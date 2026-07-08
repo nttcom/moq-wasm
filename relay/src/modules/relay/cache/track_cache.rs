@@ -1,4 +1,12 @@
-use std::{cmp::Ordering, collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    },
+    time::Duration,
+};
 
 use tokio::sync::RwLock;
 
@@ -10,17 +18,11 @@ use crate::modules::{
     },
 };
 
-#[derive(Clone, Copy)]
-struct LocationRange {
-    start: moqt::Location,
-    end: moqt::Location,
-}
-
 pub(crate) struct TrackCache {
     stream_groups: RwLock<BTreeMap<u64, BTreeMap<StreamSubgroupId, Arc<GroupCache>>>>,
     datagram_groups: RwLock<BTreeMap<u64, Arc<GroupCache>>>,
-    coverage_start: RwLock<Option<moqt::Location>>,
-    fetch_known_ranges: RwLock<KnownRanges>,
+    known_ranges: RwLock<KnownRanges>,
+    live_ingest_count: AtomicUsize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,8 +38,8 @@ impl TrackCache {
         Self {
             stream_groups: RwLock::new(BTreeMap::new()),
             datagram_groups: RwLock::new(BTreeMap::new()),
-            coverage_start: RwLock::new(None),
-            fetch_known_ranges: RwLock::new(KnownRanges::default()),
+            known_ranges: RwLock::new(KnownRanges::default()),
+            live_ingest_count: AtomicUsize::new(0),
         }
     }
 
@@ -87,12 +89,28 @@ impl TrackCache {
     ) {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
         group.append(object_id, Arc::new(object)).await;
-        if let Some(object_id) = object_id {
-            self.initialize_coverage_start(moqt::Location {
-                group_id,
-                object_id,
-            })
+    }
+
+    pub(crate) async fn append_live_stream_object(
+        &self,
+        group_id: u64,
+        subgroup_id: &StreamSubgroupId,
+        object_id: Option<u64>,
+        object: DataObject,
+    ) {
+        self.append_stream_object(group_id, subgroup_id, object_id, object)
             .await;
+        if let Some(object_id) = object_id {
+            self.known_ranges.write().await.insert(
+                moqt::Location {
+                    group_id,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id,
+                    object_id: object_id.saturating_add(1),
+                },
+            );
         }
     }
 
@@ -118,6 +136,21 @@ impl TrackCache {
     ) {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
         group.mark_end_of_group().await;
+        let caches = self.stream_group_caches(group_id).await;
+        if Self::all_subgroups_closed_for_group(&caches).await {
+            // This preserves the previous optimistic live coverage model: once all
+            // currently known subgroups close, no later subgroup for the group is assumed.
+            self.known_ranges.write().await.insert(
+                moqt::Location {
+                    group_id,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id,
+                    object_id: 0,
+                },
+            );
+        }
     }
 
     pub(crate) async fn close_datagram_group(&self, group_id: u64) {
@@ -139,12 +172,20 @@ impl TrackCache {
                 .collect()
         };
         let mut removable_streams: Vec<(u64, StreamSubgroupId)> = Vec::new();
-        let mut evicted_coverage: Option<LocationRange> = None;
         for (group_id, subgroup_id, group) in stream_groups {
             if let Some(evicted_objects) = group.evict_expired_objects(ttl).await {
-                evicted_coverage = Self::merge_location_range(
-                    evicted_coverage,
-                    Self::object_range_to_location_range(group_id, evicted_objects),
+                // Coverage is track-level, while eviction reports object IDs per subgroup.
+                // Removing this range may under-claim if another subgroup still has fresh
+                // objects with the same IDs, but it never over-claims deleted knowledge.
+                self.known_ranges.write().await.remove_range(
+                    moqt::Location {
+                        group_id,
+                        object_id: evicted_objects.start,
+                    },
+                    moqt::Location {
+                        group_id,
+                        object_id: evicted_objects.end,
+                    },
                 );
             }
             if group.is_evictable().await {
@@ -172,12 +213,7 @@ impl TrackCache {
         };
         let mut removable_datagrams: Vec<u64> = Vec::new();
         for (group_id, group) in datagram_groups {
-            if let Some(evicted_objects) = group.evict_expired_objects(ttl).await {
-                evicted_coverage = Self::merge_location_range(
-                    evicted_coverage,
-                    Self::object_range_to_location_range(group_id, evicted_objects),
-                );
-            }
+            let _ = group.evict_expired_objects(ttl).await;
             if group.is_evictable().await {
                 removable_datagrams.push(group_id);
             }
@@ -187,13 +223,6 @@ impl TrackCache {
             for group_id in removable_datagrams {
                 groups.remove(&group_id);
             }
-        }
-        if let Some(range) = evicted_coverage {
-            self.advance_coverage_start(range.end).await;
-            self.fetch_known_ranges
-                .write()
-                .await
-                .remove_up_to(range.end);
         }
     }
 
@@ -300,7 +329,9 @@ impl TrackCache {
             return FetchRangeResolution::NotCovered;
         };
 
-        if Self::location_cmp(start, largest).is_gt() {
+        if Self::location_cmp(start, largest).is_gt()
+            && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0
+        {
             return FetchRangeResolution::InvalidRange;
         }
 
@@ -320,92 +351,23 @@ impl TrackCache {
         start: moqt::Location,
         end: moqt::Location,
     ) {
-        self.fetch_known_ranges.write().await.insert(start, end);
+        self.known_ranges.write().await.insert(start, end);
     }
 
     pub(crate) async fn covers(&self, start: moqt::Location, end: moqt::Location) -> bool {
-        if self
-            .fetch_known_ranges
-            .read()
-            .await
-            .contains_range(start, end)
-        {
-            return true;
-        }
-
-        let Some(largest) = self.largest_location().await else {
-            return false;
-        };
-        let Some(coverage_start) = *self.coverage_start.read().await else {
-            return false;
-        };
-
-        if Self::location_cmp(start, coverage_start).is_lt() {
-            return self
-                .fetch_known_ranges
-                .read()
-                .await
-                .contains_range(start, coverage_start)
-                && self.live_covers(coverage_start, end, largest).await;
-        }
-        self.live_covers(start, end, largest).await
+        self.known_ranges.read().await.contains_range(start, end)
     }
 
-    async fn initialize_coverage_start(&self, location: moqt::Location) {
-        let mut coverage_start = self.coverage_start.write().await;
-        if coverage_start.is_none() {
-            *coverage_start = Some(location);
-        }
+    pub(crate) fn begin_live_ingest(&self) {
+        self.live_ingest_count.fetch_add(1, AtomicOrdering::Relaxed);
     }
 
-    async fn advance_coverage_start(&self, location: moqt::Location) {
-        let mut coverage_start = self.coverage_start.write().await;
-        match *coverage_start {
-            Some(current) if Self::location_cmp(current, location).is_ge() => {}
-            _ => *coverage_start = Some(location),
-        }
-    }
-
-    fn merge_location_range(
-        current: Option<LocationRange>,
-        candidate: LocationRange,
-    ) -> Option<LocationRange> {
-        match current {
-            Some(current) => Some(LocationRange {
-                start: Self::min_location(current.start, candidate.start),
-                end: Self::max_location(current.end, candidate.end),
-            }),
-            _ => Some(candidate),
-        }
-    }
-
-    fn object_range_to_location_range(group_id: u64, range: std::ops::Range<u64>) -> LocationRange {
-        LocationRange {
-            start: moqt::Location {
-                group_id,
-                object_id: range.start,
-            },
-            end: moqt::Location {
-                group_id,
-                object_id: range.end,
-            },
-        }
-    }
-
-    fn min_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
-        if Self::location_cmp(left, right).is_le() {
-            left
-        } else {
-            right
-        }
-    }
-
-    fn max_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
-        if Self::location_cmp(left, right).is_ge() {
-            left
-        } else {
-            right
-        }
+    pub(crate) fn end_live_ingest(&self) {
+        let _ = self.live_ingest_count.fetch_update(
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+            |count| Some(count.saturating_sub(1)),
+        );
     }
 
     fn location_after_object(group_id: u64, object_id: u64) -> moqt::Location {
@@ -451,59 +413,18 @@ impl TrackCache {
         requested_end
     }
 
-    async fn live_covers(
-        &self,
-        start: moqt::Location,
-        end: moqt::Location,
-        largest: moqt::Location,
-    ) -> bool {
-        if end.object_id != 0 && Self::location_cmp(start, end).is_ge() {
-            return false;
-        }
-        let end_group_id = end.group_id;
-        let groups_in_range: Vec<(u64, Vec<Arc<GroupCache>>)> = {
-            let groups = self.stream_groups.read().await;
-            groups
-                .range(start.group_id..=end_group_id)
-                .map(|(&group_id, subgroups)| {
-                    (group_id, subgroups.values().cloned().collect::<Vec<_>>())
-                })
-                .collect()
-        };
-
-        let mut expected_group_id = start.group_id;
-        for (group_id, caches) in groups_in_range {
-            if group_id != expected_group_id {
-                return false;
-            }
-            if caches.is_empty() {
-                return false;
-            }
-            if group_id != largest.group_id && !Self::all_subgroups_closed_for_group(&caches).await
-            {
-                return false;
-            }
-            if group_id == end_group_id {
-                return true;
-            }
-            let Some(next_group_id) = group_id.checked_add(1) else {
-                return false;
-            };
-            expected_group_id = next_group_id;
-        }
-
-        false
+    async fn stream_group_is_closed(&self, group_id: u64) -> bool {
+        let caches = self.stream_group_caches(group_id).await;
+        !caches.is_empty() && Self::all_subgroups_closed_for_group(&caches).await
     }
 
-    async fn stream_group_is_closed(&self, group_id: u64) -> bool {
-        let caches = {
-            let groups = self.stream_groups.read().await;
-            groups
-                .get(&group_id)
-                .map(|subgroups| subgroups.values().cloned().collect::<Vec<_>>())
-                .unwrap_or_default()
-        };
-        !caches.is_empty() && Self::all_subgroups_closed_for_group(&caches).await
+    async fn stream_group_caches(&self, group_id: u64) -> Vec<Arc<GroupCache>> {
+        self.stream_groups
+            .read()
+            .await
+            .get(&group_id)
+            .map(|subgroups| subgroups.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     async fn all_subgroups_closed_for_group(caches: &[Arc<GroupCache>]) -> bool {
@@ -801,7 +722,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn evict_advances_fetch_coverage_start() {
+    async fn evict_removes_only_deleted_object_range() {
         // Arrange: object 0 expires before object 1, leaving the cache head missing.
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
@@ -810,11 +731,11 @@ mod tests {
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
         cache
-            .append_stream_object(0, &subgroup, Some(0), make_object(0))
+            .append_live_stream_object(0, &subgroup, Some(0), make_object(0))
             .await;
         tokio::time::advance(Duration::from_secs(6)).await;
         cache
-            .append_stream_object(0, &subgroup, Some(1), make_object(0))
+            .append_live_stream_object(0, &subgroup, Some(1), make_object(0))
             .await;
 
         // Act: only object 0 is older than the TTL.
@@ -905,7 +826,7 @@ mod tests {
 
     #[tokio::test]
     async fn covers_fetch_known_range_after_upstream_fetch_completes() {
-        // Arrange: an upstream FETCH completed for [g0:o0, g3:o0).
+        // Arrange: an upstream FETCH completed through group 3.
         let cache = TrackCache::new();
         cache
             .insert_fetch_known_range(
@@ -930,6 +851,86 @@ mod tests {
                     },
                     moqt::Location {
                         group_id: 3,
+                        object_id: 0
+                    },
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn covers_merged_fetch_and_live_ranges() {
+        // Arrange: upstream FETCH filled groups 0..2, then live ingest reached group 5.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .insert_fetch_known_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 2,
+                    object_id: 0,
+                },
+            )
+            .await;
+        fill_group_with_ids(&cache, 3, &[0]).await;
+        cache.close_stream_subgroup(3, &subgroup).await;
+        fill_group_with_ids(&cache, 4, &[0]).await;
+        cache.close_stream_subgroup(4, &subgroup).await;
+        fill_group_with_ids(&cache, 5, &[0]).await;
+
+        // Act / Assert: adjacent fetch-filled and live ranges form one known range.
+        assert!(
+            cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 5,
+                        object_id: 1
+                    },
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn covers_returns_false_when_merged_ranges_do_not_reach_unknown_tail() {
+        // Arrange: upstream FETCH filled groups 0..2, then live ingest reached group 5.
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .insert_fetch_known_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 2,
+                    object_id: 0,
+                },
+            )
+            .await;
+        fill_group_with_ids(&cache, 3, &[0]).await;
+        cache.close_stream_subgroup(3, &subgroup).await;
+        fill_group_with_ids(&cache, 4, &[0]).await;
+        cache.close_stream_subgroup(4, &subgroup).await;
+        fill_group_with_ids(&cache, 5, &[0]).await;
+
+        // Act / Assert: group 6 was never known.
+        assert!(
+            !cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 6,
                         object_id: 0
                     },
                 )
@@ -982,6 +983,98 @@ mod tests {
                 }
             }
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evicting_newer_location_keeps_fresh_fetch_known_range() {
+        // Arrange: a high-location live object is older than a low-location fetched range.
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 5, &[0]).await;
+        tokio::time::advance(Duration::from_secs(6)).await;
+        cache
+            .insert_fetch_known_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 2,
+                    object_id: 0,
+                },
+            )
+            .await;
+
+        // Act: only the live g5 object is past TTL.
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict(ttl).await;
+
+        // Assert: removing g5 does not erase the fresh fetched historical range.
+        assert!(
+            cache
+                .covers(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    },
+                    moqt::Location {
+                        group_id: 2,
+                        object_id: 0
+                    },
+                )
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_returns_not_covered_for_start_after_largest_without_live_ingest() {
+        // Arrange: the relay has cached objects but no active live ingest to trust Largest.
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0]).await;
+
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 1,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 2,
+                },
+            )
+            .await;
+
+        // Assert: without live ingest, the relay forwards upstream instead of asserting invalidity.
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_uses_live_ingest_counter_for_start_after_largest() {
+        // Arrange: two live ingest paths are active and one ends.
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0]).await;
+        cache.begin_live_ingest();
+        cache.begin_live_ingest();
+        cache.end_live_ingest();
+
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 1,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 2,
+                },
+            )
+            .await;
+
+        // Assert: one remaining live ingest is enough to trust Largest.
+        assert_eq!(resolution, FetchRangeResolution::InvalidRange);
     }
 
     #[tokio::test]
@@ -1079,11 +1172,11 @@ mod tests {
     async fn fill_group_with_ids(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
         let subgroup = StreamSubgroupId::Value(0);
         cache
-            .append_stream_object(group_id, &subgroup, None, make_header(group_id))
+            .append_live_stream_object(group_id, &subgroup, None, make_header(group_id))
             .await;
         for &id in object_ids {
             cache
-                .append_stream_object(group_id, &subgroup, Some(id), make_object(0))
+                .append_live_stream_object(group_id, &subgroup, Some(id), make_object(0))
                 .await;
         }
     }

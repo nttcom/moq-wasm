@@ -13,7 +13,18 @@ pub(crate) struct KnownRanges {
 
 impl KnownRanges {
     pub(crate) fn insert(&mut self, start: moqt::Location, end: moqt::Location) {
+        let end = Self::normalize_end_location(end);
         if Self::location_cmp(start, end).is_ge() {
+            return;
+        }
+
+        if let Some(last) = self.ranges.last_mut()
+            && Self::location_cmp(last.start, start).is_le()
+            && Self::location_cmp(start, last.end).is_le()
+        {
+            if Self::location_cmp(end, last.end).is_gt() {
+                last.end = end;
+            }
             return;
         }
 
@@ -42,21 +53,39 @@ impl KnownRanges {
         self.ranges = next_ranges;
     }
 
-    pub(crate) fn remove_up_to(&mut self, location: moqt::Location) {
+    pub(crate) fn remove_range(&mut self, start: moqt::Location, end: moqt::Location) {
+        let end = Self::normalize_end_location(end);
+        if Self::location_cmp(start, end).is_ge() {
+            return;
+        }
+
         let mut ranges = Vec::with_capacity(self.ranges.len());
-        for mut range in self.ranges.drain(..) {
-            if Self::location_cmp(range.end, location).is_le() {
+        for range in self.ranges.drain(..) {
+            if Self::location_cmp(range.end, start).is_le()
+                || Self::location_cmp(end, range.start).is_le()
+            {
+                ranges.push(range);
                 continue;
             }
-            if Self::location_cmp(range.start, location).is_lt() {
-                range.start = location;
+
+            if Self::location_cmp(range.start, start).is_lt() {
+                ranges.push(KnownRange {
+                    start: range.start,
+                    end: start,
+                });
             }
-            ranges.push(range);
+            if Self::location_cmp(end, range.end).is_lt() {
+                ranges.push(KnownRange {
+                    start: end,
+                    end: range.end,
+                });
+            }
         }
         self.ranges = ranges;
     }
 
     pub(crate) fn contains_range(&self, start: moqt::Location, end: moqt::Location) -> bool {
+        let end = Self::normalize_end_location(end);
         if Self::location_cmp(start, end).is_ge() {
             return false;
         }
@@ -64,6 +93,20 @@ impl KnownRanges {
             Self::location_cmp(range.start, start).is_le()
                 && Self::location_cmp(end, range.end).is_le()
         })
+    }
+
+    fn normalize_end_location(location: moqt::Location) -> moqt::Location {
+        if location.object_id != 0 {
+            return location;
+        }
+
+        // `{group, 0}` denotes the whole group as an End Location. Internally we
+        // keep half-open ranges, so this becomes the next group's first object.
+        // u64::MAX groups are not practically reachable; saturating keeps ordering valid.
+        moqt::Location {
+            group_id: location.group_id.saturating_add(1),
+            object_id: 0,
+        }
     }
 
     fn min_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
@@ -104,8 +147,17 @@ mod tests {
         ranges.insert(loc(0, 0), loc(3, 0));
 
         assert!(ranges.contains_range(loc(0, 0), loc(3, 0)));
+        assert!(ranges.contains_range(loc(3, 0), loc(3, 5)));
         assert!(ranges.contains_range(loc(1, 0), loc(2, 0)));
         assert!(!ranges.contains_range(loc(0, 0), loc(4, 0)));
+    }
+
+    #[test]
+    fn whole_group_end_requires_full_group_knowledge() {
+        let mut ranges = KnownRanges::default();
+        ranges.insert(loc(0, 0), loc(2, 7));
+
+        assert!(!ranges.contains_range(loc(0, 0), loc(2, 0)));
     }
 
     #[test]
@@ -118,12 +170,14 @@ mod tests {
     }
 
     #[test]
-    fn remove_up_to_trims_ranges() {
+    fn remove_range_can_split_existing_range() {
         let mut ranges = KnownRanges::default();
-        ranges.insert(loc(0, 0), loc(3, 0));
-        ranges.remove_up_to(loc(1, 0));
+        ranges.insert(loc(0, 0), loc(5, 0));
 
-        assert!(!ranges.contains_range(loc(0, 0), loc(1, 0)));
-        assert!(ranges.contains_range(loc(1, 0), loc(3, 0)));
+        ranges.remove_range(loc(2, 0), loc(3, 0));
+
+        assert!(ranges.contains_range(loc(0, 0), loc(1, 0)));
+        assert!(!ranges.contains_range(loc(2, 0), loc(3, 0)));
+        assert!(ranges.contains_range(loc(4, 0), loc(5, 0)));
     }
 }

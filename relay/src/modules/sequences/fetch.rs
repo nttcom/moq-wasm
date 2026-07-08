@@ -641,11 +641,11 @@ mod tests {
         let subgroup = StreamSubgroupId::Value(0);
         let cache = cache_store.get_or_create(track_key);
         cache
-            .append_stream_object(group_id, &subgroup, None, make_header(group_id))
+            .append_live_stream_object(group_id, &subgroup, None, make_header(group_id))
             .await;
         for &object_id in object_ids {
             cache
-                .append_stream_object(group_id, &subgroup, Some(object_id), make_object())
+                .append_live_stream_object(group_id, &subgroup, Some(object_id), make_object())
                 .await;
         }
     }
@@ -824,6 +824,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 0, &[0]).await;
+        cache_store.get_or_create(&track_key).begin_live_ingest();
         let result = fetch_cache_status(
             2,
             standalone_fetch_type(

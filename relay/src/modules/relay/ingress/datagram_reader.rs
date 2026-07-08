@@ -112,6 +112,7 @@ impl DatagramReader {
         let mut current_group_id: Option<u64> = None;
         let mut prev_object_id: Option<u64> = None;
         let cache = cache_store.get_or_create(&track_key);
+        cache.begin_live_ingest();
         let notify = object_notify_producer_map.get_or_create(&track_key);
         loop {
             let receive_result = tokio::select! {
@@ -120,6 +121,7 @@ impl DatagramReader {
                         cache.close_datagram_group(group_id).await;
                     }
                     tracing::info!(%track_key, "datagram reader stopped");
+                    cache.end_live_ingest();
                     return;
                 }
                 result = receiver.receive_object() => result,
@@ -148,6 +150,7 @@ impl DatagramReader {
                         cache.close_datagram_group(group_id).await;
                     }
                     tracing::debug!(%track_key, "datagram receiver ended");
+                    cache.end_live_ingest();
                     return;
                 }
             }

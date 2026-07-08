@@ -274,4 +274,46 @@ mod tests {
         // Assert: only a completed FETCH known range may cover this historical gap.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
     }
+
+    #[tokio::test]
+    async fn partial_fetch_ingest_does_not_register_coverage() {
+        // Arrange: a FETCH fill wrote an object but has not reached Fetch::End.
+        let cache = Arc::new(TrackCache::new());
+        let mut previous_object_ids = HashMap::new();
+        FetchIngest::append_fetch_object(
+            cache.clone(),
+            FetchObjectField::new(
+                0,
+                0,
+                0,
+                0,
+                ExtensionHeaders {
+                    prior_group_id_gap: vec![],
+                    prior_object_id_gap: vec![],
+                    immutable_extensions: vec![],
+                },
+                FetchObject::Payload(Bytes::new()),
+            ),
+            &mut previous_object_ids,
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 1,
+                },
+            )
+            .await;
+
+        // Assert: only Fetch::End may register the filled range as known.
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
 }

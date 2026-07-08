@@ -104,7 +104,7 @@ impl StreamReader {
                     span.record("group_id", group_id);
                     span.record("subgroup_id", tracing::field::debug(&subgroup_id));
                     cache
-                        .append_stream_object(
+                        .append_live_stream_object(
                             group_id,
                             &subgroup_id,
                             None,
@@ -136,7 +136,7 @@ impl StreamReader {
                     let object_id = object.resolve_absolute_object_id(prev_object_id);
                     prev_object_id = object_id;
                     cache
-                        .append_stream_object(group_id, &subgroup_id, object_id, object)
+                        .append_live_stream_object(group_id, &subgroup_id, object_id, object)
                         .await;
                     if let Some(end_reason) = end_reason {
                         span.record("end_reason", end_reason);
