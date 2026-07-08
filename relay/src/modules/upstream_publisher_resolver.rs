@@ -103,3 +103,140 @@ impl UpstreamPublisherResolver {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::{
+        route_registry::{
+            NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError,
+            RelayInfo, RouteStatus,
+        },
+        sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
+        session_repository::SessionRepository,
+    };
+
+    enum PublisherLookup {
+        NotFound,
+        Fails,
+        MustNotBeCalled,
+    }
+
+    struct StubRouteRegistry {
+        lookup: PublisherLookup,
+    }
+
+    #[async_trait::async_trait]
+    impl RelayRouteRegistry for StubRouteRegistry {
+        async fn register_namespace_publisher(
+            &self,
+            _track_namespace: &str,
+            _status: RouteStatus,
+        ) -> Result<(), RegisterNamespacePublisherError> {
+            unimplemented!("not used in resolver tests")
+        }
+
+        async fn register_namespace_subscriber(
+            &self,
+            _track_namespace_prefix: &str,
+            _status: RouteStatus,
+        ) -> Result<(), RegisterNamespaceSubscriberError> {
+            unimplemented!("not used in resolver tests")
+        }
+
+        async fn find_active_namespace_publisher(
+            &self,
+            _track_namespace: &str,
+        ) -> anyhow::Result<Option<RelayInfo>> {
+            match self.lookup {
+                PublisherLookup::NotFound => Ok(None),
+                PublisherLookup::Fails => Err(anyhow::anyhow!("route registry down")),
+                PublisherLookup::MustNotBeCalled => {
+                    panic!("route registry must not be consulted when a local publisher exists")
+                }
+            }
+        }
+
+        async fn find_namespace_publishers_by_prefix(
+            &self,
+            _track_namespace_prefix: &str,
+        ) -> anyhow::Result<Vec<NamespaceRoute>> {
+            unimplemented!("not used in resolver tests")
+        }
+
+        async fn unregister_namespace_publisher(
+            &self,
+            _track_namespace: &str,
+        ) -> anyhow::Result<()> {
+            unimplemented!("not used in resolver tests")
+        }
+
+        async fn unregister_namespace_subscriber(
+            &self,
+            _track_namespace_prefix: &str,
+        ) -> anyhow::Result<()> {
+            unimplemented!("not used in resolver tests")
+        }
+
+        async fn find_namespace_subscribers(
+            &self,
+            _track_namespace: &str,
+        ) -> anyhow::Result<Vec<RelayInfo>> {
+            unimplemented!("not used in resolver tests")
+        }
+    }
+
+    fn make_resolver(lookup: PublisherLookup) -> UpstreamPublisherResolver {
+        let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        UpstreamPublisherResolver::new(
+            Arc::new(StubRouteRegistry { lookup }),
+            Arc::new(InterRelayConnectionManager::new(
+                repository,
+                session_event_sender,
+            )),
+        )
+    }
+
+    #[tokio::test]
+    async fn prefers_local_publisher_and_picks_min_session_id() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(5, "ns".to_string(), PeerKind::Client);
+        table.register_publish_namespace(3, "ns".to_string(), PeerKind::Client);
+        let resolver = make_resolver(PublisherLookup::MustNotBeCalled);
+
+        let resolved = resolver
+            .resolve(&table, "ns", "track")
+            .await
+            .expect("resolve should succeed")
+            .expect("local publisher should be found");
+
+        assert_eq!(resolved.publisher_session_id, 3);
+        assert_eq!(resolved.track_namespace, "ns");
+        assert_eq!(resolved.track_name, "track");
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_no_publisher_anywhere() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        let resolver = make_resolver(PublisherLookup::NotFound);
+
+        let resolved = resolver
+            .resolve(&table, "ns", "track")
+            .await
+            .expect("resolve should succeed");
+
+        assert!(resolved.is_none());
+    }
+
+    #[tokio::test]
+    async fn propagates_route_registry_error() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        let resolver = make_resolver(PublisherLookup::Fails);
+
+        let result = resolver.resolve(&table, "ns", "track").await;
+
+        assert!(result.is_err());
+    }
+}
