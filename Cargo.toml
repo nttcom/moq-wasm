@@ -11,6 +11,7 @@ members = [
     'tests/fetch-e2e',
     'tests/multiple-publishers-e2e',
     'tests/object-dedup-e2e',
+    'tests/priority-e2e',
     'examples/cross-protocol-test/publisher',
     'examples/cross-protocol-test/quic-subscriber',
     'bindings/wasm',
