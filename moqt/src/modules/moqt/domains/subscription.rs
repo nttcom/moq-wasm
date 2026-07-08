@@ -67,6 +67,13 @@ impl Subscription {
             Self::SubscriberInitiated(subscription) => subscription.filter_type,
         }
     }
+
+    pub fn subscriber_priority(&self) -> u8 {
+        match self {
+            Self::PublisherInitiated(subscription) => subscription.subscriber_priority,
+            Self::SubscriberInitiated(subscription) => subscription.subscriber_priority,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -78,6 +85,7 @@ pub struct SubscriberInitiatedSubscription {
     pub expires: u64,
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
+    pub subscriber_priority: u8,
     pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
 }
@@ -87,6 +95,7 @@ impl SubscriberInitiatedSubscription {
         track_namespace: String,
         track_name: String,
         subscribe_ok: SubscribeOk,
+        subscriber_priority: u8,
         filter_type: FilterType,
     ) -> Self {
         Self {
@@ -97,6 +106,7 @@ impl SubscriberInitiatedSubscription {
             expires: subscribe_ok.expires,
             group_order: subscribe_ok.group_order,
             content_exists: subscribe_ok.content_exists,
+            subscriber_priority,
             filter_type,
             delivery_timeout: None,
         }
@@ -114,6 +124,7 @@ impl SubscriberInitiatedSubscription {
             expires: 0,
             group_order: handler.group_order,
             content_exists: ContentExists::False,
+            subscriber_priority: handler.subscriber_priority,
             filter_type: handler.filter_type,
             delivery_timeout: handler.delivery_timeout,
         }

@@ -25,6 +25,12 @@ impl TransportSendStream for WtSendStream {
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)
     }
+
+    fn set_priority(&mut self, priority: i32) -> Result<(), TransportSendError> {
+        self.send_stream
+            .set_priority(priority)
+            .map_err(|_| TransportSendError::ClosedStream)
+    }
 }
 
 fn webtransport_write_error_to_transport_send_error(

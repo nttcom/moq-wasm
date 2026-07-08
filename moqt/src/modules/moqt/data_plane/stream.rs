@@ -6,5 +6,6 @@ pub(crate) mod stream_data_receiver;
 pub(crate) mod stream_data_receiver_factory;
 pub(crate) mod stream_data_sender;
 pub(crate) mod stream_data_sender_factory;
+pub(crate) mod stream_priority;
 pub(crate) mod stream_receiver;
 pub(crate) mod stream_sender;

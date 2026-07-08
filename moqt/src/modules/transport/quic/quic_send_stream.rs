@@ -24,6 +24,12 @@ impl TransportSendStream for QUICSendStream {
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)
     }
+
+    fn set_priority(&mut self, priority: i32) -> Result<(), TransportSendError> {
+        self.send_stream
+            .set_priority(priority)
+            .map_err(|_| TransportSendError::ClosedStream)
+    }
 }
 
 fn quic_write_error_to_transport_send_error(error: quinn::WriteError) -> TransportSendError {

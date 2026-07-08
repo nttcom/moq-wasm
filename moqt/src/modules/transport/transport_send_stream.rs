@@ -31,4 +31,7 @@ pub enum TransportSendError {
 pub(crate) trait TransportSendStream: Send + Sync + 'static + Debug {
     async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError>;
     async fn close(&mut self) -> Result<(), TransportSendError>;
+    /// Sets the transport-level send priority of this stream.
+    /// Streams with a higher value are transmitted first.
+    fn set_priority(&mut self, priority: i32) -> Result<(), TransportSendError>;
 }

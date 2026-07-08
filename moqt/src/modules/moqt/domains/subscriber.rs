@@ -139,6 +139,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                             track_namespace,
                             track_name,
                             message,
+                            option.subscriber_priority,
                             filter_type,
                         ),
                     ))

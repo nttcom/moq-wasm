@@ -7,7 +7,7 @@ use crate::{
             extension_headers::ExtensionHeaders,
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
-        stream::stream_sender::StreamSender,
+        stream::{stream_priority::resolve_transport_priority, stream_sender::StreamSender},
     },
 };
 
@@ -30,6 +30,25 @@ pub struct StreamDataSender<T: TransportProtocol, S = Uninitialized> {
     track_alias: u64,
     subgroup_header: Option<SubgroupHeader>,
     _state: PhantomData<S>,
+}
+
+impl<T: TransportProtocol, S> StreamDataSender<T, S> {
+    /// Applies the MoQT priorities to the underlying transport stream so the
+    /// transport transmits pending data of competing streams in priority order.
+    /// Available in any state: setting it before the header keeps even the
+    /// header bytes prioritized, and it can be re-applied later if needed.
+    pub async fn set_priority(
+        &self,
+        subscriber_priority: u8,
+        publisher_priority: u8,
+    ) -> anyhow::Result<()> {
+        self.stream_sender
+            .set_priority(resolve_transport_priority(
+                subscriber_priority,
+                publisher_priority,
+            ))
+            .await
+    }
 }
 
 // ─── Uninitialized State ───────────────────────────────────────────────────────
