@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 
 use crate::modules::core::{
-    data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
+    data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
+    handler::publish::SubscribeOption,
     subscription::UpstreamSubscription,
 };
 
@@ -20,6 +21,18 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         &mut self,
         subscription: &UpstreamSubscription,
     ) -> anyhow::Result<DataReceiver>;
+    async fn send_fetch(
+        &mut self,
+        track_namespace: String,
+        track_name: String,
+        start_location: moqt::Location,
+        end_location: moqt::Location,
+        option: moqt::FetchOption,
+    ) -> anyhow::Result<moqt::FetchHandle>;
+    async fn create_fetch_receiver(
+        &mut self,
+        handle: &moqt::FetchHandle,
+    ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>>;
 }
 
 #[async_trait]
@@ -91,5 +104,37 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
             moqt::DataReceiver::Stream(factory) => Ok(DataReceiver::Stream(Box::new(factory))),
             moqt::DataReceiver::Datagram(inner) => Ok(DataReceiver::Datagram(Box::new(inner))),
         }
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.subscriber.send_fetch",
+        skip_all,
+        fields(track_namespace = %track_namespace, track_name = %track_name)
+    )]
+    async fn send_fetch(
+        &mut self,
+        track_namespace: String,
+        track_name: String,
+        start_location: moqt::Location,
+        end_location: moqt::Location,
+        option: moqt::FetchOption,
+    ) -> anyhow::Result<moqt::FetchHandle> {
+        self.fetch(track_namespace, track_name, start_location, end_location, option)
+            .await
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.subscriber.create_fetch_receiver",
+        skip_all,
+        fields(request_id = handle.request_id)
+    )]
+    async fn create_fetch_receiver(
+        &mut self,
+        handle: &moqt::FetchHandle,
+    ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
+        let receiver = self.accept_fetch_receiver(handle).await?;
+        Ok(Box::new(receiver))
     }
 }

@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    core::{handler::publish::SubscribeOption, subscription::UpstreamSubscription},
+    core::{
+        data_receiver::fetch_receiver::UpstreamFetchReceiver,
+        data_sender::fetch_sender::FetchSender,
+        handler::publish::SubscribeOption,
+        subscription::UpstreamSubscription,
+    },
     enums::{FilterType, GroupOrder},
     session_repository::SessionRepository,
     types::SessionId,
@@ -139,6 +144,63 @@ impl ControlMessageForwarder {
         subscriber
             .send_subscribe(track_namespace, track_name, option)
             .await
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.control_message_forwarder.fetch",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+    )]
+    pub(crate) async fn fetch(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+        track_name: String,
+        start_location: moqt::Location,
+        end_location: moqt::Location,
+    ) -> anyhow::Result<(moqt::FetchHandle, Box<dyn UpstreamFetchReceiver>)> {
+        let subscriber = self.repository.lock().await.subscriber(session_id);
+        let Some(mut subscriber) = subscriber else {
+            tracing::error!("No subscriber");
+            return Err(anyhow::anyhow!("No subscriber"));
+        };
+        tracing::info!(
+            "Forwarding FETCH '{}/{}' to session:{}",
+            track_namespace,
+            track_name,
+            session_id
+        );
+        let handle = subscriber
+            .send_fetch(
+                track_namespace,
+                track_name,
+                start_location,
+                end_location,
+                moqt::FetchOption::default(),
+            )
+            .await?;
+        let receiver = subscriber.create_fetch_receiver(&handle).await?;
+        Ok((handle, receiver))
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.control_message_forwarder.new_fetch_sender",
+        skip_all,
+        fields(session_id = %session_id, request_id = %request_id)
+    )]
+    pub(crate) async fn new_fetch_sender(
+        &self,
+        session_id: SessionId,
+        request_id: u64,
+    ) -> anyhow::Result<Box<dyn FetchSender>> {
+        let publisher = self.repository.lock().await.publisher(session_id);
+        let Some(publisher) = publisher else {
+            tracing::error!("No publisher");
+            return Err(anyhow::anyhow!("No publisher"));
+        };
+        publisher.new_fetch_sender(request_id).await
     }
 
     #[tracing::instrument(
