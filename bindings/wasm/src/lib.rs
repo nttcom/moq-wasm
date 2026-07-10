@@ -37,7 +37,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 #[cfg(web_sys_unstable_apis)]
 use web_sys::{
-    ReadableStream, ReadableStreamDefaultReader, WebTransport, WritableStreamDefaultWriter,
+    ReadableStream, ReadableStreamDefaultReader, WebTransport, WebTransportSendStreamOptions,
+    WritableStreamDefaultWriter,
 };
 
 #[wasm_bindgen]
@@ -902,9 +903,18 @@ impl MOQTClient {
         group_id: u64,
         subgroup_id: u64,
         publisher_priority: u8,
+        subscriber_priority: Option<u8>,
     ) -> Result<(), JsValue> {
+        // WebTransport sendOrder follows the same convention as QUIC stream
+        // priorities (higher = sent first), so the shared mapping applies.
+        // 128 mirrors the protocol's default subscriber priority when the
+        // caller does not track the subscription's value.
+        let send_order = moqt::resolve_transport_priority(
+            subscriber_priority.unwrap_or(128),
+            publisher_priority,
+        );
         let writer = self
-            .get_or_create_stream_writer(track_alias, group_id, subgroup_id)
+            .get_or_create_stream_writer(track_alias, group_id, subgroup_id, send_order)
             .await
             .map_err(|error| js_error(error.to_string()))?;
         let header = SubgroupHeader::new(
@@ -1134,6 +1144,7 @@ impl MOQTClient {
         track_alias: u64,
         group_id: u64,
         subgroup_id: u64,
+        send_order: i32,
     ) -> Result<WritableStreamDefaultWriter> {
         let writer_key = (track_alias, group_id, subgroup_id);
         if let Some(writer) = self.stream_writers.borrow().get(&writer_key).cloned() {
@@ -1145,8 +1156,10 @@ impl MOQTClient {
             .borrow()
             .clone()
             .ok_or_else(|| anyhow!("transport is None"))?;
+        let options = WebTransportSendStreamOptions::new();
+        options.set_send_order(Some(send_order));
         let writable = web_sys::WritableStream::from(
-            JsFuture::from(transport.create_unidirectional_stream())
+            JsFuture::from(transport.create_unidirectional_stream_with_options(&options))
                 .await
                 .map_err(|error| anyhow!("create_unidirectional_stream: {error:?}"))?,
         );
