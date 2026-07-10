@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const LOC_CAPTURE_TIMESTAMP_ID: u64 = 2;
 pub const LOC_VIDEO_FRAME_MARKING_ID: u64 = 4;
 pub const LOC_AUDIO_LEVEL_ID: u64 = 6;
-pub const LOC_VIDEO_CONFIG_ID: u64 = 16;
+pub const LOC_VIDEO_CONFIG_ID: u64 = 13;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "camelCase")]
