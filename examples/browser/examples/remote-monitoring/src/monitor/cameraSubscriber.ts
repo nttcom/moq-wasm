@@ -47,7 +47,7 @@ export class CameraSubscriber {
     })
     // enable jitter buffer + capture-timestamp pacing (was bypassed for lowest latency)
     this.worker.postMessage({ type: 'config', config: { bypassJitterBuffer: false, telemetryEnabled: false } })
-    this.worker.postMessage({ type: 'catalog', codec: 'avc1.640028', framerate: 30 })
+    this.worker.postMessage({ type: 'catalog', codec: 'avc3.640028', framerate: 30 })
 
     this.worker.onmessage = (e) => {
       if (e.data.type === 'frame') {
