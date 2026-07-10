@@ -27,20 +27,35 @@
 use std::env;
 use std::net::ToSocketAddrs;
 use std::str::FromStr;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, Fetch,
-    FetchDataReceiver, FetchObject, FetchOption, FilterType, GroupOrder, Location, QUIC, Session,
-    StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
-    SubscribeOption,
+    FetchDataReceiver, FetchObject, FetchOption, FilterType, GroupOrder, Location, PublishOption,
+    QUIC, Session, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId,
+    SubgroupObject, SubscribeOption,
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
-const NAMESPACE: &str = "room/alice";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
 const GROUPS: u64 = 3;
 const OBJECTS_PER_GROUP: u64 = 5;
+
+#[derive(Debug, Clone)]
+struct FetchRunResult {
+    objects: Vec<(u64, u64)>,
+    end_location: Location,
+}
+
+fn unique_namespace(label: &str) -> String {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("room/{}-{}-{}", label, std::process::id(), now_ms)
+}
 
 async fn new_session() -> anyhow::Result<Session<QUIC>> {
     let relay_url =
@@ -49,12 +64,16 @@ async fn new_session() -> anyhow::Result<Session<QUIC>> {
 }
 
 async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session<QUIC>> {
-    let url = url::Url::from_str(relay_url).unwrap();
-    let host = url.host_str().unwrap();
+    let url = url::Url::from_str(relay_url)
+        .with_context(|| format!("failed to parse relay URL: {relay_url}"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("relay URL has no host: {relay_url}"))?;
     let remote = (host, url.port().unwrap_or(4433))
-        .to_socket_addrs()?
+        .to_socket_addrs()
+        .with_context(|| format!("failed to resolve relay address: {relay_url}"))?
         .next()
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("relay URL resolved no socket address: {relay_url}"))?;
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -88,19 +107,21 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> a
 /// delivery order. A receive error before `Fetch::End` is propagated.
 async fn run_fetch(
     subscriber: &mut moqt::Subscriber<QUIC>,
+    namespace: &str,
     start: Location,
     end: Location,
-) -> anyhow::Result<Vec<(u64, u64)>> {
-    run_fetch_with_label(subscriber, start, end, "bob").await
+) -> anyhow::Result<FetchRunResult> {
+    run_fetch_with_label(subscriber, namespace, start, end, "bob").await
 }
 
 async fn run_fetch_with_label(
     subscriber: &mut moqt::Subscriber<QUIC>,
+    namespace: &str,
     start: Location,
     end: Location,
     label: &str,
-) -> anyhow::Result<Vec<(u64, u64)>> {
-    run_fetch_ns(subscriber, NAMESPACE, TRACK_NAME, start, end, label).await
+) -> anyhow::Result<FetchRunResult> {
+    run_fetch_ns(subscriber, namespace, TRACK_NAME, start, end, label).await
 }
 
 async fn run_fetch_ns(
@@ -110,7 +131,7 @@ async fn run_fetch_ns(
     start: Location,
     end: Location,
     label: &str,
-) -> anyhow::Result<Vec<(u64, u64)>> {
+) -> anyhow::Result<FetchRunResult> {
     tracing::info!(
         "[{}] fetching {}/{} g{}:o{}..g{}:o{}",
         label,
@@ -130,6 +151,7 @@ async fn run_fetch_ns(
             FetchOption::default(),
         )
         .await?;
+    let end_location = handle.end_location;
     let mut receiver: FetchDataReceiver<QUIC> = subscriber.accept_fetch_receiver(&handle).await?;
     let mut received = Vec::new();
     loop {
@@ -173,7 +195,10 @@ async fn run_fetch_ns(
             }
         }
     }
-    Ok(received)
+    Ok(FetchRunResult {
+        objects: received,
+        end_location,
+    })
 }
 
 /// Runs the Joining Fetch and returns the received (group_id, object_id) in
@@ -233,6 +258,7 @@ async fn run_joining_fetch_with_label(
 }
 
 async fn carol(
+    namespace: String,
     ready_rx: tokio::sync::oneshot::Receiver<()>,
     done_tx: tokio::sync::oneshot::Sender<()>,
 ) -> anyhow::Result<()> {
@@ -243,7 +269,7 @@ async fn carol(
     let mut subscriber = session.subscriber();
     let subscription = subscriber
         .subscribe(
-            NAMESPACE.to_string(),
+            namespace.clone(),
             TRACK_NAME.to_string(),
             SubscribeOption {
                 subscriber_priority: 128,
@@ -276,11 +302,11 @@ async fn carol(
     Ok(())
 }
 
-async fn alice() -> anyhow::Result<()> {
+async fn alice(namespace: String) -> anyhow::Result<()> {
     let session = new_session().await?;
     session
         .publisher()
-        .publish_namespace(NAMESPACE.to_string())
+        .publish_namespace(namespace.clone())
         .await?;
     tracing::info!("[alice] publish_namespace ok");
 
@@ -312,17 +338,18 @@ async fn alice() -> anyhow::Result<()> {
 }
 
 async fn bob(
+    namespace: String,
     carol_ready_tx: tokio::sync::oneshot::Sender<()>,
     carol_done_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let session = new_session().await?;
 
     let mut subscriber = session.subscriber();
     let subscription = subscriber
         .subscribe(
-            NAMESPACE.to_string(),
+            namespace.clone(),
             TRACK_NAME.to_string(),
             SubscribeOption {
                 subscriber_priority: 128,
@@ -365,6 +392,7 @@ async fn bob(
     // fetch A: [g0/o0, g1/o3) = g0/o0..g0/o4 + g1/o0..g1/o2 (8 objects)
     let received_a = run_fetch(
         &mut subscriber,
+        &namespace,
         Location {
             group_id: 0,
             object_id: 0,
@@ -380,12 +408,13 @@ async fn bob(
         .chain((0..3).map(|o| (1, o)))
         .collect();
     assert_eq!(
-        received_a, expected_a,
+        received_a.objects, expected_a,
         "fetch A [g0/o0, g1/o3) must resolve to g0 in full + g1/o0..o2"
     );
     // fetch B: [g1/o2, g2/o4) = g1/o2..g1/o4 + g2/o0..g2/o3 (7 objects)
     let received_b = run_fetch(
         &mut subscriber,
+        &namespace,
         Location {
             group_id: 1,
             object_id: 2,
@@ -401,12 +430,13 @@ async fn bob(
         .chain((0..4).map(|o| (2, o)))
         .collect();
     assert_eq!(
-        received_b, expected_b,
+        received_b.objects, expected_b,
         "fetch B [g1/o2, g2/o4) must resolve to g1/o2..o4 + g2/o0..o3"
     );
     // fetch C: [g1/o0, g1/o0) = entire group 1 (object_id==0 = whole group, 5 objects)
     let received_c = run_fetch(
         &mut subscriber,
+        &namespace,
         Location {
             group_id: 1,
             object_id: 0,
@@ -419,7 +449,7 @@ async fn bob(
     .await?;
     let expected_c: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP).map(|o| (1, o)).collect();
     assert_eq!(
-        received_c, expected_c,
+        received_c.objects, expected_c,
         "fetch C [g1/o0, g1/o0) must resolve to the whole of group 1"
     );
     tracing::info!("[bob] OK: all three standalone fetches resolved to the expected objects");
@@ -495,8 +525,8 @@ async fn publisher_event_loop(
     Ok(session)
 }
 
-/// Drain a stream subscription until a given group_id arrives, then stop.
-async fn drain_until_group(
+/// Drain a stream subscription until all objects in a given group arrive.
+async fn drain_until_group_complete(
     subscriber: &mut moqt::Subscriber<QUIC>,
     subscription: &moqt::Subscription,
     until_group: u64,
@@ -507,22 +537,32 @@ async fn drain_until_group(
         DataReceiver::Stream(f) => f,
         DataReceiver::Datagram(_) => anyhow::bail!("[{}] unexpected datagram", label),
     };
-    'drain: loop {
+    loop {
         let mut stream = factory.next().await?;
+        let mut current_group = None;
+        let mut target_group_objects = 0;
         loop {
             match stream.receive().await {
                 Ok(Subgroup::Header(h)) => {
                     tracing::info!("[{}] live group_id={}", label, h.group_id);
-                    if h.group_id >= until_group {
-                        break 'drain;
+                    current_group = Some(h.group_id);
+                }
+                Ok(Subgroup::Object(_)) => {
+                    if current_group == Some(until_group) {
+                        target_group_objects += 1;
                     }
                 }
-                Ok(Subgroup::Object(_)) => {}
-                Err(_) => break,
+                Err(_) => {
+                    if current_group == Some(until_group)
+                        && target_group_objects >= OBJECTS_PER_GROUP
+                    {
+                        return Ok(());
+                    }
+                    break;
+                }
             }
         }
     }
-    Ok(())
 }
 
 /// Cross-relay scenario D: Dave publishes on relay-A; a local subscriber on relay-A
@@ -534,7 +574,7 @@ async fn run_cross_relay_standalone_fetch(
 ) -> anyhow::Result<()> {
     tracing::info!("[D] cross-relay standalone FETCH: Dave on relay-A, Eve on relay-B");
 
-    let namespace = "room/dave-cross-fetch";
+    let namespace = unique_namespace("dave-cross-fetch");
     let track_name = "data";
 
     // Dave connects to relay-A and registers the namespace.
@@ -544,6 +584,7 @@ async fn run_cross_relay_standalone_fetch(
         .publish_namespace(namespace.to_string())
         .await?;
     tracing::info!("[dave] publish_namespace ok on relay-A");
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Spawn Dave's event loop concurrently so it can respond to SUBSCRIBE while
     // the local subscriber is connecting.
@@ -555,9 +596,9 @@ async fn run_cross_relay_standalone_fetch(
     let local_sub_session = connect_to_relay(relay_a_url).await?;
     let mut local_sub = local_sub_session.subscriber();
     // Keep subscription alive until Dave finishes so the relay retains the cache.
-    let _local_subscription = local_sub
+    let local_subscription = local_sub
         .subscribe(
-            namespace.to_string(),
+            namespace.clone(),
             track_name.to_string(),
             SubscribeOption {
                 subscriber_priority: 128,
@@ -569,12 +610,14 @@ async fn run_cross_relay_standalone_fetch(
         .await?;
     tracing::info!("[local-sub] subscribe ok on relay-A");
 
+    // Drain through g2 before FETCH so relay-A's cache is deterministically populated.
+    drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
+        .await?;
+
     // Wait for Dave to finish publishing all groups. The session is returned so we can
     // keep it alive (keeping the namespace registered in Redis) while Eve FETCHes.
     let dave_session = dave_handle.await??;
     tracing::info!("[local-sub] Dave finished publishing; relay-A cache populated");
-    // Small grace period to ensure the relay fully processes and stores the last group.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // Eve connects to relay-B and FETCHes directly — no prior SUBSCRIBE via relay-B,
     // so relay-B has no cache for this track and must forward the FETCH upstream to relay-A.
@@ -584,7 +627,7 @@ async fn run_cross_relay_standalone_fetch(
 
     let received = run_fetch_ns(
         &mut eve_sub,
-        namespace,
+        &namespace,
         track_name,
         Location {
             group_id: 0,
@@ -604,7 +647,7 @@ async fn run_cross_relay_standalone_fetch(
         .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
         .collect();
     assert_eq!(
-        received, expected,
+        received.objects, expected,
         "[D] cross-relay FETCH must deliver all groups via upstream forwarding"
     );
 
@@ -617,19 +660,43 @@ async fn run_cross_relay_standalone_fetch(
 async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> anyhow::Result<()> {
     tracing::info!("[E] cross-relay joining FETCH: Frank on relay-A, Grace on relay-B");
 
-    let namespace = "room/frank-cross-join";
+    let namespace = unique_namespace("frank-cross-join");
     let track_name = "data";
 
-    // Frank connects to relay-A and registers the namespace.
+    // Frank publishes through PUBLISH before Grace subscribes. A warm subscriber
+    // on relay-B joins after g0, receives g1/g2, and populates relay-B's cache.
     let frank_session = connect_to_relay(relay_a_url).await?;
-    frank_session
-        .publisher()
-        .publish_namespace(namespace.to_string())
+    let frank_publisher = frank_session.publisher();
+    frank_publisher.publish_namespace(namespace.clone()).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let frank_publication = frank_publisher
+        .publish(
+            namespace.clone(),
+            track_name.to_string(),
+            PublishOption::default(),
+        )
         .await?;
-    tracing::info!("[frank] publish_namespace ok on relay-A");
+    let frank_factory = frank_publisher.create_stream(&frank_publication);
+    send_group(&frank_factory, 0).await?;
 
-    // Spawn Frank's event loop concurrently.
-    let frank_handle = tokio::spawn(publisher_event_loop(frank_session, "frank", 1));
+    let warm_session = connect_to_relay(relay_b_url).await?;
+    let mut warm_sub = warm_session.subscriber();
+    let warm_subscription = warm_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+
+    send_group(&frank_factory, 1).await?;
+    send_group(&frank_factory, 2).await?;
+    drain_until_group_complete(&mut warm_sub, &warm_subscription, GROUPS - 1, "warm").await?;
 
     // Grace connects to relay-B and subscribes (triggers cross-relay SUBSCRIBE → relay-A).
     let grace_session = connect_to_relay(relay_b_url).await?;
@@ -637,7 +704,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
 
     let subscription = grace_sub
         .subscribe(
-            namespace.to_string(),
+            namespace.clone(),
             track_name.to_string(),
             SubscribeOption {
                 subscriber_priority: 128,
@@ -652,12 +719,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
         subscription.request_id()
     );
 
-    // Drain Grace's live stream until all groups arrive (relay-B cache populated).
-    drain_until_group(&mut grace_sub, &subscription, GROUPS - 1, "grace").await?;
-    tracing::info!("[grace] all groups received, issuing joining fetch");
-
-    // Wait for Frank's publish loop to finish. Drop the returned session immediately.
-    drop(frank_handle.await??);
+    tracing::info!("[grace] issuing joining fetch from warmed relay-B cache");
 
     // Joining Fetch: 1 group back from g2, so groups 1 and 2 in full.
     let received =
@@ -670,8 +732,127 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
         received, expected,
         "[E] cross-relay joining fetch must deliver groups 1 and 2 in full"
     );
+    drop(frank_session);
 
     tracing::info!("[E] OK: cross-relay joining fetch passed");
+    Ok(())
+}
+
+/// Cross-relay scenario G: relay-B subscribes after relay-A already has earlier
+/// groups, so relay-B is missing the head locally. A full-range standalone FETCH
+/// must fill via upstream once, then be served from relay-B's cache the second time.
+async fn run_cross_relay_leading_gap_fetch(
+    relay_a_url: &str,
+    relay_b_url: &str,
+) -> anyhow::Result<()> {
+    tracing::info!("[G] cross-relay leading-gap FETCH: fill once, then serve locally");
+
+    let namespace = unique_namespace("leading-gap-fetch");
+    let track_name = "data";
+    let publisher_session = connect_to_relay(relay_a_url).await?;
+    publisher_session
+        .publisher()
+        .publish_namespace(namespace.clone())
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let publisher_handle = tokio::spawn(publisher_event_loop(publisher_session, "heidi", 1));
+
+    let local_sub_session = connect_to_relay(relay_a_url).await?;
+    let mut local_sub = local_sub_session.subscriber();
+    let local_subscription = local_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
+        .await?;
+    let publisher_session = publisher_handle.await??;
+
+    let relay_b_session = connect_to_relay(relay_b_url).await?;
+    let mut relay_b_subscriber = relay_b_session.subscriber();
+    let subscription = relay_b_subscriber
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    tracing::info!(
+        "[gap-sub] subscribe ok on relay-B, request_id={}",
+        subscription.request_id()
+    );
+
+    let fetch_session = connect_to_relay(relay_b_url).await?;
+    let mut fetch_subscriber = fetch_session.subscriber();
+    let requested_end = Location {
+        group_id: GROUPS + 10,
+        object_id: 0,
+    };
+    let expected: Vec<(u64, u64)> = (0..GROUPS)
+        .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
+        .collect();
+    let expected_end = Location {
+        group_id: GROUPS - 1,
+        object_id: OBJECTS_PER_GROUP,
+    };
+
+    let first = run_fetch_ns(
+        &mut fetch_subscriber,
+        &namespace,
+        track_name,
+        Location {
+            group_id: 0,
+            object_id: 0,
+        },
+        requested_end,
+        "gap-first",
+    )
+    .await?;
+    assert_eq!(
+        first.objects, expected,
+        "[G] first full-range fetch must fill the leading gap from upstream"
+    );
+    assert_eq!(
+        first.end_location, expected_end,
+        "[G] first FETCH_OK End Location must be clamped to upstream largest + 1"
+    );
+
+    let started = std::time::Instant::now();
+    let second = run_fetch_ns(
+        &mut fetch_subscriber,
+        &namespace,
+        track_name,
+        Location {
+            group_id: 0,
+            object_id: 0,
+        },
+        requested_end,
+        "gap-second",
+    )
+    .await?;
+    tracing::info!("[G] second fetch elapsed: {:?}", started.elapsed());
+    assert_eq!(
+        second.objects, expected,
+        "[G] second full-range fetch must be served from relay-B cache"
+    );
+    assert_eq!(
+        second.end_location, expected_end,
+        "[G] second FETCH_OK End Location must remain clamped"
+    );
+
+    drop(publisher_session);
     Ok(())
 }
 
@@ -683,13 +864,14 @@ async fn run_upstream_fetch_forwarding_data_not_found(
     relay_b_url: &str,
 ) -> anyhow::Result<()> {
     tracing::info!("[F] cross-relay FETCH_ERROR: namespace on relay-A but track not published");
+    let namespace = unique_namespace("fetch-not-found");
 
     // Publisher announces the namespace on relay-A so relay-B can resolve the
     // upstream route via Redis. No track is actually published.
     let pub_session = connect_to_relay(relay_a_url).await?;
     pub_session
         .publisher()
-        .publish_namespace("room/fetch-not-found".to_string())
+        .publish_namespace(namespace.clone())
         .await?;
 
     // Give the namespace route time to propagate through Redis to relay-B.
@@ -700,7 +882,7 @@ async fn run_upstream_fetch_forwarding_data_not_found(
 
     let result = sub_b
         .fetch(
-            "room/fetch-not-found".to_string(),
+            namespace,
             "nonexistent-track".to_string(),
             Location {
                 group_id: 0,
@@ -732,21 +914,27 @@ async fn main() -> anyhow::Result<()> {
 
     let (carol_ready_tx, carol_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let (carol_done_tx, carol_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let local_namespace = unique_namespace("alice");
 
-    let alice_handle = tokio::spawn(alice());
-    let mut bob_handle = tokio::spawn(bob(carol_ready_tx, carol_done_rx));
-    tokio::spawn(carol(carol_ready_rx, carol_done_tx));
+    let alice_handle = tokio::spawn(alice(local_namespace.clone()));
+    let mut bob_handle = tokio::spawn(bob(local_namespace.clone(), carol_ready_tx, carol_done_rx));
+    tokio::spawn(carol(local_namespace, carol_ready_rx, carol_done_tx));
 
     // Success requires Bob's (and, through him, Carol's) assertions to actually
     // run, so always wait for Bob to finish. Alice is a background producer; only
     // surface her early exit if it is an error.
-    tokio::select! {
-        r = &mut bob_handle => { r??; }
-        r = alice_handle => {
-            r??;
-            bob_handle.await??;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::select! {
+            r = &mut bob_handle => { r??; }
+            r = alice_handle => {
+                r??;
+                bob_handle.await??;
+            }
         }
-    }
+        anyhow::Ok(())
+    })
+    .await
+    .context("local fetch scenarios timed out")??;
 
     // Cross-relay scenarios run only when two relay URLs are provided.
     let relay_a_url = env::var("MOQT_E2E_RELAY_A_URL").ok();
@@ -754,9 +942,30 @@ async fn main() -> anyhow::Result<()> {
 
     if let (Some(relay_a_url), Some(relay_b_url)) = (relay_a_url, relay_b_url) {
         if relay_a_url != relay_b_url {
-            run_cross_relay_standalone_fetch(&relay_a_url, &relay_b_url).await?;
-            run_cross_relay_joining_fetch(&relay_a_url, &relay_b_url).await?;
-            run_upstream_fetch_forwarding_data_not_found(&relay_a_url, &relay_b_url).await?;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run_cross_relay_standalone_fetch(&relay_a_url, &relay_b_url),
+            )
+            .await
+            .context("cross-relay scenario D timed out")??;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run_cross_relay_joining_fetch(&relay_a_url, &relay_b_url),
+            )
+            .await
+            .context("cross-relay scenario E timed out")??;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run_cross_relay_leading_gap_fetch(&relay_a_url, &relay_b_url),
+            )
+            .await
+            .context("cross-relay scenario G timed out")??;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run_upstream_fetch_forwarding_data_not_found(&relay_a_url, &relay_b_url),
+            )
+            .await
+            .context("cross-relay scenario F timed out")??;
         } else {
             tracing::info!("relay-A and relay-B are the same; skipping cross-relay scenarios");
         }

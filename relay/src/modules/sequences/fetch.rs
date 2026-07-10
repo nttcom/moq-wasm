@@ -167,6 +167,7 @@ impl Fetch {
                     cache,
                     start_location,
                     end_location,
+                    group_order: handler.group_order(),
                 };
                 if let Err(e) = egress_sender
                     .send(EgressCommand::StartFetch(fetch_request))
@@ -177,9 +178,11 @@ impl Fetch {
             }
             FetchSequenceStatus::Missing(missing_range) => {
                 if !matches!(target.kind, FetchTargetKind::Standalone) {
+                    // FIXME: relay-side upstream forwarding for Joining Fetch is not
+                    // implemented yet, although spec §9.16 permits relay upstream FETCH.
                     let _ = handler
                         .error(
-                            FetchErrorCode::InvalidRange as u64,
+                            FetchErrorCode::InternalError as u64,
                             "Joining fetch cannot be served from local cache".to_string(),
                         )
                         .await;
@@ -217,6 +220,7 @@ impl Fetch {
                     cache: cache.clone(),
                     start_location,
                     end_location: prepared.handle.end_location,
+                    group_order: handler.group_order(),
                 };
                 let _fetch_ingest = FetchIngest::run(
                     forwarder.repository.clone(),
@@ -508,10 +512,8 @@ impl Fetch {
     /// Resolves the joined subscription's track and its Largest Location at subscribe time,
     /// shared by Relative and Absolute Joining Fetch.
     ///
-    /// When no objects existed at subscribe time (`start_location` is `None`), falls back
-    /// to the relay's local cache to find the largest object seen so far. This handles the
-    /// cross-relay case where a subscriber joins before the publisher has produced any
-    /// objects, and objects arrive later via a live upstream subscription.
+    /// When no objects existed at subscribe time (`start_location` is `None`), §9.16.2
+    /// requires rejecting the Joining Fetch with INVALID_RANGE.
     async fn resolve_joined_subscription(
         &self,
         session_id: SessionId,

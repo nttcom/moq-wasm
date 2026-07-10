@@ -1,14 +1,13 @@
 use std::{
-    cmp::Ordering,
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+        atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
     },
     time::Duration,
 };
 
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Instant};
 
 use crate::modules::{
     core::data_object::DataObject,
@@ -23,6 +22,8 @@ pub(crate) struct TrackCache {
     datagram_groups: RwLock<BTreeMap<u64, Arc<GroupCache>>>,
     known_ranges: RwLock<KnownRanges>,
     live_ingest_count: AtomicUsize,
+    eviction_generation: AtomicU64,
+    last_write: RwLock<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,6 +41,8 @@ impl TrackCache {
             datagram_groups: RwLock::new(BTreeMap::new()),
             known_ranges: RwLock::new(KnownRanges::default()),
             live_ingest_count: AtomicUsize::new(0),
+            eviction_generation: AtomicU64::new(0),
+            last_write: RwLock::new(Instant::now()),
         }
     }
 
@@ -89,6 +92,7 @@ impl TrackCache {
     ) {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
         group.append(object_id, Arc::new(object)).await;
+        self.record_write().await;
     }
 
     pub(crate) async fn append_live_stream_object(
@@ -127,6 +131,7 @@ impl TrackCache {
         };
         let group = self.ensure_datagram_group(group_id).await;
         group.append(Some(object_id), Arc::new(object)).await;
+        self.record_write().await;
     }
 
     pub(crate) async fn close_stream_subgroup(
@@ -136,6 +141,7 @@ impl TrackCache {
     ) {
         let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
         group.mark_end_of_group().await;
+        self.record_write().await;
         let caches = self.stream_group_caches(group_id).await;
         if Self::all_subgroups_closed_for_group(&caches).await {
             // This preserves the previous optimistic live coverage model: once all
@@ -156,9 +162,11 @@ impl TrackCache {
     pub(crate) async fn close_datagram_group(&self, group_id: u64) {
         let group = self.ensure_datagram_group(group_id).await;
         group.mark_end_of_group().await;
+        self.record_write().await;
     }
 
     pub(crate) async fn evict(&self, ttl: Duration) {
+        let mut removed_any = false;
         // Snapshot group handles so per-group eviction runs without holding the map lock.
         let stream_groups: Vec<(u64, StreamSubgroupId, Arc<GroupCache>)> = {
             let groups = self.stream_groups.read().await;
@@ -172,8 +180,10 @@ impl TrackCache {
                 .collect()
         };
         let mut removable_streams: Vec<(u64, StreamSubgroupId)> = Vec::new();
+        let reclaim_empty_open = self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0;
         for (group_id, subgroup_id, group) in stream_groups {
             if let Some(evicted_objects) = group.evict_expired_objects(ttl).await {
+                removed_any = true;
                 // Coverage is track-level, while eviction reports object IDs per subgroup.
                 // Removing this range may under-claim if another subgroup still has fresh
                 // objects with the same IDs, but it never over-claims deleted knowledge.
@@ -188,7 +198,7 @@ impl TrackCache {
                     },
                 );
             }
-            if group.is_evictable().await {
+            if group.is_evictable(ttl, reclaim_empty_open).await {
                 removable_streams.push((group_id, subgroup_id));
             }
         }
@@ -196,7 +206,7 @@ impl TrackCache {
             let mut groups = self.stream_groups.write().await;
             for (group_id, subgroup_id) in removable_streams {
                 if let Some(subgroups) = groups.get_mut(&group_id) {
-                    subgroups.remove(&subgroup_id);
+                    removed_any |= subgroups.remove(&subgroup_id).is_some();
                     if subgroups.is_empty() {
                         groups.remove(&group_id);
                     }
@@ -213,16 +223,22 @@ impl TrackCache {
         };
         let mut removable_datagrams: Vec<u64> = Vec::new();
         for (group_id, group) in datagram_groups {
-            let _ = group.evict_expired_objects(ttl).await;
-            if group.is_evictable().await {
+            if group.evict_expired_objects(ttl).await.is_some() {
+                removed_any = true;
+            }
+            if group.is_evictable(ttl, reclaim_empty_open).await {
                 removable_datagrams.push(group_id);
             }
         }
         if !removable_datagrams.is_empty() {
             let mut groups = self.datagram_groups.write().await;
             for group_id in removable_datagrams {
-                groups.remove(&group_id);
+                removed_any |= groups.remove(&group_id).is_some();
             }
+        }
+        if removed_any {
+            self.eviction_generation
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
     }
 
@@ -329,9 +345,7 @@ impl TrackCache {
             return FetchRangeResolution::NotCovered;
         };
 
-        if Self::location_cmp(start, largest).is_gt()
-            && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0
-        {
+        if start > largest && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0 {
             return FetchRangeResolution::InvalidRange;
         }
 
@@ -352,6 +366,15 @@ impl TrackCache {
         end: moqt::Location,
     ) {
         self.known_ranges.write().await.insert(start, end);
+        self.record_write().await;
+    }
+
+    pub(crate) fn eviction_generation(&self) -> u64 {
+        self.eviction_generation.load(AtomicOrdering::Relaxed)
+    }
+
+    pub(crate) async fn is_stale(&self, ttl: Duration) -> bool {
+        self.last_write.read().await.elapsed() > ttl
     }
 
     pub(crate) async fn covers(&self, start: moqt::Location, end: moqt::Location) -> bool {
@@ -370,15 +393,15 @@ impl TrackCache {
         );
     }
 
+    async fn record_write(&self) {
+        *self.last_write.write().await = Instant::now();
+    }
+
     fn location_after_object(group_id: u64, object_id: u64) -> moqt::Location {
         moqt::Location {
             group_id,
             object_id: object_id.saturating_add(1),
         }
-    }
-
-    fn location_cmp(left: moqt::Location, right: moqt::Location) -> Ordering {
-        (left.group_id, left.object_id).cmp(&(right.group_id, right.object_id))
     }
 
     fn explicit_end_before_or_equal_start(start: moqt::Location, end: moqt::Location) -> bool {
@@ -471,87 +494,93 @@ impl TrackCache {
         false
     }
 
+    #[cfg(test)]
     pub(crate) async fn get_fetch_objects(
         &self,
         start: moqt::Location,
         end: moqt::Location,
     ) -> Vec<moqt::FetchObjectField> {
-        // Collect all GroupCaches in the requested group range, tagged with their group_id.
-        // Example for start={group=1, object=3}, end={group=2, object=5}:
-        //   [(1, GroupCache),  // group=1, subgroup=0
-        //    (1, GroupCache),  // group=1, subgroup=1  <- group 1 has 2 subgroups
-        //    (2, GroupCache)]  // group=2, subgroup=0
-        let caches_in_range: Vec<(u64, Arc<GroupCache>)> = {
+        self.get_fetch_objects_with_group_order(start, end, moqt::GroupOrder::Ascending)
+            .await
+    }
+
+    pub(crate) async fn get_fetch_objects_with_group_order(
+        &self,
+        start: moqt::Location,
+        end: moqt::Location,
+        group_order: moqt::GroupOrder,
+    ) -> Vec<moqt::FetchObjectField> {
+        let mut groups_in_range: Vec<(u64, Vec<Arc<GroupCache>>)> = {
             // NOTE: Datagram objects are not included.
             let groups = self.stream_groups.read().await;
-            let mut caches_in_range = Vec::new();
-            for (&group_id, subgroup_map) in groups.range(start.group_id..=end.group_id) {
-                for cache in subgroup_map.values() {
-                    caches_in_range.push((group_id, cache.clone()));
-                }
-            }
-            caches_in_range
+            groups
+                .range(start.group_id..=end.group_id)
+                .map(|(&group_id, subgroup_map)| {
+                    (group_id, subgroup_map.values().cloned().collect())
+                })
+                .collect()
         };
+        if matches!(group_order, moqt::GroupOrder::Descending) {
+            groups_in_range.reverse();
+        }
 
-        // Convert each GroupCache into FetchObjectFields.
-        // For the first and last group, filter objects by object_id.
-        // Example for start={group=1, object=3}, end={group=2, object=5}:
-        //   group=1: skip object_id 0,1,2 -> include 3,4,...
-        //   group=2: include object_id 0,1,2,3,4 -> stop before 5 (exclusive)
         let mut fetch_objects = Vec::new();
-        for (group_id, cache) in caches_in_range {
-            let Some(header) = cache.header().await else {
-                tracing::error!("unexpected: GroupCache has no subgroup header");
-                continue;
-            };
-            let (publisher_priority, subgroup_id) = match header.as_ref() {
-                DataObject::SubgroupHeader(h) => (h.publisher_priority, h.subgroup_id.resolve()),
-                _ => {
-                    tracing::error!("unexpected: GroupCache header is not a SubgroupHeader");
+        for (group_id, caches) in groups_in_range {
+            let mut group_objects = Vec::new();
+            for cache in caches {
+                let Some(header) = cache.header().await else {
+                    tracing::error!("unexpected: GroupCache has no subgroup header");
                     continue;
-                }
-            };
-
-            for (current_object_id, object) in cache.objects_snapshot().await {
-                let field = match object.as_ref() {
-                    DataObject::SubgroupObject(f) => f,
-                    _ => continue,
                 };
-
-                // Apply range filter for first and last groups
-                if group_id == start.group_id && current_object_id < start.object_id {
-                    continue;
-                }
-                // End Location is exclusive; `>=` excludes the object at end.object_id.
-                // end.object_id == 0 is a special case meaning "the entire group".
-                if group_id == end.group_id
-                    && end.object_id != 0
-                    && current_object_id >= end.object_id
-                {
-                    break;
-                }
-
-                // Convert to FetchObjectField and append to fetch_objects
-                let fetch_object = match &field.subgroup_object {
-                    moqt::SubgroupObject::Payload { data, .. } => {
-                        moqt::FetchObject::Payload(data.clone())
+                let (publisher_priority, subgroup_id) = match header.as_ref() {
+                    DataObject::SubgroupHeader(h) => {
+                        (h.publisher_priority, h.subgroup_id.resolve())
                     }
-                    moqt::SubgroupObject::Status { code, .. } => {
-                        let Ok(status) = moqt::ObjectStatus::try_from(*code as u8) else {
-                            continue;
-                        };
-                        moqt::FetchObject::Status(status)
+                    _ => {
+                        tracing::error!("unexpected: GroupCache header is not a SubgroupHeader");
+                        continue;
                     }
                 };
-                fetch_objects.push(moqt::FetchObjectField::new(
-                    group_id,
-                    subgroup_id,
-                    current_object_id,
-                    publisher_priority,
-                    field.extension_headers.clone(),
-                    fetch_object,
-                ));
+
+                for (current_object_id, object) in cache.objects_snapshot().await {
+                    let field = match object.as_ref() {
+                        DataObject::SubgroupObject(f) => f,
+                        _ => continue,
+                    };
+
+                    if group_id == start.group_id && current_object_id < start.object_id {
+                        continue;
+                    }
+                    if group_id == end.group_id
+                        && end.object_id != 0
+                        && current_object_id >= end.object_id
+                    {
+                        break;
+                    }
+
+                    let fetch_object = match &field.subgroup_object {
+                        moqt::SubgroupObject::Payload { data, .. } => {
+                            moqt::FetchObject::Payload(data.clone())
+                        }
+                        moqt::SubgroupObject::Status { code, .. } => {
+                            let Ok(status) = moqt::ObjectStatus::try_from(*code as u8) else {
+                                continue;
+                            };
+                            moqt::FetchObject::Status(status)
+                        }
+                    };
+                    group_objects.push(moqt::FetchObjectField::new(
+                        group_id,
+                        subgroup_id,
+                        current_object_id,
+                        publisher_priority,
+                        field.extension_headers.clone(),
+                        fetch_object,
+                    ));
+                }
             }
+            group_objects.sort_by_key(|object| object.object_id);
+            fetch_objects.extend(group_objects);
         }
         fetch_objects
     }
@@ -690,7 +719,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn evict_keeps_open_group_without_objects() {
+    async fn evict_removes_empty_open_group_after_ttl_without_live_ingest() {
         // Arrange: an open group with only a header, no objects yet, TTL=10s
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
@@ -701,7 +730,27 @@ mod tests {
         // Act: long past the TTL, but the group is still open
         tokio::time::advance(Duration::from_secs(100)).await;
         cache.evict(ttl).await;
-        // Assert: an open group is never evicted, so no resurrection can occur
+        // Assert: empty open subgroups are reclaimed after TTL if no object arrives.
+        assert!(!cache.has_stream_group(0).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_empty_open_group_during_live_ingest() {
+        // Arrange: live ingress may send a header long before the first object.
+        // Reclaiming that placeholder would resurrect a headerless GroupCache.
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+
+        // Act
+        tokio::time::advance(Duration::from_secs(100)).await;
+        cache.evict(ttl).await;
+
+        // Assert
         assert!(cache.has_stream_group(0).await);
     }
 
@@ -1024,6 +1073,57 @@ mod tests {
                 )
                 .await
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_reclaims_fetch_fill_subgroup_after_objects_expire() {
+        // Arrange: fetch-fill writes an unclosed subgroup.
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        cache
+            .append_stream_object(0, &subgroup, Some(0), make_object(0))
+            .await;
+
+        // Act: the first eviction removes the object; the next pass removes the empty subgroup.
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl).await;
+        cache.evict(ttl).await;
+
+        // Assert
+        assert!(!cache.has_stream_group(0).await);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eviction_generation_does_not_increment_when_nothing_removed() {
+        // Arrange
+        let cache = TrackCache::new();
+        let generation = cache.eviction_generation();
+
+        // Act
+        cache.evict(Duration::from_secs(10)).await;
+
+        // Assert
+        assert_eq!(cache.eviction_generation(), generation);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eviction_generation_increments_when_objects_are_removed() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0]).await;
+        let generation = cache.eviction_generation();
+
+        // Act
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl).await;
+
+        // Assert
+        assert!(cache.eviction_generation() > generation);
     }
 
     #[tokio::test]
@@ -1485,5 +1585,87 @@ mod tests {
             object_ids(&objects),
             vec![(0, 2), (0, 3), (0, 4), (1, 0), (1, 1), (1, 2)]
         );
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_merges_subgroups_by_object_id() {
+        // Arrange: one group split across even and odd object IDs.
+        let cache = TrackCache::new();
+        let even = StreamSubgroupId::Value(0);
+        let odd = StreamSubgroupId::Value(1);
+        cache
+            .append_stream_object(0, &even, None, make_header(0))
+            .await;
+        cache
+            .append_stream_object(
+                0,
+                &odd,
+                None,
+                DataObject::SubgroupHeader(SubgroupHeader::new(
+                    0,
+                    0,
+                    SubgroupId::Value(1),
+                    0,
+                    false,
+                    false,
+                )),
+            )
+            .await;
+        for object_id in [0, 2, 4] {
+            cache
+                .append_stream_object(0, &even, Some(object_id), make_object(0))
+                .await;
+        }
+        for object_id in [1, 3, 5] {
+            cache
+                .append_stream_object(0, &odd, Some(object_id), make_object(0))
+                .await;
+        }
+
+        // Act
+        let objects = cache
+            .get_fetch_objects(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 6,
+                },
+            )
+            .await;
+
+        // Assert
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_descending_groups_keep_objects_ascending() {
+        // Arrange
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0, 1]).await;
+        fill_group_with_ids(&cache, 1, &[0, 1]).await;
+
+        // Act
+        let objects = cache
+            .get_fetch_objects_with_group_order(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 2,
+                },
+                moqt::GroupOrder::Descending,
+            )
+            .await;
+
+        // Assert
+        assert_eq!(object_ids(&objects), vec![(1, 0), (1, 1), (0, 0), (0, 1)]);
     }
 }

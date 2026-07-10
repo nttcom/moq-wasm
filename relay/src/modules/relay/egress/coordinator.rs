@@ -37,6 +37,7 @@ pub(crate) struct EgressFetchRequest {
     pub(crate) cache: Arc<TrackCache>,
     pub(crate) start_location: moqt::Location,
     pub(crate) end_location: moqt::Location,
+    pub(crate) group_order: moqt::GroupOrder,
 }
 
 pub(crate) enum EgressCommand {
@@ -144,7 +145,11 @@ impl EgressCoordinator {
                 }
             };
             let objects = cache
-                .get_fetch_objects(request.start_location, request.end_location)
+                .get_fetch_objects_with_group_order(
+                    request.start_location,
+                    request.end_location,
+                    request.group_order,
+                )
                 .await;
             for object in objects {
                 if let Err(e) = sender.send(object).await {

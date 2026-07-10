@@ -38,10 +38,13 @@ impl TrackCacheStore {
             track.evict(ttl).await;
         }
         // Drop the snapshot Arcs before the strong_count check so it counts only real holders.
-        let keys: Vec<TrackKey> = entries.into_iter().map(|(key, _)| key).collect();
-        for key in keys {
+        let mut stale_keys = Vec::with_capacity(entries.len());
+        for (key, track) in entries {
+            stale_keys.push((key, track.is_stale(ttl).await));
+        }
+        for (key, stale) in stale_keys {
             self.caches
-                .remove_if(&key, |_, track| Arc::strong_count(track) == 1);
+                .remove_if(&key, |_, track| stale && Arc::strong_count(track) == 1);
         }
     }
 }
@@ -51,16 +54,29 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn evict_removes_unreferenced_track() {
         // Arrange: a track held only by the store (the returned Arc is dropped immediately)
         let store = TrackCacheStore::new();
         let key = TrackKey::new("ns", "track");
         store.get_or_create(&key);
         // Act
+        tokio::time::advance(Duration::from_secs(11)).await;
         store.evict(Duration::from_secs(10)).await;
-        // Assert: strong_count == 1, so the track is reclaimed
+        // Assert: strong_count == 1 and the track is stale, so it is reclaimed
         assert!(store.get(&key).is_none());
+    }
+
+    #[tokio::test]
+    async fn evict_keeps_recent_unreferenced_track() {
+        // Arrange: a recently written track held only by the store.
+        let store = TrackCacheStore::new();
+        let key = TrackKey::new("ns", "track");
+        store.get_or_create(&key);
+        // Act
+        store.evict(Duration::from_secs(10)).await;
+        // Assert: recent fetch-filled tracks survive long enough for a second FETCH.
+        assert!(store.get(&key).is_some());
     }
 
     #[tokio::test]

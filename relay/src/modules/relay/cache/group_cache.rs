@@ -10,6 +10,7 @@ use crate::modules::core::data_object::DataObject;
 pub(crate) struct GroupCache {
     header: RwLock<Option<Arc<DataObject>>>,
     objects: RwLock<BTreeMap<u64, (Instant, Arc<DataObject>)>>,
+    last_append: RwLock<Instant>,
     end_of_group: RwLock<bool>,
     notify: Notify,
 }
@@ -19,6 +20,7 @@ impl GroupCache {
         Self {
             header: RwLock::new(None),
             objects: RwLock::new(BTreeMap::new()),
+            last_append: RwLock::new(Instant::now()),
             end_of_group: RwLock::new(false),
             notify: Notify::new(),
         }
@@ -28,6 +30,7 @@ impl GroupCache {
     // differs (or an invalid status transition) as Malformed (MUST). Not implemented;
     // we only ignore duplicates (first-wins).
     pub(crate) async fn append(&self, object_id: Option<u64>, object: Arc<DataObject>) {
+        *self.last_append.write().await = Instant::now();
         match object_id {
             // No object_id = subgroup header. Keep the first one (first-wins).
             None => {
@@ -69,8 +72,19 @@ impl GroupCache {
             .map(|(start, end)| start..end.saturating_add(1))
     }
 
-    pub(crate) async fn is_evictable(&self) -> bool {
-        self.is_closed().await && self.objects.read().await.is_empty()
+    pub(crate) async fn is_evictable(&self, ttl: Duration, reclaim_empty_open: bool) -> bool {
+        if !self.objects.read().await.is_empty() {
+            return false;
+        }
+        if self.is_closed().await {
+            return true;
+        }
+        if !reclaim_empty_open {
+            return false;
+        }
+        // Fetch-fill subgroups are intentionally not closed. Keep empty live placeholders
+        // for at least TTL after the last append, then reclaim them if no object arrived.
+        self.last_append.read().await.elapsed() > ttl
     }
 
     pub(crate) async fn header(&self) -> Option<Arc<DataObject>> {

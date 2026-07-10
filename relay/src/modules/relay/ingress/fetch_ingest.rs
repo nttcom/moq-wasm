@@ -1,11 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::task::JoinHandle;
 
 use crate::modules::{
     core::data_object::DataObject,
     relay::{
-        cache::track_cache::TrackCache,
+        cache::{duration::duration_from_env, track_cache::TrackCache},
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         types::StreamSubgroupId,
     },
@@ -14,6 +14,7 @@ use crate::modules::{
 };
 
 const DATA_STREAM_INTERNAL_ERROR: u64 = 0x0;
+const DEFAULT_FETCH_FILL_TIMEOUT_SECS: u64 = 20;
 
 pub(crate) struct FetchIngestStart {
     pub(crate) upstream_publisher_session_id: SessionId,
@@ -89,6 +90,7 @@ impl FetchIngest {
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
         let mut previous_object_ids = HashMap::<(u64, StreamSubgroupId), u64>::new();
+        let start_eviction_generation = start.cache.eviction_generation();
 
         loop {
             match receiver.receive().await? {
@@ -102,6 +104,13 @@ impl FetchIngest {
                     .await?;
                 }
                 moqt::Fetch::End => {
+                    if start.cache.eviction_generation() != start_eviction_generation {
+                        tracing::warn!(
+                            request_id = start.request_id,
+                            "fetch fill crossed cache eviction; resetting downstream fetch"
+                        );
+                        anyhow::bail!("fetch fill crossed cache eviction");
+                    }
                     start
                         .cache
                         .insert_fetch_known_range(start.requested_start, start.requested_end)
@@ -174,12 +183,11 @@ impl FetchIngest {
         Ok(())
     }
 
-    fn timeout() -> Duration {
-        std::env::var("MOQT_FETCH_FILL_TIMEOUT_SECS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or_else(|| Duration::from_secs(30))
+    fn timeout() -> std::time::Duration {
+        duration_from_env(
+            "MOQT_FETCH_FILL_TIMEOUT_SECS",
+            DEFAULT_FETCH_FILL_TIMEOUT_SECS,
+        )
     }
 
     async fn reset_downstream_fetch(

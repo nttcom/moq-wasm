@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct KnownRange {
     start: moqt::Location,
@@ -14,15 +12,15 @@ pub(crate) struct KnownRanges {
 impl KnownRanges {
     pub(crate) fn insert(&mut self, start: moqt::Location, end: moqt::Location) {
         let end = Self::normalize_end_location(end);
-        if Self::location_cmp(start, end).is_ge() {
+        if start >= end {
             return;
         }
 
         if let Some(last) = self.ranges.last_mut()
-            && Self::location_cmp(last.start, start).is_le()
-            && Self::location_cmp(start, last.end).is_le()
+            && last.start <= start
+            && start <= last.end
         {
-            if Self::location_cmp(end, last.end).is_gt() {
+            if end > last.end {
                 last.end = end;
             }
             return;
@@ -33,17 +31,17 @@ impl KnownRanges {
         let mut inserted = false;
 
         for range in self.ranges.drain(..) {
-            if Self::location_cmp(range.end, merged.start).is_lt() {
+            if range.end < merged.start {
                 next_ranges.push(range);
-            } else if Self::location_cmp(merged.end, range.start).is_lt() {
+            } else if merged.end < range.start {
                 if !inserted {
                     next_ranges.push(merged);
                     inserted = true;
                 }
                 next_ranges.push(range);
             } else {
-                merged.start = Self::min_location(merged.start, range.start);
-                merged.end = Self::max_location(merged.end, range.end);
+                merged.start = merged.start.min(range.start);
+                merged.end = merged.end.max(range.end);
             }
         }
 
@@ -55,26 +53,24 @@ impl KnownRanges {
 
     pub(crate) fn remove_range(&mut self, start: moqt::Location, end: moqt::Location) {
         let end = Self::normalize_end_location(end);
-        if Self::location_cmp(start, end).is_ge() {
+        if start >= end {
             return;
         }
 
         let mut ranges = Vec::with_capacity(self.ranges.len());
         for range in self.ranges.drain(..) {
-            if Self::location_cmp(range.end, start).is_le()
-                || Self::location_cmp(end, range.start).is_le()
-            {
+            if range.end <= start || end <= range.start {
                 ranges.push(range);
                 continue;
             }
 
-            if Self::location_cmp(range.start, start).is_lt() {
+            if range.start < start {
                 ranges.push(KnownRange {
                     start: range.start,
                     end: start,
                 });
             }
-            if Self::location_cmp(end, range.end).is_lt() {
+            if end < range.end {
                 ranges.push(KnownRange {
                     start: end,
                     end: range.end,
@@ -86,13 +82,12 @@ impl KnownRanges {
 
     pub(crate) fn contains_range(&self, start: moqt::Location, end: moqt::Location) -> bool {
         let end = Self::normalize_end_location(end);
-        if Self::location_cmp(start, end).is_ge() {
+        if start >= end {
             return false;
         }
-        self.ranges.iter().any(|range| {
-            Self::location_cmp(range.start, start).is_le()
-                && Self::location_cmp(end, range.end).is_le()
-        })
+        self.ranges
+            .iter()
+            .any(|range| range.start <= start && end <= range.end)
     }
 
     fn normalize_end_location(location: moqt::Location) -> moqt::Location {
@@ -107,26 +102,6 @@ impl KnownRanges {
             group_id: location.group_id.saturating_add(1),
             object_id: 0,
         }
-    }
-
-    fn min_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
-        if Self::location_cmp(left, right).is_le() {
-            left
-        } else {
-            right
-        }
-    }
-
-    fn max_location(left: moqt::Location, right: moqt::Location) -> moqt::Location {
-        if Self::location_cmp(left, right).is_ge() {
-            left
-        } else {
-            right
-        }
-    }
-
-    fn location_cmp(left: moqt::Location, right: moqt::Location) -> Ordering {
-        (left.group_id, left.object_id).cmp(&(right.group_id, right.object_id))
     }
 }
 
