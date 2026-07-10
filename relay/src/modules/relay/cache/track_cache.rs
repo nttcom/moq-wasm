@@ -155,6 +155,21 @@ impl TrackCache {
         self.stream_groups.read().await.is_empty() && self.datagram_groups.read().await.is_empty()
     }
 
+    /// Non-blocking emptiness check for sync contexts (the eviction `remove_if`
+    /// closure). Lock contention means someone is using the track, so report
+    /// non-empty to keep it.
+    pub(crate) fn is_empty_sync(&self) -> bool {
+        self.stream_groups
+            .try_read()
+            .map(|groups| groups.is_empty())
+            .unwrap_or(false)
+            && self
+                .datagram_groups
+                .try_read()
+                .map(|groups| groups.is_empty())
+                .unwrap_or(false)
+    }
+
     /// Returns the Largest Location as defined in the MoQT spec.
     pub(crate) async fn largest_location(&self) -> Option<moqt::Location> {
         let (group_id, cache) = {

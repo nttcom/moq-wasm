@@ -44,12 +44,14 @@ impl TrackCacheStore {
             }
         }
         // Only TTL-drained (empty) tracks may be removed: an unreferenced track
-        // must keep serving FETCH until then. strong_count==1 only guards
-        // against a writer re-attaching between the emptiness check and
-        // remove_if (appending requires holding a track Arc).
+        // must keep serving FETCH until then. Both conditions are re-checked
+        // under the shard lock because a writer may attach — or attach, write,
+        // and detach — after the emptiness loop above. With strong_count == 1
+        // no other Arc exists, so try_read inside is_empty_sync cannot fail.
         for key in empty_keys {
-            self.caches
-                .remove_if(&key, |_, track| Arc::strong_count(track) == 1);
+            self.caches.remove_if(&key, |_, track| {
+                Arc::strong_count(track) == 1 && track.is_empty_sync()
+            });
         }
     }
 }
