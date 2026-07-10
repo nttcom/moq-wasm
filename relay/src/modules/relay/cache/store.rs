@@ -46,9 +46,10 @@ impl TrackCacheStore {
         // Only TTL-drained (empty) tracks may be removed: an unreferenced track
         // must keep serving FETCH until then. Two guards close the gap between
         // the emptiness loop above and the removal here:
-        // - strong_count == 1: a session attached right now (e.g. an ingress
-        //   that acquired the cache but has not appended yet) will write to
-        //   this handle; removing the track under it would orphan those writes.
+        // - strong_count == 1: even though the track is empty, a session
+        //   holding its Arc (e.g. an ingress that acquired the cache but has
+        //   not appended yet) may still write through that handle; removing
+        //   the track under it would orphan those writes.
         // - is_empty_sync: a writer may attach, write, and detach entirely
         //   within the gap, leaving fresh objects behind at count == 1;
         //   re-checking content under the shard lock keeps them.
