@@ -34,21 +34,19 @@ impl TrackCacheStore {
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
-        for (_, track) in &entries {
-            track.evict(ttl).await;
-        }
-        // Only TTL-drained (empty) tracks may be removed: an unreferenced track
-        // must keep serving FETCH until then. strong_count==1 below only guards
-        // against a writer re-attaching between this check and remove_if
-        // (appending requires holding a track Arc).
+        // Consuming the snapshot drops each Arc with its iteration, so the
+        // strong_count check below sees only real holders.
         let mut empty_keys = Vec::new();
-        for (key, track) in &entries {
+        for (key, track) in entries {
+            track.evict(ttl).await;
             if track.is_empty().await {
-                empty_keys.push(key.clone());
+                empty_keys.push(key);
             }
         }
-        // Drop the snapshot Arcs before the strong_count check so it counts only real holders.
-        drop(entries);
+        // Only TTL-drained (empty) tracks may be removed: an unreferenced track
+        // must keep serving FETCH until then. strong_count==1 only guards
+        // against a writer re-attaching between the emptiness check and
+        // remove_if (appending requires holding a track Arc).
         for key in empty_keys {
             self.caches
                 .remove_if(&key, |_, track| Arc::strong_count(track) == 1);
