@@ -45,8 +45,8 @@ export class CameraSubscriber {
     this.worker = new Worker(new URL('../../../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
       type: 'module'
     })
-    // bypass jitter buffer for low-latency monitoring
-    this.worker.postMessage({ type: 'config', config: { bypassJitterBuffer: true, telemetryEnabled: false } })
+    // enable jitter buffer + capture-timestamp pacing (was bypassed for lowest latency)
+    this.worker.postMessage({ type: 'config', config: { bypassJitterBuffer: false, telemetryEnabled: false } })
     this.worker.postMessage({ type: 'catalog', codec: 'avc1.640028', framerate: 30 })
 
     this.worker.onmessage = (e) => {
