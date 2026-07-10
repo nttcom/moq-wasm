@@ -99,6 +99,18 @@ impl GroupCache {
             .map(|(&id, _)| id)
     }
 
+    /// Non-waiting lookup of the first object with id >= `from`. Used for
+    /// positions already covered by track knowledge, where absence means the
+    /// object does not exist and waiting would never be satisfied.
+    pub(crate) async fn first_object_from(&self, from: u64) -> Option<(u64, Arc<DataObject>)> {
+        self.objects
+            .read()
+            .await
+            .range(from..)
+            .next()
+            .map(|(&id, (_, object))| (id, object.clone()))
+    }
+
     /// Waits until the subgroup header is available, or returns `None` if the group is
     /// closed before it arrives.
     pub(crate) async fn header_or_wait(&self) -> Option<Arc<DataObject>> {
@@ -146,6 +158,9 @@ impl GroupCache {
     }
 
     /// Returns all cached objects in object_id order. The subgroup header is not included.
+    /// Test-only: production reads use `object_from_or_wait` since a snapshot can miss
+    /// in-flight objects.
+    #[cfg(test)]
     pub(crate) async fn objects_snapshot(&self) -> Vec<(u64, Arc<DataObject>)> {
         self.objects
             .read()
