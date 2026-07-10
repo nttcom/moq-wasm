@@ -47,7 +47,7 @@ type RelayUrlControlsOptions = {
 
 export function getLocalRelayUrls(): { relayAUrl: string; relayBUrl: string } {
   return {
-    relayAUrl: readRelayUrlSearchParam(['relayAUrl', ...DEFAULT_RELAY_URL_PARAM_NAMES]) ?? DEFAULT_LOCAL_RELAY_A_URL,
+    relayAUrl: readRelayUrlSearchParam(['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL,
     relayBUrl: readRelayUrlSearchParam(['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
   }
 }
