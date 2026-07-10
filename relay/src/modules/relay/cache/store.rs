@@ -37,12 +37,10 @@ impl TrackCacheStore {
         for (_, track) in &entries {
             track.evict(ttl).await;
         }
-        // A track is removed only once its groups have all drained through the
-        // TTL above; strong_count alone must not delete it — a track whose
-        // publisher already disconnected still has to serve FETCH until the
-        // TTL expires. Appending requires holding a track Arc (strong_count
-        // >= 2), so the emptiness observed here cannot be invalidated by the
-        // time remove_if re-checks the count under the shard lock.
+        // Only TTL-drained (empty) tracks may be removed: an unreferenced track
+        // must keep serving FETCH until then. strong_count==1 below only guards
+        // against a writer re-attaching between this check and remove_if
+        // (appending requires holding a track Arc).
         let mut empty_keys = Vec::new();
         for (key, track) in &entries {
             if track.is_empty().await {

@@ -255,17 +255,13 @@ impl TrackCache {
         //   group=1: skip object_id 0,1,2 -> include 3,4,...
         //   group=2: include object_id 0,1,2,3,4 -> stop before 5 (exclusive)
         //
-        // QUIC gives no cross-stream ordering, so a later group's stream can
-        // complete while an earlier group is still in flight (e.g. its packet
-        // was lost and awaits retransmission). A snapshot taken at that moment
-        // would silently drop the in-flight objects from the response, so wait
-        // for each open group instead; ingress closes every group when its
-        // stream ends, errs, or the publisher leaves, which bounds the wait.
+        // QUIC gives no cross-stream ordering, so groups in range may still be
+        // in flight; wait on open groups instead of snapshotting (ingress
+        // always closes them, bounding the wait).
         let mut fetch_objects = Vec::new();
         for (group_id, cache) in caches_in_range {
             let Some(header) = cache.header_or_wait().await else {
-                // Closed before a header arrived; nothing to deliver.
-                continue;
+                continue; // closed before a header arrived
             };
             let (publisher_priority, subgroup_id) = match header.as_ref() {
                 DataObject::SubgroupHeader(h) => (h.publisher_priority, h.subgroup_id.resolve()),
@@ -281,9 +277,8 @@ impl TrackCache {
                 0
             };
             loop {
-                // End Location is exclusive; end.object_id == 0 is a special case
-                // meaning "the entire group". Checked before waiting so a fetch
-                // ending inside a live group does not block on objects past it.
+                // End Location is exclusive (object_id == 0 = entire group);
+                // checked before waiting so we never block on objects past it.
                 if group_id == end.group_id && end.object_id != 0 && next_object_id >= end.object_id
                 {
                     break;
@@ -489,8 +484,8 @@ mod tests {
         fill_group_with_ids(cache, group_id, &object_ids).await;
     }
 
-    // Fills a group and closes it, like ingress does when the stream ends.
-    // get_fetch_objects waits on open groups, so fetch tests need closed ones.
+    // get_fetch_objects waits on open groups, so fetch tests use closed ones
+    // (like ingress leaves them once the stream ends).
     async fn fill_closed_group_with_ids(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
         fill_group_with_ids(cache, group_id, object_ids).await;
         cache
