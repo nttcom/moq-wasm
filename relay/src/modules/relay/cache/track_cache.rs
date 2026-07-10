@@ -151,6 +151,29 @@ impl TrackCache {
         }
     }
 
+    pub(crate) async fn is_empty(&self) -> bool {
+        self.stream_groups.read().await.is_empty() && self.datagram_groups.read().await.is_empty()
+    }
+
+    /// Non-blocking `is_empty` for the eviction `remove_if` closure, which is
+    /// sync and runs under the DashMap shard lock: it re-validates emptiness at
+    /// the moment of removal (a writer may have attached, written, and
+    /// detached since the async pre-check). With strong_count == 1 checked
+    /// first no other Arc exists, so try_read cannot actually be contended;
+    /// treating contention as non-empty is a defensive fallback that errs
+    /// toward keeping the track.
+    pub(crate) fn is_empty_sync(&self) -> bool {
+        self.stream_groups
+            .try_read()
+            .map(|groups| groups.is_empty())
+            .unwrap_or(false)
+            && self
+                .datagram_groups
+                .try_read()
+                .map(|groups| groups.is_empty())
+                .unwrap_or(false)
+    }
+
     /// Returns the Largest Location as defined in the MoQT spec.
     pub(crate) async fn largest_location(&self) -> Option<moqt::Location> {
         let (group_id, cache) = {
@@ -250,11 +273,14 @@ impl TrackCache {
         // Example for start={group=1, object=3}, end={group=2, object=5}:
         //   group=1: skip object_id 0,1,2 -> include 3,4,...
         //   group=2: include object_id 0,1,2,3,4 -> stop before 5 (exclusive)
+        //
+        // QUIC gives no cross-stream ordering, so groups in range may still be
+        // in flight; wait on open groups instead of snapshotting (ingress
+        // always closes them, bounding the wait).
         let mut fetch_objects = Vec::new();
         for (group_id, cache) in caches_in_range {
-            let Some(header) = cache.header().await else {
-                tracing::error!("unexpected: GroupCache has no subgroup header");
-                continue;
+            let Some(header) = cache.header_or_wait().await else {
+                continue; // closed before a header arrived
             };
             let (publisher_priority, subgroup_id) = match header.as_ref() {
                 DataObject::SubgroupHeader(h) => (h.publisher_priority, h.subgroup_id.resolve()),
@@ -264,24 +290,37 @@ impl TrackCache {
                 }
             };
 
-            for (current_object_id, object) in cache.objects_snapshot().await {
-                let field = match object.as_ref() {
-                    DataObject::SubgroupObject(f) => f,
-                    _ => continue,
-                };
-
-                // Apply range filter for first and last groups
-                if group_id == start.group_id && current_object_id < start.object_id {
-                    continue;
+            let mut next_object_id = if group_id == start.group_id {
+                start.object_id
+            } else {
+                0
+            };
+            loop {
+                // End Location is exclusive (object_id == 0 = entire group);
+                // checked before waiting so we never block on objects past it.
+                if group_id == end.group_id && end.object_id != 0 && next_object_id >= end.object_id
+                {
+                    break;
                 }
-                // End Location is exclusive; `>=` excludes the object at end.object_id.
-                // end.object_id == 0 is a special case meaning "the entire group".
+                let Some((current_object_id, object)) =
+                    cache.object_from_or_wait(next_object_id).await
+                else {
+                    break;
+                };
+                next_object_id = current_object_id + 1;
+
+                // A gap can jump past the exclusive End Location.
                 if group_id == end.group_id
                     && end.object_id != 0
                     && current_object_id >= end.object_id
                 {
                     break;
                 }
+
+                let field = match object.as_ref() {
+                    DataObject::SubgroupObject(f) => f,
+                    _ => continue,
+                };
 
                 // Convert to FetchObjectField and append to fetch_objects
                 let fetch_object = match &field.subgroup_object {
@@ -464,6 +503,20 @@ mod tests {
         fill_group_with_ids(cache, group_id, &object_ids).await;
     }
 
+    // get_fetch_objects waits on open groups, so fetch tests use closed ones
+    // (like ingress leaves them once the stream ends).
+    async fn fill_closed_group_with_ids(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
+        fill_group_with_ids(cache, group_id, object_ids).await;
+        cache
+            .close_stream_subgroup(group_id, &StreamSubgroupId::Value(0))
+            .await;
+    }
+
+    async fn fill_closed_group(cache: &TrackCache, group_id: u64, count: u64) {
+        let object_ids: Vec<u64> = (0..count).collect();
+        fill_closed_group_with_ids(cache, group_id, &object_ids).await;
+    }
+
     // Fills a group with objects at the given (non-sequential) absolute object_ids.
     async fn fill_group_with_ids(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
         let subgroup = StreamSubgroupId::Value(0);
@@ -485,7 +538,7 @@ mod tests {
     async fn get_fetch_objects_excludes_end_object() {
         // Arrange: group 0 with object_ids 0..=4
         let cache = TrackCache::new();
-        fill_group(&cache, 0, 5).await;
+        fill_closed_group(&cache, 0, 5).await;
         // Act: fetch [{0,0}, {0,3}) -> end object 3 is excluded
         let objects = cache
             .get_fetch_objects(
@@ -507,7 +560,7 @@ mod tests {
     async fn get_fetch_objects_end_object_zero_returns_entire_group() {
         // Arrange: group 0 with object_ids 0..=4
         let cache = TrackCache::new();
-        fill_group(&cache, 0, 5).await;
+        fill_closed_group(&cache, 0, 5).await;
         // Act: end.object_id == 0 means the entire end group
         let objects = cache
             .get_fetch_objects(
@@ -532,7 +585,7 @@ mod tests {
     async fn get_fetch_objects_filters_range_with_gaps() {
         // Arrange: group 0 with gapped object_ids 0, 3, 5, 8
         let cache = TrackCache::new();
-        fill_group_with_ids(&cache, 0, &[0, 3, 5, 8]).await;
+        fill_closed_group_with_ids(&cache, 0, &[0, 3, 5, 8]).await;
         // Act: fetch [{0,3}, {0,8}) -> start 3 inclusive, end 8 exclusive
         let objects = cache
             .get_fetch_objects(
@@ -554,8 +607,8 @@ mod tests {
     async fn get_fetch_objects_spans_groups_with_exclusive_end() {
         // Arrange: group 0 and group 1, each with object_ids 0..=4
         let cache = TrackCache::new();
-        fill_group(&cache, 0, 5).await;
-        fill_group(&cache, 1, 5).await;
+        fill_closed_group(&cache, 0, 5).await;
+        fill_closed_group(&cache, 1, 5).await;
         // Act: fetch [{0,2}, {1,3}) -> start object 2 (inclusive), end object 3 (exclusive)
         let objects = cache
             .get_fetch_objects(
@@ -573,6 +626,55 @@ mod tests {
         assert_eq!(
             object_ids(&objects),
             vec![(0, 2), (0, 3), (0, 4), (1, 0), (1, 1), (1, 2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_waits_for_in_flight_group() {
+        // Arrange: group 0 is still in flight (header only, open) while group 1
+        // has already completed — the cross-stream reordering QUIC allows.
+        let cache = Arc::new(TrackCache::new());
+        let subgroup = StreamSubgroupId::Value(0);
+        cache
+            .append_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        fill_closed_group(&cache, 1, 5).await;
+
+        // Act: fetch [{0,0}, {1,3}) while group 0's objects have not arrived yet.
+        let fetch = tokio::spawn({
+            let cache = cache.clone();
+            async move {
+                cache
+                    .get_fetch_objects(
+                        moqt::Location {
+                            group_id: 0,
+                            object_id: 0,
+                        },
+                        moqt::Location {
+                            group_id: 1,
+                            object_id: 3,
+                        },
+                    )
+                    .await
+            }
+        });
+        // Group 0's objects arrive after the fetch started, then the stream ends.
+        tokio::task::yield_now().await;
+        for id in 0..3u64 {
+            cache
+                .append_stream_object(0, &subgroup, Some(id), make_object(0))
+                .await;
+        }
+        cache.close_stream_subgroup(0, &subgroup).await;
+
+        let objects = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must complete once the in-flight group closes")
+            .unwrap();
+        // Assert: the late group 0 objects are delivered, not silently dropped.
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
         );
     }
 }
