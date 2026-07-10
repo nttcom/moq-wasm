@@ -1,4 +1,4 @@
-//! E2E for the relay's cache eviction (TTL object drain + strong_count track reclaim).
+//! E2E for the relay's cache eviction (TTL object drain + post-drain track reclaim).
 //!
 //! Two independent tracks exercise the two eviction mechanisms. FETCH reads the
 //! relay's object cache directly, so "present vs gone" is observed by fetching.
@@ -12,14 +12,16 @@
 //!         succeeds because the track (held by Carol) is alive; only the
 //!         closed, drained group was reclaimed.
 //!
-//!   Phase B (strong_count track reclaim):
+//!   Phase B (track reclaim after TTL drain, no holders):
 //!     A publisher sends one closed group on track B. A subscriber (Bob) triggers
 //!     the publish and holds the track during the baseline fetch, then leaves.
 //!       - fetch B/g0 while Bob holds it  -> 5 objects
 //!       - after Bob leaves, wait > interval but < TTL
-//!       - fetch B/g0                     -> FETCH error (TrackNotFound): the
-//!         whole track was reclaimed while its objects were still within TTL,
-//!         which only strong_count reclaim (not object TTL) can explain.
+//!       - fetch B/g0                     -> 5 objects: a track with fresh
+//!         objects must keep serving FETCH even with no session holding it
+//!         (reclaiming it here loses data, see the object-dedup E2E)
+//!       - after TTL+interval             -> FETCH error (TrackNotFound): the
+//!         objects drained via TTL, the emptied track was reclaimed.
 //!
 //! Run a relay on localhost:4433 with a short TTL, then `cargo run -p
 //! cache-eviction-e2e` from the repo root:
@@ -206,7 +208,7 @@ async fn run_scenario() -> anyhow::Result<()> {
 
     drop(carol); // release the track for good measure
 
-    // ---- Phase B: strong_count track reclaim (no holders, before TTL) ----
+    // ---- Phase B: track reclaim after TTL drain (no holders) ----
     let bob = subscribe_live(NAMESPACE_B).await?;
     tokio::time::sleep(Duration::from_millis(800)).await; // let group 0 publish
 
@@ -221,22 +223,28 @@ async fn run_scenario() -> anyhow::Result<()> {
     drop(bob); // now nobody holds the track (strong_count -> 1)
     tokio::time::sleep(Duration::from_secs(3)).await; // > interval, still < TTL
 
+    let unheld = fetch_group(NAMESPACE_B, 0).await?;
+    assert_eq!(
+        unheld,
+        full_group(0),
+        "[B] a fresh track must keep serving FETCH after all holders left"
+    );
+    tracing::info!("[B] after Bob left, before TTL: still 5 objects — OK");
+
+    tokio::time::sleep(Duration::from_secs(4)).await; // objects now past TTL + interval
     match fetch_group(NAMESPACE_B, 0).await {
         Err(e) => {
-            tracing::info!(
-                "[B] after Bob left: fetch errored ({}) — track reclaimed, OK",
-                e
-            );
+            tracing::info!("[B] after TTL: fetch errored ({}) — track reclaimed, OK", e);
         }
         Ok(objects) => {
             anyhow::bail!(
-                "[B] track should have been reclaimed by strong_count, but fetch returned {:?}",
+                "[B] track should have drained via TTL and been reclaimed, but fetch returned {:?}",
                 objects
             );
         }
     }
 
-    tracing::info!("ALL OK: object TTL and strong_count reclaim both verified");
+    tracing::info!("ALL OK: object TTL drain and post-drain track reclaim both verified");
     Ok(())
 }
 
