@@ -8,7 +8,7 @@
 /// The result is always negative so that the control stream, which
 /// keeps the transport default priority of 0, outranks every data
 /// stream (§7.2 recommends prioritizing the control stream highest).
-pub(crate) fn resolve_transport_priority(subscriber_priority: u8, publisher_priority: u8) -> i32 {
+pub fn resolve_transport_priority(subscriber_priority: u8, publisher_priority: u8) -> i32 {
     -1 - (((subscriber_priority as i32) << 8) | publisher_priority as i32)
 }
 

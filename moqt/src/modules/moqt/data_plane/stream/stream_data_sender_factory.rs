@@ -13,19 +13,29 @@ use crate::{
 
 pub struct StreamDataSenderFactory<T: TransportProtocol> {
     track_alias: u64,
+    subscriber_priority: u8,
     session: Arc<SessionContext<T>>,
 }
 
 impl<T: TransportProtocol> StreamDataSenderFactory<T> {
-    pub(crate) fn new(track_alias: u64, session: Arc<SessionContext<T>>) -> Self {
+    pub(crate) fn new(
+        track_alias: u64,
+        subscriber_priority: u8,
+        session: Arc<SessionContext<T>>,
+    ) -> Self {
         Self {
             track_alias,
+            subscriber_priority,
             session,
         }
     }
 
     pub async fn next(&self) -> anyhow::Result<StreamDataSender<T>> {
         let send_stream = self.session.transport_connection.open_uni().await?;
-        Ok(StreamDataSender::new(self.track_alias, send_stream))
+        Ok(StreamDataSender::new(
+            self.track_alias,
+            self.subscriber_priority,
+            send_stream,
+        ))
     }
 }

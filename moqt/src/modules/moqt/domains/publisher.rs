@@ -147,7 +147,11 @@ impl<T: TransportProtocol> Publisher<T> {
     }
 
     pub fn create_stream(&self, subscription: &Subscription) -> StreamDataSenderFactory<T> {
-        StreamDataSenderFactory::new(subscription.track_alias(), self.session.clone())
+        StreamDataSenderFactory::new(
+            subscription.track_alias(),
+            subscription.subscriber_priority(),
+            self.session.clone(),
+        )
     }
 
     pub fn create_datagram(&self, subscription: &Subscription) -> DatagramSender<T> {

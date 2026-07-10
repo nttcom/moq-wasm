@@ -72,6 +72,7 @@ pub use modules::moqt::data_plane::stream::stream_data_sender::SubgroupObjectSen
 pub use modules::moqt::data_plane::stream::stream_data_sender::Uninitialized;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory;
+pub use modules::moqt::data_plane::stream_priority::resolve_transport_priority;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::connecting::Connecting;
 #[cfg(not(target_arch = "wasm32"))]

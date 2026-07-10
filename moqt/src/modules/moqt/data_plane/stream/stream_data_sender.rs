@@ -7,7 +7,8 @@ use crate::{
             extension_headers::ExtensionHeaders,
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
-        stream::{stream_priority::resolve_transport_priority, stream_sender::StreamSender},
+        stream::stream_sender::StreamSender,
+        stream_priority::resolve_transport_priority,
     },
 };
 
@@ -28,6 +29,7 @@ pub type SubgroupObjectSender<T> = StreamDataSender<T, HeaderSent>;
 pub struct StreamDataSender<T: TransportProtocol, S = Uninitialized> {
     stream_sender: StreamSender<T>,
     track_alias: u64,
+    subscriber_priority: u8,
     subgroup_header: Option<SubgroupHeader>,
     _state: PhantomData<S>,
 }
@@ -54,11 +56,16 @@ impl<T: TransportProtocol, S> StreamDataSender<T, S> {
 // ─── Uninitialized State ───────────────────────────────────────────────────────
 
 impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
-    pub(crate) fn new(track_alias: u64, send_stream: T::SendStream) -> Self {
+    pub(crate) fn new(
+        track_alias: u64,
+        subscriber_priority: u8,
+        send_stream: T::SendStream,
+    ) -> Self {
         let stream_sender = StreamSender::new(send_stream);
         Self {
             stream_sender,
             track_alias,
+            subscriber_priority,
             subgroup_header: None,
             _state: PhantomData,
         }
@@ -96,12 +103,22 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
                 header.track_alias
             );
         }
+        // Prioritize the stream before any bytes are written so the transport
+        // schedules it against competing subgroup streams (§7.2). Best-effort:
+        // delivery continues unprioritized if the transport rejects it.
+        if let Err(error) = self
+            .set_priority(self.subscriber_priority, header.publisher_priority)
+            .await
+        {
+            tracing::warn!(?error, "failed to set subgroup stream priority");
+        }
         tracing::debug!("Sending new subgroup header: {:?}", header);
         let encoded_header = header.encode();
         self.stream_sender.send(&encoded_header).await?;
         Ok(StreamDataSender {
             stream_sender: self.stream_sender,
             track_alias: self.track_alias,
+            subscriber_priority: self.subscriber_priority,
             subgroup_header: Some(header),
             _state: PhantomData,
         })
