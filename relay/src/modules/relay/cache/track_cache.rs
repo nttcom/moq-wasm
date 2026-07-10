@@ -155,9 +155,13 @@ impl TrackCache {
         self.stream_groups.read().await.is_empty() && self.datagram_groups.read().await.is_empty()
     }
 
-    /// Non-blocking emptiness check for sync contexts (the eviction `remove_if`
-    /// closure). Lock contention means someone is using the track, so report
-    /// non-empty to keep it.
+    /// Non-blocking `is_empty` for the eviction `remove_if` closure, which is
+    /// sync and runs under the DashMap shard lock: it re-validates emptiness at
+    /// the moment of removal (a writer may have attached, written, and
+    /// detached since the async pre-check). With strong_count == 1 checked
+    /// first no other Arc exists, so try_read cannot actually be contended;
+    /// treating contention as non-empty is a defensive fallback that errs
+    /// toward keeping the track.
     pub(crate) fn is_empty_sync(&self) -> bool {
         self.stream_groups
             .try_read()
