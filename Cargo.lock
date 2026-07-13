@@ -3081,6 +3081,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "moq-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "media-streaming-format",
+ "moqt",
+ "packages",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "moqt"
 version = "0.1.0"
 dependencies = [

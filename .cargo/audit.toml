@@ -1,12 +1,10 @@
 [advisories]
 ignore = [
-    # quick-xml vulnerabilities (RUSTSEC-2026-0194, RUSTSEC-2026-0195) affect
-    # denial-of-service attack vectors that require attacker-controlled XML input.
-    # quick-xml is only used by wayland-scanner, a compile-time proc-macro that
-    # processes trusted Wayland protocol XML files bundled with the source.
-    # No user-provided input reaches this parser at compile or run time.
-    # Upstream fix requires wayland-scanner to bump its quick-xml dependency
-    # to >= 0.41.0; until that release is available this advisory is suppressed.
+    # quick-xml 0.39.4 DoS advisories (fixed in >=0.41.0). The only remaining
+    # dependent is wayland-scanner, a proc-macro that parses Wayland protocol
+    # XML bundled at build time, so no untrusted input reaches quick-xml.
+    # No wayland-scanner release accepts quick-xml 0.41 yet (master pins 0.40);
+    # remove these once wayland-scanner ships with quick-xml >=0.41.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
 ]
