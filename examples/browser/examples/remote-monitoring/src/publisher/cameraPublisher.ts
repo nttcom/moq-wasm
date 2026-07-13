@@ -11,7 +11,7 @@ const KEYFRAME_INTERVAL_FRAMES = 30 // 30fps × 1s = 1 GoP per second
 const BITRATE_LOG_INTERVAL_CHUNKS = 900 // ~30 seconds at 30fps
 const OBJECT_STATUS_END_OF_GROUP = 3
 const VIDEO_CONFIG = {
-  codec: 'avc1.640028', // H.264 High Profile Level 4.0
+  codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
   width: 1280,
   height: 720,
   bitrate: 1_000_000,

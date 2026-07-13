@@ -10,7 +10,7 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { MonitorSession } from '../monitor/monitorSession'
-import { CameraSubscriber } from '../monitor/cameraSubscriber'
+import { CameraSubscriber, type ReviewFrame } from '../monitor/cameraSubscriber'
 import { useUrlSync } from '../hooks/useUrlSync'
 
 interface Props {
@@ -43,7 +43,7 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
   const stageIdRef = useRef<CameraId>(stageId)
 
   // Review
-  const reviewBufferRef = useRef<Map<bigint, Uint8Array>>(new Map())
+  const reviewBufferRef = useRef<Map<bigint, ReviewFrame>>(new Map())
   const activeFetchIdRef = useRef<bigint | null>(null)
   const fetchGenRef = useRef(0)
 
@@ -159,7 +159,7 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
 
       const targetGroup = seekGroup
       const needSequential = targetObjectId !== undefined && targetObjectId > 0n
-      const seqBuffer = new Map<bigint, Uint8Array>()
+      const seqBuffer = new Map<bigint, ReviewFrame>()
       let seqDecoded = false
 
       try {
@@ -169,21 +169,21 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
 
           // Always store I-frames for step navigation
           if (msg.objectId === 0n) {
-            reviewBufferRef.current.set(msg.groupId, payload)
+            reviewBufferRef.current.set(msg.groupId, { payload, locHeader: msg.locHeader })
           }
 
           if (msg.groupId === targetGroup) {
             if (needSequential) {
               // Collect all frames up to targetObjectId for sequential decode
               if (msg.objectId <= targetObjectId!) {
-                seqBuffer.set(msg.objectId, payload)
+                seqBuffer.set(msg.objectId, { payload, locHeader: msg.locHeader })
               }
               if (msg.objectId === targetObjectId && !seqDecoded) {
                 seqDecoded = true
                 subscriber.decodeFrameSequential(seqBuffer, targetObjectId!)
               }
             } else if (msg.objectId === 0n) {
-              subscriber.decodeFrame(msg.groupId, payload)
+              subscriber.decodeFrame(msg.groupId, payload, msg.locHeader)
             }
           }
         })
@@ -236,9 +236,9 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
       return
     }
     setCurrentGroupId(next)
-    const payload = reviewBufferRef.current.get(next)
+    const entry = reviewBufferRef.current.get(next)
     const subscriber = subscribersRef.current.get(stageId)
-    if (payload && subscriber) subscriber.decodeFrame(next, payload)
+    if (entry && subscriber) subscriber.decodeFrame(next, entry.payload, entry.locHeader)
   }
 
   const handleStepForward = () => {
@@ -250,9 +250,9 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
       return
     }
     setCurrentGroupId(next)
-    const payload = reviewBufferRef.current.get(next)
+    const entry = reviewBufferRef.current.get(next)
     const subscriber = subscribersRef.current.get(stageId)
-    if (payload && subscriber) subscriber.decodeFrame(next, payload)
+    if (entry && subscriber) subscriber.decodeFrame(next, entry.payload, entry.locHeader)
   }
 
   const handleJump = (seekGroup: bigint) => {
