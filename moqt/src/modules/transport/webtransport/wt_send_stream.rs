@@ -25,6 +25,16 @@ impl TransportSendStream for WtSendStream {
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)
     }
+
+    async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError> {
+        let error_code =
+            u32::try_from(error_code).map_err(|source| TransportSendError::Transport {
+                source: source.into(),
+            })?;
+        self.send_stream
+            .reset(error_code)
+            .map_err(|_| TransportSendError::ClosedStream)
+    }
 }
 
 fn webtransport_write_error_to_transport_send_error(

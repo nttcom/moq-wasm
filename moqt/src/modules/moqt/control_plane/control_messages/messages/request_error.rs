@@ -3,6 +3,7 @@ use crate::modules::extensions::{
 };
 use bytes::BytesMut;
 use serde::Serialize;
+use std::fmt;
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct RequestError {
@@ -10,6 +11,18 @@ pub struct RequestError {
     pub error_code: u64,
     pub reason_phrase: String,
 }
+
+impl fmt::Display for RequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "request {} failed with code {}: {}",
+            self.request_id, self.error_code, self.reason_phrase
+        )
+    }
+}
+
+impl std::error::Error for RequestError {}
 
 impl RequestError {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {

@@ -4,7 +4,7 @@ use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::extensions::result_ext::ResultExt;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct Location {
     pub group_id: u64,
     pub object_id: u64,

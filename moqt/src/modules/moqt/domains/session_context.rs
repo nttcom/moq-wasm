@@ -25,6 +25,20 @@ use crate::{
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Returned by [`SessionContext::await_request_response`] when the peer does
+/// not answer in time. Callers map this to a per-request failure (e.g.
+/// FETCH_ERROR TIMEOUT) and keep the session open.
+#[derive(Debug)]
+pub struct RequestTimeoutError;
+
+impl fmt::Display for RequestTimeoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "request response timed out")
+    }
+}
+
+impl std::error::Error for RequestTimeoutError {}
+
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: BiStreamSender<T>,
@@ -205,6 +219,10 @@ impl<T: TransportProtocol> SessionContext<T> {
     /// resource exhaustion when a peer does not send the expected response.
     /// On timeout, the session is closed with `ControlMessageTimeout` and an
     /// error is returned so the caller can propagate the failure cleanly.
+    ///
+    /// FIXME: SUBSCRIBE and the other request/response exchanges still use
+    /// this session-closing variant; migrating them to
+    /// `await_request_response` is tracked separately.
     pub(crate) async fn await_response(
         &self,
         receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
@@ -220,6 +238,22 @@ impl<T: TransportProtocol> SessionContext<T> {
                 );
                 anyhow::bail!("control message response timed out")
             }
+        }
+    }
+
+    /// Like `await_response`, but a timeout fails only this request instead of
+    /// closing the session: a FETCH is request-scoped, and a shared
+    /// (inter-relay) session must survive one slow request. §12.2's
+    /// resource-exhaustion concern is met by the caller dropping its pending
+    /// request state on the error path.
+    pub(crate) async fn await_request_response(
+        &self,
+        receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
+    ) -> anyhow::Result<ResponseMessage> {
+        match tokio::time::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(error)) => anyhow::bail!("control response channel closed: {}", error),
+            Err(_) => Err(RequestTimeoutError.into()),
         }
     }
 
