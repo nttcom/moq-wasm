@@ -1,31 +1,13 @@
 use anyhow::Result;
-use bytes::Bytes;
 use moqt::wire::ExtensionHeaders;
 use packages::loc::LocHeader;
 
-const LOC_HEADER_SENTINEL: &[u8] = b"loc:";
-
-pub fn loc_header_to_extension_headers(header: &LocHeader) -> Result<ExtensionHeaders> {
-    let mut immutable_extensions = Vec::with_capacity(1);
-    let mut encoded = Vec::from(LOC_HEADER_SENTINEL);
-    encoded.extend_from_slice(&serde_json::to_vec(header)?);
-    immutable_extensions.push(Bytes::from(encoded));
-
-    Ok(ExtensionHeaders::from_immutable_extensions(
-        immutable_extensions,
-    ))
+pub fn loc_header_to_extension_headers(header: &LocHeader) -> ExtensionHeaders {
+    header.to_extension_headers()
 }
 
 pub fn extension_headers_to_loc_header(headers: &ExtensionHeaders) -> LocHeader {
-    for extension in headers.immutable_extensions() {
-        if let Some(encoded) = extension.as_ref().strip_prefix(LOC_HEADER_SENTINEL)
-            && let Ok(header) = serde_json::from_slice::<LocHeader>(encoded)
-        {
-            return header;
-        }
-    }
-
-    LocHeader::default()
+    LocHeader::from_extension_headers(headers)
 }
 
 pub fn parse_loc_header(value: wasm_bindgen::JsValue) -> Result<Option<LocHeader>> {

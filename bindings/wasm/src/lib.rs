@@ -831,12 +831,12 @@ impl MOQTClient {
         object_payload: Vec<u8>,
         loc_header: JsValue,
     ) -> Result<(), JsValue> {
-        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
-            Ok(None) => Ok(empty_extension_headers()),
-            Err(error) => Err(error),
-        }
-        .map_err(|error| js_error(error.to_string()))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header)
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
+            None => empty_extension_headers(),
+        };
 
         let field = if extension_headers == empty_extension_headers() {
             DatagramField::Payload0x00 {
@@ -869,12 +869,12 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let object_status =
             ObjectStatus::try_from(object_status).map_err(|_| js_error("invalid object status"))?;
-        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
-            Ok(None) => Ok(empty_extension_headers()),
-            Err(error) => Err(error),
-        }
-        .map_err(|error| js_error(error.to_string()))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header)
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
+            None => empty_extension_headers(),
+        };
 
         let field = if extension_headers == empty_extension_headers() {
             DatagramField::Status0x20 {
@@ -939,12 +939,12 @@ impl MOQTClient {
             .cloned()
             .ok_or_else(|| js_error("subgroup writer is None"))?;
 
-        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
-            Ok(None) => Ok(empty_extension_headers()),
-            Err(error) => Err(error),
-        }
-        .map_err(|error| js_error(error.to_string()))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header)
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
+            None => empty_extension_headers(),
+        };
         let object_id_delta = {
             let stream_object_numbers = self.stream_object_numbers.borrow();
             match stream_object_numbers.get(&writer_key).copied() {
