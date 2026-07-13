@@ -388,7 +388,7 @@ impl<T: TransportProtocol> Client<T> {
                             let label = label.clone();
                             self.joinset.spawn(async move {
                                 while let Ok(mut stream) = factory.next().await {
-                                    while let Ok(result) = stream.receive().await {
+                                    while let Ok(Some(result)) = stream.receive().await {
                                         tracing::info!("{} :active subscribe stream: {:?}", label, result);
                                     }
                                 }

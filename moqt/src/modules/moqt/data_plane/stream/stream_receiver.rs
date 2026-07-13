@@ -13,7 +13,7 @@ pub(crate) type BiStreamReceiver<T> = StreamReceiver<T, 1024, ControlMessageDeco
 pub(crate) type UniStreamReceiver<T> = StreamReceiver<T, { 64 * 1024 }, UniStreamDecoder>;
 
 #[derive(Debug)]
-pub(crate) enum StreamReceiveError {
+pub enum StreamReceiveError {
     Closed(String),
     Decode(String),
 }

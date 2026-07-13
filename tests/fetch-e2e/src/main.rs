@@ -288,15 +288,15 @@ async fn bob(
         let mut stream = factory.next().await?;
         loop {
             match stream.receive().await {
-                Ok(Subgroup::Header(h)) => {
+                Ok(Some(Subgroup::Header(h))) => {
                     tracing::info!("[bob] live group_id={}", h.group_id);
                     if h.group_id >= 2 {
                         tracing::info!("[bob] group 2 detected, relay cache ready");
                         break 'detect;
                     }
                 }
-                Ok(Subgroup::Object(_)) => {}
-                Err(_) => break, // stream ended, move to next group
+                Ok(Some(Subgroup::Object(_))) => {}
+                Ok(None) | Err(_) => break, // stream ended, move to next group
             }
         }
     }

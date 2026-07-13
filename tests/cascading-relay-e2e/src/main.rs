@@ -681,7 +681,10 @@ async fn subscribe_and_receive_ordered_objects(
         moqt::DataReceiver::Stream(mut factory) => {
             let mut stream = factory.next().await?;
             while payloads.len() < count {
-                if let Subgroup::Object(field) = stream.receive().await?
+                let Some(subgroup) = stream.receive().await? else {
+                    bail!("stream ended before receiving {count} objects");
+                };
+                if let Subgroup::Object(field) = subgroup
                     && let SubgroupObject::Payload { data, .. } = field.subgroup_object
                 {
                     payloads.push(data.to_vec());
@@ -902,7 +905,10 @@ where
         moqt::DataReceiver::Stream(mut factory) => {
             let mut stream = factory.next().await?;
             loop {
-                if let Subgroup::Object(field) = stream.receive().await?
+                let Some(subgroup) = stream.receive().await? else {
+                    anyhow::bail!("stream ended before receiving an object");
+                };
+                if let Subgroup::Object(field) = subgroup
                     && let SubgroupObject::Payload { data, .. } = field.subgroup_object
                 {
                     tracing::info!(

@@ -181,8 +181,10 @@ async fn bob(
             };
             loop {
                 match stream.receive().await {
-                    Ok(Subgroup::Header(h)) => tracing::info!("[bob] live group {}", h.group_id),
-                    Ok(Subgroup::Object(field)) => {
+                    Ok(Some(Subgroup::Header(h))) => {
+                        tracing::info!("[bob] live group {}", h.group_id)
+                    }
+                    Ok(Some(Subgroup::Object(field))) => {
                         if let SubgroupObject::Payload { data, .. } = field.subgroup_object {
                             let payload = String::from_utf8_lossy(&data).to_string();
                             if payload.starts_with("carol:") {
@@ -203,7 +205,7 @@ async fn bob(
                             }
                         }
                     }
-                    Err(_) => break,
+                    Ok(None) | Err(_) => break,
                 }
             }
         }
