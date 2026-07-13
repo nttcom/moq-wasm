@@ -68,6 +68,7 @@ type MsfTrack = {
   height?: number
   samplerate?: number
   channelConfig?: string
+  initData?: string
 }
 
 type MsfCatalog = {
@@ -89,6 +90,7 @@ export type MediaCatalogTrack = {
   channelConfig?: string
   width?: number
   height?: number
+  initData?: string
 }
 
 export function getResolvedMediaVideoCodec(): string {
@@ -163,7 +165,8 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       samplerate: asNumber(track.samplerate),
       channelConfig: asString(track.channelConfig),
       width: asNumber(track.width),
-      height: asNumber(track.height)
+      height: asNumber(track.height),
+      initData: asString(track.initData)
     })
     return acc
   }, [])

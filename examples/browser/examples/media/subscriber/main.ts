@@ -139,13 +139,42 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
   if (select && trackName) {
     select.value = trackName
   }
-  if (kind !== 'video') {
+  if (!trackName) {
     return
   }
-  const track = catalogVideoTracks.find((entry) => entry.name === trackName)
-  if (trackName) {
-    videoDecoderWorker.postMessage({ type: 'catalog', codec: track?.codec ?? getResolvedMediaVideoCodec() })
+  if (kind === 'video') {
+    const track = catalogVideoTracks.find((entry) => entry.name === trackName)
+    videoDecoderWorker.postMessage({
+      type: 'catalog',
+      codec: track?.codec ?? getResolvedMediaVideoCodec(),
+      descriptionBase64: track?.initData
+    })
+    return
   }
+  const track = catalogAudioTracks.find((entry) => entry.name === trackName)
+  if (track) {
+    audioDecoderWorker.postMessage({
+      type: 'catalog',
+      codec: track.codec,
+      sampleRate: track.samplerate,
+      channels: channelCountFromConfig(track.channelConfig),
+      descriptionBase64: track.initData
+    })
+  }
+}
+
+function channelCountFromConfig(channelConfig?: string): number | undefined {
+  if (!channelConfig) {
+    return undefined
+  }
+  if (channelConfig === 'mono') {
+    return 1
+  }
+  if (channelConfig === 'stereo') {
+    return 2
+  }
+  const match = /^(\d+)ch$/.exec(channelConfig)
+  return match ? Number(match[1]) : undefined
 }
 
 function formatCatalogTrackLabel(track: MediaCatalogTrack, kind: 'video' | 'audio'): string {
