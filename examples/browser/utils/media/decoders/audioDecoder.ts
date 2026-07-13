@@ -37,6 +37,10 @@ let remoteTimestampBase: number | null = null
 let lastRebasedTimestamp: number | null = null
 let decoderSignature: string | null = null
 let cachedAudioConfig: CachedAudioConfig | null = null
+let catalogAudioCodec: string | undefined
+let catalogAudioSampleRate: number | undefined
+let catalogAudioChannels: number | undefined
+let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
 const directLastObjectIds = new Map<string, bigint>()
 
@@ -81,9 +85,18 @@ setInterval(() => {
   }
 }, POP_INTERVAL_MS)
 
+type AudioCatalogMessage = {
+  type: 'catalog'
+  codec?: string
+  sampleRate?: number
+  channels?: number
+  descriptionBase64?: string
+}
+
 type AudioWorkerMessage =
   | SubgroupWorkerMessage
   | { type: 'config'; config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean } }
+  | AudioCatalogMessage
 
 self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   if ((event.data as { type?: string }).type === 'config') {
@@ -97,6 +110,23 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
     bypassJitterBuffer = config.bypassJitterBuffer ?? bypassJitterBuffer
     if (config.mode === 'ordered' || config.mode === 'latest') {
       jitterBuffer.setMode(config.mode)
+    }
+    return
+  }
+
+  if ((event.data as { type?: string }).type === 'catalog') {
+    const catalog = event.data as AudioCatalogMessage
+    if (catalog.codec) {
+      catalogAudioCodec = catalog.codec
+    }
+    if (typeof catalog.sampleRate === 'number') {
+      catalogAudioSampleRate = catalog.sampleRate
+    }
+    if (typeof catalog.channels === 'number') {
+      catalogAudioChannels = catalog.channels
+    }
+    if (catalog.descriptionBase64) {
+      catalogAudioDescriptionBase64 = catalog.descriptionBase64
     }
     return
   }
@@ -354,7 +384,15 @@ function rebaseTimestamp(remoteTimestamp: number): number {
 }
 
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
-  const hasNewConfig = metadata.codec || metadata.descriptionBase64 || metadata.sampleRate || metadata.channels
+  const hasNewConfig =
+    metadata.codec ||
+    metadata.descriptionBase64 ||
+    metadata.sampleRate ||
+    metadata.channels ||
+    catalogAudioCodec ||
+    catalogAudioSampleRate ||
+    catalogAudioChannels ||
+    catalogAudioDescriptionBase64
   if (!hasNewConfig && !cachedAudioConfig) {
     return {
       codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
@@ -366,11 +404,15 @@ function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
   const codec =
     metadata.codec ??
     (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
+    catalogAudioCodec ??
     cachedAudioConfig?.codec ??
     DEFAULT_AUDIO_DECODER_CONFIG.codec
-  const sampleRate = metadata.sampleRate ?? cachedAudioConfig?.sampleRate ?? DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
-  const channels = metadata.channels ?? cachedAudioConfig?.channels ?? DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
-  const descriptionBase64 = metadata.descriptionBase64 ?? cachedAudioConfig?.descriptionBase64
+  const sampleRate =
+    metadata.sampleRate ?? catalogAudioSampleRate ?? cachedAudioConfig?.sampleRate ?? DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
+  const channels =
+    metadata.channels ?? catalogAudioChannels ?? cachedAudioConfig?.channels ?? DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
+  const descriptionBase64 =
+    metadata.descriptionBase64 ?? catalogAudioDescriptionBase64 ?? cachedAudioConfig?.descriptionBase64
 
   return { codec, sampleRate, channels, descriptionBase64 }
 }
