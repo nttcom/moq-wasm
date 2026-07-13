@@ -27,6 +27,14 @@ pub(crate) struct FetchIngestStart {
     pub(crate) egress_start: EgressFetchRequest,
 }
 
+/// Ingests one upstream FETCH response into the track cache, then hands
+/// delivery to egress.
+///
+/// v1 limitation: strict store-and-forward. Delivery starts only after the
+/// whole response reached `Fetch::End`, so first-byte latency equals the
+/// upstream transfer time and fills longer than MOQT_FETCH_FILL_TIMEOUT_SECS
+/// fail. Streaming delivery (serving while filling, bounded by the knowledge
+/// frontier) is planned as a follow-up.
 pub(crate) struct FetchIngest {
     _join_handle: JoinHandle<()>,
 }
@@ -145,10 +153,24 @@ impl FetchIngest {
         );
         let message_type = header.message_type;
         let object_id_delta = match previous_object_ids.get(&key) {
-            Some(previous_object_id) => object
-                .object_id
-                .checked_sub(previous_object_id.saturating_add(1))
-                .ok_or_else(|| anyhow::anyhow!("FETCH objects are not in ascending order"))?,
+            Some(previous_object_id) => {
+                match object
+                    .object_id
+                    .checked_sub(previous_object_id.saturating_add(1))
+                {
+                    Some(delta) => delta,
+                    None => {
+                        // Duplicate or reordered id. The cache dedups first-wins
+                        // (§8.1), so skip the object instead of aborting the fill.
+                        tracing::warn!(
+                            group_id = object.group_id,
+                            object_id = object.object_id,
+                            "skipping non-ascending FETCH object"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
             None => object.object_id,
         };
         let subgroup_object = match object.fetch_object {

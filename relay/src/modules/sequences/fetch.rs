@@ -345,7 +345,7 @@ impl Fetch {
         if let Some(fetch_error) = error.downcast_ref::<moqt::wire::RequestError>() {
             return (fetch_error.error_code, fetch_error.reason_phrase.clone());
         }
-        if error.to_string().contains("timed out") {
+        if error.downcast_ref::<moqt::RequestTimeoutError>().is_some() {
             return (
                 FetchErrorCode::Timeout as u64,
                 "Upstream fetch timed out".to_string(),
@@ -662,6 +662,25 @@ mod tests {
             start_location,
             end_location,
         }
+    }
+
+    #[test]
+    fn upstream_timeout_maps_to_fetch_error_timeout() {
+        let error = anyhow::Error::new(moqt::RequestTimeoutError);
+        let (code, _reason) = Fetch::upstream_fetch_error_response(&error);
+        assert_eq!(code, FetchErrorCode::Timeout as u64);
+    }
+
+    #[test]
+    fn upstream_request_error_code_is_relayed_verbatim() {
+        let error = anyhow::Error::new(moqt::wire::RequestError {
+            request_id: 7,
+            error_code: 0x3,
+            reason_phrase: "not supported".to_string(),
+        });
+        let (code, reason) = Fetch::upstream_fetch_error_response(&error);
+        assert_eq!(code, 0x3);
+        assert_eq!(reason, "not supported");
     }
 
     async fn fetch_cache_status(

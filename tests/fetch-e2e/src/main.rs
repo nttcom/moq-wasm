@@ -857,8 +857,10 @@ async fn run_cross_relay_leading_gap_fetch(
 }
 
 /// Cross-relay scenario F: relay-B cache miss for a track that does not exist
-/// on relay-A either.  FETCH must be forwarded upstream and relay-A's FETCH_ERROR
-/// must be propagated back to the downstream subscriber as an error.
+/// on relay-A either. The FETCH is forwarded upstream all the way to the
+/// publisher client, whose unhandled-fetch auto-reject (NOT_SUPPORTED) must
+/// come back promptly as FETCH_ERROR — and, critically, the publisher's
+/// session must survive the failed FETCH (no timeout-driven session close).
 async fn run_upstream_fetch_forwarding_data_not_found(
     relay_a_url: &str,
     relay_b_url: &str,
@@ -866,13 +868,15 @@ async fn run_upstream_fetch_forwarding_data_not_found(
     tracing::info!("[F] cross-relay FETCH_ERROR: namespace on relay-A but track not published");
     let namespace = unique_namespace("fetch-not-found");
 
-    // Publisher announces the namespace on relay-A so relay-B can resolve the
-    // upstream route via Redis. No track is actually published.
+    // Publisher announces the namespace on relay-A. Its event loop drains
+    // events, so a forwarded FETCH handler is dropped and auto-rejected, and
+    // it serves one SUBSCRIBE afterwards for the liveness check.
     let pub_session = connect_to_relay(relay_a_url).await?;
     pub_session
         .publisher()
         .publish_namespace(namespace.clone())
         .await?;
+    let publisher_handle = tokio::spawn(publisher_event_loop(pub_session, "nf-pub", 1));
 
     // Give the namespace route time to propagate through Redis to relay-B.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -880,9 +884,10 @@ async fn run_upstream_fetch_forwarding_data_not_found(
     let session_b = connect_to_relay(relay_b_url).await?;
     let mut sub_b = session_b.subscriber();
 
+    let started = std::time::Instant::now();
     let result = sub_b
         .fetch(
-            namespace,
+            namespace.clone(),
             "nonexistent-track".to_string(),
             Location {
                 group_id: 0,
@@ -895,12 +900,41 @@ async fn run_upstream_fetch_forwarding_data_not_found(
             FetchOption::default(),
         )
         .await;
+    let elapsed = started.elapsed();
 
     assert!(
         result.is_err(),
         "[F] expected FETCH_ERROR for track not found at upstream, but got Ok"
     );
-    tracing::info!("[F] OK: FETCH_ERROR returned for nonexistent track (as expected)");
+    // The publisher client auto-rejects the unhandled FETCH, so the error must
+    // arrive well before any control-message timeout would fire.
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "[F] FETCH_ERROR must come from the publisher's auto-reject, not a timeout (took {elapsed:?})"
+    );
+    tracing::info!("[F] FETCH_ERROR returned in {:?}", elapsed);
+
+    // Liveness: the failed FETCH must not have torn down the publisher session
+    // or the inter-relay session. A fresh cross-relay subscription must still
+    // reach the publisher and deliver all groups.
+    let live_session = connect_to_relay(relay_b_url).await?;
+    let mut live_sub = live_session.subscriber();
+    let live_subscription = live_sub
+        .subscribe(
+            namespace.clone(),
+            TRACK_NAME.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    drain_until_group_complete(&mut live_sub, &live_subscription, GROUPS - 1, "nf-live").await?;
+    drop(publisher_handle.await??);
+
+    tracing::info!("[F] OK: prompt FETCH_ERROR and the publisher session survived");
     Ok(())
 }
 
