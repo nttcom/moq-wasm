@@ -11,6 +11,8 @@ default = []
 wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
 
 [dependencies]
+moqt = { path = "../../moqt" }
+bytes = "1"
 serde = { version = "1.0.228", features = ["derive"] }
 wasm-bindgen = { version = "0.2.123", optional = true }
 serde-wasm-bindgen = { version = "0.6.5", optional = true }
