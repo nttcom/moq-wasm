@@ -49,7 +49,7 @@ impl eframe::App for PtzApp {
         self.video.update(&ctx);
         egui::Panel::bottom("ptz_controls")
             .resizable(false)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 if let Some(command) = self.controls.ui(ui) {
                     self.controller.send(command);
                 }
@@ -58,7 +58,7 @@ impl eframe::App for PtzApp {
                     ui.label(format!("PTZ error: {err}"));
                 }
             });
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             self.video.show(ui);
         });
     }
