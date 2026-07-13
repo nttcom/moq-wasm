@@ -118,6 +118,9 @@ impl GroupCache {
     }
 
     /// Returns all cached objects in object_id order. The subgroup header is not included.
+    /// Test-only: production reads use `object_from_or_wait` since a snapshot can miss
+    /// in-flight objects.
+    #[cfg(test)]
     pub(crate) async fn objects_snapshot(&self) -> Vec<(u64, Arc<DataObject>)> {
         self.objects
             .read()
