@@ -833,6 +833,7 @@ pub struct FetchObjectMessage {
     group_id: u64,
     object_id: u64,
     object_payload: Vec<u8>,
+    loc_header: LocHeader,
 }
 
 #[wasm_bindgen]
@@ -856,6 +857,12 @@ impl FetchObjectMessage {
     pub fn object_payload(&self) -> Vec<u8> {
         self.object_payload.clone()
     }
+
+    #[wasm_bindgen(getter, js_name = locHeader)]
+    pub fn loc_header(&self) -> Result<JsValue, JsValue> {
+        crate::loc::encode_loc_header(&self.loc_header)
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
 }
 
 impl FetchObjectMessage {
@@ -869,6 +876,7 @@ impl FetchObjectMessage {
             group_id: field.group_id,
             object_id: field.object_id,
             object_payload: payload,
+            loc_header: crate::loc::extension_headers_to_loc_header(&field.extension_headers),
         }
     }
 }

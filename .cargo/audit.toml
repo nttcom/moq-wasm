@@ -1,0 +1,10 @@
+[advisories]
+ignore = [
+    # quick-xml 0.39.4 DoS advisories (fixed in >=0.41.0). The only remaining
+    # dependent is wayland-scanner, a proc-macro that parses Wayland protocol
+    # XML bundled at build time, so no untrusted input reaches quick-xml.
+    # No wayland-scanner release accepts quick-xml 0.41 yet (master pins 0.40);
+    # remove these once wayland-scanner ships with quick-xml >=0.41.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
