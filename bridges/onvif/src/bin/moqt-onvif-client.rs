@@ -1785,19 +1785,13 @@ fn loc_header_to_extension_headers(header: &LocHeader) -> Result<ExtensionHeader
     encoded.extend_from_slice(&serde_json::to_vec(header)?);
     immutable_extensions.push(Bytes::from(encoded));
 
-    Ok(ExtensionHeaders {
-        prior_group_id_gap: vec![],
-        prior_object_id_gap: vec![],
+    Ok(ExtensionHeaders::from_immutable_extensions(
         immutable_extensions,
-    })
+    ))
 }
 
 fn empty_extension_headers() -> ExtensionHeaders {
-    ExtensionHeaders {
-        prior_group_id_gap: vec![],
-        prior_object_id_gap: vec![],
-        immutable_extensions: vec![],
-    }
+    ExtensionHeaders::default()
 }
 
 fn parse_namespace(value: &str) -> Vec<String> {

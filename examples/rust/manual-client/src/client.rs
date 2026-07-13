@@ -295,11 +295,7 @@ impl<T: TransportProtocol> Client<T> {
                 while id < 10 {
                     let format_text = format!("hello from {}! id: {}", label, id);
                     let data = moqt::SubgroupObject::new_payload(format_text.into());
-                    let extension_headers = moqt::ExtensionHeaders {
-                        prior_group_id_gap: vec![],
-                        prior_object_id_gap: vec![],
-                        immutable_extensions: vec![],
-                    };
+                    let extension_headers = moqt::ExtensionHeaders::default();
                     let obj = stream.create_object_field(0, extension_headers, data);
                     match stream.send(obj).await {
                         Ok(_) => {

@@ -11,16 +11,30 @@ pub enum ExtensionHeaderType {
     ImmutableExtensions = 0xb,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+// Every Key-Value-Pair is preserved in receive order and re-encoded unchanged:
+// draft-ietf-moq-transport-14 §10.2.1.2 requires unsupported extension headers
+// to be forwarded and cached without modification. Higher layers (e.g. LOC)
+// assign meaning to specific keys; the transport only exposes accessors for the
+// header types it uses itself.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExtensionHeaders {
-    pub prior_group_id_gap: Vec<u64>,
-    pub prior_object_id_gap: Vec<u64>,
-    pub immutable_extensions: Vec<Bytes>,
+    pub key_value_pairs: Vec<KeyValuePair>,
 }
 
 impl ExtensionHeaders {
+    pub fn new(key_value_pairs: Vec<KeyValuePair>) -> Self {
+        Self { key_value_pairs }
+    }
+
+    pub fn from_immutable_extensions(values: Vec<Bytes>) -> Self {
+        let mut headers = Self::default();
+        for value in values {
+            headers.push_immutable_extension(value);
+        }
+        headers
+    }
+
     pub fn decode(cursor: &mut impl Buf) -> Option<Self> {
-        let mut kv_pairs = Vec::new();
         let byte_length = cursor
             .try_get_varint()
             .log_context("extension headers length")
@@ -29,61 +43,117 @@ impl ExtensionHeaders {
             return None;
         }
         let end_remaining = cursor.remaining() - byte_length;
+        let mut key_value_pairs = Vec::new();
         while cursor.remaining() > end_remaining {
-            let key_value_pair = KeyValuePair::decode(cursor)?;
-            kv_pairs.push(key_value_pair);
+            key_value_pairs.push(KeyValuePair::decode(cursor)?);
         }
-        let prior_group_id_gap = kv_pairs
-            .iter()
-            .filter(|item| item.key == ExtensionHeaderType::PriorGroupIdGap as u64)
-            .map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(_) => unreachable!(),
-                VariantType::Even(v) => *v,
-            })
-            .collect();
-        let prior_object_id_gap = kv_pairs
-            .iter()
-            .filter(|item| item.key == ExtensionHeaderType::PriorObjectIdGap as u64)
-            .map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(_) => unreachable!(),
-                VariantType::Even(v) => *v,
-            })
-            .collect();
-        let immutable_extensions = kv_pairs
-            .iter()
-            .filter(|kv_pair| kv_pair.key == ExtensionHeaderType::ImmutableExtensions as u64)
-            .map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => value.clone(),
-                VariantType::Even(_) => unreachable!(),
-            })
-            .collect();
-
-        Some(Self {
-            prior_group_id_gap,
-            prior_object_id_gap,
-            immutable_extensions,
-        })
+        Some(Self { key_value_pairs })
     }
 
     pub fn encode(&self) -> bytes::BytesMut {
         let mut kv_buf = bytes::BytesMut::new();
-        for gap in &self.prior_group_id_gap {
-            kv_buf.put_varint(ExtensionHeaderType::PriorGroupIdGap as u64);
-            kv_buf.put_varint(*gap);
-        }
-        for gap in &self.prior_object_id_gap {
-            kv_buf.put_varint(ExtensionHeaderType::PriorObjectIdGap as u64);
-            kv_buf.put_varint(*gap);
-        }
-        for ext in &self.immutable_extensions {
-            kv_buf.put_varint(ExtensionHeaderType::ImmutableExtensions as u64);
-            kv_buf.put_varint(ext.len() as u64);
-            kv_buf.extend_from_slice(ext);
+        for kv_pair in &self.key_value_pairs {
+            kv_buf.unsplit(kv_pair.encode());
         }
         let mut buf = bytes::BytesMut::new();
         buf.put_varint(kv_buf.len() as u64);
         buf.unsplit(kv_buf);
         buf
+    }
+
+    pub fn prior_group_id_gap(&self) -> Vec<u64> {
+        self.even_values(ExtensionHeaderType::PriorGroupIdGap as u64)
+    }
+
+    pub fn prior_object_id_gap(&self) -> Vec<u64> {
+        self.even_values(ExtensionHeaderType::PriorObjectIdGap as u64)
+    }
+
+    pub fn immutable_extensions(&self) -> Vec<Bytes> {
+        self.key_value_pairs
+            .iter()
+            .filter(|kv_pair| kv_pair.key == ExtensionHeaderType::ImmutableExtensions as u64)
+            .filter_map(|kv_pair| match &kv_pair.value {
+                VariantType::Odd(value) => Some(value.clone()),
+                VariantType::Even(_) => None,
+            })
+            .collect()
+    }
+
+    pub fn push_prior_group_id_gap(&mut self, gap: u64) {
+        self.push_even(ExtensionHeaderType::PriorGroupIdGap as u64, gap);
+    }
+
+    pub fn push_prior_object_id_gap(&mut self, gap: u64) {
+        self.push_even(ExtensionHeaderType::PriorObjectIdGap as u64, gap);
+    }
+
+    pub fn push_immutable_extension(&mut self, value: Bytes) {
+        self.key_value_pairs.push(KeyValuePair {
+            key: ExtensionHeaderType::ImmutableExtensions as u64,
+            value: VariantType::Odd(value),
+        });
+    }
+
+    fn even_values(&self, key: u64) -> Vec<u64> {
+        self.key_value_pairs
+            .iter()
+            .filter(|kv_pair| kv_pair.key == key)
+            .filter_map(|kv_pair| match &kv_pair.value {
+                VariantType::Even(value) => Some(*value),
+                VariantType::Odd(_) => None,
+            })
+            .collect()
+    }
+
+    fn push_even(&mut self, key: u64, value: u64) {
+        self.key_value_pairs.push(KeyValuePair {
+            key,
+            value: VariantType::Even(value),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trip_preserves_unsupported_headers_in_order() {
+        // Keys 2 and 13 are LOC extension header types the transport does not
+        // interpret; draft-14 §10.2.1.2 requires them to be forwarded unmodified.
+        let headers = ExtensionHeaders::new(vec![
+            KeyValuePair {
+                key: 2,
+                value: VariantType::Even(123),
+            },
+            KeyValuePair {
+                key: ExtensionHeaderType::PriorGroupIdGap as u64,
+                value: VariantType::Even(7),
+            },
+            KeyValuePair {
+                key: 13,
+                value: VariantType::Odd(Bytes::from(vec![0xAA, 0xBB])),
+            },
+        ]);
+
+        let mut encoded = headers.encode();
+        let decoded = ExtensionHeaders::decode(&mut encoded).unwrap();
+
+        assert_eq!(decoded, headers);
+        assert_eq!(decoded.prior_group_id_gap(), vec![7]);
+    }
+
+    #[test]
+    fn accessors_filter_by_header_type() {
+        let mut headers = ExtensionHeaders::default();
+        headers.push_prior_group_id_gap(1);
+        headers.push_prior_object_id_gap(2);
+        headers.push_immutable_extension(Bytes::from(vec![9]));
+
+        assert_eq!(headers.prior_group_id_gap(), vec![1]);
+        assert_eq!(headers.prior_object_id_gap(), vec![2]);
+        assert_eq!(headers.immutable_extensions(), vec![Bytes::from(vec![9])]);
     }
 }
 

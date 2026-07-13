@@ -11,15 +11,13 @@ pub fn loc_header_to_extension_headers(header: &LocHeader) -> Result<ExtensionHe
     encoded.extend_from_slice(&serde_json::to_vec(header)?);
     immutable_extensions.push(Bytes::from(encoded));
 
-    Ok(ExtensionHeaders {
-        prior_group_id_gap: vec![],
-        prior_object_id_gap: vec![],
+    Ok(ExtensionHeaders::from_immutable_extensions(
         immutable_extensions,
-    })
+    ))
 }
 
 pub fn extension_headers_to_loc_header(headers: &ExtensionHeaders) -> LocHeader {
-    for extension in &headers.immutable_extensions {
+    for extension in headers.immutable_extensions() {
         if let Some(encoded) = extension.as_ref().strip_prefix(LOC_HEADER_SENTINEL)
             && let Ok(header) = serde_json::from_slice::<LocHeader>(encoded)
         {

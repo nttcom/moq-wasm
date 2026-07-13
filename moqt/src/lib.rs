@@ -2,6 +2,9 @@ mod modules;
 pub mod wire;
 
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
+pub use modules::moqt::control_plane::control_messages::key_value_pair::{
+    KeyValuePair, VariantType,
+};
 pub use modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
 pub use modules::moqt::control_plane::control_messages::messages::parameters::filter_type::FilterType;
 pub use modules::moqt::control_plane::control_messages::messages::parameters::location::Location;

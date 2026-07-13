@@ -80,11 +80,7 @@ async fn send_segments(
     let mut group_id: u64 = 0;
 
     while let Some(segment) = rx.recv().await {
-        let ext = ExtensionHeaders {
-            prior_group_id_gap: vec![],
-            prior_object_id_gap: vec![],
-            immutable_extensions: vec![],
-        };
+        let ext = ExtensionHeaders::default();
 
         // グループごとに新しいストリームを開く
         let uninit = stream_factory.next().await?;

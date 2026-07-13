@@ -637,11 +637,7 @@ async fn send_ordered_objects(
         let object_id_delta = if index == 0 { 0 } else { 1 };
         let object = stream.create_object_field(
             object_id_delta,
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            ExtensionHeaders::default(),
             SubgroupObject::new_payload(Bytes::from(ordered_object_payload(index))),
         );
         stream.send(object).await?;
@@ -783,11 +779,7 @@ async fn send_test_object(
     let mut stream = uninitialized.send_header(header).await?;
     let object = stream.create_object_field(
         0,
-        ExtensionHeaders {
-            prior_group_id_gap: vec![],
-            prior_object_id_gap: vec![],
-            immutable_extensions: vec![],
-        },
+        ExtensionHeaders::default(),
         SubgroupObject::new_payload(Bytes::from_static(payload)),
     );
     stream.send(object).await?;
