@@ -259,7 +259,10 @@ impl Fetch {
         request: UpstreamFetch,
     ) -> Option<PreparedUpstreamFetch> {
         let fetch_option = moqt::FetchOption {
-            subscriber_priority: handler.subscriber_priority(),
+            // Subscriber Priority is a mandatory FETCH field; forward the default
+            // for now. Propagating the downstream request's priority belongs to
+            // the priority-control work, tracked separately.
+            subscriber_priority: moqt::FetchOption::default().subscriber_priority,
             group_order: handler.group_order(),
         };
 
