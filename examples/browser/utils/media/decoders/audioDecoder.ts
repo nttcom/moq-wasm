@@ -424,9 +424,15 @@ function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
     cachedAudioConfig?.codec ??
     DEFAULT_AUDIO_DECODER_CONFIG.codec
   const sampleRate =
-    metadata.sampleRate ?? catalogAudioSampleRate ?? cachedAudioConfig?.sampleRate ?? DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
+    metadata.sampleRate ??
+    catalogAudioSampleRate ??
+    cachedAudioConfig?.sampleRate ??
+    DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
   const channels =
-    metadata.channels ?? catalogAudioChannels ?? cachedAudioConfig?.channels ?? DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
+    metadata.channels ??
+    catalogAudioChannels ??
+    cachedAudioConfig?.channels ??
+    DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
   const descriptionBase64 =
     metadata.descriptionBase64 ?? catalogAudioDescriptionBase64 ?? cachedAudioConfig?.descriptionBase64
 

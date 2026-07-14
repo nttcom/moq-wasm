@@ -343,7 +343,9 @@ export class CameraSubscriber {
         break
       }
     }
-    void this.reviewDecoder.flush().catch((e) => console.error('[mon][review] sequential flush error', { camId: this.camId, e }))
+    void this.reviewDecoder
+      .flush()
+      .catch((e) => console.error('[mon][review] sequential flush error', { camId: this.camId, e }))
   }
 
   dispose(): void {
