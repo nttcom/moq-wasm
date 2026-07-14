@@ -163,3 +163,270 @@ impl Drop for StreamReader {
         self.join_handle.abort();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use moqt::{
+        ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField,
+        wire::ObjectStatus,
+    };
+    use tokio::sync::oneshot;
+
+    use super::*;
+
+    struct ScriptedStreamReceiver {
+        objects: VecDeque<DataObject>,
+        // Fired once all scripted objects were consumed; lets tests order a
+        // stop signal after ingestion without racing the read loop.
+        exhausted_sender: Option<oneshot::Sender<()>>,
+        hang_when_exhausted: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamReceiver for ScriptedStreamReceiver {
+        async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
+            if let Some(object) = self.objects.pop_front() {
+                return Ok(object);
+            }
+            if let Some(sender) = self.exhausted_sender.take() {
+                let _ = sender.send(());
+            }
+            if self.hang_when_exhausted {
+                std::future::pending::<()>().await;
+            }
+            anyhow::bail!("stream closed")
+        }
+    }
+
+    fn make_header(group_id: u64) -> DataObject {
+        DataObject::SubgroupHeader(SubgroupHeader::new(
+            0,
+            group_id,
+            SubgroupId::Value(0),
+            0,
+            false,
+            false,
+        ))
+    }
+
+    fn empty_extension_headers() -> ExtensionHeaders {
+        ExtensionHeaders {
+            prior_group_id_gap: vec![],
+            prior_object_id_gap: vec![],
+            immutable_extensions: vec![],
+        }
+    }
+
+    fn make_payload_object(object_id_delta: u64) -> DataObject {
+        let message_type =
+            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
+        DataObject::SubgroupObject(SubgroupObjectField {
+            message_type,
+            object_id_delta,
+            extension_headers: empty_extension_headers(),
+            subgroup_object: SubgroupObject::new_payload(Bytes::from(vec![1])),
+        })
+    }
+
+    fn make_end_of_group_object() -> DataObject {
+        let message_type =
+            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
+        DataObject::SubgroupObject(SubgroupObjectField {
+            message_type,
+            object_id_delta: 0,
+            extension_headers: empty_extension_headers(),
+            subgroup_object: SubgroupObject::new_status(ObjectStatus::EndOfGroup as u64),
+        })
+    }
+
+    struct TestEnv {
+        track_key: TrackKey,
+        cache_store: Arc<TrackCacheStore>,
+        notify_map: Arc<ObjectNotifyProducerMap>,
+        event_receiver: tokio::sync::broadcast::Receiver<TrackEvent>,
+        stop_sender: watch::Sender<bool>,
+        stop_receiver: watch::Receiver<bool>,
+    }
+
+    fn make_env() -> TestEnv {
+        let track_key = TrackKey::new("ns", "track");
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let notify_map = Arc::new(ObjectNotifyProducerMap::new());
+        let event_receiver = notify_map.get_or_create(&track_key).subscribe();
+        let (stop_sender, stop_receiver) = watch::channel(false);
+        TestEnv {
+            track_key,
+            cache_store,
+            notify_map,
+            event_receiver,
+            stop_sender,
+            stop_receiver,
+        }
+    }
+
+    async fn assert_subgroup_closed_after(env: &TestEnv, group_id: u64, last_object_id: u64) {
+        let cache = env.cache_store.get_or_create(&env.track_key);
+        let subgroup = StreamSubgroupId::Value(0);
+        let closed = tokio::time::timeout(
+            Duration::from_secs(1),
+            cache.stream_object_from_or_wait(group_id, &subgroup, last_object_id + 1),
+        )
+        .await
+        .expect("subgroup should be closed, not waiting for more objects");
+        assert!(closed.is_none());
+    }
+
+    #[tokio::test]
+    async fn end_of_group_status_closes_subgroup_and_notifies() {
+        let mut env = make_env();
+        let receiver = ScriptedStreamReceiver {
+            objects: VecDeque::from([
+                make_header(0),
+                make_payload_object(0),
+                make_end_of_group_object(),
+            ]),
+            exhausted_sender: None,
+            hang_when_exhausted: false,
+        };
+
+        StreamReader::read_loop(
+            env.track_key.clone(),
+            Box::new(receiver),
+            env.stop_receiver.clone(),
+            env.cache_store.clone(),
+            env.notify_map.clone(),
+        )
+        .await;
+
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::StreamOpened { group_id: 0, .. })
+        ));
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::EndOfGroup)
+        ));
+
+        let cache = env.cache_store.get_or_create(&env.track_key);
+        let subgroup = StreamSubgroupId::Value(0);
+        let (payload_id, _) = cache
+            .stream_object_from_or_wait(0, &subgroup, 0)
+            .await
+            .expect("payload object should be cached");
+        assert_eq!(payload_id, 0);
+        let (status_id, _) = cache
+            .stream_object_from_or_wait(0, &subgroup, 1)
+            .await
+            .expect("end-of-group status object should be cached");
+        assert_eq!(status_id, 1);
+        assert_subgroup_closed_after(&env, 0, 1).await;
+    }
+
+    #[tokio::test]
+    async fn receiver_error_closes_open_subgroup() {
+        let mut env = make_env();
+        let receiver = ScriptedStreamReceiver {
+            objects: VecDeque::from([make_header(0), make_payload_object(0)]),
+            exhausted_sender: None,
+            hang_when_exhausted: false,
+        };
+
+        StreamReader::read_loop(
+            env.track_key.clone(),
+            Box::new(receiver),
+            env.stop_receiver.clone(),
+            env.cache_store.clone(),
+            env.notify_map.clone(),
+        )
+        .await;
+
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::StreamOpened { group_id: 0, .. })
+        ));
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::EndOfGroup)
+        ));
+        assert_subgroup_closed_after(&env, 0, 0).await;
+    }
+
+    #[tokio::test]
+    async fn stop_signal_closes_open_subgroup() {
+        let mut env = make_env();
+        let (exhausted_sender, exhausted_receiver) = oneshot::channel();
+        let receiver = ScriptedStreamReceiver {
+            objects: VecDeque::from([make_header(0), make_payload_object(0)]),
+            exhausted_sender: Some(exhausted_sender),
+            hang_when_exhausted: true,
+        };
+
+        let read_task = tokio::spawn(StreamReader::read_loop(
+            env.track_key.clone(),
+            Box::new(receiver),
+            env.stop_receiver.clone(),
+            env.cache_store.clone(),
+            env.notify_map.clone(),
+        ));
+
+        exhausted_receiver
+            .await
+            .expect("reader should consume all scripted objects");
+        env.stop_sender.send(true).expect("stop signal should send");
+        tokio::time::timeout(Duration::from_secs(1), read_task)
+            .await
+            .expect("read loop should stop on signal")
+            .expect("read loop should not panic");
+
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::StreamOpened { group_id: 0, .. })
+        ));
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::EndOfGroup)
+        ));
+        assert_subgroup_closed_after(&env, 0, 0).await;
+    }
+
+    #[tokio::test]
+    async fn resolves_absolute_object_ids_from_deltas() {
+        let mut env = make_env();
+        let receiver = ScriptedStreamReceiver {
+            // deltas 0, 0, 1 resolve to absolute ids 0, 1, 3
+            objects: VecDeque::from([
+                make_header(0),
+                make_payload_object(0),
+                make_payload_object(0),
+                make_payload_object(1),
+            ]),
+            exhausted_sender: None,
+            hang_when_exhausted: false,
+        };
+
+        StreamReader::read_loop(
+            env.track_key.clone(),
+            Box::new(receiver),
+            env.stop_receiver.clone(),
+            env.cache_store.clone(),
+            env.notify_map.clone(),
+        )
+        .await;
+        // silence unused warnings for the fields this test does not exercise
+        let _ = (&env.stop_sender, &mut env.event_receiver);
+
+        let cache = env.cache_store.get_or_create(&env.track_key);
+        let subgroup = StreamSubgroupId::Value(0);
+        let mut object_ids = Vec::new();
+        let mut cursor = 0;
+        while let Some((id, _)) = cache.stream_object_from_or_wait(0, &subgroup, cursor).await {
+            object_ids.push(id);
+            cursor = id + 1;
+        }
+        assert_eq!(object_ids, vec![0, 1, 3]);
+    }
+}
