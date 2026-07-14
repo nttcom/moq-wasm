@@ -367,14 +367,56 @@ impl TrackCache {
         }
 
         let end_location = self.resolve_fetch_end_location(end, largest).await;
-        if !self.covers(start, end_location).await {
-            return FetchRangeResolution::NotCovered;
-        }
-        if !self.has_fetch_object(start, end_location).await {
-            return FetchRangeResolution::NoObjects;
+        if self.covers(start, end_location).await {
+            if !self.has_fetch_object(start, end_location).await {
+                return FetchRangeResolution::NoObjects;
+            }
+            return FetchRangeResolution::Serve { end_location };
         }
 
-        FetchRangeResolution::Serve { end_location }
+        // In-flight tolerance: QUIC gives no cross-stream ordering, so a
+        // group's FIN can lag behind its objects (and behind later groups).
+        // If live ingest is running and every group in range has knowledge
+        // accumulating from its head, the data is arriving and only closes
+        // are pending — serve and let delivery wait (bounded: live ingress
+        // always closes its groups). This is the relay-side §9.16 pause;
+        // without it these fetches would be forwarded upstream, which ends
+        // at a publisher client that cannot serve FETCH.
+        if self.serves_after_in_flight_wait(start, end_location).await
+            && self.has_fetch_object(start, end_location).await
+        {
+            return FetchRangeResolution::Serve { end_location };
+        }
+
+        FetchRangeResolution::NotCovered
+    }
+
+    /// True when the only missing knowledge in [start, end) is open tails of
+    /// live groups. Each group must have knowledge from object 0 (per-append
+    /// inserts produce exactly that for live data): a group with no knowledge
+    /// island, or one not starting at its head (evicted prefix, fetch-fill
+    /// leftovers), disqualifies the range.
+    async fn serves_after_in_flight_wait(
+        &self,
+        start: moqt::Location,
+        end: moqt::Location,
+    ) -> bool {
+        if self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0 {
+            return false;
+        }
+        let known_ranges = self.known_ranges.read().await;
+        for group_id in start.group_id..=end.group_id {
+            if known_ranges
+                .end_of_range_containing(moqt::Location {
+                    group_id,
+                    object_id: 0,
+                })
+                .is_none()
+            {
+                return false;
+            }
+        }
+        true
     }
 
     pub(crate) async fn insert_fetch_known_range(
@@ -1203,6 +1245,98 @@ mod tests {
 
         // Assert
         assert!(cache.eviction_generation() > generation);
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_serves_in_flight_groups_before_close() {
+        // Arrange: live ingest delivered g0/g1 objects but their FINs have not
+        // been processed yet (QUIC gives no cross-stream ordering).
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        fill_group_with_ids(&cache, 0, &[0, 1, 2]).await;
+        fill_group_with_ids(&cache, 1, &[0, 1]).await;
+
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 2,
+                },
+            )
+            .await;
+
+        // Assert: serve and let delivery wait for the pending closes instead
+        // of forwarding upstream.
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: moqt::Location {
+                    group_id: 1,
+                    object_id: 2
+                }
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_fetch_range_not_covered_for_open_groups_without_live_ingest() {
+        // Arrange: same cache state, but no live ingest is running, so the
+        // missing closes will never arrive locally.
+        let cache = TrackCache::new();
+        fill_group_with_ids(&cache, 0, &[0, 1, 2]).await;
+        fill_group_with_ids(&cache, 1, &[0, 1]).await;
+
+        // Act
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 2,
+                },
+            )
+            .await;
+
+        // Assert
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolve_fetch_range_not_covered_when_group_head_was_evicted() {
+        // Arrange: g0's only object expired and was evicted (knowledge removed),
+        // then live ingest continued with g1.
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        fill_group_with_ids(&cache, 0, &[0]).await;
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl).await;
+        fill_group_with_ids(&cache, 1, &[0]).await;
+
+        // Act: the range includes the evicted head of g0.
+        let resolution = cache
+            .resolve_fetch_range(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 1,
+                },
+            )
+            .await;
+
+        // Assert: evicted knowledge must not be served as an in-flight wait.
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
     }
 
     #[tokio::test]
