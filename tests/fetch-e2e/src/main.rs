@@ -370,20 +370,28 @@ async fn bob(
         DataReceiver::Datagram(_) => anyhow::bail!("[bob] unexpected datagram"),
     };
 
-    'detect: loop {
+    // Drain every group's stream to completion. QUIC gives no cross-stream
+    // ordering, so fetching on first sight of g2 can race streams that have
+    // not even reached the relay; a fetch for an un-arrived group is unknown
+    // status and correctly goes upstream (spec §9.16), which this topology's
+    // FETCH-less publisher cannot serve. The in-flight race itself is covered
+    // by relay unit tests (resolve + delivery wait).
+    let mut closed_groups = std::collections::HashSet::new();
+    while closed_groups.len() < GROUPS as usize {
         let mut stream = factory.next().await?;
+        let mut group_id = None;
         loop {
             match stream.receive().await {
                 Ok(Subgroup::Header(h)) => {
                     tracing::info!("[bob] live group_id={}", h.group_id);
-                    if h.group_id >= 2 {
-                        tracing::info!("[bob] group 2 detected, relay cache ready");
-                        break 'detect;
-                    }
+                    group_id = Some(h.group_id);
                 }
                 Ok(Subgroup::Object(_)) => {}
-                Err(_) => break, // stream ended, move to next group
+                Err(_) => break, // stream ended: this group is fully received
             }
+        }
+        if let Some(group_id) = group_id {
+            closed_groups.insert(group_id);
         }
     }
 
