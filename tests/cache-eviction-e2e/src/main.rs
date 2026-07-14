@@ -8,9 +8,9 @@
 //!     (Carol) stays connected to keep the track alive (strong_count >= 2).
 //!       - fetch A/g0 right away          -> 5 objects (cached)
 //!       - fetch A/g0 before TTL          -> 5 objects (not removed early)
-//!       - fetch A/g0 after TTL+interval  -> 0 objects, but the fetch still
-//!         succeeds because the track (held by Carol) is alive; only the
-//!         closed, drained group was reclaimed.
+//!       - fetch A/g0 after TTL+interval  -> FETCH error: evicted objects are
+//!         unknown again, so the relay refetches upstream instead of faking an
+//!         empty final response; the client publisher cannot serve FETCH.
 //!
 //!   Phase B (track reclaim after TTL drain, no holders):
 //!     A publisher sends one closed group on track B. A subscriber (Bob) triggers
@@ -20,8 +20,9 @@
 //!       - fetch B/g0                     -> 5 objects: a track with fresh
 //!         objects must keep serving FETCH even with no session holding it
 //!         (reclaiming it here loses data, see the object-dedup E2E)
-//!       - after TTL+interval             -> FETCH error (TrackNotFound): the
-//!         objects drained via TTL, the emptied track was reclaimed.
+//!       - after TTL+interval             -> FETCH error: the objects drained
+//!         via TTL and the emptied track was reclaimed; the refetch dead-ends
+//!         at the FETCH-less client publisher.
 //!
 //! Run a relay on localhost:4433 with a short TTL, then `cargo run -p
 //! cache-eviction-e2e` from the repo root:
@@ -198,13 +199,22 @@ async fn run_scenario() -> anyhow::Result<()> {
     tracing::info!("[A] before TTL: still 5 objects (not removed early)");
 
     tokio::time::sleep(Duration::from_secs(4)).await; // now past TTL + interval
-    let after_ttl = fetch_group(NAMESPACE_A, 0).await?;
-    assert!(
-        after_ttl.is_empty(),
-        "[A] group 0 objects must be evicted by TTL, got {:?}",
-        after_ttl
-    );
-    tracing::info!("[A] after TTL: 0 objects, but fetch still resolved (track alive) — OK");
+    // Evicted objects revert to unknown status: the relay must not fabricate an
+    // empty-but-final response for them (a FIN would assert non-existence).
+    // It refetches upstream instead; the upstream here is a publisher client
+    // that cannot serve FETCH, so the fetch fails with its NOT_SUPPORTED.
+    // With a FETCH-capable upstream (another relay) this would refill instead.
+    match fetch_group(NAMESPACE_A, 0).await {
+        Err(e) => {
+            tracing::info!("[A] after TTL: fetch errored ({e}) — evicted range not faked, OK");
+        }
+        Ok(objects) => {
+            anyhow::bail!(
+                "[A] evicted range must not be served as a final response, got {:?}",
+                objects
+            );
+        }
+    }
 
     drop(carol); // release the track for good measure
 
