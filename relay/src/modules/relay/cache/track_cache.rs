@@ -13,7 +13,7 @@ use crate::modules::{
     core::data_object::DataObject,
     relay::{
         cache::{
-            group_cache::{EntryOrigin, GroupCache},
+            group_cache::{ClosurePolicy, GroupCache},
             known_ranges::KnownRanges,
         },
         types::StreamSubgroupId,
@@ -51,7 +51,7 @@ impl TrackCache {
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
-        origin: EntryOrigin,
+        policy: ClosurePolicy,
     ) -> Arc<GroupCache> {
         let cache = if let Some(existing) = self
             .stream_groups
@@ -68,13 +68,13 @@ impl TrackCache {
                 .entry(group_id)
                 .or_default()
                 .entry(subgroup_id.clone())
-                .or_insert_with(|| Arc::new(GroupCache::new(origin)))
+                .or_insert_with(|| Arc::new(GroupCache::new(policy)))
                 .clone()
         };
         // Live ingest claims entries a fetch fill may have created first;
-        // origins are never demoted.
-        if origin == EntryOrigin::Live {
-            cache.promote_to_live();
+        // policies are never demoted.
+        if policy == ClosurePolicy::ClosedByIngress {
+            cache.promote_to_closed_by_ingress();
         }
         cache
     }
@@ -88,7 +88,7 @@ impl TrackCache {
         groups
             .entry(group_id)
             // Datagrams are only ingested live.
-            .or_insert_with(|| Arc::new(GroupCache::new(EntryOrigin::Live)))
+            .or_insert_with(|| Arc::new(GroupCache::new(ClosurePolicy::ClosedByIngress)))
             .clone()
     }
 
@@ -100,7 +100,7 @@ impl TrackCache {
         object: DataObject,
     ) {
         let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, EntryOrigin::FetchFill)
+            .ensure_stream_subgroup(group_id, subgroup_id, ClosurePolicy::NeverCloses)
             .await;
         group.append(object_id, Arc::new(object)).await;
     }
@@ -113,7 +113,7 @@ impl TrackCache {
         object: DataObject,
     ) {
         let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, EntryOrigin::Live)
+            .ensure_stream_subgroup(group_id, subgroup_id, ClosurePolicy::ClosedByIngress)
             .await;
         group.append(object_id, Arc::new(object)).await;
         if let Some(object_id) = object_id {
@@ -151,7 +151,7 @@ impl TrackCache {
         subgroup_id: &StreamSubgroupId,
     ) {
         let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, EntryOrigin::Live)
+            .ensure_stream_subgroup(group_id, subgroup_id, ClosurePolicy::ClosedByIngress)
             .await;
         group.mark_end_of_group().await;
         let caches = self.stream_group_caches(group_id).await;
