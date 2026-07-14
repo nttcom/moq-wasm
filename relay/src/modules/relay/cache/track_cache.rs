@@ -12,7 +12,10 @@ use tokio::sync::RwLock;
 use crate::modules::{
     core::data_object::DataObject,
     relay::{
-        cache::{group_cache::GroupCache, known_ranges::KnownRanges},
+        cache::{
+            group_cache::{EntryOrigin, GroupCache},
+            known_ranges::KnownRanges,
+        },
         types::StreamSubgroupId,
     },
 };
@@ -48,8 +51,9 @@ impl TrackCache {
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
+        origin: EntryOrigin,
     ) -> Arc<GroupCache> {
-        if let Some(existing) = self
+        let cache = if let Some(existing) = self
             .stream_groups
             .read()
             .await
@@ -57,16 +61,22 @@ impl TrackCache {
             .and_then(|subgroups| subgroups.get(subgroup_id))
             .cloned()
         {
-            return existing;
+            existing
+        } else {
+            let mut groups = self.stream_groups.write().await;
+            groups
+                .entry(group_id)
+                .or_default()
+                .entry(subgroup_id.clone())
+                .or_insert_with(|| Arc::new(GroupCache::new(origin)))
+                .clone()
+        };
+        // Live ingest claims entries a fetch fill may have created first;
+        // origins are never demoted.
+        if origin == EntryOrigin::Live {
+            cache.promote_to_live();
         }
-
-        let mut groups = self.stream_groups.write().await;
-        groups
-            .entry(group_id)
-            .or_default()
-            .entry(subgroup_id.clone())
-            .or_insert_with(|| Arc::new(GroupCache::new()))
-            .clone()
+        cache
     }
 
     async fn ensure_datagram_group(&self, group_id: u64) -> Arc<GroupCache> {
@@ -77,7 +87,8 @@ impl TrackCache {
         let mut groups = self.datagram_groups.write().await;
         groups
             .entry(group_id)
-            .or_insert_with(|| Arc::new(GroupCache::new()))
+            // Datagrams are only ingested live.
+            .or_insert_with(|| Arc::new(GroupCache::new(EntryOrigin::Live)))
             .clone()
     }
 
@@ -88,7 +99,9 @@ impl TrackCache {
         object_id: Option<u64>,
         object: DataObject,
     ) {
-        let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
+        let group = self
+            .ensure_stream_subgroup(group_id, subgroup_id, EntryOrigin::FetchFill)
+            .await;
         group.append(object_id, Arc::new(object)).await;
     }
 
@@ -99,8 +112,10 @@ impl TrackCache {
         object_id: Option<u64>,
         object: DataObject,
     ) {
-        self.append_stream_object(group_id, subgroup_id, object_id, object)
+        let group = self
+            .ensure_stream_subgroup(group_id, subgroup_id, EntryOrigin::Live)
             .await;
+        group.append(object_id, Arc::new(object)).await;
         if let Some(object_id) = object_id {
             self.known_ranges.write().await.insert(
                 moqt::Location {
@@ -135,7 +150,9 @@ impl TrackCache {
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
     ) {
-        let group = self.ensure_stream_subgroup(group_id, subgroup_id).await;
+        let group = self
+            .ensure_stream_subgroup(group_id, subgroup_id, EntryOrigin::Live)
+            .await;
         group.mark_end_of_group().await;
         let caches = self.stream_group_caches(group_id).await;
         if Self::all_subgroups_closed_for_group(&caches).await {
@@ -174,7 +191,6 @@ impl TrackCache {
                 .collect()
         };
         let mut removable_streams: Vec<(u64, StreamSubgroupId)> = Vec::new();
-        let reclaim_empty_open = self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0;
         for (group_id, subgroup_id, group) in stream_groups {
             if let Some(evicted_objects) = group.evict_expired_objects(ttl).await {
                 removed_any = true;
@@ -192,7 +208,7 @@ impl TrackCache {
                     },
                 );
             }
-            if group.is_evictable(ttl, reclaim_empty_open).await {
+            if group.is_evictable().await {
                 removable_streams.push((group_id, subgroup_id));
             }
         }
@@ -220,7 +236,7 @@ impl TrackCache {
             if group.evict_expired_objects(ttl).await.is_some() {
                 removed_any = true;
             }
-            if group.is_evictable(ttl, reclaim_empty_open).await {
+            if group.is_evictable().await {
                 removable_datagrams.push(group_id);
             }
         }
@@ -840,31 +856,31 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn evict_removes_empty_open_group_after_ttl_without_live_ingest() {
-        // Arrange: an open group with only a header, no objects yet, TTL=10s
+    async fn evict_reclaims_empty_fetch_fill_leftover() {
+        // Arrange: a fetch fill wrote only a header before failing; the entry
+        // never closes, and emptiness alone marks it reclaimable.
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
         cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
-        // Act: long past the TTL, but the group is still open
-        tokio::time::advance(Duration::from_secs(100)).await;
+        // Act
         cache.evict(ttl).await;
-        // Assert: empty open subgroups are reclaimed after TTL if no object arrives.
+        // Assert: fetch-fill leftovers are reclaimed as soon as they are empty.
         assert!(!cache.has_stream_group(0).await);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn evict_keeps_empty_open_group_during_live_ingest() {
+    async fn evict_keeps_empty_open_live_group() {
         // Arrange: live ingress may send a header long before the first object.
-        // Reclaiming that placeholder would resurrect a headerless GroupCache.
+        // Reclaiming that placeholder would resurrect a headerless GroupCache,
+        // so live-origin entries are only reclaimed once closed.
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        cache.begin_live_ingest();
         let subgroup = StreamSubgroupId::Value(0);
         cache
-            .append_stream_object(0, &subgroup, None, make_header(0))
+            .append_live_stream_object(0, &subgroup, None, make_header(0))
             .await;
 
         // Act

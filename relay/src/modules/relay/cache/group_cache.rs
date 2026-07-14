@@ -1,4 +1,11 @@
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use tokio::{
     sync::{Notify, RwLock},
@@ -7,30 +14,47 @@ use tokio::{
 
 use crate::modules::core::data_object::DataObject;
 
+/// Who created (or last claimed) a subgroup entry. The two origins have
+/// different ends of life: live subgroups are always closed by ingress
+/// (stream FIN, EndOfGroup, or reader teardown), while fetch-fill subgroups
+/// never close — emptiness is their only end-of-life signal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EntryOrigin {
+    Live,
+    FetchFill,
+}
+
 pub(crate) struct GroupCache {
     header: RwLock<Option<Arc<DataObject>>>,
     objects: RwLock<BTreeMap<u64, (Instant, Arc<DataObject>)>>,
-    last_append: RwLock<Instant>,
+    /// See [`EntryOrigin`]; stored as "is live" so promotion is a cheap store.
+    live_origin: AtomicBool,
     end_of_group: RwLock<bool>,
     notify: Notify,
 }
 
 impl GroupCache {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(origin: EntryOrigin) -> Self {
         Self {
             header: RwLock::new(None),
             objects: RwLock::new(BTreeMap::new()),
-            last_append: RwLock::new(Instant::now()),
+            live_origin: AtomicBool::new(origin == EntryOrigin::Live),
             end_of_group: RwLock::new(false),
             notify: Notify::new(),
         }
+    }
+
+    /// Live ingest writing into an entry a fetch fill created first claims it:
+    /// from then on it will be closed by ingress like any live subgroup.
+    /// Origins are never demoted.
+    pub(crate) fn promote_to_live(&self) {
+        self.live_origin.store(true, Ordering::Relaxed);
     }
 
     // FIXME: §8.1 also requires treating a duplicate whose payload/subgroup/priority
     // differs (or an invalid status transition) as Malformed (MUST). Not implemented;
     // we only ignore duplicates (first-wins).
     pub(crate) async fn append(&self, object_id: Option<u64>, object: Arc<DataObject>) {
-        *self.last_append.write().await = Instant::now();
         match object_id {
             // No object_id = subgroup header. Keep the first one (first-wins).
             None => {
@@ -72,19 +96,18 @@ impl GroupCache {
             .map(|(start, end)| start..end.saturating_add(1))
     }
 
-    pub(crate) async fn is_evictable(&self, ttl: Duration, reclaim_empty_open: bool) -> bool {
+    pub(crate) async fn is_evictable(&self) -> bool {
         if !self.objects.read().await.is_empty() {
             return false;
         }
         if self.is_closed().await {
             return true;
         }
-        if !reclaim_empty_open {
-            return false;
-        }
-        // Fetch-fill subgroups are intentionally not closed. Keep empty live placeholders
-        // for at least TTL after the last append, then reclaim them if no object arrived.
-        self.last_append.read().await.elapsed() > ttl
+        // A live subgroup that is open and empty is a placeholder whose objects
+        // are still coming — reclaiming it would resurrect a header-less entry
+        // later. A fetch-fill subgroup never closes, so once drained empty
+        // (objects only leave via TTL) it is a leftover and can go.
+        !self.live_origin.load(Ordering::Relaxed)
     }
 
     pub(crate) async fn header(&self) -> Option<Arc<DataObject>> {
@@ -225,7 +248,7 @@ mod tests {
     #[tokio::test]
     async fn append_same_object_id_keeps_first() {
         // Arrange: two objects with the same object_id but distinct payloads
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(Some(0), payload_object(b"first")).await;
         cache.append(Some(0), payload_object(b"second")).await;
         // Act
@@ -240,7 +263,7 @@ mod tests {
     #[tokio::test]
     async fn append_header_twice_keeps_first() {
         // Arrange: two subgroup headers distinguished by publisher_priority
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(None, header_object(1)).await;
         cache.append(None, header_object(2)).await;
         // Act
@@ -255,7 +278,7 @@ mod tests {
     #[tokio::test]
     async fn object_from_or_wait_returns_exact_match() {
         // Arrange: objects at ids 0, 3, 5
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(Some(0), payload_object(b"o0")).await;
         cache.append(Some(3), payload_object(b"o3")).await;
         cache.append(Some(5), payload_object(b"o5")).await;
@@ -268,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn object_from_or_wait_skips_gap_to_next_id() {
         // Arrange: objects at ids 0, 3, 5 (no object at 1, 2, 4)
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(Some(0), payload_object(b"o0")).await;
         cache.append(Some(3), payload_object(b"o3")).await;
         cache.append(Some(5), payload_object(b"o5")).await;
@@ -282,7 +305,7 @@ mod tests {
     async fn evict_removes_objects_older_than_ttl() {
         // Arrange: object 0 at t=0, object 1 at t=6s, TTL=10s
         let ttl = Duration::from_secs(10);
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(Some(0), payload_object(b"old")).await;
         tokio::time::advance(Duration::from_secs(6)).await;
         cache.append(Some(1), payload_object(b"new")).await;
@@ -299,7 +322,7 @@ mod tests {
     async fn evict_keeps_object_at_exactly_ttl() {
         // Arrange: object 0 at t=0, TTL=10s
         let ttl = Duration::from_secs(10);
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(Some(0), payload_object(b"o")).await;
         // Act: at exactly t=10s, age == TTL, which is not `> TTL`
         tokio::time::advance(Duration::from_secs(10)).await;
@@ -311,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn object_from_or_wait_returns_none_when_closed() {
         // Arrange: one object at id 0, then the group is closed
-        let cache = GroupCache::new();
+        let cache = GroupCache::new(EntryOrigin::Live);
         cache.append(Some(0), payload_object(b"o0")).await;
         cache.mark_end_of_group().await;
         // Act: ask for id 1, beyond the last object, on a closed group
