@@ -26,4 +26,8 @@ impl<T: TransportProtocol> FetchDataSender<T> {
     pub async fn close(&self) -> anyhow::Result<()> {
         self.stream_sender.close().await
     }
+
+    pub async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
+        self.stream_sender.reset(error_code).await
+    }
 }

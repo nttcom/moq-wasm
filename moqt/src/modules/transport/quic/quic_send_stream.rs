@@ -24,6 +24,17 @@ impl TransportSendStream for QUICSendStream {
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)
     }
+
+    async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError> {
+        let error_code = quinn::VarInt::try_from(error_code).map_err(|source| {
+            TransportSendError::Transport {
+                source: source.into(),
+            }
+        })?;
+        self.send_stream
+            .reset(error_code)
+            .map_err(|_| TransportSendError::ClosedStream)
+    }
 }
 
 fn quic_write_error_to_transport_send_error(error: quinn::WriteError) -> TransportSendError {

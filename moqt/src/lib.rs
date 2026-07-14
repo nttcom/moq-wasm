@@ -87,6 +87,8 @@ pub use modules::moqt::domains::publisher::Publisher;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::session::Session;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::session_context::RequestTimeoutError;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscriber::DataReceiver;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscriber::Subscriber;
