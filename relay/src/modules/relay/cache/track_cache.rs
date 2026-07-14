@@ -13,7 +13,7 @@ use crate::modules::{
     core::data_object::DataObject,
     relay::{
         cache::{
-            group_cache::{ClosurePolicy, GroupCache},
+            group_cache::{GroupCache, SubgroupLifecycle},
             known_ranges::KnownRanges,
         },
         types::StreamSubgroupId,
@@ -51,7 +51,7 @@ impl TrackCache {
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
-        policy: ClosurePolicy,
+        lifecycle: SubgroupLifecycle,
     ) -> Arc<GroupCache> {
         let cache = if let Some(existing) = self
             .stream_groups
@@ -68,14 +68,12 @@ impl TrackCache {
                 .entry(group_id)
                 .or_default()
                 .entry(subgroup_id.clone())
-                .or_insert_with(|| Arc::new(GroupCache::new(policy)))
+                .or_insert_with(|| Arc::new(GroupCache::new(lifecycle)))
                 .clone()
         };
         // Live ingest claims entries a fetch fill may have created first;
-        // policies are never demoted.
-        if policy == ClosurePolicy::ClosedByIngress {
-            cache.promote_to_closed_by_ingress();
-        }
+        // advance_to is monotone, so a NoCloseSignal caller is a no-op here.
+        cache.advance_to(lifecycle);
         cache
     }
 
@@ -88,7 +86,7 @@ impl TrackCache {
         groups
             .entry(group_id)
             // Datagrams are only ingested live.
-            .or_insert_with(|| Arc::new(GroupCache::new(ClosurePolicy::ClosedByIngress)))
+            .or_insert_with(|| Arc::new(GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal)))
             .clone()
     }
 
@@ -100,7 +98,7 @@ impl TrackCache {
         object: DataObject,
     ) {
         let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, ClosurePolicy::NeverCloses)
+            .ensure_stream_subgroup(group_id, subgroup_id, SubgroupLifecycle::NoCloseSignal)
             .await;
         group.append(object_id, Arc::new(object)).await;
     }
@@ -113,7 +111,11 @@ impl TrackCache {
         object: DataObject,
     ) {
         let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, ClosurePolicy::ClosedByIngress)
+            .ensure_stream_subgroup(
+                group_id,
+                subgroup_id,
+                SubgroupLifecycle::AwaitingCloseSignal,
+            )
             .await;
         group.append(object_id, Arc::new(object)).await;
         if let Some(object_id) = object_id {
@@ -151,9 +153,13 @@ impl TrackCache {
         subgroup_id: &StreamSubgroupId,
     ) {
         let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, ClosurePolicy::ClosedByIngress)
+            .ensure_stream_subgroup(
+                group_id,
+                subgroup_id,
+                SubgroupLifecycle::AwaitingCloseSignal,
+            )
             .await;
-        group.mark_end_of_group().await;
+        group.mark_end_of_group();
         let caches = self.stream_group_caches(group_id).await;
         if Self::all_subgroups_closed_for_group(&caches).await {
             // This preserves the previous optimistic live coverage model: once all
@@ -173,7 +179,7 @@ impl TrackCache {
 
     pub(crate) async fn close_datagram_group(&self, group_id: u64) {
         let group = self.ensure_datagram_group(group_id).await;
-        group.mark_end_of_group().await;
+        group.mark_end_of_group();
     }
 
     pub(crate) async fn evict(&self, ttl: Duration) {
@@ -518,7 +524,7 @@ impl TrackCache {
 
     async fn all_subgroups_closed_for_group(caches: &[Arc<GroupCache>]) -> bool {
         for cache in caches {
-            if cache.header().await.is_none() || !cache.is_closed().await {
+            if cache.header().await.is_none() || !cache.is_closed() {
                 return false;
             }
         }

@@ -3,7 +3,7 @@ use std::{
     ops::Range,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU8, Ordering},
     },
 };
 
@@ -14,41 +14,57 @@ use tokio::{
 
 use crate::modules::core::data_object::DataObject;
 
-/// Whether a close signal will ever arrive for a subgroup entry. Live ingest
-/// always closes its subgroups (stream FIN, EndOfGroup, or reader teardown),
-/// so an open empty entry is a placeholder still being written. Fetch fills
-/// never close their entries — emptiness is their only end-of-life signal.
+/// Lifecycle of a subgroup entry. Transitions only move forward (see
+/// [`GroupCache::advance_to`]), so the reachable states are exactly:
+/// fetch-fill entries stay at `NoCloseSignal` until a live claim, live
+/// entries wait at `AwaitingCloseSignal`, and only live ingest reaches
+/// `Closed`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ClosurePolicy {
-    ClosedByIngress,
-    NeverCloses,
+#[repr(u8)]
+pub(crate) enum SubgroupLifecycle {
+    /// Created by a fetch fill and never claimed by live ingest: nothing
+    /// will ever close it, so emptiness is its only end-of-life signal.
+    NoCloseSignal = 0,
+    /// Owned by live ingest: stream FIN, EndOfGroup, or reader teardown is
+    /// guaranteed to close it. Open and empty means a placeholder whose
+    /// objects are still coming.
+    AwaitingCloseSignal = 1,
+    /// The close signal arrived; no more objects will be appended.
+    Closed = 2,
 }
 
 pub(crate) struct GroupCache {
     header: RwLock<Option<Arc<DataObject>>>,
     objects: RwLock<BTreeMap<u64, (Instant, Arc<DataObject>)>>,
-    /// See [`ClosurePolicy`]; stored as a bool so promotion is a cheap store.
-    closed_by_ingress: AtomicBool,
-    end_of_group: RwLock<bool>,
+    /// [`SubgroupLifecycle`] as its `repr(u8)`, so advancing is a cheap
+    /// `fetch_max` on the hot append path.
+    lifecycle: AtomicU8,
     notify: Notify,
 }
 
 impl GroupCache {
-    pub(crate) fn new(policy: ClosurePolicy) -> Self {
+    pub(crate) fn new(lifecycle: SubgroupLifecycle) -> Self {
         Self {
             header: RwLock::new(None),
             objects: RwLock::new(BTreeMap::new()),
-            closed_by_ingress: AtomicBool::new(policy == ClosurePolicy::ClosedByIngress),
-            end_of_group: RwLock::new(false),
+            lifecycle: AtomicU8::new(lifecycle as u8),
             notify: Notify::new(),
         }
     }
 
-    /// Live ingest writing into an entry a fetch fill created first claims it:
-    /// from then on it will be closed by ingress like any live subgroup.
-    /// Policies are never demoted back to `NeverCloses`.
-    pub(crate) fn promote_to_closed_by_ingress(&self) {
-        self.closed_by_ingress.store(true, Ordering::Relaxed);
+    /// Moves the lifecycle forward; advancing to an earlier or equal state is
+    /// a no-op. Monotonicity matters: a live claim can race a close (e.g. an
+    /// append arriving after FIN handling), and must not regress `Closed`.
+    pub(crate) fn advance_to(&self, target: SubgroupLifecycle) {
+        self.lifecycle.fetch_max(target as u8, Ordering::AcqRel);
+    }
+
+    fn lifecycle(&self) -> SubgroupLifecycle {
+        match self.lifecycle.load(Ordering::Acquire) {
+            0 => SubgroupLifecycle::NoCloseSignal,
+            1 => SubgroupLifecycle::AwaitingCloseSignal,
+            _ => SubgroupLifecycle::Closed,
+        }
     }
 
     // FIXME: §8.1 also requires treating a duplicate whose payload/subgroup/priority
@@ -100,15 +116,12 @@ impl GroupCache {
         if !self.objects.read().await.is_empty() {
             return false;
         }
-        if self.is_closed().await {
-            return true;
-        }
-        // An open empty entry that will be closed by ingress is a placeholder
-        // whose objects are still coming — reclaiming it would resurrect a
-        // header-less entry later. An entry that never closes has no such
-        // signal to wait for, so once drained empty (objects only leave via
-        // TTL) it is a leftover and can go.
-        !self.closed_by_ingress.load(Ordering::Relaxed)
+        // Only an entry still awaiting its close signal is a placeholder whose
+        // objects may yet come — reclaiming it would resurrect a header-less
+        // entry later. Closed entries are done, and no-close-signal entries
+        // have nothing to wait for, so once drained empty (objects only leave
+        // via TTL) both are leftovers.
+        self.lifecycle() != SubgroupLifecycle::AwaitingCloseSignal
     }
 
     pub(crate) async fn header(&self) -> Option<Arc<DataObject>> {
@@ -144,7 +157,7 @@ impl GroupCache {
             if let Some(header) = self.header().await {
                 return Some(header);
             }
-            if self.is_closed().await {
+            if self.is_closed() {
                 return None;
             }
             notified.await;
@@ -163,22 +176,20 @@ impl GroupCache {
             if let Some((&id, (_, object))) = self.objects.read().await.range(object_id..).next() {
                 return Some((id, object.clone()));
             }
-            if self.is_closed().await {
+            if self.is_closed() {
                 return None;
             }
             notified.await;
         }
     }
 
-    pub(crate) async fn mark_end_of_group(&self) {
-        let mut end_of_group = self.end_of_group.write().await;
-        *end_of_group = true;
-        drop(end_of_group);
+    pub(crate) fn mark_end_of_group(&self) {
+        self.advance_to(SubgroupLifecycle::Closed);
         self.notify.notify_waiters();
     }
 
-    pub(crate) async fn is_closed(&self) -> bool {
-        *self.end_of_group.read().await
+    pub(crate) fn is_closed(&self) -> bool {
+        self.lifecycle() == SubgroupLifecycle::Closed
     }
 
     /// Returns all cached objects in object_id order. The subgroup header is not included.
@@ -249,7 +260,7 @@ mod tests {
     #[tokio::test]
     async fn append_same_object_id_keeps_first() {
         // Arrange: two objects with the same object_id but distinct payloads
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(Some(0), payload_object(b"first")).await;
         cache.append(Some(0), payload_object(b"second")).await;
         // Act
@@ -264,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn append_header_twice_keeps_first() {
         // Arrange: two subgroup headers distinguished by publisher_priority
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(None, header_object(1)).await;
         cache.append(None, header_object(2)).await;
         // Act
@@ -279,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn object_from_or_wait_returns_exact_match() {
         // Arrange: objects at ids 0, 3, 5
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(Some(0), payload_object(b"o0")).await;
         cache.append(Some(3), payload_object(b"o3")).await;
         cache.append(Some(5), payload_object(b"o5")).await;
@@ -292,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn object_from_or_wait_skips_gap_to_next_id() {
         // Arrange: objects at ids 0, 3, 5 (no object at 1, 2, 4)
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(Some(0), payload_object(b"o0")).await;
         cache.append(Some(3), payload_object(b"o3")).await;
         cache.append(Some(5), payload_object(b"o5")).await;
@@ -306,7 +317,7 @@ mod tests {
     async fn evict_removes_objects_older_than_ttl() {
         // Arrange: object 0 at t=0, object 1 at t=6s, TTL=10s
         let ttl = Duration::from_secs(10);
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(Some(0), payload_object(b"old")).await;
         tokio::time::advance(Duration::from_secs(6)).await;
         cache.append(Some(1), payload_object(b"new")).await;
@@ -323,7 +334,7 @@ mod tests {
     async fn evict_keeps_object_at_exactly_ttl() {
         // Arrange: object 0 at t=0, TTL=10s
         let ttl = Duration::from_secs(10);
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(Some(0), payload_object(b"o")).await;
         // Act: at exactly t=10s, age == TTL, which is not `> TTL`
         tokio::time::advance(Duration::from_secs(10)).await;
@@ -335,12 +346,25 @@ mod tests {
     #[tokio::test]
     async fn object_from_or_wait_returns_none_when_closed() {
         // Arrange: one object at id 0, then the group is closed
-        let cache = GroupCache::new(ClosurePolicy::ClosedByIngress);
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         cache.append(Some(0), payload_object(b"o0")).await;
-        cache.mark_end_of_group().await;
+        cache.mark_end_of_group();
         // Act: ask for id 1, beyond the last object, on a closed group
         let result = cache.object_from_or_wait(1).await;
         // Assert: no object exists and the group is closed, so None
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_never_regresses() {
+        // Arrange: a fetch-fill entry that live ingest claims, then closes
+        let cache = GroupCache::new(SubgroupLifecycle::NoCloseSignal);
+        cache.advance_to(SubgroupLifecycle::AwaitingCloseSignal);
+        cache.mark_end_of_group();
+        // Act: a late live claim races in after the close
+        cache.advance_to(SubgroupLifecycle::AwaitingCloseSignal);
+        // Assert: the entry stays closed (and empty+closed stays evictable)
+        assert!(cache.is_closed());
+        assert!(cache.is_evictable().await);
     }
 }
