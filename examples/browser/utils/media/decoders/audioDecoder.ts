@@ -1,7 +1,7 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import { tryDeserializeChunk, type ChunkMetadata } from '../chunk'
+import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros } from '../clock'
 import { readLocHeader } from '../loc'
 
@@ -187,10 +187,7 @@ function materializeDirectObject(
   const locMetadata = readLocHeader(object.locHeader)
   const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
 
-  const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object)
-  if (!parsed) {
-    return null
-  }
+  const parsed = buildChunkFromLoc(object)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
@@ -224,8 +221,29 @@ function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
 }
 
+const OBJECT_STATUS_END_OF_GROUP = 3
+const OBJECT_STATUS_END_OF_TRACK = 4
+
 function isTerminalStatus(status: number | undefined): boolean {
   return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
+}
+
+function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {
+  const loc = readLocHeader(object.locHeader)
+  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
+  const metadata: ChunkMetadata = {
+    type: 'key',
+    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
+    duration: null
+  }
+  return { metadata, data: object.objectPayload }
+}
+
+function getCaptureTimestampMicros(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+  return value
 }
 
 async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureTimestampMicros?: number) {
@@ -300,14 +318,12 @@ function decodePcmAlawChunk(metadata: ChunkMetadata, payload: Uint8Array, resolv
   }
 
   const timestamp = rebaseTimestamp(metadata.timestamp)
-  const duration = metadata.duration ?? Math.round((numberOfFrames / sampleRate) * 1_000_000)
   const audioData = new AudioData({
     format: 's16',
     sampleRate,
     numberOfFrames,
     numberOfChannels: channels,
     timestamp,
-    duration,
     data: new Uint8Array(pcm.buffer)
   })
   self.postMessage({ type: 'audioData', audioData }, [audioData])

@@ -1,7 +1,7 @@
 import { VideoJitterBuffer } from '../videoJitterBuffer'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import { tryDeserializeChunk, type ChunkMetadata } from '../chunk'
+import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
 import { bytesToBase64, readLocHeader } from '../loc'
 
@@ -312,7 +312,7 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   currentDecoderHardwareAcceleration = nextDecoderHardwareAcceleration
   currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
   updatePacingConfig(config.pacing)
-  jitterBuffer = createJitterBuffer(currentJitterConfig)
+  jitterBuffer = createJitterBuffer()
   if (decoderHardwareAccelerationChanged) {
     if (videoDecoder && videoDecoder.state !== 'closed') {
       try {
@@ -862,13 +862,7 @@ function materializeDirectObject(
 
   const locMetadata = readLocHeader(object.locHeader)
   const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
-  const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object, objectId)
-  if (!parsed) {
-    return null
-  }
-  if (!parsed.metadata.descriptionBase64 && locMetadata.videoConfig) {
-    parsed.metadata.descriptionBase64 = bytesToBase64(locMetadata.videoConfig)
-  }
+  const parsed = buildChunkFromLoc(object, objectId)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
@@ -909,7 +903,7 @@ function isTerminalStatus(status: number | undefined): boolean {
 function buildChunkFromLoc(
   object: SubgroupObjectWithLoc,
   objectId: bigint
-): { metadata: ChunkMetadata; data: Uint8Array } | null {
+): { metadata: ChunkMetadata; data: Uint8Array } {
   const loc = readLocHeader(object.locHeader)
   const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
   const metadata: ChunkMetadata = {
