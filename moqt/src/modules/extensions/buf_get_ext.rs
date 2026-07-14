@@ -43,6 +43,15 @@ impl<T: Buf> BufGetExt for T {
                 bail!("Failed to get string length: {:?}", e)
             }
         };
+        // copy_to_bytes panics when the buffer is shorter than the
+        // peer-controlled length, so reject truncated input first.
+        if self.remaining() < length as usize {
+            bail!(
+                "String truncated: length {} > remaining {}",
+                length,
+                self.remaining()
+            );
+        }
         let bytes_str = self.copy_to_bytes(length as usize);
         let s = str::from_utf8(&bytes_str)
             .inspect_err(|e| tracing::error!("Failed to convert bytes to string: {:?}", e))?;
@@ -136,6 +145,15 @@ mod tests {
         #[test]
         fn try_get_string_failed() {
             let bytes = BytesMut::new();
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+            let result = bytes.try_get_string();
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn try_get_string_truncated_body() {
+            // length claims 4 bytes but only 2 are available
+            let bytes = BytesMut::from(&[0x04, 0x61, 0x62][..]);
             let mut bytes = std::io::Cursor::new(&bytes[..]);
             let result = bytes.try_get_string();
             assert!(result.is_err());
