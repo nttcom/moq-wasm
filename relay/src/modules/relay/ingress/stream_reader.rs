@@ -214,11 +214,7 @@ mod tests {
     }
 
     fn empty_extension_headers() -> ExtensionHeaders {
-        ExtensionHeaders {
-            prior_group_id_gap: vec![],
-            prior_object_id_gap: vec![],
-            immutable_extensions: vec![],
-        }
+        ExtensionHeaders::default()
     }
 
     fn make_payload_object(object_id_delta: u64) -> DataObject {

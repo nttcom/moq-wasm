@@ -155,86 +155,30 @@ mod tests {
         assert_eq!(headers.prior_object_id_gap(), vec![2]);
         assert_eq!(headers.immutable_extensions(), vec![Bytes::from(vec![9])]);
     }
-}
 
-#[cfg(test)]
-mod tests {
-    mod success {
-        use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
-        use bytes::Bytes;
+    #[test]
+    fn decode_returns_none_on_truncated_block() {
+        // length claims 4 bytes but only 2 follow
+        let bytes = [0x04_u8, 0x3c, 0x05];
+        let mut cursor = std::io::Cursor::new(&bytes[..]);
 
-        #[test]
-        fn packetize_and_depacketize_all_header_types() {
-            let headers = ExtensionHeaders {
-                prior_group_id_gap: vec![1, 2],
-                prior_object_id_gap: vec![3],
-                immutable_extensions: vec![Bytes::from(vec![0xaa, 0xbb])],
-            };
-
-            let buf = headers.encode();
-            let mut cursor = std::io::Cursor::new(&buf[..]);
-            let depacketized = ExtensionHeaders::decode(&mut cursor).unwrap();
-
-            assert_eq!(depacketized, headers);
-            assert_eq!(cursor.position() as usize, buf.len());
-        }
-
-        #[test]
-        fn packetize_and_depacketize_empty() {
-            let headers = ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            };
-
-            let buf = headers.encode();
-            let mut cursor = std::io::Cursor::new(&buf[..]);
-            let depacketized = ExtensionHeaders::decode(&mut cursor).unwrap();
-
-            assert_eq!(depacketized, headers);
-        }
-
-        #[test]
-        fn depacketize_ignores_unknown_even_key() {
-            // length (4) + unknown even key (0x10) + value (7)
-            // + PriorGroupIdGap key (0x3c) + value (5)
-            let bytes = [0x04_u8, 0x10, 0x07, 0x3c, 0x05];
-            let mut cursor = std::io::Cursor::new(&bytes[..]);
-            let depacketized = ExtensionHeaders::decode(&mut cursor).unwrap();
-
-            assert_eq!(depacketized.prior_group_id_gap, vec![5]);
-            assert!(depacketized.prior_object_id_gap.is_empty());
-            assert!(depacketized.immutable_extensions.is_empty());
-        }
+        assert!(ExtensionHeaders::decode(&mut cursor).is_none());
     }
 
-    mod failure {
-        use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
+    #[test]
+    fn decode_returns_none_on_truncated_inner_kv_pair() {
+        // length (2) + odd key (0x0b) + value length (5) with no value bytes
+        let bytes = [0x02_u8, 0x0b, 0x05];
+        let mut cursor = std::io::Cursor::new(&bytes[..]);
 
-        #[test]
-        fn depacketize_truncated_block() {
-            // length claims 4 bytes but only 2 follow
-            let bytes = [0x04_u8, 0x3c, 0x05];
-            let mut cursor = std::io::Cursor::new(&bytes[..]);
+        assert!(ExtensionHeaders::decode(&mut cursor).is_none());
+    }
 
-            assert!(ExtensionHeaders::decode(&mut cursor).is_none());
-        }
+    #[test]
+    fn decode_returns_none_on_empty_input() {
+        let bytes: [u8; 0] = [];
+        let mut cursor = std::io::Cursor::new(&bytes[..]);
 
-        #[test]
-        fn depacketize_truncated_inner_kv_pair() {
-            // length (2) + odd key (0x0b) + value length (5) with no value bytes
-            let bytes = [0x02_u8, 0x0b, 0x05];
-            let mut cursor = std::io::Cursor::new(&bytes[..]);
-
-            assert!(ExtensionHeaders::decode(&mut cursor).is_none());
-        }
-
-        #[test]
-        fn depacketize_empty_input() {
-            let bytes: [u8; 0] = [];
-            let mut cursor = std::io::Cursor::new(&bytes[..]);
-
-            assert!(ExtensionHeaders::decode(&mut cursor).is_none());
-        }
+        assert!(ExtensionHeaders::decode(&mut cursor).is_none());
     }
 }
