@@ -284,8 +284,10 @@ impl Fetch {
                 return None;
             }
             Err(err) => {
+                // Display with alternate ({:#}) keeps the error chain but not the
+                // backtrace: these are expected request-scoped failures.
                 tracing::warn!(
-                    ?err,
+                    err = %format!("{err:#}"),
                     track_namespace = %request.track_namespace,
                     track_name = %request.track_name,
                     "Failed to resolve upstream publisher for fetch"
@@ -315,7 +317,7 @@ impl Fetch {
             Ok(pair) => pair,
             Err(err) => {
                 tracing::warn!(
-                    ?err,
+                    err = %format!("{err:#}"),
                     pub_session_id = upstream_key.publisher_session_id,
                     track_namespace = %request.track_namespace,
                     track_name = %request.track_name,

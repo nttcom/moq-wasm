@@ -49,7 +49,9 @@ impl FetchIngest {
         let request_id = start.request_id;
         let join_handle = tokio::spawn(async move {
             if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
-                tracing::error!(?error, "fetch ingest failed");
+                // Expected request-scoped failures (timeout, upstream reset):
+                // log the chain without anyhow's captured backtrace.
+                tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                 Self::reset_downstream_fetch(
                     session_repo,
                     downstream_subscriber_session_id,
@@ -229,10 +231,12 @@ impl FetchIngest {
         match publisher.new_fetch_sender(request_id).await {
             Ok(sender) => {
                 if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
-                    tracing::error!(?error, "failed to reset downstream fetch stream");
+                    tracing::error!(error = %format!("{error:#}"), "failed to reset downstream fetch stream");
                 }
             }
-            Err(error) => tracing::error!(?error, "failed to create downstream fetch stream"),
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "failed to create downstream fetch stream")
+            }
         }
     }
 }
