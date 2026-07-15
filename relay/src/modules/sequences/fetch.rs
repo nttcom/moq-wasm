@@ -29,18 +29,11 @@ struct CacheTarget {
 }
 
 struct FetchTarget {
-    kind: FetchTargetKind,
     track_key: TrackKey,
     track_namespace: String,
     track_name: String,
     start_location: moqt::Location,
     end_location: moqt::Location,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FetchTargetKind {
-    Standalone,
-    Joining,
 }
 
 struct JoinedSubscriptionTarget {
@@ -182,17 +175,9 @@ impl Fetch {
                 }
             }
             FetchSource::Upstream(missing_range) => {
-                if !matches!(target.kind, FetchTargetKind::Standalone) {
-                    // FIXME: relay-side upstream forwarding for Joining Fetch is not
-                    // implemented yet, although spec §9.16 permits relay upstream FETCH.
-                    let _ = handler
-                        .error(
-                            FetchErrorCode::InternalError as u64,
-                            "Joining fetch cannot be served from local cache".to_string(),
-                        )
-                        .await;
-                    return;
-                }
+                // Joining Fetches forward as Standalone: the target is already
+                // resolved to the absolute range whose end is the equivalent
+                // Standalone Fetch encoding (§9.16.2.1, largest + 1).
                 let start_location = missing_range.start_location;
                 let request = Self::build_upstream_fetch(&target, missing_range);
                 // This awaits the upstream FETCH_OK before returning to the session
@@ -382,7 +367,6 @@ impl Fetch {
             } => {
                 let track_namespace = track_namespace.join("/");
                 Ok(FetchTarget {
-                    kind: FetchTargetKind::Standalone,
                     track_key: TrackKey::new(&track_namespace, &track_name),
                     track_namespace,
                     track_name,
@@ -429,7 +413,6 @@ impl Fetch {
             .await?;
         let largest_location = joined_target.largest_location;
         Ok(FetchTarget {
-            kind: FetchTargetKind::Joining,
             track_key: joined_target.track_key,
             track_namespace: joined_target.track_namespace,
             track_name: joined_target.track_name,
@@ -460,7 +443,6 @@ impl Fetch {
             return Err(FetchError::InvalidRange);
         }
         Ok(FetchTarget {
-            kind: FetchTargetKind::Joining,
             track_key: joined_target.track_key,
             track_namespace: joined_target.track_namespace,
             track_name: joined_target.track_name,
