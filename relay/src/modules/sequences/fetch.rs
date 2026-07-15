@@ -67,9 +67,11 @@ struct PreparedUpstreamFetch {
     upstream_publisher_session_id: SessionId,
 }
 
-enum FetchSequenceStatus {
-    Ready(CacheTarget),
-    Missing(LocationRange),
+/// Where the data for a FETCH will come from: the local cache, or an
+/// upstream fetch for the range the cache cannot serve.
+enum FetchSource {
+    Cache(CacheTarget),
+    Upstream(LocationRange),
 }
 
 /// A reason a FETCH could not be resolved, mapped to a FETCH_ERROR.
@@ -140,8 +142,8 @@ impl Fetch {
             }
         };
 
-        let status = match self.cache_status(&target, cache_store).await {
-            Ok(status) => status,
+        let source = match self.resolve_fetch_source(&target, cache_store).await {
+            Ok(source) => source,
             Err(err) => {
                 let _ = handler
                     .error(err.code() as u64, err.reason().to_string())
@@ -150,8 +152,8 @@ impl Fetch {
             }
         };
 
-        match status {
-            FetchSequenceStatus::Ready(CacheTarget {
+        match source {
+            FetchSource::Cache(CacheTarget {
                 cache,
                 start_location,
                 end_location,
@@ -179,7 +181,7 @@ impl Fetch {
                     tracing::error!(?e, "Failed to send fetch request to egress");
                 }
             }
-            FetchSequenceStatus::Missing(missing_range) => {
+            FetchSource::Upstream(missing_range) => {
                 if !matches!(target.kind, FetchTargetKind::Standalone) {
                     // FIXME: relay-side upstream forwarding for Joining Fetch is not
                     // implemented yet, although spec §9.16 permits relay upstream FETCH.
@@ -467,11 +469,11 @@ impl Fetch {
         })
     }
 
-    async fn cache_status(
+    async fn resolve_fetch_source(
         &self,
         target: &FetchTarget,
         cache_store: &TrackCacheStore,
-    ) -> Result<FetchSequenceStatus, FetchError> {
+    ) -> Result<FetchSource, FetchError> {
         let start_location = target.start_location;
         let end_location = target.end_location;
         let Some(cache) = cache_store.get(&target.track_key) else {
@@ -480,22 +482,20 @@ impl Fetch {
                 track_name = %target.track_name,
                 "No cached track for fetch"
             );
-            return Ok(FetchSequenceStatus::Missing(LocationRange {
+            return Ok(FetchSource::Upstream(LocationRange {
                 start_location,
                 end_location,
             }));
         };
-        let status = match cache
+        let source = match cache
             .resolve_fetch_range(start_location, end_location)
             .await
         {
-            FetchRangeResolution::Serve { end_location } => {
-                FetchSequenceStatus::Ready(CacheTarget {
-                    cache,
-                    start_location,
-                    end_location,
-                })
-            }
+            FetchRangeResolution::Serve { end_location } => FetchSource::Cache(CacheTarget {
+                cache,
+                start_location,
+                end_location,
+            }),
             FetchRangeResolution::InvalidRange => return Err(FetchError::InvalidRange),
             FetchRangeResolution::NoObjects => return Err(FetchError::NoObjects),
             FetchRangeResolution::NotCovered => {
@@ -508,13 +508,13 @@ impl Fetch {
                     end_object_id = end_location.object_id,
                     "Cached track cannot serve full fetch range locally"
                 );
-                FetchSequenceStatus::Missing(LocationRange {
+                FetchSource::Upstream(LocationRange {
                     start_location,
                     end_location,
                 })
             }
         };
-        Ok(status)
+        Ok(source)
     }
 
     /// Resolves the joined subscription's track and its Largest Location at subscribe time,
@@ -691,21 +691,21 @@ mod tests {
         assert_eq!(reason, "not supported");
     }
 
-    async fn fetch_cache_status(
+    async fn resolve_target_and_source(
         session_id: SessionId,
         fetch_params: FetchParams,
         table: &dyn LocalPubSubDirectory,
         cache_store: &Arc<TrackCacheStore>,
-    ) -> Result<(FetchTarget, FetchSequenceStatus), FetchError> {
+    ) -> Result<(FetchTarget, FetchSource), FetchError> {
         let target = Fetch
             .resolve_fetch_target(session_id, fetch_params, table)
             .await?;
-        let status = Fetch.cache_status(&target, cache_store).await?;
-        Ok((target, status))
+        let source = Fetch.resolve_fetch_source(&target, cache_store).await?;
+        Ok((target, source))
     }
 
     #[tokio::test]
-    async fn cache_status_returns_missing_when_track_entry_missing() {
+    async fn fetch_source_is_upstream_when_track_entry_missing() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let start = moqt::Location {
             group_id: 0,
@@ -715,7 +715,7 @@ mod tests {
             group_id: 0,
             object_id: 1,
         };
-        let (target, status) = fetch_cache_status(
+        let (target, source) = resolve_target_and_source(
             2,
             standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
@@ -723,19 +723,19 @@ mod tests {
         )
         .await
         .unwrap();
-        match status {
-            FetchSequenceStatus::Missing(missing_range) => {
+        match source {
+            FetchSource::Upstream(missing_range) => {
                 assert_eq!(target.track_namespace, "ns");
                 assert_eq!(target.track_name, "track");
                 assert_eq!(missing_range.start_location, start);
                 assert_eq!(missing_range.end_location, end);
             }
-            FetchSequenceStatus::Ready(_) => panic!("expected upstream fetch"),
+            FetchSource::Cache(_) => panic!("expected upstream fetch"),
         }
     }
 
     #[tokio::test]
-    async fn cache_status_returns_missing_when_cache_entry_is_empty() {
+    async fn fetch_source_is_upstream_when_cache_entry_is_empty() {
         let cache_store = Arc::new(TrackCacheStore::new());
         cache_store.get_or_create(&TrackKey::new("ns", "track"));
         let start = moqt::Location {
@@ -746,7 +746,7 @@ mod tests {
             group_id: 0,
             object_id: 1,
         };
-        let (_, status) = fetch_cache_status(
+        let (_, source) = resolve_target_and_source(
             2,
             standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
@@ -754,11 +754,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(matches!(status, FetchSequenceStatus::Missing(_)));
+        assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
     #[tokio::test]
-    async fn cache_status_is_ready_for_known_gapped_object_ids() {
+    async fn fetch_source_is_cache_for_known_gapped_object_ids() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 0, &[0, 2]).await;
@@ -770,7 +770,7 @@ mod tests {
             group_id: 0,
             object_id: 3,
         };
-        let (_, status) = fetch_cache_status(
+        let (_, source) = resolve_target_and_source(
             2,
             standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
@@ -778,11 +778,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(matches!(status, FetchSequenceStatus::Ready(_)));
+        assert!(matches!(source, FetchSource::Cache(_)));
     }
 
     #[tokio::test]
-    async fn cache_status_returns_missing_when_request_starts_before_cache_coverage() {
+    async fn fetch_source_is_upstream_when_request_starts_before_cache_coverage() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 1, &[0, 1]).await;
@@ -794,7 +794,7 @@ mod tests {
             group_id: 1,
             object_id: 2,
         };
-        let (_, status) = fetch_cache_status(
+        let (_, source) = resolve_target_and_source(
             2,
             standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
@@ -802,19 +802,19 @@ mod tests {
         )
         .await
         .unwrap();
-        match status {
-            FetchSequenceStatus::Missing(missing_range) => {
+        match source {
+            FetchSource::Upstream(missing_range) => {
                 assert_eq!(missing_range.start_location, start);
                 assert_eq!(missing_range.end_location, end);
             }
-            FetchSequenceStatus::Ready(_) => {
+            FetchSource::Cache(_) => {
                 panic!("leading cache gaps must be forwarded upstream")
             }
         }
     }
 
     #[tokio::test]
-    async fn cache_status_clamps_standalone_end_when_request_exceeds_largest() {
+    async fn fetch_source_clamps_standalone_end_when_request_exceeds_largest() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 0, &[0, 1, 2]).await;
@@ -826,7 +826,7 @@ mod tests {
             group_id: 2,
             object_id: 0,
         };
-        let (_, status) = fetch_cache_status(
+        let (_, source) = resolve_target_and_source(
             2,
             standalone_fetch_params(start, requested_end),
             &InMemoryLocalPubSubDirectory::new(),
@@ -834,8 +834,8 @@ mod tests {
         )
         .await
         .unwrap();
-        match status {
-            FetchSequenceStatus::Ready(resolved) => {
+        match source {
+            FetchSource::Cache(resolved) => {
                 assert_eq!(
                     resolved.end_location,
                     moqt::Location {
@@ -844,19 +844,19 @@ mod tests {
                     }
                 );
             }
-            FetchSequenceStatus::Missing(_) => {
+            FetchSource::Upstream(_) => {
                 panic!("covered fetch range should be served locally with clamped end")
             }
         }
     }
 
     #[tokio::test]
-    async fn cache_status_rejects_standalone_start_after_largest_as_invalid_range() {
+    async fn fetch_source_rejects_standalone_start_after_largest_as_invalid_range() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 0, &[0]).await;
         cache_store.get_or_create(&track_key).begin_live_ingest();
-        let result = fetch_cache_status(
+        let result = resolve_target_and_source(
             2,
             standalone_fetch_params(
                 moqt::Location {
@@ -876,7 +876,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cache_status_rejects_standalone_covered_empty_range_as_no_objects() {
+    async fn fetch_source_rejects_standalone_covered_empty_range_as_no_objects() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 0, &[0]).await;
@@ -888,7 +888,7 @@ mod tests {
         cache.close_stream_subgroup(1, &subgroup).await;
         fill_group_with_ids(&cache_store, &track_key, 2, &[0]).await;
 
-        let result = fetch_cache_status(
+        let result = resolve_target_and_source(
             2,
             standalone_fetch_params(
                 moqt::Location {
@@ -908,7 +908,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cache_status_is_ready_when_standalone_cache_covers_range() {
+    async fn fetch_source_is_cache_when_standalone_cache_covers_range() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         fill_group_with_ids(&cache_store, &track_key, 1, &[2, 3]).await;
@@ -920,7 +920,7 @@ mod tests {
             group_id: 1,
             object_id: 4,
         };
-        let (_, status) = fetch_cache_status(
+        let (_, source) = resolve_target_and_source(
             2,
             standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
@@ -928,12 +928,12 @@ mod tests {
         )
         .await
         .unwrap();
-        match status {
-            FetchSequenceStatus::Ready(resolved) => {
+        match source {
+            FetchSource::Cache(resolved) => {
                 assert_eq!(resolved.start_location, start);
                 assert_eq!(resolved.end_location, end);
             }
-            FetchSequenceStatus::Missing(_) => {
+            FetchSource::Upstream(_) => {
                 panic!("expected cache fetch readiness")
             }
         }
@@ -982,7 +982,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cache_status_returns_missing_when_relative_joining_cache_does_not_cover_range() {
+    async fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
@@ -998,7 +998,7 @@ mod tests {
         );
         fill_group_with_ids(&cache_store, &track_key, 1, &[0, 1]).await;
 
-        let (target, status) = fetch_cache_status(
+        let (target, source) = resolve_target_and_source(
             2,
             FetchParams::RelativeJoining {
                 joining_request_id: 100,
@@ -1010,8 +1010,8 @@ mod tests {
         .await
         .unwrap();
 
-        match status {
-            FetchSequenceStatus::Missing(missing_range) => {
+        match source {
+            FetchSource::Upstream(missing_range) => {
                 assert_eq!(target.track_namespace, "ns");
                 assert_eq!(target.track_name, "track");
                 assert_eq!(
@@ -1029,14 +1029,14 @@ mod tests {
                     }
                 );
             }
-            FetchSequenceStatus::Ready(_) => {
+            FetchSource::Cache(_) => {
                 panic!("joining fetch with missing local coverage must be forwarded upstream")
             }
         }
     }
 
     #[tokio::test]
-    async fn cache_status_rejects_absolute_joining_start_after_largest_without_cache() {
+    async fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
@@ -1050,7 +1050,7 @@ mod tests {
             }),
         );
 
-        let result = fetch_cache_status(
+        let result = resolve_target_and_source(
             2,
             FetchParams::AbsoluteJoining {
                 joining_request_id: 100,
