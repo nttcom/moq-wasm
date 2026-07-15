@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::wire::FetchType;
+use moqt::wire::FetchParams;
 use tracing::Span;
 
 use crate::modules::{
@@ -124,10 +124,13 @@ impl Fetch {
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         handler: Box<dyn FetchHandler>,
     ) {
-        let fetch_type = handler.fetch_type();
+        let fetch_params = handler.fetch_params();
         let request_id = handler.request_id();
 
-        let target = match self.fetch_target(session_id, fetch_type, table).await {
+        let target = match self
+            .resolve_fetch_target(session_id, fetch_params, table)
+            .await
+        {
             Ok(target) => target,
             Err(err) => {
                 let _ = handler
@@ -362,14 +365,14 @@ impl Fetch {
         )
     }
 
-    async fn fetch_target(
+    async fn resolve_fetch_target(
         &self,
         session_id: SessionId,
-        fetch_type: FetchType,
+        fetch_params: FetchParams,
         table: &dyn LocalPubSubDirectory,
     ) -> Result<FetchTarget, FetchError> {
-        match fetch_type {
-            FetchType::Standalone {
+        match fetch_params {
+            FetchParams::Standalone {
                 track_namespace,
                 track_name,
                 start_location,
@@ -385,7 +388,7 @@ impl Fetch {
                     end_location,
                 })
             }
-            FetchType::RelativeJoining {
+            FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
             } => {
@@ -397,7 +400,7 @@ impl Fetch {
                 )
                 .await
             }
-            FetchType::AbsoluteJoining {
+            FetchParams::AbsoluteJoining {
                 joining_request_id,
                 joining_start,
             } => {
@@ -657,11 +660,11 @@ mod tests {
         }
     }
 
-    fn standalone_fetch_type(
+    fn standalone_fetch_params(
         start_location: moqt::Location,
         end_location: moqt::Location,
-    ) -> FetchType {
-        FetchType::Standalone {
+    ) -> FetchParams {
+        FetchParams::Standalone {
             track_namespace: vec!["ns".to_string()],
             track_name: "track".to_string(),
             start_location,
@@ -690,11 +693,13 @@ mod tests {
 
     async fn fetch_cache_status(
         session_id: SessionId,
-        fetch_type: FetchType,
+        fetch_params: FetchParams,
         table: &dyn LocalPubSubDirectory,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Result<(FetchTarget, FetchSequenceStatus), FetchError> {
-        let target = Fetch.fetch_target(session_id, fetch_type, table).await?;
+        let target = Fetch
+            .resolve_fetch_target(session_id, fetch_params, table)
+            .await?;
         let status = Fetch.cache_status(&target, cache_store).await?;
         Ok((target, status))
     }
@@ -712,7 +717,7 @@ mod tests {
         };
         let (target, status) = fetch_cache_status(
             2,
-            standalone_fetch_type(start, end),
+            standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         )
@@ -743,7 +748,7 @@ mod tests {
         };
         let (_, status) = fetch_cache_status(
             2,
-            standalone_fetch_type(start, end),
+            standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         )
@@ -767,7 +772,7 @@ mod tests {
         };
         let (_, status) = fetch_cache_status(
             2,
-            standalone_fetch_type(start, end),
+            standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         )
@@ -791,7 +796,7 @@ mod tests {
         };
         let (_, status) = fetch_cache_status(
             2,
-            standalone_fetch_type(start, end),
+            standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         )
@@ -823,7 +828,7 @@ mod tests {
         };
         let (_, status) = fetch_cache_status(
             2,
-            standalone_fetch_type(start, requested_end),
+            standalone_fetch_params(start, requested_end),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         )
@@ -853,7 +858,7 @@ mod tests {
         cache_store.get_or_create(&track_key).begin_live_ingest();
         let result = fetch_cache_status(
             2,
-            standalone_fetch_type(
+            standalone_fetch_params(
                 moqt::Location {
                     group_id: 0,
                     object_id: 1,
@@ -885,7 +890,7 @@ mod tests {
 
         let result = fetch_cache_status(
             2,
-            standalone_fetch_type(
+            standalone_fetch_params(
                 moqt::Location {
                     group_id: 1,
                     object_id: 0,
@@ -917,7 +922,7 @@ mod tests {
         };
         let (_, status) = fetch_cache_status(
             2,
-            standalone_fetch_type(start, end),
+            standalone_fetch_params(start, end),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         )
@@ -995,7 +1000,7 @@ mod tests {
 
         let (target, status) = fetch_cache_status(
             2,
-            FetchType::RelativeJoining {
+            FetchParams::RelativeJoining {
                 joining_request_id: 100,
                 joining_start: 1,
             },
@@ -1047,7 +1052,7 @@ mod tests {
 
         let result = fetch_cache_status(
             2,
-            FetchType::AbsoluteJoining {
+            FetchParams::AbsoluteJoining {
                 joining_request_id: 100,
                 joining_start: 2,
             },
