@@ -325,11 +325,7 @@ impl SubgroupObjectField {
         let extension_headers = if message_type.has_extensions() {
             ExtensionHeaders::decode(&mut cursor).ok_or(DecodeError::NeedMoreData)?
         } else {
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            }
+            ExtensionHeaders::default()
         };
         let length = SubgroupObject::check_length(&mut cursor).ok_or(DecodeError::NeedMoreData)?;
         let subgroup_object = if length == 0 {
@@ -467,11 +463,7 @@ mod tests {
             let object_field = SubgroupObjectField {
                 message_type,
                 object_id_delta: 1,
-                extension_headers: ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                extension_headers: ExtensionHeaders::default(),
                 subgroup_object: SubgroupObject::new_payload(payload.clone()),
             };
 
@@ -482,7 +474,7 @@ mod tests {
             assert!(
                 depacketized
                     .extension_headers
-                    .immutable_extensions
+                    .immutable_extensions()
                     .is_empty()
             );
             assert_eq!(object_field.subgroup_object, depacketized.subgroup_object);
@@ -492,14 +484,13 @@ mod tests {
         fn subgroup_object_field_packetize_and_depacketize_with_extensions() {
             let message_type = SubgroupHeaderType::new(0x11).unwrap();
             let payload = Bytes::from(vec![0x11, 0x22, 0x33]);
+            let mut extension_headers = ExtensionHeaders::default();
+            extension_headers.push_prior_group_id_gap(10);
+            extension_headers.push_immutable_extension(Bytes::from(vec![0x01, 0x02]));
             let object_field = SubgroupObjectField {
                 message_type,
                 object_id_delta: 5,
-                extension_headers: ExtensionHeaders {
-                    prior_group_id_gap: vec![10],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![Bytes::from(vec![0x01, 0x02])],
-                },
+                extension_headers,
                 subgroup_object: SubgroupObject::new_payload(payload.clone()),
             };
 
@@ -508,12 +499,12 @@ mod tests {
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
             assert_eq!(
-                object_field.extension_headers.prior_group_id_gap,
-                depacketized.extension_headers.prior_group_id_gap
+                object_field.extension_headers.prior_group_id_gap(),
+                depacketized.extension_headers.prior_group_id_gap()
             );
             assert_eq!(
-                object_field.extension_headers.immutable_extensions,
-                depacketized.extension_headers.immutable_extensions
+                object_field.extension_headers.immutable_extensions(),
+                depacketized.extension_headers.immutable_extensions()
             );
             assert_eq!(object_field.subgroup_object, depacketized.subgroup_object);
         }
@@ -524,11 +515,7 @@ mod tests {
             let object_field = SubgroupObjectField {
                 message_type,
                 object_id_delta: 10,
-                extension_headers: ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                extension_headers: ExtensionHeaders::default(),
                 subgroup_object: SubgroupObject::new_status(3), // EndOfGroup
             };
 
@@ -539,7 +526,7 @@ mod tests {
             assert!(
                 depacketized
                     .extension_headers
-                    .immutable_extensions
+                    .immutable_extensions()
                     .is_empty()
             );
             assert_eq!(object_field.subgroup_object, depacketized.subgroup_object);
@@ -573,11 +560,7 @@ mod tests {
             SubgroupObjectField {
                 message_type: SubgroupHeaderType::new(0x10).unwrap(),
                 object_id_delta: delta,
-                extension_headers: ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                extension_headers: ExtensionHeaders::default(),
                 subgroup_object: SubgroupObject::new_payload(bytes::Bytes::new()),
             }
         }

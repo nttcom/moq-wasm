@@ -560,11 +560,7 @@ mod tests {
         DataObject::SubgroupObject(SubgroupObjectField {
             message_type,
             object_id_delta: 0,
-            extension_headers: ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            extension_headers: ExtensionHeaders::default(),
             subgroup_object: SubgroupObject::new_payload(Bytes::from(vec![])),
         })
     }

@@ -10,6 +10,7 @@ import {
   type AudioJitterConfig
 } from '../types/jitterBuffer'
 import type { JitterBufferEvent } from '../types/media'
+import type { TrackMediaConfig } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
 
@@ -123,7 +124,7 @@ export class MediaSubscriber {
     this.handlers = handlers
   }
 
-  registerVideoTrack(userId: string, trackName: string, trackAlias: bigint, codec?: string): void {
+  registerVideoTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
     if (this.videoContexts.has(trackAlias)) {
       return
     }
@@ -310,16 +311,21 @@ export class MediaSubscriber {
     const context: VideoSubscriptionContext = { userId, source, worker, writer, stream, frameLogCount: 0 }
     this.videoContexts.set(trackAlias, context)
     this.handlers.onRemoteVideoStream?.(userId, stream, source)
-    if (codec) {
-      worker.postMessage({ type: 'catalog', codec })
+    if (config?.codec || config?.framerate !== undefined || config?.initData !== undefined) {
+      worker.postMessage({
+        type: 'catalog',
+        codec: config?.codec,
+        framerate: config?.framerate,
+        descriptionBase64: config?.initData
+      })
     }
-    const config = this.videoJitterConfigByUserId.get(userId) ?? DEFAULT_VIDEO_JITTER_CONFIG
+    const jitterConfig = this.videoJitterConfigByUserId.get(userId) ?? DEFAULT_VIDEO_JITTER_CONFIG
     if (!this.videoJitterConfigByUserId.has(userId)) {
-      this.videoJitterConfigByUserId.set(userId, config)
+      this.videoJitterConfigByUserId.set(userId, jitterConfig)
     }
     worker.postMessage({
       type: 'config',
-      config: { ...config, debugVideoPipeline: isCallVideoPipelineDebugEnabled() }
+      config: { ...jitterConfig, debugVideoPipeline: isCallVideoPipelineDebugEnabled() }
     })
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
@@ -359,7 +365,7 @@ export class MediaSubscriber {
     )
   }
 
-  registerAudioTrack(userId: string, trackAlias: bigint): void {
+  registerAudioTrack(userId: string, trackAlias: bigint, config?: TrackMediaConfig): void {
     if (this.audioContexts.has(trackAlias)) {
       return
     }
@@ -433,9 +439,19 @@ export class MediaSubscriber {
     this.audioContexts.set(trackAlias, context)
     this.handlers.onRemoteAudioStream?.(userId, context.stream)
     this.maybeReportAudioPlaybackQueue(context, true)
-    const config = this.audioJitterConfigByUserId.get(userId)
-    if (config) {
-      worker.postMessage({ type: 'config', config })
+    const channels = parseChannelCount(config?.channelConfig)
+    if (config?.codec || config?.samplerate !== undefined || channels !== undefined || config?.initData !== undefined) {
+      worker.postMessage({
+        type: 'catalog',
+        codec: config?.codec,
+        sampleRate: config?.samplerate,
+        channels,
+        descriptionBase64: config?.initData
+      })
+    }
+    const jitterConfig = this.audioJitterConfigByUserId.get(userId)
+    if (jitterConfig) {
+      worker.postMessage({ type: 'config', config: jitterConfig })
     }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
@@ -544,6 +560,25 @@ export class MediaSubscriber {
     context.lastPlaybackQueueReportAtMs = now
     this.handlers.onRemoteAudioPlaybackQueue?.(context.userId, context.pendingPlaybackQueueMs)
   }
+}
+
+function parseChannelCount(channelConfig?: string): number | undefined {
+  const normalized = channelConfig?.trim().toLowerCase()
+  if (!normalized) {
+    return undefined
+  }
+  if (normalized === 'mono') {
+    return 1
+  }
+  if (normalized === 'stereo') {
+    return 2
+  }
+  const match = normalized.match(/^(\d+)ch$/)
+  if (match) {
+    const count = Number(match[1])
+    return Number.isInteger(count) && count > 0 ? count : undefined
+  }
+  return undefined
 }
 
 function estimateAudioDataDurationMs(audioData: AudioData): number {

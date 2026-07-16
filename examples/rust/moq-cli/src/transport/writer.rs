@@ -90,11 +90,7 @@ impl GroupSender {
         object: Bytes,
         immutable_extensions: Vec<Bytes>,
     ) -> Result<()> {
-        let ext = ExtensionHeaders {
-            prior_group_id_gap: vec![],
-            prior_object_id_gap: vec![],
-            immutable_extensions,
-        };
+        let ext = ExtensionHeaders::from_immutable_extensions(immutable_extensions);
         let field = self
             .sender
             .create_object_field(0, ext, SubgroupObject::new_payload(object));
@@ -113,9 +109,5 @@ impl GroupSender {
 }
 
 fn empty_ext() -> ExtensionHeaders {
-    ExtensionHeaders {
-        prior_group_id_gap: vec![],
-        prior_object_id_gap: vec![],
-        immutable_extensions: vec![],
-    }
+    ExtensionHeaders::default()
 }

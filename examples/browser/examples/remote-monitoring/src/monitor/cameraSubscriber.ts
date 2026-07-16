@@ -1,6 +1,6 @@
 import type { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
-import { tryDeserializeChunk, type DeserializedChunk } from '../../../../utils/media/chunk'
+import { type DeserializedChunk } from '../../../../utils/media/chunk'
 import { readLocHeader, bytesToBase64, type LocHeader } from '../../../../utils/media/loc'
 
 export type ReviewFrame = { payload: Uint8Array; locHeader: unknown }
@@ -198,12 +198,9 @@ export class CameraSubscriber {
     this.paused = false
   }
 
-  // Parse a review object: the browser publisher wraps metadata in the payload
-  // (serializeChunk envelope), whereas moq-cli publishes raw LOC objects (coded frame in
-  // the payload, metadata in the LOC extension header). Try the envelope first, then LOC.
-  private deserializeOrLoc(payload: Uint8Array, locHeader: unknown, objectId: bigint): DeserializedChunk | null {
-    const parsed = tryDeserializeChunk(payload)
-    if (parsed) return parsed
+  // Parse a review object: the coded frame is the raw payload and metadata lives in the
+  // LOC extension header (both the browser publisher and moq-cli publish raw LOC objects).
+  private buildChunkFromLoc(payload: Uint8Array, locHeader: unknown, objectId: bigint): DeserializedChunk {
     const loc = readLocHeader(locHeader as LocHeader | undefined)
     const timestamp =
       typeof loc.captureTimestampMicros === 'number' && Number.isFinite(loc.captureTimestampMicros)
@@ -223,11 +220,7 @@ export class CameraSubscriber {
   }
 
   decodeFrame(groupId: bigint, payload: Uint8Array, locHeader?: unknown): void {
-    const parsed = this.deserializeOrLoc(payload, locHeader, 0n)
-    if (!parsed) {
-      log('decodeFrame: failed to parse payload', { camId: this.camId, groupId })
-      return
-    }
+    const parsed = this.buildChunkFromLoc(payload, locHeader, 0n)
 
     if (this.reviewDecoder && this.reviewDecoder.state !== 'closed') {
       this.reviewDecoder.close()
@@ -283,11 +276,10 @@ export class CameraSubscriber {
       return
     }
 
-    const iFrameParsed = this.deserializeOrLoc(iFrame.payload, iFrame.locHeader, 0n)
-    if (!iFrameParsed) return
+    const iFrameParsed = this.buildChunkFromLoc(iFrame.payload, iFrame.locHeader, 0n)
 
     const target = frames.get(targetObjectId)
-    const targetParsed = target ? this.deserializeOrLoc(target.payload, target.locHeader, targetObjectId) : null
+    const targetParsed = target ? this.buildChunkFromLoc(target.payload, target.locHeader, targetObjectId) : null
     // Use timestamp to identify the target frame in the output callback
     const targetTimestamp = targetParsed?.metadata.timestamp ?? null
 
@@ -336,8 +328,7 @@ export class CameraSubscriber {
         log('decodeFrameSequential: missing frame, stopping', { camId: this.camId, objId, targetObjectId })
         break
       }
-      const parsed = this.deserializeOrLoc(entry.payload, entry.locHeader, objId)
-      if (!parsed) break
+      const parsed = this.buildChunkFromLoc(entry.payload, entry.locHeader, objId)
       try {
         this.reviewDecoder.decode(
           new EncodedVideoChunk({
@@ -352,6 +343,9 @@ export class CameraSubscriber {
         break
       }
     }
+    void this.reviewDecoder
+      .flush()
+      .catch((e) => console.error('[mon][review] sequential flush error', { camId: this.camId, e }))
   }
 
   dispose(): void {

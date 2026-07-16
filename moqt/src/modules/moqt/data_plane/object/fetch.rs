@@ -212,11 +212,7 @@ mod tests {
                 2,   // subgroup_id
                 3,   // object_id
                 128, // publisher_priority
-                ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                ExtensionHeaders::default(),
                 object,
             )
         }

@@ -132,6 +132,11 @@ One struct owns all cross-task state:
 - `object/*` — wire formats: `SubgroupHeader` (types `0x10..=0x1D` encoding
   subgroup-id mode / extensions / end-of-group), `SubgroupObject`,
   `ObjectDatagram`, `FetchObject`, `ExtensionHeaders`, `ObjectStatus`.
+  `ExtensionHeaders` keeps every Object Extension Header as an ordered list of
+  `KeyValuePair`s and re-encodes them unchanged (accessors expose the header
+  types the transport uses); this satisfies the draft-14 §10.2.1.2 requirement
+  to forward unsupported extension headers unmodified, and lets higher layers
+  (e.g. LOC) define their own header types without changing the transport.
 - `codec/*` — incremental decoders (`ControlMessageDecoder`,
   `UniStreamDecoder`, `SubgroupDecoder`, `FetchDecoder`) over a shared
   `tokio_reader`.

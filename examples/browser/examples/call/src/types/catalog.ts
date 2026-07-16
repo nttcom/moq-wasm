@@ -15,6 +15,7 @@ export interface CallCatalogTrack {
   keyframeInterval?: number
   samplerate?: number
   channelConfig?: string
+  initData?: string
   audioStreamUpdateMode?: AudioStreamUpdateMode
   audioStreamUpdateIntervalSeconds?: number
   isLive?: boolean
@@ -22,6 +23,14 @@ export interface CallCatalogTrack {
 
 export interface EditableCallCatalogTrack extends CallCatalogTrack {
   id: string
+}
+
+export type TrackMediaConfig = {
+  codec?: string
+  framerate?: number
+  samplerate?: number
+  channelConfig?: string
+  initData?: string
 }
 
 export interface AudioStreamUpdateSettings {
