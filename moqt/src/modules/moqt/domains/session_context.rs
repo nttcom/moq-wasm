@@ -50,7 +50,7 @@ impl std::error::Error for RequestTimeoutError {}
 /// stopped waiting (timeout or cancellation). Late error responses never need
 /// a withdrawal and are always discarded.
 #[derive(Debug)]
-pub(crate) enum LateResponseCleanup {
+pub(crate) enum LateResponseAction {
     /// Discard the late response without a withdrawal message.
     ///
     /// FIXME: PUBLISH and FETCH should withdraw with PUBLISH_DONE /
@@ -72,9 +72,9 @@ pub(crate) enum LateResponseCleanup {
 pub(crate) enum InflightRequest {
     Waiting {
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
-        on_late_response: LateResponseCleanup,
+        on_late_response: LateResponseAction,
     },
-    Abandoned(LateResponseCleanup),
+    Abandoned(LateResponseAction),
 }
 
 pub(crate) struct SessionContext<T: TransportProtocol> {
@@ -117,7 +117,7 @@ pub(crate) enum IncomingObjectNotification {
 /// Holds the `sender_map` registration for an in-flight request. On drop, a
 /// still-waiting entry is downgraded to `Abandoned` (not removed): the caller
 /// gave up, but a late response must still find the entry so it triggers the
-/// registered cleanup instead of a session close.
+/// registered action instead of a session close.
 #[must_use = "dropping this abandons the request in sender_map; bind it for the lifetime of the request"]
 pub(crate) struct RegisteredSender<T: TransportProtocol> {
     session: Arc<SessionContext<T>>,
@@ -132,8 +132,8 @@ impl<T: TransportProtocol> Drop for RegisteredSender<T> {
                 on_late_response, ..
             } = entry
         {
-            let cleanup = std::mem::replace(on_late_response, LateResponseCleanup::Discard);
-            *entry = InflightRequest::Abandoned(cleanup);
+            let action = std::mem::replace(on_late_response, LateResponseAction::Discard);
+            *entry = InflightRequest::Abandoned(action);
         }
     }
 }
@@ -179,7 +179,7 @@ impl<T: TransportProtocol> SessionContext<T> {
         self: &Arc<Self>,
         request_id: RequestId,
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
-        on_late_response: LateResponseCleanup,
+        on_late_response: LateResponseAction,
     ) -> RegisteredSender<T> {
         self.sender_map.lock().expect("sender_map poisoned").insert(
             request_id,
@@ -289,11 +289,11 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn handle_late_response(
         &self,
         request_id: RequestId,
-        cleanup: LateResponseCleanup,
+        action: LateResponseAction,
         response: ResponseMessage,
     ) {
-        let send_result = match (&cleanup, &response) {
-            (LateResponseCleanup::Unsubscribe, ResponseMessage::SubscribeOk(_)) => {
+        let send_result = match (&action, &response) {
+            (LateResponseAction::Unsubscribe, ResponseMessage::SubscribeOk(_)) => {
                 tracing::warn!(
                     request_id,
                     "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
@@ -306,7 +306,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                     .await
             }
             (
-                LateResponseCleanup::UnsubscribeNamespace { namespace },
+                LateResponseAction::UnsubscribeNamespace { namespace },
                 ResponseMessage::SubscribeNameSpaceOk(_),
             ) => {
                 tracing::warn!(
@@ -321,7 +321,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                     .await
             }
             (
-                LateResponseCleanup::PublishNamespaceDone { namespace },
+                LateResponseAction::PublishNamespaceDone { namespace },
                 ResponseMessage::PublishNamespaceOk(_),
             ) => {
                 tracing::warn!(

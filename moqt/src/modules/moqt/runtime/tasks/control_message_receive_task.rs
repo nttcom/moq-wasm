@@ -89,9 +89,9 @@ impl ControlMessageReceiveTask {
                                                     .await;
                                             }
                                         }
-                                        Some(InflightRequest::Abandoned(cleanup)) => {
+                                        Some(InflightRequest::Abandoned(action)) => {
                                             session
-                                                .handle_late_response(request_id, cleanup, message)
+                                                .handle_late_response(request_id, action, message)
                                                 .await;
                                         }
                                         None => {

@@ -26,7 +26,7 @@ use crate::{
                 },
             },
             domains::{
-                session_context::{LateResponseCleanup, SessionContext},
+                session_context::{LateResponseAction, SessionContext},
                 subscription::{PublisherInitiatedSubscription, Subscription},
             },
             protocol::TransportProtocol,
@@ -54,7 +54,7 @@ impl<T: TransportProtocol> Publisher<T> {
         let _registered_sender = self.session.register_response_sender(
             request_id,
             sender,
-            LateResponseCleanup::PublishNamespaceDone {
+            LateResponseAction::PublishNamespaceDone {
                 namespace: vec_namespace.clone(),
             },
         );
@@ -114,11 +114,11 @@ impl<T: TransportProtocol> Publisher<T> {
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
         // A late PUBLISH_OK is discarded: the peer keeps subscription state
-        // but receives no objects; see LateResponseCleanup::Discard for why
+        // but receives no objects; see LateResponseAction::Discard for why
         // no PUBLISH_DONE is sent yet.
         let _registered_sender =
             self.session
-                .register_response_sender(request_id, sender, LateResponseCleanup::Discard);
+                .register_response_sender(request_id, sender, LateResponseAction::Discard);
         let content_exists = option.content_exists;
         let publish = Publish {
             request_id,

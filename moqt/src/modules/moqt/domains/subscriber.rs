@@ -24,7 +24,7 @@ use crate::{
         },
         domains::{
             fetch_handle::FetchHandle,
-            session_context::{LateResponseCleanup, SessionContext},
+            session_context::{LateResponseAction, SessionContext},
         },
         protocol::TransportProtocol,
         runtime::dispatch::incoming_object::IncomingObject,
@@ -55,7 +55,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let _registered_sender = self.session.register_response_sender(
             request_id,
             sender,
-            LateResponseCleanup::UnsubscribeNamespace {
+            LateResponseAction::UnsubscribeNamespace {
                 namespace: vec_namespace.clone(),
             },
         );
@@ -110,7 +110,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let _registered_sender = self.session.register_response_sender(
             request_id,
             sender,
-            LateResponseCleanup::Unsubscribe,
+            LateResponseAction::Unsubscribe,
         );
         let subscribe = Subscribe {
             request_id,
@@ -209,12 +209,12 @@ impl<T: TransportProtocol> Subscriber<T> {
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
         // A late FETCH_OK is discarded (its data stream is dropped by
-        // FetchNotifier); see LateResponseCleanup::Discard for why no
+        // FetchNotifier); see LateResponseAction::Discard for why no
         // FETCH_CANCEL is sent yet.
         let _registered_sender = self.session.register_response_sender(
             request_id,
             fetch_message_tx,
-            LateResponseCleanup::Discard,
+            LateResponseAction::Discard,
         );
         let fetch = Fetch {
             request_id,
@@ -303,12 +303,12 @@ impl<T: TransportProtocol> Subscriber<T> {
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
         // A late FETCH_OK is discarded (its data stream is dropped by
-        // FetchNotifier); see LateResponseCleanup::Discard for why no
+        // FetchNotifier); see LateResponseAction::Discard for why no
         // FETCH_CANCEL is sent yet.
         let _registered_sender = self.session.register_response_sender(
             request_id,
             fetch_message_tx,
-            LateResponseCleanup::Discard,
+            LateResponseAction::Discard,
         );
         let fetch = Fetch {
             request_id,
