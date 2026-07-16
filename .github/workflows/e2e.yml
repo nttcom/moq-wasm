@@ -267,8 +267,8 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -327,8 +327,8 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -411,8 +411,8 @@ jobs:
           toolchain: 1.96.0
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -474,8 +474,8 @@ jobs:
           toolchain: 1.96.0
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -537,8 +537,8 @@ jobs:
           toolchain: 1.96.0
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -600,8 +600,8 @@ jobs:
           toolchain: 1.96.0
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -663,8 +663,8 @@ jobs:
           toolchain: 1.96.0
 
       - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 = v2.9.1
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
