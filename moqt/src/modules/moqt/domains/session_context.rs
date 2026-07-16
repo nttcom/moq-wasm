@@ -26,7 +26,9 @@ use crate::{
             data_plane::stream::bi_stream_sender::BiStreamSender,
             runtime::dispatch::incoming_object::IncomingObject,
         },
-        transport::transport_connection::TransportConnection,
+        transport::{
+            transport_connection::TransportConnection, transport_send_stream::TransportSendError,
+        },
     },
 };
 
@@ -292,60 +294,57 @@ impl<T: TransportProtocol> SessionContext<T> {
         action: LateResponseAction,
         response: ResponseMessage,
     ) {
-        // The action fires only for the success response it was registered
-        // for: an error response leaves no peer state to withdraw, and a
-        // mismatched response type must not trigger a blind withdrawal.
-        let send_result = match (&action, &response) {
-            (LateResponseAction::Unsubscribe, ResponseMessage::SubscribeOk(_)) => {
-                tracing::warn!(
-                    request_id,
-                    "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
-                );
-                self.send_stream
-                    .send(
-                        ControlMessageType::UnSubscribe,
-                        Unsubscribe { request_id }.encode(),
-                    )
-                    .await
-            }
-            (
-                LateResponseAction::UnsubscribeNamespace { namespace },
-                ResponseMessage::SubscribeNameSpaceOk(_),
-            ) => {
-                tracing::warn!(
-                    request_id,
-                    "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
-                );
-                self.send_stream
-                    .send(
-                        ControlMessageType::UnSubscribeNamespace,
-                        UnsubscribeNamespace::new(namespace.clone()).encode(),
-                    )
-                    .await
-            }
-            (
-                LateResponseAction::PublishNamespaceDone { namespace },
-                ResponseMessage::PublishNamespaceOk(_),
-            ) => {
-                tracing::warn!(
-                    request_id,
-                    "PUBLISH_NAMESPACE_OK arrived after the request was abandoned; sending PUBLISH_NAMESPACE_DONE"
-                );
-                self.send_stream
-                    .send(
-                        ControlMessageType::PublishNamespaceDone,
-                        PublishNamespaceDone::new(namespace.clone()).encode(),
-                    )
-                    .await
-            }
-            _ => {
-                tracing::warn!(
-                    request_id,
-                    ?response,
-                    "discarding response that arrived after the request was abandoned"
-                );
-                Ok(())
-            }
+        // A withdrawal is sent only when the success response matches the
+        // action registered for this request: an error response leaves no
+        // peer state to withdraw, and a mismatched response type must not
+        // trigger a blind withdrawal.
+        let send_result = match &response {
+            ResponseMessage::SubscribeOk(_) => match &action {
+                LateResponseAction::Unsubscribe => {
+                    tracing::warn!(
+                        request_id,
+                        "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
+                    );
+                    self.send_stream
+                        .send(
+                            ControlMessageType::UnSubscribe,
+                            Unsubscribe { request_id }.encode(),
+                        )
+                        .await
+                }
+                _ => Self::discard_late_response(request_id, &response),
+            },
+            ResponseMessage::SubscribeNameSpaceOk(_) => match &action {
+                LateResponseAction::UnsubscribeNamespace { namespace } => {
+                    tracing::warn!(
+                        request_id,
+                        "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
+                    );
+                    self.send_stream
+                        .send(
+                            ControlMessageType::UnSubscribeNamespace,
+                            UnsubscribeNamespace::new(namespace.clone()).encode(),
+                        )
+                        .await
+                }
+                _ => Self::discard_late_response(request_id, &response),
+            },
+            ResponseMessage::PublishNamespaceOk(_) => match &action {
+                LateResponseAction::PublishNamespaceDone { namespace } => {
+                    tracing::warn!(
+                        request_id,
+                        "PUBLISH_NAMESPACE_OK arrived after the request was abandoned; sending PUBLISH_NAMESPACE_DONE"
+                    );
+                    self.send_stream
+                        .send(
+                            ControlMessageType::PublishNamespaceDone,
+                            PublishNamespaceDone::new(namespace.clone()).encode(),
+                        )
+                        .await
+                }
+                _ => Self::discard_late_response(request_id, &response),
+            },
+            _ => Self::discard_late_response(request_id, &response),
         };
         if let Err(error) = send_result {
             tracing::warn!(
@@ -354,6 +353,20 @@ impl<T: TransportProtocol> SessionContext<T> {
                 "failed to withdraw an abandoned request"
             );
         }
+    }
+
+    /// Nothing to withdraw (late error, or a response that does not match
+    /// the registered action): log and drop the response.
+    fn discard_late_response(
+        request_id: RequestId,
+        response: &ResponseMessage,
+    ) -> Result<(), TransportSendError> {
+        tracing::warn!(
+            request_id,
+            ?response,
+            "discarding response that arrived after the request was abandoned"
+        );
+        Ok(())
     }
 
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
