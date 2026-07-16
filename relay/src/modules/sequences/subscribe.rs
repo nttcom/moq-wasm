@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe::SubscribeHandler,
-    enums::{ContentExists, Location},
+    enums::{ContentExists, Location, SubscribeErrorCode},
     relay::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
@@ -71,22 +71,43 @@ async fn resolve_subscribe_largest(
 
 enum UpstreamSubscriptionError {
     PublisherNotFound,
-    SubscribeFailed,
+    SubscribeFailed(anyhow::Error),
     IngressStartFailed,
 }
 
 impl UpstreamSubscriptionError {
-    fn code(&self) -> u64 {
-        0
-    }
-
-    fn reason_phrase(&self) -> String {
+    /// SUBSCRIBE_ERROR (code, reason) for the downstream subscriber. An
+    /// upstream SUBSCRIBE_ERROR is relayed verbatim; an upstream timeout maps
+    /// to TIMEOUT so one slow upstream request stays a request-scoped failure.
+    fn subscribe_error_response(&self) -> (u64, String) {
         match self {
-            Self::PublisherNotFound => "Designated namespace and track name do not exist.",
-            Self::SubscribeFailed => "Failed to create upstream subscription.",
-            Self::IngressStartFailed => "Failed to start upstream ingress.",
+            Self::PublisherNotFound => (
+                SubscribeErrorCode::TrackDoesNotExist as u64,
+                "Designated namespace and track name do not exist.".to_string(),
+            ),
+            Self::SubscribeFailed(error) => {
+                if let Some(subscribe_error) = error.downcast_ref::<moqt::wire::RequestError>() {
+                    (
+                        subscribe_error.error_code,
+                        subscribe_error.reason_phrase.clone(),
+                    )
+                } else if error.downcast_ref::<moqt::RequestTimeoutError>().is_some() {
+                    (
+                        SubscribeErrorCode::Timeout as u64,
+                        "Upstream subscribe timed out".to_string(),
+                    )
+                } else {
+                    (
+                        SubscribeErrorCode::InternalError as u64,
+                        "Failed to create upstream subscription.".to_string(),
+                    )
+                }
+            }
+            Self::IngressStartFailed => (
+                SubscribeErrorCode::InternalError as u64,
+                "Failed to start upstream ingress.".to_string(),
+            ),
         }
-        .to_string()
     }
 }
 
@@ -142,8 +163,9 @@ impl Subscribe {
                     track_name = %track_name,
                     "failed to get or create upstream subscription"
                 );
+                let (code, reason_phrase) = err.subscribe_error_response();
                 if let Err(send_error) = self
-                    .response_error(handler.as_ref(), err.code(), err.reason_phrase())
+                    .response_error(handler.as_ref(), code, reason_phrase)
                     .await
                 {
                     tracing::error!(
@@ -320,21 +342,25 @@ impl Subscribe {
             .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
 
         let pub_session_id = upstream_key.publisher_session_id;
-        let Ok(subscription) = forwarder
+        let subscription = match forwarder
             .subscribe(
                 pub_session_id,
                 upstream_key.track_namespace.clone(),
                 upstream_key.track_name.clone(),
             )
             .await
-        else {
-            tracing::warn!(
-                pub_session_id = %pub_session_id,
-                track_namespace = %upstream_key.track_namespace,
-                track_name = %upstream_key.track_name,
-                "failed to send upstream SUBSCRIBE"
-            );
-            return Err(UpstreamSubscriptionError::SubscribeFailed);
+        {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    pub_session_id = %pub_session_id,
+                    track_namespace = %upstream_key.track_namespace,
+                    track_name = %upstream_key.track_name,
+                    "upstream SUBSCRIBE failed"
+                );
+                return Err(UpstreamSubscriptionError::SubscribeFailed(error));
+            }
         };
         tracing::info!(
             pub_session_id = %pub_session_id,
@@ -574,6 +600,36 @@ mod tests {
         cache
             .append_stream_object(group_id, &subgroup, Some(0), make_object())
             .await;
+    }
+
+    #[test]
+    fn upstream_timeout_maps_to_subscribe_error_timeout() {
+        let error = UpstreamSubscriptionError::SubscribeFailed(anyhow::Error::new(
+            moqt::RequestTimeoutError,
+        ));
+        let (code, _reason) = error.subscribe_error_response();
+        assert_eq!(code, SubscribeErrorCode::Timeout as u64);
+    }
+
+    #[test]
+    fn upstream_subscribe_error_code_is_relayed_verbatim() {
+        let error = UpstreamSubscriptionError::SubscribeFailed(anyhow::Error::new(
+            moqt::wire::RequestError {
+                request_id: 7,
+                error_code: 0x1,
+                reason_phrase: "unauthorized".to_string(),
+            },
+        ));
+        let (code, reason) = error.subscribe_error_response();
+        assert_eq!(code, 0x1);
+        assert_eq!(reason, "unauthorized");
+    }
+
+    #[test]
+    fn publisher_not_found_maps_to_track_does_not_exist() {
+        let (code, _reason) =
+            UpstreamSubscriptionError::PublisherNotFound.subscribe_error_response();
+        assert_eq!(code, SubscribeErrorCode::TrackDoesNotExist as u64);
     }
 
     // A publisher that left a catalog cache (groups 0..=4) then reconnected as a

@@ -21,7 +21,7 @@ use crate::{
         data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
-        domains::session_context::SessionContext,
+        domains::session_context::{PendingRequest, SessionContext},
     },
 };
 
@@ -66,25 +66,45 @@ impl ControlMessageReceiveTask {
                                     }
                                 }
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let sender = session
+                                    let pending = session
                                         .sender_map
                                         .lock()
                                         .expect("sender_map poisoned")
                                         .remove(&request_id);
-                                    if let Some(sender) = sender {
-                                        if let Err(error) = sender.send(message) {
-                                            tracing::error!("failed to send message: {:?}", error);
+                                    match pending {
+                                        Some(PendingRequest::Waiting {
+                                            sender,
+                                            on_late_response,
+                                        }) => {
+                                            // The caller can stop waiting between response
+                                            // arrival and this send; fall back to the
+                                            // late-response withdrawal in that case.
+                                            if let Err(message) = sender.send(message) {
+                                                session
+                                                    .handle_late_response(
+                                                        request_id,
+                                                        on_late_response,
+                                                        message,
+                                                    )
+                                                    .await;
+                                            }
                                         }
-                                    } else {
-                                        tracing::error!(
-                                            request_id,
-                                            "Protocol violation: response for unknown or already-completed Request ID; closing session"
-                                        );
-                                        session.close_with_error(
-                                            TerminationErrorCode::ProtocolViolation,
-                                            "received response for unknown or already-completed Request ID",
-                                        );
-                                        break;
+                                        Some(PendingRequest::Abandoned(cleanup)) => {
+                                            session
+                                                .handle_late_response(request_id, cleanup, message)
+                                                .await;
+                                        }
+                                        None => {
+                                            tracing::error!(
+                                                request_id,
+                                                "Protocol violation: response for unknown or already-completed Request ID; closing session"
+                                            );
+                                            session.close_with_error(
+                                                TerminationErrorCode::ProtocolViolation,
+                                                "received response for unknown or already-completed Request ID",
+                                            );
+                                            break;
+                                        }
                                     }
                                 }
                             }

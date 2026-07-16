@@ -2,6 +2,7 @@ pub mod fetch_handler;
 pub mod publish_handler;
 pub mod publish_namespace_done_handler;
 pub mod publish_namespace_handler;
+pub(crate) mod response_guard;
 pub mod subscribe_handler;
 pub mod subscribe_namespace_handler;
 pub mod unsubscribe_handler;

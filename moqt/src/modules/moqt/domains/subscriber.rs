@@ -22,7 +22,10 @@ use crate::{
             fetch_data_receiver::FetchDataReceiver, stream_data_receiver::StreamDataReceiver,
             stream_data_receiver_factory::StreamDataReceiverFactory,
         },
-        domains::{fetch_handle::FetchHandle, session_context::SessionContext},
+        domains::{
+            fetch_handle::FetchHandle,
+            session_context::{LateResponseCleanup, SessionContext},
+        },
         protocol::TransportProtocol,
         runtime::dispatch::incoming_object::IncomingObject,
     },
@@ -46,10 +49,16 @@ impl<T: TransportProtocol> Subscriber<T> {
         fields(namespace = %namespace)
     )]
     pub async fn subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
-        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(
+            request_id,
+            sender,
+            LateResponseCleanup::UnsubscribeNamespace {
+                namespace: vec_namespace.clone(),
+            },
+        );
         let subscribe_namespace = SubscribeNamespace::new(request_id, vec_namespace, vec![]);
         self.session
             .send_stream
@@ -59,7 +68,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             )
             .await?;
         tracing::info!("Subscribe namespace");
-        let response = self.session.await_response(receiver).await?;
+        let response = self.session.await_request_response(receiver).await?;
         match response {
             ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
                 if request_id != response_request_id {
@@ -69,9 +78,14 @@ impl<T: TransportProtocol> Subscriber<T> {
                     Ok(())
                 }
             }
-            ResponseMessage::SubscribeNameSpaceError(_, _, _) => {
+            ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe namespace error");
-                bail!("Subscribe namespace error")
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }
@@ -93,7 +107,11 @@ impl<T: TransportProtocol> Subscriber<T> {
         let filter_type = option.filter_type;
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(
+            request_id,
+            sender,
+            LateResponseCleanup::Unsubscribe,
+        );
         let subscribe = Subscribe {
             request_id,
             track_namespace: vec_namespace,
@@ -109,7 +127,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             .send_stream
             .send(ControlMessageType::Subscribe, subscribe.encode())
             .await?;
-        let response = self.session.await_response(receiver).await?;
+        let response = self.session.await_request_response(receiver).await?;
         match response {
             ResponseMessage::SubscribeOk(message) => {
                 if request_id != message.request_id {
@@ -145,9 +163,14 @@ impl<T: TransportProtocol> Subscriber<T> {
                     ))
                 }
             }
-            ResponseMessage::SubscribeError(_, _, _) => {
+            ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe error");
-                bail!("Subscribe error")
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }
@@ -185,9 +208,14 @@ impl<T: TransportProtocol> Subscriber<T> {
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
-        let _registered_sender = self
-            .session
-            .register_response_sender(request_id, fetch_message_tx);
+        // A late FETCH_OK is discarded (its data stream is dropped by
+        // FetchNotifier); see LateResponseCleanup::Discard for why no
+        // FETCH_CANCEL is sent yet.
+        let _registered_sender = self.session.register_response_sender(
+            request_id,
+            fetch_message_tx,
+            LateResponseCleanup::Discard,
+        );
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,
@@ -274,9 +302,14 @@ impl<T: TransportProtocol> Subscriber<T> {
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
-        let _registered_sender = self
-            .session
-            .register_response_sender(request_id, fetch_message_tx);
+        // A late FETCH_OK is discarded (its data stream is dropped by
+        // FetchNotifier); see LateResponseCleanup::Discard for why no
+        // FETCH_CANCEL is sent yet.
+        let _registered_sender = self.session.register_response_sender(
+            request_id,
+            fetch_message_tx,
+            LateResponseCleanup::Discard,
+        );
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,

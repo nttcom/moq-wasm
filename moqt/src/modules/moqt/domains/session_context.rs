@@ -14,6 +14,13 @@ use crate::{
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
+                control_messages::{
+                    control_message_type::ControlMessageType,
+                    messages::{
+                        publish_namespace_done::PublishNamespaceDone, unsubscribe::Unsubscribe,
+                        unsubscribe_namespace::UnsubscribeNamespace,
+                    },
+                },
                 enums::{RequestId, ResponseMessage},
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
@@ -39,14 +46,44 @@ impl fmt::Display for RequestTimeoutError {
 
 impl std::error::Error for RequestTimeoutError {}
 
+/// How to withdraw a request whose success response arrives after the caller
+/// stopped waiting (timeout or cancellation). Late error responses never need
+/// a withdrawal and are always discarded.
+#[derive(Debug)]
+pub(crate) enum LateResponseCleanup {
+    /// Discard the late response without a withdrawal message.
+    ///
+    /// FIXME: PUBLISH and FETCH should withdraw with PUBLISH_DONE /
+    /// FETCH_CANCEL, but decoding those messages is still `todo!()`, so
+    /// sending them would crash a peer running this crate.
+    Discard,
+    /// A late SUBSCRIBE_OK established a subscription nobody consumes.
+    Unsubscribe,
+    /// A late SUBSCRIBE_NAMESPACE_OK registered an unwanted namespace interest.
+    UnsubscribeNamespace { namespace: Vec<String> },
+    /// A late PUBLISH_NAMESPACE_OK accepted an announcement we gave up on.
+    PublishNamespaceDone { namespace: Vec<String> },
+}
+
+/// A request awaiting its response on this session. Kept in `sender_map`
+/// until the response arrives, even after the caller stops waiting, so a
+/// late response is answered with a withdrawal instead of being mistaken
+/// for an unknown Request ID (which must close the session, §9.1).
+pub(crate) enum PendingRequest {
+    Waiting {
+        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+        on_late_response: LateResponseCleanup,
+    },
+    Abandoned(LateResponseCleanup),
+}
+
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: BiStreamSender<T>,
     request_id: AtomicU64,
     track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
-    pub(crate) sender_map:
-        std::sync::Mutex<HashMap<RequestId, tokio::sync::oneshot::Sender<ResponseMessage>>>,
+    pub(crate) sender_map: std::sync::Mutex<HashMap<RequestId, PendingRequest>>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
@@ -77,9 +114,11 @@ pub(crate) enum IncomingObjectNotification {
     ReceiverClosed,
 }
 
-/// Holds the `sender_map` registration for an in-flight request. Removes the
-/// entry on drop, so a cancelled request does not leave an orphaned sender behind.
-#[must_use = "dropping this removes the sender from sender_map; bind it for the lifetime of the request"]
+/// Holds the `sender_map` registration for an in-flight request. On drop, a
+/// still-waiting entry is downgraded to `Abandoned` (not removed): the caller
+/// gave up, but a late response must still find the entry so it triggers the
+/// registered cleanup instead of a session close.
+#[must_use = "dropping this abandons the request in sender_map; bind it for the lifetime of the request"]
 pub(crate) struct RegisteredSender<T: TransportProtocol> {
     session: Arc<SessionContext<T>>,
     request_id: RequestId,
@@ -87,8 +126,14 @@ pub(crate) struct RegisteredSender<T: TransportProtocol> {
 
 impl<T: TransportProtocol> Drop for RegisteredSender<T> {
     fn drop(&mut self) {
-        if let Ok(mut senders) = self.session.sender_map.lock() {
-            senders.remove(&self.request_id);
+        if let Ok(mut requests) = self.session.sender_map.lock()
+            && let Some(entry) = requests.get_mut(&self.request_id)
+            && let PendingRequest::Waiting {
+                on_late_response, ..
+            } = entry
+        {
+            let cleanup = std::mem::replace(on_late_response, LateResponseCleanup::Discard);
+            *entry = PendingRequest::Abandoned(cleanup);
         }
     }
 }
@@ -127,17 +172,22 @@ impl<T: TransportProtocol> SessionContext<T> {
         track_alias
     }
 
-    /// Inserts the sender into `sender_map` and returns a `RegisteredSender` that
-    /// removes it on drop, ensuring cleanup on both normal completion and cancellation.
+    /// Inserts the sender into `sender_map` and returns a `RegisteredSender`
+    /// that marks the request abandoned on drop. `on_late_response` is the
+    /// withdrawal to send if a success response arrives after abandonment.
     pub(crate) fn register_response_sender(
         self: &Arc<Self>,
         request_id: RequestId,
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+        on_late_response: LateResponseCleanup,
     ) -> RegisteredSender<T> {
-        self.sender_map
-            .lock()
-            .expect("sender_map poisoned")
-            .insert(request_id, sender);
+        self.sender_map.lock().expect("sender_map poisoned").insert(
+            request_id,
+            PendingRequest::Waiting {
+                sender,
+                on_late_response,
+            },
+        );
         RegisteredSender {
             session: self.clone(),
             request_id,
@@ -213,39 +263,14 @@ impl<T: TransportProtocol> SessionContext<T> {
         Ok(())
     }
 
-    /// Awaits a response to a control message with a bounded timeout.
+    /// Awaits a response to a control message with a bounded timeout (§12.2).
     ///
-    /// draft-14 §12.2 recommends implementation-defined timeouts to prevent
-    /// resource exhaustion when a peer does not send the expected response.
-    /// On timeout, the session is closed with `ControlMessageTimeout` and an
-    /// error is returned so the caller can propagate the failure cleanly.
-    ///
-    /// FIXME: SUBSCRIBE and the other request/response exchanges still use
-    /// this session-closing variant; migrating them to
-    /// `await_request_response` is tracked separately.
-    pub(crate) async fn await_response(
-        &self,
-        receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
-    ) -> anyhow::Result<ResponseMessage> {
-        match tokio::time::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(error)) => anyhow::bail!("control response channel closed: {}", error),
-            Err(_) => {
-                tracing::warn!("control message response timed out; closing session");
-                self.close_with_error(
-                    TerminationErrorCode::ControlMessageTimeout,
-                    "peer did not respond to a control message in time",
-                );
-                anyhow::bail!("control message response timed out")
-            }
-        }
-    }
-
-    /// Like `await_response`, but a timeout fails only this request instead of
-    /// closing the session: a FETCH is request-scoped, and a shared
-    /// (inter-relay) session must survive one slow request. §12.2's
-    /// resource-exhaustion concern is met by the caller dropping its pending
-    /// request state on the error path.
+    /// A timeout fails only this request instead of closing the session:
+    /// requests are request-scoped, and a shared (inter-relay) session must
+    /// survive one slow request. §12.2's resource-exhaustion concern is met
+    /// by the caller dropping its pending request state on the error path;
+    /// the `sender_map` entry stays behind as `Abandoned` so a late response
+    /// is withdrawn instead of closing the session.
     pub(crate) async fn await_request_response(
         &self,
         receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
@@ -254,6 +279,77 @@ impl<T: TransportProtocol> SessionContext<T> {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(error)) => anyhow::bail!("control response channel closed: {}", error),
             Err(_) => Err(RequestTimeoutError.into()),
+        }
+    }
+
+    /// Handles a response that arrived after the caller abandoned the request.
+    /// A success response means the peer holds state (subscription, namespace
+    /// interest, ...) nobody on this side will consume, so send the matching
+    /// withdrawal; error responses are simply discarded.
+    pub(crate) async fn handle_late_response(
+        &self,
+        request_id: RequestId,
+        cleanup: LateResponseCleanup,
+        response: ResponseMessage,
+    ) {
+        let send_result = match (&cleanup, &response) {
+            (LateResponseCleanup::Unsubscribe, ResponseMessage::SubscribeOk(_)) => {
+                tracing::warn!(
+                    request_id,
+                    "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
+                );
+                self.send_stream
+                    .send(
+                        ControlMessageType::UnSubscribe,
+                        Unsubscribe { request_id }.encode(),
+                    )
+                    .await
+            }
+            (
+                LateResponseCleanup::UnsubscribeNamespace { namespace },
+                ResponseMessage::SubscribeNameSpaceOk(_),
+            ) => {
+                tracing::warn!(
+                    request_id,
+                    "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
+                );
+                self.send_stream
+                    .send(
+                        ControlMessageType::UnSubscribeNamespace,
+                        UnsubscribeNamespace::new(namespace.clone()).encode(),
+                    )
+                    .await
+            }
+            (
+                LateResponseCleanup::PublishNamespaceDone { namespace },
+                ResponseMessage::PublishNamespaceOk(_),
+            ) => {
+                tracing::warn!(
+                    request_id,
+                    "PUBLISH_NAMESPACE_OK arrived after the request was abandoned; sending PUBLISH_NAMESPACE_DONE"
+                );
+                self.send_stream
+                    .send(
+                        ControlMessageType::PublishNamespaceDone,
+                        PublishNamespaceDone::new(namespace.clone()).encode(),
+                    )
+                    .await
+            }
+            _ => {
+                tracing::warn!(
+                    request_id,
+                    ?response,
+                    "discarding response that arrived after the request was abandoned"
+                );
+                Ok(())
+            }
+        };
+        if let Err(error) = send_result {
+            tracing::warn!(
+                request_id,
+                %error,
+                "failed to withdraw an abandoned request"
+            );
         }
     }
 

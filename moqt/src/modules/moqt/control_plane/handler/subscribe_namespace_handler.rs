@@ -3,12 +3,15 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::moqt::{
-        control_plane::control_messages::{
-            control_message_type::ControlMessageType,
-            messages::{
-                namespace_ok::NamespaceOk, request_error::RequestError,
-                subscribe_namespace::SubscribeNamespace,
+        control_plane::{
+            control_messages::{
+                control_message_type::ControlMessageType,
+                messages::{
+                    namespace_ok::NamespaceOk, request_error::RequestError,
+                    subscribe_namespace::SubscribeNamespace,
+                },
             },
+            handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
     },
@@ -21,6 +24,7 @@ pub struct SubscribeNamespaceHandler<T: TransportProtocol> {
     request_id: u64,
     pub track_namespace_prefix: String,
     pub authorization_token: Option<String>,
+    guard: ResponseGuard<T>,
 }
 
 impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
@@ -28,8 +32,14 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
         session_context: Arc<SessionContext<T>>,
         subscribe_namespace: SubscribeNamespace,
     ) -> Self {
+        let guard = ResponseGuard::new(
+            session_context.clone(),
+            subscribe_namespace.request_id,
+            ControlMessageType::SubscribeNamespaceError,
+        );
         Self {
             session_context,
+            guard,
             request_id: subscribe_namespace.request_id,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             authorization_token: None,
@@ -37,6 +47,7 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
     }
 
     pub async fn ok(&self) -> Result<(), TransportSendError> {
+        self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
             request_id: self.request_id,
         };
@@ -55,6 +66,7 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
+        self.guard.mark_responded();
         let err = RequestError {
             request_id: self.request_id,
             error_code,
