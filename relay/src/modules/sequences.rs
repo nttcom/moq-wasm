@@ -10,9 +10,8 @@ pub(crate) mod unsubscribe_namespace;
 pub(crate) mod upstream_serializer;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
-    inter_relay::InterRelayConnectionManager, route_registry::RelayRouteRegistry,
-    types::SessionId,
+    control_message_forwarder::ControlMessageForwarder, inter_relay::InterRelayConnectionManager,
+    route_registry::RelayRouteRegistry, types::SessionId,
 };
 
 pub(crate) struct CascadingRelayContext<'a> {
