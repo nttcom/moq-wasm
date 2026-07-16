@@ -1,4 +1,4 @@
-import { tryDeserializeChunk, type ChunkMetadata } from './chunk'
+import { type ChunkMetadata } from './chunk'
 import { bytesToBase64, readLocHeader } from './loc'
 import { latencyMsFromCaptureMicros } from './clock'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
@@ -34,13 +34,7 @@ export class VideoJitterBuffer {
 
     const locMetadata = readLocHeader(object.locHeader)
     const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
-    const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object, objectId)
-    if (!parsed) {
-      return null
-    }
-    if (!parsed.metadata.descriptionBase64 && locMetadata.videoConfig) {
-      parsed.metadata.descriptionBase64 = bytesToBase64(locMetadata.videoConfig)
-    }
+    const parsed = buildChunkFromLoc(object, objectId)
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
@@ -131,7 +125,7 @@ function isTerminalStatus(status: number | undefined): boolean {
 function buildChunkFromLoc(
   object: SubgroupObjectWithLoc,
   objectId: bigint
-): { metadata: ChunkMetadata; data: Uint8Array } | null {
+): { metadata: ChunkMetadata; data: Uint8Array } {
   const loc = readLocHeader(object.locHeader)
   const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
   const metadata: ChunkMetadata = {

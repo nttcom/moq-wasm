@@ -90,11 +90,7 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> a
         let payload = format!("g{}:o{}", group_id, obj_id);
         let obj = stream.create_object_field(
             0,
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            ExtensionHeaders::default(),
             SubgroupObject::new_payload(payload.into()),
         );
         stream.send(obj).await?;
@@ -382,12 +378,12 @@ async fn bob(
         let mut group_id = None;
         loop {
             match stream.receive().await {
-                Ok(Subgroup::Header(h)) => {
+                Ok(Some(Subgroup::Header(h))) => {
                     tracing::info!("[bob] live group_id={}", h.group_id);
                     group_id = Some(h.group_id);
                 }
-                Ok(Subgroup::Object(_)) => {}
-                Err(_) => break, // stream ended: this group is fully received
+                Ok(Some(Subgroup::Object(_))) => {}
+                Ok(None) | Err(_) => break, // stream ended: this group is fully received
             }
         }
         if let Some(group_id) = group_id {
@@ -505,11 +501,7 @@ async fn publisher_event_loop(
                         let payload = format!("{}-g{}:o{}", label, group_id, obj_id);
                         let obj = stream.create_object_field(
                             0,
-                            ExtensionHeaders {
-                                prior_group_id_gap: vec![],
-                                prior_object_id_gap: vec![],
-                                immutable_extensions: vec![],
-                            },
+                            ExtensionHeaders::default(),
                             SubgroupObject::new_payload(payload.into()),
                         );
                         stream.send(obj).await?;
@@ -551,16 +543,16 @@ async fn drain_until_group_complete(
         let mut target_group_objects = 0;
         loop {
             match stream.receive().await {
-                Ok(Subgroup::Header(h)) => {
+                Ok(Some(Subgroup::Header(h))) => {
                     tracing::info!("[{}] live group_id={}", label, h.group_id);
                     current_group = Some(h.group_id);
                 }
-                Ok(Subgroup::Object(_)) => {
+                Ok(Some(Subgroup::Object(_))) => {
                     if current_group == Some(until_group) {
                         target_group_objects += 1;
                     }
                 }
-                Err(_) => {
+                Ok(None) | Err(_) => {
                     if current_group == Some(until_group)
                         && target_group_objects >= OBJECTS_PER_GROUP
                     {

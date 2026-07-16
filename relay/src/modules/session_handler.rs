@@ -75,50 +75,57 @@ impl SessionHandler {
                             continue;
                         }
                     };
-                    let session = async {
-                        connecting.await.inspect_err(|error| {
-                            tracing::warn!(%error, "failed to establish session");
-                        })
-                    }
-                    .instrument(session_span.clone())
-                    .await;
-                    let session = match session {
-                        Ok(session) => session,
-                        Err(_) => continue,
-                    };
-                    let session_add_span = tracing::info_span!(
-                        parent: &session_span,
-                        "relay.session_repository.add",
-                        session_id = session_id
-                    );
 
-                    async {
-                        tracing::info!("Session accepted");
-                        let mut repo = repo.lock().await;
-                        match accepted_peer.clone() {
-                            SessionPeer::Client => {
-                                repo.add_client(
-                                    session_id,
-                                    Box::new(session),
-                                    relay_session_event_sender.clone(),
-                                    session_span.clone(),
-                                )
-                                .await;
-                            }
-                            SessionPeer::Relay { relay_id } => {
-                                repo.add_relay(
-                                    session_id,
-                                    Box::new(session),
-                                    relay_session_event_sender.clone(),
-                                    session_span.clone(),
-                                    relay_id,
-                                )
-                                .await;
+                    // Spawn per connection so a slow ClientSetup cannot block the accept loop.
+                    let repo = repo.clone();
+                    let relay_session_event_sender = relay_session_event_sender.clone();
+                    let accepted_peer = accepted_peer.clone();
+                    tokio::spawn(async move {
+                        let session = async {
+                            connecting.await.inspect_err(|error| {
+                                tracing::warn!(%error, "failed to establish session");
+                            })
+                        }
+                        .instrument(session_span.clone())
+                        .await;
+                        let session = match session {
+                            Ok(session) => session,
+                            Err(_) => return,
+                        };
+                        let session_add_span = tracing::info_span!(
+                            parent: &session_span,
+                            "relay.session_repository.add",
+                            session_id = session_id
+                        );
+
+                        async {
+                            tracing::info!("Session accepted");
+                            let mut repo = repo.lock().await;
+                            match accepted_peer {
+                                SessionPeer::Client => {
+                                    repo.add_client(
+                                        session_id,
+                                        Box::new(session),
+                                        relay_session_event_sender.clone(),
+                                        session_span.clone(),
+                                    )
+                                    .await;
+                                }
+                                SessionPeer::Relay { relay_id } => {
+                                    repo.add_relay(
+                                        session_id,
+                                        Box::new(session),
+                                        relay_session_event_sender.clone(),
+                                        session_span.clone(),
+                                        relay_id,
+                                    )
+                                    .await;
+                                }
                             }
                         }
-                    }
-                    .instrument(session_add_span)
-                    .await;
+                        .instrument(session_add_span)
+                        .await;
+                    });
                 }
             })
             .unwrap()

@@ -87,8 +87,9 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
                 let mut object_id: u64 = 0;
                 loop {
                     let result = match stream.receive().await {
-                        Ok(r) => r,
-                        Err(_) => break,
+                        Ok(Some(r)) => r,
+                        // FIN or receive error: move on to the next stream
+                        Ok(None) | Err(_) => break,
                     };
                     match result {
                         Subgroup::Header(header) => {

@@ -135,11 +135,7 @@ mod tests {
                 field: DatagramField::Payload0x01 {
                     object_id: 3,
                     publisher_priority: 128,
-                    extension_headers: ExtensionHeaders {
-                        prior_group_id_gap: vec![],
-                        prior_object_id_gap: vec![],
-                        immutable_extensions: vec![],
-                    },
+                    extension_headers: ExtensionHeaders::default(),
                     payload: Bytes::from(vec![0, 1, 2, 3]),
                 },
             };

@@ -1,10 +1,7 @@
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { MediaTransportState } from './transportState'
-import { serializeChunk } from './chunk'
-import { buildLocHeader, bytesToBase64, arrayBufferToUint8Array, type LocHeader } from './loc'
+import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
-
-const H264_BOOTSTRAP_FRAME_INTERVAL_US = 33_333
 
 export type VideoChunkSender = (
   trackAlias: bigint,
@@ -46,15 +43,10 @@ export async function sendVideoChunkViaMoqt({
 
   const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
   const decoderConfig = metadata?.decoderConfig as any
-  const codec = typeof decoderConfig?.codec === 'string' ? decoderConfig.codec : undefined
   const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
   const includeConfig = chunk.type === 'key' || shouldIncludeCodec
-  const payload = serializeChunk(chunk, {
-    codec,
-    timestamp: normalizeVideoChunkTimestamp(chunk, codec),
-    descriptionBase64: includeConfig && configBytes ? bytesToBase64(configBytes) : undefined,
-    avcFormat: codec?.startsWith('avc') ? 'annexb' : undefined
-  })
+  const payload = new Uint8Array(chunk.byteLength)
+  chunk.copyTo(payload)
   const resolvedCaptureTimestampMicros =
     typeof captureTimestampMicros === 'number' && Number.isFinite(captureTimestampMicros)
       ? Math.round(captureTimestampMicros)
@@ -132,11 +124,4 @@ export async function sendVideoChunkViaMoqt({
   // sent to; the number is shared across all aliases in the same group.
   transportState.incrementVideoObjectNumber()
   return { needsKeyframe: pending.length > 0 }
-}
-
-function normalizeVideoChunkTimestamp(chunk: EncodedVideoChunk, codec: string | undefined): number {
-  if (codec?.startsWith('avc') && chunk.type === 'key' && chunk.timestamp === 0) {
-    return H264_BOOTSTRAP_FRAME_INTERVAL_US
-  }
-  return chunk.timestamp
 }

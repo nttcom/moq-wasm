@@ -1,7 +1,7 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import { tryDeserializeChunk, type ChunkMetadata } from '../chunk'
+import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros } from '../clock'
 import { readLocHeader } from '../loc'
 
@@ -37,6 +37,10 @@ let remoteTimestampBase: number | null = null
 let lastRebasedTimestamp: number | null = null
 let decoderSignature: string | null = null
 let cachedAudioConfig: CachedAudioConfig | null = null
+let catalogAudioCodec: string | undefined
+let catalogAudioSampleRate: number | undefined
+let catalogAudioChannels: number | undefined
+let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
 const directLastObjectIds = new Map<string, bigint>()
 
@@ -81,9 +85,18 @@ setInterval(() => {
   }
 }, POP_INTERVAL_MS)
 
+type AudioCatalogMessage = {
+  type: 'catalog'
+  codec?: string
+  sampleRate?: number
+  channels?: number
+  descriptionBase64?: string
+}
+
 type AudioWorkerMessage =
   | SubgroupWorkerMessage
   | { type: 'config'; config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean } }
+  | AudioCatalogMessage
 
 self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   if ((event.data as { type?: string }).type === 'config') {
@@ -97,6 +110,23 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
     bypassJitterBuffer = config.bypassJitterBuffer ?? bypassJitterBuffer
     if (config.mode === 'ordered' || config.mode === 'latest') {
       jitterBuffer.setMode(config.mode)
+    }
+    return
+  }
+
+  if ((event.data as { type?: string }).type === 'catalog') {
+    const catalog = event.data as AudioCatalogMessage
+    if (catalog.codec) {
+      catalogAudioCodec = catalog.codec
+    }
+    if (typeof catalog.sampleRate === 'number') {
+      catalogAudioSampleRate = catalog.sampleRate
+    }
+    if (typeof catalog.channels === 'number') {
+      catalogAudioChannels = catalog.channels
+    }
+    if (catalog.descriptionBase64) {
+      catalogAudioDescriptionBase64 = catalog.descriptionBase64
     }
     return
   }
@@ -157,10 +187,7 @@ function materializeDirectObject(
   const locMetadata = readLocHeader(object.locHeader)
   const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
 
-  const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object)
-  if (!parsed) {
-    return null
-  }
+  const parsed = buildChunkFromLoc(object)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
@@ -194,8 +221,29 @@ function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
 }
 
+const OBJECT_STATUS_END_OF_GROUP = 3
+const OBJECT_STATUS_END_OF_TRACK = 4
+
 function isTerminalStatus(status: number | undefined): boolean {
   return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
+}
+
+function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {
+  const loc = readLocHeader(object.locHeader)
+  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
+  const metadata: ChunkMetadata = {
+    type: 'key',
+    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
+    duration: null
+  }
+  return { metadata, data: object.objectPayload }
+}
+
+function getCaptureTimestampMicros(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    return undefined
+  }
+  return value
 }
 
 async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureTimestampMicros?: number) {
@@ -270,14 +318,12 @@ function decodePcmAlawChunk(metadata: ChunkMetadata, payload: Uint8Array, resolv
   }
 
   const timestamp = rebaseTimestamp(metadata.timestamp)
-  const duration = metadata.duration ?? Math.round((numberOfFrames / sampleRate) * 1_000_000)
   const audioData = new AudioData({
     format: 's16',
     sampleRate,
     numberOfFrames,
     numberOfChannels: channels,
     timestamp,
-    duration,
     data: new Uint8Array(pcm.buffer)
   })
   self.postMessage({ type: 'audioData', audioData }, [audioData])
@@ -354,7 +400,15 @@ function rebaseTimestamp(remoteTimestamp: number): number {
 }
 
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
-  const hasNewConfig = metadata.codec || metadata.descriptionBase64 || metadata.sampleRate || metadata.channels
+  const hasNewConfig =
+    metadata.codec ||
+    metadata.descriptionBase64 ||
+    metadata.sampleRate ||
+    metadata.channels ||
+    catalogAudioCodec ||
+    catalogAudioSampleRate ||
+    catalogAudioChannels ||
+    catalogAudioDescriptionBase64
   if (!hasNewConfig && !cachedAudioConfig) {
     return {
       codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
@@ -366,11 +420,21 @@ function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
   const codec =
     metadata.codec ??
     (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
+    catalogAudioCodec ??
     cachedAudioConfig?.codec ??
     DEFAULT_AUDIO_DECODER_CONFIG.codec
-  const sampleRate = metadata.sampleRate ?? cachedAudioConfig?.sampleRate ?? DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
-  const channels = metadata.channels ?? cachedAudioConfig?.channels ?? DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
-  const descriptionBase64 = metadata.descriptionBase64 ?? cachedAudioConfig?.descriptionBase64
+  const sampleRate =
+    metadata.sampleRate ??
+    catalogAudioSampleRate ??
+    cachedAudioConfig?.sampleRate ??
+    DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
+  const channels =
+    metadata.channels ??
+    catalogAudioChannels ??
+    cachedAudioConfig?.channels ??
+    DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
+  const descriptionBase64 =
+    metadata.descriptionBase64 ?? catalogAudioDescriptionBase64 ?? cachedAudioConfig?.descriptionBase64
 
   return { codec, sampleRate, channels, descriptionBase64 }
 }

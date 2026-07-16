@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
-import { configureRelayUrlControls } from '../../utils/relayPresets'
+import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 
 const moqtClient = new MoqtClientWrapper()
 let audioDecoderWorker: Worker | null = null
@@ -150,6 +150,7 @@ type CatalogTrack = {
   bitrate?: number
   samplerate?: number
   channelConfig?: string
+  initData?: string
 }
 
 type FieldKey = 'pan' | 'tilt' | 'zoom' | 'speed'
@@ -631,6 +632,7 @@ function setupAudioDecoderWorker(): void {
       }
     }
   }
+  notifyAudioDecoderFromCatalog()
 }
 
 function setupVideoCallbacks(trackAlias: bigint): void {
@@ -854,13 +856,43 @@ function applySelectedVideoTrack(track: string): void {
 function applySelectedAudioTrack(track: string): void {
   selectedAudioTrack = track
   updateSelectedAudioTrackLabel(track)
+  notifyAudioDecoderFromCatalog()
 }
 
 function notifyDecoderFromCatalog(trackName: string | null): void {
   if (!trackName) return
   const track = catalogTracks.find((entry) => entry.name === trackName && entry.role === 'video')
   if (!track?.codec && typeof track?.framerate !== 'number') return
-  videoDecoderWorker.postMessage({ type: 'catalog', codec: track.codec, framerate: track.framerate })
+  videoDecoderWorker.postMessage({
+    type: 'catalog',
+    codec: track.codec,
+    framerate: track.framerate,
+    descriptionBase64: track.initData
+  })
+}
+
+function notifyAudioDecoderFromCatalog(): void {
+  if (!audioDecoderWorker || !selectedAudioTrack) return
+  const track = catalogTracks.find((entry) => entry.name === selectedAudioTrack && entry.role === 'audio')
+  if (!track) return
+  const channels = channelCountFromConfig(track.channelConfig)
+  if (!track.codec && typeof track.samplerate !== 'number' && channels === undefined && !track.initData) return
+  audioDecoderWorker.postMessage({
+    type: 'catalog',
+    codec: track.codec,
+    sampleRate: track.samplerate,
+    channels,
+    descriptionBase64: track.initData
+  })
+}
+
+function channelCountFromConfig(channelConfig?: string): number | undefined {
+  const normalized = channelConfig?.trim().toLowerCase()
+  if (!normalized) return undefined
+  if (normalized === 'mono') return 1
+  if (normalized === 'stereo') return 2
+  const match = /^(\d+)ch$/.exec(normalized)
+  return match ? Number(match[1]) : undefined
 }
 
 function appendMeta(container: HTMLElement, label: string, value?: string): void {
@@ -1056,7 +1088,8 @@ function buildCatalogTracks(catalog: MsfCatalog): CatalogTrack[] {
       framerate: track.framerate,
       bitrate: track.bitrate,
       samplerate: track.samplerate,
-      channelConfig: track.channelConfig
+      channelConfig: track.channelConfig,
+      initData: track.initData
     }
   })
 }
@@ -1156,7 +1189,8 @@ function setupUrlPresets(): void {
   const presetContainer = urlInput.closest('form')?.querySelector<HTMLElement>('.button-row')
   configureRelayUrlControls({
     input: urlInput,
-    presetContainer
+    presetContainer,
+    defaultUrl: DEFAULT_LOCAL_RELAY_A_URL
   })
 }
 

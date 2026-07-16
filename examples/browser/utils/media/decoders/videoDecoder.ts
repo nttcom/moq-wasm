@@ -1,7 +1,7 @@
 import { VideoJitterBuffer } from '../videoJitterBuffer'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import { tryDeserializeChunk, type ChunkMetadata } from '../chunk'
+import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
 import { bytesToBase64, readLocHeader } from '../loc'
 
@@ -312,7 +312,7 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   currentDecoderHardwareAcceleration = nextDecoderHardwareAcceleration
   currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
   updatePacingConfig(config.pacing)
-  jitterBuffer = createJitterBuffer(currentJitterConfig)
+  jitterBuffer = createJitterBuffer()
   if (decoderHardwareAccelerationChanged) {
     if (videoDecoder && videoDecoder.state !== 'closed') {
       try {
@@ -334,6 +334,8 @@ type CachedVideoConfig = { codec: string; descriptionBase64?: string; avcFormat?
 let cachedVideoConfig: CachedVideoConfig | null = null
 let catalogCodec: string | null = null
 let catalogFramerate: number | null = null
+let catalogDescriptionBase64: string | undefined
+let catalogAvcFormat: 'annexb' | 'avc' | undefined
 let missingCatalogCodecWarned = false
 let directDecodeQueue: Promise<void> = Promise.resolve()
 const directLastObjectIds = new Map<string, bigint>()
@@ -753,7 +755,14 @@ type DecoderControlMessage =
         debugVideoPipeline?: boolean
       }
     }
-  | { type: 'catalog'; codec?: string; framerate?: number }
+  | CatalogMessage
+type CatalogMessage = {
+  type: 'catalog'
+  codec?: string
+  framerate?: number
+  descriptionBase64?: string
+  avcFormat?: 'annexb' | 'avc'
+}
 type WorkerMessage = SubgroupWorkerMessage | DecoderControlMessage
 
 function isConfigMessage(message: WorkerMessage): message is {
@@ -767,7 +776,7 @@ function isConfigMessage(message: WorkerMessage): message is {
   return (message as { type?: string }).type === 'config'
 }
 
-function isCatalogMessage(message: WorkerMessage): message is { type: 'catalog'; codec?: string; framerate?: number } {
+function isCatalogMessage(message: WorkerMessage): message is CatalogMessage {
   return (message as { type?: string }).type === 'catalog'
 }
 
@@ -780,7 +789,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
     return
   }
   if (isCatalogMessage(event.data)) {
-    applyCatalogInfo(event.data.codec, event.data.framerate)
+    applyCatalogInfo(event.data.codec, event.data.framerate, event.data.descriptionBase64, event.data.avcFormat)
     return
   }
   const subgroupStreamObject: SubgroupObjectWithLoc = {
@@ -853,13 +862,7 @@ function materializeDirectObject(
 
   const locMetadata = readLocHeader(object.locHeader)
   const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
-  const parsed = tryDeserializeChunk(object.objectPayload) ?? buildChunkFromLoc(object, objectId)
-  if (!parsed) {
-    return null
-  }
-  if (!parsed.metadata.descriptionBase64 && locMetadata.videoConfig) {
-    parsed.metadata.descriptionBase64 = bytesToBase64(locMetadata.videoConfig)
-  }
+  const parsed = buildChunkFromLoc(object, objectId)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
@@ -900,7 +903,7 @@ function isTerminalStatus(status: number | undefined): boolean {
 function buildChunkFromLoc(
   object: SubgroupObjectWithLoc,
   objectId: bigint
-): { metadata: ChunkMetadata; data: Uint8Array } | null {
+): { metadata: ChunkMetadata; data: Uint8Array } {
   const loc = readLocHeader(object.locHeader)
   const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
   const metadata: ChunkMetadata = {
@@ -1114,7 +1117,18 @@ function postDecoderConfig(resolvedConfig: CachedVideoConfig, desired: VideoDeco
   })
 }
 
-function applyCatalogInfo(codec?: string, framerate?: number): void {
+function applyCatalogInfo(
+  codec?: string,
+  framerate?: number,
+  descriptionBase64?: string,
+  avcFormat?: 'annexb' | 'avc'
+): void {
+  if (descriptionBase64) {
+    catalogDescriptionBase64 = descriptionBase64
+  }
+  if (avcFormat) {
+    catalogAvcFormat = avcFormat
+  }
   if (typeof framerate === 'number' && Number.isFinite(framerate) && framerate > 0) {
     if (catalogFramerate !== framerate) {
       catalogFramerate = framerate
@@ -1157,8 +1171,8 @@ function resolveVideoConfig(metadata: ChunkMetadata): CachedVideoConfig | null {
   missingCatalogCodecWarned = false
   return {
     codec,
-    descriptionBase64: metadata.descriptionBase64,
-    avcFormat: metadata.avcFormat ?? (codec.startsWith('avc') ? 'annexb' : undefined)
+    descriptionBase64: metadata.descriptionBase64 ?? catalogDescriptionBase64,
+    avcFormat: metadata.avcFormat ?? catalogAvcFormat ?? (codec.startsWith('avc') ? 'annexb' : undefined)
   }
 }
 
