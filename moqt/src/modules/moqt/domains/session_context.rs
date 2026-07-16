@@ -292,6 +292,9 @@ impl<T: TransportProtocol> SessionContext<T> {
         action: LateResponseAction,
         response: ResponseMessage,
     ) {
+        // The action fires only for the success response it was registered
+        // for: an error response leaves no peer state to withdraw, and a
+        // mismatched response type must not trigger a blind withdrawal.
         let send_result = match (&action, &response) {
             (LateResponseAction::Unsubscribe, ResponseMessage::SubscribeOk(_)) => {
                 tracing::warn!(
