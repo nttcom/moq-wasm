@@ -287,17 +287,15 @@ impl<T: TransportProtocol> SessionContext<T> {
     /// Handles a response that arrived after the caller abandoned the request.
     /// A success response means the peer holds state (subscription, namespace
     /// interest, ...) nobody on this side will consume, so send the matching
-    /// withdrawal; error responses are simply discarded.
+    /// withdrawal. A success response whose type does not match the request
+    /// is a protocol violation and closes the session; error responses are
+    /// simply discarded.
     pub(crate) async fn handle_late_response(
         &self,
         request_id: RequestId,
         action: LateResponseAction,
         response: ResponseMessage,
     ) {
-        // A withdrawal is sent only when the success response matches the
-        // action registered for this request: an error response leaves no
-        // peer state to withdraw, and a mismatched response type must not
-        // trigger a blind withdrawal.
         let send_result = match &response {
             ResponseMessage::SubscribeOk(_) => match &action {
                 LateResponseAction::Unsubscribe => {
@@ -312,7 +310,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                         )
                         .await
                 }
-                _ => Self::discard_late_response(request_id, &response),
+                _ => self.close_on_mismatched_late_response(request_id, &response),
             },
             ResponseMessage::SubscribeNameSpaceOk(_) => match &action {
                 LateResponseAction::UnsubscribeNamespace { namespace } => {
@@ -327,7 +325,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                         )
                         .await
                 }
-                _ => Self::discard_late_response(request_id, &response),
+                _ => self.close_on_mismatched_late_response(request_id, &response),
             },
             ResponseMessage::PublishNamespaceOk(_) => match &action {
                 LateResponseAction::PublishNamespaceDone { namespace } => {
@@ -342,8 +340,12 @@ impl<T: TransportProtocol> SessionContext<T> {
                         )
                         .await
                 }
-                _ => Self::discard_late_response(request_id, &response),
+                _ => self.close_on_mismatched_late_response(request_id, &response),
             },
+            // Late error responses, and late FETCH_OK / PUBLISH_OK for
+            // requests registered with `Discard`. FETCH_OK / PUBLISH_OK for
+            // a request of another kind is not detected here: `Discard` does
+            // not record which request kind it was registered for.
             _ => Self::discard_late_response(request_id, &response),
         };
         if let Err(error) = send_result {
@@ -355,8 +357,8 @@ impl<T: TransportProtocol> SessionContext<T> {
         }
     }
 
-    /// Nothing to withdraw (late error, or a response that does not match
-    /// the registered action): log and drop the response.
+    /// Nothing to withdraw (late error, or a `Discard` action): log and drop
+    /// the response.
     fn discard_late_response(
         request_id: RequestId,
         response: &ResponseMessage,
@@ -365,6 +367,26 @@ impl<T: TransportProtocol> SessionContext<T> {
             request_id,
             ?response,
             "discarding response that arrived after the request was abandoned"
+        );
+        Ok(())
+    }
+
+    /// A success response whose type does not correspond to the request it
+    /// answers means the peer's request-id bookkeeping cannot be trusted, so
+    /// close the session instead of guessing a withdrawal.
+    fn close_on_mismatched_late_response(
+        &self,
+        request_id: RequestId,
+        response: &ResponseMessage,
+    ) -> Result<(), TransportSendError> {
+        tracing::error!(
+            request_id,
+            ?response,
+            "Protocol violation: response type does not match the request; closing session"
+        );
+        self.close_with_error(
+            TerminationErrorCode::ProtocolViolation,
+            "response type does not match the request",
         );
         Ok(())
     }
