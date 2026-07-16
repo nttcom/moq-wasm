@@ -96,7 +96,7 @@ impl StreamReader {
             };
 
             match receive_result {
-                Ok(DataObject::SubgroupHeader(header)) => {
+                Ok(Some(DataObject::SubgroupHeader(header))) => {
                     group_id = header.group_id;
                     subgroup_id = StreamSubgroupId::from(&header.subgroup_id);
                     has_subgroup = true;
@@ -116,7 +116,7 @@ impl StreamReader {
                         subgroup_id: subgroup_id.clone(),
                     });
                 }
-                Ok(object) => {
+                Ok(Some(object)) => {
                     let end_reason = match &object {
                         DataObject::SubgroupObject(field) => match &field.subgroup_object {
                             moqt::SubgroupObject::Status { code, .. }
@@ -145,8 +145,33 @@ impl StreamReader {
                         return;
                     }
                 }
-                Err(_) => {
-                    span.record("end_reason", "receiver_error");
+                Ok(None) => {
+                    // FIN: the routine end of a subgroup stream that carries
+                    // no explicit end-of-group status object.
+                    span.record("end_reason", "fin");
+                    if has_subgroup {
+                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
+                        let _ = notify.send(TrackEvent::EndOfGroup);
+                    }
+                    tracing::debug!(%track_key, "stream finished");
+                    return;
+                }
+                Err(moqt::StreamReceiveError::Closed(error)) => {
+                    // Transport-level interruption: RESET_STREAM or the
+                    // publisher connection was lost mid-subgroup.
+                    span.record("end_reason", "transport_closed");
+                    tracing::info!(%track_key, %error, "stream transport closed");
+                    if has_subgroup {
+                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
+                        let _ = notify.send(TrackEvent::EndOfGroup);
+                    }
+                    return;
+                }
+                Err(moqt::StreamReceiveError::Decode(error)) => {
+                    // Malformed data on the wire: a peer bug or protocol
+                    // violation, unlike the two endings above.
+                    span.record("end_reason", "decode_error");
+                    tracing::error!(%track_key, %error, "failed to decode stream data");
                     if has_subgroup {
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
                         let _ = notify.send(TrackEvent::EndOfGroup);
@@ -178,27 +203,44 @@ mod tests {
 
     use super::*;
 
+    // How the scripted stream ends once all objects were consumed.
+    enum TerminalOutcome {
+        Fin,
+        TransportClosed,
+        DecodeFailed,
+        Hang,
+    }
+
     struct ScriptedStreamReceiver {
         objects: VecDeque<DataObject>,
         // Fired once all scripted objects were consumed; lets tests order a
         // stop signal after ingestion without racing the read loop.
         exhausted_sender: Option<oneshot::Sender<()>>,
-        hang_when_exhausted: bool,
+        terminal: TerminalOutcome,
     }
 
     #[async_trait::async_trait]
     impl StreamReceiver for ScriptedStreamReceiver {
-        async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
+        async fn receive_object(&mut self) -> Result<Option<DataObject>, moqt::StreamReceiveError> {
             if let Some(object) = self.objects.pop_front() {
-                return Ok(object);
+                return Ok(Some(object));
             }
             if let Some(sender) = self.exhausted_sender.take() {
                 let _ = sender.send(());
             }
-            if self.hang_when_exhausted {
-                std::future::pending::<()>().await;
+            match self.terminal {
+                TerminalOutcome::Fin => Ok(None),
+                TerminalOutcome::TransportClosed => Err(moqt::StreamReceiveError::Closed(
+                    "stream reset by peer".to_string(),
+                )),
+                TerminalOutcome::DecodeFailed => Err(moqt::StreamReceiveError::Decode(
+                    "malformed object field".to_string(),
+                )),
+                TerminalOutcome::Hang => {
+                    std::future::pending::<()>().await;
+                    unreachable!()
+                }
             }
-            anyhow::bail!("stream closed")
         }
     }
 
@@ -286,7 +328,7 @@ mod tests {
                 make_end_of_group_object(),
             ]),
             exhausted_sender: None,
-            hang_when_exhausted: false,
+            terminal: TerminalOutcome::Fin,
         };
 
         StreamReader::read_loop(
@@ -322,13 +364,14 @@ mod tests {
         assert_subgroup_closed_after(&env, 0, 1).await;
     }
 
-    #[tokio::test]
-    async fn receiver_error_closes_open_subgroup() {
+    // Runs read_loop over [header, one payload object] ending with `terminal`,
+    // then asserts the open subgroup was closed and EndOfGroup notified.
+    async fn assert_open_subgroup_closed_on(terminal: TerminalOutcome) {
         let mut env = make_env();
         let receiver = ScriptedStreamReceiver {
             objects: VecDeque::from([make_header(0), make_payload_object(0)]),
             exhausted_sender: None,
-            hang_when_exhausted: false,
+            terminal,
         };
 
         StreamReader::read_loop(
@@ -352,13 +395,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fin_closes_open_subgroup() {
+        assert_open_subgroup_closed_on(TerminalOutcome::Fin).await;
+    }
+
+    #[tokio::test]
+    async fn transport_close_closes_open_subgroup() {
+        assert_open_subgroup_closed_on(TerminalOutcome::TransportClosed).await;
+    }
+
+    #[tokio::test]
+    async fn decode_failure_closes_open_subgroup() {
+        assert_open_subgroup_closed_on(TerminalOutcome::DecodeFailed).await;
+    }
+
+    #[tokio::test]
     async fn stop_signal_closes_open_subgroup() {
         let mut env = make_env();
         let (exhausted_sender, exhausted_receiver) = oneshot::channel();
         let receiver = ScriptedStreamReceiver {
             objects: VecDeque::from([make_header(0), make_payload_object(0)]),
             exhausted_sender: Some(exhausted_sender),
-            hang_when_exhausted: true,
+            terminal: TerminalOutcome::Hang,
         };
 
         let read_task = tokio::spawn(StreamReader::read_loop(
@@ -401,7 +459,7 @@ mod tests {
                 make_payload_object(1),
             ]),
             exhausted_sender: None,
-            hang_when_exhausted: false,
+            terminal: TerminalOutcome::Fin,
         };
 
         StreamReader::read_loop(

@@ -76,6 +76,8 @@ pub use modules::moqt::data_plane::stream::stream_data_sender::Uninitialized;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::stream::stream_receiver::StreamReceiveError;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::connecting::Connecting;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::ClientConfig;

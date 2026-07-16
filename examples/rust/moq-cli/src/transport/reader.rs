@@ -31,11 +31,16 @@ impl TrackReader {
             }
             let group = self.group.as_mut().expect("group opened above");
             match group.receive().await {
-                Ok(Subgroup::Object(field)) => match field.subgroup_object {
+                Ok(Some(Subgroup::Object(field))) => match field.subgroup_object {
                     SubgroupObject::Payload { data, .. } => return Ok(Some(data)),
                     SubgroupObject::Status { .. } => continue,
                 },
-                Ok(Subgroup::Header(_)) => continue,
+                Ok(Some(Subgroup::Header(_))) => continue,
+                Ok(None) => {
+                    // group stream finished (FIN); advance to the next group
+                    self.group = None;
+                    continue;
+                }
                 Err(e) => {
                     tracing::warn!("group read error, advancing to next group: {e}");
                     self.group = None;
