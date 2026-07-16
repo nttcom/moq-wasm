@@ -1018,6 +1018,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn absolute_joining_forwards_resolved_range_upstream() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        table.register_downstream_subscription(
+            2,
+            100,
+            upstream_key,
+            Some(moqt::Location {
+                group_id: 2,
+                object_id: 3,
+            }),
+        );
+
+        let (_, source) = resolve_target_and_source(
+            2,
+            FetchParams::AbsoluteJoining {
+                joining_request_id: 100,
+                joining_start: 1,
+            },
+            &table,
+            &cache_store,
+        )
+        .await
+        .unwrap();
+
+        // Upstream range: start = {joining_start, 0}, end = largest + 1
+        // (the equivalent Standalone Fetch encoding, §9.16.2.1).
+        match source {
+            FetchSource::Upstream(missing_range) => {
+                assert_eq!(
+                    missing_range.start_location,
+                    moqt::Location {
+                        group_id: 1,
+                        object_id: 0
+                    }
+                );
+                assert_eq!(
+                    missing_range.end_location,
+                    moqt::Location {
+                        group_id: 2,
+                        object_id: 4
+                    }
+                );
+            }
+            FetchSource::Cache(_) => panic!("cold cache must forward upstream"),
+        }
+    }
+
+    #[tokio::test]
+    async fn relative_joining_start_saturates_at_group_zero() {
+        let table = InMemoryLocalPubSubDirectory::new();
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        table.register_downstream_subscription(
+            2,
+            100,
+            upstream_key,
+            Some(moqt::Location {
+                group_id: 1,
+                object_id: 1,
+            }),
+        );
+
+        let (_, source) = resolve_target_and_source(
+            2,
+            FetchParams::RelativeJoining {
+                joining_request_id: 100,
+                // Further back than the track head: the start group saturates to 0.
+                joining_start: 5,
+            },
+            &table,
+            &cache_store,
+        )
+        .await
+        .unwrap();
+
+        match source {
+            FetchSource::Upstream(missing_range) => {
+                assert_eq!(
+                    missing_range.start_location,
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0
+                    }
+                );
+                assert_eq!(
+                    missing_range.end_location,
+                    moqt::Location {
+                        group_id: 1,
+                        object_id: 2
+                    }
+                );
+            }
+            FetchSource::Cache(_) => panic!("cold cache must forward upstream"),
+        }
+    }
+
+    #[tokio::test]
     async fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
