@@ -311,6 +311,7 @@ export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
       hardwareAcceleration: asHardwareAcceleration(rawTrack.hardwareAcceleration),
       samplerate: asNumber(rawTrack.samplerate),
       channelConfig: asString(rawTrack.channelConfig),
+      initData: asString(rawTrack.initData),
       isLive: asBoolean(rawTrack.isLive)
     })
     return acc

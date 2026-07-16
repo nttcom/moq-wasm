@@ -20,7 +20,8 @@
     "examples/**/*.tsx",
     "examples/media/publisher/files/decoder.js",
     "lib/**/*.ts",
-    "pkg/**/*.d.ts"
+    "pkg/**/*.d.ts",
+    "utils/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

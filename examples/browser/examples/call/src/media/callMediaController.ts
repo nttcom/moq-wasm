@@ -6,7 +6,7 @@ import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import type { SubscribeMessage } from '../../../../pkg/moqt_client_wasm'
-import type { CallCatalogTrack, CatalogSubscribeRole, CatalogTrackRole } from '../types/catalog'
+import type { CallCatalogTrack, CatalogSubscribeRole, CatalogTrackRole, TrackMediaConfig } from '../types/catalog'
 import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
@@ -246,13 +246,13 @@ export class CallMediaController {
     trackName: string,
     trackAlias: bigint,
     role?: CatalogSubscribeRole,
-    codec?: string
+    config?: TrackMediaConfig
   ): void {
     const resolvedRole = this.resolveSubscribeRole(trackName, role)
     if (resolvedRole === 'video' || resolvedRole === 'screenshare') {
-      this.subscriber.registerVideoTrack(userId, trackName, trackAlias, codec)
+      this.subscriber.registerVideoTrack(userId, trackName, trackAlias, config)
     } else if (resolvedRole === 'audio') {
-      this.subscriber.registerAudioTrack(userId, trackAlias)
+      this.subscriber.registerAudioTrack(userId, trackAlias, config)
     }
   }
 

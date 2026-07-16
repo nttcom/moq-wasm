@@ -142,9 +142,7 @@ impl FetchIngest {
         let subgroup_id = StreamSubgroupId::Value(object.subgroup_id);
         let key = (object.group_id, subgroup_id.clone());
 
-        let has_extensions = !object.extension_headers.prior_group_id_gap.is_empty()
-            || !object.extension_headers.prior_object_id_gap.is_empty()
-            || !object.extension_headers.immutable_extensions.is_empty();
+        let has_extensions = !object.extension_headers.key_value_pairs.is_empty();
         let header = moqt::SubgroupHeader::new(
             0,
             object.group_id,
@@ -261,11 +259,7 @@ mod tests {
                 0,
                 0,
                 0,
-                ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                ExtensionHeaders::default(),
                 FetchObject::Status(ObjectStatus::EndOfGroup),
             ),
             &mut previous_object_ids,
@@ -279,11 +273,7 @@ mod tests {
                 0,
                 0,
                 0,
-                ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::new()),
             ),
             &mut previous_object_ids,
@@ -321,11 +311,7 @@ mod tests {
                 0,
                 0,
                 0,
-                ExtensionHeaders {
-                    prior_group_id_gap: vec![],
-                    prior_object_id_gap: vec![],
-                    immutable_extensions: vec![],
-                },
+                ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::new()),
             ),
             &mut previous_object_ids,

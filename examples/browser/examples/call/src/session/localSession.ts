@@ -9,7 +9,7 @@ import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { CallMediaController } from '../media/callMediaController'
 import { parseCallCatalogTracks } from '../media/callCatalog'
-import type { CallCatalogTrack, CatalogSubscribeRole } from '../types/catalog'
+import type { CallCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 
 interface LocalSessionOptions {
   roomName: string
@@ -186,7 +186,7 @@ export class LocalSession {
     trackName: string,
     authInfo: string = this.defaultAuthInfo,
     role?: CatalogSubscribeRole,
-    codec?: string
+    config?: TrackMediaConfig
   ): Promise<bigint> {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe when session state is "${this.state}"`)
@@ -219,7 +219,7 @@ export class LocalSession {
         }
       })
     } else if (resolvedRole === 'video' || resolvedRole === 'screenshare' || resolvedRole === 'audio') {
-      this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias, resolvedRole, codec)
+      this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias, resolvedRole, config)
     }
 
     return requestId

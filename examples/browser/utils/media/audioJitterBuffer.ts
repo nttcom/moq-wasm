@@ -1,4 +1,4 @@
-import { tryDeserializeChunk, type ChunkMetadata } from './chunk'
+import { type ChunkMetadata } from './chunk'
 import { readLocHeader } from './loc'
 import { latencyMsFromCaptureMicros } from './clock'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
@@ -46,27 +46,7 @@ export class AudioJitterBuffer {
     const locMetadata = readLocHeader(object.locHeader)
     const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
 
-    const parsedFromMetadata = tryDeserializeChunk(object.objectPayload)
-    if (!parsedFromMetadata) {
-      const locHeader = object.locHeader
-      const extensions = locHeader?.extensions ?? []
-      if (!locHeader || extensions.length === 0) {
-        console.debug('[AudioJitterBuffer] Missing metadata and LOC header', {
-          groupId,
-          objectId,
-          payloadLength: object.objectPayloadLength
-        })
-      }
-    }
-    const parsed = parsedFromMetadata ?? buildChunkFromLoc(object)
-    if (!parsed) {
-      console.debug('[AudioJitterBuffer] Failed to build chunk from payload', {
-        groupId,
-        objectId,
-        payloadLength: object.objectPayloadLength
-      })
-      return null
-    }
+    const parsed = buildChunkFromLoc(object)
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
@@ -169,7 +149,7 @@ function isTerminalStatus(status: number | undefined): boolean {
   return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
 }
 
-function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } | null {
+function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {
   const loc = readLocHeader(object.locHeader)
   const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
   const metadata: ChunkMetadata = {

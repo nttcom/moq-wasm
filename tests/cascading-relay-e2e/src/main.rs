@@ -637,11 +637,7 @@ async fn send_ordered_objects(
         let object_id_delta = if index == 0 { 0 } else { 1 };
         let object = stream.create_object_field(
             object_id_delta,
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            ExtensionHeaders::default(),
             SubgroupObject::new_payload(Bytes::from(ordered_object_payload(index))),
         );
         stream.send(object).await?;
@@ -681,7 +677,10 @@ async fn subscribe_and_receive_ordered_objects(
         moqt::DataReceiver::Stream(mut factory) => {
             let mut stream = factory.next().await?;
             while payloads.len() < count {
-                if let Subgroup::Object(field) = stream.receive().await?
+                let Some(subgroup) = stream.receive().await? else {
+                    bail!("stream ended before receiving {count} objects");
+                };
+                if let Subgroup::Object(field) = subgroup
                     && let SubgroupObject::Payload { data, .. } = field.subgroup_object
                 {
                     payloads.push(data.to_vec());
@@ -783,11 +782,7 @@ async fn send_test_object(
     let mut stream = uninitialized.send_header(header).await?;
     let object = stream.create_object_field(
         0,
-        ExtensionHeaders {
-            prior_group_id_gap: vec![],
-            prior_object_id_gap: vec![],
-            immutable_extensions: vec![],
-        },
+        ExtensionHeaders::default(),
         SubgroupObject::new_payload(Bytes::from_static(payload)),
     );
     stream.send(object).await?;
@@ -902,7 +897,10 @@ where
         moqt::DataReceiver::Stream(mut factory) => {
             let mut stream = factory.next().await?;
             loop {
-                if let Subgroup::Object(field) = stream.receive().await?
+                let Some(subgroup) = stream.receive().await? else {
+                    anyhow::bail!("stream ended before receiving an object");
+                };
+                if let Subgroup::Object(field) = subgroup
                     && let SubgroupObject::Payload { data, .. } = field.subgroup_object
                 {
                     tracing::info!(
