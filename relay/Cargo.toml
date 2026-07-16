@@ -20,10 +20,6 @@ dashmap = "6.2.1"
 rcgen = "0.14.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 bytes = "1"
-console-subscriber = "0.5"
-tracing-appender = "0.2.5"
-backtrace-on-stack-overflow="0.3.0"
-tracing-panic = "0.1.2"
 opentelemetry = { version = "0.32.0", features = ["trace", "logs"] }
 opentelemetry_sdk = { version = "0.32.1", features = ["rt-tokio", "logs"] }
 opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs"] }

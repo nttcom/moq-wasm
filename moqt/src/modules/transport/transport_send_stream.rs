@@ -2,7 +2,6 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use bytes::BytesMut;
-use mockall::automock;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -26,7 +25,7 @@ pub enum TransportSendError {
     },
 }
 
-#[automock]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub(crate) trait TransportSendStream: Send + Sync + 'static + Debug {
     async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError>;

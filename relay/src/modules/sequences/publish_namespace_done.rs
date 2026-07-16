@@ -40,7 +40,7 @@ impl PublishNamespaceDone {
 
         Self::notify_local_subscribers(session_id, track_namespace, table, forwarder).await;
 
-        if Self::is_origin_client(session_id, forwarder).await && no_clients_remain {
+        if super::is_origin_client(session_id, forwarder).await && no_clients_remain {
             Self::withdraw_namespace_publication(
                 track_namespace,
                 forwarder,
@@ -49,14 +49,6 @@ impl PublishNamespaceDone {
             )
             .await;
         }
-    }
-
-    async fn is_origin_client(session_id: SessionId, forwarder: &ControlMessageForwarder) -> bool {
-        forwarder
-            .repository
-            .lock()
-            .await
-            .is_client_session(session_id)
     }
 
     #[tracing::instrument(

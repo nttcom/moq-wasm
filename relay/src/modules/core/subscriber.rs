@@ -8,7 +8,6 @@ use crate::modules::core::{
 
 #[async_trait]
 pub(crate) trait Subscriber: 'static + Send + Sync {
-    async fn _send_subscribe_namespace(&self, namespaces: String) -> anyhow::Result<()>;
     async fn send_subscribe(
         &mut self,
         track_namespace: String,
@@ -37,16 +36,6 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
 
 #[async_trait]
 impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.subscriber.send_subscribe_namespace",
-        skip_all,
-        fields(namespace = %namespace)
-    )]
-    async fn _send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
-        self.subscribe_namespace(namespace).await
-    }
-
     #[tracing::instrument(
         level = "info",
         name = "relay.subscriber.send_subscribe",
