@@ -32,7 +32,7 @@ use crate::{
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Returned by [`SessionContext::await_request_response`] when the peer does
+/// Returned by [`SessionContext::await_response`] when the peer does
 /// not answer in time. Callers map this to a per-request failure (e.g.
 /// FETCH_ERROR TIMEOUT) and keep the session open.
 #[derive(Debug)]
@@ -271,7 +271,7 @@ impl<T: TransportProtocol> SessionContext<T> {
     /// by the caller dropping its pending request state on the error path;
     /// the `sender_map` entry stays behind as `Abandoned` so a late response
     /// is withdrawn instead of closing the session.
-    pub(crate) async fn await_request_response(
+    pub(crate) async fn await_response(
         &self,
         receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
     ) -> anyhow::Result<ResponseMessage> {

@@ -66,7 +66,7 @@ impl<T: TransportProtocol> Publisher<T> {
                 publish_namespace.encode(),
             )
             .await?;
-        let response = self.session.await_request_response(receiver).await?;
+        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::PublishNamespaceOk(response_request_id) => {
                 if request_id != response_request_id {
@@ -137,7 +137,7 @@ impl<T: TransportProtocol> Publisher<T> {
             .send_stream
             .send(ControlMessageType::Publish, bytes)
             .await?;
-        let response = self.session.await_request_response(receiver).await?;
+        let response = self.session.await_response(receiver).await?;
         match response {
             ResponseMessage::PublishOk(message) => {
                 if request_id != message.request_id {
