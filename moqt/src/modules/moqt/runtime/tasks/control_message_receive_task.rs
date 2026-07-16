@@ -66,12 +66,12 @@ impl ControlMessageReceiveTask {
                                     }
                                 }
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let pending = session
+                                    let inflight_request = session
                                         .sender_map
                                         .lock()
                                         .expect("sender_map poisoned")
                                         .remove(&request_id);
-                                    match pending {
+                                    match inflight_request {
                                         Some(InflightRequest::Waiting {
                                             sender,
                                             on_late_response,
