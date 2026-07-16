@@ -69,7 +69,7 @@ pub(crate) enum LateResponseCleanup {
 /// until the response arrives, even after the caller stops waiting, so a
 /// late response is answered with a withdrawal instead of being mistaken
 /// for an unknown Request ID (which must close the session, §9.1).
-pub(crate) enum PendingRequest {
+pub(crate) enum InflightRequest {
     Waiting {
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
         on_late_response: LateResponseCleanup,
@@ -83,7 +83,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
     request_id: AtomicU64,
     track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
-    pub(crate) sender_map: std::sync::Mutex<HashMap<RequestId, PendingRequest>>,
+    pub(crate) sender_map: std::sync::Mutex<HashMap<RequestId, InflightRequest>>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
@@ -128,12 +128,12 @@ impl<T: TransportProtocol> Drop for RegisteredSender<T> {
     fn drop(&mut self) {
         if let Ok(mut requests) = self.session.sender_map.lock()
             && let Some(entry) = requests.get_mut(&self.request_id)
-            && let PendingRequest::Waiting {
+            && let InflightRequest::Waiting {
                 on_late_response, ..
             } = entry
         {
             let cleanup = std::mem::replace(on_late_response, LateResponseCleanup::Discard);
-            *entry = PendingRequest::Abandoned(cleanup);
+            *entry = InflightRequest::Abandoned(cleanup);
         }
     }
 }
@@ -183,7 +183,7 @@ impl<T: TransportProtocol> SessionContext<T> {
     ) -> RegisteredSender<T> {
         self.sender_map.lock().expect("sender_map poisoned").insert(
             request_id,
-            PendingRequest::Waiting {
+            InflightRequest::Waiting {
                 sender,
                 on_late_response,
             },

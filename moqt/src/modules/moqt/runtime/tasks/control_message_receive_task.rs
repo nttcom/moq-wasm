@@ -21,7 +21,7 @@ use crate::{
         data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
-        domains::session_context::{PendingRequest, SessionContext},
+        domains::session_context::{InflightRequest, SessionContext},
     },
 };
 
@@ -72,7 +72,7 @@ impl ControlMessageReceiveTask {
                                         .expect("sender_map poisoned")
                                         .remove(&request_id);
                                     match pending {
-                                        Some(PendingRequest::Waiting {
+                                        Some(InflightRequest::Waiting {
                                             sender,
                                             on_late_response,
                                         }) => {
@@ -89,7 +89,7 @@ impl ControlMessageReceiveTask {
                                                     .await;
                                             }
                                         }
-                                        Some(PendingRequest::Abandoned(cleanup)) => {
+                                        Some(InflightRequest::Abandoned(cleanup)) => {
                                             session
                                                 .handle_late_response(request_id, cleanup, message)
                                                 .await;
