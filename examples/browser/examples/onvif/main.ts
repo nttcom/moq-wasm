@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
-import { configureRelayUrlControls } from '../../utils/relayPresets'
+import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 
 const moqtClient = new MoqtClientWrapper()
 let audioDecoderWorker: Worker | null = null
@@ -1189,7 +1189,8 @@ function setupUrlPresets(): void {
   const presetContainer = urlInput.closest('form')?.querySelector<HTMLElement>('.button-row')
   configureRelayUrlControls({
     input: urlInput,
-    presetContainer
+    presetContainer,
+    defaultUrl: DEFAULT_LOCAL_RELAY_A_URL
   })
 }
 

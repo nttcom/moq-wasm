@@ -16,7 +16,7 @@ use moqt_bridge_onvif::{
     soap_client,
 };
 use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
 use std::net::ToSocketAddrs;
@@ -81,7 +81,7 @@ struct MoqtArgs {
     video_codec: String,
 
     /// Payload format to send over MoQ: annexb or avcc
-    #[arg(long, default_value = "avcc")]
+    #[arg(long, default_value = "annexb")]
     payload_format: String,
 
     /// Dump the first keyframe AnnexB payload for ffprobe (default: /tmp/moqt-onvif-keyframe.h264)
@@ -762,15 +762,12 @@ async fn send_video_packet(
     let loc_header = build_video_loc_header(&packet);
     let extension_headers =
         loc_header_to_extension_headers(&loc_header).context("build loc header extensions")?;
-    let payload = serialize_video_chunk_payload(&packet)?;
+    let payload = Bytes::from(packet.data);
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
     };
-    let object = stream.create_object_field(
-        0,
-        extension_headers,
-        SubgroupObject::new_payload(payload.into()),
-    );
+    let object =
+        stream.create_object_field(0, extension_headers, SubgroupObject::new_payload(payload));
     stream.send(object).await.context("send subgroup object")?;
     let total_delay_us = now_micros().saturating_sub(packet.ingest_wallclock_micros);
     log::info!(
@@ -820,15 +817,12 @@ async fn send_audio_packet(
     let loc_header = build_audio_loc_header(&packet);
     let extension_headers = loc_header_to_extension_headers(&loc_header)
         .context("build audio loc header extensions")?;
-    let payload = serialize_audio_chunk_payload(&packet)?;
+    let payload = Bytes::from(packet.data);
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
     };
-    let object = stream.create_object_field(
-        0,
-        extension_headers,
-        SubgroupObject::new_payload(payload.into()),
-    );
+    let object =
+        stream.create_object_field(0, extension_headers, SubgroupObject::new_payload(payload));
     stream
         .send(object)
         .await
@@ -861,75 +855,6 @@ async fn send_audio_packet(
         spawn_pending_group_close(pending);
     }
     Ok(())
-}
-
-#[derive(Serialize)]
-struct VideoChunkMetadata<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    timestamp: u64,
-    duration: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    codec: Option<&'a str>,
-    #[serde(rename = "descriptionBase64", skip_serializing_if = "Option::is_none")]
-    description_base64: Option<&'a str>,
-    #[serde(rename = "avcFormat", skip_serializing_if = "Option::is_none")]
-    avc_format: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct AudioChunkMetadata<'a> {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    timestamp: u64,
-    duration: Option<u64>,
-    codec: &'a str,
-    #[serde(rename = "descriptionBase64", skip_serializing_if = "Option::is_none")]
-    description_base64: Option<&'a str>,
-    #[serde(rename = "sampleRate", skip_serializing_if = "Option::is_none")]
-    sample_rate: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    channels: Option<u8>,
-}
-
-fn serialize_video_chunk_payload(packet: &EncodedPacket) -> Result<Vec<u8>> {
-    let avc_format = match packet.avc_format.as_deref() {
-        Some("avcc") => Some("avc"),
-        Some("annexb") => Some("annexb"),
-        other => other,
-    };
-    let metadata = VideoChunkMetadata {
-        kind: if packet.is_keyframe { "key" } else { "delta" },
-        timestamp: packet.timestamp_us,
-        duration: packet.duration_us,
-        codec: packet.codec.as_deref(),
-        description_base64: packet.description_base64.as_deref(),
-        avc_format,
-    };
-    let meta_bytes = serde_json::to_vec(&metadata).context("serialize chunk metadata")?;
-    let mut payload = Vec::with_capacity(4 + meta_bytes.len() + packet.data.len());
-    payload.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
-    payload.extend_from_slice(&meta_bytes);
-    payload.extend_from_slice(&packet.data);
-    Ok(payload)
-}
-
-fn serialize_audio_chunk_payload(packet: &EncodedAudioPacket) -> Result<Vec<u8>> {
-    let metadata = AudioChunkMetadata {
-        kind: "key",
-        timestamp: packet.timestamp_us,
-        duration: packet.duration_us,
-        codec: packet.codec.as_str(),
-        description_base64: packet.description_base64.as_deref(),
-        sample_rate: packet.sample_rate,
-        channels: packet.channels,
-    };
-    let meta_bytes = serde_json::to_vec(&metadata).context("serialize audio chunk metadata")?;
-    let mut payload = Vec::with_capacity(4 + meta_bytes.len() + packet.data.len());
-    payload.extend_from_slice(&(meta_bytes.len() as u32).to_be_bytes());
-    payload.extend_from_slice(&meta_bytes);
-    payload.extend_from_slice(&packet.data);
-    Ok(payload)
 }
 
 #[allow(clippy::too_many_arguments)]
