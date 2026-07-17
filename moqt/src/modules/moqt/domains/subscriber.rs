@@ -11,7 +11,7 @@ use crate::{
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
-                    fetch::Fetch, fetch::FetchType, subscribe::Subscribe,
+                    fetch::Fetch, fetch::FetchParams, subscribe::Subscribe,
                     subscribe_namespace::SubscribeNamespace, unsubscribe::Unsubscribe,
                     unsubscribe_namespace::UnsubscribeNamespace,
                 },
@@ -26,6 +26,7 @@ use crate::{
         protocol::TransportProtocol,
         runtime::dispatch::incoming_object::IncomingObject,
     },
+    wire::RequestError,
 };
 
 pub enum DataReceiver<T: TransportProtocol> {
@@ -192,7 +193,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             request_id,
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
-            fetch_type: FetchType::Standalone {
+            fetch_params: FetchParams::Standalone {
                 track_namespace: vec_namespace,
                 track_name,
                 start_location,
@@ -200,28 +201,49 @@ impl<T: TransportProtocol> Subscriber<T> {
             },
             authorization_tokens: vec![],
         };
-        self.session
-            .send_stream
-            .send(ControlMessageType::Fetch, fetch.encode())
-            .await?;
-        let response = self.session.await_response(fetch_message_rx).await?;
+        let result = async {
+            self.session
+                .send_stream
+                .send(ControlMessageType::Fetch, fetch.encode())
+                .await?;
+            self.session.await_request_response(fetch_message_rx).await
+        }
+        .await;
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                // Request-scoped failure (send error or timeout): drop the
+                // pending fetch state so nothing leaks. The session stays open.
+                self.remove_pending_fetch(request_id).await;
+                return Err(error);
+            }
+        };
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
-            ResponseMessage::FetchError(_, _, _) => {
-                self.session
-                    .fetch_notification_map
-                    .write()
-                    .await
-                    .remove(&request_id);
-                self.session
-                    .fetch_receiver_map
-                    .lock()
-                    .await
-                    .remove(&request_id);
-                bail!("Fetch error")
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
+                self.remove_pending_fetch(request_id).await;
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    async fn remove_pending_fetch(&self, request_id: u64) {
+        self.session
+            .fetch_notification_map
+            .write()
+            .await
+            .remove(&request_id);
+        self.session
+            .fetch_receiver_map
+            .lock()
+            .await
+            .remove(&request_id);
     }
 
     #[tracing::instrument(
@@ -253,40 +275,46 @@ impl<T: TransportProtocol> Subscriber<T> {
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
-        self.session
-            .sender_map
-            .lock()
-            .expect("sender_map poisoned")
-            .insert(request_id, fetch_message_tx);
+        let _registered_sender = self
+            .session
+            .register_response_sender(request_id, fetch_message_tx);
         let fetch = Fetch {
             request_id,
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
-            fetch_type: FetchType::RelativeJoining {
+            fetch_params: FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
             },
             authorization_tokens: vec![],
         };
-        self.session
-            .send_stream
-            .send(ControlMessageType::Fetch, fetch.encode())
-            .await?;
-        let response = self.session.await_response(fetch_message_rx).await?;
+        let result = async {
+            self.session
+                .send_stream
+                .send(ControlMessageType::Fetch, fetch.encode())
+                .await?;
+            self.session.await_request_response(fetch_message_rx).await
+        }
+        .await;
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                // Request-scoped failure (send error or timeout): drop the
+                // pending fetch state so nothing leaks. The session stays open.
+                self.remove_pending_fetch(request_id).await;
+                return Err(error);
+            }
+        };
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
-            ResponseMessage::FetchError(_, _, _) => {
-                self.session
-                    .fetch_notification_map
-                    .write()
-                    .await
-                    .remove(&request_id);
-                self.session
-                    .fetch_receiver_map
-                    .lock()
-                    .await
-                    .remove(&request_id);
-                bail!("Fetch error")
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
+                self.remove_pending_fetch(request_id).await;
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }

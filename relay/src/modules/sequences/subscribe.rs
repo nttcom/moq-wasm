@@ -560,11 +560,7 @@ mod tests {
         DataObject::SubgroupObject(SubgroupObjectField {
             message_type,
             object_id_delta: 0,
-            extension_headers: ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            extension_headers: ExtensionHeaders::default(),
             subgroup_object: SubgroupObject::new_payload(Bytes::from(vec![])),
         })
     }
@@ -573,10 +569,10 @@ mod tests {
     async fn append_one_object(cache: &TrackCache, group_id: u64) {
         let subgroup = StreamSubgroupId::Value(0);
         cache
-            .append_stream_object(group_id, &subgroup, None, make_header())
+            .append_live_stream_object(group_id, &subgroup, None, make_header())
             .await;
         cache
-            .append_stream_object(group_id, &subgroup, Some(0), make_object())
+            .append_live_stream_object(group_id, &subgroup, Some(0), make_object())
             .await;
     }
 

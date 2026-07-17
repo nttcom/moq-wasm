@@ -71,7 +71,7 @@ cargo run -p moqt-bridge-onvif --bin moqt-onvif-client -- \
   --username admin \
   --password secret \
   --moqt-url https://127.0.0.1:4433 \
-  --payload-format avcc \
+  --payload-format annexb \
   --dump-keyframe \
   --insecure-skip-tls-verify
 ```

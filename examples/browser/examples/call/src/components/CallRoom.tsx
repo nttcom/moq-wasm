@@ -8,7 +8,7 @@ import { MemberGrid } from './MemberGrid'
 import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useCallMedia } from '../hooks/useCallMedia'
-import type { CallCatalogTrack, CatalogSubscribeRole } from '../types/catalog'
+import type { CallCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import type { RemoteMediaStreams } from '../types/media'
 import type { SidebarStatsSample } from '../types/stats'
 import { updateSubscriptionState } from '../utils/state/roomState'
@@ -433,7 +433,16 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
         return
       }
     }
-    const trackCodec = role === 'audio' || role === 'video' || role === 'screenshare' ? selectedTrack?.codec : undefined
+    const trackMediaConfig: TrackMediaConfig | undefined =
+      role === 'audio' || role === 'video' || role === 'screenshare'
+        ? {
+            codec: selectedTrack?.codec,
+            framerate: role === 'video' || role === 'screenshare' ? selectedTrack?.framerate : undefined,
+            samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
+            channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
+            initData: selectedTrack?.initData
+          }
+        : undefined
     const trackState = getSubscriptionStateByRole(member, role)
     const trackKey = buildTrackActionKey(memberId, role)
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
@@ -451,7 +460,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     )
 
     try {
-      const requestId = await session.subscribe(trackNamespace, trackName, undefined, role, trackCodec)
+      const requestId = await session.subscribe(trackNamespace, trackName, undefined, role, trackMediaConfig)
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,

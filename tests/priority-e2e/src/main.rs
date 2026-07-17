@@ -107,11 +107,7 @@ async fn send_group(
     for _ in 0..OBJECTS_PER_GROUP {
         let obj = stream.create_object_field(
             0,
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            ExtensionHeaders::default(),
             SubgroupObject::new_payload(vec![0xAB; OBJECT_SIZE].into()),
         );
         stream.send(obj).await?;
@@ -192,17 +188,26 @@ async fn read_track(
     let mut stream = factory.next().await?;
     let mut arrivals = Vec::with_capacity(OBJECTS_PER_GROUP as usize);
     while arrivals.len() < OBJECTS_PER_GROUP as usize {
-        if let Subgroup::Object(field) = stream.receive().await? {
-            let SubgroupObject::Payload { data, .. } = field.subgroup_object else {
-                anyhow::bail!("[bob] unexpected non-payload object on {}", track_name);
-            };
-            anyhow::ensure!(
-                data.len() == OBJECT_SIZE,
-                "[bob] wrong payload size on {}: {}",
-                track_name,
-                data.len()
-            );
-            arrivals.push(started_at.elapsed());
+        match stream.receive().await? {
+            Some(Subgroup::Object(field)) => {
+                let SubgroupObject::Payload { data, .. } = field.subgroup_object else {
+                    anyhow::bail!("[bob] unexpected non-payload object on {}", track_name);
+                };
+                anyhow::ensure!(
+                    data.len() == OBJECT_SIZE,
+                    "[bob] wrong payload size on {}: {}",
+                    track_name,
+                    data.len()
+                );
+                arrivals.push(started_at.elapsed());
+            }
+            Some(_) => {}
+            None => anyhow::bail!(
+                "[bob] stream ended after {} of {} objects on {}",
+                arrivals.len(),
+                OBJECTS_PER_GROUP,
+                track_name
+            ),
         }
     }
     let mean_arrival = arrivals.iter().sum::<Duration>() / arrivals.len() as u32;

@@ -370,6 +370,8 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &cache_store,
                             &egress_sender,
+                            &control_message_forwarder,
+                            upstream_publisher_resolver.as_ref(),
                             handler,
                         )
                         .instrument(event_span)

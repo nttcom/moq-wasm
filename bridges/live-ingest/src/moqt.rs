@@ -663,11 +663,7 @@ impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
 }
 
 fn empty_extension_headers() -> ExtensionHeaders {
-    ExtensionHeaders {
-        prior_group_id_gap: vec![],
-        prior_object_id_gap: vec![],
-        immutable_extensions: vec![],
-    }
+    ExtensionHeaders::default()
 }
 
 fn is_supported_track(track_name: &str) -> bool {

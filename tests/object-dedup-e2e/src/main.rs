@@ -61,11 +61,7 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, attempt: &str) -> a
         let payload = format!("alice:{}:g{}:o{}", attempt, GROUP_ID, obj_id);
         let obj = stream.create_object_field(
             0,
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            ExtensionHeaders::default(),
             SubgroupObject::new_payload(payload.into()),
         );
         stream.send(obj).await?;

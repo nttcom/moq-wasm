@@ -36,6 +36,16 @@ impl KeyValuePair {
                 .try_get_varint()
                 .log_context("KeyValuePair length")
                 .ok()?;
+            // copy_to_bytes panics when the buffer is shorter than the
+            // peer-controlled length, so reject truncated input first.
+            if bytes.remaining() < length as usize {
+                tracing::error!(
+                    "KeyValuePair value truncated: length {} > remaining {}",
+                    length,
+                    bytes.remaining()
+                );
+                return None;
+            }
             let value = bytes.copy_to_bytes(length as usize);
             Some(Self {
                 key,
@@ -131,6 +141,37 @@ mod tests {
             // key (0x0b) + value length (3) + value ([0x01, 0x02, 0x03])
             let expected_bytes = vec![0x0b, 0x03, 0x01, 0x02, 0x03];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+    }
+
+    mod failure {
+        use crate::modules::moqt::control_plane::control_messages::key_value_pair::KeyValuePair;
+
+        #[test]
+        fn depacketize_odd_key_value_truncated() {
+            // key (0x0b, odd) + value length (3) but only 1 byte of value
+            let bytes = [0x0b_u8, 0x03, 0x01];
+            let mut buf = std::io::Cursor::new(&bytes[..]);
+
+            assert!(KeyValuePair::decode(&mut buf).is_none());
+        }
+
+        #[test]
+        fn depacketize_odd_key_length_without_value() {
+            // key (0x0b, odd) + value length (3) and nothing else
+            let bytes = [0x0b_u8, 0x03];
+            let mut buf = std::io::Cursor::new(&bytes[..]);
+
+            assert!(KeyValuePair::decode(&mut buf).is_none());
+        }
+
+        #[test]
+        fn depacketize_even_key_without_value() {
+            // key (0x3c, even) and no value varint
+            let bytes = [0x3c_u8];
+            let mut buf = std::io::Cursor::new(&bytes[..]);
+
+            assert!(KeyValuePair::decode(&mut buf).is_none());
         }
     }
 }

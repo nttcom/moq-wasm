@@ -17,7 +17,7 @@ use bytes::{Buf, Bytes, BytesMut};
 #[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
-    DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchType,
+    DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchParams,
     FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram, ObjectStatus, Publish,
     PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup, SetupParameter,
     SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
@@ -663,7 +663,7 @@ impl MOQTClient {
             request_id,
             subscriber_priority: 0,
             group_order: GroupOrder::Ascending,
-            fetch_type: FetchType::Standalone {
+            fetch_params: FetchParams::Standalone {
                 track_namespace,
                 track_name,
                 start_location: Location {
@@ -693,7 +693,7 @@ impl MOQTClient {
             request_id,
             subscriber_priority: 0,
             group_order: GroupOrder::Ascending,
-            fetch_type: FetchType::RelativeJoining {
+            fetch_params: FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
             },
@@ -832,12 +832,12 @@ impl MOQTClient {
         object_payload: Vec<u8>,
         loc_header: JsValue,
     ) -> Result<(), JsValue> {
-        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
-            Ok(None) => Ok(empty_extension_headers()),
-            Err(error) => Err(error),
-        }
-        .map_err(|error| js_error(error.to_string()))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header)
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
+            None => empty_extension_headers(),
+        };
 
         let field = if extension_headers == empty_extension_headers() {
             DatagramField::Payload0x00 {
@@ -870,12 +870,12 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let object_status =
             ObjectStatus::try_from(object_status).map_err(|_| js_error("invalid object status"))?;
-        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
-            Ok(None) => Ok(empty_extension_headers()),
-            Err(error) => Err(error),
-        }
-        .map_err(|error| js_error(error.to_string()))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header)
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
+            None => empty_extension_headers(),
+        };
 
         let field = if extension_headers == empty_extension_headers() {
             DatagramField::Status0x20 {
@@ -949,12 +949,12 @@ impl MOQTClient {
             .cloned()
             .ok_or_else(|| js_error("subgroup writer is None"))?;
 
-        let extension_headers = match crate::loc::parse_loc_header(loc_header) {
-            Ok(Some(header)) => crate::loc::loc_header_to_extension_headers(&header),
-            Ok(None) => Ok(empty_extension_headers()),
-            Err(error) => Err(error),
-        }
-        .map_err(|error| js_error(error.to_string()))?;
+        let extension_headers = match crate::loc::parse_loc_header(loc_header)
+            .map_err(|error| js_error(error.to_string()))?
+        {
+            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
+            None => empty_extension_headers(),
+        };
         let object_id_delta = {
             let stream_object_numbers = self.stream_object_numbers.borrow();
             match stream_object_numbers.get(&writer_key).copied() {
@@ -1763,11 +1763,7 @@ fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
 
 #[cfg(web_sys_unstable_apis)]
 fn empty_extension_headers() -> ExtensionHeaders {
-    ExtensionHeaders {
-        prior_group_id_gap: vec![],
-        prior_object_id_gap: vec![],
-        immutable_extensions: vec![],
-    }
+    ExtensionHeaders::default()
 }
 
 #[cfg(web_sys_unstable_apis)]

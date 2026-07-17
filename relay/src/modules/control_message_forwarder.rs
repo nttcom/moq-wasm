@@ -143,6 +143,44 @@ impl ControlMessageForwarder {
 
     #[tracing::instrument(
         level = "info",
+        name = "relay.control_message_forwarder.fetch",
+        skip_all,
+        fields(session_id = %session_id, track_namespace = %track_namespace, track_name = %track_name)
+    )]
+    pub(crate) async fn fetch(
+        &self,
+        session_id: SessionId,
+        track_namespace: String,
+        track_name: String,
+        start_location: moqt::Location,
+        end_location: moqt::Location,
+        option: moqt::FetchOption,
+    ) -> anyhow::Result<moqt::FetchHandle> {
+        let subscriber = self.repository.lock().await.subscriber(session_id);
+        let Some(mut subscriber) = subscriber else {
+            tracing::error!("No subscriber");
+            return Err(anyhow::anyhow!("No subscriber"));
+        };
+        tracing::info!(
+            "Forwarding FETCH '{}/{}' to session:{}",
+            track_namespace,
+            track_name,
+            session_id
+        );
+        let handle = subscriber
+            .send_fetch(
+                track_namespace,
+                track_name,
+                start_location,
+                end_location,
+                option,
+            )
+            .await?;
+        Ok(handle)
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "relay.control_message_forwarder.unsubscribe",
         skip_all,
         fields(session_id = %session_id, subscribe_id = %subscribe_id)

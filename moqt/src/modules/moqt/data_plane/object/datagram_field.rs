@@ -463,11 +463,8 @@ mod tests {
         #[test]
         fn payload0x01_encode_decode() {
             // setup
-            let extension_header = ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![Bytes::from(vec![10, 20])],
-            };
+            let extension_header =
+                ExtensionHeaders::from_immutable_extensions(vec![Bytes::from(vec![10, 20])]);
             let field = DatagramField::Payload0x01 {
                 object_id: 456,
                 publisher_priority: 20,
@@ -491,7 +488,7 @@ mod tests {
                 assert_eq!(object_id, 456);
                 assert_eq!(publisher_priority, 20);
                 assert_eq!(
-                    extension_headers.immutable_extensions,
+                    extension_headers.immutable_extensions(),
                     vec![Bytes::from(vec![10, 20])]
                 );
                 assert_eq!(*payload, Bytes::from(vec![6, 7, 8, 9, 10]));
@@ -534,11 +531,7 @@ mod tests {
         #[test]
         fn payload0x03_with_end_of_group_encode_decode() {
             // setup
-            let extension_header = ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            };
+            let extension_header = ExtensionHeaders::default();
             let field = DatagramField::Payload0x03WithEndOfGroup {
                 object_id: 101,
                 publisher_priority: 40,
@@ -561,14 +554,7 @@ mod tests {
             {
                 assert_eq!(object_id, 101);
                 assert_eq!(publisher_priority, 40);
-                assert_eq!(
-                    extension_headers,
-                    ExtensionHeaders {
-                        prior_group_id_gap: vec![],
-                        prior_object_id_gap: vec![],
-                        immutable_extensions: vec![]
-                    }
-                );
+                assert_eq!(extension_headers, ExtensionHeaders::default());
                 assert_eq!(*payload, Bytes::from(vec![16, 17, 18, 19, 20]));
             } else {
                 panic!("Decoded into wrong variant");
@@ -609,14 +595,11 @@ mod tests {
         #[test]
         fn payload0x05_encode_decode() {
             // setup
-            let extension_header = ExtensionHeaders {
-                prior_group_id_gap: vec![3],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            };
+            let mut extension_header = ExtensionHeaders::default();
+            extension_header.push_prior_group_id_gap(3);
             let field = DatagramField::Payload0x05 {
                 publisher_priority: 60,
-                extension_headers: extension_header,
+                extension_headers: extension_header.clone(),
                 payload: Bytes::from(vec![26, 27, 28, 29, 30]),
             };
 
@@ -633,14 +616,7 @@ mod tests {
             } = decoded
             {
                 assert_eq!(publisher_priority, 60);
-                assert_eq!(
-                    extension_headers,
-                    ExtensionHeaders {
-                        prior_group_id_gap: vec![3],
-                        prior_object_id_gap: vec![],
-                        immutable_extensions: vec![]
-                    }
-                );
+                assert_eq!(extension_headers, extension_header);
                 assert_eq!(*payload, vec![26, 27, 28, 29, 30]);
             } else {
                 panic!("Decoded into wrong variant");
@@ -678,14 +654,11 @@ mod tests {
         #[test]
         fn payload0x07_with_end_of_group_encode_decode() {
             // setup
-            let extension_header = ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![3],
-                immutable_extensions: vec![],
-            };
+            let mut extension_header = ExtensionHeaders::default();
+            extension_header.push_prior_object_id_gap(3);
             let field = DatagramField::Payload0x07WithEndOfGroup {
                 publisher_priority: 80,
-                extension_headers: extension_header,
+                extension_headers: extension_header.clone(),
                 payload: Bytes::from(vec![36, 37, 38, 39, 40]),
             };
 
@@ -702,14 +675,7 @@ mod tests {
             } = decoded
             {
                 assert_eq!(publisher_priority, 80);
-                assert_eq!(
-                    extension_headers,
-                    ExtensionHeaders {
-                        prior_group_id_gap: vec![],
-                        prior_object_id_gap: vec![3],
-                        immutable_extensions: vec![]
-                    }
-                );
+                assert_eq!(extension_headers, extension_header);
                 assert_eq!(*payload, vec![36, 37, 38, 39, 40]);
             } else {
                 panic!("Decoded into wrong variant");
@@ -750,11 +716,7 @@ mod tests {
         #[test]
         fn status0x21_encode_decode() {
             // setup
-            let extension_header = ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            };
+            let extension_header = ExtensionHeaders::default();
             let field = DatagramField::Status0x21 {
                 object_id: 141,
                 publisher_priority: 100,
@@ -777,14 +739,7 @@ mod tests {
             {
                 assert_eq!(object_id, 141);
                 assert_eq!(publisher_priority, 100);
-                assert_eq!(
-                    extension_headers,
-                    ExtensionHeaders {
-                        prior_group_id_gap: vec![],
-                        prior_object_id_gap: vec![],
-                        immutable_extensions: vec![]
-                    }
-                );
+                assert_eq!(extension_headers, ExtensionHeaders::default());
                 assert_eq!(status, ObjectStatus::EndOfGroup);
             } else {
                 panic!("Decoded into wrong variant");

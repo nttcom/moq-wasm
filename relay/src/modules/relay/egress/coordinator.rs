@@ -9,7 +9,8 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     core::subscription::DownstreamSubscription,
     relay::{
-        cache::store::TrackCacheStore, egress::runner::EgressRunner,
+        cache::{store::TrackCacheStore, track_cache::TrackCache},
+        egress::runner::EgressRunner,
         notifications::track_notifier::ObjectNotifyProducerMap,
     },
     session_repository::SessionRepository,
@@ -33,9 +34,10 @@ pub(crate) struct EgressStartRequest {
 pub(crate) struct EgressFetchRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) request_id: u64,
-    pub(crate) track_key: TrackKey,
+    pub(crate) cache: Arc<TrackCache>,
     pub(crate) start_location: moqt::Location,
     pub(crate) end_location: moqt::Location,
+    pub(crate) group_order: moqt::GroupOrder,
 }
 
 pub(crate) enum EgressCommand {
@@ -98,12 +100,7 @@ impl EgressCoordinator {
                         }
                     }
                     EgressCommand::StartFetch(request) => {
-                        Self::spawn_fetch_delivery(
-                            session_repo.clone(),
-                            cache_store.clone(),
-                            request,
-                        )
-                        .await;
+                        Self::spawn_fetch_delivery(session_repo.clone(), request).await;
                     }
                 }
             }
@@ -125,7 +122,6 @@ impl EgressCoordinator {
 
     async fn spawn_fetch_delivery(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        cache_store: Arc<TrackCacheStore>,
         request: EgressFetchRequest,
     ) {
         // publisher = relay's outbound handle to the session that issued FETCH
@@ -138,10 +134,7 @@ impl EgressCoordinator {
             return;
         };
 
-        let Some(cache) = cache_store.get(&request.track_key) else {
-            tracing::error!("cache not found for fetch");
-            return;
-        };
+        let cache = request.cache.clone();
 
         tokio::spawn(async move {
             let sender = match publisher.new_fetch_sender(request.request_id).await {
@@ -152,7 +145,11 @@ impl EgressCoordinator {
                 }
             };
             let objects = cache
-                .get_fetch_objects(request.start_location, request.end_location)
+                .get_fetch_objects_with_group_order(
+                    request.start_location,
+                    request.end_location,
+                    request.group_order,
+                )
                 .await;
             for object in objects {
                 if let Err(e) = sender.send(object).await {

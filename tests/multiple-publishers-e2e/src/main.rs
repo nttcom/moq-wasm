@@ -65,11 +65,7 @@ async fn send_group(
         let payload = format!("{}:g{}:o{}", who, group_id, obj_id);
         let obj = stream.create_object_field(
             0,
-            ExtensionHeaders {
-                prior_group_id_gap: vec![],
-                prior_object_id_gap: vec![],
-                immutable_extensions: vec![],
-            },
+            ExtensionHeaders::default(),
             SubgroupObject::new_payload(payload.into()),
         );
         stream.send(obj).await?;
@@ -181,8 +177,10 @@ async fn bob(
             };
             loop {
                 match stream.receive().await {
-                    Ok(Subgroup::Header(h)) => tracing::info!("[bob] live group {}", h.group_id),
-                    Ok(Subgroup::Object(field)) => {
+                    Ok(Some(Subgroup::Header(h))) => {
+                        tracing::info!("[bob] live group {}", h.group_id)
+                    }
+                    Ok(Some(Subgroup::Object(field))) => {
                         if let SubgroupObject::Payload { data, .. } = field.subgroup_object {
                             let payload = String::from_utf8_lossy(&data).to_string();
                             if payload.starts_with("carol:") {
@@ -203,7 +201,7 @@ async fn bob(
                             }
                         }
                     }
-                    Err(_) => break,
+                    Ok(None) | Err(_) => break,
                 }
             }
         }

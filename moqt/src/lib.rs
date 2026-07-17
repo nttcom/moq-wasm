@@ -2,6 +2,9 @@ mod modules;
 pub mod wire;
 
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
+pub use modules::moqt::control_plane::control_messages::key_value_pair::{
+    KeyValuePair, VariantType,
+};
 pub use modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
 pub use modules::moqt::control_plane::control_messages::messages::parameters::filter_type::FilterType;
 pub use modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
@@ -72,6 +75,8 @@ pub use modules::moqt::data_plane::stream::stream_data_sender::SubgroupObjectSen
 pub use modules::moqt::data_plane::stream::stream_data_sender::Uninitialized;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::data_plane::stream::stream_receiver::StreamReceiveError;
 pub use modules::moqt::data_plane::stream_priority::resolve_transport_priority;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::connecting::Connecting;
@@ -87,6 +92,8 @@ pub use modules::moqt::domains::fetch_handle::FetchHandle;
 pub use modules::moqt::domains::publisher::Publisher;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::session::Session;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::session_context::RequestTimeoutError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscriber::DataReceiver;
 #[cfg(not(target_arch = "wasm32"))]

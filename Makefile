@@ -61,7 +61,7 @@ onvif:
 		--catalog-track catalog \
 		--command-track command \
 		--dump-keyframe \
-		--payload-format avcc \
+		--payload-format annexb \
 		--insecure-skip-tls-verify
 
 onvif-controller:

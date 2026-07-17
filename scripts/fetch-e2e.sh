@@ -32,13 +32,18 @@ if docker image inspect moqt-relay:local >/dev/null 2>&1; then
 else
   docker compose build relay-common
 fi
-# fetch-e2e talks to a single relay, so only relay-a (and its redis) is needed.
-docker compose up -d redis relay-a
-docker compose logs -f --no-color relay-a &
+# Both relay-a and relay-b are needed: single-relay scenarios use relay-a,
+# and the multi-relay FETCH forwarding scenarios require both.
+docker compose up -d redis relay-a relay-b
+docker compose logs -f --no-color relay-a relay-b &
 LOGS_PID=$!
-RELAY_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
-echo "Using relay URL: $RELAY_URL"
+RELAY_A_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
+RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
+echo "Using relay URLs: relay-a=$RELAY_A_URL relay-b=$RELAY_B_URL"
 
-# The clients assert the fetched object sets and panic on mismatch, so a
-# non-zero exit is the only failure signal needed.
-MOQT_E2E_RELAY_URL="$RELAY_URL" cargo run -p fetch-e2e
+# MOQT_E2E_RELAY_URL keeps the single-relay scenarios pointed at relay-a.
+# MOQT_E2E_RELAY_A_URL / MOQT_E2E_RELAY_B_URL enable the multi-relay scenarios.
+MOQT_E2E_RELAY_URL="$RELAY_A_URL" \
+MOQT_E2E_RELAY_A_URL="$RELAY_A_URL" \
+MOQT_E2E_RELAY_B_URL="$RELAY_B_URL" \
+cargo run -p fetch-e2e

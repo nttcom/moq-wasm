@@ -5,16 +5,16 @@ export type LocHeader = {
 export type LocHeaderExtension =
   | { type: 'captureTimestamp'; value: { microsSinceUnixEpoch: number } }
   | { type: 'videoConfig'; value: { data: Uint8Array } }
-  | { type: 'videoFrameMarking'; value: { data: Uint8Array } }
+  | { type: 'videoFrameMarking'; value: { flags: number } }
   | { type: 'audioLevel'; value: { level: number } }
   | { type: 'unknown'; value: { id: number; value: LocHeaderValue } }
 
-export type LocHeaderValue = { evenBytes: Uint8Array } | { oddVarint: number }
+export type LocHeaderValue = { even: number } | { odd: Uint8Array }
 
 export type LocMetadata = {
   captureTimestampMicros?: number
   videoConfig?: Uint8Array
-  videoFrameMarking?: Uint8Array
+  videoFrameMarking?: number
   audioLevel?: number
 }
 
@@ -32,10 +32,10 @@ export function buildLocHeader(meta: LocMetadata): LocHeader {
       value: { data: meta.videoConfig }
     })
   }
-  if (meta.videoFrameMarking) {
+  if (typeof meta.videoFrameMarking === 'number') {
     extensions.push({
       type: 'videoFrameMarking',
-      value: { data: meta.videoFrameMarking }
+      value: { flags: meta.videoFrameMarking }
     })
   }
   if (typeof meta.audioLevel === 'number') {
@@ -61,7 +61,7 @@ export function readLocHeader(header?: LocHeader): LocMetadata {
         meta.videoConfig = ext.value.data
         break
       case 'videoFrameMarking':
-        meta.videoFrameMarking = ext.value.data
+        meta.videoFrameMarking = ext.value.flags
         break
       case 'audioLevel':
         meta.audioLevel = ext.value.level
