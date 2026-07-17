@@ -34,8 +34,11 @@ enum FetchTypeValue {
     AbsoluteJoining = 0x3,
 }
 
+/// Fetch Type plus its type-specific fields from the FETCH message
+/// (draft-14 §9.16): the wire's Fetch Type (i) discriminant merged with the
+/// Standalone/Joining Fetch structure it selects.
 #[derive(Debug, Clone, PartialEq)]
-pub enum FetchType {
+pub enum FetchParams {
     Standalone {
         track_namespace: Vec<String>,
         track_name: String,
@@ -52,13 +55,13 @@ pub enum FetchType {
     },
 }
 
-impl FetchType {
+impl FetchParams {
     fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let fetch_type_value = buf.try_get_varint().log_context("fetch type").ok()?;
-        let fetch_type = FetchTypeValue::try_from(fetch_type_value)
+        let wire_type = FetchTypeValue::try_from(fetch_type_value)
             .log_context("fetch type value")
             .ok()?;
-        match fetch_type {
+        match wire_type {
             FetchTypeValue::Standalone => {
                 let namespace_length = buf.try_get_varint().log_context("namespace length").ok()?;
                 let mut track_namespace = Vec::new();
@@ -69,7 +72,7 @@ impl FetchType {
                 let track_name = buf.try_get_string().log_context("track name").ok()?;
                 let start_location = Location::decode(buf)?;
                 let end_location = Location::decode(buf)?;
-                Some(FetchType::Standalone {
+                Some(FetchParams::Standalone {
                     track_namespace,
                     track_name,
                     start_location,
@@ -82,7 +85,7 @@ impl FetchType {
                     .log_context("joining request id")
                     .ok()?;
                 let joining_start = buf.try_get_varint().log_context("joining start").ok()?;
-                Some(FetchType::RelativeJoining {
+                Some(FetchParams::RelativeJoining {
                     joining_request_id,
                     joining_start,
                 })
@@ -93,7 +96,7 @@ impl FetchType {
                     .log_context("joining request id")
                     .ok()?;
                 let joining_start = buf.try_get_varint().log_context("joining start").ok()?;
-                Some(FetchType::AbsoluteJoining {
+                Some(FetchParams::AbsoluteJoining {
                     joining_request_id,
                     joining_start,
                 })
@@ -104,7 +107,7 @@ impl FetchType {
     fn encode(&self) -> BytesMut {
         let mut payload = BytesMut::new();
         match self {
-            FetchType::Standalone {
+            FetchParams::Standalone {
                 track_namespace,
                 track_name,
                 start_location,
@@ -119,7 +122,7 @@ impl FetchType {
                 payload.unsplit(start_location.encode());
                 payload.unsplit(end_location.encode());
             }
-            FetchType::RelativeJoining {
+            FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
             } => {
@@ -127,7 +130,7 @@ impl FetchType {
                 payload.put_varint(*joining_request_id);
                 payload.put_varint(*joining_start);
             }
-            FetchType::AbsoluteJoining {
+            FetchParams::AbsoluteJoining {
                 joining_request_id,
                 joining_start,
             } => {
@@ -160,7 +163,7 @@ pub struct Fetch {
     pub request_id: u64,
     pub subscriber_priority: u8,
     pub group_order: GroupOrder,
-    pub fetch_type: FetchType,
+    pub fetch_params: FetchParams,
     pub authorization_tokens: Vec<AuthorizationToken>,
 }
 
@@ -172,7 +175,7 @@ impl Fetch {
         let group_order = GroupOrder::try_from(group_order_u8)
             .log_context("group order")
             .ok()?;
-        let fetch_type = FetchType::decode(buf)?;
+        let fetch_params = FetchParams::decode(buf)?;
         let number_of_parameters = buf
             .try_get_varint()
             .log_context("number of parameters")
@@ -197,7 +200,7 @@ impl Fetch {
             request_id,
             subscriber_priority,
             group_order,
-            fetch_type,
+            fetch_params,
             authorization_tokens,
         })
     }
@@ -207,7 +210,7 @@ impl Fetch {
         payload.put_varint(self.request_id);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
-        payload.unsplit(self.fetch_type.encode());
+        payload.unsplit(self.fetch_params.encode());
         let mut number_of_parameters = 0;
         let mut parameters_payload = BytesMut::new();
         for token in &self.authorization_tokens {
@@ -236,7 +239,7 @@ mod tests {
                 request_id: 1,
                 subscriber_priority: 0,
                 group_order: GroupOrder::Ascending,
-                fetch_type: FetchType::Standalone {
+                fetch_params: FetchParams::Standalone {
                     track_namespace: vec!["test".to_string(), "ns".to_string()],
                     track_name: "track".to_string(),
                     start_location: Location {
@@ -262,7 +265,7 @@ mod tests {
                 request_id: 1,
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,
-                fetch_type: FetchType::Standalone {
+                fetch_params: FetchParams::Standalone {
                     track_namespace: vec!["a".to_string()],
                     track_name: "b".to_string(),
                     start_location: Location {
@@ -316,7 +319,7 @@ mod tests {
                 request_id: 1,
                 subscriber_priority: 128,
                 group_order: GroupOrder::Ascending,
-                fetch_type: FetchType::Standalone {
+                fetch_params: FetchParams::Standalone {
                     track_namespace: vec!["a".to_string()],
                     track_name: "b".to_string(),
                     start_location: Location {
@@ -339,7 +342,7 @@ mod tests {
                 request_id: 5,
                 subscriber_priority: 0,
                 group_order: GroupOrder::Descending,
-                fetch_type: FetchType::RelativeJoining {
+                fetch_params: FetchParams::RelativeJoining {
                     joining_request_id: 3,
                     joining_start: 2,
                 },
@@ -375,7 +378,7 @@ mod tests {
                 request_id: 5,
                 subscriber_priority: 0,
                 group_order: GroupOrder::Descending,
-                fetch_type: FetchType::RelativeJoining {
+                fetch_params: FetchParams::RelativeJoining {
                     joining_request_id: 3,
                     joining_start: 2,
                 },
@@ -390,7 +393,7 @@ mod tests {
                 request_id: 7,
                 subscriber_priority: 0,
                 group_order: GroupOrder::Ascending,
-                fetch_type: FetchType::AbsoluteJoining {
+                fetch_params: FetchParams::AbsoluteJoining {
                     joining_request_id: 4,
                     joining_start: 100,
                 },
@@ -426,7 +429,7 @@ mod tests {
                 request_id: 7,
                 subscriber_priority: 0,
                 group_order: GroupOrder::Ascending,
-                fetch_type: FetchType::AbsoluteJoining {
+                fetch_params: FetchParams::AbsoluteJoining {
                     joining_request_id: 4,
                     joining_start: 100,
                 },

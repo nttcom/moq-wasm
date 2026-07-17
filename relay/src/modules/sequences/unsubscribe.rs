@@ -115,6 +115,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         core::{
+            data_receiver::fetch_receiver::UpstreamFetchReceiver,
             data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
             publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
             subscriber::Subscriber, subscription::UpstreamSubscription,
@@ -176,6 +177,24 @@ mod tests {
             &mut self,
             _subscription: &UpstreamSubscription,
         ) -> anyhow::Result<DataReceiver> {
+            unimplemented!("not used in unsubscribe tests")
+        }
+
+        async fn send_fetch(
+            &mut self,
+            _track_namespace: String,
+            _track_name: String,
+            _start_location: moqt::Location,
+            _end_location: moqt::Location,
+            _option: moqt::FetchOption,
+        ) -> anyhow::Result<moqt::FetchHandle> {
+            unimplemented!("not used in unsubscribe tests")
+        }
+
+        async fn create_fetch_receiver(
+            &mut self,
+            _handle: &moqt::FetchHandle,
+        ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
             unimplemented!("not used in unsubscribe tests")
         }
     }

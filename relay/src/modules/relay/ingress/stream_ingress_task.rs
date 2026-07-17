@@ -43,7 +43,8 @@ impl StreamIngressTask {
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
     ) -> Self {
         let (opened_tx, opened_rx) = mpsc::channel::<StreamOpened>(64);
-        let stream_reader = StreamReader::run(opened_rx, cache_store, object_notify_producer_map);
+        let stream_reader =
+            StreamReader::run(opened_rx, cache_store.clone(), object_notify_producer_map);
 
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -71,7 +72,10 @@ impl StreamIngressTask {
                                     track_key = %track_key,
                                 );
                                 let opened_tx = opened_tx.clone();
+                                let cache_store = cache_store.clone();
                                 joinset.spawn(async move {
+                                    let cache = cache_store.get_or_create(&track_key);
+                                    cache.begin_live_ingest();
                                     Self::factory_loop(
                                         track_key.clone(),
                                         factory,
@@ -80,6 +84,7 @@ impl StreamIngressTask {
                                         stop_receiver,
                                     )
                                     .await;
+                                    cache.end_live_ingest();
                                     track_key
                                 }.instrument(span));
                             }

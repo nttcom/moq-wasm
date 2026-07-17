@@ -17,7 +17,7 @@ use bytes::{Buf, Bytes, BytesMut};
 #[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
-    DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchType,
+    DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchParams,
     FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram, ObjectStatus, Publish,
     PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup, SetupParameter,
     SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
@@ -662,7 +662,7 @@ impl MOQTClient {
             request_id,
             subscriber_priority: 0,
             group_order: GroupOrder::Ascending,
-            fetch_type: FetchType::Standalone {
+            fetch_params: FetchParams::Standalone {
                 track_namespace,
                 track_name,
                 start_location: Location {
@@ -692,7 +692,7 @@ impl MOQTClient {
             request_id,
             subscriber_priority: 0,
             group_order: GroupOrder::Ascending,
-            fetch_type: FetchType::RelativeJoining {
+            fetch_params: FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
             },

@@ -134,7 +134,7 @@ fn log_session_event(event: &MoqtSessionEvent) {
             tracing::info!(
                 event = "Fetch",
                 request_id = handler.request_id(),
-                fetch_type = ?handler.fetch_type(),
+                fetch_params = ?handler.fetch_params(),
                 "Received session event"
             );
         }

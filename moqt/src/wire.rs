@@ -15,7 +15,7 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::paramet
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::Fetch;
-pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchType;
+pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchParams;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchHeader;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchObject;

@@ -33,28 +33,24 @@ impl<T: TransportProtocol> StreamDataReceiver<T> {
         })
     }
 
-    pub async fn receive(&mut self) -> anyhow::Result<Subgroup> {
+    /// Returns `Ok(None)` when the peer finished the stream normally (FIN).
+    /// Transport-level closure and decode failures are reported as distinct
+    /// `StreamReceiveError` variants so callers can react per cause.
+    pub async fn receive(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
         if let Some(subgroup_header) = self.first_subgroup_header.take() {
-            return Ok(Subgroup::Header(subgroup_header));
+            return Ok(Some(Subgroup::Header(subgroup_header)));
         }
 
         match self.stream_receiver.receive().await {
-            Ok(Some(UniStreamData::Subgroup(subgroup))) => Ok(subgroup),
+            Ok(Some(UniStreamData::Subgroup(subgroup))) => Ok(Some(subgroup)),
             Ok(Some(UniStreamData::Fetch(_))) => {
                 unreachable!("Unexpected fetch data in subgroup stream")
             }
             Ok(None) => {
-                tracing::info!("Stream data ended");
-                anyhow::bail!("Stream data ended")
+                tracing::debug!("Stream data ended");
+                Ok(None)
             }
-            Err(StreamReceiveError::Closed(error)) => {
-                tracing::info!(error = %error, "Stream data closed");
-                anyhow::bail!("Stream data closed: {error}")
-            }
-            Err(StreamReceiveError::Decode(error)) => {
-                tracing::error!(error = %error, "Failed to decode data from stream");
-                anyhow::bail!("Failed to decode data from stream: {error}")
-            }
+            Err(error) => Err(error),
         }
     }
 }
