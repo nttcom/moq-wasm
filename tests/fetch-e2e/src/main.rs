@@ -938,6 +938,262 @@ async fn run_upstream_fetch_forwarding_data_not_found(
     Ok(())
 }
 
+/// Cross-relay scenario H: relay-B's cache is completely cold (no prior FETCH
+/// or subscriber warmed it) and the publisher has already finished, so the
+/// upstream SUBSCRIBE triggered by the cold subscriber delivers no live
+/// objects. Its Relative Joining Fetch must be forwarded upstream to relay-A
+/// as a standalone FETCH with the pre-resolved absolute range (draft-14
+/// §9.16.2.1) and fill relay-B's cache; before that fix relay-B answered with
+/// FETCH_ERROR InternalError.
+async fn run_cross_relay_cold_cache_joining_fetch(
+    relay_a_url: &str,
+    relay_b_url: &str,
+) -> anyhow::Result<()> {
+    tracing::info!("[H] cross-relay cold-cache joining FETCH: fill from relay-A via upstream");
+
+    let namespace = unique_namespace("cold-join-fetch");
+    let track_name = "data";
+
+    // Publisher on relay-A; a local subscriber on relay-A drains every group so
+    // relay-A's cache is deterministically populated while relay-B stays cold.
+    let publisher_session = connect_to_relay(relay_a_url).await?;
+    publisher_session
+        .publisher()
+        .publish_namespace(namespace.clone())
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let publisher_handle = tokio::spawn(publisher_event_loop(publisher_session, "ivan", 1));
+
+    let local_sub_session = connect_to_relay(relay_a_url).await?;
+    let mut local_sub = local_sub_session.subscriber();
+    let local_subscription = local_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
+        .await?;
+    let publisher_session = publisher_handle.await??;
+
+    // Cold subscriber on relay-B. Publishing is already finished, so the
+    // upstream SUBSCRIBE brings no live objects: the published groups exist
+    // only in relay-A's cache.
+    let cold_session = connect_to_relay(relay_b_url).await?;
+    let mut cold_sub = cold_session.subscriber();
+    let cold_subscription = cold_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    tracing::info!(
+        "[cold-join] subscribe ok on relay-B, request_id={}",
+        cold_subscription.request_id()
+    );
+
+    // Joining Fetch 2 groups back from largest (g2): groups 0..=2 in full.
+    let received = run_joining_fetch_with_label(
+        &mut cold_sub,
+        cold_subscription.request_id(),
+        2,
+        "cold-join",
+    )
+    .await?;
+    let expected: Vec<(u64, u64)> = (0..GROUPS)
+        .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
+        .collect();
+    assert_eq!(
+        received, expected,
+        "[H] cold-cache joining fetch must deliver all groups via upstream forwarding"
+    );
+
+    // Same joining fetch on a fresh session: served from relay-B's now-warm cache.
+    let warm_session = connect_to_relay(relay_b_url).await?;
+    let mut warm_sub = warm_session.subscriber();
+    let warm_subscription = warm_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    let received = run_joining_fetch_with_label(
+        &mut warm_sub,
+        warm_subscription.request_id(),
+        2,
+        "warm-join",
+    )
+    .await?;
+    assert_eq!(
+        received, expected,
+        "[H] repeated joining fetch must be served from relay-B's warmed cache"
+    );
+
+    drop(publisher_session);
+    tracing::info!("[H] OK: cold-cache joining fetch filled via upstream and warmed the cache");
+    Ok(())
+}
+
+/// Publisher for scenario I: serves one SUBSCRIBE with groups 0..GROUPS, then
+/// holds group `GROUPS` until signalled, so the test controls exactly when the
+/// upstream largest advances past the subscribe-time largest.
+async fn live_publisher_event_loop(
+    session: Session<QUIC>,
+    label: &'static str,
+    group_signal_rx: tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<Session<QUIC>> {
+    let handler = loop {
+        match session.receive_event().await {
+            Ok(moqt::SessionEvent::Subscribe(handler)) => break handler,
+            Ok(moqt::SessionEvent::Disconnected()) => {
+                anyhow::bail!("[{}] disconnected before Subscribe", label)
+            }
+            Ok(_) => {}
+            Err(e) => anyhow::bail!("[{}] session error: {}", label, e),
+        }
+    };
+    tracing::info!("[{}] received Subscribe", label);
+    let track_alias = handler.ok(0, ContentExists::False).await?;
+    let publication = handler.into_subscription(track_alias);
+    let factory = session.publisher().create_stream(&publication);
+    for group_id in 0..GROUPS {
+        send_group(&factory, group_id).await?;
+    }
+    tracing::info!(
+        "[{}] groups 0..={} published, holding group {}",
+        label,
+        GROUPS - 1,
+        GROUPS
+    );
+    group_signal_rx
+        .await
+        .map_err(|_| anyhow::anyhow!("[{}] group-{} signal sender dropped", label, GROUPS))?;
+    send_group(&factory, GROUPS).await?;
+    tracing::info!("[{}] group {} published", label, GROUPS);
+    Ok(session)
+}
+
+/// Cross-relay scenario I: joining fetch / live subscription contiguity while
+/// the publisher is still publishing. The subscriber joins relay-B (cold) when
+/// the largest is g2; the publisher then publishes g3, advancing the upstream
+/// largest, before the Joining Fetch is issued. The fetch's absolute range must
+/// stay pinned at the subscribe-time largest (draft-14 §9.16.2.1): exactly
+/// groups 0..=2, no g3 objects — g3 arrives via the live subscription instead,
+/// so fetch + live cover g0..=g3 with no gap at the seam.
+async fn run_cross_relay_live_joining_fetch(
+    relay_a_url: &str,
+    relay_b_url: &str,
+) -> anyhow::Result<()> {
+    tracing::info!("[I] cross-relay live joining FETCH: largest advances before the fetch");
+
+    let namespace = unique_namespace("live-join-fetch");
+    let track_name = "data";
+
+    let publisher_session = connect_to_relay(relay_a_url).await?;
+    publisher_session
+        .publisher()
+        .publish_namespace(namespace.clone())
+        .await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (group3_tx, group3_rx) = tokio::sync::oneshot::channel::<()>();
+    let publisher_handle = tokio::spawn(live_publisher_event_loop(
+        publisher_session,
+        "judy",
+        group3_rx,
+    ));
+
+    // Local subscriber on relay-A drains groups 0..=2 so relay-A's cache is
+    // deterministically populated while the publisher holds group 3.
+    let local_sub_session = connect_to_relay(relay_a_url).await?;
+    let mut local_sub = local_sub_session.subscriber();
+    let local_subscription = local_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
+        .await?;
+
+    // Subscribe on relay-B while the publisher is parked: largest-at-subscribe
+    // is deterministically g2.
+    let live_session = connect_to_relay(relay_b_url).await?;
+    let mut live_sub = live_session.subscriber();
+    let live_subscription = live_sub
+        .subscribe(
+            namespace.clone(),
+            track_name.to_string(),
+            SubscribeOption {
+                subscriber_priority: 128,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+            },
+        )
+        .await?;
+    tracing::info!(
+        "[live-join] subscribe ok on relay-B, request_id={}",
+        live_subscription.request_id()
+    );
+
+    // Release group 3 and wait until the live subscription has it in full, so
+    // the upstream largest has definitively advanced past g2 when the joining
+    // fetch is issued. We assert "group 3 fully received live" rather than
+    // strict fetch/live set-disjointness because the LargestObject filter may
+    // also re-deliver the boundary object of group 2 live.
+    group3_tx
+        .send(())
+        .map_err(|_| anyhow::anyhow!("[I] publisher exited before the group-3 signal"))?;
+    let publisher_session = publisher_handle.await??;
+    drain_until_group_complete(&mut live_sub, &live_subscription, GROUPS, "live-join").await?;
+
+    // Joining Fetch 2 groups back from the subscribe-time largest (g2): exactly
+    // groups 0..=2 in full, ending at g2's last object, with no g3 objects even
+    // though upstream now has g3.
+    let received = run_joining_fetch_with_label(
+        &mut live_sub,
+        live_subscription.request_id(),
+        2,
+        "live-join",
+    )
+    .await?;
+    let expected: Vec<(u64, u64)> = (0..GROUPS)
+        .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
+        .collect();
+    assert_eq!(
+        received, expected,
+        "[I] joining fetch must stay pinned at the subscribe-time largest (groups 0..=2 only)"
+    );
+
+    drop(publisher_session);
+    tracing::info!("[I] OK: joining fetch pinned at subscribe-time largest; g3 arrived live");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -1000,6 +1256,18 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
             .context("cross-relay scenario F timed out")??;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run_cross_relay_cold_cache_joining_fetch(&relay_a_url, &relay_b_url),
+            )
+            .await
+            .context("cross-relay scenario H timed out")??;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                run_cross_relay_live_joining_fetch(&relay_a_url, &relay_b_url),
+            )
+            .await
+            .context("cross-relay scenario I timed out")??;
         } else {
             tracing::info!("relay-A and relay-B are the same; skipping cross-relay scenarios");
         }
