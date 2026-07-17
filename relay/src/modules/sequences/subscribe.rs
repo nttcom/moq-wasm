@@ -569,10 +569,10 @@ mod tests {
     async fn append_one_object(cache: &TrackCache, group_id: u64) {
         let subgroup = StreamSubgroupId::Value(0);
         cache
-            .append_stream_object(group_id, &subgroup, None, make_header())
+            .append_live_stream_object(group_id, &subgroup, None, make_header())
             .await;
         cache
-            .append_stream_object(group_id, &subgroup, Some(0), make_object())
+            .append_live_stream_object(group_id, &subgroup, Some(0), make_object())
             .await;
     }
 

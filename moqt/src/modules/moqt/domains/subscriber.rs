@@ -11,7 +11,7 @@ use crate::{
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
-                    fetch::Fetch, fetch::FetchType, subscribe::Subscribe,
+                    fetch::Fetch, fetch::FetchParams, subscribe::Subscribe,
                     subscribe_namespace::SubscribeNamespace, unsubscribe::Unsubscribe,
                     unsubscribe_namespace::UnsubscribeNamespace,
                 },
@@ -192,7 +192,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             request_id,
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
-            fetch_type: FetchType::Standalone {
+            fetch_params: FetchParams::Standalone {
                 track_namespace: vec_namespace,
                 track_name,
                 start_location,
@@ -281,7 +281,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             request_id,
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
-            fetch_type: FetchType::RelativeJoining {
+            fetch_params: FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
             },

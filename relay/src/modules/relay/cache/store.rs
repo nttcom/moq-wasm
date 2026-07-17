@@ -66,7 +66,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn evict_removes_unreferenced_track() {
         // Arrange: a track held only by the store (the returned Arc is dropped immediately)
         let store = TrackCacheStore::new();
@@ -74,7 +74,7 @@ mod tests {
         store.get_or_create(&key);
         // Act
         store.evict(Duration::from_secs(10)).await;
-        // Assert: strong_count == 1, so the track is reclaimed
+        // Assert: strong_count == 1 and the track is empty, so it is reclaimed
         assert!(store.get(&key).is_none());
     }
 
