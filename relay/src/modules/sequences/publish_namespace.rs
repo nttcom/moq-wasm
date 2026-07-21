@@ -37,7 +37,7 @@ impl PublishNamespace {
             "SequenceHandler::PublishNamespace"
         );
 
-        let is_origin = self.is_origin_client(session_id, forwarder).await;
+        let is_origin = super::is_origin_client(session_id, forwarder).await;
 
         if is_origin
             && !self
@@ -82,18 +82,6 @@ impl PublishNamespace {
             )
             .await;
         }
-    }
-
-    async fn is_origin_client(
-        &self,
-        session_id: SessionId,
-        forwarder: &ControlMessageForwarder,
-    ) -> bool {
-        forwarder
-            .repository
-            .lock()
-            .await
-            .is_client_session(session_id)
     }
 
     #[tracing::instrument(

@@ -4,10 +4,7 @@ use bytes::BytesMut;
 use crate::modules::transport::transport_send_stream::{TransportSendError, TransportSendStream};
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct WtSendStream {
-    pub(crate) stable_id: usize,
-    pub(crate) stream_id: u64,
     pub(crate) send_stream: web_transport_quinn::SendStream,
 }
 

@@ -36,7 +36,6 @@ pub enum SessionEvent<T: TransportProtocol> {
     ProtocolViolation(),
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum ResponseMessage {
     SubscribeNameSpaceOk(RequestId),

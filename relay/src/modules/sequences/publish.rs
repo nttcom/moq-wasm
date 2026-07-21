@@ -67,7 +67,7 @@ impl Publish {
             track_alias = %upstream_subscription.track_alias(),
             "SequenceHandler::publish"
         );
-        let is_origin_client = self.is_origin_client(session_id, forwarder).await;
+        let is_origin_client = super::is_origin_client(session_id, forwarder).await;
 
         if let Err(error) = self
             .register_upstream_subscription(
@@ -117,18 +117,6 @@ impl Publish {
             track_alias = %upstream_subscription.track_alias(),
             "SequenceHandler::publish DONE"
         );
-    }
-
-    async fn is_origin_client(
-        &self,
-        session_id: SessionId,
-        forwarder: &ControlMessageForwarder,
-    ) -> bool {
-        forwarder
-            .repository
-            .lock()
-            .await
-            .is_client_session(session_id)
     }
 
     #[tracing::instrument(

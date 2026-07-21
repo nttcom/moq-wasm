@@ -32,7 +32,7 @@ impl SubscribeNameSpace {
             track_namespace_prefix = %track_namespace_prefix,
             "SequenceHandler::SubscribeNamespace"
         );
-        let peer_kind = if self.is_origin_client(session_id, forwarder).await {
+        let peer_kind = if super::is_origin_client(session_id, forwarder).await {
             PeerKind::Client
         } else {
             PeerKind::Relay
@@ -57,18 +57,6 @@ impl SubscribeNameSpace {
         )
         .await;
         self.response(handler).await;
-    }
-
-    async fn is_origin_client(
-        &self,
-        session_id: SessionId,
-        forwarder: &ControlMessageForwarder,
-    ) -> bool {
-        forwarder
-            .repository
-            .lock()
-            .await
-            .is_client_session(session_id)
     }
 
     #[tracing::instrument(

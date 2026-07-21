@@ -38,7 +38,7 @@ impl UnsubscribeNamespace {
 
         let no_clients_remain =
             table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
-        if !Self::is_origin_client(session_id, forwarder).await {
+        if !super::is_origin_client(session_id, forwarder).await {
             return;
         }
         if !no_clients_remain {
@@ -53,14 +53,6 @@ impl UnsubscribeNamespace {
             cascading_relay_context.inter_relay_connection_manager,
         )
         .await;
-    }
-
-    async fn is_origin_client(session_id: SessionId, forwarder: &ControlMessageForwarder) -> bool {
-        forwarder
-            .repository
-            .lock()
-            .await
-            .is_client_session(session_id)
     }
 
     #[tracing::instrument(

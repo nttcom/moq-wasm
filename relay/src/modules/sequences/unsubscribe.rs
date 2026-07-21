@@ -148,10 +148,6 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Subscriber for MockSubscriber {
-        async fn _send_subscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
-            Ok(())
-        }
-
         async fn send_subscribe(
             &mut self,
             _track_namespace: String,
