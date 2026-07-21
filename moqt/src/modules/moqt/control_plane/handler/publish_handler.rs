@@ -3,12 +3,15 @@ use std::sync::Arc;
 use crate::{
     FilterType, GroupOrder, PublisherInitiatedSubscription, Subscription, TransportProtocol,
     modules::moqt::{
-        control_plane::control_messages::{
-            control_message_type::ControlMessageType,
-            messages::{
-                parameters::content_exists::ContentExists, publish::Publish, publish_ok::PublishOk,
-                request_error::RequestError,
+        control_plane::{
+            control_messages::{
+                control_message_type::ControlMessageType,
+                messages::{
+                    parameters::content_exists::ContentExists, publish::Publish,
+                    publish_ok::PublishOk, request_error::RequestError,
+                },
             },
+            handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
     },
@@ -28,12 +31,19 @@ pub struct PublishHandler<T: TransportProtocol> {
     pub authorization_token: Option<String>,
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
+    guard: ResponseGuard<T>,
 }
 
 impl<T: TransportProtocol> PublishHandler<T> {
     pub(crate) fn new(session_context: Arc<SessionContext<T>>, publish_message: Publish) -> Self {
+        let guard = ResponseGuard::new(
+            session_context.clone(),
+            publish_message.request_id,
+            ControlMessageType::PublishError,
+        );
         Self {
             session_context,
+            guard,
             request_id: publish_message.request_id,
             track_namespace: publish_message.track_namespace_tuple.join("/"),
             track_name: publish_message.track_name,
@@ -53,6 +63,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
         filter_type: FilterType,
         expires: u64,
     ) -> Result<Subscription, TransportSendError> {
+        self.guard.mark_responded();
         let publish_ok = PublishOk {
             request_id: self.request_id,
             forward: self.forward,
@@ -110,6 +121,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
+        self.guard.mark_responded();
         let err = RequestError {
             // TODO: assign correct request id.
             request_id: self.request_id,

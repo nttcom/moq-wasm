@@ -26,13 +26,14 @@ use crate::{
                 },
             },
             domains::{
-                session_context::SessionContext,
+                session_context::{LateResponseAction, SessionContext},
                 subscription::{PublisherInitiatedSubscription, Subscription},
             },
             protocol::TransportProtocol,
         },
         transport::transport_connection::TransportConnection,
     },
+    wire::RequestError,
 };
 
 pub struct Publisher<T: TransportProtocol> {
@@ -47,10 +48,16 @@ impl<T: TransportProtocol> Publisher<T> {
     }
 
     pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
-        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
+        let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(request_id, sender);
+        let _registered_sender = self.session.register_response_sender(
+            request_id,
+            sender,
+            LateResponseAction::PublishNamespaceDone {
+                namespace: vec_namespace.clone(),
+            },
+        );
         let publish_namespace = PublishNamespace::new(request_id, vec_namespace, vec![]);
         self.session
             .send_stream
@@ -68,8 +75,13 @@ impl<T: TransportProtocol> Publisher<T> {
                     Ok(())
                 }
             }
-            ResponseMessage::PublishNamespaceError(_, _, _) => {
-                bail!("Publish namespace error")
+            ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase) => {
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }
@@ -101,7 +113,12 @@ impl<T: TransportProtocol> Publisher<T> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(request_id, sender);
+        // A late PUBLISH_OK is discarded: the peer keeps subscription state
+        // but receives no objects; see LateResponseAction::Discard for why
+        // no PUBLISH_DONE is sent yet.
+        let _registered_sender =
+            self.session
+                .register_response_sender(request_id, sender, LateResponseAction::Discard);
         let content_exists = option.content_exists;
         let publish = Publish {
             request_id,
@@ -138,9 +155,14 @@ impl<T: TransportProtocol> Publisher<T> {
                     ))
                 }
             }
-            ResponseMessage::PublishError(_, _, _) => {
+            ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Publish error");
-                bail!("Publish error")
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
             }
             _ => bail!("Protocol violation"),
         }

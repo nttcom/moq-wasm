@@ -3,12 +3,15 @@ use std::sync::Arc;
 use crate::{
     FilterType, GroupOrder, SubscriberInitiatedSubscription, Subscription, TransportProtocol,
     modules::moqt::{
-        control_plane::control_messages::{
-            control_message_type::ControlMessageType,
-            messages::{
-                parameters::content_exists::ContentExists, request_error::RequestError,
-                subscribe::Subscribe, subscribe_ok::SubscribeOk,
+        control_plane::{
+            control_messages::{
+                control_message_type::ControlMessageType,
+                messages::{
+                    parameters::content_exists::ContentExists, request_error::RequestError,
+                    subscribe::Subscribe, subscribe_ok::SubscribeOk,
+                },
             },
+            handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
     },
@@ -28,6 +31,7 @@ pub struct SubscribeHandler<T: TransportProtocol> {
     pub authorization_token: Option<String>,
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
+    guard: ResponseGuard<T>,
 }
 
 impl<T: TransportProtocol> SubscribeHandler<T> {
@@ -35,8 +39,14 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         session_context: Arc<SessionContext<T>>,
         subscribe_message: Subscribe,
     ) -> Self {
+        let guard = ResponseGuard::new(
+            session_context.clone(),
+            subscribe_message.request_id,
+            ControlMessageType::SubscribeError,
+        );
         Self {
             session_context,
+            guard,
             request_id: subscribe_message.request_id,
             track_namespace: subscribe_message.track_namespace.join("/"),
             track_name: subscribe_message.track_name,
@@ -67,6 +77,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), TransportSendError> {
+        self.guard.mark_responded();
         let subscribe_ok = SubscribeOk {
             request_id: self.request_id,
             track_alias,
@@ -92,6 +103,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
+        self.guard.mark_responded();
         let err = RequestError {
             // TODO: assign correct request id.
             request_id: self.request_id,
