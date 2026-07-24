@@ -3,5 +3,5 @@ pub(crate) mod egress;
 pub(crate) mod ingress;
 pub(crate) mod notifications;
 #[cfg(test)]
-mod pipeline_tests;
+mod tests;
 pub(crate) mod types;
