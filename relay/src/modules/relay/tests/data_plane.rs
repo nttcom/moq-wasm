@@ -1,4 +1,4 @@
-//! Live forwarding pipeline scenarios: ingress `StreamReader` ->
+//! Data plane forwarding scenarios: ingress `StreamReader` ->
 //! `TrackCache` -> `EgressRunner` (scheduler + group sender) -> downstream
 //! `DataSender`.
 //!
@@ -6,13 +6,13 @@
 //! 50 objects": a publisher that answers SUBSCRIBE with a burst of objects on
 //! one subgroup stream and closes it immediately (FIN) races the relay's
 //! subscribe handling, and the downstream subscriber observes a truncated
-//! stream. The tests pin the pipeline behavior at each stage of that race so
+//! stream. The tests pin the data plane behavior at each stage of that race so
 //! a failure names the stage instead of an opaque E2E timeout.
 
 use bytes::Bytes;
 
 use super::harness::{
-    OBJECT_COUNT, PipelineHarness, assert_full_ordered_delivery, collect_until_closed,
+    DataPlaneHarness, OBJECT_COUNT, assert_full_ordered_delivery, collect_until_closed,
     header_group_on_stream, ordered_payload, payloads_on_stream, stream_closed,
 };
 
@@ -23,7 +23,7 @@ use super::harness::{
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn burst_publish_with_immediate_fin_delivers_all_objects() {
     for round in 0..100 {
-        let harness = PipelineHarness::new();
+        let harness = DataPlaneHarness::new();
         let mut egress = harness.start_egress(None).await;
 
         let feed = harness.open_upstream_stream().await;
@@ -51,7 +51,7 @@ async fn burst_publish_with_immediate_fin_delivers_all_objects() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn egress_start_racing_ingest_burst_delivers_all_objects() {
     for round in 0..100 {
-        let harness = PipelineHarness::new();
+        let harness = DataPlaneHarness::new();
 
         let feed = harness.open_upstream_stream().await;
         feed.header(0);
@@ -80,7 +80,7 @@ async fn egress_start_racing_ingest_burst_delivers_all_objects() {
 /// closing must never truncate objects already in the cache.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn closed_subgroup_is_drained_in_full() {
-    let harness = PipelineHarness::new();
+    let harness = DataPlaneHarness::new();
     let mut track_events = harness
         .notify_map
         .get_or_create(&harness.track_key)
@@ -122,7 +122,7 @@ async fn closed_subgroup_is_drained_in_full() {
 async fn largest_location_resolved_mid_burst_must_not_skip_head_objects() {
     const IN_FLIGHT_BEFORE_RESOLVE: usize = 10;
 
-    let harness = PipelineHarness::new();
+    let harness = DataPlaneHarness::new();
 
     // The burst races ahead: the first objects reach the cache before the
     // subscribe sequence resolves the largest location.
@@ -159,7 +159,7 @@ async fn sequential_groups_with_fast_fin_each_arrive_complete() {
     const GROUPS: u64 = 10;
     const OBJECTS_PER_GROUP: usize = 5;
 
-    let harness = PipelineHarness::new();
+    let harness = DataPlaneHarness::new();
     let mut egress = harness.start_egress(None).await;
 
     for group_id in 0..GROUPS {

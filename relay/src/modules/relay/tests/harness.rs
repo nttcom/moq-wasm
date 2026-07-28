@@ -1,4 +1,4 @@
-//! Test harness for the live forwarding pipeline: wires the real ingress
+//! Test harness for the relay data plane (`relay.dataplane.*` spans): wires the real ingress
 //! `StreamReader`, `TrackCache`, notifier and `EgressRunner` together with no
 //! QUIC involved. Only the two boundaries are substituted: the upstream
 //! `StreamReceiver` is fed through a channel so tests control exactly when
@@ -59,11 +59,11 @@ impl StreamReceiver for ChannelStreamReceiver {
 }
 
 /// Plays the publisher side of one upstream subgroup stream.
-pub(super) struct UpstreamFeed {
+pub(super) struct UpstreamSubgroupStream {
     sender: mpsc::UnboundedSender<FeedItem>,
 }
 
-impl UpstreamFeed {
+impl UpstreamSubgroupStream {
     pub(super) fn header(&self, group_id: u64) {
         self.sender
             .send(Ok(Some(make_header(group_id))))
@@ -94,13 +94,13 @@ pub(super) enum EgressEvent {
     Closed { stream: usize },
 }
 
-struct CapturingDataSender {
+struct MockDataSender {
     stream: usize,
     events: mpsc::UnboundedSender<EgressEvent>,
 }
 
 #[async_trait::async_trait]
-impl DataSender for CapturingDataSender {
+impl DataSender for MockDataSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         self.events
             .send(EgressEvent::Object {
@@ -119,35 +119,35 @@ impl DataSender for CapturingDataSender {
     }
 }
 
-struct CapturingStreamSenderFactory {
+struct MockStreamSenderFactory {
     next_stream: Arc<AtomicUsize>,
     events: mpsc::UnboundedSender<EgressEvent>,
 }
 
 #[async_trait::async_trait]
-impl StreamSenderFactory for CapturingStreamSenderFactory {
+impl StreamSenderFactory for MockStreamSenderFactory {
     async fn next(&mut self) -> anyhow::Result<Box<dyn DataSender>> {
         let stream = self.next_stream.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::new(CapturingDataSender {
+        Ok(Box::new(MockDataSender {
             stream,
             events: self.events.clone(),
         }))
     }
 }
 
-struct CapturingPublisher {
+struct MockPublisher {
     next_stream: Arc<AtomicUsize>,
     events: mpsc::UnboundedSender<EgressEvent>,
 }
 
 #[async_trait::async_trait]
-impl Publisher for CapturingPublisher {
+impl Publisher for MockPublisher {
     async fn send_publish_namespace(&self, _namespaces: String) -> anyhow::Result<()> {
-        unreachable!("not used by the egress pipeline under test")
+        unreachable!("not used by the egress path under test")
     }
 
     async fn send_publish_namespace_done(&self, _namespace: String) -> anyhow::Result<()> {
-        unreachable!("not used by the egress pipeline under test")
+        unreachable!("not used by the egress path under test")
     }
 
     async fn send_publish(
@@ -155,14 +155,14 @@ impl Publisher for CapturingPublisher {
         _track_namespace: String,
         _track_name: String,
     ) -> anyhow::Result<DownstreamSubscription> {
-        unreachable!("not used by the egress pipeline under test")
+        unreachable!("not used by the egress path under test")
     }
 
     fn new_stream_factory(
         &self,
         _downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory> {
-        Box::new(CapturingStreamSenderFactory {
+        Box::new(MockStreamSenderFactory {
             next_stream: self.next_stream.clone(),
             events: self.events.clone(),
         })
@@ -172,11 +172,11 @@ impl Publisher for CapturingPublisher {
         &self,
         _downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn DataSender> {
-        unreachable!("not used by the egress pipeline under test")
+        unreachable!("not used by the egress path under test")
     }
 
     async fn new_fetch_sender(&self, _request_id: u64) -> anyhow::Result<Box<dyn FetchSender>> {
-        unreachable!("not used by the egress pipeline under test")
+        unreachable!("not used by the egress path under test")
     }
 }
 
@@ -229,10 +229,10 @@ fn make_downstream_subscription() -> DownstreamSubscription {
 }
 
 // ---------------------------------------------------------------------------
-// Pipeline wiring
+// Data plane wiring
 // ---------------------------------------------------------------------------
 
-pub(super) struct PipelineHarness {
+pub(super) struct DataPlaneHarness {
     pub(super) track_key: TrackKey,
     pub(super) notify_map: Arc<ObjectNotifyProducerMap>,
     cache_store: Arc<TrackCacheStore>,
@@ -253,7 +253,7 @@ impl Drop for RunningEgress {
     }
 }
 
-impl PipelineHarness {
+impl DataPlaneHarness {
     pub(super) fn new() -> Self {
         let track_key = TrackKey::new("ns", "track");
         let cache_store = Arc::new(TrackCacheStore::new());
@@ -275,7 +275,7 @@ impl PipelineHarness {
 
     /// Opens one upstream subgroup stream in the ingress; the returned feed
     /// plays the publisher side of that stream.
-    pub(super) async fn open_upstream_stream(&self) -> UpstreamFeed {
+    pub(super) async fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
         let (feed_sender, feed_receiver) = mpsc::unbounded_channel();
         self.opened_sender
             .send(StreamOpened {
@@ -288,7 +288,7 @@ impl PipelineHarness {
             })
             .await
             .expect("ingress stream reader should accept new streams");
-        UpstreamFeed {
+        UpstreamSubgroupStream {
             sender: feed_sender,
         }
     }
@@ -300,7 +300,7 @@ impl PipelineHarness {
         largest_location: Option<moqt::Location>,
     ) -> RunningEgress {
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        let publisher = CapturingPublisher {
+        let publisher = MockPublisher {
             next_stream: Arc::new(AtomicUsize::new(0)),
             events: event_sender,
         };
@@ -372,7 +372,7 @@ impl PipelineHarness {
 // ---------------------------------------------------------------------------
 
 /// Receives egress events until `closed_streams` downstream streams closed.
-/// Panics with the events collected so far when the pipeline stalls, so a
+/// Panics with the events collected so far when the data plane stalls, so a
 /// lost-object bug reports as "stalled after N objects" rather than a hang.
 pub(super) async fn collect_until_closed(
     egress: &mut RunningEgress,
