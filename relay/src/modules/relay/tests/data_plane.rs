@@ -11,9 +11,12 @@
 
 use bytes::Bytes;
 
-use super::harness::{
-    DataPlaneHarness, OBJECT_COUNT, assert_full_ordered_delivery, collect_until_closed,
-    header_group_on_stream, ordered_payload, payloads_on_stream, stream_closed,
+use super::{
+    harness::{DataPlaneHarness, OBJECT_COUNT, assert_full_ordered_delivery, collect_until_closed},
+    mocks::{
+        downstream_client::{header_group_on_stream, payloads_on_stream, stream_closed},
+        upstream_client::ordered_payload,
+    },
 };
 
 /// Baseline: egress is running (largest resolved as None before any object
