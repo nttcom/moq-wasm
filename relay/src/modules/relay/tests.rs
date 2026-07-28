@@ -3,5 +3,6 @@
 //! they cover; QUIC-level tests live in `relay/tests/`).
 
 mod data_plane;
+mod fixtures;
 mod harness;
 mod mocks;

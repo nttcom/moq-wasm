@@ -18,12 +18,14 @@ use crate::modules::{
     types::TrackKey,
 };
 
-use super::mocks::{
-    downstream_client::{
-        EgressEvent, MockPublisher, header_group_on_stream, make_downstream_subscription,
-        payloads_on_stream, stream_closed,
+use super::{
+    fixtures::{make_downstream_subscription, ordered_payload},
+    mocks::{
+        downstream_client::{
+            EgressEvent, MockPublisher, header_group_on_stream, payloads_on_stream, stream_closed,
+        },
+        upstream_client::UpstreamSubgroupStream,
     },
-    upstream_client::{UpstreamSubgroupStream, ordered_payload},
 };
 
 pub(crate) const OBJECT_COUNT: usize = 50;

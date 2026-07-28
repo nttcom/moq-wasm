@@ -3,11 +3,11 @@
 //! implements, so tests control exactly when each object (and the FIN)
 //! becomes visible to the relay.
 
-use bytes::Bytes;
 use tokio::sync::mpsc;
 
-use crate::modules::core::{
-    data_object::DataObject, data_receiver::stream_receiver::StreamReceiver,
+use crate::modules::{
+    core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
+    relay::tests::fixtures::{make_header, make_payload_object, ordered_payload},
 };
 
 type FeedItem = Result<Option<DataObject>, moqt::StreamReceiveError>;
@@ -61,31 +61,4 @@ impl UpstreamSubgroupStream {
             .send(Ok(None))
             .expect("ingress feed should be open");
     }
-}
-
-/// Payloads carry their index so ordering is verifiable on the way out.
-pub(crate) fn ordered_payload(index: usize) -> Bytes {
-    Bytes::from(format!("ordered-object-{index}"))
-}
-
-fn make_header(group_id: u64) -> DataObject {
-    DataObject::SubgroupHeader(moqt::SubgroupHeader::new(
-        0,
-        group_id,
-        moqt::SubgroupId::Value(0),
-        128,
-        false,
-        false,
-    ))
-}
-
-fn make_payload_object(object_id_delta: u64, payload: Bytes) -> DataObject {
-    let message_type =
-        moqt::SubgroupHeader::new(0, 0, moqt::SubgroupId::Value(0), 128, false, false).message_type;
-    DataObject::SubgroupObject(moqt::SubgroupObjectField {
-        message_type,
-        object_id_delta,
-        extension_headers: moqt::ExtensionHeaders::default(),
-        subgroup_object: moqt::SubgroupObject::new_payload(payload),
-    })
 }
