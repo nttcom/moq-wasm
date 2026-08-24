@@ -19,7 +19,7 @@ mod fixtures;
 mod mocks;
 
 use self::{
-    fixtures::{make_largest_object_subscription, ordered_payload},
+    fixtures::{data_object::ordered_payload, subscription::make_largest_object_subscription},
     mocks::{downstream_client::MockPublisher, upstream_client::UpstreamSubgroupStream},
 };
 
