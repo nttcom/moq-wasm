@@ -18,7 +18,6 @@ impl PublishDoneHandler {
         }
     }
 
-    /// The Request ID of the subscription the publisher finished.
     pub fn request_id(&self) -> u64 {
         self.request_id
     }
@@ -27,7 +26,6 @@ impl PublishDoneHandler {
         self.status_code
     }
 
-    /// Number of data streams the publisher opened for this subscription.
     pub fn stream_count(&self) -> u64 {
         self.stream_count
     }

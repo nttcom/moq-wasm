@@ -12,7 +12,6 @@ impl GoAwayHandler {
         }
     }
 
-    /// Empty when the peer wants the current session URI to be reused.
     pub fn new_session_uri(&self) -> &str {
         &self.new_session_uri
     }

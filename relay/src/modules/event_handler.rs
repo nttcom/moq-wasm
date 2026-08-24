@@ -385,9 +385,6 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                // draft-14 control messages the relay decodes and delivers so
-                // the session survives, but does not act on yet. The event
-                // span carries the decoded fields.
                 SessionEvent::GoAway(..)
                 | SessionEvent::MaxRequestId(..)
                 | SessionEvent::RequestsBlocked(..)

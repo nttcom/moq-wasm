@@ -12,7 +12,6 @@ impl MaxRequestIdHandler {
         }
     }
 
-    /// The new Maximum Request ID for the session, plus 1.
     pub fn request_id(&self) -> u64 {
         self.request_id
     }

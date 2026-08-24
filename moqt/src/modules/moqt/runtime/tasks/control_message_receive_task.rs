@@ -33,8 +33,6 @@ use crate::{
 enum DepacketizeResult<T: TransportProtocol> {
     SessionEvent(SessionEvent<T>),
     ResponseMessage(u64, ResponseMessage),
-    /// The session was closed while resolving the message; the caller must
-    /// stop reading instead of emitting another event.
     SessionClosed,
 }
 
@@ -315,9 +313,8 @@ impl ControlMessageReceiveTask {
                     track_status_handler,
                 ))
             }
-            // Sending TRACK_STATUS is not implemented, so any response to one
-            // is unsolicited. Route these through `ResponseMessage` once a
-            // TRACK_STATUS request API exists.
+            // Sending TRACK_STATUS is not implemented, so any response to one is
+            // unsolicited. Route these through `ResponseMessage` once it is.
             ReceivedMessage::TrackStatusOk(track_status_ok) => {
                 tracing::error!(
                     request_id = track_status_ok.request_id,
@@ -342,8 +339,6 @@ impl ControlMessageReceiveTask {
                 );
                 DepacketizeResult::SessionClosed
             }
-            // SETUP is exchanged before this task starts, so a later one means
-            // the peer's state machine diverged from ours.
             ReceivedMessage::ClientSetup(_) | ReceivedMessage::ServerSetup(_) => {
                 tracing::error!(
                     "Protocol violation: SETUP received after the session was established"

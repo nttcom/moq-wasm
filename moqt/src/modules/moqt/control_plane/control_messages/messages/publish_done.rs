@@ -3,9 +3,8 @@ use crate::modules::extensions::{
 };
 use bytes::BytesMut;
 
-/// Status codes defined by draft-14 §9.12. The wire field stays a varint
-/// because the draft only says applications SHOULD use a relevant code, so an
-/// unknown value must not fail decoding.
+/// draft-14 §9.12. The wire field stays a varint because an unknown code must
+/// not fail decoding.
 pub mod status_code {
     pub const INTERNAL_ERROR: u64 = 0x0;
     pub const UNAUTHORIZED: u64 = 0x1;
@@ -19,10 +18,8 @@ pub mod status_code {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PublishDone {
-    /// The Request ID of the subscription that is being terminated.
     pub request_id: u64,
     pub status_code: u64,
-    /// Number of data streams the publisher opened for this subscription.
     pub stream_count: u64,
     pub error_reason: String,
 }
@@ -102,8 +99,6 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = PublishDone::decode(&mut cursor).unwrap();
 
-            // Unknown status codes are carried through instead of failing the
-            // decode, so a newer peer does not break the session.
             assert_eq!(decoded.status_code, 0x3f);
         }
     }

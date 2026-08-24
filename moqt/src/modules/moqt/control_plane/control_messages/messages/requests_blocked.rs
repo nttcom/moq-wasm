@@ -5,7 +5,6 @@ use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RequestsBlocked {
-    /// The Maximum Request ID the sender is currently blocked on.
     pub maximum_request_id: u64,
 }
 

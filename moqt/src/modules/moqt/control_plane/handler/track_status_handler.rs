@@ -13,10 +13,9 @@ use crate::{
     },
 };
 
-/// TRACK_STATUS carries the SUBSCRIBE payload (draft-14 §9.20), so the handler
-/// exposes the same fields. Responding is not implemented yet; the response
-/// guard answers with TRACK_STATUS_ERROR when the handler is dropped so the
-/// requester does not wait for its control timeout.
+/// Responding is not implemented yet: the guard answers TRACK_STATUS_ERROR
+/// when the handler is dropped, so the requester does not wait for its
+/// control timeout.
 #[derive(Debug, Clone)]
 pub struct TrackStatusHandler<T: TransportProtocol> {
     _session_context: Arc<SessionContext<T>>,

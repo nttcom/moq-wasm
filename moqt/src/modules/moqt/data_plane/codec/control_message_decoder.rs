@@ -133,8 +133,6 @@ impl ControlMessageDecoder {
                 FetchCancel::decode,
                 ReceivedMessage::FetchCancel,
             ),
-            // draft-14 §9.20-9.22: the TRACK_STATUS family reuses the
-            // SUBSCRIBE, SUBSCRIBE_OK and SUBSCRIBE_ERROR payload formats.
             ControlMessageType::TrackStatus => {
                 Self::decode_payload(&mut cursor, Subscribe::decode, ReceivedMessage::TrackStatus)
             }
@@ -196,8 +194,6 @@ impl ControlMessageDecoder {
         }
     }
 
-    /// A payload that fails to decode is a protocol violation for the session,
-    /// so every message type maps a `None` to `FatalError`.
     fn decode_payload<T>(
         cursor: &mut Cursor<&[u8]>,
         decode: fn(&mut Cursor<&[u8]>) -> Option<T>,
@@ -360,8 +356,6 @@ mod tests {
     fn decode_control_messages_added_in_draft14() {
         let mut decoder = ControlMessageDecoder;
 
-        // Every message type that used to hit an unimplemented branch is now
-        // decoded, so a peer sending one no longer kills the receive task.
         let mut buf = BytesMut::new();
         buf.unsplit(encode_control_message(
             ControlMessageType::GoAway,
@@ -427,7 +421,6 @@ mod tests {
         })
         .collect();
 
-        // Each frame maps to its own message variant, in order.
         assert_eq!(
             decoded,
             vec![

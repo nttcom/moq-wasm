@@ -12,7 +12,6 @@ impl RequestsBlockedHandler {
         }
     }
 
-    /// The Maximum Request ID the peer is blocked on.
     pub fn maximum_request_id(&self) -> u64 {
         self.maximum_request_id
     }

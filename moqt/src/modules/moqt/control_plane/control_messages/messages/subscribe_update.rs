@@ -11,10 +11,9 @@ use bytes::{Buf, BufMut, BytesMut};
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubscribeUpdate {
     pub request_id: u64,
-    /// The Request ID of the SUBSCRIBE this message updates.
     pub subscription_request_id: u64,
     pub start_location: Location,
-    /// The end Group ID plus 1; 0 means the subscription stays open-ended.
+    /// The end Group ID plus 1; 0 means open-ended.
     pub end_group: u64,
     pub subscriber_priority: u8,
     pub forward: bool,
@@ -170,7 +169,6 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = SubscribeUpdate::decode(&mut cursor).unwrap();
 
-            // The DELIVERY_TIMEOUT parameter survives the round trip.
             assert_eq!(decoded.delivery_timeout, Some(2000));
             assert_eq!(decoded, message);
         }
@@ -196,7 +194,6 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&payload[..]);
             let decoded = SubscribeUpdate::decode(&mut cursor);
 
-            // draft-14 §9.10: any other Forward value is a protocol violation.
             assert!(decoded.is_none());
         }
     }

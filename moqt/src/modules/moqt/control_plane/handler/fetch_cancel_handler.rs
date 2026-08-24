@@ -12,7 +12,6 @@ impl FetchCancelHandler {
         }
     }
 
-    /// The Request ID of the FETCH being cancelled.
     pub fn request_id(&self) -> u64 {
         self.request_id
     }

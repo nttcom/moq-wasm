@@ -31,7 +31,6 @@ impl SubscribeUpdateHandler {
         self.request_id
     }
 
-    /// The Request ID of the SUBSCRIBE this update narrows.
     pub fn subscription_request_id(&self) -> u64 {
         self.subscription_request_id
     }
@@ -40,7 +39,6 @@ impl SubscribeUpdateHandler {
         self.start_location
     }
 
-    /// The end Group ID plus 1; 0 keeps the subscription open-ended.
     pub fn end_group(&self) -> u64 {
         self.end_group
     }

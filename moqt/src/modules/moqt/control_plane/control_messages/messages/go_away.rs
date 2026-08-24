@@ -3,13 +3,11 @@ use crate::modules::extensions::{
 };
 use bytes::BytesMut;
 
-/// draft-14 §9.4: a New Session URI longer than this is a protocol violation,
-/// not a value to be truncated.
 const MAX_NEW_SESSION_URI_LENGTH: usize = 8192;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GoAway {
-    /// A zero-length URI means the peer should reuse the current one.
+    /// Empty means the peer should reuse the current session URI.
     pub new_session_uri: String,
 }
 
@@ -75,7 +73,6 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = GoAway::decode(&mut cursor).unwrap();
 
-            // An empty URI is valid and tells the peer to reuse the current URI.
             assert_eq!(decoded.new_session_uri, "");
         }
 
@@ -87,7 +84,6 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = GoAway::decode(&mut cursor);
 
-            // draft-14 §9.4: exceeding the maximum is a protocol violation.
             assert!(decoded.is_none());
         }
     }

@@ -54,8 +54,7 @@ pub type SubscribeNamespaceError = RequestError;
 pub type PublishError = RequestError;
 pub type SubscribeError = RequestError;
 pub type FetchError = RequestError;
-// draft-14 §9.20-9.22: the TRACK_STATUS family reuses the SUBSCRIBE,
-// SUBSCRIBE_OK and SUBSCRIBE_ERROR payload formats verbatim.
+// draft-14 §9.20-9.22: identical payload formats.
 pub type TrackStatus = Subscribe;
 pub type TrackStatusOk = SubscribeOk;
 pub type TrackStatusError = RequestError;

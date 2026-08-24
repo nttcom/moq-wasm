@@ -37,7 +37,6 @@ mod tests {
 
             let buf = message.encode();
 
-            // 64 does not fit in a 1-byte varint, so it is encoded in 2 bytes.
             assert_eq!(buf.as_ref(), [0x40, 0x40].as_slice());
         }
 

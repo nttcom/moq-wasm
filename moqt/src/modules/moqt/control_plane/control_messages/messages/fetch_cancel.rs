@@ -5,7 +5,6 @@ use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FetchCancel {
-    /// The Request ID of the FETCH being cancelled.
     pub request_id: u64,
 }
 

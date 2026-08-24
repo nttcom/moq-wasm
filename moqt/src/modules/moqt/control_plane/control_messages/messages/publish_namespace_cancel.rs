@@ -6,7 +6,6 @@ use bytes::BytesMut;
 #[derive(Debug, Clone, PartialEq)]
 pub struct PublishNamespaceCancel {
     pub track_namespace: Vec<String>,
-    /// Uses the same error codes as PUBLISH_NAMESPACE_ERROR.
     pub error_code: u64,
     pub error_reason: String,
 }
