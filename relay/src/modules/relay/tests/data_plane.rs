@@ -1,11 +1,11 @@
 use super::harness::{
-    DataPlaneHarness, OBJECT_COUNT, assert_full_ordered_delivery, receive_objects_until_close,
+    OBJECT_COUNT, RelayHarness, assert_full_ordered_delivery, receive_objects_until_close,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn burst_publish_with_immediate_fin_delivers_all_objects() {
     for _ in 0..100 {
-        let harness = DataPlaneHarness::new();
+        let harness = RelayHarness::new();
         let mut egress = harness.start_egress(None).await;
 
         let upstream_stream = harness.open_upstream_stream().await;
@@ -23,7 +23,7 @@ async fn burst_publish_with_immediate_fin_delivers_all_objects() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn egress_start_racing_ingest_burst_delivers_all_objects() {
     for _ in 0..100 {
-        let harness = DataPlaneHarness::new();
+        let harness = RelayHarness::new();
 
         let upstream_stream = harness.open_upstream_stream().await;
         upstream_stream.header(0);
@@ -44,7 +44,7 @@ async fn egress_start_racing_ingest_burst_delivers_all_objects() {
 async fn largest_location_resolved_mid_burst_must_not_skip_head_objects() {
     const IN_FLIGHT_BEFORE_RESOLVE: usize = 10;
 
-    let harness = DataPlaneHarness::new();
+    let harness = RelayHarness::new();
 
     let upstream_stream = harness.open_upstream_stream().await;
     upstream_stream.header(0);

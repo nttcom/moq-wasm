@@ -23,7 +23,7 @@ use super::{
 pub(crate) const OBJECT_COUNT: usize = 50;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
-pub(crate) struct DataPlaneHarness {
+pub(crate) struct RelayHarness {
     track_key: TrackKey,
     cache_store: Arc<TrackCacheStore>,
     notify_map: Arc<ObjectNotifyProducerMap>,
@@ -44,7 +44,7 @@ impl Drop for EgressRunnerHandle {
     }
 }
 
-impl DataPlaneHarness {
+impl RelayHarness {
     pub(crate) fn new() -> Self {
         let track_key = TrackKey::new("ns", "track");
         let cache_store = Arc::new(TrackCacheStore::new());
