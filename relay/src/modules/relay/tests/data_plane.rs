@@ -1,5 +1,5 @@
 use super::harness::{
-    DataPlaneHarness, OBJECT_COUNT, assert_full_ordered_delivery, collect_until_closed,
+    DataPlaneHarness, OBJECT_COUNT, assert_full_ordered_delivery, receive_objects_until_close,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -15,8 +15,8 @@ async fn burst_publish_with_immediate_fin_delivers_all_objects() {
         }
         upstream_stream.fin();
 
-        let events = collect_until_closed(&mut egress).await;
-        assert_full_ordered_delivery(&events);
+        let objects = receive_objects_until_close(&mut egress).await;
+        assert_full_ordered_delivery(&objects);
     }
 }
 
@@ -34,8 +34,8 @@ async fn egress_start_racing_ingest_burst_delivers_all_objects() {
 
         let mut egress = harness.start_egress(None).await;
 
-        let events = collect_until_closed(&mut egress).await;
-        assert_full_ordered_delivery(&events);
+        let objects = receive_objects_until_close(&mut egress).await;
+        assert_full_ordered_delivery(&objects);
     }
 }
 
@@ -65,6 +65,6 @@ async fn largest_location_resolved_mid_burst_must_not_skip_head_objects() {
     }
     upstream_stream.fin();
 
-    let events = collect_until_closed(&mut egress).await;
-    assert_full_ordered_delivery(&events);
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert_full_ordered_delivery(&objects);
 }

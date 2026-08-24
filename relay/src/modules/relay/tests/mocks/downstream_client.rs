@@ -9,56 +9,46 @@ use crate::modules::core::{
     subscription::DownstreamSubscription,
 };
 
-pub(crate) enum EgressEvent {
-    Object(DataObject),
-    Closed,
-}
-
 struct MockDataSender {
-    events: mpsc::UnboundedSender<EgressEvent>,
+    sent: mpsc::UnboundedSender<Option<DataObject>>,
 }
 
 #[async_trait::async_trait]
 impl DataSender for MockDataSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
-        self.events
-            .send(EgressEvent::Object(object))
-            .map_err(|_| anyhow::anyhow!("egress capture receiver dropped"))
+        self.sent
+            .send(Some(object))
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
-        self.events
-            .send(EgressEvent::Closed)
-            .map_err(|_| anyhow::anyhow!("egress capture receiver dropped"))
+        self.sent
+            .send(None)
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 }
 
 struct MockStreamSenderFactory {
-    events: mpsc::UnboundedSender<EgressEvent>,
+    sent: mpsc::UnboundedSender<Option<DataObject>>,
 }
 
 #[async_trait::async_trait]
 impl StreamSenderFactory for MockStreamSenderFactory {
     async fn next(&mut self) -> anyhow::Result<Box<dyn DataSender>> {
         Ok(Box::new(MockDataSender {
-            events: self.events.clone(),
+            sent: self.sent.clone(),
         }))
     }
 }
 
 pub(crate) struct MockPublisher {
-    events: mpsc::UnboundedSender<EgressEvent>,
+    sent: mpsc::UnboundedSender<Option<DataObject>>,
 }
 
 impl MockPublisher {
-    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<EgressEvent>) {
-        let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        (
-            Self {
-                events: event_sender,
-            },
-            event_receiver,
-        )
+    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<Option<DataObject>>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (Self { sent: sender }, receiver)
     }
 }
 
@@ -85,7 +75,7 @@ impl Publisher for MockPublisher {
         _downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn StreamSenderFactory> {
         Box::new(MockStreamSenderFactory {
-            events: self.events.clone(),
+            sent: self.sent.clone(),
         })
     }
 

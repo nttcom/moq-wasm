@@ -17,10 +17,7 @@ use crate::modules::{
 
 use super::{
     fixtures::{make_largest_object_subscription, ordered_payload},
-    mocks::{
-        downstream_client::{EgressEvent, MockPublisher},
-        upstream_client::UpstreamSubgroupStream,
-    },
+    mocks::{downstream_client::MockPublisher, upstream_client::UpstreamSubgroupStream},
 };
 
 pub(crate) const OBJECT_COUNT: usize = 50;
@@ -36,14 +33,14 @@ pub(crate) struct DataPlaneHarness {
     stop_receiver: watch::Receiver<bool>,
 }
 
-pub(crate) struct RunningEgress {
-    events: mpsc::UnboundedReceiver<EgressEvent>,
-    handle: tokio::task::JoinHandle<()>,
+pub(crate) struct EgressRunnerHandle {
+    sent: mpsc::UnboundedReceiver<Option<DataObject>>,
+    join_handle: tokio::task::JoinHandle<()>,
 }
 
-impl Drop for RunningEgress {
+impl Drop for EgressRunnerHandle {
     fn drop(&mut self) {
-        self.handle.abort();
+        self.join_handle.abort();
     }
 }
 
@@ -77,15 +74,15 @@ impl DataPlaneHarness {
                 stop_receiver: self.stop_receiver.clone(),
             })
             .await
-            .expect("ingress stream reader should accept new streams");
+            .expect("stream reader should accept new streams");
         upstream_stream
     }
 
     pub(crate) async fn start_egress(
         &self,
         largest_location: Option<moqt::Location>,
-    ) -> RunningEgress {
-        let (publisher, event_receiver) = MockPublisher::channel();
+    ) -> EgressRunnerHandle {
+        let (publisher, sent) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
         let runner = EgressRunner::new(
             self.track_key.clone(),
@@ -96,7 +93,7 @@ impl DataPlaneHarness {
             ready_sender,
             largest_location,
         );
-        let handle = tokio::spawn(async move {
+        let join_handle = tokio::spawn(async move {
             let _ = runner.run().await;
         });
         tokio::time::timeout(RECV_TIMEOUT, ready_receiver)
@@ -104,10 +101,7 @@ impl DataPlaneHarness {
             .expect("egress runner should signal readiness")
             .expect("egress readiness should not be dropped")
             .expect("egress runner should start");
-        RunningEgress {
-            events: event_receiver,
-            handle,
-        }
+        EgressRunnerHandle { sent, join_handle }
     }
 
     pub(crate) async fn wait_largest_location(&self, expected: moqt::Location) -> moqt::Location {
@@ -130,42 +124,41 @@ impl DataPlaneHarness {
     }
 }
 
-pub(crate) async fn collect_until_closed(egress: &mut RunningEgress) -> Vec<EgressEvent> {
-    let mut events = Vec::new();
+pub(crate) async fn receive_objects_until_close(
+    egress: &mut EgressRunnerHandle,
+) -> Vec<DataObject> {
+    let mut objects = Vec::new();
     loop {
-        let event = match tokio::time::timeout(RECV_TIMEOUT, egress.events.recv()).await {
-            Ok(Some(event)) => event,
+        match tokio::time::timeout(RECV_TIMEOUT, egress.sent.recv()).await {
+            Ok(Some(Some(object))) => objects.push(object),
+            Ok(Some(None)) => return objects,
             Ok(None) => panic!(
-                "egress capture channel closed early after {} events",
-                events.len()
+                "egress dropped its sender after sending {} objects",
+                objects.len()
             ),
-            Err(_) => panic!("egress stalled after {} events", events.len()),
-        };
-        let closed = matches!(event, EgressEvent::Closed);
-        events.push(event);
-        if closed {
-            return events;
+            Err(_) => panic!(
+                "egress stalled without closing after sending {} objects",
+                objects.len()
+            ),
         }
     }
 }
 
-pub(crate) fn assert_full_ordered_delivery(events: &[EgressEvent]) {
+pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
     assert!(
         matches!(
-            events.first(),
-            Some(EgressEvent::Object(DataObject::SubgroupHeader(header))) if header.group_id == 0
+            objects.first(),
+            Some(DataObject::SubgroupHeader(header)) if header.group_id == 0
         ),
         "downstream stream should start with the group 0 subgroup header"
     );
-    let payloads: Vec<Bytes> = events
+    let payloads: Vec<Bytes> = objects
         .iter()
-        .filter_map(|event| match event {
-            EgressEvent::Object(DataObject::SubgroupObject(field)) => {
-                match &field.subgroup_object {
-                    moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
-                    _ => None,
-                }
-            }
+        .filter_map(|object| match object {
+            DataObject::SubgroupObject(field) => match &field.subgroup_object {
+                moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
+                _ => None,
+            },
             _ => None,
         })
         .collect();
@@ -173,12 +166,8 @@ pub(crate) fn assert_full_ordered_delivery(events: &[EgressEvent]) {
     assert_eq!(
         payloads.len(),
         expected.len(),
-        "downstream stream ended before receiving {OBJECT_COUNT} objects (got {})",
+        "downstream stream closed before receiving {OBJECT_COUNT} objects (got {})",
         payloads.len()
     );
     assert_eq!(payloads, expected, "objects must arrive in publish order");
-    assert!(
-        matches!(events.last(), Some(EgressEvent::Closed)),
-        "the downstream stream should be closed after the last object"
-    );
 }
