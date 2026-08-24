@@ -15,6 +15,14 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::paramet
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::Fetch;
+pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel;
+pub use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
+pub use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
+pub use crate::modules::moqt::control_plane::control_messages::messages::publish_done::PublishDone;
+pub use crate::modules::moqt::control_plane::control_messages::messages::publish_done::status_code as publish_done_status_code;
+pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace_cancel::PublishNamespaceCancel;
+pub use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
+pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchParams;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchHeader;
@@ -46,6 +54,11 @@ pub type SubscribeNamespaceError = RequestError;
 pub type PublishError = RequestError;
 pub type SubscribeError = RequestError;
 pub type FetchError = RequestError;
+// draft-14 §9.20-9.22: the TRACK_STATUS family reuses the SUBSCRIBE,
+// SUBSCRIBE_OK and SUBSCRIBE_ERROR payload formats verbatim.
+pub type TrackStatus = Subscribe;
+pub type TrackStatusOk = SubscribeOk;
+pub type TrackStatusError = RequestError;
 
 pub fn encode_control_message(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
     let mut buf = BytesMut::new();
