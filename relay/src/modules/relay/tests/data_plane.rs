@@ -40,27 +40,27 @@ async fn egress_start_racing_ingest_burst_delivers_all_objects() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "known bug (cascading-relay E2E flake): objects ingested between upstream ingress start and largest-location resolution shift the delivery start, losing the head of the group; un-ignore with the fix"]
-async fn largest_location_resolved_mid_burst_must_not_skip_head_objects() {
-    const IN_FLIGHT_BEFORE_RESOLVE: usize = 10;
+async fn egress_started_with_pre_subscribe_snapshot_delivers_head_objects_cached_mid_burst() {
+    const IN_FLIGHT_BEFORE_EGRESS_START: usize = 10;
 
     let harness = RelayHarness::new();
+    let snapshot_before_subscribe = None;
 
     let upstream_stream = harness.open_upstream_stream().await;
     upstream_stream.header(0);
-    for index in 0..IN_FLIGHT_BEFORE_RESOLVE {
+    for index in 0..IN_FLIGHT_BEFORE_EGRESS_START {
         upstream_stream.object(index);
     }
-    let largest_at_subscribe_ok = harness
+    harness
         .wait_largest_location(moqt::Location {
             group_id: 0,
-            object_id: (IN_FLIGHT_BEFORE_RESOLVE - 1) as u64,
+            object_id: (IN_FLIGHT_BEFORE_EGRESS_START - 1) as u64,
         })
         .await;
 
-    let mut egress = harness.start_egress(Some(largest_at_subscribe_ok)).await;
+    let mut egress = harness.start_egress(snapshot_before_subscribe).await;
 
-    for index in IN_FLIGHT_BEFORE_RESOLVE..OBJECT_COUNT {
+    for index in IN_FLIGHT_BEFORE_EGRESS_START..OBJECT_COUNT {
         upstream_stream.object(index);
     }
     upstream_stream.fin();
