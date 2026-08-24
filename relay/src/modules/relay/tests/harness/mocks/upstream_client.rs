@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
-    relay::tests::fixtures::{make_header, make_payload_object, ordered_payload},
+    relay::tests::harness::fixtures::{make_header, make_payload_object, ordered_payload},
 };
 
 struct MockStreamReceiver {

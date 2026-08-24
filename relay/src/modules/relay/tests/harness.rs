@@ -15,7 +15,10 @@ use crate::modules::{
     types::TrackKey,
 };
 
-use super::{
+mod fixtures;
+mod mocks;
+
+use self::{
     fixtures::{make_largest_object_subscription, ordered_payload},
     mocks::{downstream_client::MockPublisher, upstream_client::UpstreamSubgroupStream},
 };
