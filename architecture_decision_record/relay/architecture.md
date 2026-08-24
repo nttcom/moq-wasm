@@ -72,6 +72,10 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   `event_handler.rs` pin this). Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
   session are strictly ordered.
+- Events for control messages without relay-side logic yet (GOAWAY,
+  MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
+  SUBSCRIBE_UPDATE, FETCH_CANCEL, TRACK_STATUS) are logged in the event span
+  and dropped by the worker; they have no `sequences` entry.
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
   `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
   session from the pub/sub directory, stop affected egress readers, forward
