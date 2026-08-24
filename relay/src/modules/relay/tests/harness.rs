@@ -1,7 +1,3 @@
-//! Assembles the real data plane components (`relay.dataplane.*` spans) —
-//! ingress `StreamReader`, `TrackCache`, notifier and `EgressRunner` — with
-//! the mock clients from `mocks`, wired the same way production wires them.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,21 +5,20 @@ use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
+    core::data_object::DataObject,
     relay::{
         cache::store::TrackCacheStore,
         egress::runner::EgressRunner,
         ingress::stream_reader::{StreamOpened, StreamReader},
-        notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
+        notifications::track_notifier::ObjectNotifyProducerMap,
     },
     types::TrackKey,
 };
 
 use super::{
-    fixtures::{make_downstream_subscription, ordered_payload},
+    fixtures::{make_largest_object_subscription, ordered_payload},
     mocks::{
-        downstream_client::{
-            EgressEvent, MockPublisher, header_group_on_stream, payloads_on_stream, stream_closed,
-        },
+        downstream_client::{EgressEvent, MockPublisher},
         upstream_client::UpstreamSubgroupStream,
     },
 };
@@ -32,9 +27,9 @@ pub(crate) const OBJECT_COUNT: usize = 50;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct DataPlaneHarness {
-    pub(crate) track_key: TrackKey,
-    pub(crate) notify_map: Arc<ObjectNotifyProducerMap>,
+    track_key: TrackKey,
     cache_store: Arc<TrackCacheStore>,
+    notify_map: Arc<ObjectNotifyProducerMap>,
     opened_sender: mpsc::Sender<StreamOpened>,
     _stream_reader: StreamReader,
     _stop_sender: watch::Sender<bool>,
@@ -63,8 +58,8 @@ impl DataPlaneHarness {
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
             track_key,
-            notify_map,
             cache_store,
+            notify_map,
             opened_sender,
             _stream_reader: stream_reader,
             _stop_sender: stop_sender,
@@ -72,8 +67,6 @@ impl DataPlaneHarness {
         }
     }
 
-    /// Opens one upstream subgroup stream in the ingress; the returned handle
-    /// plays the publisher side of that stream.
     pub(crate) async fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
         let (upstream_stream, receiver) = UpstreamSubgroupStream::open();
         self.opened_sender
@@ -88,8 +81,6 @@ impl DataPlaneHarness {
         upstream_stream
     }
 
-    /// Starts the egress runner the way `sequences::subscribe` does and waits
-    /// for its readiness signal (production sends SUBSCRIBE_OK only after it).
     pub(crate) async fn start_egress(
         &self,
         largest_location: Option<moqt::Location>,
@@ -101,7 +92,7 @@ impl DataPlaneHarness {
             self.cache_store.get_or_create(&self.track_key),
             self.notify_map.get_or_create(&self.track_key),
             Box::new(publisher),
-            make_downstream_subscription(),
+            make_largest_object_subscription(),
             ready_sender,
             largest_location,
         );
@@ -119,25 +110,6 @@ impl DataPlaneHarness {
         }
     }
 
-    /// Waits until the ingress has fully ingested a subgroup (its EndOfGroup
-    /// notification fired). Subscribe to events before feeding the FIN.
-    pub(crate) async fn wait_end_of_group(
-        &self,
-        events: &mut tokio::sync::broadcast::Receiver<TrackEvent>,
-    ) {
-        loop {
-            let event = tokio::time::timeout(RECV_TIMEOUT, events.recv())
-                .await
-                .expect("ingress should finish ingesting the subgroup")
-                .expect("track event channel should stay open");
-            if matches!(event, TrackEvent::EndOfGroup) {
-                return;
-            }
-        }
-    }
-
-    /// Polls the cache until its Largest Location reaches `expected`,
-    /// mirroring the moment `sequences::subscribe` resolves it.
     pub(crate) async fn wait_largest_location(&self, expected: moqt::Location) -> moqt::Location {
         let cache = self.cache_store.get_or_create(&self.track_key);
         let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
@@ -158,38 +130,45 @@ impl DataPlaneHarness {
     }
 }
 
-/// Receives egress events until `closed_streams` downstream streams closed.
-/// Panics with the events collected so far when the data plane stalls, so a
-/// lost-object bug reports as "stalled after N objects" rather than a hang.
-pub(crate) async fn collect_until_closed(
-    egress: &mut RunningEgress,
-    closed_streams: usize,
-) -> Vec<EgressEvent> {
+pub(crate) async fn collect_until_closed(egress: &mut RunningEgress) -> Vec<EgressEvent> {
     let mut events = Vec::new();
-    let mut closed = 0;
-    while closed < closed_streams {
+    loop {
         let event = match tokio::time::timeout(RECV_TIMEOUT, egress.events.recv()).await {
             Ok(Some(event)) => event,
-            Ok(None) => panic!("egress capture channel closed early; events so far: {events:?}"),
-            Err(_) => panic!(
-                "egress stalled before closing {closed_streams} stream(s); events so far: {events:?}"
+            Ok(None) => panic!(
+                "egress capture channel closed early after {} events",
+                events.len()
             ),
+            Err(_) => panic!("egress stalled after {} events", events.len()),
         };
-        if matches!(event, EgressEvent::Closed { .. }) {
-            closed += 1;
-        }
+        let closed = matches!(event, EgressEvent::Closed);
         events.push(event);
+        if closed {
+            return events;
+        }
     }
-    events
 }
 
 pub(crate) fn assert_full_ordered_delivery(events: &[EgressEvent]) {
-    assert_eq!(
-        header_group_on_stream(events, 0),
-        Some(0),
+    assert!(
+        matches!(
+            events.first(),
+            Some(EgressEvent::Object(DataObject::SubgroupHeader(header))) if header.group_id == 0
+        ),
         "downstream stream should start with the group 0 subgroup header"
     );
-    let payloads = payloads_on_stream(events, 0);
+    let payloads: Vec<Bytes> = events
+        .iter()
+        .filter_map(|event| match event {
+            EgressEvent::Object(DataObject::SubgroupObject(field)) => {
+                match &field.subgroup_object {
+                    moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
     let expected: Vec<Bytes> = (0..OBJECT_COUNT).map(ordered_payload).collect();
     assert_eq!(
         payloads.len(),
@@ -199,7 +178,7 @@ pub(crate) fn assert_full_ordered_delivery(events: &[EgressEvent]) {
     );
     assert_eq!(payloads, expected, "objects must arrive in publish order");
     assert!(
-        stream_closed(events, 0),
+        matches!(events.last(), Some(EgressEvent::Closed)),
         "the downstream stream should be closed after the last object"
     );
 }

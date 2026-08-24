@@ -1,8 +1,3 @@
-//! The publisher-client role: plays one upstream subgroup stream toward the
-//! ingress through the same `StreamReceiver` seam the QUIC transport
-//! implements, so tests control exactly when each object (and the FIN)
-//! becomes visible to the relay.
-
 use tokio::sync::mpsc;
 
 use crate::modules::{
@@ -21,20 +16,16 @@ impl StreamReceiver for ChannelStreamReceiver {
     async fn receive_object(&mut self) -> Result<Option<DataObject>, moqt::StreamReceiveError> {
         match self.receiver.recv().await {
             Some(item) => item,
-            // Dropped feed sender behaves like a FIN.
             None => Ok(None),
         }
     }
 }
 
-/// Publisher-side handle of one upstream subgroup stream.
 pub(crate) struct UpstreamSubgroupStream {
     sender: mpsc::UnboundedSender<FeedItem>,
 }
 
 impl UpstreamSubgroupStream {
-    /// Opens the stream: the handle plays the publisher, the receiver is
-    /// what the ingress reads from.
     pub(crate) fn open() -> (Self, Box<dyn StreamReceiver>) {
         let (sender, receiver) = mpsc::unbounded_channel();
         (

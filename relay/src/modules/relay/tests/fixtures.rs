@@ -1,11 +1,7 @@
-//! Test data builders: real production types filled with test values.
-//! Nothing here substitutes behavior — behavior doubles live in `mocks`.
-
 use bytes::Bytes;
 
 use crate::modules::core::{data_object::DataObject, subscription::DownstreamSubscription};
 
-/// Payloads carry their index so ordering is verifiable on the way out.
 pub(crate) fn ordered_payload(index: usize) -> Bytes {
     Bytes::from(format!("ordered-object-{index}"))
 }
@@ -32,9 +28,7 @@ pub(crate) fn make_payload_object(object_id_delta: u64, payload: Bytes) -> DataO
     })
 }
 
-/// A LargestObject/Ascending downstream subscription, matching what the
-/// cascading-relay E2E subscriber sends.
-pub(crate) fn make_downstream_subscription() -> DownstreamSubscription {
+pub(crate) fn make_largest_object_subscription() -> DownstreamSubscription {
     DownstreamSubscription::from(moqt::Subscription::SubscriberInitiated(
         moqt::SubscriberInitiatedSubscription {
             request_id: 0,
