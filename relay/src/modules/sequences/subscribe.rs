@@ -23,11 +23,12 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
-/// Where the subscribe-time Largest Object comes from: the upstream
-/// SUBSCRIBE_OK, or the local cache when joining an active upstream.
+/// Where the subscribe-time Largest Object comes from: the local cache when
+/// joining an active upstream, or a value already determined while creating
+/// the upstream subscription.
 enum LargestObjectSource {
     LocalCache,
-    SubscribeOk(Option<moqt::Location>),
+    Resolved(Option<moqt::Location>),
 }
 
 /// Return the location with the greater `(group_id, object_id)`, treating
@@ -45,27 +46,17 @@ fn max_location(a: Option<moqt::Location>, b: Option<moqt::Location>) -> Option<
     }
 }
 
-/// Resolve the subscribe-time Largest Object for a downstream subscription,
-/// from the upstream SUBSCRIBE_OK and/or the local cache for this track.
-///
-/// The cache is always consulted, even for a freshly created upstream: a
-/// publisher that left and rejoined under the same track leaves its prior
-/// objects cached, and ignoring them (when the new upstream reports no content)
-/// makes the relay advertise contentExists=false and replay the stale cache
-/// from {0,0}. Taking the max also covers a publisher that already had content
-/// at SUBSCRIBE_OK time before the cache caught up.
 async fn resolve_subscribe_largest(
     largest_source: &LargestObjectSource,
     track_key: &TrackKey,
     cache_store: &TrackCacheStore,
 ) -> Option<moqt::Location> {
-    let cached = match cache_store.get(track_key) {
-        Some(cache) => cache.largest_location().await,
-        None => None,
-    };
     match largest_source {
-        LargestObjectSource::LocalCache => cached,
-        LargestObjectSource::SubscribeOk(location) => max_location(*location, cached),
+        LargestObjectSource::LocalCache => match cache_store.get(track_key) {
+            Some(cache) => cache.largest_location().await,
+            None => None,
+        },
+        LargestObjectSource::Resolved(largest) => *largest,
     }
 }
 
@@ -152,6 +143,7 @@ impl Subscribe {
                 ingress_sender,
                 upstream_publisher_resolver,
                 upstream_serializer,
+                cache_store,
             )
             .await
         {
@@ -214,6 +206,7 @@ impl Subscribe {
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         upstream_serializer: &UpstreamCreationSerializer,
+        cache_store: &Arc<TrackCacheStore>,
     ) -> Result<
         (
             UpstreamSubscriptionKey,
@@ -259,7 +252,7 @@ impl Subscribe {
         // upstream subscription while holding the guard. The guard is dropped
         // at the end of this scope, after register_upstream_subscription
         // has been called inside create_upstream_subscription.
-        let (upstream_key, active_upstream) = self
+        let (upstream_key, active_upstream, subscribe_time_largest) = self
             .create_upstream_subscription(
                 session_id,
                 track_namespace,
@@ -268,12 +261,15 @@ impl Subscribe {
                 forwarder,
                 ingress_sender,
                 upstream_publisher_resolver,
+                cache_store,
             )
             .await?;
-        let largest_source =
-            LargestObjectSource::SubscribeOk(active_upstream.content_exists.location());
 
-        Ok((upstream_key, active_upstream, largest_source))
+        Ok((
+            upstream_key,
+            active_upstream,
+            LargestObjectSource::Resolved(subscribe_time_largest),
+        ))
     }
 
     #[tracing::instrument(
@@ -325,8 +321,15 @@ impl Subscribe {
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
-    ) -> Result<(UpstreamSubscriptionKey, ActiveUpstreamSubscription), UpstreamSubscriptionError>
-    {
+        cache_store: &Arc<TrackCacheStore>,
+    ) -> Result<
+        (
+            UpstreamSubscriptionKey,
+            ActiveUpstreamSubscription,
+            Option<moqt::Location>,
+        ),
+        UpstreamSubscriptionError,
+    > {
         let upstream_key = upstream_publisher_resolver
             .resolve(table, track_namespace, track_name)
             .await
@@ -340,6 +343,12 @@ impl Subscribe {
                 UpstreamSubscriptionError::PublisherNotFound
             })?
             .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
+
+        let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
+        let cache_before_subscribe = match cache_store.get(&track_key) {
+            Some(cache) => cache.largest_location().await,
+            None => None,
+        };
 
         let pub_session_id = upstream_key.publisher_session_id;
         let subscription = match forwarder
@@ -371,7 +380,6 @@ impl Subscribe {
             "upstream subscribe ok received"
         );
 
-        let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
         let active_upstream = ActiveUpstreamSubscription {
             upstream_request_id: subscription.request_id(),
             track_key,
@@ -409,7 +417,11 @@ impl Subscribe {
             "upstream subscription registered"
         );
 
-        Ok((upstream_key, active_upstream))
+        let subscribe_time_largest = max_location(
+            active_upstream.content_exists.location(),
+            cache_before_subscribe,
+        );
+        Ok((upstream_key, active_upstream, subscribe_time_largest))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -564,8 +576,20 @@ impl Subscribe {
 mod tests {
     use super::*;
     use crate::modules::core::data_object::DataObject;
+    use crate::modules::core::{
+        data_receiver::fetch_receiver::UpstreamFetchReceiver,
+        data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
+        publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
+        subscriber::Subscriber, subscription::UpstreamSubscription,
+    };
+    use crate::modules::inter_relay::InterRelayConnectionManager;
     use crate::modules::relay::cache::track_cache::TrackCache;
     use crate::modules::relay::types::StreamSubgroupId;
+    use crate::modules::route_registry::NoopRelayRouteRegistry;
+    use crate::modules::sequences::tables::{
+        hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
+    };
+    use crate::modules::session_repository::SessionRepository;
     use bytes::Bytes;
     use moqt::{ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField};
 
@@ -632,24 +656,200 @@ mod tests {
         assert_eq!(code, SubscribeErrorCode::TrackDoesNotExist as u64);
     }
 
-    // A publisher that left a catalog cache (groups 0..=4) then reconnected as a
-    // fresh upstream reporting no content (SubscribeOk(None)) must still resolve
-    // the cached Largest Object (group 4), not None. Returning None makes the
-    // relay advertise contentExists=false and replay the stale cache from {0,0}
-    // out of order, leaving the subscriber on an old catalog version.
+    struct MockUpstreamSession {
+        cache_store: Arc<TrackCacheStore>,
+        track_key: TrackKey,
+        content_exists: moqt::ContentExists,
+        bursts_on_subscribe: bool,
+    }
+
+    struct MockUpstreamSubscriber {
+        cache_store: Arc<TrackCacheStore>,
+        track_key: TrackKey,
+        content_exists: moqt::ContentExists,
+        bursts_on_subscribe: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Session for MockUpstreamSession {
+        fn as_publisher(&self) -> Box<dyn Publisher> {
+            unimplemented!("not used in subscribe tests")
+        }
+
+        fn as_subscriber(&self) -> Box<dyn Subscriber> {
+            Box::new(MockUpstreamSubscriber {
+                cache_store: self.cache_store.clone(),
+                track_key: self.track_key.clone(),
+                content_exists: self.content_exists,
+                bursts_on_subscribe: self.bursts_on_subscribe,
+            })
+        }
+
+        async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
+            std::future::pending().await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Subscriber for MockUpstreamSubscriber {
+        async fn send_subscribe(
+            &mut self,
+            track_namespace: String,
+            track_name: String,
+            _option: SubscribeOption,
+        ) -> anyhow::Result<UpstreamSubscription> {
+            if self.bursts_on_subscribe {
+                let cache = self.cache_store.get_or_create(&self.track_key);
+                append_one_object(&cache, 0).await;
+            }
+            Ok(UpstreamSubscription::from(
+                moqt::Subscription::SubscriberInitiated(moqt::SubscriberInitiatedSubscription {
+                    request_id: 1,
+                    track_namespace,
+                    track_name,
+                    track_alias: 0,
+                    expires: 0,
+                    group_order: moqt::GroupOrder::Ascending,
+                    content_exists: self.content_exists,
+                    filter_type: moqt::FilterType::LargestObject,
+                    delivery_timeout: None,
+                }),
+            ))
+        }
+
+        async fn send_unsubscribe(&self, _subscribe_id: u64) -> anyhow::Result<()> {
+            unimplemented!("not used in subscribe tests")
+        }
+
+        async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
+            unimplemented!("not used in subscribe tests")
+        }
+
+        async fn create_data_receiver(
+            &mut self,
+            _subscription: &UpstreamSubscription,
+        ) -> anyhow::Result<DataReceiver> {
+            unimplemented!("not used in subscribe tests")
+        }
+
+        async fn send_fetch(
+            &mut self,
+            _track_namespace: String,
+            _track_name: String,
+            _start_location: moqt::Location,
+            _end_location: moqt::Location,
+            _option: moqt::FetchOption,
+        ) -> anyhow::Result<moqt::FetchHandle> {
+            unimplemented!("not used in subscribe tests")
+        }
+
+        async fn create_fetch_receiver(
+            &mut self,
+            _handle: &moqt::FetchHandle,
+        ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
+            unimplemented!("not used in subscribe tests")
+        }
+    }
+
+    async fn create_upstream_and_resolve_largest(
+        cache_store: Arc<TrackCacheStore>,
+        track_key: TrackKey,
+        content_exists: moqt::ContentExists,
+        bursts_on_subscribe: bool,
+    ) -> Option<moqt::Location> {
+        const PUBLISHER_SESSION: SessionId = 1;
+        const SUBSCRIBER_SESSION: SessionId = 2;
+
+        let table = InMemoryLocalPubSubDirectory::new();
+        assert!(table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            track_key.track_namespace.clone(),
+            PeerKind::Client
+        ));
+
+        let mut repository = SessionRepository::new();
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        repository
+            .add_client(
+                PUBLISHER_SESSION,
+                Box::new(MockUpstreamSession {
+                    cache_store: cache_store.clone(),
+                    track_key: track_key.clone(),
+                    content_exists,
+                    bursts_on_subscribe,
+                }),
+                session_event_sender.clone(),
+                tracing::Span::none(),
+            )
+            .await;
+        let repository = Arc::new(tokio::sync::Mutex::new(repository));
+        let forwarder = ControlMessageForwarder {
+            repository: repository.clone(),
+        };
+        let resolver = UpstreamPublisherResolver::new(
+            Arc::new(NoopRelayRouteRegistry),
+            Arc::new(InterRelayConnectionManager::new(
+                repository.clone(),
+                session_event_sender,
+            )),
+        );
+        let serializer = UpstreamCreationSerializer::new();
+        let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
+
+        let Ok((_, _, largest_source)) = Subscribe
+            .get_or_create_upstream_subscription(
+                SUBSCRIBER_SESSION,
+                &track_key.track_namespace,
+                &track_key.track_name,
+                &table,
+                &forwarder,
+                &ingress_sender,
+                &resolver,
+                &serializer,
+                &cache_store,
+            )
+            .await
+        else {
+            panic!("upstream subscription should be created");
+        };
+
+        resolve_subscribe_largest(&largest_source, &track_key, &cache_store).await
+    }
+
     #[tokio::test]
-    async fn subscribe_largest_uses_cache_when_fresh_upstream_reports_no_content() {
-        let cache_store = TrackCacheStore::new();
-        let track_key = TrackKey::new("e2e-room/bob", "catalog");
+    async fn burst_during_upstream_subscribe_does_not_shift_the_largest() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let track_key = TrackKey::new("ns", "video");
+
+        let largest = create_upstream_and_resolve_largest(
+            cache_store,
+            track_key,
+            moqt::ContentExists::False,
+            true,
+        )
+        .await;
+
+        assert_eq!(
+            largest, None,
+            "objects that landed during the upstream SUBSCRIBE must not shift the largest"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_subscribe_snapshot_keeps_stale_cache_of_rejoined_publisher() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let track_key = TrackKey::new("ns", "catalog");
         let cache = cache_store.get_or_create(&track_key);
         for group_id in 0..=4 {
             append_one_object(&cache, group_id).await;
         }
 
-        let largest = resolve_subscribe_largest(
-            &LargestObjectSource::SubscribeOk(None),
-            &track_key,
-            &cache_store,
+        let largest = create_upstream_and_resolve_largest(
+            cache_store,
+            track_key,
+            moqt::ContentExists::False,
+            false,
         )
         .await;
 
@@ -662,22 +862,23 @@ mod tests {
         );
     }
 
-    // When the publisher already had content at SUBSCRIBE_OK time but the cache
-    // has not caught up yet, the SUBSCRIBE_OK location is larger and must win.
     #[tokio::test]
-    async fn subscribe_largest_prefers_subscribe_ok_when_ahead_of_cache() {
-        let cache_store = TrackCacheStore::new();
-        let track_key = TrackKey::new("e2e-room/bob", "catalog");
+    async fn subscribe_ok_largest_wins_when_ahead_of_cache() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let track_key = TrackKey::new("ns", "catalog");
         let cache = cache_store.get_or_create(&track_key);
         append_one_object(&cache, 3).await;
 
-        let largest = resolve_subscribe_largest(
-            &LargestObjectSource::SubscribeOk(Some(moqt::Location {
-                group_id: 10,
-                object_id: 0,
-            })),
-            &track_key,
-            &cache_store,
+        let largest = create_upstream_and_resolve_largest(
+            cache_store,
+            track_key,
+            moqt::ContentExists::True {
+                location: moqt::Location {
+                    group_id: 10,
+                    object_id: 0,
+                },
+            },
+            false,
         )
         .await;
 

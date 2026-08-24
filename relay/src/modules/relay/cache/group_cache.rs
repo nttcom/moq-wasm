@@ -150,14 +150,24 @@ impl GroupCache {
 
     /// Waits until the subgroup header is available, or returns `None` if the group is
     /// closed before it arrives.
+    ///
+    /// Ordering matters twice here. `enable()` registers the waiter before the
+    /// checks so a `notify_waiters` firing between check and await cannot be
+    /// lost. `is_closed` is loaded before the content read: appends
+    /// happen-before the close, so observing "not closed" first guarantees the
+    /// read below sees every object that will ever matter for this wait; the
+    /// reverse order can observe a stale empty read plus a fresh close and cut
+    /// the subgroup short.
     pub(crate) async fn header_or_wait(&self) -> Option<Arc<DataObject>> {
         loop {
-            // Create notified() before the check to avoid a race between it and the wait.
             let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let closed = self.is_closed();
             if let Some(header) = self.header().await {
                 return Some(header);
             }
-            if self.is_closed() {
+            if closed {
                 return None;
             }
             notified.await;
@@ -166,17 +176,21 @@ impl GroupCache {
 
     /// Returns the first object whose id is `>= object_id` (inclusive), waiting if none is
     /// available yet. Returns `None` once the group is closed and no such object exists.
+    ///
+    /// See `header_or_wait` for why the checks are ordered this way.
     pub(crate) async fn object_from_or_wait(
         &self,
         object_id: u64,
     ) -> Option<(u64, Arc<DataObject>)> {
         loop {
-            // Create notified() before the check to avoid a race between it and the wait.
             let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let closed = self.is_closed();
             if let Some((&id, (_, object))) = self.objects.read().await.range(object_id..).next() {
                 return Some((id, object.clone()));
             }
-            if self.is_closed() {
+            if closed {
                 return None;
             }
             notified.await;
