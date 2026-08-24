@@ -29,9 +29,6 @@ enum LargestObjectSource {
     LocalCache,
     SubscribeOk {
         largest: Option<moqt::Location>,
-        /// Cache snapshot taken before the upstream SUBSCRIBE was sent, so
-        /// objects that SUBSCRIBE triggers can never be counted as
-        /// pre-existing content.
         cache_before_subscribe: Option<moqt::Location>,
     },
 }
@@ -51,19 +48,6 @@ fn max_location(a: Option<moqt::Location>, b: Option<moqt::Location>) -> Option<
     }
 }
 
-/// Resolve the subscribe-time Largest Object for a downstream subscription.
-///
-/// For a freshly created upstream the live cache must not be read here: the
-/// upstream ingress is already running by this point, so objects triggered by
-/// this very SUBSCRIBE may already be landing in the cache, and counting them
-/// as pre-existing shifts the delivery start past the head of the group,
-/// losing it permanently for the subscriber. The snapshot taken before the
-/// upstream SUBSCRIBE was sent still covers a publisher that left and
-/// rejoined under the same track: its prior objects predate the SUBSCRIBE and
-/// are in the snapshot, so the relay neither advertises contentExists=false
-/// nor replays the stale cache from {0,0}. Taking the max also covers a
-/// publisher that already had content at SUBSCRIBE_OK time before the cache
-/// caught up.
 async fn resolve_subscribe_largest(
     largest_source: &LargestObjectSource,
     track_key: &TrackKey,
@@ -366,9 +350,6 @@ impl Subscribe {
             .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
 
         let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
-        // Before the upstream SUBSCRIBE is sent: objects it triggers cannot
-        // have arrived yet, so this snapshot cleanly separates pre-existing
-        // content from the burst the publisher may send on subscribing.
         let cache_before_subscribe = match cache_store.get(&track_key) {
             Some(cache) => cache.largest_location().await,
             None => None,
@@ -676,15 +657,8 @@ mod tests {
         assert_eq!(code, SubscribeErrorCode::TrackDoesNotExist as u64);
     }
 
-    // A publisher that left a catalog cache (groups 0..=4) then reconnected as a
-    // fresh upstream reporting no content must still resolve the cached Largest
-    // Object (group 4), not None: the stale objects predate the upstream
-    // SUBSCRIBE, so they are in the pre-subscribe snapshot. Returning None makes
-    // the relay advertise contentExists=false and replay the stale cache from
-    // {0,0} out of order, leaving the subscriber on an old catalog version.
     #[tokio::test]
-    async fn subscribe_largest_uses_pre_subscribe_snapshot_when_fresh_upstream_reports_no_content()
-    {
+    async fn pre_subscribe_snapshot_keeps_stale_cache_of_rejoined_publisher() {
         let cache_store = TrackCacheStore::new();
         let track_key = TrackKey::new("e2e-room/bob", "catalog");
         let cache = cache_store.get_or_create(&track_key);
@@ -744,37 +718,6 @@ mod tests {
         );
     }
 
-    // The cascading-relay E2E flake: a publisher that answers the upstream
-    // SUBSCRIBE by bursting objects lands the head of the burst in the cache
-    // before the downstream largest is resolved. Those objects were triggered
-    // by this SUBSCRIBE and must not shift the delivery start.
-    #[tokio::test]
-    async fn subscribe_largest_ignores_objects_ingested_after_the_snapshot() {
-        let cache_store = TrackCacheStore::new();
-        let track_key = TrackKey::new("e2e-room/bob", "video");
-        let cache = cache_store.get_or_create(&track_key);
-        let cache_before_subscribe = cache.largest_location().await;
-
-        for group_id in 0..=1 {
-            append_one_object(&cache, group_id).await;
-        }
-
-        let largest = resolve_subscribe_largest(
-            &LargestObjectSource::SubscribeOk {
-                largest: None,
-                cache_before_subscribe,
-            },
-            &track_key,
-            &cache_store,
-        )
-        .await;
-
-        assert_eq!(largest, None);
-    }
-
-    // A publisher session whose SUBSCRIBE handling bursts objects into the
-    // cache before SUBSCRIBE_OK returns, modeling the burst arriving during
-    // the upstream round-trip.
     struct BurstingSession {
         cache_store: Arc<TrackCacheStore>,
         track_key: TrackKey,
@@ -862,12 +805,8 @@ mod tests {
         }
     }
 
-    // Regression test for the cascading-relay E2E flake: the cache snapshot
-    // feeding the subscribe-time largest must be taken before the upstream
-    // SUBSCRIBE is sent, so a burst arriving during the round-trip cannot
-    // shift the delivery start.
     #[tokio::test]
-    async fn upstream_creation_snapshots_cache_before_sending_subscribe() {
+    async fn burst_during_upstream_subscribe_does_not_shift_the_largest() {
         const PUBLISHER_SESSION: SessionId = 1;
         const SUBSCRIBER_SESSION: SessionId = 2;
 
