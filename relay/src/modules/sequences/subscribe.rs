@@ -680,7 +680,7 @@ mod tests {
             Box::new(MockUpstreamSubscriber {
                 cache_store: self.cache_store.clone(),
                 track_key: self.track_key.clone(),
-                content_exists: self.content_exists.clone(),
+                content_exists: self.content_exists,
                 bursts_on_subscribe: self.bursts_on_subscribe,
             })
         }
@@ -710,7 +710,7 @@ mod tests {
                     track_alias: 0,
                     expires: 0,
                     group_order: moqt::GroupOrder::Ascending,
-                    content_exists: self.content_exists.clone(),
+                    content_exists: self.content_exists,
                     filter_type: moqt::FilterType::LargestObject,
                     delivery_timeout: None,
                 }),
