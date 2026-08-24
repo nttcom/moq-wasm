@@ -23,14 +23,12 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
-/// Where the subscribe-time Largest Object comes from: the upstream
-/// SUBSCRIBE_OK, or the local cache when joining an active upstream.
+/// Where the subscribe-time Largest Object comes from: the local cache when
+/// joining an active upstream, or a value already determined while creating
+/// the upstream subscription.
 enum LargestObjectSource {
     LocalCache,
-    SubscribeOk {
-        largest: Option<moqt::Location>,
-        cache_before_subscribe: Option<moqt::Location>,
-    },
+    Resolved(Option<moqt::Location>),
 }
 
 /// Return the location with the greater `(group_id, object_id)`, treating
@@ -58,10 +56,7 @@ async fn resolve_subscribe_largest(
             Some(cache) => cache.largest_location().await,
             None => None,
         },
-        LargestObjectSource::SubscribeOk {
-            largest,
-            cache_before_subscribe,
-        } => max_location(*largest, *cache_before_subscribe),
+        LargestObjectSource::Resolved(largest) => *largest,
     }
 }
 
@@ -257,7 +252,7 @@ impl Subscribe {
         // upstream subscription while holding the guard. The guard is dropped
         // at the end of this scope, after register_upstream_subscription
         // has been called inside create_upstream_subscription.
-        let (upstream_key, active_upstream, cache_before_subscribe) = self
+        let (upstream_key, active_upstream, subscribe_time_largest) = self
             .create_upstream_subscription(
                 session_id,
                 track_namespace,
@@ -269,12 +264,12 @@ impl Subscribe {
                 cache_store,
             )
             .await?;
-        let largest_source = LargestObjectSource::SubscribeOk {
-            largest: active_upstream.content_exists.location(),
-            cache_before_subscribe,
-        };
 
-        Ok((upstream_key, active_upstream, largest_source))
+        Ok((
+            upstream_key,
+            active_upstream,
+            LargestObjectSource::Resolved(subscribe_time_largest),
+        ))
     }
 
     #[tracing::instrument(
@@ -422,7 +417,11 @@ impl Subscribe {
             "upstream subscription registered"
         );
 
-        Ok((upstream_key, active_upstream, cache_before_subscribe))
+        let subscribe_time_largest = max_location(
+            active_upstream.content_exists.location(),
+            cache_before_subscribe,
+        );
+        Ok((upstream_key, active_upstream, subscribe_time_largest))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -657,87 +656,32 @@ mod tests {
         assert_eq!(code, SubscribeErrorCode::TrackDoesNotExist as u64);
     }
 
-    #[tokio::test]
-    async fn pre_subscribe_snapshot_keeps_stale_cache_of_rejoined_publisher() {
-        let cache_store = TrackCacheStore::new();
-        let track_key = TrackKey::new("e2e-room/bob", "catalog");
-        let cache = cache_store.get_or_create(&track_key);
-        for group_id in 0..=4 {
-            append_one_object(&cache, group_id).await;
-        }
-        let cache_before_subscribe = cache.largest_location().await;
-
-        let largest = resolve_subscribe_largest(
-            &LargestObjectSource::SubscribeOk {
-                largest: None,
-                cache_before_subscribe,
-            },
-            &track_key,
-            &cache_store,
-        )
-        .await;
-
-        assert_eq!(
-            largest,
-            Some(moqt::Location {
-                group_id: 4,
-                object_id: 0,
-            })
-        );
-    }
-
-    // When the publisher already had content at SUBSCRIBE_OK time but the cache
-    // has not caught up yet, the SUBSCRIBE_OK location is larger and must win.
-    #[tokio::test]
-    async fn subscribe_largest_prefers_subscribe_ok_when_ahead_of_cache() {
-        let cache_store = TrackCacheStore::new();
-        let track_key = TrackKey::new("e2e-room/bob", "catalog");
-        let cache = cache_store.get_or_create(&track_key);
-        append_one_object(&cache, 3).await;
-        let cache_before_subscribe = cache.largest_location().await;
-
-        let largest = resolve_subscribe_largest(
-            &LargestObjectSource::SubscribeOk {
-                largest: Some(moqt::Location {
-                    group_id: 10,
-                    object_id: 0,
-                }),
-                cache_before_subscribe,
-            },
-            &track_key,
-            &cache_store,
-        )
-        .await;
-
-        assert_eq!(
-            largest,
-            Some(moqt::Location {
-                group_id: 10,
-                object_id: 0,
-            })
-        );
-    }
-
-    struct BurstingSession {
+    struct MockUpstreamSession {
         cache_store: Arc<TrackCacheStore>,
         track_key: TrackKey,
+        content_exists: moqt::ContentExists,
+        bursts_on_subscribe: bool,
     }
 
-    struct BurstingSubscriber {
+    struct MockUpstreamSubscriber {
         cache_store: Arc<TrackCacheStore>,
         track_key: TrackKey,
+        content_exists: moqt::ContentExists,
+        bursts_on_subscribe: bool,
     }
 
     #[async_trait::async_trait]
-    impl Session for BurstingSession {
+    impl Session for MockUpstreamSession {
         fn as_publisher(&self) -> Box<dyn Publisher> {
             unimplemented!("not used in subscribe tests")
         }
 
         fn as_subscriber(&self) -> Box<dyn Subscriber> {
-            Box::new(BurstingSubscriber {
+            Box::new(MockUpstreamSubscriber {
                 cache_store: self.cache_store.clone(),
                 track_key: self.track_key.clone(),
+                content_exists: self.content_exists.clone(),
+                bursts_on_subscribe: self.bursts_on_subscribe,
             })
         }
 
@@ -747,15 +691,17 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl Subscriber for BurstingSubscriber {
+    impl Subscriber for MockUpstreamSubscriber {
         async fn send_subscribe(
             &mut self,
             track_namespace: String,
             track_name: String,
             _option: SubscribeOption,
         ) -> anyhow::Result<UpstreamSubscription> {
-            let cache = self.cache_store.get_or_create(&self.track_key);
-            append_one_object(&cache, 0).await;
+            if self.bursts_on_subscribe {
+                let cache = self.cache_store.get_or_create(&self.track_key);
+                append_one_object(&cache, 0).await;
+            }
             Ok(UpstreamSubscription::from(
                 moqt::Subscription::SubscriberInitiated(moqt::SubscriberInitiatedSubscription {
                     request_id: 1,
@@ -764,7 +710,7 @@ mod tests {
                     track_alias: 0,
                     expires: 0,
                     group_order: moqt::GroupOrder::Ascending,
-                    content_exists: moqt::ContentExists::False,
+                    content_exists: self.content_exists.clone(),
                     filter_type: moqt::FilterType::LargestObject,
                     delivery_timeout: None,
                 }),
@@ -805,18 +751,19 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn burst_during_upstream_subscribe_does_not_shift_the_largest() {
+    async fn create_upstream_and_resolve_largest(
+        cache_store: Arc<TrackCacheStore>,
+        track_key: TrackKey,
+        content_exists: moqt::ContentExists,
+        bursts_on_subscribe: bool,
+    ) -> Option<moqt::Location> {
         const PUBLISHER_SESSION: SessionId = 1;
         const SUBSCRIBER_SESSION: SessionId = 2;
-
-        let cache_store = Arc::new(TrackCacheStore::new());
-        let track_key = TrackKey::new("ns", "video");
 
         let table = InMemoryLocalPubSubDirectory::new();
         assert!(table.register_publish_namespace(
             PUBLISHER_SESSION,
-            "ns".to_string(),
+            track_key.track_namespace.clone(),
             PeerKind::Client
         ));
 
@@ -826,9 +773,11 @@ mod tests {
         repository
             .add_client(
                 PUBLISHER_SESSION,
-                Box::new(BurstingSession {
+                Box::new(MockUpstreamSession {
                     cache_store: cache_store.clone(),
                     track_key: track_key.clone(),
+                    content_exists,
+                    bursts_on_subscribe,
                 }),
                 session_event_sender.clone(),
                 tracing::Span::none(),
@@ -851,8 +800,8 @@ mod tests {
         let Ok((_, _, largest_source)) = Subscribe
             .get_or_create_upstream_subscription(
                 SUBSCRIBER_SESSION,
-                "ns",
-                "video",
+                &track_key.track_namespace,
+                &track_key.track_name,
                 &table,
                 &forwarder,
                 &ingress_sender,
@@ -865,10 +814,80 @@ mod tests {
             panic!("upstream subscription should be created");
         };
 
-        let largest = resolve_subscribe_largest(&largest_source, &track_key, &cache_store).await;
+        resolve_subscribe_largest(&largest_source, &track_key, &cache_store).await
+    }
+
+    #[tokio::test]
+    async fn burst_during_upstream_subscribe_does_not_shift_the_largest() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let track_key = TrackKey::new("ns", "video");
+
+        let largest = create_upstream_and_resolve_largest(
+            cache_store,
+            track_key,
+            moqt::ContentExists::False,
+            true,
+        )
+        .await;
+
         assert_eq!(
             largest, None,
             "objects that landed during the upstream SUBSCRIBE must not shift the largest"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_subscribe_snapshot_keeps_stale_cache_of_rejoined_publisher() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let track_key = TrackKey::new("ns", "catalog");
+        let cache = cache_store.get_or_create(&track_key);
+        for group_id in 0..=4 {
+            append_one_object(&cache, group_id).await;
+        }
+
+        let largest = create_upstream_and_resolve_largest(
+            cache_store,
+            track_key,
+            moqt::ContentExists::False,
+            false,
+        )
+        .await;
+
+        assert_eq!(
+            largest,
+            Some(moqt::Location {
+                group_id: 4,
+                object_id: 0,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_ok_largest_wins_when_ahead_of_cache() {
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let track_key = TrackKey::new("ns", "catalog");
+        let cache = cache_store.get_or_create(&track_key);
+        append_one_object(&cache, 3).await;
+
+        let largest = create_upstream_and_resolve_largest(
+            cache_store,
+            track_key,
+            moqt::ContentExists::True {
+                location: moqt::Location {
+                    group_id: 10,
+                    object_id: 0,
+                },
+            },
+            false,
+        )
+        .await;
+
+        assert_eq!(
+            largest,
+            Some(moqt::Location {
+                group_id: 10,
+                object_id: 0,
+            })
         );
     }
 }
