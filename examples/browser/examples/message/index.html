@@ -543,6 +543,99 @@
               </section>
 
               <section class="panel">
+                <h3>PUBLISH_NAMESPACE_DONE</h3>
+                <label>
+                  Track Namespace:
+                  <input
+                    type="text"
+                    name="publish-namespace-done-track-namespace"
+                    id="publish-namespace-done-track-namespace"
+                    value="vc/aa"
+                  />
+                </label>
+                <div class="button-row action-row">
+                  <button type="button" id="sendPublishNamespaceDoneBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel">
+                <h3>UNSUBSCRIBE_NAMESPACE</h3>
+                <label>
+                  Track Namespace Prefix:
+                  <input type="text" name="unsubscribe-namespace-prefix" id="unsubscribe-namespace-prefix" value="vc" />
+                </label>
+                <div class="button-row action-row">
+                  <button type="button" id="sendUnsubscribeNamespaceBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>PUBLISH</h3>
+                <div class="inline-group">
+                  <label>
+                    Request ID:
+                    <input type="text" name="publish-request-id" id="publish-request-id" value="3" />
+                  </label>
+                  <label>
+                    Track Namespace:
+                    <input type="text" name="publish-track-namespace-2" id="publish-track-namespace-2" value="vc/aa" />
+                  </label>
+                  <label>
+                    Track Name:
+                    <input type="text" name="publish-track-name" id="publish-track-name" value="track" />
+                  </label>
+                </div>
+                <div class="inline-group">
+                  <label>
+                    Track Alias:
+                    <input type="text" name="publish-track-alias" id="publish-track-alias" value="100" />
+                  </label>
+                  <label>
+                    Group Order:
+                    <input type="text" name="publish-group-order" id="publish-group-order" value="1" />
+                  </label>
+                </div>
+                <p class="hint">Content Exists は false、Forward は true で送信します。</p>
+                <div class="button-row action-row">
+                  <button type="button" id="sendPublishBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel wide">
+                <h3>FETCH</h3>
+                <div class="inline-group">
+                  <label>
+                    Request ID:
+                    <input type="text" name="fetch-request-id" id="fetch-request-id" value="4" />
+                  </label>
+                  <label>
+                    Track Namespace:
+                    <input type="text" name="fetch-track-namespace" id="fetch-track-namespace" value="vc/aa" />
+                  </label>
+                  <label>
+                    Track Name:
+                    <input type="text" name="fetch-track-name" id="fetch-track-name" value="track" />
+                  </label>
+                </div>
+                <div class="inline-group">
+                  <label
+                    >Start Group: <input type="text" name="fetch-start-group" id="fetch-start-group" value="0"
+                  /></label>
+                  <label>
+                    Start Object:
+                    <input type="text" name="fetch-start-object" id="fetch-start-object" value="0" />
+                  </label>
+                  <label>End Group: <input type="text" name="fetch-end-group" id="fetch-end-group" value="1" /></label>
+                  <label
+                    >End Object: <input type="text" name="fetch-end-object" id="fetch-end-object" value="1"
+                  /></label>
+                </div>
+                <div class="button-row action-row">
+                  <button type="button" id="sendFetchBtn">Send</button>
+                </div>
+              </section>
+
+              <section class="panel">
                 <h3>GOAWAY</h3>
                 <label>
                   New Session URI:
