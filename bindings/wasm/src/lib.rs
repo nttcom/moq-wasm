@@ -22,7 +22,8 @@ use moqt::wire::{
     ObjectDatagram, ObjectStatus, Publish, PublishDone, PublishNamespace, PublishNamespaceCancel,
     PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked, ServerSetup, SetupParameter,
     SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
-    SubscribeOk, SubscribeUpdate, TrackStatus, encode_control_message, take_control_message,
+    SubscribeOk, SubscribeUpdate, TrackStatus, UnsubscribeNamespace, encode_control_message,
+    take_control_message,
 };
 #[cfg(web_sys_unstable_apis)]
 use std::{
@@ -820,6 +821,30 @@ impl MOQTClient {
             .borrow_mut()
             .remove_outgoing_subscription(request_id);
         Ok(())
+    }
+
+    #[wasm_bindgen(js_name = sendPublishNamespaceDone)]
+    pub async fn send_publish_namespace_done(
+        &self,
+        track_namespace: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::PublishNamespaceDone,
+            PublishNamespaceDone::new(track_namespace).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendUnsubscribeNamespace)]
+    pub async fn send_unsubscribe_namespace(
+        &self,
+        track_namespace_prefix: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::UnSubscribeNamespace,
+            UnsubscribeNamespace::new(track_namespace_prefix).encode(),
+        )
+        .await
     }
 
     #[wasm_bindgen(js_name = sendGoAway)]

@@ -23,6 +23,8 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::publish
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace_cancel::PublishNamespaceCancel;
 pub use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
 pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate;
+pub use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe::Unsubscribe;
+pub use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe_namespace::UnsubscribeNamespace;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchParams;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchHeader;
