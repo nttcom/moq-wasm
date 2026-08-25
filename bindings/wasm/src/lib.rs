@@ -824,8 +824,11 @@ impl MOQTClient {
 
     #[wasm_bindgen(js_name = sendGoAway)]
     pub async fn send_go_away(&self, new_session_uri: String) -> Result<(), JsValue> {
-        self.send_control_message(ControlMessageType::GoAway, GoAway::new(new_session_uri).encode())
-            .await
+        self.send_control_message(
+            ControlMessageType::GoAway,
+            GoAway::new(new_session_uri).encode(),
+        )
+        .await
     }
 
     #[wasm_bindgen(js_name = sendMaxRequestId)]
@@ -884,7 +887,8 @@ impl MOQTClient {
         stream_count: u64,
         error_reason: String,
     ) -> Result<(), JsValue> {
-        let payload = PublishDone::new(request_id, status_code, stream_count, error_reason).encode();
+        let payload =
+            PublishDone::new(request_id, status_code, stream_count, error_reason).encode();
         self.send_control_message(ControlMessageType::PublishDone, payload)
             .await
     }
