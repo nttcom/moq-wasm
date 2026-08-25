@@ -9,12 +9,17 @@ use crate::{
             constants::TerminationErrorCode,
             enums::ResponseMessage,
             handler::{
-                fetch_handler::FetchHandler, publish_handler::PublishHandler,
+                fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
+                go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
+                publish_done_handler::PublishDoneHandler, publish_handler::PublishHandler,
+                publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
                 publish_namespace_done_handler::PublishNamespaceDoneHandler,
                 publish_namespace_handler::PublishNamespaceHandler,
+                requests_blocked_handler::RequestsBlockedHandler,
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
-                unsubscribe_handler::UnsubscribeHandler,
+                subscribe_update_handler::SubscribeUpdateHandler,
+                track_status_handler::TrackStatusHandler, unsubscribe_handler::UnsubscribeHandler,
                 unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
             },
         },
@@ -28,6 +33,7 @@ use crate::{
 enum DepacketizeResult<T: TransportProtocol> {
     SessionEvent(SessionEvent<T>),
     ResponseMessage(u64, ResponseMessage),
+    SessionClosed,
 }
 
 pub(crate) struct ControlMessageReceiveTask;
@@ -65,6 +71,7 @@ impl ControlMessageReceiveTask {
                                         tracing::error!("failed to send message: {:?}", error);
                                     }
                                 }
+                                DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
                                     let inflight_request = session
                                         .sender_map
@@ -251,7 +258,105 @@ impl ControlMessageReceiveTask {
                 );
                 DepacketizeResult::ResponseMessage(fetch_error.request_id, response)
             }
-            _ => todo!(),
+            ReceivedMessage::SubscribeUpdate(subscribe_update) => {
+                tracing::debug!("Event: Subscribe update");
+                let subscribe_update_handler = SubscribeUpdateHandler::new(subscribe_update);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::SubscribeUpdate(
+                    subscribe_update_handler,
+                ))
+            }
+            ReceivedMessage::PublishDone(publish_done) => {
+                tracing::debug!("Event: Publish done");
+                let publish_done_handler = PublishDoneHandler::new(publish_done);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishDone(
+                    publish_done_handler,
+                ))
+            }
+            ReceivedMessage::FetchCancel(fetch_cancel) => {
+                tracing::debug!("Event: Fetch cancel");
+                let fetch_cancel_handler = FetchCancelHandler::new(fetch_cancel);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::FetchCancel(
+                    fetch_cancel_handler,
+                ))
+            }
+            ReceivedMessage::PublishNamespaceCancel(publish_namespace_cancel) => {
+                tracing::debug!("Event: Publish namespace cancel");
+                let publish_namespace_cancel_handler =
+                    PublishNamespaceCancelHandler::new(publish_namespace_cancel);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespaceCancel(
+                    publish_namespace_cancel_handler,
+                ))
+            }
+            ReceivedMessage::GoAway(go_away) => {
+                tracing::debug!("Event: Go away");
+                let go_away_handler = GoAwayHandler::new(go_away);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::GoAway(go_away_handler))
+            }
+            ReceivedMessage::MaxRequestId(max_request_id) => {
+                tracing::debug!("Event: Max request id");
+                let max_request_id_handler = MaxRequestIdHandler::new(max_request_id);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::MaxRequestId(
+                    max_request_id_handler,
+                ))
+            }
+            ReceivedMessage::RequestsBlocked(requests_blocked) => {
+                tracing::debug!("Event: Requests blocked");
+                let requests_blocked_handler = RequestsBlockedHandler::new(requests_blocked);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::RequestsBlocked(
+                    requests_blocked_handler,
+                ))
+            }
+            ReceivedMessage::TrackStatus(track_status) => {
+                tracing::debug!("Event: Track status");
+                let track_status_handler = TrackStatusHandler::new(session.clone(), track_status);
+                DepacketizeResult::SessionEvent(SessionEvent::<T>::TrackStatus(
+                    track_status_handler,
+                ))
+            }
+            // Sending TRACK_STATUS is not implemented, so any response to one is
+            // unsolicited. Route these through `ResponseMessage` once it is.
+            ReceivedMessage::TrackStatusOk(track_status_ok) => {
+                tracing::error!(
+                    request_id = track_status_ok.request_id,
+                    "Protocol violation: TRACK_STATUS_OK for a request that was never sent"
+                );
+                session.close_with_error(
+                    TerminationErrorCode::ProtocolViolation,
+                    "TRACK_STATUS_OK for a request that was never sent",
+                );
+                DepacketizeResult::SessionClosed
+            }
+            ReceivedMessage::TrackStatusError(track_status_error) => {
+                tracing::error!(
+                    request_id = track_status_error.request_id,
+                    error_code = track_status_error.error_code,
+                    reason_phrase = %track_status_error.reason_phrase,
+                    "Protocol violation: TRACK_STATUS_ERROR for a request that was never sent"
+                );
+                session.close_with_error(
+                    TerminationErrorCode::ProtocolViolation,
+                    "TRACK_STATUS_ERROR for a request that was never sent",
+                );
+                DepacketizeResult::SessionClosed
+            }
+            ReceivedMessage::ClientSetup(_) | ReceivedMessage::ServerSetup(_) => {
+                tracing::error!(
+                    "Protocol violation: SETUP received after the session was established"
+                );
+                session.close_with_error(
+                    TerminationErrorCode::ProtocolViolation,
+                    "SETUP received after the session was established",
+                );
+                DepacketizeResult::SessionClosed
+            }
+            ReceivedMessage::FatalError() => {
+                tracing::error!("Protocol violation: malformed control message payload");
+                session.close_with_error(
+                    TerminationErrorCode::ProtocolViolation,
+                    "malformed control message payload",
+                );
+                DepacketizeResult::SessionClosed
+            }
         }
     }
 }

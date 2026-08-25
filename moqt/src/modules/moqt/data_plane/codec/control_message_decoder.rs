@@ -7,12 +7,16 @@ use crate::modules::moqt::{
     control_plane::control_messages::{
         control_message_type::ControlMessageType,
         messages::{
-            client_setup::ClientSetup, fetch::Fetch, fetch_ok::FetchOk, namespace_ok::NamespaceOk,
-            publish::Publish, publish_namespace::PublishNamespace,
+            client_setup::ClientSetup, fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk,
+            go_away::GoAway, max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
+            publish::Publish, publish_done::PublishDone, publish_namespace::PublishNamespace,
+            publish_namespace_cancel::PublishNamespaceCancel,
             publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
-            request_error::RequestError, server_setup::ServerSetup, subscribe::Subscribe,
+            request_error::RequestError, requests_blocked::RequestsBlocked,
+            server_setup::ServerSetup, subscribe::Subscribe,
             subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
-            unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
+            subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
+            unsubscribe_namespace::UnsubscribeNamespace,
         },
     },
     data_plane::stream::received_message::ReceivedMessage,
@@ -48,233 +52,177 @@ impl ControlMessageDecoder {
         payload: BytesMut,
     ) -> ReceivedMessage {
         tracing::debug!("Event: message_type: {:?}", message_type);
-        let mut cursor_buf = Cursor::new(payload.as_ref());
+        let mut cursor = Cursor::new(payload.as_ref());
 
         match message_type {
-            ControlMessageType::ClientSetup => {
-                tracing::debug!("Event: Client setup");
-                match ClientSetup::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::ClientSetup(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+            ControlMessageType::ClientSetup => Self::decode_payload(
+                &mut cursor,
+                ClientSetup::decode,
+                ReceivedMessage::ClientSetup,
+            ),
+            ControlMessageType::ServerSetup => Self::decode_payload(
+                &mut cursor,
+                ServerSetup::decode,
+                ReceivedMessage::ServerSetup,
+            ),
+            ControlMessageType::GoAway => {
+                Self::decode_payload(&mut cursor, GoAway::decode, ReceivedMessage::GoAway)
             }
-            ControlMessageType::ServerSetup => {
-                tracing::debug!("Event: Server setup");
-                match ServerSetup::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::ServerSetup(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::GoAway => todo!(),
-            ControlMessageType::MaxSubscribeId => todo!(),
-            ControlMessageType::RequestsBlocked => todo!(),
+            ControlMessageType::MaxRequestId => Self::decode_payload(
+                &mut cursor,
+                MaxRequestId::decode,
+                ReceivedMessage::MaxRequestId,
+            ),
+            ControlMessageType::RequestsBlocked => Self::decode_payload(
+                &mut cursor,
+                RequestsBlocked::decode,
+                ReceivedMessage::RequestsBlocked,
+            ),
             ControlMessageType::Subscribe => {
-                tracing::debug!("Event: Subscribe");
-                match Subscribe::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::Subscribe(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+                Self::decode_payload(&mut cursor, Subscribe::decode, ReceivedMessage::Subscribe)
             }
-            ControlMessageType::SubscribeOk => {
-                tracing::debug!("Event: Subscribe ok");
-                match SubscribeOk::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::SubscribeOk(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::SubscribeError => {
-                tracing::debug!("Event: Subscribe error");
-                match RequestError::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::SubscribeError(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::SubscribeUpdate => todo!(),
-            ControlMessageType::UnSubscribe => {
-                tracing::debug!("Event: Unsubscribe");
-                match Unsubscribe::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::Unsubscribe(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::PublishDone => todo!(),
+            ControlMessageType::SubscribeOk => Self::decode_payload(
+                &mut cursor,
+                SubscribeOk::decode,
+                ReceivedMessage::SubscribeOk,
+            ),
+            ControlMessageType::SubscribeError => Self::decode_payload(
+                &mut cursor,
+                RequestError::decode,
+                ReceivedMessage::SubscribeError,
+            ),
+            ControlMessageType::SubscribeUpdate => Self::decode_payload(
+                &mut cursor,
+                SubscribeUpdate::decode,
+                ReceivedMessage::SubscribeUpdate,
+            ),
+            ControlMessageType::UnSubscribe => Self::decode_payload(
+                &mut cursor,
+                Unsubscribe::decode,
+                ReceivedMessage::Unsubscribe,
+            ),
+            ControlMessageType::PublishDone => Self::decode_payload(
+                &mut cursor,
+                PublishDone::decode,
+                ReceivedMessage::PublishDone,
+            ),
             ControlMessageType::Publish => {
-                tracing::debug!("Event: Publish");
-                match Publish::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::Publish(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+                Self::decode_payload(&mut cursor, Publish::decode, ReceivedMessage::Publish)
             }
             ControlMessageType::PublishOk => {
-                tracing::debug!("Event: Publish ok");
-                match PublishOk::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::PublishOk(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+                Self::decode_payload(&mut cursor, PublishOk::decode, ReceivedMessage::PublishOk)
             }
-            ControlMessageType::PublishError => {
-                tracing::debug!("Event: Publish error");
-                match RequestError::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::PublishError(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
+            ControlMessageType::PublishError => Self::decode_payload(
+                &mut cursor,
+                RequestError::decode,
+                ReceivedMessage::PublishError,
+            ),
             ControlMessageType::Fetch => {
-                tracing::debug!("Event: Fetch");
-                match Fetch::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::Fetch(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+                Self::decode_payload(&mut cursor, Fetch::decode, ReceivedMessage::Fetch)
             }
             ControlMessageType::FetchOk => {
-                tracing::debug!("Event: Fetch ok");
-                match FetchOk::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::FetchOk(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+                Self::decode_payload(&mut cursor, FetchOk::decode, ReceivedMessage::FetchOk)
             }
-            ControlMessageType::FetchError => {
-                tracing::debug!("Event: Fetch error");
-                match RequestError::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::FetchError(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+            ControlMessageType::FetchError => Self::decode_payload(
+                &mut cursor,
+                RequestError::decode,
+                ReceivedMessage::FetchError,
+            ),
+            ControlMessageType::FetchCancel => Self::decode_payload(
+                &mut cursor,
+                FetchCancel::decode,
+                ReceivedMessage::FetchCancel,
+            ),
+            ControlMessageType::TrackStatus => {
+                Self::decode_payload(&mut cursor, Subscribe::decode, ReceivedMessage::TrackStatus)
             }
-            ControlMessageType::FetchCancel => todo!(),
-            ControlMessageType::TrackStatusRequest => todo!(),
-            ControlMessageType::TrackStatus => todo!(),
-            ControlMessageType::PublishNamespace => {
-                tracing::debug!("Event: Publish namespace");
-                match PublishNamespace::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::PublishNamespace(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::PublishNamespaceOk => {
-                tracing::debug!("Event: Publish namespace ok");
-                match NamespaceOk::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::PublishNamespaceOk(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::PublishNamespaceError => {
-                tracing::debug!("Event: Publish namespace error");
-                match RequestError::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::PublishNamespaceError(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::PublishNamespaceDone => {
-                tracing::debug!("Event: Publish namespace done");
-                match PublishNamespaceDone::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::PublishNamespaceDone(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::PublishNamespaceCancel => todo!(),
-            ControlMessageType::SubscribeNamespace => {
-                tracing::debug!("Event: Subscribe namespace");
-                match SubscribeNamespace::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::SubscribeNamespace(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::SubscribeNamespaceOk => {
-                tracing::debug!("Event: Subscribe namespace ok");
-                match NamespaceOk::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::SubscribeNamespaceOk(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::SubscribeNamespaceError => {
-                tracing::debug!("Event: Subscribe namespace error");
-                match RequestError::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::SubscribeNamespaceError(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
-            }
-            ControlMessageType::UnSubscribeNamespace => {
-                tracing::debug!("Event: Unsubscribe namespace");
-                match UnsubscribeNamespace::decode(&mut cursor_buf) {
-                    Some(v) => ReceivedMessage::UnsubscribeNamespace(v),
-                    None => {
-                        tracing::error!("Protocol violation is detected.");
-                        ReceivedMessage::FatalError()
-                    }
-                }
+            ControlMessageType::TrackStatusOk => Self::decode_payload(
+                &mut cursor,
+                SubscribeOk::decode,
+                ReceivedMessage::TrackStatusOk,
+            ),
+            ControlMessageType::TrackStatusError => Self::decode_payload(
+                &mut cursor,
+                RequestError::decode,
+                ReceivedMessage::TrackStatusError,
+            ),
+            ControlMessageType::PublishNamespace => Self::decode_payload(
+                &mut cursor,
+                PublishNamespace::decode,
+                ReceivedMessage::PublishNamespace,
+            ),
+            ControlMessageType::PublishNamespaceOk => Self::decode_payload(
+                &mut cursor,
+                NamespaceOk::decode,
+                ReceivedMessage::PublishNamespaceOk,
+            ),
+            ControlMessageType::PublishNamespaceError => Self::decode_payload(
+                &mut cursor,
+                RequestError::decode,
+                ReceivedMessage::PublishNamespaceError,
+            ),
+            ControlMessageType::PublishNamespaceDone => Self::decode_payload(
+                &mut cursor,
+                PublishNamespaceDone::decode,
+                ReceivedMessage::PublishNamespaceDone,
+            ),
+            ControlMessageType::PublishNamespaceCancel => Self::decode_payload(
+                &mut cursor,
+                PublishNamespaceCancel::decode,
+                ReceivedMessage::PublishNamespaceCancel,
+            ),
+            ControlMessageType::SubscribeNamespace => Self::decode_payload(
+                &mut cursor,
+                SubscribeNamespace::decode,
+                ReceivedMessage::SubscribeNamespace,
+            ),
+            ControlMessageType::SubscribeNamespaceOk => Self::decode_payload(
+                &mut cursor,
+                NamespaceOk::decode,
+                ReceivedMessage::SubscribeNamespaceOk,
+            ),
+            ControlMessageType::SubscribeNamespaceError => Self::decode_payload(
+                &mut cursor,
+                RequestError::decode,
+                ReceivedMessage::SubscribeNamespaceError,
+            ),
+            ControlMessageType::UnSubscribeNamespace => Self::decode_payload(
+                &mut cursor,
+                UnsubscribeNamespace::decode,
+                ReceivedMessage::UnsubscribeNamespace,
+            ),
+        }
+    }
+
+    fn decode_payload<T>(
+        cursor: &mut Cursor<&[u8]>,
+        decode: fn(&mut Cursor<&[u8]>) -> Option<T>,
+        wrap: fn(T) -> ReceivedMessage,
+    ) -> ReceivedMessage {
+        match decode(cursor) {
+            Some(message) => wrap(message),
+            None => {
+                tracing::error!("Protocol violation is detected.");
+                ReceivedMessage::FatalError()
             }
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use bytes::{BufMut, BytesMut};
     use tokio_util::codec::Decoder;
 
     use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
-        filter_type::FilterType, group_order::GroupOrder,
+        filter_type::FilterType, group_order::GroupOrder, location::Location,
     };
     use crate::modules::moqt::control_plane::control_messages::messages::{
-        subscribe::Subscribe, unsubscribe::Unsubscribe,
+        fetch_cancel::FetchCancel, go_away::GoAway, max_request_id::MaxRequestId,
+        publish_done::PublishDone, publish_namespace_cancel::PublishNamespaceCancel,
+        request_error::RequestError, requests_blocked::RequestsBlocked, subscribe::Subscribe,
+        subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
     };
+    use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
     use crate::modules::moqt::data_plane::stream::received_message::ReceivedMessage;
     use crate::wire::{ControlMessageType, encode_control_message};
 
@@ -289,6 +237,22 @@ mod tests {
             group_order: GroupOrder::Ascending,
             forward: true,
             filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        }
+    }
+
+    fn make_subscribe_update() -> SubscribeUpdate {
+        SubscribeUpdate {
+            request_id: 8,
+            subscription_request_id: 7,
+            start_location: Location {
+                group_id: 10,
+                object_id: 0,
+            },
+            end_group: 20,
+            subscriber_priority: 0,
+            forward: true,
             authorization_tokens: vec![],
             delivery_timeout: None,
         }
@@ -387,5 +351,91 @@ mod tests {
             .expect("framing should succeed")
             .expect("frame should be complete");
         assert!(matches!(message, ReceivedMessage::FatalError()));
+    }
+    #[test]
+    fn decode_control_messages_added_in_draft14() {
+        let mut decoder = ControlMessageDecoder;
+
+        let mut buf = BytesMut::new();
+        buf.unsplit(encode_control_message(
+            ControlMessageType::GoAway,
+            GoAway::new("https://relay.example/next".to_string()).encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::MaxRequestId,
+            MaxRequestId::new(100).encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::RequestsBlocked,
+            RequestsBlocked::new(100).encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::SubscribeUpdate,
+            make_subscribe_update().encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::PublishDone,
+            PublishDone::new(7, 2, 1, "track ended".to_string()).encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::FetchCancel,
+            FetchCancel::new(3).encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::PublishNamespaceCancel,
+            PublishNamespaceCancel::new(vec!["room".to_string()], 1, "expired".to_string())
+                .encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::TrackStatus,
+            make_subscribe().encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::TrackStatusOk,
+            SubscribeOk {
+                request_id: 7,
+                track_alias: 0,
+                expires: 0,
+                group_order: GroupOrder::Ascending,
+                content_exists: ContentExists::False,
+                delivery_timeout: None,
+                max_duration: None,
+            }
+            .encode(),
+        ));
+        buf.unsplit(encode_control_message(
+            ControlMessageType::TrackStatusError,
+            RequestError {
+                request_id: 7,
+                error_code: 1,
+                reason_phrase: "no such track".to_string(),
+            }
+            .encode(),
+        ));
+
+        let decoded: Vec<String> = std::iter::from_fn(|| {
+            decoder
+                .decode(&mut buf)
+                .expect("framing should succeed")
+                .map(|message| format!("{:?}", message))
+        })
+        .collect();
+
+        assert_eq!(
+            decoded,
+            vec![
+                "GoAway",
+                "MaxRequestId",
+                "RequestsBlocked",
+                "SubscribeUpdate",
+                "PublishDone",
+                "FetchCancel",
+                "PublishNamespaceCancel",
+                "TrackStatus",
+                "TrackStatusOk",
+                "TrackStatusError",
+            ]
+        );
+        assert!(buf.is_empty());
     }
 }

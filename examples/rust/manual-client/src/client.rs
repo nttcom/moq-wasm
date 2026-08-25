@@ -163,6 +163,16 @@ impl<T: TransportProtocol> Client<T> {
                         moqt::SessionEvent::Fetch(_) => {
                             tracing::info!("Received: {} Fetch", _label);
                         }
+                        event @ (moqt::SessionEvent::GoAway(_)
+                        | moqt::SessionEvent::MaxRequestId(_)
+                        | moqt::SessionEvent::RequestsBlocked(_)
+                        | moqt::SessionEvent::PublishNamespaceCancel(_)
+                        | moqt::SessionEvent::PublishDone(_)
+                        | moqt::SessionEvent::SubscribeUpdate(_)
+                        | moqt::SessionEvent::FetchCancel(_)
+                        | moqt::SessionEvent::TrackStatus(_)) => {
+                            tracing::info!("Received: {} unhandled event {:?}", _label, event);
+                        }
                     };
                 }
             })

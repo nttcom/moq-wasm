@@ -10,6 +10,8 @@ on:
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
       - "scripts/run-call-e2e.mjs"
+      - "scripts/run-message-e2e.mjs"
+      - "scripts/browser-e2e-process.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
       - "scripts/resolve-local-relay-url.mjs"
@@ -46,6 +48,8 @@ on:
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
       - "scripts/run-call-e2e.mjs"
+      - "scripts/run-message-e2e.mjs"
+      - "scripts/browser-e2e-process.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
       - "scripts/resolve-local-relay-url.mjs"
@@ -83,6 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       media: ${{ steps.filter.outputs.media }}
+      message: ${{ steps.filter.outputs.message }}
       call: ${{ steps.filter.outputs.call }}
       cascading: ${{ steps.filter.outputs.cascading }}
       cache_eviction: ${{ steps.filter.outputs.cache_eviction }}
@@ -107,6 +112,7 @@ jobs:
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             media=true
+            message=true
             call=true
             cascading=true
             cache_eviction=true
@@ -123,6 +129,7 @@ jobs:
             fi
 
             media=false
+            message=false
             call=false
             cascading=false
             cache_eviction=false
@@ -132,8 +139,14 @@ jobs:
 
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   media=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-message-e2e.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  message=true
                   ;;
               esac
 
@@ -193,6 +206,7 @@ jobs:
 
           {
             echo "media=$media"
+            echo "message=$message"
             echo "call=$call"
             echo "cascading=$cascading"
             echo "cache_eviction=$cache_eviction"
@@ -291,6 +305,63 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: media-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  message_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.message == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/browser/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Prepare browser E2E environment
+        run: node scripts/setup-media-e2e.mjs
+
+      - name: Install Playwright Linux dependencies
+        working-directory: examples/browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run message E2E
+        env:
+          CI: "true"
+        run: node scripts/run-message-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: message-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report

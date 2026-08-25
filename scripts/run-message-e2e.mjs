@@ -17,7 +17,7 @@ import {
   getErrorMessage,
   jsDir,
   keyPath,
-  mediaIndexPath,
+  messageIndexPath,
   repoRoot,
   resolveCommandName,
   waitForHttpOk,
@@ -50,7 +50,7 @@ async function main() {
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
-  const namespace = process.env.MEDIA_E2E_NAMESPACE ?? `e2e/${Date.now()}`;
+  const namespace = process.env.MESSAGE_E2E_NAMESPACE ?? `e2e/${Date.now()}`;
   const moqtUrl = getDefaultMoqtUrl();
 
   const cleanup = async () => {
@@ -62,14 +62,9 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
-    const server = spawnProcess(
-      "server",
-      "cargo",
-      ["run", "-p", "relay"],
-      {
-        cwd: repoRoot,
-      },
-    );
+    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
+      cwd: repoRoot,
+    });
     const vite = spawnProcess(
       "vite",
       resolveCommandName("npm"),
@@ -90,16 +85,16 @@ async function main() {
 
     await Promise.all([
       waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${mediaIndexPath}`, 120_000),
+      waitForHttpOk(`${baseUrl}${messageIndexPath}`, 120_000),
     ]);
 
-    await runCommand(resolveCommandName("npm"), ["run", "e2e:media"], {
+    await runCommand(resolveCommandName("npm"), ["run", "e2e:message"], {
       cwd: jsDir,
       env: {
         ...process.env,
         MEDIA_E2E_BASE_URL: baseUrl,
-        MEDIA_E2E_MOQT_URL: moqtUrl,
-        MEDIA_E2E_NAMESPACE: namespace,
+        MESSAGE_E2E_MOQT_URL: moqtUrl,
+        MESSAGE_E2E_NAMESPACE: namespace,
       },
     });
   } finally {

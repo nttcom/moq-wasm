@@ -17,11 +17,13 @@ use bytes::{Buf, Bytes, BytesMut};
 #[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
-    DatagramField, ExtensionHeaders, Fetch, FetchHeader, FetchObjectField, FetchOk, FetchParams,
-    FilterType, GroupOrder, Location, NamespaceOk, ObjectDatagram, ObjectStatus, Publish,
-    PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup, SetupParameter,
+    DatagramField, ExtensionHeaders, Fetch, FetchCancel, FetchHeader, FetchObjectField, FetchOk,
+    FetchParams, FilterType, GoAway, GroupOrder, Location, MaxRequestId, NamespaceOk,
+    ObjectDatagram, ObjectStatus, Publish, PublishDone, PublishNamespace, PublishNamespaceCancel,
+    PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked, ServerSetup, SetupParameter,
     SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
-    SubscribeOk, encode_control_message, take_control_message,
+    SubscribeOk, SubscribeUpdate, TrackStatus, UnsubscribeNamespace, encode_control_message,
+    take_control_message,
 };
 #[cfg(web_sys_unstable_apis)]
 use std::{
@@ -819,6 +821,147 @@ impl MOQTClient {
             .borrow_mut()
             .remove_outgoing_subscription(request_id);
         Ok(())
+    }
+
+    #[wasm_bindgen(js_name = sendPublishNamespaceDone)]
+    pub async fn send_publish_namespace_done(
+        &self,
+        track_namespace: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::PublishNamespaceDone,
+            PublishNamespaceDone::new(track_namespace).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendUnsubscribeNamespace)]
+    pub async fn send_unsubscribe_namespace(
+        &self,
+        track_namespace_prefix: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::UnSubscribeNamespace,
+            UnsubscribeNamespace::new(track_namespace_prefix).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendGoAway)]
+    pub async fn send_go_away(&self, new_session_uri: String) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::GoAway,
+            GoAway::new(new_session_uri).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendMaxRequestId)]
+    pub async fn send_max_request_id(&self, request_id: u64) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::MaxRequestId,
+            MaxRequestId::new(request_id).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendRequestsBlocked)]
+    pub async fn send_requests_blocked(&self, maximum_request_id: u64) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::RequestsBlocked,
+            RequestsBlocked::new(maximum_request_id).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendSubscribeUpdate)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_subscribe_update(
+        &self,
+        request_id: u64,
+        subscription_request_id: u64,
+        start_group: u64,
+        start_object: u64,
+        end_group: u64,
+        subscriber_priority: u8,
+        forward: bool,
+    ) -> Result<(), JsValue> {
+        let payload = SubscribeUpdate {
+            request_id,
+            subscription_request_id,
+            start_location: Location {
+                group_id: start_group,
+                object_id: start_object,
+            },
+            end_group,
+            subscriber_priority,
+            forward,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        }
+        .encode();
+        self.send_control_message(ControlMessageType::SubscribeUpdate, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublishDone)]
+    pub async fn send_publish_done(
+        &self,
+        request_id: u64,
+        status_code: u64,
+        stream_count: u64,
+        error_reason: String,
+    ) -> Result<(), JsValue> {
+        let payload =
+            PublishDone::new(request_id, status_code, stream_count, error_reason).encode();
+        self.send_control_message(ControlMessageType::PublishDone, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendFetchCancel)]
+    pub async fn send_fetch_cancel(&self, request_id: u64) -> Result<(), JsValue> {
+        self.send_control_message(
+            ControlMessageType::FetchCancel,
+            FetchCancel::new(request_id).encode(),
+        )
+        .await
+    }
+
+    #[wasm_bindgen(js_name = sendPublishNamespaceCancel)]
+    pub async fn send_publish_namespace_cancel(
+        &self,
+        track_namespace: Vec<String>,
+        error_code: u64,
+        error_reason: String,
+    ) -> Result<(), JsValue> {
+        let payload =
+            PublishNamespaceCancel::new(track_namespace, error_code, error_reason).encode();
+        self.send_control_message(ControlMessageType::PublishNamespaceCancel, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendTrackStatus)]
+    pub async fn send_track_status(
+        &self,
+        request_id: u64,
+        track_namespace: Vec<String>,
+        track_name: String,
+        auth_info: String,
+    ) -> Result<(), JsValue> {
+        let payload = TrackStatus {
+            request_id,
+            track_namespace,
+            track_name,
+            subscriber_priority: 0,
+            group_order: GroupOrder::Ascending,
+            forward: false,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: authorization_tokens(&auth_info),
+            delivery_timeout: None,
+        }
+        .encode();
+        self.send_control_message(ControlMessageType::TrackStatus, payload)
+            .await
     }
 
     #[wasm_bindgen(js_name = sendObjectDatagram)]

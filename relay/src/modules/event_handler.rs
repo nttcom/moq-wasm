@@ -137,14 +137,22 @@ impl EventHandler {
                             };
 
                             let session_id = match &event {
-                                SessionEvent::PublishNameSpace(id, _)
+                                SessionEvent::GoAway(id, _)
+                                | SessionEvent::MaxRequestId(id, _)
+                                | SessionEvent::RequestsBlocked(id, _)
+                                | SessionEvent::PublishNameSpace(id, _)
                                 | SessionEvent::PublishNamespaceDone(id, _)
+                                | SessionEvent::PublishNamespaceCancel(id, _)
                                 | SessionEvent::SubscribeNameSpace(id, _)
                                 | SessionEvent::UnsubscribeNameSpace(id, _)
                                 | SessionEvent::Publish(id, _)
+                                | SessionEvent::PublishDone(id, _)
                                 | SessionEvent::Subscribe(id, _)
+                                | SessionEvent::SubscribeUpdate(id, _)
                                 | SessionEvent::Unsubscribe(id, _)
                                 | SessionEvent::Fetch(id, _)
+                                | SessionEvent::FetchCancel(id, _)
+                                | SessionEvent::TrackStatus(id, _)
                                 | SessionEvent::Disconnected(id)
                                 | SessionEvent::ProtocolViolation(id) => *id,
                             };
@@ -377,6 +385,18 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
+                SessionEvent::GoAway(..)
+                | SessionEvent::MaxRequestId(..)
+                | SessionEvent::RequestsBlocked(..)
+                | SessionEvent::PublishNamespaceCancel(..)
+                | SessionEvent::PublishDone(..)
+                | SessionEvent::SubscribeUpdate(..)
+                | SessionEvent::FetchCancel(..)
+                | SessionEvent::TrackStatus(..) => {
+                    event_span.in_scope(|| {
+                        tracing::warn!("Relay handling for this event is not implemented");
+                    });
+                }
                 SessionEvent::Disconnected(session_id) => {
                     let disconnected_span = tracing::info_span!(
                         parent: &event_span,
@@ -506,6 +526,70 @@ impl EventHandler {
                 "relay.session.event",
                 session_id = %session_id,
                 event = "ProtocolViolation",
+            ),
+            SessionEvent::GoAway(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "GoAway",
+                new_session_uri = %handler.new_session_uri(),
+            ),
+            SessionEvent::MaxRequestId(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "MaxRequestId",
+                request_id = handler.request_id(),
+            ),
+            SessionEvent::RequestsBlocked(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "RequestsBlocked",
+                maximum_request_id = handler.maximum_request_id(),
+            ),
+            SessionEvent::PublishNamespaceCancel(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "PublishNamespaceCancel",
+                track_namespace = %handler.track_namespace(),
+                error_code = handler.error_code(),
+            ),
+            SessionEvent::PublishDone(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "PublishDone",
+                request_id = handler.request_id(),
+                status_code = handler.status_code(),
+                stream_count = handler.stream_count(),
+            ),
+            SessionEvent::SubscribeUpdate(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "SubscribeUpdate",
+                request_id = handler.request_id(),
+                subscription_request_id = handler.subscription_request_id(),
+                end_group = handler.end_group(),
+                forward = handler.forward(),
+            ),
+            SessionEvent::FetchCancel(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "FetchCancel",
+                request_id = handler.request_id(),
+            ),
+            SessionEvent::TrackStatus(session_id, handler) => tracing::info_span!(
+                parent: session_span,
+                "relay.session.event",
+                session_id = %session_id,
+                event = "TrackStatus",
+                request_id = handler.request_id(),
+                track_namespace = %handler.track_namespace(),
+                track_name = %handler.track_name(),
             ),
         }
     }

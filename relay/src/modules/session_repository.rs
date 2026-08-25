@@ -138,6 +138,74 @@ fn log_session_event(event: &MoqtSessionEvent) {
                 "Received session event"
             );
         }
+        MoqtSessionEvent::FetchCancel(handler) => {
+            tracing::info!(
+                event = "FetchCancel",
+                request_id = handler.request_id(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::GoAway(handler) => {
+            tracing::info!(
+                event = "GoAway",
+                new_session_uri = %handler.new_session_uri(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::MaxRequestId(handler) => {
+            tracing::info!(
+                event = "MaxRequestId",
+                request_id = handler.request_id(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::RequestsBlocked(handler) => {
+            tracing::info!(
+                event = "RequestsBlocked",
+                maximum_request_id = handler.maximum_request_id(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::PublishDone(handler) => {
+            tracing::info!(
+                event = "PublishDone",
+                request_id = handler.request_id(),
+                status_code = handler.status_code(),
+                stream_count = handler.stream_count(),
+                error_reason = %handler.error_reason(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::PublishNamespaceCancel(handler) => {
+            tracing::info!(
+                event = "PublishNamespaceCancel",
+                track_namespace = %handler.track_namespace(),
+                error_code = handler.error_code(),
+                error_reason = %handler.error_reason(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::SubscribeUpdate(handler) => {
+            tracing::info!(
+                event = "SubscribeUpdate",
+                request_id = handler.request_id(),
+                subscription_request_id = handler.subscription_request_id(),
+                start_location = ?handler.start_location(),
+                end_group = handler.end_group(),
+                subscriber_priority = handler.subscriber_priority(),
+                forward = handler.forward(),
+                "Received session event"
+            );
+        }
+        MoqtSessionEvent::TrackStatus(handler) => {
+            tracing::info!(
+                event = "TrackStatus",
+                request_id = handler.request_id(),
+                track_namespace = %handler.track_namespace(),
+                track_name = %handler.track_name(),
+                "Received session event"
+            );
+        }
         MoqtSessionEvent::Disconnected() => {
             tracing::info!(event = "Disconnected", "Received session event");
         }

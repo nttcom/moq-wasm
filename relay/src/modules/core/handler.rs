@@ -1,8 +1,16 @@
 pub(crate) mod fetch;
+pub(crate) mod fetch_cancel;
+pub(crate) mod go_away;
+pub(crate) mod max_request_id;
 pub(crate) mod publish;
+pub(crate) mod publish_done;
 pub(crate) mod publish_namespace;
+pub(crate) mod publish_namespace_cancel;
 pub(crate) mod publish_namespace_done;
+pub(crate) mod requests_blocked;
 pub(crate) mod subscribe;
 pub(crate) mod subscribe_namespace;
+pub(crate) mod subscribe_update;
+pub(crate) mod track_status;
 pub(crate) mod unsubscribe;
 pub(crate) mod unsubscribe_namespace;

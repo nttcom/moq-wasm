@@ -11,7 +11,7 @@ pub enum ControlMessageType {
     ServerSetup = 0x21,
     GoAway = 0x10,
 
-    MaxSubscribeId = 0x15,
+    MaxRequestId = 0x15,
     RequestsBlocked = 0x1a,
 
     // subscribe
@@ -33,9 +33,10 @@ pub enum ControlMessageType {
     FetchError = 0x19,
     FetchCancel = 0x17,
 
-    // track
-    TrackStatusRequest = 0x0d,
-    TrackStatus = 0x0e,
+    // track status
+    TrackStatus = 0x0d,
+    TrackStatusOk = 0x0e,
+    TrackStatusError = 0x0f,
 
     // publish namespace
     PublishNamespace = 0x06,

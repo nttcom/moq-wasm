@@ -120,12 +120,23 @@ One struct owns all cross-task state:
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
   §13.1.1).
 
-`ControlMessageReceiveTask` splits every decoded message into one of two paths:
+`ControlMessageReceiveTask` splits every decoded message into one of three
+paths:
 
 1. **Requests** (SUBSCRIBE, PUBLISH, FETCH, namespace messages, …) become
    `SessionEvent` variants delivered to `Session::receive_event()`.
 2. **Responses** (`*_OK` / `*_ERROR`) are matched against `sender_map` by
    request id and complete the pending `oneshot`.
+3. **Protocol violations** (a malformed payload, a SETUP after the handshake,
+   a response to a request kind this crate never sends) close the session and
+   stop the task.
+
+Messages the crate can decode but not yet act on (GOAWAY, MAX_REQUEST_ID,
+REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
+PUBLISH_NAMESPACE_CANCEL, TRACK_STATUS) still take path 1, so the application
+sees them instead of the session dying. TRACK_STATUS carries a `ResponseGuard`,
+so an application that ignores the event answers TRACK_STATUS_ERROR
+NOT_SUPPORTED automatically.
 
 ## Data plane (`modules/moqt/data_plane`)
 
