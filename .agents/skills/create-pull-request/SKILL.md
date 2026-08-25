@@ -24,6 +24,8 @@ description: Create a pull request for the current branch. Use when the user ask
 
 Use `.github/pull_request_template.md` as-is. Keep every heading, replace each HTML comment with the actual content, and delete no section — write `なし` when a section does not apply.
 
+Keep every section to one line where possible, and never more than three lines. Bullets count as lines: group related changes into a single bullet rather than listing every file. A section that will not fit in three lines usually means the PR is too large, or that the detail belongs in the diff rather than the description.
+
 Section rules:
 
 - `## 概要` — exactly 3 lines. One line each for background, what was done, and the result. This is the only part some reviewers read.
