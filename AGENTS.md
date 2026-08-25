@@ -138,11 +138,12 @@ Follow the log level guidelines below.
 | ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
 
 ## 8. Git Conventions
+- Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
   - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `packages`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
-- PR titles must clearly describe what was changed.
+- PR titles must be written in Japanese and clearly describe what was changed.
 - PR descriptions must be written in Japanese and include:
   1. What feature or fix is being addressed.
   2. What changes were made.
