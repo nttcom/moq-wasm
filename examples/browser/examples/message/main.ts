@@ -295,6 +295,107 @@ function registerClientCallbacks(receivedTextElement: HTMLElement): void {
   })
 }
 
+function setSendStatus(message: string): void {
+  const element = document.getElementById('send-status')
+  if (element) {
+    element.textContent = message
+  }
+}
+
+async function sendDraft14Message(label: string, send: () => Promise<void>): Promise<void> {
+  try {
+    await send()
+    setSendStatus(`Sent ${label}`)
+  } catch (error) {
+    setSendStatus(`Failed ${label}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+function onClick(id: string, handler: () => Promise<void>): void {
+  const button = document.getElementById(id) as HTMLButtonElement | null
+  button?.addEventListener('click', handler)
+}
+
+function setupDraft14Buttons(): void {
+  onClick('sendGoAwayBtn', async () => {
+    const form = getForm()
+    const newSessionUri = getField(form, 'goaway-new-session-uri').value
+    await sendDraft14Message('GOAWAY', () => ensureRawClient().sendGoAway(newSessionUri))
+  })
+
+  onClick('sendMaxRequestIdBtn', async () => {
+    const form = getForm()
+    const requestId = BigInt(getField(form, 'max-request-id-value').value)
+    await sendDraft14Message('MAX_REQUEST_ID', () => ensureRawClient().sendMaxRequestId(requestId))
+  })
+
+  onClick('sendRequestsBlockedBtn', async () => {
+    const form = getForm()
+    const maximumRequestId = BigInt(getField(form, 'requests-blocked-maximum-request-id').value)
+    await sendDraft14Message('REQUESTS_BLOCKED', () => ensureRawClient().sendRequestsBlocked(maximumRequestId))
+  })
+
+  onClick('sendFetchCancelBtn', async () => {
+    const form = getForm()
+    const requestId = BigInt(getField(form, 'fetch-cancel-request-id').value)
+    await sendDraft14Message('FETCH_CANCEL', () => ensureRawClient().sendFetchCancel(requestId))
+  })
+
+  onClick('sendSubscribeUpdateBtn', async () => {
+    const form = getForm()
+    const requestId = BigInt(getField(form, 'subscribe-update-request-id').value)
+    const subscriptionRequestId = BigInt(getField(form, 'subscribe-update-subscription-request-id').value)
+    const startGroup = BigInt(getField(form, 'subscribe-update-start-group').value)
+    const startObject = BigInt(getField(form, 'subscribe-update-start-object').value)
+    const endGroup = BigInt(getField(form, 'subscribe-update-end-group').value)
+    const subscriberPriority = Number(getField(form, 'subscribe-update-subscriber-priority').value)
+    const forward = getRadioValue(form, 'forwarding') === 'true'
+    await sendDraft14Message('SUBSCRIBE_UPDATE', () =>
+      ensureRawClient().sendSubscribeUpdate(
+        requestId,
+        subscriptionRequestId,
+        startGroup,
+        startObject,
+        endGroup,
+        subscriberPriority,
+        forward
+      )
+    )
+  })
+
+  onClick('sendPublishDoneBtn', async () => {
+    const form = getForm()
+    const requestId = BigInt(getField(form, 'publish-done-request-id').value)
+    const statusCode = BigInt(getField(form, 'publish-done-status-code').value)
+    const streamCount = BigInt(getField(form, 'publish-done-stream-count').value)
+    const errorReason = getField(form, 'publish-done-error-reason').value
+    await sendDraft14Message('PUBLISH_DONE', () =>
+      ensureRawClient().sendPublishDone(requestId, statusCode, streamCount, errorReason)
+    )
+  })
+
+  onClick('sendPublishNamespaceCancelBtn', async () => {
+    const form = getForm()
+    const trackNamespace = parseTrackNamespace(getField(form, 'publish-namespace-cancel-track-namespace').value)
+    const errorCode = BigInt(getField(form, 'publish-namespace-cancel-error-code').value)
+    const errorReason = getField(form, 'publish-namespace-cancel-error-reason').value
+    await sendDraft14Message('PUBLISH_NAMESPACE_CANCEL', () =>
+      ensureRawClient().sendPublishNamespaceCancel(trackNamespace, errorCode, errorReason)
+    )
+  })
+
+  onClick('sendTrackStatusBtn', async () => {
+    const form = getForm()
+    const requestId = BigInt(getField(form, 'track-status-request-id').value)
+    const trackNamespace = parseTrackNamespace(getField(form, 'track-status-track-namespace').value)
+    const trackName = getField(form, 'track-status-track-name').value
+    const authInfo = getField(form, 'auth-info').value
+    await sendDraft14Message('TRACK_STATUS', () =>
+      ensureRawClient().sendTrackStatus(requestId, trackNamespace, trackName, authInfo)
+    )
+  })
+}
+
 function setupConnectButton(): void {
   const connectBtn = document.getElementById('connectBtn')
   if (!(connectBtn instanceof HTMLButtonElement)) {
@@ -503,6 +604,8 @@ function setupActionButtons(): void {
       objectIdElement.textContent = objectId.toString()
     }
   })
+
+  setupDraft14Buttons()
 
   const ascendDatagramGroupId = document.getElementById('ascendDatagramGroupIdBtn') as HTMLButtonElement | null
   ascendDatagramGroupId?.addEventListener('click', () => {
