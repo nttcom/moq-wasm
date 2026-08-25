@@ -16,6 +16,22 @@ export interface MessagePageModel {
   logPanel: Locator
   sendStatus: Locator
   setupButton: Locator
+  publishNamespaceButton: Locator
+  publishNamespaceInput: Locator
+  publishNamespaceDoneButton: Locator
+  publishNamespaceDoneInput: Locator
+  subscribeNamespaceButton: Locator
+  subscribeNamespaceInput: Locator
+  unsubscribeNamespaceButton: Locator
+  unsubscribeNamespaceInput: Locator
+  subscribeButton: Locator
+  subscribeNamespaceFieldInput: Locator
+  subscribeTrackNameInput: Locator
+  unsubscribeButton: Locator
+  publishButton: Locator
+  publishMessageNamespaceInput: Locator
+  fetchButton: Locator
+  fetchNamespaceInput: Locator
   goAwayButton: Locator
   goAwayUriInput: Locator
   maxRequestIdButton: Locator
@@ -47,6 +63,22 @@ function createMessagePageModel(page: Page): MessagePageModel {
     logPanel: page.locator('#logPanel'),
     sendStatus: page.locator('#send-status'),
     setupButton: page.locator('#sendSetupBtn'),
+    publishNamespaceButton: page.locator('#sendPublishNamespaceBtn'),
+    publishNamespaceInput: page.locator('#publish-track-namespace'),
+    publishNamespaceDoneButton: page.locator('#sendPublishNamespaceDoneBtn'),
+    publishNamespaceDoneInput: page.locator('#publish-namespace-done-track-namespace'),
+    subscribeNamespaceButton: page.locator('#sendSubscribeNamespaceBtn'),
+    subscribeNamespaceInput: page.locator('#track-namespace-prefix'),
+    unsubscribeNamespaceButton: page.locator('#sendUnsubscribeNamespaceBtn'),
+    unsubscribeNamespaceInput: page.locator('#unsubscribe-namespace-prefix'),
+    subscribeButton: page.locator('#sendSubscribeBtn'),
+    subscribeNamespaceFieldInput: page.locator('#subscribe-track-namespace'),
+    subscribeTrackNameInput: page.locator('input[name="track-name"]'),
+    unsubscribeButton: page.locator('#sendUnsubscribeBtn'),
+    publishButton: page.locator('#sendPublishBtn'),
+    publishMessageNamespaceInput: page.locator('#publish-track-namespace-2'),
+    fetchButton: page.locator('#sendFetchBtn'),
+    fetchNamespaceInput: page.locator('#fetch-track-namespace'),
     goAwayButton: page.locator('#sendGoAwayBtn'),
     goAwayUriInput: page.locator('#goaway-new-session-uri'),
     maxRequestIdButton: page.locator('#sendMaxRequestIdBtn'),
