@@ -396,6 +396,16 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     SessionEvent::Fetch(_) => {
                         todo!()
                     }
+                    event @ (SessionEvent::GoAway(_)
+                    | SessionEvent::MaxRequestId(_)
+                    | SessionEvent::RequestsBlocked(_)
+                    | SessionEvent::PublishNamespaceCancel(_)
+                    | SessionEvent::PublishDone(_)
+                    | SessionEvent::SubscribeUpdate(_)
+                    | SessionEvent::FetchCancel(_)
+                    | SessionEvent::TrackStatus(_)) => {
+                        println!("[moqt] unhandled control message: {event:?}");
+                    }
                 }
             }
         })
