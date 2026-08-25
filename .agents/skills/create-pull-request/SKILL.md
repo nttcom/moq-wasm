@@ -10,9 +10,10 @@ description: Create a pull request for the current branch. Use when the user ask
 1. Review the change: `git status`, `git diff origin/master...HEAD`, and `git log origin/master..HEAD --oneline`.
 2. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
 3. Push the branch: `git push -u origin <branch>`.
-4. Create the PR with `gh pr create --base master --title <title> --body <body>`.
+4. Draft the title and body, then have a subagent review them for redundancy (see *Review Before Posting*) and apply its cuts.
+5. Create the PR with `gh pr create --base master --title <title> --body <body>`.
    - If a PR already exists for the branch, push the new commits and update the existing PR with `gh pr edit` instead of creating a duplicate.
-5. Report the PR URL.
+6. Report the PR URL.
 
 ## Title
 
@@ -35,6 +36,16 @@ Section rules:
 - `## テスト` — the commands actually run and their results. If a check was skipped, say so.
 
 Write the whole body in Japanese.
+
+## Review Before Posting
+
+Never post the first draft. Pass the drafted title and body to a subagent and ask it to cut anything that costs the reader attention without informing the review:
+
+- Sentences that restate the diff, the section heading, or a point already made elsewhere in the body
+- Background the reviewer of this repository already knows
+- Hedging and filler that carries no information
+
+Ask for the shortened text plus a one-line reason per cut, then apply the cuts you agree with. Do not let the review add new content — it only removes. Verify the result still satisfies the line limits and keeps every template section.
 
 ## Mermaid Diagrams
 
