@@ -47,6 +47,16 @@ Application and integration components (draft reference is normally not required
 
 ## 4. Coding Style
 
+### Implementation Principles
+- Follow YAGNI. Implement only what the current requirement needs.
+- Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs. Add them when a second concrete use case appears.
+- Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
+
+### Comments
+- Keep comments to a minimum. Code that needs a comment to be readable should usually be renamed or restructured instead.
+- Write a comment only for the non-obvious *why* — an invariant, a specification constraint, a workaround, or a deliberate trade-off. Do not restate what the code already says.
+- Exceptions where comments are still required: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the Act / Assert comments in tests.
+
 ### Naming
 - Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).
 - Names must represent the target concept clearly.
