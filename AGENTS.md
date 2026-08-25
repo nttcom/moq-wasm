@@ -154,7 +154,5 @@ Follow the log level guidelines below.
   - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `packages`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles must be written in Japanese and clearly describe what was changed.
-- PR descriptions must be written in Japanese and include:
-  1. What feature or fix is being addressed.
-  2. What changes were made.
-  3. Why — the intent behind the changes.
+- PR descriptions must be written in Japanese and follow `.github/pull_request_template.md`.
+- When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
