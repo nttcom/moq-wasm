@@ -48,7 +48,6 @@ pub(crate) struct EgressRunnerHandle {
 }
 
 impl EgressRunnerHandle {
-    /// Waits for the runner to send PUBLISH_DONE downstream.
     pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {
         tokio::time::timeout(RECV_TIMEOUT, self.publish_done.recv())
             .await
@@ -56,7 +55,6 @@ impl EgressRunnerHandle {
             .expect("egress dropped its publisher before PUBLISH_DONE")
     }
 
-    /// Asserts no PUBLISH_DONE was sent so far (non-blocking).
     pub(crate) fn assert_no_publish_done(&mut self) {
         assert!(
             self.publish_done.try_recv().is_err(),
@@ -135,7 +133,6 @@ impl RelayHarness {
         }
     }
 
-    /// Waits until the track's malformed latch is set.
     pub(crate) async fn wait_track_malformed(&self) {
         let cache = self.cache_store.get_or_create(&self.track_key);
         tokio::time::timeout(RECV_TIMEOUT, cache.malformed_track_detected())

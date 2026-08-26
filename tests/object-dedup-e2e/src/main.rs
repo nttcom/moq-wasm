@@ -5,8 +5,7 @@
 //!      identical payloads.
 //!   3. bob FETCHes the whole of group 0 and must receive exactly o0..o4.
 //!   4. alice publishes group 0 once more with *different* payloads; the relay
-//!      must quarantine the track (draft-14 §2.5 condition 8) and answer bob's
-//!      next FETCH with FETCH_ERROR MALFORMED_TRACK (0x9).
+//!      must reject bob's next FETCH with MALFORMED_TRACK (§2.5 condition 8).
 //!
 //! Without dedup the relay appends the second group 0 after the first, so the
 //! fetch returns 10 objects (each object id 0..4 twice) and the assertion fails.
@@ -56,9 +55,8 @@ fn unique_track_name() -> String {
     format!("data-{}", nanos)
 }
 
-/// Deterministic per-object payload: republishing the same objects must be
-/// byte-identical, otherwise the relay treats the track as malformed
-/// (draft-14 §2.5 condition 8) instead of deduplicating.
+/// Republished objects must be byte-identical, or the relay treats the track
+/// as malformed (§2.5 condition 8) instead of deduplicating.
 fn object_payload(obj_id: u64) -> String {
     format!("alice:g{}:o{}", GROUP_ID, obj_id)
 }
@@ -202,12 +200,9 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!("[bob] OK: group 0 deduplicated to o0..o4");
 
-    // 4. alice republishes group 0 with *different* payloads: the same objects
-    // with different content make the track malformed (draft-14 §2.5
-    // condition 8), so the relay must quarantine it and reject further FETCHes
-    // with MALFORMED_TRACK (0x9).
-    // The relay stops reading the stream at the first conflicting object, so
-    // alice's remaining sends may fail; only the detection matters here.
+    // 4. alice republishes group 0 with *different* payloads. The relay stops
+    // reading at the first conflicting object, so alice's remaining sends may
+    // fail; only the detection matters here.
     if let Err(error) = publish_once(&track_name, "conflict", |obj_id| {
         format!("alice:conflict:g{}:o{}", GROUP_ID, obj_id)
     })

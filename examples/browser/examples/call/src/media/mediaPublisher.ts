@@ -134,12 +134,8 @@ export class MediaPublisher {
     noiseSuppression: true,
     autoGainControl: true
   }
-  // Catalog group ids must never reuse a location whose content has changed:
-  // the relay caches by (track, group, object) and quarantines the track as
-  // malformed on a content mismatch (draft-14 §2.5). One monotonic counter per
-  // track (not per subscriber alias), seeded from wall-clock time so a
-  // rejoining session does not collide with groups the relay cached from the
-  // previous session of the same member.
+  // Per-track and time-seeded: reusing a location the relay cached with
+  // different content makes the track malformed (draft-14 §2.5).
   private nextCatalogGroupId = BigInt(Date.now())
 
   constructor(

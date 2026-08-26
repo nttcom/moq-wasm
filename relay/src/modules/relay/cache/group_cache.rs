@@ -33,18 +33,13 @@ pub(crate) enum SubgroupLifecycle {
     Closed = 2,
 }
 
-/// Result of appending an object into the cache (draft-14 §8.1 dedup and
-/// §2.5 condition 8 detection).
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppendOutcome {
-    /// The object was stored.
     Appended,
-    /// A byte-identical duplicate was ignored (first-wins). Normal in
-    /// cascading topologies where the same object arrives via several paths.
+    /// Identical duplicate ignored (§8.1 first-wins; normal in cascading).
     Duplicate,
-    /// The same Object arrived again with different payload or other
-    /// immutable properties: the track is malformed (draft-14 §2.5).
+    /// Same Object with different immutable properties (§2.5 condition 8).
     MalformedTrack,
 }
 
@@ -88,9 +83,7 @@ impl GroupCache {
         object: Arc<DataObject>,
     ) -> AppendOutcome {
         let outcome = match object_id {
-            // No object_id = subgroup header. Keep the first one (first-wins),
-            // but a later header with different immutable properties (e.g.
-            // publisher priority) makes the track malformed (§2.5 condition 8).
+            // No object_id = subgroup header.
             None => {
                 let mut header = self.header.write().await;
                 match header.as_ref() {
@@ -104,8 +97,6 @@ impl GroupCache {
                     }
                 }
             }
-            // A later identical object with the same object_id is ignored
-            // (draft-14 §8.1 dedup); a differing one is malformed (§2.5).
             Some(object_id) => match self.objects.write().await.entry(object_id) {
                 Entry::Occupied(existing) => {
                     if existing.get().1.matches_immutable_properties(&object) {
@@ -306,11 +297,11 @@ mod tests {
 
     #[tokio::test]
     async fn append_identical_duplicate_keeps_first() {
-        // Arrange: the same object arrives twice (normal in cascading setups)
+        // Arrange: the same object arrives twice
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         let first = cache.append(Some(0), payload_object(b"same")).await;
         let second = cache.append(Some(0), payload_object(b"same")).await;
-        // Assert: first-wins dedup, and neither append flags the track
+        // Assert: first-wins dedup, no malformed flag
         assert_eq!(first, AppendOutcome::Appended);
         assert_eq!(second, AppendOutcome::Duplicate);
         let snapshot = cache.objects_snapshot().await;
@@ -323,11 +314,10 @@ mod tests {
     #[tokio::test]
     async fn append_duplicate_with_different_payload_is_malformed() {
         // Arrange: the same object_id arrives again with a different payload
-        // (draft-14 §2.5 condition 8)
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         let _ = cache.append(Some(0), payload_object(b"first")).await;
         let outcome = cache.append(Some(0), payload_object(b"second")).await;
-        // Assert: detected as malformed; the first object is kept untouched
+        // Assert: malformed; the first object is kept untouched
         assert_eq!(outcome, AppendOutcome::MalformedTrack);
         let snapshot = cache.objects_snapshot().await;
         assert_eq!(payload_of(&snapshot[0].1), Bytes::from_static(b"first"));
@@ -347,12 +337,11 @@ mod tests {
 
     #[tokio::test]
     async fn append_header_with_different_priority_is_malformed() {
-        // Arrange: a second header for the same subgroup with a different
-        // publisher priority (an immutable property, §2.5 condition 8)
+        // Arrange: a second header with a different publisher priority
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         let _ = cache.append(None, header_object(1)).await;
         let outcome = cache.append(None, header_object(2)).await;
-        // Assert: detected as malformed; the first header survives
+        // Assert: malformed; the first header survives
         assert_eq!(outcome, AppendOutcome::MalformedTrack);
         match cache.header().await.unwrap().as_ref() {
             DataObject::SubgroupHeader(h) => assert_eq!(h.publisher_priority, 1),

@@ -103,8 +103,7 @@ impl<T: TransportProtocol> Publisher<T> {
         Ok(())
     }
 
-    /// Signals the end of a subscription (draft-14 §9.12). Fire-and-forget:
-    /// the spec defines no response message for PUBLISH_DONE.
+    /// Fire-and-forget: the spec defines no response message for PUBLISH_DONE.
     pub async fn publish_done(
         &self,
         request_id: u64,

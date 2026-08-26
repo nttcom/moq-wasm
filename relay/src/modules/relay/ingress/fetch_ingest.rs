@@ -54,8 +54,6 @@ impl FetchIngest {
                 // Expected request-scoped failures (timeout, upstream reset):
                 // log the chain without anyhow's captured backtrace.
                 tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
-                // §2.5: a fetch stream of a malformed track must be reset
-                // with MALFORMED_TRACK rather than a generic error.
                 let error_code = if cache.is_malformed() {
                     FetchErrorCode::MalformedTrack as u64
                 } else {
@@ -326,7 +324,7 @@ mod tests {
 
     #[tokio::test]
     async fn conflicting_fetch_object_fails_the_fill_and_latches_the_track() {
-        // Arrange: a fill stored the object once.
+        // Arrange: a fill stored the object once
         let cache = Arc::new(TrackCache::new());
         let mut first_fill = HashMap::new();
         FetchIngest::append_fetch_object(
@@ -345,7 +343,6 @@ mod tests {
         .unwrap();
 
         // Act: a second fill delivers the same object with another payload
-        // (§2.5 condition 8).
         let mut second_fill = HashMap::new();
         let result = FetchIngest::append_fetch_object(
             cache.clone(),
@@ -361,8 +358,7 @@ mod tests {
         )
         .await;
 
-        // Assert: the fill fails (its downstream fetch gets reset) and the
-        // track is quarantined.
+        // Assert: the fill fails and the track is quarantined
         assert!(result.is_err());
         assert!(cache.is_malformed());
     }

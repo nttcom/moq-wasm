@@ -444,9 +444,7 @@ impl Subscribe {
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) {
-        // §2.5: a malformed track is quarantined, so new subscriptions to it
-        // are rejected. SUBSCRIBE_ERROR has no malformed-track code (§9.9);
-        // TRACK_DOES_NOT_EXIST ("not available at the publisher") is closest.
+        // §9.9 has no malformed-track code; TRACK_DOES_NOT_EXIST is closest.
         if cache_store
             .get(&active_upstream.track_key)
             .is_some_and(|cache| cache.is_malformed())

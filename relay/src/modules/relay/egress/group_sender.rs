@@ -25,8 +25,7 @@ pub(crate) struct GroupSender {
     publisher: Arc<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     receiver: mpsc::Receiver<GroupSendTask>,
-    /// Streams opened for this subscription, reported in PUBLISH_DONE's
-    /// Stream Count (§9.12).
+    /// Reported as PUBLISH_DONE Stream Count (§9.12).
     opened_stream_count: Arc<AtomicU64>,
 }
 

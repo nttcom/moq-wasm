@@ -14,12 +14,9 @@ impl DataObject {
         }
     }
 
-    /// Compares the properties draft-14 §2.5 (condition 8) declares immutable
-    /// per Object: payload or status, extension headers, publisher priority,
-    /// and group. Per-hop or per-stream encoding details are excluded:
-    /// `track_alias` is rewritten per hop, `message_type` and
-    /// `object_id_delta` depend on how the carrying stream was encoded (a
-    /// fetch fill re-synthesizes both for the same object).
+    /// draft-14 §2.5 condition 8 comparison. Excludes per-hop / per-stream
+    /// encoding (`track_alias`, `message_type`, `object_id_delta`): a fetch
+    /// fill legitimately re-encodes them for the same object.
     pub(crate) fn matches_immutable_properties(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::SubgroupHeader(a), Self::SubgroupHeader(b)) => {
@@ -28,8 +25,6 @@ impl DataObject {
                     && a.publisher_priority == b.publisher_priority
             }
             (Self::SubgroupObject(a), Self::SubgroupObject(b)) => {
-                // Payload comparison is Bytes ==, which checks length before
-                // the byte-wise compare.
                 a.subgroup_object == b.subgroup_object && a.extension_headers == b.extension_headers
             }
             (Self::ObjectDatagram(a), Self::ObjectDatagram(b)) => {
@@ -141,8 +136,6 @@ mod tests {
 
     #[test]
     fn stream_encoding_details_are_not_immutable_properties() {
-        // The same object can legitimately arrive with a different
-        // object_id_delta (e.g. re-encoded by a fetch fill).
         let a = subgroup_object(0, b"same");
         let b = subgroup_object(3, b"same");
         assert!(a.matches_immutable_properties(&b));

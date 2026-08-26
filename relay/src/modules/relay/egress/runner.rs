@@ -49,9 +49,7 @@ impl EgressRunner {
         let publisher: Arc<dyn Publisher> = Arc::from(self.publisher);
         let request_id = self.downstream_subscription.request_id();
 
-        // The subscribe sequence rejects known-malformed tracks, but detection
-        // can race it. Answer readiness (so SUBSCRIBE_OK goes out) and
-        // terminate immediately; no streams were opened yet (Stream Count 0).
+        // Detection can race the subscribe sequence's own malformed check.
         if self.cache.is_malformed() {
             let _ = self.ready_sender.send(Ok(()));
             Self::send_malformed_publish_done(publisher.as_ref(), &self.track_key, request_id, 0)
@@ -84,14 +82,9 @@ impl EgressRunner {
         tokio::select! {
             _ = async { tokio::join!(scheduler.run(), group_sender.run()) } => {}
             _ = self.cache.malformed_track_detected() => {
-                // §2.5: a relay MUST immediately terminate downstream
-                // subscriptions of a malformed track with PUBLISH_DONE.
-                // Dropping the scheduler and sender futures above aborts every
-                // per-group send task, closing all data streams before the
-                // control message goes out (§9.12 requires that ordering).
-                // The count is taken at stream-open time, so it is exact even
-                // though the send tasks were just aborted (a datagram track
-                // stays at 0, as §9.12 requires).
+                // Reaching this arm drops the futures above, aborting every
+                // send task: all data streams close before PUBLISH_DONE goes
+                // out, the order §9.12 requires.
                 let stream_count = opened_stream_count.load(Ordering::Acquire);
                 Self::send_malformed_publish_done(
                     publisher.as_ref(),

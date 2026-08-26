@@ -138,8 +138,6 @@ impl Fetch {
             }
         };
 
-        // §2.5: a malformed track is quarantined; answer FETCH_ERROR
-        // MALFORMED_TRACK instead of serving or forwarding upstream.
         if cache_store
             .get(&target.track_key)
             .is_some_and(|cache| cache.is_malformed())

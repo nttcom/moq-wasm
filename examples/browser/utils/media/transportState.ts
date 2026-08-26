@@ -25,10 +25,8 @@ function aliasKey(alias: bigint | string): string {
   return normalizeAlias(alias).toString()
 }
 
-// Group ids start from wall-clock time instead of 0: reusing a (group, object)
-// location of a track the relay already cached with different content
-// quarantines the track as malformed (draft-14 §2.5), and a rejoining session
-// publishing the same track name cannot know which locations were already used.
+// Time-seeded: reusing a location the relay cached with different content
+// makes the track malformed (draft-14 §2.5).
 function initialGroupId(): bigint {
   return BigInt(Date.now()) - 1n
 }

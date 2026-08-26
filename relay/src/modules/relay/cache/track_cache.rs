@@ -20,7 +20,6 @@ use crate::modules::{
     },
 };
 
-/// Marker error: the track was latched malformed while serving from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
 
@@ -30,9 +29,7 @@ pub(crate) struct TrackCache {
     known_ranges: RwLock<KnownRanges>,
     live_ingest_count: AtomicUsize,
     eviction_generation: AtomicU64,
-    /// Sticky Malformed Track latch (draft-14 §2.5). Once set the track is
-    /// quarantined: appends are rejected, fetch serving aborts, and egress
-    /// runners terminate their subscriptions. The session itself stays alive.
+    /// Sticky §2.5 Malformed Track latch; quarantines the track, not the session.
     malformed: AtomicBool,
     malformed_notify: Notify,
 }
@@ -68,8 +65,6 @@ impl TrackCache {
     }
 
     /// Resolves once the track is marked malformed; pends forever otherwise.
-    /// See `GroupCache::header_or_wait` for why the waiter is enabled before
-    /// the check.
     pub(crate) async fn malformed_track_detected(&self) {
         loop {
             let notified = self.malformed_notify.notified();
@@ -205,12 +200,9 @@ impl TrackCache {
         outcome
     }
 
-    /// §2.5 condition 8: the same (group, object) must not appear in two
-    /// different subgroups. Checked after the insert so two racing writers
-    /// cannot both miss the other's entry — the later one sees both.
-    /// Restricted to explicit `Value` subgroup ids: a `None` or
-    /// `FirstObjectIdDelta` key cannot be proven to denote a different
-    /// subgroup than a `Value` key of the same group.
+    /// §2.5 condition 8 across subgroups. Checked after the insert so racing
+    /// writers cannot both miss each other. Only explicit `Value` ids are
+    /// comparable; other key kinds may alias the same subgroup.
     async fn object_exists_in_other_subgroup(
         &self,
         group_id: u64,
@@ -690,9 +682,8 @@ impl TrackCache {
             .await
     }
 
-    /// Collects the requested range from the cache. Fails with
-    /// [`TrackMalformed`] as soon as the track's malformed latch is observed,
-    /// so an in-flight fetch can be reset instead of served (draft-14 §2.5).
+    /// Fails with [`TrackMalformed`] as soon as the latch is observed, so an
+    /// in-flight fetch is reset instead of served (§2.5).
     pub(crate) async fn get_fetch_objects_with_group_order(
         &self,
         start: moqt::Location,
@@ -2135,14 +2126,13 @@ mod tests {
             .append_live_stream_object(0, &odd, None, subgroup_header_for(1))
             .await;
 
-        // Act: the same object arrives again under a different subgroup — the
-        // subgroup is an immutable property, so this is §2.5 condition 8 even
-        // with an identical payload.
+        // Act: the same object arrives under a different subgroup (identical
+        // payload; the subgroup itself is the immutable property)
         let outcome = cache
             .append_live_stream_object(0, &odd, Some(0), make_object(0))
             .await;
 
-        // Assert: detected, latched, and later appends are rejected.
+        // Assert: latched, and later appends are rejected
         assert_eq!(outcome, AppendOutcome::MalformedTrack);
         assert!(cache.is_malformed());
         let rejected = cache
@@ -2175,7 +2165,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_fetch_objects_aborts_when_track_goes_malformed() {
-        // Arrange: a live group whose tail the fetch will wait for.
+        // Arrange: a live group whose tail the fetch will wait for
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
         let _ = cache

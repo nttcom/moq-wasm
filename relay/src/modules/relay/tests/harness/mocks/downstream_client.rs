@@ -41,7 +41,6 @@ impl StreamSenderFactory for MockStreamSenderFactory {
     }
 }
 
-/// A PUBLISH_DONE observed by the mock downstream publisher.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SentPublishDone {
     pub(crate) request_id: u64,

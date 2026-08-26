@@ -41,8 +41,6 @@ impl UpstreamSubgroupStream {
         self.object_with_payload(index, ordered_payload(index));
     }
 
-    /// Sends the object at `index` with an arbitrary payload, for duplicate /
-    /// malformed-track scenarios.
     pub(crate) fn object_with_payload(&self, index: usize, payload: bytes::Bytes) {
         let delta = if index == 0 { 0 } else { 1 };
         self.sender
