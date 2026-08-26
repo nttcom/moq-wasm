@@ -13,15 +13,12 @@ use crate::modules::{
     core::data_object::DataObject,
     relay::{
         cache::{
-            group_cache::{AppendOutcome, GroupCache, SubgroupLifecycle},
+            group_cache::{AppendStatus, GroupCache, SubgroupLifecycle, TrackMalformed},
             known_ranges::KnownRanges,
         },
         types::StreamSubgroupId,
     },
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TrackMalformed;
 
 pub(crate) struct TrackCache {
     stream_groups: RwLock<BTreeMap<u64, BTreeMap<StreamSubgroupId, Arc<GroupCache>>>>,
@@ -126,7 +123,7 @@ impl TrackCache {
         subgroup_id: &StreamSubgroupId,
         object_id: Option<u64>,
         object: DataObject,
-    ) -> AppendOutcome {
+    ) -> Result<(), TrackMalformed> {
         self.append_stream_object_with_lifecycle(
             group_id,
             subgroup_id,
@@ -143,19 +140,15 @@ impl TrackCache {
         subgroup_id: &StreamSubgroupId,
         object_id: Option<u64>,
         object: DataObject,
-    ) -> AppendOutcome {
-        let outcome = self
-            .append_stream_object_with_lifecycle(
-                group_id,
-                subgroup_id,
-                object_id,
-                object,
-                SubgroupLifecycle::AwaitingCloseSignal,
-            )
-            .await;
-        if outcome == AppendOutcome::MalformedTrack {
-            return outcome;
-        }
+    ) -> Result<(), TrackMalformed> {
+        self.append_stream_object_with_lifecycle(
+            group_id,
+            subgroup_id,
+            object_id,
+            object,
+            SubgroupLifecycle::AwaitingCloseSignal,
+        )
+        .await?;
         if let Some(object_id) = object_id {
             self.known_ranges.write().await.insert(
                 moqt::Location {
@@ -168,7 +161,7 @@ impl TrackCache {
                 },
             );
         }
-        outcome
+        Ok(())
     }
 
     async fn append_stream_object_with_lifecycle(
@@ -178,26 +171,26 @@ impl TrackCache {
         object_id: Option<u64>,
         object: DataObject,
         lifecycle: SubgroupLifecycle,
-    ) -> AppendOutcome {
+    ) -> Result<(), TrackMalformed> {
         if self.is_malformed() {
-            return AppendOutcome::MalformedTrack;
+            return Err(TrackMalformed);
         }
         let group = self
             .ensure_stream_subgroup(group_id, subgroup_id, lifecycle)
             .await;
-        let mut outcome = group.append(object_id, Arc::new(object)).await;
-        if outcome == AppendOutcome::Appended
+        let mut result = group.append(object_id, Arc::new(object)).await;
+        if result == Ok(AppendStatus::Inserted)
             && let Some(object_id) = object_id
             && self
                 .object_exists_in_other_subgroup(group_id, subgroup_id, object_id)
                 .await
         {
-            outcome = AppendOutcome::MalformedTrack;
+            result = Err(TrackMalformed);
         }
-        if outcome == AppendOutcome::MalformedTrack {
+        if result.is_err() {
             self.mark_malformed();
         }
-        outcome
+        result.map(|_| ())
     }
 
     /// §2.5 condition 8 across subgroups. Checked after the insert so racing
@@ -236,21 +229,21 @@ impl TrackCache {
         group_id: u64,
         object_id: Option<u64>,
         object: DataObject,
-    ) -> AppendOutcome {
+    ) -> Result<(), TrackMalformed> {
         if self.is_malformed() {
-            return AppendOutcome::MalformedTrack;
+            return Err(TrackMalformed);
         }
         // Datagrams have no subgroup header, so a resolved object_id is always expected.
         let Some(object_id) = object_id else {
             tracing::error!(group_id, "unexpected: datagram object without object_id");
-            return AppendOutcome::Duplicate;
+            return Ok(());
         };
         let group = self.ensure_datagram_group(group_id).await;
-        let outcome = group.append(Some(object_id), Arc::new(object)).await;
-        if outcome == AppendOutcome::MalformedTrack {
+        let result = group.append(Some(object_id), Arc::new(object)).await;
+        if result.is_err() {
             self.mark_malformed();
         }
-        outcome
+        result.map(|_| ())
     }
 
     pub(crate) async fn close_stream_subgroup(
@@ -2133,12 +2126,12 @@ mod tests {
             .await;
 
         // Assert: latched, and later appends are rejected
-        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
         let rejected = cache
             .append_live_stream_object(0, &even, Some(5), make_object(0))
             .await;
-        assert_eq!(rejected, AppendOutcome::MalformedTrack);
+        assert_eq!(rejected, Err(TrackMalformed));
     }
 
     #[tokio::test]
@@ -2159,7 +2152,7 @@ mod tests {
             .await;
 
         // Assert
-        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
     }
 
@@ -2198,7 +2191,7 @@ mod tests {
         let outcome = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
             .await;
-        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert_eq!(outcome, Err(TrackMalformed));
 
         // Assert: the in-flight collection aborts instead of serving.
         let result = tokio::time::timeout(Duration::from_secs(5), fetch)

@@ -6,7 +6,7 @@ use crate::modules::{
     core::data_object::DataObject,
     enums::FetchErrorCode,
     relay::{
-        cache::{duration::duration_from_env, group_cache::AppendOutcome, track_cache::TrackCache},
+        cache::{duration::duration_from_env, track_cache::TrackCache},
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         types::StreamSubgroupId,
     },
@@ -188,7 +188,7 @@ impl FetchIngest {
             }
         };
 
-        let header_outcome = cache
+        let header_result = cache
             .append_stream_object(
                 object.group_id,
                 &subgroup_id,
@@ -196,14 +196,14 @@ impl FetchIngest {
                 DataObject::SubgroupHeader(header),
             )
             .await;
-        if header_outcome == AppendOutcome::MalformedTrack {
+        if header_result.is_err() {
             anyhow::bail!(
                 "malformed track detected during fetch fill (group {}, subgroup {})",
                 object.group_id,
                 object.subgroup_id
             );
         }
-        let object_outcome = cache
+        let object_result = cache
             .append_stream_object(
                 object.group_id,
                 &subgroup_id,
@@ -216,7 +216,7 @@ impl FetchIngest {
                 }),
             )
             .await;
-        if object_outcome == AppendOutcome::MalformedTrack {
+        if object_result.is_err() {
             anyhow::bail!(
                 "malformed track detected during fetch fill (group {}, object {})",
                 object.group_id,

@@ -33,14 +33,16 @@ pub(crate) enum SubgroupLifecycle {
     Closed = 2,
 }
 
-#[must_use]
+/// The track violated draft-14 §2.5 (same Object, different immutable
+/// properties) and is quarantined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrackMalformed;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AppendOutcome {
-    Appended,
+pub(crate) enum AppendStatus {
+    Inserted,
     /// Identical duplicate, ignored (§8.1 first-wins; normal in cascading).
     Duplicate,
-    /// §2.5 condition 8: same Object, different immutable properties.
-    MalformedTrack,
 }
 
 pub(crate) struct GroupCache {
@@ -81,37 +83,37 @@ impl GroupCache {
         &self,
         object_id: Option<u64>,
         object: Arc<DataObject>,
-    ) -> AppendOutcome {
-        let outcome = match object_id {
+    ) -> Result<AppendStatus, TrackMalformed> {
+        let result = match object_id {
             None => {
                 let mut header = self.header.write().await;
                 match header.as_ref() {
                     Some(existing) if existing.matches_immutable_properties(&object) => {
-                        AppendOutcome::Duplicate
+                        Ok(AppendStatus::Duplicate)
                     }
-                    Some(_) => AppendOutcome::MalformedTrack,
+                    Some(_) => Err(TrackMalformed),
                     None => {
                         *header = Some(object);
-                        AppendOutcome::Appended
+                        Ok(AppendStatus::Inserted)
                     }
                 }
             }
             Some(object_id) => match self.objects.write().await.entry(object_id) {
                 Entry::Occupied(existing) => {
                     if existing.get().1.matches_immutable_properties(&object) {
-                        AppendOutcome::Duplicate
+                        Ok(AppendStatus::Duplicate)
                     } else {
-                        AppendOutcome::MalformedTrack
+                        Err(TrackMalformed)
                     }
                 }
                 Entry::Vacant(slot) => {
                     slot.insert((Instant::now(), object));
-                    AppendOutcome::Appended
+                    Ok(AppendStatus::Inserted)
                 }
             },
         };
         self.notify.notify_waiters();
-        outcome
+        result
     }
 
     pub(crate) async fn contains_object(&self, object_id: u64) -> bool {
@@ -301,8 +303,8 @@ mod tests {
         let first = cache.append(Some(0), payload_object(b"same")).await;
         let second = cache.append(Some(0), payload_object(b"same")).await;
         // Assert: first-wins dedup, no malformed flag
-        assert_eq!(first, AppendOutcome::Appended);
-        assert_eq!(second, AppendOutcome::Duplicate);
+        assert_eq!(first, Ok(AppendStatus::Inserted));
+        assert_eq!(second, Ok(AppendStatus::Duplicate));
         let snapshot = cache.objects_snapshot().await;
         assert_eq!(snapshot.len(), 1);
         let (id, object) = &snapshot[0];
@@ -317,7 +319,7 @@ mod tests {
         let _ = cache.append(Some(0), payload_object(b"first")).await;
         let outcome = cache.append(Some(0), payload_object(b"second")).await;
         // Assert: malformed; the first object is kept untouched
-        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert_eq!(outcome, Err(TrackMalformed));
         let snapshot = cache.objects_snapshot().await;
         assert_eq!(payload_of(&snapshot[0].1), Bytes::from_static(b"first"));
     }
@@ -329,8 +331,8 @@ mod tests {
         let first = cache.append(None, header_object(1)).await;
         let second = cache.append(None, header_object(1)).await;
         // Assert: first-wins, no malformed flag
-        assert_eq!(first, AppendOutcome::Appended);
-        assert_eq!(second, AppendOutcome::Duplicate);
+        assert_eq!(first, Ok(AppendStatus::Inserted));
+        assert_eq!(second, Ok(AppendStatus::Duplicate));
         assert!(cache.header().await.is_some());
     }
 
@@ -341,7 +343,7 @@ mod tests {
         let _ = cache.append(None, header_object(1)).await;
         let outcome = cache.append(None, header_object(2)).await;
         // Assert: malformed; the first header survives
-        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert_eq!(outcome, Err(TrackMalformed));
         match cache.header().await.unwrap().as_ref() {
             DataObject::SubgroupHeader(h) => assert_eq!(h.publisher_priority, 1),
             _ => panic!("expected SubgroupHeader"),

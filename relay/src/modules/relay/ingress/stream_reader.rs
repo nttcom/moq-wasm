@@ -10,7 +10,7 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
-        cache::{group_cache::AppendOutcome, store::TrackCacheStore},
+        cache::store::TrackCacheStore,
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
         types::StreamSubgroupId,
     },
@@ -103,7 +103,7 @@ impl StreamReader {
                     prev_object_id = None;
                     span.record("group_id", group_id);
                     span.record("subgroup_id", tracing::field::debug(&subgroup_id));
-                    let outcome = cache
+                    let result = cache
                         .append_live_stream_object(
                             group_id,
                             &subgroup_id,
@@ -111,7 +111,7 @@ impl StreamReader {
                             DataObject::SubgroupHeader(header),
                         )
                         .await;
-                    if outcome == AppendOutcome::MalformedTrack {
+                    if result.is_err() {
                         span.record("end_reason", "malformed_track");
                         tracing::warn!(%track_key, group_id, "malformed track detected; stopping stream ingest");
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
@@ -142,10 +142,10 @@ impl StreamReader {
                     };
                     let object_id = object.resolve_absolute_object_id(prev_object_id);
                     prev_object_id = object_id;
-                    let outcome = cache
+                    let result = cache
                         .append_live_stream_object(group_id, &subgroup_id, object_id, object)
                         .await;
-                    if outcome == AppendOutcome::MalformedTrack {
+                    if result.is_err() {
                         span.record("end_reason", "malformed_track");
                         tracing::warn!(
                             %track_key,
