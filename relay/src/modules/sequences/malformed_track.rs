@@ -70,7 +70,7 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        core::mocks::{RecordedControlMessages, session_repository_with_mock_control_session},
+        core::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
         enums::ContentExists,
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
@@ -111,7 +111,7 @@ mod tests {
         );
 
         let (repository, recorded) =
-            session_repository_with_mock_control_session(PUBLISHER_SESSION).await;
+            session_repository_with_upstream_session(PUBLISHER_SESSION).await;
         let forwarder = ControlMessageForwarder { repository };
 
         let (ingress_sender, ingress_receiver) = mpsc::channel(8);

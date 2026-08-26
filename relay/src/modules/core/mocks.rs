@@ -20,11 +20,11 @@ pub(crate) struct RecordedControlMessages {
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
 }
 
-pub(crate) struct MockControlSession {
+pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
 }
 
-pub(crate) async fn session_repository_with_mock_control_session(
+pub(crate) async fn session_repository_with_upstream_session(
     session_id: SessionId,
 ) -> (
     Arc<tokio::sync::Mutex<SessionRepository>>,
@@ -36,7 +36,7 @@ pub(crate) async fn session_repository_with_mock_control_session(
     repository
         .add_client(
             session_id,
-            Box::new(MockControlSession {
+            Box::new(MockUpstreamSession {
                 recorded: recorded.clone(),
             }),
             session_event_sender,
@@ -47,13 +47,13 @@ pub(crate) async fn session_repository_with_mock_control_session(
 }
 
 #[async_trait::async_trait]
-impl Session for MockControlSession {
+impl Session for MockUpstreamSession {
     fn as_publisher(&self) -> Box<dyn Publisher> {
-        unimplemented!("not used by MockControlSession tests")
+        unimplemented!("not used by MockUpstreamSession tests")
     }
 
     fn as_subscriber(&self) -> Box<dyn Subscriber> {
-        Box::new(MockControlSubscriber {
+        Box::new(MockUpstreamSubscriber {
             recorded: self.recorded.clone(),
         })
     }
@@ -63,19 +63,19 @@ impl Session for MockControlSession {
     }
 }
 
-struct MockControlSubscriber {
+struct MockUpstreamSubscriber {
     recorded: RecordedControlMessages,
 }
 
 #[async_trait::async_trait]
-impl Subscriber for MockControlSubscriber {
+impl Subscriber for MockUpstreamSubscriber {
     async fn send_subscribe(
         &mut self,
         _track_namespace: String,
         _track_name: String,
         _option: SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
-        unimplemented!("not used by MockControlSession tests")
+        unimplemented!("not used by MockUpstreamSession tests")
     }
 
     async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
@@ -88,14 +88,14 @@ impl Subscriber for MockControlSubscriber {
     }
 
     async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
-        unimplemented!("not used by MockControlSession tests")
+        unimplemented!("not used by MockUpstreamSession tests")
     }
 
     async fn create_data_receiver(
         &mut self,
         _subscription: &UpstreamSubscription,
     ) -> anyhow::Result<DataReceiver> {
-        unimplemented!("not used by MockControlSession tests")
+        unimplemented!("not used by MockUpstreamSession tests")
     }
 
     async fn send_fetch(
@@ -106,7 +106,7 @@ impl Subscriber for MockControlSubscriber {
         _end_location: moqt::Location,
         _option: moqt::FetchOption,
     ) -> anyhow::Result<moqt::FetchHandle> {
-        unimplemented!("not used by MockControlSession tests")
+        unimplemented!("not used by MockUpstreamSession tests")
     }
 
     async fn create_fetch_receiver(

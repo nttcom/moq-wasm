@@ -303,7 +303,7 @@ impl FetchIngest {
 mod tests {
     use super::*;
     use crate::modules::{
-        core::mocks::session_repository_with_mock_control_session,
+        core::mocks::session_repository_with_upstream_session,
         relay::cache::track_cache::FetchRangeResolution,
     };
     use bytes::Bytes;
@@ -318,7 +318,7 @@ mod tests {
         const DOWNSTREAM_SESSION: SessionId = 2; // not registered: downstream reset is skipped
         const UPSTREAM_FETCH_REQUEST_ID: u64 = 7;
         let (session_repo, recorded) =
-            session_repository_with_mock_control_session(UPSTREAM_SESSION).await;
+            session_repository_with_upstream_session(UPSTREAM_SESSION).await;
 
         let cache = Arc::new(TrackCache::new());
         let mut first_fill = HashMap::new();
