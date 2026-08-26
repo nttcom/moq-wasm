@@ -8,7 +8,7 @@ use tokio::{
 use crate::modules::{
     core::data_receiver::datagram_receiver::DatagramReceiver,
     relay::{
-        cache::store::TrackCacheStore,
+        cache::{group_cache::AppendOutcome, store::TrackCacheStore},
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
     },
     types::{SessionId, TrackKey},
@@ -140,9 +140,19 @@ impl DatagramReader {
                     }
                     let object_id = object.resolve_absolute_object_id(prev_object_id);
                     prev_object_id = object_id;
-                    cache
+                    let outcome = cache
                         .append_datagram_object(group_id, object_id, object)
                         .await;
+                    if outcome == AppendOutcome::MalformedTrack {
+                        tracing::warn!(
+                            %track_key,
+                            group_id,
+                            "malformed track detected; stopping datagram ingest"
+                        );
+                        cache.close_datagram_group(group_id).await;
+                        cache.end_live_ingest();
+                        return;
+                    }
                 }
                 Err(_) => {
                     // Ensure the last group is closed before exiting.

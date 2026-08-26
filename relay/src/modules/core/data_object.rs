@@ -14,6 +14,34 @@ impl DataObject {
         }
     }
 
+    /// Compares the properties draft-14 §2.5 (condition 8) declares immutable
+    /// per Object: payload or status, extension headers, publisher priority,
+    /// and group. Per-hop or per-stream encoding details are excluded:
+    /// `track_alias` is rewritten per hop, `message_type` and
+    /// `object_id_delta` depend on how the carrying stream was encoded (a
+    /// fetch fill re-synthesizes both for the same object).
+    pub(crate) fn matches_immutable_properties(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::SubgroupHeader(a), Self::SubgroupHeader(b)) => {
+                a.group_id == b.group_id
+                    && a.subgroup_id == b.subgroup_id
+                    && a.publisher_priority == b.publisher_priority
+            }
+            (Self::SubgroupObject(a), Self::SubgroupObject(b)) => {
+                // Payload comparison is Bytes ==, which checks length before
+                // the byte-wise compare.
+                a.subgroup_object == b.subgroup_object && a.extension_headers == b.extension_headers
+            }
+            (Self::ObjectDatagram(a), Self::ObjectDatagram(b)) => {
+                a.group_id == b.group_id
+                    && a.field.publisher_priority() == b.field.publisher_priority()
+                    && a.field.extension_headers() == b.field.extension_headers()
+                    && a.field.payload() == b.field.payload()
+            }
+            _ => false,
+        }
+    }
+
     /// Resolves the absolute object_id of this object within its ingest stream.
     /// `prev_object_id` is the resolved object_id of the previous object on the same
     /// stream (`None` at the start of a subgroup or right after its header).
@@ -85,5 +113,59 @@ mod tests {
         let datagram = datagram_without_id();
         // Act / Assert: implicit id starts at 0
         assert_eq!(datagram.resolve_absolute_object_id(None), Some(0));
+    }
+
+    fn subgroup_object(object_id_delta: u64, payload: &'static [u8]) -> DataObject {
+        let message_type =
+            moqt::SubgroupHeader::new(0, 0, moqt::SubgroupId::Value(0), 0, false, false)
+                .message_type;
+        DataObject::SubgroupObject(moqt::SubgroupObjectField {
+            message_type,
+            object_id_delta,
+            extension_headers: moqt::ExtensionHeaders::default(),
+            subgroup_object: moqt::SubgroupObject::new_payload(Bytes::from_static(payload)),
+        })
+    }
+
+    fn datagram(publisher_priority: u8, payload: &'static [u8]) -> DataObject {
+        DataObject::ObjectDatagram(ObjectDatagram::new(
+            0,
+            0,
+            DatagramField::Payload0x00 {
+                object_id: 0,
+                publisher_priority,
+                payload: Bytes::from_static(payload),
+            },
+        ))
+    }
+
+    #[test]
+    fn stream_encoding_details_are_not_immutable_properties() {
+        // The same object can legitimately arrive with a different
+        // object_id_delta (e.g. re-encoded by a fetch fill).
+        let a = subgroup_object(0, b"same");
+        let b = subgroup_object(3, b"same");
+        assert!(a.matches_immutable_properties(&b));
+    }
+
+    #[test]
+    fn differing_payload_is_not_a_match() {
+        let a = subgroup_object(0, b"a");
+        let b = subgroup_object(0, b"b");
+        assert!(!a.matches_immutable_properties(&b));
+    }
+
+    #[test]
+    fn differing_datagram_priority_is_not_a_match() {
+        let a = datagram(1, b"same");
+        let b = datagram(2, b"same");
+        assert!(!a.matches_immutable_properties(&b));
+    }
+
+    #[test]
+    fn identical_datagram_matches() {
+        let a = datagram(1, b"same");
+        let b = datagram(1, b"same");
+        assert!(a.matches_immutable_properties(&b));
     }
 }

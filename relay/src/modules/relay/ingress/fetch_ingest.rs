@@ -4,8 +4,9 @@ use tokio::task::JoinHandle;
 
 use crate::modules::{
     core::data_object::DataObject,
+    enums::FetchErrorCode,
     relay::{
-        cache::{duration::duration_from_env, track_cache::TrackCache},
+        cache::{duration::duration_from_env, group_cache::AppendOutcome, track_cache::TrackCache},
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         types::StreamSubgroupId,
     },
@@ -47,15 +48,24 @@ impl FetchIngest {
     ) -> Self {
         let downstream_subscriber_session_id = start.downstream_subscriber_session_id;
         let request_id = start.request_id;
+        let cache = start.cache.clone();
         let join_handle = tokio::spawn(async move {
             if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
                 // Expected request-scoped failures (timeout, upstream reset):
                 // log the chain without anyhow's captured backtrace.
                 tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
+                // §2.5: a fetch stream of a malformed track must be reset
+                // with MALFORMED_TRACK rather than a generic error.
+                let error_code = if cache.is_malformed() {
+                    FetchErrorCode::MalformedTrack as u64
+                } else {
+                    DATA_STREAM_INTERNAL_ERROR
+                };
                 Self::reset_downstream_fetch(
                     session_repo,
                     downstream_subscriber_session_id,
                     request_id,
+                    error_code,
                 )
                 .await;
             }
@@ -180,7 +190,7 @@ impl FetchIngest {
             }
         };
 
-        cache
+        let header_outcome = cache
             .append_stream_object(
                 object.group_id,
                 &subgroup_id,
@@ -188,7 +198,14 @@ impl FetchIngest {
                 DataObject::SubgroupHeader(header),
             )
             .await;
-        cache
+        if header_outcome == AppendOutcome::MalformedTrack {
+            anyhow::bail!(
+                "malformed track detected during fetch fill (group {}, subgroup {})",
+                object.group_id,
+                object.subgroup_id
+            );
+        }
+        let object_outcome = cache
             .append_stream_object(
                 object.group_id,
                 &subgroup_id,
@@ -201,6 +218,13 @@ impl FetchIngest {
                 }),
             )
             .await;
+        if object_outcome == AppendOutcome::MalformedTrack {
+            anyhow::bail!(
+                "malformed track detected during fetch fill (group {}, object {})",
+                object.group_id,
+                object.object_id
+            );
+        }
         previous_object_ids.insert(key, object.object_id);
         Ok(())
     }
@@ -216,6 +240,7 @@ impl FetchIngest {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         downstream_subscriber_session_id: SessionId,
         request_id: u64,
+        error_code: u64,
     ) {
         let publisher = {
             let session_repo = session_repo.lock().await;
@@ -228,7 +253,7 @@ impl FetchIngest {
         // was delivered, so failure after FETCH_OK must be signaled with RESET_STREAM.
         match publisher.new_fetch_sender(request_id).await {
             Ok(sender) => {
-                if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
+                if let Err(error) = sender.reset(error_code).await {
                     tracing::error!(error = %format!("{error:#}"), "failed to reset downstream fetch stream");
                 }
             }
@@ -297,6 +322,49 @@ mod tests {
 
         // Assert: only a completed FETCH known range may cover this historical gap.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test]
+    async fn conflicting_fetch_object_fails_the_fill_and_latches_the_track() {
+        // Arrange: a fill stored the object once.
+        let cache = Arc::new(TrackCache::new());
+        let mut first_fill = HashMap::new();
+        FetchIngest::append_fetch_object(
+            cache.clone(),
+            FetchObjectField::new(
+                0,
+                0,
+                0,
+                0,
+                ExtensionHeaders::default(),
+                FetchObject::Payload(Bytes::from_static(b"a")),
+            ),
+            &mut first_fill,
+        )
+        .await
+        .unwrap();
+
+        // Act: a second fill delivers the same object with another payload
+        // (§2.5 condition 8).
+        let mut second_fill = HashMap::new();
+        let result = FetchIngest::append_fetch_object(
+            cache.clone(),
+            FetchObjectField::new(
+                0,
+                0,
+                0,
+                0,
+                ExtensionHeaders::default(),
+                FetchObject::Payload(Bytes::from_static(b"b")),
+            ),
+            &mut second_fill,
+        )
+        .await;
+
+        // Assert: the fill fails (its downstream fetch gets reset) and the
+        // track is quarantined.
+        assert!(result.is_err());
+        assert!(cache.is_malformed());
     }
 
     #[tokio::test]

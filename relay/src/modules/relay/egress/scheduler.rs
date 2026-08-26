@@ -341,7 +341,7 @@ mod tests {
     ) {
         let object_id = object.resolve_absolute_object_id(*prev_object_id);
         *prev_object_id = object_id;
-        cache
+        let _ = cache
             .append_stream_object(group_id, subgroup, object_id, object)
             .await;
     }

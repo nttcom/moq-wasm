@@ -19,6 +19,13 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
     ) -> anyhow::Result<DownstreamSubscription>;
+    async fn send_publish_done(
+        &self,
+        request_id: u64,
+        status_code: u64,
+        stream_count: u64,
+        error_reason: String,
+    ) -> anyhow::Result<()>;
     fn new_stream_factory(
         &self,
         downstream_subscription: &DownstreamSubscription,
@@ -46,6 +53,17 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         let option = moqt::PublishOption::default();
         let subscription = self.publish(track_namespace, track_name, option).await?;
         Ok(DownstreamSubscription::from(subscription))
+    }
+
+    async fn send_publish_done(
+        &self,
+        request_id: u64,
+        status_code: u64,
+        stream_count: u64,
+        error_reason: String,
+    ) -> anyhow::Result<()> {
+        self.publish_done(request_id, status_code, stream_count, error_reason)
+            .await
     }
 
     fn new_stream_factory(

@@ -18,9 +18,14 @@ use crate::modules::{
 mod fixtures;
 mod mocks;
 
+pub(crate) use self::fixtures::data_object::ordered_payload;
+
 use self::{
-    fixtures::{data_object::ordered_payload, subscription::make_largest_object_subscription},
-    mocks::{downstream_client::MockPublisher, upstream_client::UpstreamSubgroupStream},
+    fixtures::subscription::make_largest_object_subscription,
+    mocks::{
+        downstream_client::{MockPublisher, SentPublishDone},
+        upstream_client::UpstreamSubgroupStream,
+    },
 };
 
 pub(crate) const OBJECT_COUNT: usize = 50;
@@ -38,7 +43,26 @@ pub(crate) struct RelayHarness {
 
 pub(crate) struct EgressRunnerHandle {
     sent: mpsc::UnboundedReceiver<Option<DataObject>>,
+    publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
     join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl EgressRunnerHandle {
+    /// Waits for the runner to send PUBLISH_DONE downstream.
+    pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {
+        tokio::time::timeout(RECV_TIMEOUT, self.publish_done.recv())
+            .await
+            .expect("egress should send PUBLISH_DONE")
+            .expect("egress dropped its publisher before PUBLISH_DONE")
+    }
+
+    /// Asserts no PUBLISH_DONE was sent so far (non-blocking).
+    pub(crate) fn assert_no_publish_done(&mut self) {
+        assert!(
+            self.publish_done.try_recv().is_err(),
+            "no PUBLISH_DONE should have been sent"
+        );
+    }
 }
 
 impl Drop for EgressRunnerHandle {
@@ -85,7 +109,7 @@ impl RelayHarness {
         &self,
         largest_location: Option<moqt::Location>,
     ) -> EgressRunnerHandle {
-        let (publisher, sent) = MockPublisher::channel();
+        let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
         let runner = EgressRunner::new(
             self.track_key.clone(),
@@ -104,7 +128,19 @@ impl RelayHarness {
             .expect("egress runner should signal readiness")
             .expect("egress readiness should not be dropped")
             .expect("egress runner should start");
-        EgressRunnerHandle { sent, join_handle }
+        EgressRunnerHandle {
+            sent: observers.sent,
+            publish_done: observers.publish_done,
+            join_handle,
+        }
+    }
+
+    /// Waits until the track's malformed latch is set.
+    pub(crate) async fn wait_track_malformed(&self) {
+        let cache = self.cache_store.get_or_create(&self.track_key);
+        tokio::time::timeout(RECV_TIMEOUT, cache.malformed_track_detected())
+            .await
+            .expect("track should be marked malformed");
     }
 
     pub(crate) async fn wait_largest_location(&self, expected: moqt::Location) -> moqt::Location {

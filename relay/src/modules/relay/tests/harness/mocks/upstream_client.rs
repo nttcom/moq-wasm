@@ -38,9 +38,15 @@ impl UpstreamSubgroupStream {
     }
 
     pub(crate) fn object(&self, index: usize) {
+        self.object_with_payload(index, ordered_payload(index));
+    }
+
+    /// Sends the object at `index` with an arbitrary payload, for duplicate /
+    /// malformed-track scenarios.
+    pub(crate) fn object_with_payload(&self, index: usize, payload: bytes::Bytes) {
         let delta = if index == 0 { 0 } else { 1 };
         self.sender
-            .send(Ok(Some(make_payload_object(delta, ordered_payload(index)))))
+            .send(Ok(Some(make_payload_object(delta, payload))))
             .expect("ingress should be reading this stream");
     }
 

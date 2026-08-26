@@ -109,6 +109,22 @@ pub(crate) enum FetchErrorCode {
     ExpiredAuthToken = 0x12,
 }
 
+// https://www.ietf.org/archive/id/draft-ietf-moq-transport-14.html#section-9.12
+// PUBLISH_DONE status codes.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u64)]
+pub(crate) enum PublishDoneStatusCode {
+    InternalError = 0x0,
+    Unauthorized = 0x1,
+    TrackEnded = 0x2,
+    SubscriptionEnded = 0x3,
+    GoingAway = 0x4,
+    Expired = 0x5,
+    TooFarBehind = 0x6,
+    MalformedTrack = 0x7,
+}
+
 // https://www.ietf.org/archive/id/draft-ietf-moq-transport-14.html#section-9.9
 // SUBSCRIBE_ERROR error codes.
 #[allow(dead_code)]

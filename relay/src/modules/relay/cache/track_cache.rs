@@ -2,23 +2,27 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
     },
     time::Duration,
 };
 
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 use crate::modules::{
     core::data_object::DataObject,
     relay::{
         cache::{
-            group_cache::{GroupCache, SubgroupLifecycle},
+            group_cache::{AppendOutcome, GroupCache, SubgroupLifecycle},
             known_ranges::KnownRanges,
         },
         types::StreamSubgroupId,
     },
 };
+
+/// Marker error: the track was latched malformed while serving from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrackMalformed;
 
 pub(crate) struct TrackCache {
     stream_groups: RwLock<BTreeMap<u64, BTreeMap<StreamSubgroupId, Arc<GroupCache>>>>,
@@ -26,6 +30,11 @@ pub(crate) struct TrackCache {
     known_ranges: RwLock<KnownRanges>,
     live_ingest_count: AtomicUsize,
     eviction_generation: AtomicU64,
+    /// Sticky Malformed Track latch (draft-14 §2.5). Once set the track is
+    /// quarantined: appends are rejected, fetch serving aborts, and egress
+    /// runners terminate their subscriptions. The session itself stays alive.
+    malformed: AtomicBool,
+    malformed_notify: Notify,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,6 +53,32 @@ impl TrackCache {
             known_ranges: RwLock::new(KnownRanges::default()),
             live_ingest_count: AtomicUsize::new(0),
             eviction_generation: AtomicU64::new(0),
+            malformed: AtomicBool::new(false),
+            malformed_notify: Notify::new(),
+        }
+    }
+
+    pub(crate) fn is_malformed(&self) -> bool {
+        self.malformed.load(AtomicOrdering::Acquire)
+    }
+
+    fn mark_malformed(&self) {
+        self.malformed.store(true, AtomicOrdering::Release);
+        self.malformed_notify.notify_waiters();
+    }
+
+    /// Resolves once the track is marked malformed; pends forever otherwise.
+    /// See `GroupCache::header_or_wait` for why the waiter is enabled before
+    /// the check.
+    pub(crate) async fn malformed_track_detected(&self) {
+        loop {
+            let notified = self.malformed_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_malformed() {
+                return;
+            }
+            notified.await;
         }
     }
 
@@ -96,11 +131,15 @@ impl TrackCache {
         subgroup_id: &StreamSubgroupId,
         object_id: Option<u64>,
         object: DataObject,
-    ) {
-        let group = self
-            .ensure_stream_subgroup(group_id, subgroup_id, SubgroupLifecycle::NoCloseSignal)
-            .await;
-        group.append(object_id, Arc::new(object)).await;
+    ) -> AppendOutcome {
+        self.append_stream_object_with_lifecycle(
+            group_id,
+            subgroup_id,
+            object_id,
+            object,
+            SubgroupLifecycle::NoCloseSignal,
+        )
+        .await
     }
 
     pub(crate) async fn append_live_stream_object(
@@ -109,15 +148,19 @@ impl TrackCache {
         subgroup_id: &StreamSubgroupId,
         object_id: Option<u64>,
         object: DataObject,
-    ) {
-        let group = self
-            .ensure_stream_subgroup(
+    ) -> AppendOutcome {
+        let outcome = self
+            .append_stream_object_with_lifecycle(
                 group_id,
                 subgroup_id,
+                object_id,
+                object,
                 SubgroupLifecycle::AwaitingCloseSignal,
             )
             .await;
-        group.append(object_id, Arc::new(object)).await;
+        if outcome == AppendOutcome::MalformedTrack {
+            return outcome;
+        }
         if let Some(object_id) = object_id {
             self.known_ranges.write().await.insert(
                 moqt::Location {
@@ -130,6 +173,70 @@ impl TrackCache {
                 },
             );
         }
+        outcome
+    }
+
+    async fn append_stream_object_with_lifecycle(
+        &self,
+        group_id: u64,
+        subgroup_id: &StreamSubgroupId,
+        object_id: Option<u64>,
+        object: DataObject,
+        lifecycle: SubgroupLifecycle,
+    ) -> AppendOutcome {
+        if self.is_malformed() {
+            return AppendOutcome::MalformedTrack;
+        }
+        let group = self
+            .ensure_stream_subgroup(group_id, subgroup_id, lifecycle)
+            .await;
+        let mut outcome = group.append(object_id, Arc::new(object)).await;
+        if outcome == AppendOutcome::Appended
+            && let Some(object_id) = object_id
+            && self
+                .object_exists_in_other_subgroup(group_id, subgroup_id, object_id)
+                .await
+        {
+            outcome = AppendOutcome::MalformedTrack;
+        }
+        if outcome == AppendOutcome::MalformedTrack {
+            self.mark_malformed();
+        }
+        outcome
+    }
+
+    /// §2.5 condition 8: the same (group, object) must not appear in two
+    /// different subgroups. Checked after the insert so two racing writers
+    /// cannot both miss the other's entry — the later one sees both.
+    /// Restricted to explicit `Value` subgroup ids: a `None` or
+    /// `FirstObjectIdDelta` key cannot be proven to denote a different
+    /// subgroup than a `Value` key of the same group.
+    async fn object_exists_in_other_subgroup(
+        &self,
+        group_id: u64,
+        subgroup_id: &StreamSubgroupId,
+        object_id: u64,
+    ) -> bool {
+        if !matches!(subgroup_id, StreamSubgroupId::Value(_)) {
+            return false;
+        }
+        let other_subgroups: Vec<Arc<GroupCache>> = {
+            let groups = self.stream_groups.read().await;
+            let Some(subgroups) = groups.get(&group_id) else {
+                return false;
+            };
+            subgroups
+                .iter()
+                .filter(|(key, _)| *key != subgroup_id && matches!(key, StreamSubgroupId::Value(_)))
+                .map(|(_, cache)| cache.clone())
+                .collect()
+        };
+        for other in other_subgroups {
+            if other.contains_object(object_id).await {
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) async fn append_datagram_object(
@@ -137,14 +244,21 @@ impl TrackCache {
         group_id: u64,
         object_id: Option<u64>,
         object: DataObject,
-    ) {
+    ) -> AppendOutcome {
+        if self.is_malformed() {
+            return AppendOutcome::MalformedTrack;
+        }
         // Datagrams have no subgroup header, so a resolved object_id is always expected.
         let Some(object_id) = object_id else {
             tracing::error!(group_id, "unexpected: datagram object without object_id");
-            return;
+            return AppendOutcome::Duplicate;
         };
         let group = self.ensure_datagram_group(group_id).await;
-        group.append(Some(object_id), Arc::new(object)).await;
+        let outcome = group.append(Some(object_id), Arc::new(object)).await;
+        if outcome == AppendOutcome::MalformedTrack {
+            self.mark_malformed();
+        }
+        outcome
     }
 
     pub(crate) async fn close_stream_subgroup(
@@ -571,17 +685,20 @@ impl TrackCache {
         &self,
         start: moqt::Location,
         end: moqt::Location,
-    ) -> Vec<moqt::FetchObjectField> {
+    ) -> Result<Vec<moqt::FetchObjectField>, TrackMalformed> {
         self.get_fetch_objects_with_group_order(start, end, moqt::GroupOrder::Ascending)
             .await
     }
 
+    /// Collects the requested range from the cache. Fails with
+    /// [`TrackMalformed`] as soon as the track's malformed latch is observed,
+    /// so an in-flight fetch can be reset instead of served (draft-14 §2.5).
     pub(crate) async fn get_fetch_objects_with_group_order(
         &self,
         start: moqt::Location,
         end: moqt::Location,
         group_order: moqt::GroupOrder,
-    ) -> Vec<moqt::FetchObjectField> {
+    ) -> Result<Vec<moqt::FetchObjectField>, TrackMalformed> {
         let mut groups_in_range: Vec<(u64, Vec<Arc<GroupCache>>)> = {
             // NOTE: Datagram objects are not included.
             let groups = self.stream_groups.read().await;
@@ -636,7 +753,11 @@ impl TrackCache {
 
             let mut group_objects = Vec::new();
             for cache in caches {
-                let Some(header) = cache.header_or_wait().await else {
+                let header = tokio::select! {
+                    header = cache.header_or_wait() => header,
+                    _ = self.malformed_track_detected() => return Err(TrackMalformed),
+                };
+                let Some(header) = header else {
                     continue; // closed before a header arrived
                 };
                 let (publisher_priority, subgroup_id) = match header.as_ref() {
@@ -651,6 +772,9 @@ impl TrackCache {
 
                 let mut next_object_id = start_object_id;
                 loop {
+                    if self.is_malformed() {
+                        return Err(TrackMalformed);
+                    }
                     if let Some(end_object_id) = end_exclusive
                         && next_object_id >= end_object_id
                     {
@@ -661,7 +785,10 @@ impl TrackCache {
                     let found = if in_known {
                         cache.first_object_from(next_object_id).await
                     } else {
-                        cache.object_from_or_wait(next_object_id).await
+                        tokio::select! {
+                            found = cache.object_from_or_wait(next_object_id) => found,
+                            _ = self.malformed_track_detected() => return Err(TrackMalformed),
+                        }
                     };
                     match found {
                         Some((current_object_id, object)) => {
@@ -695,7 +822,7 @@ impl TrackCache {
             group_objects.sort_by_key(|object| object.object_id);
             fetch_objects.extend(group_objects);
         }
-        fetch_objects
+        Ok(fetch_objects)
     }
 
     fn push_fetch_object(
@@ -782,7 +909,7 @@ mod tests {
         // Arrange: append a SubgroupHeader only, no SubgroupObject
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
         // Act / Assert: a header is not an object, so None is returned
@@ -860,7 +987,7 @@ mod tests {
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
         // Act
@@ -877,7 +1004,7 @@ mod tests {
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_live_stream_object(0, &subgroup, None, make_header(0))
             .await;
 
@@ -911,14 +1038,14 @@ mod tests {
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
-        cache
+        let _ = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object(0))
             .await;
         tokio::time::advance(Duration::from_secs(6)).await;
-        cache
+        let _ = cache
             .append_live_stream_object(0, &subgroup, Some(1), make_object(0))
             .await;
 
@@ -1216,10 +1343,10 @@ mod tests {
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, Some(0), make_object(0))
             .await;
 
@@ -1409,10 +1536,10 @@ mod tests {
         // Arrange: datagrams are cached for delivery but cannot prove that gaps
         // are object non-existence.
         let cache = TrackCache::new();
-        cache
+        let _ = cache
             .append_datagram_object(0, Some(1), make_object(0))
             .await;
-        cache
+        let _ = cache
             .append_datagram_object(0, Some(3), make_object(0))
             .await;
         cache.close_datagram_group(0).await;
@@ -1512,11 +1639,11 @@ mod tests {
     // Fills a group with objects at the given (non-sequential) absolute object_ids.
     async fn fill_group_with_ids(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_live_stream_object(group_id, &subgroup, None, make_header(group_id))
             .await;
         for &id in object_ids {
-            cache
+            let _ = cache
                 .append_live_stream_object(group_id, &subgroup, Some(id), make_object(0))
                 .await;
         }
@@ -1711,7 +1838,8 @@ mod tests {
                     object_id: 3,
                 },
             )
-            .await;
+            .await
+            .unwrap();
         // Assert: 0,1,2 included; 3 (the End) excluded
         assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1), (0, 2)]);
     }
@@ -1721,10 +1849,10 @@ mod tests {
         // Arrange: a status object carries positive knowledge about non-existence.
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
-        cache
+        let _ = cache
             .append_stream_object(
                 0,
                 &subgroup,
@@ -1745,7 +1873,8 @@ mod tests {
                     object_id: 3,
                 },
             )
-            .await;
+            .await
+            .unwrap();
 
         // Assert: the status object is returned rather than filtered out.
         assert_eq!(object_ids(&objects), vec![(0, 2)]);
@@ -1772,7 +1901,8 @@ mod tests {
                     object_id: 0,
                 },
             )
-            .await;
+            .await
+            .unwrap();
         // Assert: all objects are included
         assert_eq!(
             object_ids(&objects),
@@ -1797,7 +1927,8 @@ mod tests {
                     object_id: 8,
                 },
             )
-            .await;
+            .await
+            .unwrap();
         // Assert: 0 skipped (< start), 8 excluded (>= end); 3 and 5 survive across the gaps
         assert_eq!(object_ids(&objects), vec![(0, 3), (0, 5)]);
     }
@@ -1820,7 +1951,8 @@ mod tests {
                     object_id: 3,
                 },
             )
-            .await;
+            .await
+            .unwrap();
         // Assert: g0 from object 2; g1 up to (not including) object 3
         assert_eq!(
             object_ids(&objects),
@@ -1834,10 +1966,10 @@ mod tests {
         let cache = TrackCache::new();
         let even = StreamSubgroupId::Value(0);
         let odd = StreamSubgroupId::Value(1);
-        cache
+        let _ = cache
             .append_stream_object(0, &even, None, make_header(0))
             .await;
-        cache
+        let _ = cache
             .append_stream_object(
                 0,
                 &odd,
@@ -1853,12 +1985,12 @@ mod tests {
             )
             .await;
         for object_id in [0, 2, 4] {
-            cache
+            let _ = cache
                 .append_stream_object(0, &even, Some(object_id), make_object(0))
                 .await;
         }
         for object_id in [1, 3, 5] {
-            cache
+            let _ = cache
                 .append_stream_object(0, &odd, Some(object_id), make_object(0))
                 .await;
         }
@@ -1878,7 +2010,8 @@ mod tests {
                     object_id: 6,
                 },
             )
-            .await;
+            .await
+            .unwrap();
 
         // Assert
         assert_eq!(
@@ -1907,7 +2040,8 @@ mod tests {
                 },
                 moqt::GroupOrder::Descending,
             )
-            .await;
+            .await
+            .unwrap();
 
         // Assert
         assert_eq!(object_ids(&objects), vec![(1, 0), (1, 1), (0, 0), (0, 1)]);
@@ -1919,7 +2053,7 @@ mod tests {
         // has already completed — the cross-stream reordering QUIC allows.
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
         fill_closed_group(&cache, 1, 5).await;
@@ -1945,7 +2079,7 @@ mod tests {
         // Group 0's objects arrive after the fetch started, then the stream ends.
         tokio::task::yield_now().await;
         for id in 0..3u64 {
-            cache
+            let _ = cache
                 .append_stream_object(0, &subgroup, Some(id), make_object(0))
                 .await;
         }
@@ -1954,11 +2088,133 @@ mod tests {
         let objects = tokio::time::timeout(Duration::from_secs(5), fetch)
             .await
             .expect("fetch must complete once the in-flight group closes")
+            .unwrap()
             .unwrap();
         // Assert: the late group 0 objects are delivered, not silently dropped.
         assert_eq!(
             object_ids(&objects),
             vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
         );
+    }
+
+    fn make_object_with_payload(delta: u64, payload: &[u8]) -> DataObject {
+        let message_type =
+            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
+        DataObject::SubgroupObject(SubgroupObjectField {
+            message_type,
+            object_id_delta: delta,
+            extension_headers: ExtensionHeaders::default(),
+            subgroup_object: SubgroupObject::new_payload(Bytes::from(payload.to_vec())),
+        })
+    }
+
+    fn subgroup_header_for(subgroup_id: u64) -> DataObject {
+        DataObject::SubgroupHeader(SubgroupHeader::new(
+            0,
+            0,
+            SubgroupId::Value(subgroup_id),
+            0,
+            false,
+            false,
+        ))
+    }
+
+    #[tokio::test]
+    async fn same_object_in_two_subgroups_is_malformed() {
+        // Arrange: object 0 already lives in subgroup 0.
+        let cache = TrackCache::new();
+        let even = StreamSubgroupId::Value(0);
+        let odd = StreamSubgroupId::Value(1);
+        let _ = cache
+            .append_live_stream_object(0, &even, None, subgroup_header_for(0))
+            .await;
+        let _ = cache
+            .append_live_stream_object(0, &even, Some(0), make_object(0))
+            .await;
+        let _ = cache
+            .append_live_stream_object(0, &odd, None, subgroup_header_for(1))
+            .await;
+
+        // Act: the same object arrives again under a different subgroup — the
+        // subgroup is an immutable property, so this is §2.5 condition 8 even
+        // with an identical payload.
+        let outcome = cache
+            .append_live_stream_object(0, &odd, Some(0), make_object(0))
+            .await;
+
+        // Assert: detected, latched, and later appends are rejected.
+        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert!(cache.is_malformed());
+        let rejected = cache
+            .append_live_stream_object(0, &even, Some(5), make_object(0))
+            .await;
+        assert_eq!(rejected, AppendOutcome::MalformedTrack);
+    }
+
+    #[tokio::test]
+    async fn duplicate_object_with_different_payload_latches_the_track() {
+        // Arrange
+        let cache = TrackCache::new();
+        let subgroup = StreamSubgroupId::Value(0);
+        let _ = cache
+            .append_live_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        let _ = cache
+            .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
+            .await;
+
+        // Act
+        let outcome = cache
+            .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
+            .await;
+
+        // Assert
+        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+        assert!(cache.is_malformed());
+    }
+
+    #[tokio::test]
+    async fn get_fetch_objects_aborts_when_track_goes_malformed() {
+        // Arrange: a live group whose tail the fetch will wait for.
+        let cache = Arc::new(TrackCache::new());
+        let subgroup = StreamSubgroupId::Value(0);
+        let _ = cache
+            .append_live_stream_object(0, &subgroup, None, make_header(0))
+            .await;
+        let _ = cache
+            .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
+            .await;
+
+        // Act: the fetch consumes object 0, then waits for object 1.
+        let fetch = tokio::spawn({
+            let cache = cache.clone();
+            async move {
+                cache
+                    .get_fetch_objects(
+                        moqt::Location {
+                            group_id: 0,
+                            object_id: 0,
+                        },
+                        moqt::Location {
+                            group_id: 0,
+                            object_id: 3,
+                        },
+                    )
+                    .await
+            }
+        });
+        tokio::task::yield_now().await;
+        // A conflicting duplicate latches the track while the fetch waits.
+        let outcome = cache
+            .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
+            .await;
+        assert_eq!(outcome, AppendOutcome::MalformedTrack);
+
+        // Assert: the in-flight collection aborts instead of serving.
+        let result = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must abort once the track is malformed")
+            .unwrap();
+        assert!(matches!(result, Err(TrackMalformed)));
     }
 }

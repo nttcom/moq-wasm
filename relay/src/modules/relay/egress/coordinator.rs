@@ -8,6 +8,7 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::subscription::DownstreamSubscription,
+    enums::FetchErrorCode,
     relay::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::runner::EgressRunner,
@@ -144,18 +145,41 @@ impl EgressCoordinator {
                     return;
                 }
             };
-            let objects = cache
+            let objects = match cache
                 .get_fetch_objects_with_group_order(
                     request.start_location,
                     request.end_location,
                     request.group_order,
                 )
-                .await;
+                .await
+            {
+                Ok(objects) => objects,
+                Err(_) => {
+                    // §2.5: fetch streams of a malformed track are reset with
+                    // MALFORMED_TRACK instead of served.
+                    tracing::warn!(
+                        request_id = request.request_id,
+                        "malformed track detected; resetting fetch stream"
+                    );
+                    if let Err(e) = sender.reset(FetchErrorCode::MalformedTrack as u64).await {
+                        tracing::error!(?e, "failed to reset fetch stream");
+                    }
+                    return;
+                }
+            };
             for object in objects {
                 if let Err(e) = sender.send(object).await {
                     tracing::error!(?e, "failed to send fetch object");
                     return;
                 }
+            }
+            // A FIN asserts the whole range was delivered; if the track went
+            // malformed after collection, reset instead (§2.5).
+            if cache.is_malformed() {
+                if let Err(e) = sender.reset(FetchErrorCode::MalformedTrack as u64).await {
+                    tracing::error!(?e, "failed to reset fetch stream");
+                }
+                return;
             }
             if let Err(e) = sender.close().await {
                 tracing::error!(?e, "failed to close fetch stream");

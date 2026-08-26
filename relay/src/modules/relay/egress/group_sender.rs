@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
@@ -19,18 +22,22 @@ use super::scheduler::GroupSendTask;
 pub(crate) struct GroupSender {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
-    publisher: Box<dyn Publisher>,
+    publisher: Arc<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     receiver: mpsc::Receiver<GroupSendTask>,
+    /// Streams opened for this subscription, reported in PUBLISH_DONE's
+    /// Stream Count (§9.12).
+    opened_stream_count: Arc<AtomicU64>,
 }
 
 impl GroupSender {
     pub(crate) fn new(
         track_key: TrackKey,
         cache: Arc<TrackCache>,
-        publisher: Box<dyn Publisher>,
+        publisher: Arc<dyn Publisher>,
         downstream_subscription: DownstreamSubscription,
         receiver: mpsc::Receiver<GroupSendTask>,
+        opened_stream_count: Arc<AtomicU64>,
     ) -> Self {
         Self {
             track_key,
@@ -38,6 +45,7 @@ impl GroupSender {
             publisher,
             downstream_subscription,
             receiver,
+            opened_stream_count,
         }
     }
 
@@ -78,6 +86,7 @@ impl GroupSender {
                             .await
                             {
                                 Ok(sender) => {
+                                    self.opened_stream_count.fetch_add(1, Ordering::AcqRel);
                                     joinset.spawn(Self::send_stream_task(
                                         track_alias,
                                         group_id,
