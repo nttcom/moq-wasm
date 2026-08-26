@@ -2,6 +2,8 @@ pub(crate) mod data_object;
 pub(crate) mod data_receiver;
 pub(crate) mod data_sender;
 pub(crate) mod handler;
+#[cfg(test)]
+pub(crate) mod mocks;
 pub(crate) mod publisher;
 pub(crate) mod session;
 pub(crate) mod session_event;

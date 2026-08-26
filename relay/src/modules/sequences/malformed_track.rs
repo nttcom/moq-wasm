@@ -72,113 +72,27 @@ impl MalformedTrackCleanup {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::modules::{
-        core::{
-            data_receiver::fetch_receiver::UpstreamFetchReceiver,
-            data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
-            publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
-            subscriber::Subscriber, subscription::UpstreamSubscription,
-        },
+        core::mocks::{RecordedControlMessages, session_repository_with_mock_control_session},
         enums::ContentExists,
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
         },
-        session_repository::SessionRepository,
     };
 
     const PUBLISHER_SESSION: SessionId = 1;
     const UPSTREAM_REQUEST_ID: u64 = 42;
-
-    struct MockSubscriber {
-        unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl Subscriber for MockSubscriber {
-        async fn send_subscribe(
-            &mut self,
-            _track_namespace: String,
-            _track_name: String,
-            _option: SubscribeOption,
-        ) -> anyhow::Result<UpstreamSubscription> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-
-        async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
-            self.unsubscribed_request_ids
-                .lock()
-                .unwrap()
-                .push(subscribe_id);
-            Ok(())
-        }
-
-        async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-
-        async fn create_data_receiver(
-            &mut self,
-            _subscription: &UpstreamSubscription,
-        ) -> anyhow::Result<DataReceiver> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-
-        async fn send_fetch(
-            &mut self,
-            _track_namespace: String,
-            _track_name: String,
-            _start_location: moqt::Location,
-            _end_location: moqt::Location,
-            _option: moqt::FetchOption,
-        ) -> anyhow::Result<moqt::FetchHandle> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-
-        async fn create_fetch_receiver(
-            &mut self,
-            _handle: &moqt::FetchHandle,
-        ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-
-        async fn send_fetch_cancel(&self, _request_id: u64) -> anyhow::Result<()> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-    }
-
-    struct MockSession {
-        unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl Session for MockSession {
-        fn as_publisher(&self) -> Box<dyn Publisher> {
-            unimplemented!("not used in malformed track cleanup tests")
-        }
-
-        fn as_subscriber(&self) -> Box<dyn Subscriber> {
-            Box::new(MockSubscriber {
-                unsubscribed_request_ids: self.unsubscribed_request_ids.clone(),
-            })
-        }
-
-        async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-            std::future::pending().await
-        }
-    }
 
     struct TestContext {
         table: InMemoryLocalPubSubDirectory,
         forwarder: ControlMessageForwarder,
         ingress_sender: mpsc::Sender<IngressCommand>,
         ingress_receiver: mpsc::Receiver<IngressCommand>,
-        unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
+        recorded: RecordedControlMessages,
         track_key: TrackKey,
     }
 
@@ -202,22 +116,9 @@ mod tests {
             },
         );
 
-        let unsubscribed_request_ids = Arc::new(Mutex::new(Vec::new()));
-        let mut repository = SessionRepository::new();
-        let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
-        repository
-            .add_client(
-                PUBLISHER_SESSION,
-                Box::new(MockSession {
-                    unsubscribed_request_ids: unsubscribed_request_ids.clone(),
-                }),
-                session_event_sender,
-                tracing::Span::none(),
-            )
-            .await;
-        let forwarder = ControlMessageForwarder {
-            repository: Arc::new(tokio::sync::Mutex::new(repository)),
-        };
+        let (repository, recorded) =
+            session_repository_with_mock_control_session(PUBLISHER_SESSION).await;
+        let forwarder = ControlMessageForwarder { repository };
 
         let (ingress_sender, ingress_receiver) = mpsc::channel(8);
         TestContext {
@@ -225,7 +126,7 @@ mod tests {
             forwarder,
             ingress_sender,
             ingress_receiver,
-            unsubscribed_request_ids,
+            recorded,
             track_key,
         }
     }
@@ -245,6 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn detection_unsubscribes_upstream_and_stops_ingress() {
+        // Arrange
         let mut ctx = setup().await;
 
         // Act
@@ -257,7 +159,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            *ctx.unsubscribed_request_ids.lock().unwrap(),
+            *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]
         );
         // Assert: ingress is told to stop the track.
@@ -275,6 +177,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_detection_reports_are_idempotent() {
+        // Arrange: the first report already ran the cleanup.
         let mut ctx = setup().await;
         run_cleanup(&ctx).await;
         let _ = ctx.ingress_receiver.try_recv();
@@ -284,7 +187,7 @@ mod tests {
 
         // Assert: no second unsubscribe or stop is issued.
         assert_eq!(
-            *ctx.unsubscribed_request_ids.lock().unwrap(),
+            *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]
         );
         assert!(ctx.ingress_receiver.try_recv().is_err());

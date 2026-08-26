@@ -308,109 +308,13 @@ impl FetchIngest {
 mod tests {
     use super::*;
     use crate::modules::{
-        core::{
-            data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
-            handler::publish::SubscribeOption,
-            publisher::Publisher,
-            session::Session,
-            session_event::MoqtSessionEvent,
-            subscriber::Subscriber,
-            subscription::UpstreamSubscription,
-        },
+        core::mocks::session_repository_with_mock_control_session,
         relay::cache::track_cache::FetchRangeResolution,
     };
     use bytes::Bytes;
     use moqt::{ExtensionHeaders, FetchObject, FetchObjectField, ObjectStatus};
-    use std::sync::Mutex;
+    use std::time::Duration;
     use tokio::sync::mpsc;
-
-    struct MockUpstreamSession {
-        fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl Session for MockUpstreamSession {
-        fn as_publisher(&self) -> Box<dyn Publisher> {
-            unimplemented!("not used in fetch ingest tests")
-        }
-
-        fn as_subscriber(&self) -> Box<dyn Subscriber> {
-            Box::new(MockUpstreamSubscriber {
-                fetch_cancelled_request_ids: self.fetch_cancelled_request_ids.clone(),
-            })
-        }
-
-        async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-            std::future::pending().await
-        }
-    }
-
-    struct MockUpstreamSubscriber {
-        fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl Subscriber for MockUpstreamSubscriber {
-        async fn send_subscribe(
-            &mut self,
-            _track_namespace: String,
-            _track_name: String,
-            _option: SubscribeOption,
-        ) -> anyhow::Result<UpstreamSubscription> {
-            unimplemented!("not used in fetch ingest tests")
-        }
-
-        async fn send_unsubscribe(&self, _subscribe_id: u64) -> anyhow::Result<()> {
-            unimplemented!("not used in fetch ingest tests")
-        }
-
-        async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
-            unimplemented!("not used in fetch ingest tests")
-        }
-
-        async fn create_data_receiver(
-            &mut self,
-            _subscription: &UpstreamSubscription,
-        ) -> anyhow::Result<DataReceiver> {
-            unimplemented!("not used in fetch ingest tests")
-        }
-
-        async fn send_fetch(
-            &mut self,
-            _track_namespace: String,
-            _track_name: String,
-            _start_location: moqt::Location,
-            _end_location: moqt::Location,
-            _option: moqt::FetchOption,
-        ) -> anyhow::Result<moqt::FetchHandle> {
-            unimplemented!("not used in fetch ingest tests")
-        }
-
-        async fn create_fetch_receiver(
-            &mut self,
-            _handle: &moqt::FetchHandle,
-        ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
-            Ok(Box::new(PendingFetchReceiver))
-        }
-
-        async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
-            self.fetch_cancelled_request_ids
-                .lock()
-                .unwrap()
-                .push(request_id);
-            Ok(())
-        }
-    }
-
-    /// Never yields data, like an upstream that stalls mid-fetch.
-    struct PendingFetchReceiver;
-
-    #[async_trait::async_trait]
-    impl UpstreamFetchReceiver for PendingFetchReceiver {
-        async fn receive(&mut self) -> anyhow::Result<moqt::Fetch> {
-            std::future::pending().await
-        }
-    }
 
     #[tokio::test]
     async fn malformed_track_cancels_upstream_fetch_while_awaiting_data() {
@@ -419,20 +323,8 @@ mod tests {
         const UPSTREAM_SESSION: SessionId = 1;
         const DOWNSTREAM_SESSION: SessionId = 2; // not registered: downstream reset is skipped
         const UPSTREAM_FETCH_REQUEST_ID: u64 = 7;
-        let fetch_cancelled_request_ids = Arc::new(Mutex::new(Vec::new()));
-        let mut repository = SessionRepository::new();
-        let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
-        repository
-            .add_client(
-                UPSTREAM_SESSION,
-                Box::new(MockUpstreamSession {
-                    fetch_cancelled_request_ids: fetch_cancelled_request_ids.clone(),
-                }),
-                session_event_sender,
-                tracing::Span::none(),
-            )
-            .await;
-        let session_repo = Arc::new(tokio::sync::Mutex::new(repository));
+        let (session_repo, recorded) =
+            session_repository_with_mock_control_session(UPSTREAM_SESSION).await;
 
         let cache = Arc::new(TrackCache::new());
         let mut first_fill = HashMap::new();
@@ -499,19 +391,24 @@ mod tests {
         let _ingest = FetchIngest::run(session_repo, egress_sender, start);
 
         // Assert: the upstream fetch is cancelled with its own request id.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
-            if !fetch_cancelled_request_ids.lock().unwrap().is_empty() {
+            if !recorded
+                .fetch_cancelled_request_ids
+                .lock()
+                .unwrap()
+                .is_empty()
+            {
                 break;
             }
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "upstream FETCH_CANCEL was never sent"
             );
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
         assert_eq!(
-            *fetch_cancelled_request_ids.lock().unwrap(),
+            *recorded.fetch_cancelled_request_ids.lock().unwrap(),
             vec![UPSTREAM_FETCH_REQUEST_ID]
         );
     }
