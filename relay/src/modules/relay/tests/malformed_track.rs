@@ -2,9 +2,10 @@
 
 use bytes::Bytes;
 
+use moqt::wire::publish_done_status_code;
+
 use crate::modules::{
     core::data_object::DataObject,
-    enums::PublishDoneStatusCode,
     relay::tests::harness::{RelayHarness, ordered_payload, receive_objects_until_close},
 };
 
@@ -38,7 +39,7 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(
         publish_done.status_code,
-        PublishDoneStatusCode::MalformedTrack as u64
+        publish_done_status_code::MALFORMED_TRACK
     );
     assert_eq!(publish_done.request_id, 0);
 }
@@ -93,7 +94,7 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(
         publish_done.status_code,
-        PublishDoneStatusCode::MalformedTrack as u64
+        publish_done_status_code::MALFORMED_TRACK
     );
     assert_eq!(publish_done.stream_count, 0);
 }

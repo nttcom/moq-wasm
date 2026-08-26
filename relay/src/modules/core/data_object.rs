@@ -14,9 +14,8 @@ impl DataObject {
         }
     }
 
-    /// draft-14 §2.5 condition 8 comparison. Excludes per-hop / per-stream
-    /// encoding (`track_alias`, `message_type`, `object_id_delta`): a fetch
-    /// fill legitimately re-encodes them for the same object.
+    /// §2.5 condition 8 comparison. Excludes `track_alias`, `message_type`
+    /// and `object_id_delta`: a fetch fill re-encodes them for the same object.
     pub(crate) fn matches_immutable_properties(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::SubgroupHeader(a), Self::SubgroupHeader(b)) => {

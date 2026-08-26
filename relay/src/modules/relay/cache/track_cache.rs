@@ -682,8 +682,8 @@ impl TrackCache {
             .await
     }
 
-    /// Fails with [`TrackMalformed`] as soon as the latch is observed, so an
-    /// in-flight fetch is reset instead of served (§2.5).
+    /// Fails as soon as the malformed latch is observed, so an in-flight
+    /// fetch is reset instead of served (§2.5).
     pub(crate) async fn get_fetch_objects_with_group_order(
         &self,
         start: moqt::Location,

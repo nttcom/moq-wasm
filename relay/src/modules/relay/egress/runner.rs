@@ -5,9 +5,10 @@ use std::sync::{
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use moqt::wire::publish_done_status_code;
+
 use crate::modules::{
     core::{publisher::Publisher, subscription::DownstreamSubscription},
-    enums::PublishDoneStatusCode,
     relay::{cache::track_cache::TrackCache, notifications::track_event::TrackEvent},
     types::TrackKey,
 };
@@ -82,9 +83,8 @@ impl EgressRunner {
         tokio::select! {
             _ = async { tokio::join!(scheduler.run(), group_sender.run()) } => {}
             _ = self.cache.malformed_track_detected() => {
-                // Reaching this arm drops the futures above, aborting every
-                // send task: all data streams close before PUBLISH_DONE goes
-                // out, the order §9.12 requires.
+                // This arm drops the futures above, closing all data streams
+                // before PUBLISH_DONE goes out (§9.12 ordering).
                 let stream_count = opened_stream_count.load(Ordering::Acquire);
                 Self::send_malformed_publish_done(
                     publisher.as_ref(),
@@ -112,7 +112,7 @@ impl EgressRunner {
         if let Err(error) = publisher
             .send_publish_done(
                 request_id,
-                PublishDoneStatusCode::MalformedTrack as u64,
+                publish_done_status_code::MALFORMED_TRACK,
                 stream_count,
                 "malformed track".to_string(),
             )

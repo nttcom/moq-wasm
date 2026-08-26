@@ -37,9 +37,9 @@ pub(crate) enum SubgroupLifecycle {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppendOutcome {
     Appended,
-    /// Identical duplicate ignored (§8.1 first-wins; normal in cascading).
+    /// Identical duplicate, ignored (§8.1 first-wins; normal in cascading).
     Duplicate,
-    /// Same Object with different immutable properties (§2.5 condition 8).
+    /// §2.5 condition 8: same Object, different immutable properties.
     MalformedTrack,
 }
 
@@ -83,7 +83,6 @@ impl GroupCache {
         object: Arc<DataObject>,
     ) -> AppendOutcome {
         let outcome = match object_id {
-            // No object_id = subgroup header.
             None => {
                 let mut header = self.header.write().await;
                 match header.as_ref() {

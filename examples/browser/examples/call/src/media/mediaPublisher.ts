@@ -134,8 +134,7 @@ export class MediaPublisher {
     noiseSuppression: true,
     autoGainControl: true
   }
-  // Per-track and time-seeded: reusing a location the relay cached with
-  // different content makes the track malformed (draft-14 §2.5).
+  // Per-track and time-seeded to avoid reusing relay-cached locations (draft-14 §2.5).
   private nextCatalogGroupId = BigInt(Date.now())
 
   constructor(

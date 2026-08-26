@@ -55,8 +55,8 @@ fn unique_track_name() -> String {
     format!("data-{}", nanos)
 }
 
-/// Republished objects must be byte-identical, or the relay treats the track
-/// as malformed (§2.5 condition 8) instead of deduplicating.
+/// Byte-identical across republishes, or the relay treats the track as
+/// malformed (§2.5 condition 8) instead of deduplicating.
 fn object_payload(obj_id: u64) -> String {
     format!("alice:g{}:o{}", GROUP_ID, obj_id)
 }
