@@ -57,8 +57,6 @@ impl FetchIngest {
                 // log the chain without anyhow's captured backtrace.
                 tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                 let error_code = if cache.is_malformed() {
-                    // §2.5: a subscriber detecting a Malformed Track MUST
-                    // FETCH_CANCEL any fetch for that track.
                     Self::cancel_upstream_fetch(
                         session_repo.clone(),
                         upstream_publisher_session_id,
@@ -121,9 +119,6 @@ impl FetchIngest {
         let start_eviction_generation = start.cache.eviction_generation();
 
         loop {
-            // Another ingest path may latch the track while this fill is idle
-            // waiting for upstream data; bail promptly instead of waiting for
-            // the next append or the fill timeout.
             let received = tokio::select! {
                 received = receiver.receive() => received?,
                 _ = start.cache.malformed_track_detected() => {

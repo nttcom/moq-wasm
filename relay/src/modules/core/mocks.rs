@@ -20,8 +20,6 @@ pub(crate) struct RecordedControlMessages {
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
 }
 
-/// Records UNSUBSCRIBE / FETCH_CANCEL and hands out a fetch receiver that
-/// never yields data; every other subscriber method is unimplemented.
 pub(crate) struct MockControlSession {
     recorded: RecordedControlMessages,
 }

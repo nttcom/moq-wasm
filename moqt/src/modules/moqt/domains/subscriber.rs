@@ -267,8 +267,6 @@ impl<T: TransportProtocol> Subscriber<T> {
         fields(request_id = %request_id)
     )]
     pub async fn fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
-        // Local fetch state is dropped even when the send fails: the caller
-        // has abandoned the fetch either way.
         self.remove_pending_fetch(request_id).await;
         let fetch_cancel = FetchCancel::new(request_id);
         self.session

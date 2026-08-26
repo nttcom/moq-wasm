@@ -6,8 +6,6 @@ use crate::modules::{
 };
 use tracing::Span;
 
-/// §2.5: a subscriber detecting a Malformed Track MUST UNSUBSCRIBE it.
-/// In-flight upstream fetches FETCH_CANCEL themselves in `FetchIngest`.
 pub(crate) struct MalformedTrackCleanup;
 
 impl MalformedTrackCleanup {

@@ -8,8 +8,6 @@ use crate::modules::{
     types::{SessionId, TrackKey},
 };
 
-/// Dropped (and thereby aborted) when ingress for the track stops, so the
-/// held cache Arc never blocks eviction of the track.
 pub(crate) struct MalformedTrackWatchTask {
     join_handle: JoinHandle<()>,
 }
