@@ -46,7 +46,7 @@ Application and integration components (draft reference is normally not required
 - If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
 
 ## 4. Coding Style
-- Coding style rules are shared by all agents and live in `.agents/rules/coding-style.md`. They apply to every code change. If the file contents are not already in your context, read the file before your first code edit.
+- Coding style rules live in `.agents/rules/coding-style.md`, shared by all agents. If it is not already in your context, read it before your first code edit.
 
 @.agents/rules/coding-style.md
 
@@ -62,7 +62,7 @@ Application and integration components (draft reference is normally not required
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
-- Testing rules are shared by all agents and live in `.agents/rules/testing.md`. Unit tests are colocated with the implementation via `#[cfg(test)] mod tests`, so these rules apply to ordinary source edits as well. If the file contents are not already in your context, read the file before your first code edit.
+- Testing rules live in `.agents/rules/testing.md`, shared by all agents. Unit tests are colocated with the implementation, so read it before your first code edit as well.
 
 @.agents/rules/testing.md
 

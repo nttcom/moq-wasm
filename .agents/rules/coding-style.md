@@ -1,26 +1,21 @@
 # Coding Style Rules
 
-Shared coding style rules for all agents (Claude Code, Codex). Read this before writing or modifying implementation code.
+Shared by all agents (Claude Code, Codex).
 
 ## Implementation Principles
-- Follow YAGNI. Implement only what the current requirement needs.
-- Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs. Add them when a second concrete use case appears.
+- Follow YAGNI: implement only what the current requirement needs. Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs — add them when a second concrete use case appears.
 - Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
 
 ## Comments
 - Keep comments to a minimum. Code that needs a comment to be readable should usually be renamed or restructured instead.
-- A comment in the code body may carry only information that satisfies both conditions:
-  1. It cannot be reconstructed from the code itself.
-  2. It affects current behavior right now.
-- Consequences of that rule: do not leave change history, past implementations, migration notes, review discussion, TODO speculation, or plans for future work in the code body. Such context belongs in the commit message, the pull request, or an architecture document.
-- Write a comment only for the non-obvious *why* — an invariant, a specification constraint, a workaround, or a deliberate trade-off. Do not restate what the code already says.
-- Exceptions where comments are still required: the invariant behind `panic!`/`unreachable!` and the meaning of abbreviations in type declarations.
-- In test code, the `// Arrange` / `// Act` / `// Assert` phase-separator comments are always allowed even though they only label the phase. See `testing.md`.
+- A comment may stay in the code body only if it both cannot be reconstructed from the code and affects current behavior — in practice, the non-obvious *why*: an invariant, a specification constraint, a workaround, or a deliberate trade-off.
+- Change history, past implementations, migration notes, review discussion, TODO speculation, and plans for future work therefore do not belong in the code body. Put them in the commit message, the pull request, or an architecture document.
+- A comment is required in three cases: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the `// Arrange` / `// Act` / `// Assert` labels in tests (see `testing.md`).
 
 ## Naming
 - Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).
 - Names must represent the target concept clearly.
-- Abbreviations are allowed, but when used in type declarations, document the meaning in a code-level doc comment.
+- Abbreviations are allowed.
 - Channel-related variables must be named using the `xxx_sender` or `yyy_receiver` pattern.
 
 ## Error Handling
@@ -28,16 +23,14 @@ Shared coding style rules for all agents (Claude Code, Codex). Read this before 
 - Use `std::io::Result` only when explicitly instructed.
 - For recoverable failures, do not use `panic!`/`unwrap`; return `Result` instead.
 - `panic!`/`unwrap` is allowed during initialization/startup only when the process cannot continue safely.
-- `panic!`/`unreachable!` is allowed for proven unreachable states only; in this case, add a comment that explains the invariant.
+- `panic!`/`unreachable!` is allowed for proven unreachable states only.
 - Choose `bool` / `Option` / `Result` in this order:
   1. If the caller needs the failure reason or recovery action, use `Result`.
   2. Otherwise, if a value may be absent as a normal case, use `Option`.
   3. Otherwise, use `bool` for pure yes/no semantics.
-- Use `Option` only when `None` is an expected and non-error state.
 - If the return state may expand beyond true/false in the future, prefer a dedicated enum over `bool`.
 
 ## Async / Tasks
-- No special naming convention for async functions.
 - Background tasks must be encapsulated in a dedicated struct that owns the `JoinHandle`.
 - The struct's constructor `run()` spawns the task and returns `Self`.
 - If the task needs to receive commands, store an `mpsc::Sender` alongside the `JoinHandle` (actor pattern).
@@ -54,7 +47,7 @@ Shared coding style rules for all agents (Claude Code, Codex). Read this before 
 
 ## Module Structure
 - Split modules and structs based on SOLID principles with functional cohesion.
-- Keep each file under 300 lines. If a file exceeds this, consider splitting it.
+- Keep each file under 300 lines.
 - When creating a directory module, use a same-name `.rs` file (e.g. `foo.rs` + `foo/`) instead of `foo/mod.rs`.
 
 ## Visibility
@@ -65,12 +58,12 @@ Shared coding style rules for all agents (Claude Code, Codex). Read this before 
 
 ## Dependencies
 - Minimize the number of external crates. Prefer existing dependencies over adding new ones.
-- When adding a new crate, create an Architecture Decision Record (ADR) under `architecture_decision_record/${package_name}/` at the repository root. Use the target package's `name` value in `Cargo.toml` as `${package_name}` (e.g. `architecture_decision_record/media-streaming-format/tokio-util.md` for `shared/media-streaming-format`). Each ADR must be a separate Markdown file named after the crate. The ADR must include:
+- When adding a new crate, create an Architecture Decision Record (ADR) at `architecture_decision_record/${package_name}/<crate>.md`, where `${package_name}` is the package's `name` in `Cargo.toml` (e.g. `architecture_decision_record/media-streaming-format/tokio-util.md`). The ADR must cover:
   1. What — the crate being added and its purpose.
   2. Context — the problem or requirement that motivates the addition.
   3. Alternatives — other crates or approaches considered, with trade-offs.
   4. Decision — the final choice and rationale.
-- If you are unsure about ADR writing style or structure, refer to `architecture_decision_record/example/000_jwt_authentication.md` as a reference.
+- For ADR style, see `architecture_decision_record/example/000_jwt_authentication.md`.
 
 ## Unsafe
 - `unsafe` is prohibited in principle.
