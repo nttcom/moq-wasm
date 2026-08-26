@@ -52,7 +52,7 @@ the repository works with `Box<dyn …>`.
 
 ```
 moqt session ──receive_event()──► Session Event Forwarder (one task per session)
-      │  MoqtSessionEvent → RelaySessionEventResolver → SessionEvent(session_id, handler)
+      │  MoqtSessionEvent → SessionEvent { session_id, kind: EventKind::FromSession }
       ▼
 EventHandler reader (single task, never awaits handlers)
       │  per-session unbounded channel (lazily created)
