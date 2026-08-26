@@ -23,7 +23,9 @@ description: Create a pull request for the current branch. Use when the user ask
 
 ## Body
 
-Use `.github/pull_request_template.md` as-is. Keep every heading, replace each HTML comment with the actual content, and delete no section — write `なし` when a section does not apply.
+Start from `.github/pull_request_template.md` and replace each HTML comment with the actual content. Keep the order and wording of the headings you keep.
+
+Delete a section outright when it would only hold `なし`, or when its content restates another section. An empty heading makes the reader stop for nothing, so an omitted section is better than a filled-in one that says nothing. `## 概要` and `## やったこと` are always present.
 
 Keep every section to one line where possible, and never more than three lines. Bullets count as lines: group related changes into a single bullet rather than listing every file. A section that will not fit in three lines usually means the PR is too large, or that the detail belongs in the diff rather than the description.
 
@@ -60,7 +62,7 @@ Never post the first draft. Pass the drafted title and body to a subagent and as
 - Hedging and filler that carries no information
 - Claims of effect or benefit that follow automatically from the change (see *Do Not Write*)
 
-Ask for the shortened text plus a one-line reason per cut, then apply the cuts you agree with. Do not let the review add new content — it only removes. Verify the result still satisfies the line limits and keeps every template section.
+Whole sections are in scope: the review may propose deleting one, not just shortening it. Ask for the shortened text plus a one-line reason per cut, then apply the cuts you agree with. Do not let the review add new content — it only removes. Verify the result still satisfies the line limits.
 
 ## Mermaid Diagrams
 
