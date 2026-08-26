@@ -10,7 +10,8 @@ Shared coding style rules for all agents (Claude Code, Codex). Read this before 
 ## Comments
 - Keep comments to a minimum. Code that needs a comment to be readable should usually be renamed or restructured instead.
 - Write a comment only for the non-obvious *why* — an invariant, a specification constraint, a workaround, or a deliberate trade-off. Do not restate what the code already says.
-- Exceptions where comments are still required: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the Act / Assert comments in tests.
+- Exceptions where comments are still required: the invariant behind `panic!`/`unreachable!` and the meaning of abbreviations in type declarations.
+- In test code, the `// Arrange` / `// Act` / `// Assert` phase-separator comments are always allowed even though they only label the phase. See `testing.md`.
 
 ## Naming
 - Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).

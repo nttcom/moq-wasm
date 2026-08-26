@@ -62,7 +62,7 @@ Application and integration components (draft reference is normally not required
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
-- Testing rules are shared by all agents and live in `.agents/rules/testing.md`. If the file contents are not already in your context, read the file before your first code edit.
+- Testing rules are shared by all agents and live in `.agents/rules/testing.md`. Unit tests are colocated with the implementation via `#[cfg(test)] mod tests`, so these rules apply to ordinary source edits as well. If the file contents are not already in your context, read the file before your first code edit.
 
 @.agents/rules/testing.md
 
