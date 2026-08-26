@@ -41,14 +41,38 @@ impl StreamSenderFactory for MockStreamSenderFactory {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SentPublishDone {
+    pub(crate) request_id: u64,
+    pub(crate) status_code: u64,
+    pub(crate) stream_count: u64,
+    pub(crate) error_reason: String,
+}
+
 pub(crate) struct MockPublisher {
     sent: mpsc::UnboundedSender<Option<DataObject>>,
+    publish_done: mpsc::UnboundedSender<SentPublishDone>,
+}
+
+pub(crate) struct MockPublisherObservers {
+    pub(crate) sent: mpsc::UnboundedReceiver<Option<DataObject>>,
+    pub(crate) publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
 }
 
 impl MockPublisher {
-    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<Option<DataObject>>) {
+    pub(crate) fn channel() -> (Self, MockPublisherObservers) {
         let (sender, receiver) = mpsc::unbounded_channel();
-        (Self { sent: sender }, receiver)
+        let (publish_done_sender, publish_done_receiver) = mpsc::unbounded_channel();
+        (
+            Self {
+                sent: sender,
+                publish_done: publish_done_sender,
+            },
+            MockPublisherObservers {
+                sent: receiver,
+                publish_done: publish_done_receiver,
+            },
+        )
     }
 }
 
@@ -68,6 +92,23 @@ impl Publisher for MockPublisher {
         _track_name: String,
     ) -> anyhow::Result<DownstreamSubscription> {
         unreachable!("not used by the egress path under test")
+    }
+
+    async fn send_publish_done(
+        &self,
+        request_id: u64,
+        status_code: u64,
+        stream_count: u64,
+        error_reason: String,
+    ) -> anyhow::Result<()> {
+        self.publish_done
+            .send(SentPublishDone {
+                request_id,
+                status_code,
+                stream_count,
+                error_reason,
+            })
+            .map_err(|_| anyhow::anyhow!("test side dropped"))
     }
 
     fn new_stream_factory(

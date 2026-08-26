@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, btree_map::Entry},
     ops::Range,
     sync::{
         Arc,
@@ -31,6 +31,15 @@ pub(crate) enum SubgroupLifecycle {
     AwaitingCloseSignal = 1,
     /// The close signal arrived; no more objects will be appended.
     Closed = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrackMalformed;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppendStatus {
+    Inserted,
+    Duplicate,
 }
 
 pub(crate) struct GroupCache {
@@ -67,28 +76,45 @@ impl GroupCache {
         }
     }
 
-    // FIXME: §8.1 also requires treating a duplicate whose payload/subgroup/priority
-    // differs (or an invalid status transition) as Malformed (MUST). Not implemented;
-    // we only ignore duplicates (first-wins).
-    pub(crate) async fn append(&self, object_id: Option<u64>, object: Arc<DataObject>) {
-        match object_id {
-            // No object_id = subgroup header. Keep the first one (first-wins).
+    pub(crate) async fn append(
+        &self,
+        object_id: Option<u64>,
+        object: Arc<DataObject>,
+    ) -> Result<AppendStatus, TrackMalformed> {
+        let result = match object_id {
             None => {
                 let mut header = self.header.write().await;
-                if header.is_none() {
-                    *header = Some(object);
+                match header.as_ref() {
+                    Some(existing) if existing.matches_immutable_properties(&object) => {
+                        Ok(AppendStatus::Duplicate)
+                    }
+                    Some(_) => Err(TrackMalformed),
+                    None => {
+                        *header = Some(object);
+                        Ok(AppendStatus::Inserted)
+                    }
                 }
             }
-            // A later object with the same object_id is ignored (draft-14 §8.1 dedup).
-            Some(object_id) => {
-                self.objects
-                    .write()
-                    .await
-                    .entry(object_id)
-                    .or_insert((Instant::now(), object));
-            }
-        }
+            Some(object_id) => match self.objects.write().await.entry(object_id) {
+                Entry::Occupied(existing) => {
+                    if existing.get().1.matches_immutable_properties(&object) {
+                        Ok(AppendStatus::Duplicate)
+                    } else {
+                        Err(TrackMalformed)
+                    }
+                }
+                Entry::Vacant(slot) => {
+                    slot.insert((Instant::now(), object));
+                    Ok(AppendStatus::Inserted)
+                }
+            },
+        };
         self.notify.notify_waiters();
+        result
+    }
+
+    pub(crate) async fn contains_object(&self, object_id: u64) -> bool {
+        self.objects.read().await.contains_key(&object_id)
     }
 
     pub(crate) async fn evict_expired_objects(&self, ttl: Duration) -> Option<Range<u64>> {
@@ -268,30 +294,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_same_object_id_keeps_first() {
-        // Arrange: two objects with the same object_id but distinct payloads
+    async fn append_identical_duplicate_keeps_first() {
+        // Arrange: the same object arrives twice
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(Some(0), payload_object(b"first")).await;
-        cache.append(Some(0), payload_object(b"second")).await;
         // Act
+        let first = cache.append(Some(0), payload_object(b"same")).await;
+        let second = cache.append(Some(0), payload_object(b"same")).await;
+        // Assert: first-wins dedup, no malformed flag
+        assert_eq!(first, Ok(AppendStatus::Inserted));
+        assert_eq!(second, Ok(AppendStatus::Duplicate));
         let snapshot = cache.objects_snapshot().await;
-        // Assert: only the first object survives (first-wins dedup)
         assert_eq!(snapshot.len(), 1);
         let (id, object) = &snapshot[0];
         assert_eq!(*id, 0);
-        assert_eq!(payload_of(object), Bytes::from_static(b"first"));
+        assert_eq!(payload_of(object), Bytes::from_static(b"same"));
     }
 
     #[tokio::test]
-    async fn append_header_twice_keeps_first() {
-        // Arrange: two subgroup headers distinguished by publisher_priority
+    async fn append_duplicate_with_different_payload_is_malformed() {
+        // Arrange
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(None, header_object(1)).await;
-        cache.append(None, header_object(2)).await;
-        // Act
-        let header = cache.header().await.unwrap();
-        // Assert: the first header survives (first-wins)
-        match header.as_ref() {
+        let _ = cache.append(Some(0), payload_object(b"first")).await;
+        // Act: the same object_id arrives again with a different payload
+        let outcome = cache.append(Some(0), payload_object(b"second")).await;
+        // Assert: malformed; the first object is kept untouched
+        assert_eq!(outcome, Err(TrackMalformed));
+        let snapshot = cache.objects_snapshot().await;
+        assert_eq!(payload_of(&snapshot[0].1), Bytes::from_static(b"first"));
+    }
+
+    #[tokio::test]
+    async fn append_identical_header_twice_keeps_first() {
+        // Arrange
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
+        // Act: the same subgroup header arrives twice
+        let first = cache.append(None, header_object(1)).await;
+        let second = cache.append(None, header_object(1)).await;
+        // Assert: first-wins, no malformed flag
+        assert_eq!(first, Ok(AppendStatus::Inserted));
+        assert_eq!(second, Ok(AppendStatus::Duplicate));
+        assert!(cache.header().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn append_header_with_different_priority_is_malformed() {
+        // Arrange
+        let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
+        let _ = cache.append(None, header_object(1)).await;
+        // Act: a second header with a different publisher priority
+        let outcome = cache.append(None, header_object(2)).await;
+        // Assert: malformed; the first header survives
+        assert_eq!(outcome, Err(TrackMalformed));
+        match cache.header().await.unwrap().as_ref() {
             DataObject::SubgroupHeader(h) => assert_eq!(h.publisher_priority, 1),
             _ => panic!("expected SubgroupHeader"),
         }
@@ -301,9 +355,9 @@ mod tests {
     async fn object_from_or_wait_returns_exact_match() {
         // Arrange: objects at ids 0, 3, 5
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(Some(0), payload_object(b"o0")).await;
-        cache.append(Some(3), payload_object(b"o3")).await;
-        cache.append(Some(5), payload_object(b"o5")).await;
+        let _ = cache.append(Some(0), payload_object(b"o0")).await;
+        let _ = cache.append(Some(3), payload_object(b"o3")).await;
+        let _ = cache.append(Some(5), payload_object(b"o5")).await;
         // Act: ask for exactly id 3
         let (id, _) = cache.object_from_or_wait(3).await.unwrap();
         // Assert: the exact id is returned (inclusive lower bound)
@@ -314,9 +368,9 @@ mod tests {
     async fn object_from_or_wait_skips_gap_to_next_id() {
         // Arrange: objects at ids 0, 3, 5 (no object at 1, 2, 4)
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(Some(0), payload_object(b"o0")).await;
-        cache.append(Some(3), payload_object(b"o3")).await;
-        cache.append(Some(5), payload_object(b"o5")).await;
+        let _ = cache.append(Some(0), payload_object(b"o0")).await;
+        let _ = cache.append(Some(3), payload_object(b"o3")).await;
+        let _ = cache.append(Some(5), payload_object(b"o5")).await;
         // Act: ask for id 4, which has no object
         let (id, _) = cache.object_from_or_wait(4).await.unwrap();
         // Assert: the next available id (5) is returned across the gap
@@ -328,9 +382,9 @@ mod tests {
         // Arrange: object 0 at t=0, object 1 at t=6s, TTL=10s
         let ttl = Duration::from_secs(10);
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(Some(0), payload_object(b"old")).await;
+        let _ = cache.append(Some(0), payload_object(b"old")).await;
         tokio::time::advance(Duration::from_secs(6)).await;
-        cache.append(Some(1), payload_object(b"new")).await;
+        let _ = cache.append(Some(1), payload_object(b"new")).await;
         // Act: at t=11s, object 0 is 11s old (>10), object 1 is 5s old (<=10)
         tokio::time::advance(Duration::from_secs(5)).await;
         cache.evict_expired_objects(ttl).await;
@@ -345,7 +399,7 @@ mod tests {
         // Arrange: object 0 at t=0, TTL=10s
         let ttl = Duration::from_secs(10);
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(Some(0), payload_object(b"o")).await;
+        let _ = cache.append(Some(0), payload_object(b"o")).await;
         // Act: at exactly t=10s, age == TTL, which is not `> TTL`
         tokio::time::advance(Duration::from_secs(10)).await;
         cache.evict_expired_objects(ttl).await;
@@ -357,7 +411,7 @@ mod tests {
     async fn object_from_or_wait_returns_none_when_closed() {
         // Arrange: one object at id 0, then the group is closed
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
-        cache.append(Some(0), payload_object(b"o0")).await;
+        let _ = cache.append(Some(0), payload_object(b"o0")).await;
         cache.mark_end_of_group();
         // Act: ask for id 1, beyond the last object, on a closed group
         let result = cache.object_from_or_wait(1).await;

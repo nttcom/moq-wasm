@@ -444,6 +444,20 @@ impl Subscribe {
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) {
+        if cache_store
+            .get(&active_upstream.track_key)
+            .is_some_and(|cache| cache.is_malformed())
+        {
+            let _ = self
+                .response_error(
+                    handler,
+                    SubscribeErrorCode::TrackDoesNotExist as u64,
+                    "malformed track".to_string(),
+                )
+                .await;
+            return;
+        }
+
         let subscriber_track_alias = handler.allocate_track_alias();
 
         // Determined here so the Largest Location advertised in SUBSCRIBE_OK
@@ -618,10 +632,10 @@ mod tests {
     // Append a single object (id 0) to `group_id` so the cache reports it as content.
     async fn append_one_object(cache: &TrackCache, group_id: u64) {
         let subgroup = StreamSubgroupId::Value(0);
-        cache
+        let _ = cache
             .append_live_stream_object(group_id, &subgroup, None, make_header())
             .await;
-        cache
+        let _ = cache
             .append_live_stream_object(group_id, &subgroup, Some(0), make_object())
             .await;
     }

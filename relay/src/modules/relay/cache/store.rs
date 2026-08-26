@@ -95,10 +95,10 @@ mod tests {
             let track = store.get_or_create(&key);
             let header = SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false);
             let message_type = header.message_type;
-            track
+            let _ = track
                 .append_stream_object(0, &subgroup, None, DataObject::SubgroupHeader(header))
                 .await;
-            track
+            let _ = track
                 .append_stream_object(
                     0,
                     &subgroup,

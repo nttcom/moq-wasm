@@ -25,15 +25,19 @@ function aliasKey(alias: bigint | string): string {
   return normalizeAlias(alias).toString()
 }
 
+function initialGroupId(): bigint {
+  return BigInt(Date.now()) - 1n
+}
+
 export class MediaTransportState {
   private readonly video: TrackCounters = {
-    groupId: -1n,
+    groupId: initialGroupId(),
     nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
 
   private readonly audio: TrackCounters = {
-    groupId: -1n,
+    groupId: initialGroupId(),
     nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }

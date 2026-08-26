@@ -75,6 +75,7 @@ enum FetchError {
     NoObjectsPublished,
     InvalidRange,
     NoObjects,
+    MalformedTrack,
 }
 
 impl FetchError {
@@ -85,6 +86,7 @@ impl FetchError {
             Self::NoObjectsPublished => FetchErrorCode::InvalidRange,
             Self::InvalidRange => FetchErrorCode::InvalidRange,
             Self::NoObjects => FetchErrorCode::NoObjects,
+            Self::MalformedTrack => FetchErrorCode::MalformedTrack,
         }
     }
 
@@ -95,6 +97,7 @@ impl FetchError {
             Self::NoObjectsPublished => "No objects published",
             Self::InvalidRange => "Invalid fetch range",
             Self::NoObjects => "No objects in fetch range",
+            Self::MalformedTrack => "Malformed track",
         }
     }
 }
@@ -134,6 +137,17 @@ impl Fetch {
                 return;
             }
         };
+
+        if cache_store
+            .get(&target.track_key)
+            .is_some_and(|cache| cache.is_malformed())
+        {
+            let err = FetchError::MalformedTrack;
+            let _ = handler
+                .error(err.code() as u64, err.reason().to_string())
+                .await;
+            return;
+        }
 
         let source = match self.resolve_fetch_source(&target, cache_store).await {
             Ok(source) => source,
@@ -628,11 +642,11 @@ mod tests {
     ) {
         let subgroup = StreamSubgroupId::Value(0);
         let cache = cache_store.get_or_create(track_key);
-        cache
+        let _ = cache
             .append_live_stream_object(group_id, &subgroup, None, make_header(group_id))
             .await;
         for &object_id in object_ids {
-            cache
+            let _ = cache
                 .append_live_stream_object(group_id, &subgroup, Some(object_id), make_object())
                 .await;
         }
@@ -860,7 +874,7 @@ mod tests {
         fill_group_with_ids(&cache_store, &track_key, 0, &[0]).await;
         let subgroup = StreamSubgroupId::Value(0);
         let cache = cache_store.get_or_create(&track_key);
-        cache
+        let _ = cache
             .append_stream_object(1, &subgroup, None, make_header(1))
             .await;
         cache.close_stream_subgroup(1, &subgroup).await;

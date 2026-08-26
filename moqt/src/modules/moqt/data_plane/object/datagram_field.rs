@@ -31,6 +31,7 @@ use crate::modules::{
     moqt::data_plane::object::{extension_headers::ExtensionHeaders, object_status::ObjectStatus},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectDatagramPayload {
     Payload(Bytes),
     Status(ObjectStatus),
@@ -137,6 +138,62 @@ impl DatagramField {
             | Self::Payload0x04 { object_id, .. }
             | Self::Status0x20 { object_id, .. }
             | Self::Status0x21 { object_id, .. } => Some(*object_id),
+            _ => None,
+        }
+    }
+
+    pub fn publisher_priority(&self) -> u8 {
+        match self {
+            Self::Payload0x00 {
+                publisher_priority, ..
+            }
+            | Self::Payload0x01 {
+                publisher_priority, ..
+            }
+            | Self::Payload0x02WithEndOfGroup {
+                publisher_priority, ..
+            }
+            | Self::Payload0x03WithEndOfGroup {
+                publisher_priority, ..
+            }
+            | Self::Payload0x04 {
+                publisher_priority, ..
+            }
+            | Self::Payload0x05 {
+                publisher_priority, ..
+            }
+            | Self::Payload0x06WithEndOfGroup {
+                publisher_priority, ..
+            }
+            | Self::Payload0x07WithEndOfGroup {
+                publisher_priority, ..
+            }
+            | Self::Status0x20 {
+                publisher_priority, ..
+            }
+            | Self::Status0x21 {
+                publisher_priority, ..
+            } => *publisher_priority,
+        }
+    }
+
+    pub fn extension_headers(&self) -> Option<&ExtensionHeaders> {
+        match self {
+            Self::Payload0x01 {
+                extension_headers, ..
+            }
+            | Self::Payload0x03WithEndOfGroup {
+                extension_headers, ..
+            }
+            | Self::Payload0x05 {
+                extension_headers, ..
+            }
+            | Self::Payload0x07WithEndOfGroup {
+                extension_headers, ..
+            }
+            | Self::Status0x21 {
+                extension_headers, ..
+            } => Some(extension_headers),
             _ => None,
         }
     }

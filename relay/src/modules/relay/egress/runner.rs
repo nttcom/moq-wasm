@@ -1,6 +1,11 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use tokio::sync::{broadcast, mpsc, oneshot};
+
+use moqt::wire::publish_done_status_code;
 
 use crate::modules::{
     core::{publisher::Publisher, subscription::DownstreamSubscription},
@@ -42,8 +47,18 @@ impl EgressRunner {
     }
 
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let (sender, receiver) = mpsc::channel(64);
+        let publisher: Arc<dyn Publisher> = Arc::from(self.publisher);
+        let request_id = self.downstream_subscription.request_id();
 
+        if self.cache.is_malformed() {
+            let _ = self.ready_sender.send(Ok(()));
+            Self::send_malformed_publish_done(publisher.as_ref(), &self.track_key, request_id, 0)
+                .await;
+            return Ok(());
+        }
+
+        let (sender, receiver) = mpsc::channel(64);
+        let opened_stream_count = Arc::new(AtomicU64::new(0));
         let filter_type = self.downstream_subscription.filter_type();
         let group_order = self.downstream_subscription.group_order();
         let scheduler = EgressScheduler::new(
@@ -56,14 +71,56 @@ impl EgressRunner {
             self.largest_location,
         );
         let group_sender = GroupSender::new(
-            self.track_key,
-            self.cache,
-            self.publisher,
+            self.track_key.clone(),
+            self.cache.clone(),
+            publisher.clone(),
             self.downstream_subscription,
             receiver,
+            opened_stream_count.clone(),
         );
 
-        tokio::join!(scheduler.run(), group_sender.run());
+        tokio::select! {
+            _ = async { tokio::join!(scheduler.run(), group_sender.run()) } => {}
+            _ = self.cache.malformed_track_detected() => {
+                let stream_count = opened_stream_count.load(Ordering::Acquire);
+                Self::send_malformed_publish_done(
+                    publisher.as_ref(),
+                    &self.track_key,
+                    request_id,
+                    stream_count,
+                )
+                .await;
+            }
+        }
         Ok(())
+    }
+
+    async fn send_malformed_publish_done(
+        publisher: &dyn Publisher,
+        track_key: &TrackKey,
+        request_id: u64,
+        stream_count: u64,
+    ) {
+        tracing::warn!(
+            %track_key,
+            request_id,
+            "malformed track detected; terminating downstream subscription"
+        );
+        if let Err(error) = publisher
+            .send_publish_done(
+                request_id,
+                publish_done_status_code::MALFORMED_TRACK,
+                stream_count,
+                "malformed track".to_string(),
+            )
+            .await
+        {
+            tracing::error!(
+                ?error,
+                %track_key,
+                request_id,
+                "failed to send PUBLISH_DONE for malformed track"
+            );
+        }
     }
 }
