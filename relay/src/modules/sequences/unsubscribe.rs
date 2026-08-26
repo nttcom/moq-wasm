@@ -193,6 +193,10 @@ mod tests {
         ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
             unimplemented!("not used in unsubscribe tests")
         }
+
+        async fn send_fetch_cancel(&self, _request_id: u64) -> anyhow::Result<()> {
+            unimplemented!("not used in unsubscribe tests")
+        }
     }
 
     struct MockSession {

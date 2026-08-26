@@ -48,6 +48,8 @@ impl FetchIngest {
     ) -> Self {
         let downstream_subscriber_session_id = start.downstream_subscriber_session_id;
         let request_id = start.request_id;
+        let upstream_publisher_session_id = start.upstream_publisher_session_id;
+        let upstream_request_id = start.fetch_handle.request_id;
         let cache = start.cache.clone();
         let join_handle = tokio::spawn(async move {
             if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
@@ -55,6 +57,14 @@ impl FetchIngest {
                 // log the chain without anyhow's captured backtrace.
                 tracing::error!(error = %format!("{error:#}"), "fetch ingest failed");
                 let error_code = if cache.is_malformed() {
+                    // §2.5: a subscriber detecting a Malformed Track MUST
+                    // FETCH_CANCEL any fetch for that track.
+                    Self::cancel_upstream_fetch(
+                        session_repo.clone(),
+                        upstream_publisher_session_id,
+                        upstream_request_id,
+                    )
+                    .await;
                     FetchErrorCode::MalformedTrack as u64
                 } else {
                     DATA_STREAM_INTERNAL_ERROR
@@ -111,7 +121,16 @@ impl FetchIngest {
         let start_eviction_generation = start.cache.eviction_generation();
 
         loop {
-            match receiver.receive().await? {
+            // Another ingest path may latch the track while this fill is idle
+            // waiting for upstream data; bail promptly instead of waiting for
+            // the next append or the fill timeout.
+            let received = tokio::select! {
+                received = receiver.receive() => received?,
+                _ = start.cache.malformed_track_detected() => {
+                    anyhow::bail!("malformed track detected while awaiting fetch data");
+                }
+            };
+            match received {
                 moqt::Fetch::Header(_) => {}
                 moqt::Fetch::Object(object) => {
                     Self::append_fetch_object(
@@ -234,6 +253,29 @@ impl FetchIngest {
         )
     }
 
+    async fn cancel_upstream_fetch(
+        session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        upstream_publisher_session_id: SessionId,
+        upstream_request_id: u64,
+    ) {
+        let subscriber = {
+            let session_repo = session_repo.lock().await;
+            session_repo.subscriber(upstream_publisher_session_id)
+        };
+        let Some(subscriber) = subscriber else {
+            return;
+        };
+        if let Err(error) = subscriber.send_fetch_cancel(upstream_request_id).await {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                upstream_request_id,
+                "failed to send upstream FETCH_CANCEL"
+            );
+        } else {
+            tracing::info!(upstream_request_id, "sent upstream FETCH_CANCEL");
+        }
+    }
+
     async fn reset_downstream_fetch(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         downstream_subscriber_session_id: SessionId,
@@ -265,9 +307,214 @@ impl FetchIngest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::relay::cache::track_cache::FetchRangeResolution;
+    use crate::modules::{
+        core::{
+            data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
+            handler::publish::SubscribeOption,
+            publisher::Publisher,
+            session::Session,
+            session_event::MoqtSessionEvent,
+            subscriber::Subscriber,
+            subscription::UpstreamSubscription,
+        },
+        relay::cache::track_cache::FetchRangeResolution,
+    };
     use bytes::Bytes;
     use moqt::{ExtensionHeaders, FetchObject, FetchObjectField, ObjectStatus};
+    use std::sync::Mutex;
+    use tokio::sync::mpsc;
+
+    struct MockUpstreamSession {
+        fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Session for MockUpstreamSession {
+        fn as_publisher(&self) -> Box<dyn Publisher> {
+            unimplemented!("not used in fetch ingest tests")
+        }
+
+        fn as_subscriber(&self) -> Box<dyn Subscriber> {
+            Box::new(MockUpstreamSubscriber {
+                fetch_cancelled_request_ids: self.fetch_cancelled_request_ids.clone(),
+            })
+        }
+
+        async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
+            std::future::pending().await
+        }
+    }
+
+    struct MockUpstreamSubscriber {
+        fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Subscriber for MockUpstreamSubscriber {
+        async fn send_subscribe(
+            &mut self,
+            _track_namespace: String,
+            _track_name: String,
+            _option: SubscribeOption,
+        ) -> anyhow::Result<UpstreamSubscription> {
+            unimplemented!("not used in fetch ingest tests")
+        }
+
+        async fn send_unsubscribe(&self, _subscribe_id: u64) -> anyhow::Result<()> {
+            unimplemented!("not used in fetch ingest tests")
+        }
+
+        async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
+            unimplemented!("not used in fetch ingest tests")
+        }
+
+        async fn create_data_receiver(
+            &mut self,
+            _subscription: &UpstreamSubscription,
+        ) -> anyhow::Result<DataReceiver> {
+            unimplemented!("not used in fetch ingest tests")
+        }
+
+        async fn send_fetch(
+            &mut self,
+            _track_namespace: String,
+            _track_name: String,
+            _start_location: moqt::Location,
+            _end_location: moqt::Location,
+            _option: moqt::FetchOption,
+        ) -> anyhow::Result<moqt::FetchHandle> {
+            unimplemented!("not used in fetch ingest tests")
+        }
+
+        async fn create_fetch_receiver(
+            &mut self,
+            _handle: &moqt::FetchHandle,
+        ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
+            Ok(Box::new(PendingFetchReceiver))
+        }
+
+        async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
+            self.fetch_cancelled_request_ids
+                .lock()
+                .unwrap()
+                .push(request_id);
+            Ok(())
+        }
+    }
+
+    /// Never yields data, like an upstream that stalls mid-fetch.
+    struct PendingFetchReceiver;
+
+    #[async_trait::async_trait]
+    impl UpstreamFetchReceiver for PendingFetchReceiver {
+        async fn receive(&mut self) -> anyhow::Result<moqt::Fetch> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_track_cancels_upstream_fetch_while_awaiting_data() {
+        // Arrange: the upstream session records FETCH_CANCEL; the track is
+        // latched malformed by conflicting duplicate objects.
+        const UPSTREAM_SESSION: SessionId = 1;
+        const DOWNSTREAM_SESSION: SessionId = 2; // not registered: downstream reset is skipped
+        const UPSTREAM_FETCH_REQUEST_ID: u64 = 7;
+        let fetch_cancelled_request_ids = Arc::new(Mutex::new(Vec::new()));
+        let mut repository = SessionRepository::new();
+        let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
+        repository
+            .add_client(
+                UPSTREAM_SESSION,
+                Box::new(MockUpstreamSession {
+                    fetch_cancelled_request_ids: fetch_cancelled_request_ids.clone(),
+                }),
+                session_event_sender,
+                tracing::Span::none(),
+            )
+            .await;
+        let session_repo = Arc::new(tokio::sync::Mutex::new(repository));
+
+        let cache = Arc::new(TrackCache::new());
+        let mut first_fill = HashMap::new();
+        FetchIngest::append_fetch_object(
+            cache.clone(),
+            FetchObjectField::new(
+                0,
+                0,
+                0,
+                0,
+                ExtensionHeaders::default(),
+                FetchObject::Payload(Bytes::from_static(b"a")),
+            ),
+            &mut first_fill,
+        )
+        .await
+        .unwrap();
+        let mut second_fill = HashMap::new();
+        let _ = FetchIngest::append_fetch_object(
+            cache.clone(),
+            FetchObjectField::new(
+                0,
+                0,
+                0,
+                0,
+                ExtensionHeaders::default(),
+                FetchObject::Payload(Bytes::from_static(b"b")),
+            ),
+            &mut second_fill,
+        )
+        .await;
+        assert!(cache.is_malformed());
+
+        let (egress_sender, _egress_receiver) = mpsc::channel(1);
+        let location = |group_id, object_id| moqt::Location {
+            group_id,
+            object_id,
+        };
+        let start = FetchIngestStart {
+            upstream_publisher_session_id: UPSTREAM_SESSION,
+            downstream_subscriber_session_id: DOWNSTREAM_SESSION,
+            request_id: 3,
+            fetch_handle: moqt::FetchHandle {
+                request_id: UPSTREAM_FETCH_REQUEST_ID,
+                group_order: moqt::GroupOrder::Ascending,
+                end_of_track: false,
+                end_location: location(0, 1),
+            },
+            cache: cache.clone(),
+            requested_start: location(0, 0),
+            requested_end: location(0, 1),
+            egress_start: EgressFetchRequest {
+                subscriber_session_id: DOWNSTREAM_SESSION,
+                request_id: 3,
+                cache: cache.clone(),
+                start_location: location(0, 0),
+                end_location: location(0, 1),
+                group_order: moqt::GroupOrder::Ascending,
+            },
+        };
+
+        // Act: the receiver pends forever, so only the malformed latch can
+        // make the ingest bail.
+        let _ingest = FetchIngest::run(session_repo, egress_sender, start);
+
+        // Assert: the upstream fetch is cancelled with its own request id.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if !fetch_cancelled_request_ids.lock().unwrap().is_empty() {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "upstream FETCH_CANCEL was never sent"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        assert_eq!(
+            *fetch_cancelled_request_ids.lock().unwrap(),
+            vec![UPSTREAM_FETCH_REQUEST_ID]
+        );
+    }
 
     #[tokio::test]
     async fn fetch_status_object_does_not_close_live_subgroup() {
