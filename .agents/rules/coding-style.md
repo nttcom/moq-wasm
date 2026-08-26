@@ -14,10 +14,11 @@ Shared by all agents (Claude Code, Codex).
 - When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
 
 ## Comments
-- Write a comment only for what cannot be derived from the code and affects current behavior: an invariant, a specification constraint, a workaround, or a deliberate trade-off.
-- If a comment is needed to make the code readable, rename or restructure the code instead of adding the comment.
+- Do not write comments. Before adding or keeping one, apply this test: can the reader derive the information from the code itself (names, types, control flow, test names)? If yes, the comment is prohibited — this applies to all code, not only tests: production code, mocks, and doc comments alike. A doc comment that restates the item's name or signature fails the test.
+- When code seems to need a comment, make the code convey the information instead — rename the function or variable, split the function, or restructure — and then delete the comment. This refactoring is part of the change that removes the comment; do not keep a comment to avoid the refactoring.
+- The only information that may stay as a comment is what code cannot express: an invariant, a specification constraint, a workaround, or a deliberate trade-off that affects current behavior.
 - Change history, past implementations, migration notes, review discussion, TODO speculation, and plans for future work do not belong in the code body. Put them in the commit message, the pull request, or an architecture document.
-- A comment is required in three cases: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the `// Arrange` / `// Act` / `// Assert` labels in tests (see `testing.md`).
+- A comment is required in three cases only: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the bare `// Arrange` / `// Act` / `// Assert` labels in tests (see `testing.md`).
 
 ## Naming
 - Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).
