@@ -25,7 +25,6 @@ function aliasKey(alias: bigint | string): string {
   return normalizeAlias(alias).toString()
 }
 
-// Time-seeded to avoid reusing relay-cached locations (draft-14 §2.5).
 function initialGroupId(): bigint {
   return BigInt(Date.now()) - 1n
 }

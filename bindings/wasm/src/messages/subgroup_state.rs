@@ -43,7 +43,6 @@ impl SubgroupState {
     pub(crate) fn with_track(track_alias: u64) -> Self {
         Self {
             track_alias,
-            // Time-seeded to avoid reusing relay-cached locations (draft-14 §2.5).
             group_id: js_sys::Date::now() as u64,
             subgroup_id: 0,
             object_id: 0,
