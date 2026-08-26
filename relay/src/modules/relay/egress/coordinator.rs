@@ -171,8 +171,6 @@ impl EgressCoordinator {
                     return;
                 }
             }
-            // A FIN would assert full delivery; reset if the track went
-            // malformed after collection.
             if cache.is_malformed() {
                 if let Err(e) = sender.reset(FetchErrorCode::MalformedTrack as u64).await {
                     tracing::error!(?e, "failed to reset fetch stream");

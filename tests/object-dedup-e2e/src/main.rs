@@ -1,11 +1,8 @@
 //! Manual e2e for per-object dedup when the same track is published twice.
 //!
 //!   1. alice publishes group 0 (o0..o4) on a track, then disconnects.
-//!   2. alice publishes the same Full Track Name and group 0 again with
-//!      identical payloads.
+//!   2. alice publishes the same Full Track Name and group 0 again.
 //!   3. bob FETCHes the whole of group 0 and must receive exactly o0..o4.
-//!   4. alice publishes group 0 once more with *different* payloads; the relay
-//!      must reject bob's next FETCH with MALFORMED_TRACK (§2.5 condition 8).
 //!
 //! Without dedup the relay appends the second group 0 after the first, so the
 //! fetch returns 10 objects (each object id 0..4 twice) and the assertion fails.
@@ -55,8 +52,6 @@ fn unique_track_name() -> String {
     format!("data-{}", nanos)
 }
 
-/// Byte-identical across republishes, or the relay treats the track as
-/// malformed (§2.5 condition 8) instead of deduplicating.
 fn object_payload(obj_id: u64) -> String {
     format!("alice:g{}:o{}", GROUP_ID, obj_id)
 }
@@ -163,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     // guard is cleared before the same track is published again.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 2. alice publishes the *same* group 0 again with identical payloads.
+    // 2. alice publishes the *same* group 0 again.
     publish_once(&track_name, "2nd", object_payload).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -200,9 +195,6 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!("[bob] OK: group 0 deduplicated to o0..o4");
 
-    // 4. alice republishes group 0 with *different* payloads. The relay stops
-    // reading at the first conflicting object, so alice's remaining sends may
-    // fail; only the detection matters here.
     if let Err(error) = publish_once(&track_name, "conflict", |obj_id| {
         format!("alice:conflict:g{}:o{}", GROUP_ID, obj_id)
     })

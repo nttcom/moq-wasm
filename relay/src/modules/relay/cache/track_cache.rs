@@ -26,7 +26,6 @@ pub(crate) struct TrackCache {
     known_ranges: RwLock<KnownRanges>,
     live_ingest_count: AtomicUsize,
     eviction_generation: AtomicU64,
-    /// Sticky §2.5 Malformed Track latch; quarantines the track, not the session.
     malformed: AtomicBool,
     malformed_notify: Notify,
 }
@@ -61,7 +60,6 @@ impl TrackCache {
         self.malformed_notify.notify_waiters();
     }
 
-    /// Resolves once the track is marked malformed; pends forever otherwise.
     pub(crate) async fn malformed_track_detected(&self) {
         loop {
             let notified = self.malformed_notify.notified();
@@ -193,9 +191,6 @@ impl TrackCache {
         result.map(|_| ())
     }
 
-    /// §2.5 condition 8 across subgroups. Checked after the insert so racing
-    /// writers cannot both miss each other. Only explicit `Value` ids are
-    /// comparable; other key kinds may alias the same subgroup.
     async fn object_exists_in_other_subgroup(
         &self,
         group_id: u64,
@@ -675,8 +670,6 @@ impl TrackCache {
             .await
     }
 
-    /// Fails as soon as the malformed latch is observed, so an in-flight
-    /// fetch is reset instead of served (§2.5).
     pub(crate) async fn get_fetch_objects_with_group_order(
         &self,
         start: moqt::Location,
@@ -905,7 +898,6 @@ mod tests {
         // Arrange: one object at id 0 in group 0
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[0]).await;
-        // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: the only object's location is returned
         assert_eq!(loc.group_id, 0);
@@ -917,7 +909,6 @@ mod tests {
         // Arrange: sequential object_ids 0, 1, 2 in group 0
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[0, 1, 2]).await;
-        // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: the largest object_id is returned
         assert_eq!(loc.group_id, 0);
@@ -929,7 +920,6 @@ mod tests {
         // Arrange: gapped object_ids 5, 8 in group 0
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[5, 8]).await;
-        // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: the largest object_id is returned even with a gap
         assert_eq!(loc.group_id, 0);
@@ -942,7 +932,6 @@ mod tests {
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[0]).await;
         fill_group_with_ids(&cache, 1, &[0]).await;
-        // Act
         let loc = cache.largest_location().await.unwrap();
         // Assert: the latest group's location is returned
         assert_eq!(loc.group_id, 1);
@@ -974,7 +963,6 @@ mod tests {
         let _ = cache
             .append_stream_object(0, &subgroup, None, make_header(0))
             .await;
-        // Act
         cache.evict(ttl).await;
         // Assert: fetch-fill leftovers are reclaimed as soon as they are empty.
         assert!(!cache.has_stream_group(0).await);
@@ -992,11 +980,9 @@ mod tests {
             .append_live_stream_object(0, &subgroup, None, make_header(0))
             .await;
 
-        // Act
         tokio::time::advance(Duration::from_secs(100)).await;
         cache.evict(ttl).await;
 
-        // Assert
         assert!(cache.has_stream_group(0).await);
     }
 
@@ -1254,7 +1240,6 @@ mod tests {
             )
             .await;
 
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1339,36 +1324,29 @@ mod tests {
         cache.evict(ttl).await;
         cache.evict(ttl).await;
 
-        // Assert
         assert!(!cache.has_stream_group(0).await);
     }
 
     #[tokio::test(start_paused = true)]
     async fn eviction_generation_does_not_increment_when_nothing_removed() {
-        // Arrange
         let cache = TrackCache::new();
         let generation = cache.eviction_generation();
 
-        // Act
         cache.evict(Duration::from_secs(10)).await;
 
-        // Assert
         assert_eq!(cache.eviction_generation(), generation);
     }
 
     #[tokio::test(start_paused = true)]
     async fn eviction_generation_increments_when_objects_are_removed() {
-        // Arrange
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[0]).await;
         let generation = cache.eviction_generation();
 
-        // Act
         tokio::time::advance(Duration::from_secs(11)).await;
         cache.evict(ttl).await;
 
-        // Assert
         assert!(cache.eviction_generation() > generation);
     }
 
@@ -1381,7 +1359,6 @@ mod tests {
         fill_group_with_ids(&cache, 0, &[0, 1, 2]).await;
         fill_group_with_ids(&cache, 1, &[0, 1]).await;
 
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1416,7 +1393,6 @@ mod tests {
         fill_group_with_ids(&cache, 0, &[0, 1, 2]).await;
         fill_group_with_ids(&cache, 1, &[0, 1]).await;
 
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1430,7 +1406,6 @@ mod tests {
             )
             .await;
 
-        // Assert
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
     }
 
@@ -1470,7 +1445,6 @@ mod tests {
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[0]).await;
 
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1497,7 +1471,6 @@ mod tests {
         cache.begin_live_ingest();
         cache.end_live_ingest();
 
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1641,7 +1614,6 @@ mod tests {
     async fn resolve_fetch_range_returns_not_covered_for_empty_cache() {
         // Arrange: empty cache
         let cache = TrackCache::new();
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1663,7 +1635,6 @@ mod tests {
         // Arrange: group 0 has exactly the requested object coverage.
         let cache = TrackCache::new();
         fill_group(&cache, 0, 3).await;
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1693,7 +1664,6 @@ mod tests {
         // Arrange: object 1 is not cached, but cache coverage starts before it.
         let cache = TrackCache::new();
         fill_group_with_ids(&cache, 0, &[0, 2]).await;
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1726,7 +1696,6 @@ mod tests {
         fill_group(&cache, 0, 1).await;
         cache.close_stream_subgroup(0, &subgroup).await;
         fill_group(&cache, 2, 1).await;
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1748,7 +1717,6 @@ mod tests {
         // Arrange: end.object_id == 0 requests the full group, but it is still open.
         let cache = TrackCache::new();
         fill_group(&cache, 0, 3).await;
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1780,7 +1748,6 @@ mod tests {
         let subgroup = StreamSubgroupId::Value(0);
         fill_group(&cache, 0, 3).await;
         cache.close_stream_subgroup(0, &subgroup).await;
-        // Act
         let resolution = cache
             .resolve_fetch_range(
                 moqt::Location {
@@ -1845,7 +1812,6 @@ mod tests {
             )
             .await;
 
-        // Act
         let objects = cache
             .get_fetch_objects(
                 moqt::Location {
@@ -1982,7 +1948,6 @@ mod tests {
         cache.close_stream_subgroup(0, &even).await;
         cache.close_stream_subgroup(0, &odd).await;
 
-        // Act
         let objects = cache
             .get_fetch_objects(
                 moqt::Location {
@@ -1997,7 +1962,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Assert
         assert_eq!(
             object_ids(&objects),
             vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]
@@ -2006,12 +1970,10 @@ mod tests {
 
     #[tokio::test]
     async fn get_fetch_objects_descending_groups_keep_objects_ascending() {
-        // Arrange
         let cache = TrackCache::new();
         fill_closed_group_with_ids(&cache, 0, &[0, 1]).await;
         fill_closed_group_with_ids(&cache, 1, &[0, 1]).await;
 
-        // Act
         let objects = cache
             .get_fetch_objects_with_group_order(
                 moqt::Location {
@@ -2027,7 +1989,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Assert
         assert_eq!(object_ids(&objects), vec![(1, 0), (1, 1), (0, 0), (0, 1)]);
     }
 
@@ -2105,7 +2066,6 @@ mod tests {
 
     #[tokio::test]
     async fn same_object_in_two_subgroups_is_malformed() {
-        // Arrange: object 0 already lives in subgroup 0.
         let cache = TrackCache::new();
         let even = StreamSubgroupId::Value(0);
         let odd = StreamSubgroupId::Value(1);
@@ -2119,13 +2079,10 @@ mod tests {
             .append_live_stream_object(0, &odd, None, subgroup_header_for(1))
             .await;
 
-        // Act: the same object arrives under a different subgroup (identical
-        // payload; the subgroup itself is the immutable property)
         let outcome = cache
             .append_live_stream_object(0, &odd, Some(0), make_object(0))
             .await;
 
-        // Assert: latched, and later appends are rejected
         assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
         let rejected = cache
@@ -2136,7 +2093,6 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_object_with_different_payload_latches_the_track() {
-        // Arrange
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
         let _ = cache
@@ -2146,19 +2102,16 @@ mod tests {
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
             .await;
 
-        // Act
         let outcome = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
             .await;
 
-        // Assert
         assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
     }
 
     #[tokio::test]
     async fn get_fetch_objects_aborts_when_track_goes_malformed() {
-        // Arrange: a live group whose tail the fetch will wait for
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
         let _ = cache
@@ -2168,7 +2121,6 @@ mod tests {
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
             .await;
 
-        // Act: the fetch consumes object 0, then waits for object 1.
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
@@ -2187,13 +2139,11 @@ mod tests {
             }
         });
         tokio::task::yield_now().await;
-        // A conflicting duplicate latches the track while the fetch waits.
         let outcome = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
             .await;
         assert_eq!(outcome, Err(TrackMalformed));
 
-        // Assert: the in-flight collection aborts instead of serving.
         let result = tokio::time::timeout(Duration::from_secs(5), fetch)
             .await
             .expect("fetch must abort once the track is malformed")

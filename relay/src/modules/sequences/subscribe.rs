@@ -444,7 +444,6 @@ impl Subscribe {
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) {
-        // §9.9 has no malformed-track code; TRACK_DOES_NOT_EXIST is closest.
         if cache_store
             .get(&active_upstream.track_key)
             .is_some_and(|cache| cache.is_malformed())

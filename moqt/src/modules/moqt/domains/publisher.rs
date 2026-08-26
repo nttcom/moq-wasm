@@ -103,7 +103,6 @@ impl<T: TransportProtocol> Publisher<T> {
         Ok(())
     }
 
-    /// Fire-and-forget: the spec defines no response message for PUBLISH_DONE.
     pub async fn publish_done(
         &self,
         request_id: u64,

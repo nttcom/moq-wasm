@@ -50,7 +50,6 @@ impl EgressRunner {
         let publisher: Arc<dyn Publisher> = Arc::from(self.publisher);
         let request_id = self.downstream_subscription.request_id();
 
-        // Detection can race the subscribe sequence's own malformed check.
         if self.cache.is_malformed() {
             let _ = self.ready_sender.send(Ok(()));
             Self::send_malformed_publish_done(publisher.as_ref(), &self.track_key, request_id, 0)
@@ -83,8 +82,6 @@ impl EgressRunner {
         tokio::select! {
             _ = async { tokio::join!(scheduler.run(), group_sender.run()) } => {}
             _ = self.cache.malformed_track_detected() => {
-                // This arm drops the futures above, closing all data streams
-                // before PUBLISH_DONE goes out (§9.12 ordering).
                 let stream_count = opened_stream_count.load(Ordering::Acquire);
                 Self::send_malformed_publish_done(
                     publisher.as_ref(),

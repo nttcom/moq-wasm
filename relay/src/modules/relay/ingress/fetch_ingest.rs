@@ -324,7 +324,6 @@ mod tests {
 
     #[tokio::test]
     async fn conflicting_fetch_object_fails_the_fill_and_latches_the_track() {
-        // Arrange: a fill stored the object once
         let cache = Arc::new(TrackCache::new());
         let mut first_fill = HashMap::new();
         FetchIngest::append_fetch_object(
@@ -342,7 +341,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Act: a second fill delivers the same object with another payload
         let mut second_fill = HashMap::new();
         let result = FetchIngest::append_fetch_object(
             cache.clone(),
@@ -358,7 +356,6 @@ mod tests {
         )
         .await;
 
-        // Assert: the fill fails and the track is quarantined
         assert!(result.is_err());
         assert!(cache.is_malformed());
     }
