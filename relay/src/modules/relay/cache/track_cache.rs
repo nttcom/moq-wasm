@@ -2066,6 +2066,7 @@ mod tests {
 
     #[tokio::test]
     async fn same_object_in_two_subgroups_is_malformed() {
+        // Arrange: object 0 already lives in subgroup 0
         let cache = TrackCache::new();
         let even = StreamSubgroupId::Value(0);
         let odd = StreamSubgroupId::Value(1);
@@ -2079,10 +2080,12 @@ mod tests {
             .append_live_stream_object(0, &odd, None, subgroup_header_for(1))
             .await;
 
+        // Act: the same object arrives under a different subgroup
         let outcome = cache
             .append_live_stream_object(0, &odd, Some(0), make_object(0))
             .await;
 
+        // Assert: latched, and later appends are rejected
         assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
         let rejected = cache
@@ -2093,6 +2096,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_object_with_different_payload_latches_the_track() {
+        // Arrange
         let cache = TrackCache::new();
         let subgroup = StreamSubgroupId::Value(0);
         let _ = cache
@@ -2102,16 +2106,19 @@ mod tests {
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
             .await;
 
+        // Act
         let outcome = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
             .await;
 
+        // Assert
         assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
     }
 
     #[tokio::test]
     async fn get_fetch_objects_aborts_when_track_goes_malformed() {
+        // Arrange: a live group whose tail the fetch will wait for
         let cache = Arc::new(TrackCache::new());
         let subgroup = StreamSubgroupId::Value(0);
         let _ = cache
@@ -2121,6 +2128,7 @@ mod tests {
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
             .await;
 
+        // Act: the fetch consumes object 0, then waits for object 1
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
@@ -2139,11 +2147,13 @@ mod tests {
             }
         });
         tokio::task::yield_now().await;
+        // A conflicting duplicate latches the track while the fetch waits
         let outcome = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
             .await;
         assert_eq!(outcome, Err(TrackMalformed));
 
+        // Assert: the in-flight collection aborts instead of serving
         let result = tokio::time::timeout(Duration::from_secs(5), fetch)
             .await
             .expect("fetch must abort once the track is malformed")

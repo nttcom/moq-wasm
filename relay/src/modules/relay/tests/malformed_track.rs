@@ -22,9 +22,11 @@ fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn duplicate_object_with_different_payload_terminates_subscription() {
+    // Arrange
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
 
+    // Act: a second stream re-delivers object 0 with a different payload
     let first_stream = harness.open_upstream_stream().await;
     first_stream.header(0);
     first_stream.object(0);
@@ -32,6 +34,7 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
     second_stream.header(0);
     second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
 
+    // Assert: the subscription ends with PUBLISH_DONE(MALFORMED_TRACK)
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(
         publish_done.status_code,
@@ -42,9 +45,11 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn identical_duplicate_from_second_stream_is_not_malformed() {
+    // Arrange
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
 
+    // Act: a second stream re-delivers object 0 with an identical payload
     let first_stream = harness.open_upstream_stream().await;
     first_stream.header(0);
     first_stream.object(0);
@@ -61,6 +66,7 @@ async fn identical_duplicate_from_second_stream_is_not_malformed() {
     first_stream.fin();
     second_stream.fin();
 
+    // Assert: deduplicated delivery, no PUBLISH_DONE
     let objects = receive_objects_until_close(&mut egress).await;
     assert_eq!(
         payloads_of(&objects),
@@ -71,6 +77,7 @@ async fn identical_duplicate_from_second_stream_is_not_malformed() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn subscription_started_after_detection_is_terminated_immediately() {
+    // Arrange: latch the track before any downstream subscriber attaches
     let harness = RelayHarness::new();
 
     let first_stream = harness.open_upstream_stream().await;
@@ -81,6 +88,7 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
     second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
     harness.wait_track_malformed().await;
 
+    // Act / Assert: the runner terminates right away, with Stream Count 0
     let mut egress = harness.start_egress(None).await;
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(

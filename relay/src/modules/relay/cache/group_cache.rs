@@ -295,9 +295,12 @@ mod tests {
 
     #[tokio::test]
     async fn append_identical_duplicate_keeps_first() {
+        // Arrange: the same object arrives twice
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
+        // Act
         let first = cache.append(Some(0), payload_object(b"same")).await;
         let second = cache.append(Some(0), payload_object(b"same")).await;
+        // Assert: first-wins dedup, no malformed flag
         assert_eq!(first, Ok(AppendStatus::Inserted));
         assert_eq!(second, Ok(AppendStatus::Duplicate));
         let snapshot = cache.objects_snapshot().await;
@@ -309,9 +312,12 @@ mod tests {
 
     #[tokio::test]
     async fn append_duplicate_with_different_payload_is_malformed() {
+        // Arrange
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         let _ = cache.append(Some(0), payload_object(b"first")).await;
+        // Act: the same object_id arrives again with a different payload
         let outcome = cache.append(Some(0), payload_object(b"second")).await;
+        // Assert: malformed; the first object is kept untouched
         assert_eq!(outcome, Err(TrackMalformed));
         let snapshot = cache.objects_snapshot().await;
         assert_eq!(payload_of(&snapshot[0].1), Bytes::from_static(b"first"));
@@ -319,9 +325,11 @@ mod tests {
 
     #[tokio::test]
     async fn append_identical_header_twice_keeps_first() {
+        // Arrange / Act: the same subgroup header arrives twice
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         let first = cache.append(None, header_object(1)).await;
         let second = cache.append(None, header_object(1)).await;
+        // Assert: first-wins, no malformed flag
         assert_eq!(first, Ok(AppendStatus::Inserted));
         assert_eq!(second, Ok(AppendStatus::Duplicate));
         assert!(cache.header().await.is_some());
@@ -329,9 +337,12 @@ mod tests {
 
     #[tokio::test]
     async fn append_header_with_different_priority_is_malformed() {
+        // Arrange
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
         let _ = cache.append(None, header_object(1)).await;
+        // Act: a second header with a different publisher priority
         let outcome = cache.append(None, header_object(2)).await;
+        // Assert: malformed; the first header survives
         assert_eq!(outcome, Err(TrackMalformed));
         match cache.header().await.unwrap().as_ref() {
             DataObject::SubgroupHeader(h) => assert_eq!(h.publisher_priority, 1),
