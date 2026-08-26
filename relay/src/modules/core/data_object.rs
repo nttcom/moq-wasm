@@ -133,29 +133,37 @@ mod tests {
 
     #[test]
     fn stream_encoding_details_are_not_immutable_properties() {
+        // Arrange: same payload, different object_id_delta
         let a = subgroup_object(0, b"same");
         let b = subgroup_object(3, b"same");
+        // Act / Assert
         assert!(a.matches_immutable_properties(&b));
     }
 
     #[test]
     fn differing_payload_is_not_a_match() {
+        // Arrange
         let a = subgroup_object(0, b"a");
         let b = subgroup_object(0, b"b");
+        // Act / Assert
         assert!(!a.matches_immutable_properties(&b));
     }
 
     #[test]
     fn differing_datagram_priority_is_not_a_match() {
+        // Arrange
         let a = datagram(1, b"same");
         let b = datagram(2, b"same");
+        // Act / Assert
         assert!(!a.matches_immutable_properties(&b));
     }
 
     #[test]
     fn identical_datagram_matches() {
+        // Arrange
         let a = datagram(1, b"same");
         let b = datagram(1, b"same");
+        // Act / Assert
         assert!(a.matches_immutable_properties(&b));
     }
 }

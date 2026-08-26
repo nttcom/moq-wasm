@@ -325,8 +325,9 @@ mod tests {
 
     #[tokio::test]
     async fn append_identical_header_twice_keeps_first() {
-        // Arrange / Act: the same subgroup header arrives twice
+        // Arrange
         let cache = GroupCache::new(SubgroupLifecycle::AwaitingCloseSignal);
+        // Act: the same subgroup header arrives twice
         let first = cache.append(None, header_object(1)).await;
         let second = cache.append(None, header_object(1)).await;
         // Assert: first-wins, no malformed flag

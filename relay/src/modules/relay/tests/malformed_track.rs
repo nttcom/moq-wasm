@@ -88,9 +88,10 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
     second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
     harness.wait_track_malformed().await;
 
-    // Act / Assert: the runner terminates right away, with Stream Count 0
+    // Act
     let mut egress = harness.start_egress(None).await;
     let publish_done = egress.expect_publish_done().await;
+    // Assert: the runner terminates right away, with Stream Count 0
     assert_eq!(
         publish_done.status_code,
         publish_done_status_code::MALFORMED_TRACK

@@ -2128,7 +2128,8 @@ mod tests {
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"a"))
             .await;
 
-        // Act: the fetch consumes object 0, then waits for object 1
+        // Act: the fetch consumes object 0 and waits for object 1, then a
+        // conflicting duplicate latches the track mid-wait
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
@@ -2147,7 +2148,6 @@ mod tests {
             }
         });
         tokio::task::yield_now().await;
-        // A conflicting duplicate latches the track while the fetch waits
         let outcome = cache
             .append_live_stream_object(0, &subgroup, Some(0), make_object_with_payload(0, b"b"))
             .await;
