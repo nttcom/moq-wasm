@@ -9,6 +9,10 @@ Shared coding style rules for all agents (Claude Code, Codex). Read this before 
 
 ## Comments
 - Keep comments to a minimum. Code that needs a comment to be readable should usually be renamed or restructured instead.
+- A comment in the code body may carry only information that satisfies both conditions:
+  1. It cannot be reconstructed from the code itself.
+  2. It affects current behavior right now.
+- Consequences of that rule: do not leave change history, past implementations, migration notes, review discussion, TODO speculation, or plans for future work in the code body. Such context belongs in the commit message, the pull request, or an architecture document.
 - Write a comment only for the non-obvious *why* — an invariant, a specification constraint, a workaround, or a deliberate trade-off. Do not restate what the code already says.
 - Exceptions where comments are still required: the invariant behind `panic!`/`unreachable!` and the meaning of abbreviations in type declarations.
 - In test code, the `// Arrange` / `// Act` / `// Assert` phase-separator comments are always allowed even though they only label the phase. See `testing.md`.
