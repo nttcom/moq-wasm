@@ -1,8 +1,12 @@
 //! Manual e2e for per-object dedup when the same track is published twice.
 //!
 //!   1. alice publishes group 0 (o0..o4) on a track, then disconnects.
-//!   2. alice publishes the same Full Track Name and group 0 again.
+//!   2. alice publishes the same Full Track Name and group 0 again with
+//!      identical payloads.
 //!   3. bob FETCHes the whole of group 0 and must receive exactly o0..o4.
+//!   4. alice publishes group 0 once more with *different* payloads; the relay
+//!      must quarantine the track (draft-14 §2.5 condition 8) and answer bob's
+//!      next FETCH with FETCH_ERROR MALFORMED_TRACK (0x9).
 //!
 //! Without dedup the relay appends the second group 0 after the first, so the
 //! fetch returns 10 objects (each object id 0..4 twice) and the assertion fails.
@@ -52,17 +56,26 @@ fn unique_track_name() -> String {
     format!("data-{}", nanos)
 }
 
-async fn send_group(factory: &StreamDataSenderFactory<QUIC>, attempt: &str) -> anyhow::Result<()> {
+/// Deterministic per-object payload: republishing the same objects must be
+/// byte-identical, otherwise the relay treats the track as malformed
+/// (draft-14 §2.5 condition 8) instead of deduplicating.
+fn object_payload(obj_id: u64) -> String {
+    format!("alice:g{}:o{}", GROUP_ID, obj_id)
+}
+
+async fn send_group(
+    factory: &StreamDataSenderFactory<QUIC>,
+    attempt: &str,
+    payload_of: impl Fn(u64) -> String,
+) -> anyhow::Result<()> {
     let sender = factory.next().await?;
     let header = sender.create_header(GROUP_ID, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
     let mut stream = sender.send_header(header).await?;
     for obj_id in 0..OBJECTS_PER_GROUP {
-        // Tag the payload with the publish attempt so the duplication is visible.
-        let payload = format!("alice:{}:g{}:o{}", attempt, GROUP_ID, obj_id);
         let obj = stream.create_object_field(
             0,
             ExtensionHeaders::default(),
-            SubgroupObject::new_payload(payload.into()),
+            SubgroupObject::new_payload(payload_of(obj_id).into()),
         );
         stream.send(obj).await?;
         tracing::info!("[alice:{}] sent g{}:o{}", attempt, GROUP_ID, obj_id);
@@ -73,7 +86,11 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, attempt: &str) -> a
 /// Connects, PUBLISHes the track, sends group 0, then drops the session
 /// (disconnect). The trailing sleep lets the relay ingest the objects and, on
 /// return, tear the session down before the next publish.
-async fn publish_once(track_name: &str, attempt: &str) -> anyhow::Result<()> {
+async fn publish_once(
+    track_name: &str,
+    attempt: &str,
+    payload_of: impl Fn(u64) -> String,
+) -> anyhow::Result<()> {
     let session = new_session().await?;
     let publisher = session.publisher();
     let subscription = publisher
@@ -85,7 +102,7 @@ async fn publish_once(track_name: &str, attempt: &str) -> anyhow::Result<()> {
         .await?;
     tracing::info!("[alice:{}] publish ok", attempt);
     let factory = publisher.create_stream(&subscription);
-    send_group(&factory, attempt).await?;
+    send_group(&factory, attempt, payload_of).await?;
     tracing::info!(
         "[alice:{}] group sent; waiting for relay to ingest",
         attempt
@@ -143,13 +160,13 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("[main] track = {}/{}", NAMESPACE, track_name);
 
     // 1. alice publishes group 0, then disconnects.
-    publish_once(&track_name, "1st").await?;
+    publish_once(&track_name, "1st", object_payload).await?;
     // Let the relay finish tearing down alice's ingress so the single-writer
     // guard is cleared before the same track is published again.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // 2. alice publishes the *same* group 0 again.
-    publish_once(&track_name, "2nd").await?;
+    // 2. alice publishes the *same* group 0 again with identical payloads.
+    publish_once(&track_name, "2nd", object_payload).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // 3. bob fetches the whole of group 0. End object_id 0 means "entire group",
@@ -183,7 +200,51 @@ async fn main() -> anyhow::Result<()> {
         received.len(),
         received
     );
-
     tracing::info!("[bob] OK: group 0 deduplicated to o0..o4");
+
+    // 4. alice republishes group 0 with *different* payloads: the same objects
+    // with different content make the track malformed (draft-14 §2.5
+    // condition 8), so the relay must quarantine it and reject further FETCHes
+    // with MALFORMED_TRACK (0x9).
+    // The relay stops reading the stream at the first conflicting object, so
+    // alice's remaining sends may fail; only the detection matters here.
+    if let Err(error) = publish_once(&track_name, "conflict", |obj_id| {
+        format!("alice:conflict:g{}:o{}", GROUP_ID, obj_id)
+    })
+    .await
+    {
+        tracing::info!("[alice:conflict] publish ended early (expected): {error:#}");
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let session = new_session().await?;
+    let mut subscriber = session.subscriber();
+    let fetch_result = run_fetch(
+        &mut subscriber,
+        &track_name,
+        Location {
+            group_id: GROUP_ID,
+            object_id: 0,
+        },
+        Location {
+            group_id: GROUP_ID,
+            object_id: 0,
+        },
+    )
+    .await;
+    let error = match fetch_result {
+        Err(error) => error,
+        Ok(received) => anyhow::bail!(
+            "fetch on a malformed track must fail, but returned {} objects: {:?}",
+            received.len(),
+            received
+        ),
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("code 9"),
+        "fetch on a malformed track must fail with MALFORMED_TRACK (0x9); got: {message}"
+    );
+    tracing::info!("[bob] OK: conflicting republish is rejected as a malformed track");
     Ok(())
 }
