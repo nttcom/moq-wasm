@@ -6,7 +6,6 @@
 
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
-- The project is organized around the following components.
 
 Library components (draft-governed):
 
@@ -29,19 +28,15 @@ Application and integration components (draft reference is normally not required
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
 ### Architecture Documents
-- Architecture documents live under `architecture_decision_record/${package_name}/architecture.md`:
-  - `architecture_decision_record/moqt/architecture.md` — `moqt` crate architecture
-  - `architecture_decision_record/relay/architecture.md` — `relay` crate architecture
+- Architecture documents live at `architecture_decision_record/${package_name}/architecture.md` (currently `moqt` and `relay`).
 - Before making structural changes to a component (module layout, layering, task/channel topology), read its architecture document first.
 - When a change alters the design intent, module boundaries, runtime flow, or key invariants described in an architecture document, update that document in the same change.
 
 ## 3. Specifications
-- MoQT-related specifications are stored in the `spec` directory.
 - For library components listed in the draft-governed table above, use only the draft listed in `Related Draft` as the authoritative specification. Do not consult other drafts unless the task explicitly requires them.
 - For application and integration components, draft lookup is not required unless the task explicitly asks for specification-level alignment.
 - Do not read the entire draft. Search for the relevant section heading or keyword to locate the needed content.
 - When implementation details are unclear, consult the relevant draft before answering questions or making code changes.
-  - For definitions shared by clients and servers, verify the draft text carefully and implement behavior accordingly.
 - When the draft uses MUST, SHOULD, or MAY (RFC 2119 keywords), ask the user how far to implement before proceeding.
 - If ambiguity remains after consulting both the specification and this document, ask the user for clarification rather than guessing.
 
@@ -68,7 +63,6 @@ Application and integration components (draft reference is normally not required
 
 ## 7. Logging
 Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::debug!`).
-Follow the log level guidelines below.
 
 | Level | Role | Example Events |
 | --- | --- | --- |
@@ -84,6 +78,5 @@ Follow the log level guidelines below.
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
   - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `packages`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
-- PR titles must be written in Japanese and clearly describe what was changed.
-- PR descriptions must be written in Japanese and follow `.github/pull_request_template.md`.
+- PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
