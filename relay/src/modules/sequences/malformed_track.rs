@@ -6,10 +6,8 @@ use crate::modules::{
 };
 use tracing::Span;
 
-/// Upstream-side teardown after a §2.5 Malformed Track detection: the relay
-/// is the subscriber toward the publisher, so it MUST UNSUBSCRIBE the
-/// subscription for that track (in-flight upstream fetches send their own
-/// FETCH_CANCEL from `FetchIngest`).
+/// §2.5: a subscriber detecting a Malformed Track MUST UNSUBSCRIBE it.
+/// In-flight upstream fetches FETCH_CANCEL themselves in `FetchIngest`.
 pub(crate) struct MalformedTrackCleanup;
 
 impl MalformedTrackCleanup {
@@ -34,8 +32,6 @@ impl MalformedTrackCleanup {
             track_namespace: track_key.track_namespace.clone(),
             track_name: track_key.track_name.clone(),
         };
-        // Concurrent readers can report the same detection; only the first
-        // report finds the subscription still registered.
         let Some(removed) = table.remove_upstream_subscription(&upstream_key) else {
             tracing::debug!("upstream subscription already removed");
             return;
@@ -152,7 +148,7 @@ mod tests {
         // Act
         run_cleanup(&ctx).await;
 
-        // Assert: the upstream subscription is unregistered and unsubscribed.
+        // Assert
         assert!(
             ctx.table
                 .get_active_upstream_subscription(PUBLISHER_SESSION, "ns", "track")
@@ -162,7 +158,6 @@ mod tests {
             *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        // Assert: ingress is told to stop the track.
         match ctx.ingress_receiver.try_recv() {
             Ok(IngressCommand::StopTrack {
                 track_key,
@@ -185,7 +180,7 @@ mod tests {
         // Act: a second reader reports the same detection.
         run_cleanup(&ctx).await;
 
-        // Assert: no second unsubscribe or stop is issued.
+        // Assert
         assert_eq!(
             *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]

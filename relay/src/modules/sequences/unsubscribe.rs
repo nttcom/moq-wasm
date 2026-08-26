@@ -213,7 +213,7 @@ mod tests {
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
 
-        // Assert: the reader stops, the upstream is unsubscribed, ingress stops.
+        // Assert
         match ctx.egress_receiver.try_recv() {
             Ok(EgressCommand::StopReader {
                 subscriber_session_id,
@@ -252,7 +252,7 @@ mod tests {
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
 
-        // Assert: only the reader stops; the upstream subscription survives.
+        // Assert
         assert!(matches!(
             ctx.egress_receiver.try_recv(),
             Ok(EgressCommand::StopReader { .. })
@@ -275,7 +275,7 @@ mod tests {
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
 
-        // Assert: only the reader stops; the publisher pushed the track.
+        // Assert
         assert!(matches!(
             ctx.egress_receiver.try_recv(),
             Ok(EgressCommand::StopReader { .. })

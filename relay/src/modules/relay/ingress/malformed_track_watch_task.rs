@@ -8,10 +8,8 @@ use crate::modules::{
     types::{SessionId, TrackKey},
 };
 
-/// Watches a track's §2.5 malformed latch and reports the detection to the
-/// relay event pipeline, where the upstream subscription is torn down.
-/// Dropped (and thereby aborted) when ingress for the track stops, so it
-/// never outlives the track's cache entry.
+/// Dropped (and thereby aborted) when ingress for the track stops, so the
+/// held cache Arc never blocks eviction of the track.
 pub(crate) struct MalformedTrackWatchTask {
     join_handle: JoinHandle<()>,
 }
@@ -85,10 +83,10 @@ mod tests {
         let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
         let _task = MalformedTrackWatchTask::run(cache.clone(), track_key.clone(), 7, event_sender);
 
-        // Act: conflicting duplicate objects latch the track.
+        // Act
         latch_malformed(&cache).await;
 
-        // Assert: the detection event names the track and its publisher session.
+        // Assert
         let event = tokio::time::timeout(Duration::from_secs(3), event_receiver.recv())
             .await
             .expect("watch task should report the detection")

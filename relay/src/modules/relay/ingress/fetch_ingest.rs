@@ -318,8 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_track_cancels_upstream_fetch_while_awaiting_data() {
-        // Arrange: the upstream session records FETCH_CANCEL; the track is
-        // latched malformed by conflicting duplicate objects.
+        // Arrange: the track is latched malformed by conflicting duplicate objects.
         const UPSTREAM_SESSION: SessionId = 1;
         const DOWNSTREAM_SESSION: SessionId = 2; // not registered: downstream reset is skipped
         const UPSTREAM_FETCH_REQUEST_ID: u64 = 7;
@@ -390,7 +389,7 @@ mod tests {
         // make the ingest bail.
         let _ingest = FetchIngest::run(session_repo, egress_sender, start);
 
-        // Assert: the upstream fetch is cancelled with its own request id.
+        // Assert
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
             if !recorded

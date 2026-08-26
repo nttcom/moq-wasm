@@ -14,21 +14,18 @@ use crate::modules::{
     types::SessionId,
 };
 
-/// Control messages recorded by [`MockControlSession`]'s subscriber.
 #[derive(Clone, Default)]
 pub(crate) struct RecordedControlMessages {
     pub(crate) unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
 }
 
-/// Session mock for control-plane tests: records UNSUBSCRIBE and
-/// FETCH_CANCEL, and hands out a fetch receiver that never yields data.
+/// Records UNSUBSCRIBE / FETCH_CANCEL and hands out a fetch receiver that
+/// never yields data; every other subscriber method is unimplemented.
 pub(crate) struct MockControlSession {
     recorded: RecordedControlMessages,
 }
 
-/// Registers a [`MockControlSession`] in a fresh repository and returns the
-/// repository together with the recorders observing the session.
 pub(crate) async fn session_repository_with_mock_control_session(
     session_id: SessionId,
 ) -> (
@@ -131,7 +128,6 @@ impl Subscriber for MockControlSubscriber {
     }
 }
 
-/// Never yields data, like an upstream that stalls mid-fetch.
 struct PendingFetchReceiver;
 
 #[async_trait::async_trait]
