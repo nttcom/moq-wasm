@@ -41,7 +41,6 @@ pub(crate) struct TrackMalformed;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppendStatus {
     Inserted,
-    /// Identical duplicate, ignored (§8.1 first-wins; normal in cascading).
     Duplicate,
 }
 
