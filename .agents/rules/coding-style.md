@@ -7,9 +7,9 @@ Shared by all agents (Claude Code, Codex).
 - Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
 
 ## Comments
-- Keep comments to a minimum. Code that needs a comment to be readable should usually be renamed or restructured instead.
-- A comment may stay in the code body only if it both cannot be reconstructed from the code and affects current behavior — in practice, the non-obvious *why*: an invariant, a specification constraint, a workaround, or a deliberate trade-off.
-- Change history, past implementations, migration notes, review discussion, TODO speculation, and plans for future work therefore do not belong in the code body. Put them in the commit message, the pull request, or an architecture document.
+- Write a comment only for what cannot be derived from the code and affects current behavior: an invariant, a specification constraint, a workaround, or a deliberate trade-off.
+- If a comment is needed to make the code readable, rename or restructure the code instead of adding the comment.
+- Change history, past implementations, migration notes, review discussion, TODO speculation, and plans for future work do not belong in the code body. Put them in the commit message, the pull request, or an architecture document.
 - A comment is required in three cases: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the `// Arrange` / `// Act` / `// Assert` labels in tests (see `testing.md`).
 
 ## Naming
