@@ -43,7 +43,12 @@ impl SubgroupState {
     pub(crate) fn with_track(track_alias: u64) -> Self {
         Self {
             track_alias,
-            group_id: 0,
+            // Time-based instead of 0: reusing a (group, object) location of a
+            // track cached by the relay with different content quarantines the
+            // track as malformed (draft-14 §2.5), and a fresh state (new alias
+            // or rejoined session) cannot know which locations were already
+            // used under this track name.
+            group_id: js_sys::Date::now() as u64,
             subgroup_id: 0,
             object_id: 0,
             header_sent: false,

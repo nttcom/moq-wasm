@@ -25,15 +25,23 @@ function aliasKey(alias: bigint | string): string {
   return normalizeAlias(alias).toString()
 }
 
+// Group ids start from wall-clock time instead of 0: reusing a (group, object)
+// location of a track the relay already cached with different content
+// quarantines the track as malformed (draft-14 §2.5), and a rejoining session
+// publishing the same track name cannot know which locations were already used.
+function initialGroupId(): bigint {
+  return BigInt(Date.now()) - 1n
+}
+
 export class MediaTransportState {
   private readonly video: TrackCounters = {
-    groupId: -1n,
+    groupId: initialGroupId(),
     nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
 
   private readonly audio: TrackCounters = {
-    groupId: -1n,
+    groupId: initialGroupId(),
     nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }

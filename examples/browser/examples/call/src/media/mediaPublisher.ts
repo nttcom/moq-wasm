@@ -134,7 +134,13 @@ export class MediaPublisher {
     noiseSuppression: true,
     autoGainControl: true
   }
-  private readonly catalogGroupByAlias = new Map<string, bigint>()
+  // Catalog group ids must never reuse a location whose content has changed:
+  // the relay caches by (track, group, object) and quarantines the track as
+  // malformed on a content mismatch (draft-14 §2.5). One monotonic counter per
+  // track (not per subscriber alias), seeded from wall-clock time so a
+  // rejoining session does not collide with groups the relay cached from the
+  // previous session of the same member.
+  private nextCatalogGroupId = BigInt(Date.now())
 
   constructor(
     private readonly client: MoqtClientWrapper,
@@ -208,7 +214,6 @@ export class MediaPublisher {
     await this.stopCamera()
     await this.stopScreenShare()
     await this.stopAudio()
-    this.catalogGroupByAlias.clear()
     this.handlers = {}
   }
 
@@ -1450,13 +1455,11 @@ export class MediaPublisher {
   }
 
   private async sendCatalogObject(client: MOQTClient, trackAlias: bigint): Promise<void> {
-    const aliasKey = trackAlias.toString()
-    const previousGroup = this.catalogGroupByAlias.get(aliasKey) ?? -1n
-    const groupId = previousGroup + 1n
-    this.catalogGroupByAlias.set(aliasKey, groupId)
+    const groupId = this.nextCatalogGroupId
+    this.nextCatalogGroupId += 1n
 
     console.info('[call][catalog] send object', {
-      alias: aliasKey,
+      alias: trackAlias.toString(),
       groupId: groupId.toString(),
       tracks: this.catalogTracks.map((t) => t.role)
     })
