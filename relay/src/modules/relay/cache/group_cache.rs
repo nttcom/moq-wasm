@@ -33,8 +33,6 @@ pub(crate) enum SubgroupLifecycle {
     Closed = 2,
 }
 
-/// The track violated draft-14 §2.5 (same Object, different immutable
-/// properties) and is quarantined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
 
