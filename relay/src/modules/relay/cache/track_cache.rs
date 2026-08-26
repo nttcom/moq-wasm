@@ -122,7 +122,7 @@ impl TrackCache {
         object_id: Option<u64>,
         object: DataObject,
     ) -> Result<(), TrackMalformed> {
-        self.append_stream_object_with_lifecycle(
+        self.append_to_stream_subgroup(
             group_id,
             subgroup_id,
             object_id,
@@ -139,7 +139,7 @@ impl TrackCache {
         object_id: Option<u64>,
         object: DataObject,
     ) -> Result<(), TrackMalformed> {
-        self.append_stream_object_with_lifecycle(
+        self.append_to_stream_subgroup(
             group_id,
             subgroup_id,
             object_id,
@@ -162,7 +162,7 @@ impl TrackCache {
         Ok(())
     }
 
-    async fn append_stream_object_with_lifecycle(
+    async fn append_to_stream_subgroup(
         &self,
         group_id: u64,
         subgroup_id: &StreamSubgroupId,
