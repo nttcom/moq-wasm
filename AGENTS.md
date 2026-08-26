@@ -47,6 +47,16 @@ Application and integration components (draft reference is normally not required
 
 ## 4. Coding Style
 
+### Implementation Principles
+- Follow YAGNI. Implement only what the current requirement needs.
+- Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs. Add them when a second concrete use case appears.
+- Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
+
+### Comments
+- Keep comments to a minimum. Code that needs a comment to be readable should usually be renamed or restructured instead.
+- Write a comment only for the non-obvious *why* — an invariant, a specification constraint, a workaround, or a deliberate trade-off. Do not restate what the code already says.
+- Exceptions where comments are still required: the invariant behind `panic!`/`unreachable!`, the meaning of abbreviations in type declarations, and the Act / Assert comments in tests.
+
 ### Naming
 - Follow the naming conventions of the implementation language (e.g. `snake_case` for Rust, `camelCase` for TypeScript).
 - Names must represent the target concept clearly.
@@ -138,12 +148,11 @@ Follow the log level guidelines below.
 | ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
 
 ## 8. Git Conventions
+- Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
   - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `packages`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
-- PR titles must clearly describe what was changed.
-- PR descriptions must be written in Japanese and include:
-  1. What feature or fix is being addressed.
-  2. What changes were made.
-  3. Why — the intent behind the changes.
+- PR titles must be written in Japanese and clearly describe what was changed.
+- PR descriptions must be written in Japanese and follow `.github/pull_request_template.md`.
+- When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
