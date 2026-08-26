@@ -1,4 +1,7 @@
-use crate::modules::{core::session_event::MoqtSessionEvent, types::SessionId};
+use crate::modules::{
+    core::session_event::MoqtSessionEvent,
+    types::{SessionId, TrackKey},
+};
 
 pub(crate) struct SessionEvent {
     pub(crate) session_id: SessionId,
@@ -7,4 +10,5 @@ pub(crate) struct SessionEvent {
 
 pub(crate) enum EventKind {
     FromSession(MoqtSessionEvent),
+    MalformedTrackDetected(TrackKey),
 }

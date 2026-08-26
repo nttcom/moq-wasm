@@ -1,4 +1,5 @@
 pub(crate) mod fetch;
+pub(crate) mod malformed_track;
 pub(crate) mod publish;
 pub(crate) mod publish_namespace;
 pub(crate) mod publish_namespace_done;

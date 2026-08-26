@@ -14,6 +14,7 @@ use crate::modules::{
     sequences::{
         CascadingRelayContext,
         fetch::Fetch,
+        malformed_track::MalformedTrackCleanup,
         publish::Publish,
         publish_namespace::PublishNamespace,
         publish_namespace_done::PublishNamespaceDone,
@@ -206,10 +207,11 @@ impl EventHandler {
             // event always breaks the loop, even when the session span is
             // already gone (e.g. the second terminal event in a
             // timeout-then-disconnect sequence).
-            let EventKind::FromSession(event) = event.kind;
             let is_terminal = matches!(
-                event,
-                MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
+                event.kind,
+                EventKind::FromSession(
+                    MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
+                )
             );
 
             let session_span = {
@@ -236,6 +238,30 @@ impl EventHandler {
                     break;
                 }
                 continue;
+            };
+            let event = match event.kind {
+                EventKind::FromSession(event) => event,
+                EventKind::MalformedTrackDetected(track_key) => {
+                    let event_span = tracing::info_span!(
+                        parent: &session_span,
+                        "relay.session.event",
+                        session_id = %session_id,
+                        event = "MalformedTrackDetected",
+                        track_key = %track_key,
+                    );
+                    MalformedTrackCleanup {}
+                        .handle(
+                            session_id,
+                            &session_span,
+                            &track_key,
+                            local_pub_sub_directory.as_ref(),
+                            &control_message_forwarder,
+                            &ingress_sender,
+                        )
+                        .instrument(event_span)
+                        .await;
+                    continue;
+                }
             };
             let event_span = Self::session_event_span(session_id, &session_span, &event);
 

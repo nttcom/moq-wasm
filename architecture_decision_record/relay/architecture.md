@@ -76,6 +76,13 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
   SUBSCRIBE_UPDATE, FETCH_CANCEL, TRACK_STATUS) are logged in the event span
   and dropped by the worker; they have no `sequences` entry.
+- One relay-internal event exists: `MalformedTrackDetected(session_id,
+  track_key)`, emitted by the ingress-side malformed watch task (not by a
+  peer). It is routed to the upstream publisher session's worker and handled
+  by `sequences::malformed_track::MalformedTrackCleanup`: remove the
+  `ActiveUpstreamSubscription`, send upstream UNSUBSCRIBE (§2.5 MUST), and
+  stop ingress via `IngressCommand::StopTrack`. Duplicate reports are
+  idempotent (the table entry is only found once).
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
   `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
   session from the pub/sub directory, stop affected egress readers, forward
@@ -143,6 +150,13 @@ from `TrackCache` over a new uni stream.
   ignored (draft-14 §8.2 multiple-publisher dedup is a known TODO), and only
   the owning publisher's `Stop` tears the reader down.
 - Readers append every object into `TrackCache` and broadcast a `TrackEvent`.
+- On `Start` the coordinator also spawns a per-track
+  `MalformedTrackWatchTask` that waits on the cache's sticky §2.5 malformed
+  latch and reports `SessionEvent::MalformedTrackDetected` into the event
+  pipeline; the task is dropped (aborted) on `StopTrack` so it never blocks
+  cache eviction. Downstream, `EgressRunner` watches the same latch and
+  terminates subscriptions with PUBLISH_DONE(MALFORMED_TRACK); `FetchIngest`
+  bails on the latch and sends upstream FETCH_CANCEL for its own fetch.
 
 ### Cache (`modules/relay/cache`)
 - `TrackCache`: `group_id → subgroup_id → GroupCache` for streams plus a
