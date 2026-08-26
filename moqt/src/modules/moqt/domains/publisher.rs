@@ -11,7 +11,8 @@ use crate::{
                 control_messages::{
                     control_message_type::ControlMessageType,
                     messages::{
-                        publish::Publish, publish_namespace::PublishNamespace,
+                        publish::Publish, publish_done::PublishDone,
+                        publish_namespace::PublishNamespace,
                         publish_namespace_done::PublishNamespaceDone,
                     },
                 },
@@ -98,6 +99,23 @@ impl<T: TransportProtocol> Publisher<T> {
                 ControlMessageType::PublishNamespaceDone,
                 publish_namespace_done.encode(),
             )
+            .await?;
+        Ok(())
+    }
+
+    /// Signals the end of a subscription (draft-14 §9.12). Fire-and-forget:
+    /// the spec defines no response message for PUBLISH_DONE.
+    pub async fn publish_done(
+        &self,
+        request_id: u64,
+        status_code: u64,
+        stream_count: u64,
+        error_reason: String,
+    ) -> anyhow::Result<()> {
+        let publish_done = PublishDone::new(request_id, status_code, stream_count, error_reason);
+        self.session
+            .send_stream
+            .send(ControlMessageType::PublishDone, publish_done.encode())
             .await?;
         Ok(())
     }
