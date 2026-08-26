@@ -6,6 +6,18 @@ Shared by all agents (Claude Code, Codex).
 - Follow YAGNI: implement only what the current requirement needs. Do not add configuration options, abstraction layers, generic parameters, or extension points for anticipated future needs — add them when a second concrete use case appears.
 - Prefer the smallest change that satisfies the requirement over a larger refactor, unless the task explicitly asks for the refactor.
 
+## Root Cause First
+- Before fixing a bug, reproduce it and explain the mechanism. A fix that adds a retry, sleep, widened timeout, defensive check, or call-site special case without a stated mechanism is a symptom patch, not a fix.
+- If the mechanism lives in a lower layer, fix it there rather than working around it in the caller. The workaround becomes load-bearing and hides the bug from the next caller.
+
+## Refactor As You Go
+A change isn't done when it works; it's done when it's the shape you'd want to maintain. Spend the extra cycles:
+
+- A function with 4+ args, or a call site passing the same 3+ values into multiple functions, is a struct waiting to happen. Same for repeated tuples returned across modules. Make the change as part of the same task rather than leaving a TODO.
+- Prefer extending an existing primitive over adding a parallel one-off, and generalizing a helper over copying it. If a fix needs the same edit in N places, reshape so it's one place first, then fix.
+- When a task can be solved by patching around an awkward internal shape or by fixing the shape, fix the shape as part of the same task. Don't preserve an awkward shape just to avoid churn — this applies to internal code as well as public APIs.
+- When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
+
 ## Comments
 - Write a comment only for what cannot be derived from the code and affects current behavior: an invariant, a specification constraint, a workaround, or a deliberate trade-off.
 - If a comment is needed to make the code readable, rename or restructure the code instead of adding the comment.
