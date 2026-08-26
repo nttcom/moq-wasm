@@ -8,8 +8,7 @@ use crate::modules::{
         publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
         subscriber::Subscriber,
     },
-    event_resolver::moqt_relay_event_resolver::RelaySessionEventResolver,
-    session_event::SessionEvent,
+    session_event::{EventKind, SessionEvent},
     session_event_forward_task_registry::SessionEventForwardTaskRegistry,
     types::SessionId,
 };
@@ -348,7 +347,10 @@ impl SessionRepository {
                                     | MoqtSessionEvent::ProtocolViolation()
                             );
 
-                            let relay_event = RelaySessionEventResolver::resolve(session_id, event);
+                            let relay_event = SessionEvent {
+                                session_id,
+                                kind: EventKind::FromSession(event),
+                            };
                             if let Err(err) = relay_session_event_sender.send(relay_event) {
                                 tracing::error!("Failed to forward session event: {}", err);
                                 break;

@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
+    core::session_event::MoqtSessionEvent,
     inter_relay::InterRelayConnectionManager,
     relay::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
@@ -28,7 +29,7 @@ use crate::modules::{
         unsubscribe_namespace::UnsubscribeNamespace,
         upstream_serializer::UpstreamCreationSerializer,
     },
-    session_event::SessionEvent,
+    session_event::{EventKind, SessionEvent},
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
@@ -136,26 +137,7 @@ impl EventHandler {
                                 break;
                             };
 
-                            let session_id = match &event {
-                                SessionEvent::GoAway(id, _)
-                                | SessionEvent::MaxRequestId(id, _)
-                                | SessionEvent::RequestsBlocked(id, _)
-                                | SessionEvent::PublishNameSpace(id, _)
-                                | SessionEvent::PublishNamespaceDone(id, _)
-                                | SessionEvent::PublishNamespaceCancel(id, _)
-                                | SessionEvent::SubscribeNameSpace(id, _)
-                                | SessionEvent::UnsubscribeNameSpace(id, _)
-                                | SessionEvent::Publish(id, _)
-                                | SessionEvent::PublishDone(id, _)
-                                | SessionEvent::Subscribe(id, _)
-                                | SessionEvent::SubscribeUpdate(id, _)
-                                | SessionEvent::Unsubscribe(id, _)
-                                | SessionEvent::Fetch(id, _)
-                                | SessionEvent::FetchCancel(id, _)
-                                | SessionEvent::TrackStatus(id, _)
-                                | SessionEvent::Disconnected(id)
-                                | SessionEvent::ProtocolViolation(id) => *id,
-                            };
+                            let session_id = event.session_id;
 
                             // Locate or lazily create the per-session channel.
                             // Single-threaded reader: creation is race-free.
@@ -224,9 +206,10 @@ impl EventHandler {
             // event always breaks the loop, even when the session span is
             // already gone (e.g. the second terminal event in a
             // timeout-then-disconnect sequence).
+            let EventKind::FromSession(event) = event.kind;
             let is_terminal = matches!(
                 event,
-                SessionEvent::Disconnected(_) | SessionEvent::ProtocolViolation(_)
+                MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
             );
 
             let session_span = {
@@ -254,10 +237,10 @@ impl EventHandler {
                 }
                 continue;
             };
-            let event_span = Self::session_event_span(&session_span, &event);
+            let event_span = Self::session_event_span(session_id, &session_span, &event);
 
             match event {
-                SessionEvent::PublishNameSpace(session_id, handler) => {
+                MoqtSessionEvent::PublishNamespace(handler) => {
                     PublishNamespace {}
                         .handle(
                             session_id,
@@ -274,7 +257,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::PublishNamespaceDone(session_id, handler) => {
+                MoqtSessionEvent::PublishNamespaceDone(handler) => {
                     PublishNamespaceDone {}
                         .handle(
                             session_id,
@@ -291,7 +274,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::SubscribeNameSpace(session_id, handler) => {
+                MoqtSessionEvent::SubscribeNamespace(handler) => {
                     SubscribeNameSpace {}
                         .handle(
                             session_id,
@@ -304,7 +287,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::UnsubscribeNameSpace(session_id, handler) => {
+                MoqtSessionEvent::UnsubscribeNamespace(handler) => {
                     UnsubscribeNamespace {}
                         .handle(
                             session_id,
@@ -321,7 +304,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::Publish(session_id, handler) => {
+                MoqtSessionEvent::Publish(handler) => {
                     Publish {}
                         .handle(
                             session_id,
@@ -339,7 +322,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::Subscribe(session_id, handler) => {
+                MoqtSessionEvent::Subscribe(handler) => {
                     Subscribe {}
                         .handle(
                             session_id,
@@ -356,7 +339,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::Unsubscribe(session_id, handler) => {
+                MoqtSessionEvent::Unsubscribe(handler) => {
                     Unsubscribe {}
                         .handle(
                             session_id,
@@ -370,7 +353,7 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::Fetch(session_id, handler) => {
+                MoqtSessionEvent::Fetch(handler) => {
                     Fetch {}
                         .handle(
                             session_id,
@@ -385,19 +368,19 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
-                SessionEvent::GoAway(..)
-                | SessionEvent::MaxRequestId(..)
-                | SessionEvent::RequestsBlocked(..)
-                | SessionEvent::PublishNamespaceCancel(..)
-                | SessionEvent::PublishDone(..)
-                | SessionEvent::SubscribeUpdate(..)
-                | SessionEvent::FetchCancel(..)
-                | SessionEvent::TrackStatus(..) => {
+                MoqtSessionEvent::GoAway(..)
+                | MoqtSessionEvent::MaxRequestId(..)
+                | MoqtSessionEvent::RequestsBlocked(..)
+                | MoqtSessionEvent::PublishNamespaceCancel(..)
+                | MoqtSessionEvent::PublishDone(..)
+                | MoqtSessionEvent::SubscribeUpdate(..)
+                | MoqtSessionEvent::FetchCancel(..)
+                | MoqtSessionEvent::TrackStatus(..) => {
                     event_span.in_scope(|| {
                         tracing::warn!("Relay handling for this event is not implemented");
                     });
                 }
-                SessionEvent::Disconnected(session_id) => {
+                MoqtSessionEvent::Disconnected() => {
                     let disconnected_span = tracing::info_span!(
                         parent: &event_span,
                         "relay.session.disconnected",
@@ -419,7 +402,7 @@ impl EventHandler {
                     .instrument(disconnected_span)
                     .await;
                 }
-                SessionEvent::ProtocolViolation(session_id) => {
+                MoqtSessionEvent::ProtocolViolation() => {
                     let protocol_violation_span = tracing::info_span!(
                         parent: &event_span,
                         "relay.session.protocol_violation",
@@ -453,37 +436,41 @@ impl EventHandler {
         session_id
     }
 
-    fn session_event_span(session_span: &Span, event: &SessionEvent) -> Span {
+    fn session_event_span(
+        session_id: SessionId,
+        session_span: &Span,
+        event: &MoqtSessionEvent,
+    ) -> Span {
         match event {
-            SessionEvent::PublishNameSpace(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::PublishNamespace(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "PublishNamespace",
                 track_namespace = %handler.track_namespace(),
             ),
-            SessionEvent::PublishNamespaceDone(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::PublishNamespaceDone(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "PublishNamespaceDone",
                 track_namespace = %handler.track_namespace(),
             ),
-            SessionEvent::SubscribeNameSpace(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::SubscribeNamespace(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "SubscribeNamespace",
                 track_namespace_prefix = %handler.track_namespace_prefix(),
             ),
-            SessionEvent::UnsubscribeNameSpace(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::UnsubscribeNamespace(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "UnsubscribeNamespace",
                 track_namespace_prefix = %handler.track_namespace_prefix(),
             ),
-            SessionEvent::Publish(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::Publish(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -492,7 +479,7 @@ impl EventHandler {
                 track_name = %handler.track_name(),
                 track_alias = handler.track_alias(),
             ),
-            SessionEvent::Subscribe(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::Subscribe(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -501,54 +488,54 @@ impl EventHandler {
                 track_namespace = %handler.track_namespace(),
                 track_name = %handler.track_name(),
             ),
-            SessionEvent::Unsubscribe(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::Unsubscribe(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Unsubscribe",
                 subscribe_id = handler.subscribe_id(),
             ),
-            SessionEvent::Disconnected(session_id) => tracing::info_span!(
+            MoqtSessionEvent::Disconnected() => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Disconnected",
             ),
-            SessionEvent::Fetch(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::Fetch(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "Fetch",
                 request_id = handler.request_id(),
             ),
-            SessionEvent::ProtocolViolation(session_id) => tracing::info_span!(
+            MoqtSessionEvent::ProtocolViolation() => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "ProtocolViolation",
             ),
-            SessionEvent::GoAway(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::GoAway(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "GoAway",
                 new_session_uri = %handler.new_session_uri(),
             ),
-            SessionEvent::MaxRequestId(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::MaxRequestId(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "MaxRequestId",
                 request_id = handler.request_id(),
             ),
-            SessionEvent::RequestsBlocked(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::RequestsBlocked(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "RequestsBlocked",
                 maximum_request_id = handler.maximum_request_id(),
             ),
-            SessionEvent::PublishNamespaceCancel(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::PublishNamespaceCancel(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -556,7 +543,7 @@ impl EventHandler {
                 track_namespace = %handler.track_namespace(),
                 error_code = handler.error_code(),
             ),
-            SessionEvent::PublishDone(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::PublishDone(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -565,7 +552,7 @@ impl EventHandler {
                 status_code = handler.status_code(),
                 stream_count = handler.stream_count(),
             ),
-            SessionEvent::SubscribeUpdate(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::SubscribeUpdate(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
@@ -575,14 +562,14 @@ impl EventHandler {
                 end_group = handler.end_group(),
                 forward = handler.forward(),
             ),
-            SessionEvent::FetchCancel(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::FetchCancel(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,
                 event = "FetchCancel",
                 request_id = handler.request_id(),
             ),
-            SessionEvent::TrackStatus(session_id, handler) => tracing::info_span!(
+            MoqtSessionEvent::TrackStatus(handler) => tracing::info_span!(
                 parent: session_span,
                 "relay.session.event",
                 session_id = %session_id,

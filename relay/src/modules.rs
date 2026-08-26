@@ -2,7 +2,6 @@ pub(crate) mod control_message_forwarder;
 pub(crate) mod core;
 pub(crate) mod enums;
 pub(crate) mod event_handler;
-pub(crate) mod event_resolver;
 pub(crate) mod inter_relay;
 pub(crate) mod relay;
 pub(crate) mod route_registry;
