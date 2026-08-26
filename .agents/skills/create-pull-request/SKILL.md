@@ -29,11 +29,25 @@ Keep every section to one line where possible, and never more than three lines. 
 
 Section rules:
 
-- `## 概要` — exactly 3 lines. One line each for background, what was done, and the result. This is the only part some reviewers read.
+- `## 概要` — at most 3 lines: why the change was needed, what was done, and anything the reviewer must know before reading the diff. Stop at two lines when there is no third fact. Never pad to three.
 - `## 関連タスク` — link issues as `#<IssueNumber>`. This repository is public OSS, so never paste internal tracker URLs.
 - `## やらないこと` — state what was deliberately left out, so reviewers do not look for it.
 - `## 影響範囲` — name the affected crates and whether the change is breaking for dependents. `moqt` is the central crate, so changes there affect the whole workspace.
 - `## テスト` — the commands actually run and their results. If a check was skipped, say so.
+
+### Do Not Write
+
+Cut any sentence whose truth follows automatically from the change itself. It reads as a conclusion but carries no information the reviewer did not already have.
+
+- The expected benefit or significance of the change: 「〜できるようになります」「〜が改善されます」「〜の負担が減ります」
+- General statements about why the practice is good: 「規約が統一されていると保守しやすくなります」
+- Effects that were not measured. Write a number and the condition, or write nothing.
+
+Concrete example. In a PR that adds conventions to `AGENTS.md`, this third line was cut:
+
+> エージェントと人間が、同じ規約を読み込んだ状態で作業を始められます。
+
+It only restates what "adding conventions" means, so the summary became two lines instead of three.
 
 Write the whole body in Japanese.
 
@@ -44,6 +58,7 @@ Never post the first draft. Pass the drafted title and body to a subagent and as
 - Sentences that restate the diff, the section heading, or a point already made elsewhere in the body
 - Background the reviewer of this repository already knows
 - Hedging and filler that carries no information
+- Claims of effect or benefit that follow automatically from the change (see *Do Not Write*)
 
 Ask for the shortened text plus a one-line reason per cut, then apply the cuts you agree with. Do not let the review add new content — it only removes. Verify the result still satisfies the line limits and keeps every template section.
 
