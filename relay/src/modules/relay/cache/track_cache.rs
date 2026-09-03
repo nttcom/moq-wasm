@@ -132,9 +132,7 @@ impl TrackCache {
                 }
             };
             if result.is_ok() && registers_knowledge {
-                ledger
-                    .known_ranges
-                    .insert(location(at.group_id, 0), after(at));
+                ledger.register_live_object(at);
             }
             result
         };
@@ -649,6 +647,51 @@ mod tests {
         tokio::time::advance(Duration::from_secs(11)).await;
         cache.evict(ttl);
         assert_eq!(cache.eviction_generation(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn live_insert_after_eviction_does_not_reclaim_the_hole() {
+        // Arrange: object 0 of an open group expired and was evicted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Act: the group keeps going
+        let _ = open.insert(stream_object(0, 1));
+        // Assert: the evicted position stays unknown (§9.2.1.3), the new one is known
+        assert!(!cache.covers(location(0, 0), location(0, 1)));
+        assert!(cache.covers(location(0, 1), location(0, 2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closing_a_group_after_eviction_claims_only_the_tail() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0, 1]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Act
+        drop(open);
+        // Assert: "no more objects after 1" is known, positions 0 and 1 are not
+        assert!(!cache.covers(location(0, 0), location(0, 2)));
+        assert!(cache.covers(location(0, 2), location(0, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reordered_lower_object_id_does_not_reclaim_the_evicted_frontier() {
+        // Arrange: object 5 arrived first (claiming 0..=4 as skipped) and was later evicted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[5]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Act: a lower id from another subgroup arrives afterwards
+        let _ = open.insert(stream_object_in_subgroup(0, 1, 2));
+        // Assert: its own position is known again, the evicted object's is not
+        assert!(cache.covers(location(0, 2), location(0, 3)));
+        assert!(!cache.covers(location(0, 5), location(0, 6)));
     }
 }
 
