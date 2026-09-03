@@ -142,6 +142,13 @@ impl DatagramField {
         }
     }
 
+    /// Types 0x04-0x07 omit the Object ID: it is the previous object's id + 1,
+    /// or 0 for the first object of the group.
+    pub fn resolve_object_id(&self, prev_object_id: Option<u64>) -> u64 {
+        self.object_id()
+            .unwrap_or_else(|| prev_object_id.map_or(0, |prev| prev + 1))
+    }
+
     pub fn publisher_priority(&self) -> u8 {
         match self {
             Self::Payload0x00 {
@@ -486,6 +493,33 @@ mod tests {
         use super::super::*;
 
         use bytes::{Buf, Bytes};
+
+        fn implicit_id_field() -> DatagramField {
+            DatagramField::Payload0x06WithEndOfGroup {
+                publisher_priority: 0,
+                payload: Bytes::new(),
+            }
+        }
+
+        #[test]
+        fn explicit_object_id_wins_over_prev() {
+            let field = DatagramField::Payload0x00 {
+                object_id: 7,
+                publisher_priority: 0,
+                payload: Bytes::new(),
+            };
+            assert_eq!(field.resolve_object_id(Some(3)), 7);
+        }
+
+        #[test]
+        fn implicit_object_id_is_prev_plus_one() {
+            assert_eq!(implicit_id_field().resolve_object_id(Some(3)), 4);
+        }
+
+        #[test]
+        fn implicit_object_id_starts_at_zero() {
+            assert_eq!(implicit_id_field().resolve_object_id(None), 0);
+        }
 
         #[test]
         fn payload0x00_encode_decode() {
