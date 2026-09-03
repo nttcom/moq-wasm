@@ -146,7 +146,7 @@ impl EgressCoordinator {
                 }
             };
             let objects = match cache
-                .get_fetch_objects_with_group_order(
+                .fetch_objects(
                     request.start_location,
                     request.end_location,
                     request.group_order,

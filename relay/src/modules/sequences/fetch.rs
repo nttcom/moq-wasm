@@ -487,10 +487,7 @@ impl Fetch {
                 end_location,
             }));
         };
-        let source = match cache
-            .resolve_fetch_range(start_location, end_location)
-            .await
-        {
+        let source = match cache.resolve_fetch_range(start_location, end_location) {
             FetchRangeResolution::Serve { end_location } => FetchSource::Cache(CacheTarget {
                 cache,
                 start_location,
@@ -580,9 +577,10 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::modules::{
-        core::data_object::DataObject,
         enums::ContentExists,
-        relay::types::StreamSubgroupId,
+        relay::tests::harness::fixtures::cached_object::{
+            insert_closed_live_group, open_live_group,
+        },
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{
@@ -590,8 +588,6 @@ mod tests {
             },
         },
     };
-    use bytes::Bytes;
-    use moqt::{ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField};
 
     fn setup_upstream(
         table: &InMemoryLocalPubSubDirectory,
@@ -614,46 +610,6 @@ mod tests {
             },
         );
         key
-    }
-
-    fn make_header(group_id: u64) -> DataObject {
-        DataObject::SubgroupHeader(SubgroupHeader::new(
-            0,
-            group_id,
-            SubgroupId::Value(0),
-            0,
-            false,
-            false,
-        ))
-    }
-
-    fn make_object() -> DataObject {
-        let message_type =
-            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
-        DataObject::SubgroupObject(SubgroupObjectField {
-            message_type,
-            object_id_delta: 0,
-            extension_headers: ExtensionHeaders::default(),
-            subgroup_object: SubgroupObject::new_payload(Bytes::new()),
-        })
-    }
-
-    async fn fill_group_with_ids(
-        cache_store: &TrackCacheStore,
-        track_key: &TrackKey,
-        group_id: u64,
-        object_ids: &[u64],
-    ) {
-        let subgroup = StreamSubgroupId::Value(0);
-        let cache = cache_store.get_or_create(track_key);
-        let _ = cache
-            .append_live_stream_object(group_id, &subgroup, None, make_header(group_id))
-            .await;
-        for &object_id in object_ids {
-            let _ = cache
-                .append_live_stream_object(group_id, &subgroup, Some(object_id), make_object())
-                .await;
-        }
     }
 
     fn standalone_fetch_params(
@@ -757,7 +713,8 @@ mod tests {
     async fn fetch_source_is_cache_for_known_gapped_object_ids() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
-        fill_group_with_ids(&cache_store, &track_key, 0, &[0, 2]).await;
+        let cache = cache_store.get_or_create(&track_key);
+        let _live_g0 = open_live_group(&cache, 0, &[0, 2]);
         let start = moqt::Location {
             group_id: 0,
             object_id: 0,
@@ -781,7 +738,8 @@ mod tests {
     async fn fetch_source_is_upstream_when_request_starts_before_cache_coverage() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
-        fill_group_with_ids(&cache_store, &track_key, 1, &[0, 1]).await;
+        let cache = cache_store.get_or_create(&track_key);
+        let _live_g1 = open_live_group(&cache, 1, &[0, 1]);
         let start = moqt::Location {
             group_id: 0,
             object_id: 0,
@@ -813,7 +771,8 @@ mod tests {
     async fn fetch_source_clamps_standalone_end_when_request_exceeds_largest() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
-        fill_group_with_ids(&cache_store, &track_key, 0, &[0, 1, 2]).await;
+        let cache = cache_store.get_or_create(&track_key);
+        let _live_g0 = open_live_group(&cache, 0, &[0, 1, 2]);
         let start = moqt::Location {
             group_id: 0,
             object_id: 0,
@@ -850,8 +809,9 @@ mod tests {
     async fn fetch_source_rejects_standalone_start_after_largest_as_invalid_range() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
-        fill_group_with_ids(&cache_store, &track_key, 0, &[0]).await;
-        cache_store.get_or_create(&track_key).begin_live_ingest();
+        let cache = cache_store.get_or_create(&track_key);
+        let _live_g0 = open_live_group(&cache, 0, &[0]);
+        cache.begin_live_ingest();
         let result = resolve_target_and_source(
             2,
             standalone_fetch_params(
@@ -875,14 +835,10 @@ mod tests {
     async fn fetch_source_rejects_standalone_covered_empty_range_as_no_objects() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
-        fill_group_with_ids(&cache_store, &track_key, 0, &[0]).await;
-        let subgroup = StreamSubgroupId::Value(0);
         let cache = cache_store.get_or_create(&track_key);
-        let _ = cache
-            .append_stream_object(1, &subgroup, None, make_header(1))
-            .await;
-        cache.close_stream_subgroup(1, &subgroup).await;
-        fill_group_with_ids(&cache_store, &track_key, 2, &[0]).await;
+        let _live_g0 = open_live_group(&cache, 0, &[0]);
+        insert_closed_live_group(&cache, 1, &[]);
+        let _live_g2 = open_live_group(&cache, 2, &[0]);
 
         let result = resolve_target_and_source(
             2,
@@ -907,7 +863,8 @@ mod tests {
     async fn fetch_source_is_cache_when_standalone_cache_covers_range() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
-        fill_group_with_ids(&cache_store, &track_key, 1, &[2, 3]).await;
+        let cache = cache_store.get_or_create(&track_key);
+        let _live_g1 = open_live_group(&cache, 1, &[2, 3]);
         let start = moqt::Location {
             group_id: 1,
             object_id: 2,
@@ -982,6 +939,7 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
+        let cache = cache_store.get_or_create(&track_key);
         let upstream_key = setup_upstream(&table, track_key.clone());
         table.register_downstream_subscription(
             2,
@@ -992,7 +950,7 @@ mod tests {
                 object_id: 1,
             }),
         );
-        fill_group_with_ids(&cache_store, &track_key, 1, &[0, 1]).await;
+        let _live_g1 = open_live_group(&cache, 1, &[0, 1]);
 
         let (target, source) = resolve_target_and_source(
             2,

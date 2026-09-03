@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use moqt::wire::ObjectStatus;
+use moqt::ObjectStatus;
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{broadcast, mpsc, watch},
     task::JoinHandle,
 };
 use tracing::{Instrument, Span};
@@ -10,9 +10,12 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
     relay::{
-        cache::store::TrackCacheStore,
+        cache::{
+            cached_object::{CachedObject, SubgroupStream},
+            store::TrackCacheStore,
+            track_cache::{LiveSubgroup, TrackCache},
+        },
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
-        types::StreamSubgroupId,
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
@@ -28,6 +31,21 @@ pub(crate) struct StreamOpened {
 
 pub(crate) struct StreamReader {
     join_handle: JoinHandle<()>,
+}
+
+/// What the SUBGROUP_HEADER told us; the subgroup id of Type 0x12/0x13/0x1A/0x1B
+/// headers is only known once the first object arrives.
+struct ReceivedHeader {
+    group_id: u64,
+    publisher_priority: u8,
+    ends_group_on_fin: bool,
+    prev_object_id: Option<u64>,
+}
+
+struct SubgroupIngest<'a> {
+    stream: SubgroupStream,
+    live: LiveSubgroup<'a>,
+    last_object_id: Option<u64>,
 }
 
 impl StreamReader {
@@ -82,20 +100,14 @@ impl StreamReader {
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
         let span = Span::current();
-        let mut group_id = 0u64;
-        let mut subgroup_id = StreamSubgroupId::None;
-        let mut has_subgroup = false;
-        let mut prev_object_id: Option<u64> = None;
         let cache = cache_store.get_or_create(&track_key);
         let notify = object_notify_producer_map.get_or_create(&track_key);
+        let mut header: Option<ReceivedHeader> = None;
+        let mut ingest: Option<SubgroupIngest<'_>> = None;
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
                     span.record("end_reason", "stopped");
-                    if has_subgroup {
-                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = notify.send(TrackEvent::EndOfGroup);
-                    }
                     tracing::info!(%track_key, "stream reader stopped");
                     return;
                 }
@@ -103,64 +115,71 @@ impl StreamReader {
             };
 
             match receive_result {
-                Ok(Some(DataObject::SubgroupHeader(header))) => {
-                    group_id = header.group_id;
-                    subgroup_id = StreamSubgroupId::from(&header.subgroup_id);
-                    has_subgroup = true;
-                    prev_object_id = None;
-                    span.record("group_id", group_id);
-                    span.record("subgroup_id", tracing::field::debug(&subgroup_id));
-                    let result = cache
-                        .append_live_stream_object(
-                            group_id,
-                            &subgroup_id,
-                            None,
-                            DataObject::SubgroupHeader(header),
-                        )
-                        .await;
-                    if result.is_err() {
-                        span.record("end_reason", "malformed_track");
-                        tracing::warn!(%track_key, group_id, "malformed track detected; stopping stream ingest");
-                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
-                            publisher_session_id,
-                            track_key.clone(),
+                Ok(Some(DataObject::SubgroupHeader(received))) => {
+                    ingest = None;
+                    span.record("group_id", received.group_id);
+                    let subgroup_id = match received.subgroup_id {
+                        moqt::SubgroupId::None => Some(0),
+                        moqt::SubgroupId::Value(subgroup_id) => Some(subgroup_id),
+                        moqt::SubgroupId::FirstObjectIdDelta => None,
+                    };
+                    let received = ReceivedHeader {
+                        group_id: received.group_id,
+                        publisher_priority: received.publisher_priority,
+                        ends_group_on_fin: received.message_type.has_end_of_group(),
+                        prev_object_id: None,
+                    };
+                    if let Some(subgroup_id) = subgroup_id {
+                        ingest = Some(Self::open_subgroup(
+                            &cache,
+                            &notify,
+                            &span,
+                            received.stream(subgroup_id),
                         ));
-                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = notify.send(TrackEvent::EndOfGroup);
-                        return;
                     }
-                    let _ = notify.send(TrackEvent::StreamOpened {
-                        group_id,
-                        subgroup_id: subgroup_id.clone(),
-                    });
+                    header = Some(received);
                 }
-                Ok(Some(object)) => {
-                    let end_reason = match &object {
-                        DataObject::SubgroupObject(field) => match &field.subgroup_object {
-                            moqt::SubgroupObject::Status { code, .. }
-                                if *code == ObjectStatus::EndOfGroup as u64 =>
-                            {
-                                Some("end_of_group")
-                            }
-                            moqt::SubgroupObject::Status { code, .. }
-                                if *code == ObjectStatus::EndOfTrack as u64 =>
-                            {
-                                Some("end_of_track")
-                            }
-                            _ => None,
-                        },
+                Ok(Some(DataObject::SubgroupObject(field))) => {
+                    let Some(header) = header.as_mut() else {
+                        span.record("end_reason", "object_before_header");
+                        tracing::error!(%track_key, "subgroup object received before its header");
+                        return;
+                    };
+                    let object_id = field.resolve_object_id(header.prev_object_id);
+                    header.prev_object_id = Some(object_id);
+                    let ingest = ingest.get_or_insert_with(|| {
+                        Self::open_subgroup(&cache, &notify, &span, header.stream(object_id))
+                    });
+                    let end_reason = match &field.subgroup_object {
+                        moqt::SubgroupObject::Status { code, .. }
+                            if *code == ObjectStatus::EndOfGroup as u64 =>
+                        {
+                            Some("end_of_group")
+                        }
+                        moqt::SubgroupObject::Status { code, .. }
+                            if *code == ObjectStatus::EndOfTrack as u64 =>
+                        {
+                            Some("end_of_track")
+                        }
                         _ => None,
                     };
-                    let object_id = object.resolve_absolute_object_id(prev_object_id);
-                    prev_object_id = object_id;
-                    let result = cache
-                        .append_live_stream_object(group_id, &subgroup_id, object_id, object)
-                        .await;
-                    if result.is_err() {
+                    let object = match CachedObject::from_subgroup_object(
+                        &ingest.stream,
+                        object_id,
+                        field,
+                    ) {
+                        Ok(object) => object,
+                        Err(error) => {
+                            span.record("end_reason", "invalid_status");
+                            tracing::error!(%track_key, %error, object_id, "invalid object status");
+                            return;
+                        }
+                    };
+                    if ingest.live.insert(object).is_err() {
                         span.record("end_reason", "malformed_track");
                         tracing::warn!(
                             %track_key,
-                            group_id,
+                            group_id = ingest.stream.group_id,
                             object_id,
                             "malformed track detected; stopping stream ingest"
                         );
@@ -168,26 +187,30 @@ impl StreamReader {
                             publisher_session_id,
                             track_key.clone(),
                         ));
-                        if has_subgroup {
-                            cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                            let _ = notify.send(TrackEvent::EndOfGroup);
-                        }
                         return;
                     }
+                    ingest.last_object_id = Some(object_id);
                     if let Some(end_reason) = end_reason {
                         span.record("end_reason", end_reason);
-                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = notify.send(TrackEvent::EndOfGroup);
                         return;
                     }
+                }
+                Ok(Some(DataObject::ObjectDatagram(_))) => {
+                    span.record("end_reason", "unexpected_datagram");
+                    tracing::error!(%track_key, "datagram received on a subgroup stream");
+                    return;
                 }
                 Ok(None) => {
                     // FIN: the routine end of a subgroup stream that carries
                     // no explicit end-of-group status object.
                     span.record("end_reason", "fin");
-                    if has_subgroup {
-                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = notify.send(TrackEvent::EndOfGroup);
+                    if let (Some(header), Some(ingest)) = (&header, &ingest)
+                        && header.ends_group_on_fin
+                    {
+                        let end_of_group_id = ingest.last_object_id.map_or(0, |id| id + 1);
+                        let _ = ingest
+                            .live
+                            .insert(CachedObject::end_of_group(&ingest.stream, end_of_group_id));
                     }
                     tracing::debug!(%track_key, "stream finished");
                     return;
@@ -197,10 +220,6 @@ impl StreamReader {
                     // publisher connection was lost mid-subgroup.
                     span.record("end_reason", "transport_closed");
                     tracing::info!(%track_key, %error, "stream transport closed");
-                    if has_subgroup {
-                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = notify.send(TrackEvent::EndOfGroup);
-                    }
                     return;
                 }
                 Err(moqt::StreamReceiveError::Decode(error)) => {
@@ -208,13 +227,35 @@ impl StreamReader {
                     // violation, unlike the two endings above.
                     span.record("end_reason", "decode_error");
                     tracing::error!(%track_key, %error, "failed to decode stream data");
-                    if has_subgroup {
-                        cache.close_stream_subgroup(group_id, &subgroup_id).await;
-                        let _ = notify.send(TrackEvent::EndOfGroup);
-                    }
                     return;
                 }
             }
+        }
+    }
+
+    fn open_subgroup<'a>(
+        cache: &'a TrackCache,
+        notify: &broadcast::Sender<TrackEvent>,
+        span: &Span,
+        stream: SubgroupStream,
+    ) -> SubgroupIngest<'a> {
+        span.record("subgroup_id", stream.subgroup_id);
+        let live = cache.open_live_subgroup(stream.key());
+        let _ = notify.send(TrackEvent::SubgroupOpened(stream.key()));
+        SubgroupIngest {
+            stream,
+            live,
+            last_object_id: None,
+        }
+    }
+}
+
+impl ReceivedHeader {
+    fn stream(&self, subgroup_id: u64) -> SubgroupStream {
+        SubgroupStream {
+            group_id: self.group_id,
+            subgroup_id,
+            publisher_priority: self.publisher_priority,
         }
     }
 }
@@ -231,13 +272,15 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use moqt::{
-        ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField,
-        wire::ObjectStatus,
-    };
+    use moqt::{ObjectStatus, SubgroupId};
     use tokio::sync::oneshot;
 
     use super::*;
+    use crate::modules::relay::tests::harness::fixtures::{
+        cached_object::stream_key,
+        data_object::{make_header, make_header_with, make_payload_object, make_status_object},
+    };
+    use crate::modules::relay::types::SubgroupKey;
 
     // How the scripted stream ends once all objects were consumed.
     enum TerminalOutcome {
@@ -280,41 +323,8 @@ mod tests {
         }
     }
 
-    fn make_header(group_id: u64) -> DataObject {
-        DataObject::SubgroupHeader(SubgroupHeader::new(
-            0,
-            group_id,
-            SubgroupId::Value(0),
-            0,
-            false,
-            false,
-        ))
-    }
-
-    fn empty_extension_headers() -> ExtensionHeaders {
-        ExtensionHeaders::default()
-    }
-
-    fn make_payload_object(object_id_delta: u64) -> DataObject {
-        let message_type =
-            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
-        DataObject::SubgroupObject(SubgroupObjectField {
-            message_type,
-            object_id_delta,
-            extension_headers: empty_extension_headers(),
-            subgroup_object: SubgroupObject::new_payload(Bytes::from(vec![1])),
-        })
-    }
-
-    fn make_end_of_group_object() -> DataObject {
-        let message_type =
-            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
-        DataObject::SubgroupObject(SubgroupObjectField {
-            message_type,
-            object_id_delta: 0,
-            extension_headers: empty_extension_headers(),
-            subgroup_object: SubgroupObject::new_status(ObjectStatus::EndOfGroup as u64),
-        })
+    fn payload(object_id_delta: u64) -> DataObject {
+        make_payload_object(object_id_delta, Bytes::from_static(b"payload"))
     }
 
     const PUBLISHER_SESSION: SessionId = 1;
@@ -330,115 +340,114 @@ mod tests {
         stop_receiver: watch::Receiver<bool>,
     }
 
-    fn make_env() -> TestEnv {
-        let track_key = TrackKey::new("ns", "track");
-        let cache_store = Arc::new(TrackCacheStore::new());
-        let notify_map = Arc::new(ObjectNotifyProducerMap::new());
-        let event_receiver = notify_map.get_or_create(&track_key).subscribe();
-        let (stop_sender, stop_receiver) = watch::channel(false);
-        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
-        TestEnv {
-            track_key,
-            cache_store,
-            notify_map,
-            session_event_sender,
-            _session_event_receiver: session_event_receiver,
-            event_receiver,
-            stop_sender,
-            stop_receiver,
+    impl TestEnv {
+        fn new() -> Self {
+            let track_key = TrackKey::new("ns", "track");
+            let cache_store = Arc::new(TrackCacheStore::new());
+            let notify_map = Arc::new(ObjectNotifyProducerMap::new());
+            let event_receiver = notify_map.get_or_create(&track_key).subscribe();
+            let (stop_sender, stop_receiver) = watch::channel(false);
+            let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
+            TestEnv {
+                track_key,
+                cache_store,
+                notify_map,
+                session_event_sender,
+                _session_event_receiver: session_event_receiver,
+                event_receiver,
+                stop_sender,
+                stop_receiver,
+            }
+        }
+
+        fn read_loop(
+            &self,
+            receiver: ScriptedStreamReceiver,
+        ) -> impl Future<Output = ()> + Send + 'static {
+            StreamReader::read_loop(
+                self.track_key.clone(),
+                PUBLISHER_SESSION,
+                Box::new(receiver),
+                self.stop_receiver.clone(),
+                self.cache_store.clone(),
+                self.notify_map.clone(),
+                self.session_event_sender.clone(),
+            )
+        }
+
+        fn cache(&self) -> Arc<TrackCache> {
+            self.cache_store.get_or_create(&self.track_key)
+        }
+
+        async fn cached_object_ids(&self, key: SubgroupKey) -> Vec<(u64, ObjectStatus)> {
+            let cache = self.cache();
+            let mut objects = Vec::new();
+            let mut cursor = 0;
+            while let Some(object) = cache.next_object_or_wait(key, cursor).await {
+                objects.push((object.location.object_id, object.status));
+                cursor = object.location.object_id + 1;
+            }
+            objects
+        }
+
+        async fn assert_subgroup_closed_after(&self, key: SubgroupKey, last_object_id: u64) {
+            let cache = self.cache();
+            let closed = tokio::time::timeout(
+                Duration::from_secs(1),
+                cache.next_object_or_wait(key, last_object_id + 1),
+            )
+            .await
+            .expect("subgroup should be closed, not waiting for more objects");
+            assert!(closed.is_none());
         }
     }
 
-    async fn assert_subgroup_closed_after(env: &TestEnv, group_id: u64, last_object_id: u64) {
-        let cache = env.cache_store.get_or_create(&env.track_key);
-        let subgroup = StreamSubgroupId::Value(0);
-        let closed = tokio::time::timeout(
-            Duration::from_secs(1),
-            cache.stream_object_from_or_wait(group_id, &subgroup, last_object_id + 1),
-        )
-        .await
-        .expect("subgroup should be closed, not waiting for more objects");
-        assert!(closed.is_none());
+    fn scripted(objects: Vec<DataObject>, terminal: TerminalOutcome) -> ScriptedStreamReceiver {
+        ScriptedStreamReceiver {
+            objects: VecDeque::from(objects),
+            exhausted_sender: None,
+            terminal,
+        }
     }
 
     #[tokio::test]
     async fn end_of_group_status_closes_subgroup_and_notifies() {
-        let mut env = make_env();
-        let receiver = ScriptedStreamReceiver {
-            objects: VecDeque::from([
+        // Arrange
+        let mut env = TestEnv::new();
+        let receiver = scripted(
+            vec![
                 make_header(0),
-                make_payload_object(0),
-                make_end_of_group_object(),
-            ]),
-            exhausted_sender: None,
-            terminal: TerminalOutcome::Fin,
-        };
-
-        StreamReader::read_loop(
-            env.track_key.clone(),
-            PUBLISHER_SESSION,
-            Box::new(receiver),
-            env.stop_receiver.clone(),
-            env.cache_store.clone(),
-            env.notify_map.clone(),
-            env.session_event_sender.clone(),
-        )
-        .await;
-
+                payload(0),
+                make_status_object(0, ObjectStatus::EndOfGroup),
+            ],
+            TerminalOutcome::Fin,
+        );
+        // Act
+        env.read_loop(receiver).await;
+        // Assert
         assert!(matches!(
             env.event_receiver.try_recv(),
-            Ok(TrackEvent::StreamOpened { group_id: 0, .. })
+            Ok(TrackEvent::SubgroupOpened(key)) if key == stream_key(0)
         ));
-        assert!(matches!(
-            env.event_receiver.try_recv(),
-            Ok(TrackEvent::EndOfGroup)
-        ));
-
-        let cache = env.cache_store.get_or_create(&env.track_key);
-        let subgroup = StreamSubgroupId::Value(0);
-        let (payload_id, _) = cache
-            .stream_object_from_or_wait(0, &subgroup, 0)
-            .await
-            .expect("payload object should be cached");
-        assert_eq!(payload_id, 0);
-        let (status_id, _) = cache
-            .stream_object_from_or_wait(0, &subgroup, 1)
-            .await
-            .expect("end-of-group status object should be cached");
-        assert_eq!(status_id, 1);
-        assert_subgroup_closed_after(&env, 0, 1).await;
+        assert_eq!(
+            env.cached_object_ids(stream_key(0)).await,
+            vec![(0, ObjectStatus::Normal), (1, ObjectStatus::EndOfGroup)]
+        );
+        env.assert_subgroup_closed_after(stream_key(0), 1).await;
     }
 
-    // Runs read_loop over [header, one payload object] ending with `terminal`,
-    // then asserts the open subgroup was closed and EndOfGroup notified.
     async fn assert_open_subgroup_closed_on(terminal: TerminalOutcome) {
-        let mut env = make_env();
-        let receiver = ScriptedStreamReceiver {
-            objects: VecDeque::from([make_header(0), make_payload_object(0)]),
-            exhausted_sender: None,
-            terminal,
-        };
-
-        StreamReader::read_loop(
-            env.track_key.clone(),
-            PUBLISHER_SESSION,
-            Box::new(receiver),
-            env.stop_receiver.clone(),
-            env.cache_store.clone(),
-            env.notify_map.clone(),
-            env.session_event_sender.clone(),
-        )
-        .await;
-
+        // Arrange
+        let mut env = TestEnv::new();
+        let receiver = scripted(vec![make_header(0), payload(0)], terminal);
+        // Act
+        env.read_loop(receiver).await;
+        // Assert
         assert!(matches!(
             env.event_receiver.try_recv(),
-            Ok(TrackEvent::StreamOpened { group_id: 0, .. })
+            Ok(TrackEvent::SubgroupOpened(key)) if key == stream_key(0)
         ));
-        assert!(matches!(
-            env.event_receiver.try_recv(),
-            Ok(TrackEvent::EndOfGroup)
-        ));
-        assert_subgroup_closed_after(&env, 0, 0).await;
+        env.assert_subgroup_closed_after(stream_key(0), 0).await;
     }
 
     #[tokio::test]
@@ -458,80 +467,119 @@ mod tests {
 
     #[tokio::test]
     async fn stop_signal_closes_open_subgroup() {
-        let mut env = make_env();
+        // Arrange: the stream hangs after two objects
+        let env = TestEnv::new();
         let (exhausted_sender, exhausted_receiver) = oneshot::channel();
         let receiver = ScriptedStreamReceiver {
-            objects: VecDeque::from([make_header(0), make_payload_object(0)]),
+            objects: VecDeque::from([make_header(0), payload(0)]),
             exhausted_sender: Some(exhausted_sender),
             terminal: TerminalOutcome::Hang,
         };
-
-        let read_task = tokio::spawn(StreamReader::read_loop(
-            env.track_key.clone(),
-            PUBLISHER_SESSION,
-            Box::new(receiver),
-            env.stop_receiver.clone(),
-            env.cache_store.clone(),
-            env.notify_map.clone(),
-            env.session_event_sender.clone(),
-        ));
-
+        let read_task = tokio::spawn(env.read_loop(receiver));
         exhausted_receiver
             .await
             .expect("reader should consume all scripted objects");
+        // Act
         env.stop_sender.send(true).expect("stop signal should send");
         tokio::time::timeout(Duration::from_secs(1), read_task)
             .await
             .expect("read loop should stop on signal")
             .expect("read loop should not panic");
-
-        assert!(matches!(
-            env.event_receiver.try_recv(),
-            Ok(TrackEvent::StreamOpened { group_id: 0, .. })
-        ));
-        assert!(matches!(
-            env.event_receiver.try_recv(),
-            Ok(TrackEvent::EndOfGroup)
-        ));
-        assert_subgroup_closed_after(&env, 0, 0).await;
+        // Assert
+        env.assert_subgroup_closed_after(stream_key(0), 0).await;
     }
 
     #[tokio::test]
     async fn resolves_absolute_object_ids_from_deltas() {
-        let mut env = make_env();
-        let receiver = ScriptedStreamReceiver {
-            // deltas 0, 0, 1 resolve to absolute ids 0, 1, 3
-            objects: VecDeque::from([
-                make_header(0),
-                make_payload_object(0),
-                make_payload_object(0),
-                make_payload_object(1),
-            ]),
-            exhausted_sender: None,
-            terminal: TerminalOutcome::Fin,
+        // Arrange: deltas 0, 0, 1 resolve to absolute ids 0, 1, 3
+        let env = TestEnv::new();
+        let receiver = scripted(
+            vec![make_header(0), payload(0), payload(0), payload(1)],
+            TerminalOutcome::Fin,
+        );
+        // Act
+        env.read_loop(receiver).await;
+        // Assert
+        let ids: Vec<u64> = env
+            .cached_object_ids(stream_key(0))
+            .await
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec![0, 1, 3]);
+    }
+
+    #[tokio::test]
+    async fn end_of_group_header_type_synthesizes_status_object_on_fin() {
+        // Arrange: Type 0x18 header (last object before FIN ends the group)
+        let env = TestEnv::new();
+        let receiver = scripted(
+            vec![
+                make_header_with(0, SubgroupId::None, true),
+                payload(0),
+                payload(0),
+            ],
+            TerminalOutcome::Fin,
+        );
+        // Act
+        env.read_loop(receiver).await;
+        // Assert: the End of Group becomes canonical data at last_id + 1
+        assert_eq!(
+            env.cached_object_ids(stream_key(0)).await,
+            vec![
+                (0, ObjectStatus::Normal),
+                (1, ObjectStatus::Normal),
+                (2, ObjectStatus::EndOfGroup)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn end_of_group_header_type_does_not_synthesize_on_reset() {
+        // Arrange: a reset stream cannot tell where the group ended (§10.4.2)
+        let env = TestEnv::new();
+        let receiver = scripted(
+            vec![make_header_with(0, SubgroupId::None, true), payload(0)],
+            TerminalOutcome::TransportClosed,
+        );
+        // Act
+        env.read_loop(receiver).await;
+        // Assert
+        assert_eq!(
+            env.cached_object_ids(stream_key(0)).await,
+            vec![(0, ObjectStatus::Normal)]
+        );
+    }
+
+    #[tokio::test]
+    async fn first_object_id_delta_header_takes_subgroup_id_from_first_object() {
+        // Arrange: Type 0x12 header; the first object arrives with id 5
+        let mut env = TestEnv::new();
+        let receiver = scripted(
+            vec![
+                make_header_with(0, SubgroupId::FirstObjectIdDelta, false),
+                payload(5),
+                payload(0),
+            ],
+            TerminalOutcome::Fin,
+        );
+        // Act
+        env.read_loop(receiver).await;
+        // Assert: the subgroup is opened, and announced, only once its id is known
+        let key = SubgroupKey::Stream {
+            group_id: 0,
+            subgroup_id: 5,
         };
-
-        StreamReader::read_loop(
-            env.track_key.clone(),
-            PUBLISHER_SESSION,
-            Box::new(receiver),
-            env.stop_receiver.clone(),
-            env.cache_store.clone(),
-            env.notify_map.clone(),
-            env.session_event_sender.clone(),
-        )
-        .await;
-        // silence unused warnings for the fields this test does not exercise
-        let _ = (&env.stop_sender, &mut env.event_receiver);
-
-        let cache = env.cache_store.get_or_create(&env.track_key);
-        let subgroup = StreamSubgroupId::Value(0);
-        let mut object_ids = Vec::new();
-        let mut cursor = 0;
-        while let Some((id, _)) = cache.stream_object_from_or_wait(0, &subgroup, cursor).await {
-            object_ids.push(id);
-            cursor = id + 1;
-        }
-        assert_eq!(object_ids, vec![0, 1, 3]);
+        assert!(matches!(
+            env.event_receiver.try_recv(),
+            Ok(TrackEvent::SubgroupOpened(opened)) if opened == key
+        ));
+        let ids: Vec<u64> = env
+            .cached_object_ids(key)
+            .await
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec![5, 6]);
     }
 }

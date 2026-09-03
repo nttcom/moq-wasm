@@ -1,14 +1,16 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
-    core::data_object::DataObject,
     enums::FetchErrorCode,
     relay::{
-        cache::{duration::duration_from_env, track_cache::TrackCache},
+        cache::{
+            cached_object::CachedObject,
+            duration::duration_from_env,
+            track_cache::{InsertOrigin, TrackCache},
+        },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
-        types::StreamSubgroupId,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -123,7 +125,6 @@ impl FetchIngest {
         let mut receiver = subscriber
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
-        let mut previous_object_ids = HashMap::<(u64, StreamSubgroupId), u64>::new();
         let start_eviction_generation = start.cache.eviction_generation();
 
         loop {
@@ -136,12 +137,7 @@ impl FetchIngest {
             match received {
                 moqt::Fetch::Header(_) => {}
                 moqt::Fetch::Object(object) => {
-                    Self::append_fetch_object(
-                        start.cache.clone(),
-                        object,
-                        &mut previous_object_ids,
-                    )
-                    .await?;
+                    Self::append_fetch_object(&start.cache, object)?;
                 }
                 moqt::Fetch::End => {
                     if start.cache.eviction_generation() != start_eviction_generation {
@@ -153,8 +149,7 @@ impl FetchIngest {
                     }
                     start
                         .cache
-                        .insert_fetch_known_range(start.requested_start, start.requested_end)
-                        .await;
+                        .insert_fetch_known_range(start.requested_start, start.requested_end);
                     egress_sender
                         .send(EgressCommand::StartFetch(start.egress_start))
                         .await?;
@@ -164,89 +159,19 @@ impl FetchIngest {
         }
     }
 
-    async fn append_fetch_object(
-        cache: Arc<TrackCache>,
+    fn append_fetch_object(
+        cache: &TrackCache,
         object: moqt::FetchObjectField,
-        previous_object_ids: &mut HashMap<(u64, StreamSubgroupId), u64>,
     ) -> anyhow::Result<()> {
-        let subgroup_id = StreamSubgroupId::Value(object.subgroup_id);
-        let key = (object.group_id, subgroup_id.clone());
-
-        let has_extensions = !object.extension_headers.key_value_pairs.is_empty();
-        let header = moqt::SubgroupHeader::new(
-            0,
-            object.group_id,
-            moqt::SubgroupId::Value(object.subgroup_id),
-            object.publisher_priority,
-            has_extensions,
-            false,
-        );
-        let message_type = header.message_type;
-        let object_id_delta = match previous_object_ids.get(&key) {
-            Some(previous_object_id) => {
-                match object
-                    .object_id
-                    .checked_sub(previous_object_id.saturating_add(1))
-                {
-                    Some(delta) => delta,
-                    None => {
-                        // Duplicate or reordered id. The cache dedups first-wins
-                        // (§8.1), so skip the object instead of aborting the fill.
-                        tracing::warn!(
-                            group_id = object.group_id,
-                            object_id = object.object_id,
-                            "skipping non-ascending FETCH object"
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-            None => object.object_id,
-        };
-        let subgroup_object = match object.fetch_object {
-            moqt::FetchObject::Payload(payload) => moqt::SubgroupObject::new_payload(payload),
-            moqt::FetchObject::Status(status) => {
-                moqt::SubgroupObject::new_status(u8::from(status) as u64)
-            }
-        };
-
-        let header_result = cache
-            .append_stream_object(
-                object.group_id,
-                &subgroup_id,
-                None,
-                DataObject::SubgroupHeader(header),
-            )
-            .await;
-        if header_result.is_err() {
-            anyhow::bail!(
-                "malformed track detected during fetch fill (group {}, subgroup {})",
-                object.group_id,
-                object.subgroup_id
-            );
-        }
-        let object_result = cache
-            .append_stream_object(
-                object.group_id,
-                &subgroup_id,
-                Some(object.object_id),
-                DataObject::SubgroupObject(moqt::SubgroupObjectField {
-                    message_type,
-                    object_id_delta,
-                    extension_headers: object.extension_headers,
-                    subgroup_object,
-                }),
-            )
-            .await;
-        if object_result.is_err() {
-            anyhow::bail!(
-                "malformed track detected during fetch fill (group {}, object {})",
-                object.group_id,
-                object.object_id
-            );
-        }
-        previous_object_ids.insert(key, object.object_id);
-        Ok(())
+        let (group_id, object_id) = (object.group_id, object.object_id);
+        cache
+            .insert(CachedObject::from_fetch_object(object), InsertOrigin::Fill)
+            .map(|_| ())
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "malformed track detected during fetch fill (group {group_id}, object {object_id})"
+                )
+            })
     }
 
     fn timeout() -> std::time::Duration {
@@ -329,9 +254,8 @@ mod tests {
             session_repository_with_upstream_session(UPSTREAM_SESSION).await;
 
         let cache = Arc::new(TrackCache::new());
-        let mut first_fill = HashMap::new();
         FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 0,
                 0,
@@ -340,13 +264,10 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::from_static(b"a")),
             ),
-            &mut first_fill,
         )
-        .await
         .unwrap();
-        let mut second_fill = HashMap::new();
         let _ = FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 0,
                 0,
@@ -355,9 +276,7 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::from_static(b"b")),
             ),
-            &mut second_fill,
-        )
-        .await;
+        );
         assert!(cache.is_malformed());
 
         let (egress_sender, _egress_receiver) = mpsc::channel(1);
@@ -431,9 +350,8 @@ mod tests {
         // Arrange: a FETCH response can contain EndOfGroup status, but that
         // must not close the shared live GroupCache.
         let cache = Arc::new(TrackCache::new());
-        let mut previous_object_ids = HashMap::new();
         FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 0,
                 0,
@@ -442,12 +360,10 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Status(ObjectStatus::EndOfGroup),
             ),
-            &mut previous_object_ids,
         )
-        .await
         .unwrap();
         FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 1,
                 0,
@@ -456,24 +372,20 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::new()),
             ),
-            &mut previous_object_ids,
         )
-        .await
         .unwrap();
 
         // Act
-        let resolution = cache
-            .resolve_fetch_range(
-                moqt::Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
-                moqt::Location {
-                    group_id: 1,
-                    object_id: 1,
-                },
-            )
-            .await;
+        let resolution = cache.resolve_fetch_range(
+            moqt::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            moqt::Location {
+                group_id: 1,
+                object_id: 1,
+            },
+        );
 
         // Assert: only a completed FETCH known range may cover this historical gap.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
@@ -483,9 +395,8 @@ mod tests {
     async fn conflicting_fetch_object_fails_the_fill_and_latches_the_track() {
         // Arrange: a fill stored the object once
         let cache = Arc::new(TrackCache::new());
-        let mut first_fill = HashMap::new();
         FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 0,
                 0,
@@ -494,15 +405,12 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::from_static(b"a")),
             ),
-            &mut first_fill,
         )
-        .await
         .unwrap();
 
         // Act: a second fill delivers the same object with another payload
-        let mut second_fill = HashMap::new();
         let result = FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 0,
                 0,
@@ -511,9 +419,7 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::from_static(b"b")),
             ),
-            &mut second_fill,
-        )
-        .await;
+        );
 
         // Assert: the fill fails and the track is quarantined
         assert!(result.is_err());
@@ -524,9 +430,8 @@ mod tests {
     async fn partial_fetch_ingest_does_not_register_coverage() {
         // Arrange: a FETCH fill wrote an object but has not reached Fetch::End.
         let cache = Arc::new(TrackCache::new());
-        let mut previous_object_ids = HashMap::new();
         FetchIngest::append_fetch_object(
-            cache.clone(),
+            &cache,
             FetchObjectField::new(
                 0,
                 0,
@@ -535,24 +440,20 @@ mod tests {
                 ExtensionHeaders::default(),
                 FetchObject::Payload(Bytes::new()),
             ),
-            &mut previous_object_ids,
         )
-        .await
         .unwrap();
 
         // Act
-        let resolution = cache
-            .resolve_fetch_range(
-                moqt::Location {
-                    group_id: 0,
-                    object_id: 0,
-                },
-                moqt::Location {
-                    group_id: 0,
-                    object_id: 1,
-                },
-            )
-            .await;
+        let resolution = cache.resolve_fetch_range(
+            moqt::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            moqt::Location {
+                group_id: 0,
+                object_id: 1,
+            },
+        );
 
         // Assert: only Fetch::End may register the filled range as known.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);

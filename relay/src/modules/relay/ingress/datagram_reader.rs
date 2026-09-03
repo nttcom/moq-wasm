@@ -6,10 +6,11 @@ use tokio::{
 };
 
 use crate::modules::{
-    core::data_receiver::datagram_receiver::DatagramReceiver,
+    core::{data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver},
     relay::{
-        cache::store::TrackCacheStore,
+        cache::{cached_object::CachedObject, store::TrackCacheStore, track_cache::LiveSubgroup},
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
+        types::SubgroupKey,
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
@@ -116,41 +117,43 @@ impl DatagramReader {
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
-        let mut current_group_id: Option<u64> = None;
-        let mut prev_object_id: Option<u64> = None;
         let cache = cache_store.get_or_create(&track_key);
         cache.begin_live_ingest();
         let notify = object_notify_producer_map.get_or_create(&track_key);
+        let mut current_group: Option<(u64, LiveSubgroup<'_>)> = None;
+        let mut prev_object_id: Option<u64> = None;
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
-                    if let Some(group_id) = current_group_id {
-                        cache.close_datagram_group(group_id).await;
-                    }
                     tracing::info!(%track_key, "datagram reader stopped");
-                    cache.end_live_ingest();
-                    return;
+                    break;
                 }
                 result = receiver.receive_object() => result,
             };
 
             match receive_result {
                 Ok(object) => {
-                    let group_id = object.group_id().or(current_group_id).unwrap_or(0);
-                    if current_group_id != Some(group_id) {
-                        if let Some(old_group) = current_group_id {
-                            cache.close_datagram_group(old_group).await;
+                    let DataObject::ObjectDatagram(datagram) = object else {
+                        tracing::error!(%track_key, "non-datagram object on datagram receiver");
+                        continue;
+                    };
+                    let group_id = datagram.group_id;
+                    let live = match &mut current_group {
+                        Some((current_group_id, live)) if *current_group_id == group_id => live,
+                        slot => {
+                            let key = SubgroupKey::Datagram { group_id };
+                            let (_, live) = slot.insert((group_id, cache.open_live_subgroup(key)));
+                            prev_object_id = None;
+                            let _ = notify.send(TrackEvent::SubgroupOpened(key));
+                            live
                         }
-                        current_group_id = Some(group_id);
-                        prev_object_id = None;
-                        let _ = notify.send(TrackEvent::DatagramOpened { group_id });
-                    }
-                    let object_id = object.resolve_absolute_object_id(prev_object_id);
-                    prev_object_id = object_id;
-                    let result = cache
-                        .append_datagram_object(group_id, object_id, object)
-                        .await;
-                    if result.is_err() {
+                    };
+                    let object_id = datagram.field.resolve_object_id(prev_object_id);
+                    prev_object_id = Some(object_id);
+                    if live
+                        .insert(CachedObject::from_datagram(object_id, datagram))
+                        .is_err()
+                    {
                         tracing::warn!(
                             %track_key,
                             group_id,
@@ -160,22 +163,17 @@ impl DatagramReader {
                             publisher_session_id,
                             track_key.clone(),
                         ));
-                        cache.close_datagram_group(group_id).await;
-                        cache.end_live_ingest();
-                        return;
+                        break;
                     }
                 }
                 Err(_) => {
-                    // Ensure the last group is closed before exiting.
-                    if let Some(group_id) = current_group_id {
-                        cache.close_datagram_group(group_id).await;
-                    }
                     tracing::debug!(%track_key, "datagram receiver ended");
-                    cache.end_live_ingest();
-                    return;
+                    break;
                 }
             }
         }
+        drop(current_group);
+        cache.end_live_ingest();
     }
 }
 

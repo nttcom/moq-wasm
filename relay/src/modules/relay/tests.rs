@@ -1,3 +1,3 @@
 mod data_plane;
-mod harness;
+pub(crate) mod harness;
 mod malformed_track;
