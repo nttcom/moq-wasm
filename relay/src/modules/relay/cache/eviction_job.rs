@@ -15,7 +15,7 @@ pub(crate) fn spawn_cache_eviction_job(cache_store: Arc<TrackCacheStore>) -> Joi
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
-            cache_store.evict(ttl).await;
+            cache_store.evict(ttl);
         }
     })
 }

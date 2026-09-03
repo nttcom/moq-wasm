@@ -11,7 +11,7 @@ pub(crate) struct KnownRanges {
 
 impl KnownRanges {
     pub(crate) fn insert(&mut self, start: moqt::Location, end: moqt::Location) {
-        let end = Self::normalize_end_location(end);
+        let end = Self::exclusive_end(end);
         if start >= end {
             return;
         }
@@ -52,7 +52,7 @@ impl KnownRanges {
     }
 
     pub(crate) fn remove_range(&mut self, start: moqt::Location, end: moqt::Location) {
-        let end = Self::normalize_end_location(end);
+        let end = Self::exclusive_end(end);
         if start >= end {
             return;
         }
@@ -81,7 +81,7 @@ impl KnownRanges {
     }
 
     pub(crate) fn contains_range(&self, start: moqt::Location, end: moqt::Location) -> bool {
-        let end = Self::normalize_end_location(end);
+        let end = Self::exclusive_end(end);
         if start >= end {
             return false;
         }
@@ -103,7 +103,7 @@ impl KnownRanges {
             .map(|range| range.end)
     }
 
-    fn normalize_end_location(location: moqt::Location) -> moqt::Location {
+    pub(crate) fn exclusive_end(location: moqt::Location) -> moqt::Location {
         if location.object_id != 0 {
             return location;
         }
