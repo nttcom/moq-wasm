@@ -4,7 +4,10 @@ use moqt::wire::publish_done_status_code;
 
 use crate::modules::{
     core::data_object::DataObject,
-    relay::tests::harness::{RelayHarness, ordered_payload, receive_objects_until_close},
+    relay::tests::harness::{
+        PUBLISHER_SESSION_ID, RelayHarness, ordered_payload, receive_objects_until_close,
+    },
+    session_event::EventKind,
 };
 
 fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
@@ -97,4 +100,26 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
         publish_done_status_code::MALFORMED_TRACK
     );
     assert_eq!(publish_done.stream_count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn detection_reports_the_publisher_session_and_track() {
+    // Arrange
+    let mut harness = RelayHarness::new();
+
+    // Act: a second stream re-delivers object 0 with a different payload.
+    let first_stream = harness.open_upstream_stream().await;
+    first_stream.header(0);
+    first_stream.object(0);
+    let second_stream = harness.open_upstream_stream().await;
+    second_stream.header(0);
+    second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
+
+    // Assert: the appender reports the detection for upstream teardown.
+    let event = harness.expect_malformed_track_detected().await;
+    assert_eq!(event.session_id, PUBLISHER_SESSION_ID);
+    assert!(matches!(
+        event.kind,
+        EventKind::MalformedTrackDetected(ref track_key) if track_key == harness.track_key()
+    ));
 }

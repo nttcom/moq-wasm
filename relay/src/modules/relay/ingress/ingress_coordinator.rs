@@ -11,7 +11,6 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         ingress::{
             datagram_reader::{DatagramReader, DatagramReceiveCommand, DatagramReceiveStart},
-            malformed_track_watch_task::MalformedTrackWatchTask,
             stream_ingress_task::{StreamIngressCommand, StreamIngressTask, StreamReceiveStart},
         },
         notifications::track_notifier::ObjectNotifyProducerMap,
@@ -58,9 +57,14 @@ impl IngressCoordinator {
             stream_rx,
             cache_store.clone(),
             object_notify_producer_map.clone(),
+            session_event_sender.clone(),
         );
-        let datagram_reader =
-            DatagramReader::run(datagram_rx, cache_store.clone(), object_notify_producer_map);
+        let datagram_reader = DatagramReader::run(
+            datagram_rx,
+            cache_store,
+            object_notify_producer_map,
+            session_event_sender,
+        );
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
         let session_repo_for_runner = session_repo;
@@ -68,7 +72,6 @@ impl IngressCoordinator {
         let command_runner = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
             let mut create_stop_senders = HashMap::<TrackKey, watch::Sender<bool>>::new();
-            let mut malformed_watch_tasks = HashMap::<TrackKey, MalformedTrackWatchTask>::new();
             loop {
                 tokio::select! {
                     Some(command) = command_receiver.recv() => {
@@ -106,15 +109,6 @@ impl IngressCoordinator {
                         }
                         let (create_stop_sender, mut create_stop_receiver) = watch::channel(false);
                         create_stop_senders.insert(track_key.clone(), create_stop_sender);
-                        malformed_watch_tasks.insert(
-                            track_key.clone(),
-                            MalformedTrackWatchTask::run(
-                                cache_store.get_or_create(&track_key),
-                                track_key.clone(),
-                                command.publisher_session_id,
-                                session_event_sender.clone(),
-                            ),
-                        );
                         let create_receiver_span = tracing::info_span!(
                             parent: &command.parent_span,
                             "relay.upstream.ingress",
@@ -207,7 +201,6 @@ impl IngressCoordinator {
                                 let _ = stop_sender.send(true);
                                 tracing::info!(%track_key, "upstream ingress stop requested");
                             }
-                            malformed_watch_tasks.remove(&track_key);
                             let stream_result = stream_tx
                                 .send(StreamIngressCommand::Stop {
                                     track_key: track_key.clone(),

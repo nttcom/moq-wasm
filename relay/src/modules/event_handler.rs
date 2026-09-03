@@ -44,6 +44,7 @@ pub(crate) struct EventHandler {
 /// All deps cloned from the reader into a newly spawned session worker.
 struct WorkerDeps {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
     control_message_forwarder: ControlMessageForwarder,
     local_pub_sub_directory: Arc<dyn LocalPubSubDirectory>,
     ingress_sender: mpsc::Sender<IngressCommand>,
@@ -60,6 +61,7 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+        relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
         route_registry: Arc<dyn RelayRouteRegistry>,
@@ -70,6 +72,7 @@ impl EventHandler {
         let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
             relay_event_receiver,
+            relay_event_sender,
             ingress_sender,
             egress_sender,
             route_registry,
@@ -86,6 +89,7 @@ impl EventHandler {
     fn create_relay_session_event_handler(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+        relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
         route_registry: Arc<dyn RelayRouteRegistry>,
@@ -146,6 +150,7 @@ impl EventHandler {
                                 let (tx, rx) = mpsc::unbounded_channel::<SessionEvent>();
                                 let deps = WorkerDeps {
                                     repo: repo.clone(),
+                                    relay_event_sender: relay_event_sender.clone(),
                                     control_message_forwarder: control_message_forwarder.clone(),
                                     local_pub_sub_directory: local_pub_sub_directory.clone(),
                                     ingress_sender: ingress_sender.clone(),
@@ -191,6 +196,7 @@ impl EventHandler {
     ) -> SessionId {
         let WorkerDeps {
             repo,
+            relay_event_sender,
             control_message_forwarder,
             local_pub_sub_directory,
             ingress_sender,
@@ -387,6 +393,7 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &cache_store,
                             &egress_sender,
+                            &relay_event_sender,
                             &control_message_forwarder,
                             upstream_publisher_resolver.as_ref(),
                             handler,

@@ -52,6 +52,7 @@ impl RelayRuntime {
         let manager = EventHandler::run(
             repo,
             receiver,
+            sender.clone(),
             ingress.sender(),
             egress.sender(),
             route_registry,

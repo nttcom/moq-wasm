@@ -13,6 +13,7 @@ use crate::modules::{
         ingress::stream_reader::{StreamOpened, StreamReader},
         notifications::track_notifier::ObjectNotifyProducerMap,
     },
+    session_event::SessionEvent,
     types::{SessionId, TrackKey},
 };
 
@@ -41,10 +42,15 @@ impl StreamIngressTask {
         mut receiver: mpsc::Receiver<StreamIngressCommand>,
         cache_store: Arc<TrackCacheStore>,
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (opened_tx, opened_rx) = mpsc::channel::<StreamOpened>(64);
-        let stream_reader =
-            StreamReader::run(opened_rx, cache_store.clone(), object_notify_producer_map);
+        let stream_reader = StreamReader::run(
+            opened_rx,
+            cache_store.clone(),
+            object_notify_producer_map,
+            session_event_sender,
+        );
 
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -78,6 +84,7 @@ impl StreamIngressTask {
                                     cache.begin_live_ingest();
                                     Self::factory_loop(
                                         track_key.clone(),
+                                        publisher_session_id,
                                         factory,
                                         opened_tx,
                                         track_span,
@@ -123,6 +130,7 @@ impl StreamIngressTask {
 
     async fn factory_loop(
         track_key: TrackKey,
+        publisher_session_id: SessionId,
         mut factory: Box<dyn StreamReceiverFactory>,
         stream_tx: mpsc::Sender<StreamOpened>,
         track_span: Span,
@@ -142,6 +150,7 @@ impl StreamIngressTask {
             if stream_tx
                 .send(StreamOpened {
                     track_key: track_key.clone(),
+                    publisher_session_id,
                     receiver,
                     parent_span: track_span.clone(),
                     stop_receiver: stop_receiver.clone(),
