@@ -763,6 +763,10 @@ mod tests {
         ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
             unimplemented!("not used in subscribe tests")
         }
+
+        async fn send_fetch_cancel(&self, _request_id: u64) -> anyhow::Result<()> {
+            unimplemented!("not used in subscribe tests")
+        }
     }
 
     async fn create_upstream_and_resolve_largest(

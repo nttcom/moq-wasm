@@ -11,9 +11,9 @@ use crate::{
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
-                    fetch::Fetch, fetch::FetchParams, subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace, unsubscribe::Unsubscribe,
-                    unsubscribe_namespace::UnsubscribeNamespace,
+                    fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel,
+                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
+                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                 },
             },
             enums::ResponseMessage,
@@ -258,6 +258,22 @@ impl<T: TransportProtocol> Subscriber<T> {
             }
             _ => bail!("Protocol violation"),
         }
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.fetch_cancel",
+        skip_all,
+        fields(request_id = %request_id)
+    )]
+    pub async fn fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
+        self.remove_pending_fetch(request_id).await;
+        let fetch_cancel = FetchCancel::new(request_id);
+        self.session
+            .send_stream
+            .send(ControlMessageType::FetchCancel, fetch_cancel.encode())
+            .await?;
+        Ok(())
     }
 
     async fn remove_pending_fetch(&self, request_id: u64) {

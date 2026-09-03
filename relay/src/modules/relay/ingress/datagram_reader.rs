@@ -11,6 +11,7 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
     },
+    session_event::SessionEvent,
     types::{SessionId, TrackKey},
 };
 
@@ -37,6 +38,7 @@ impl DatagramReader {
         mut receiver: mpsc::Receiver<DatagramReceiveCommand>,
         cache_store: Arc<TrackCacheStore>,
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -60,13 +62,16 @@ impl DatagramReader {
 
                                 let cache_store = cache_store.clone();
                                 let sender_map = object_notify_producer_map.clone();
+                                let session_event_sender = session_event_sender.clone();
                                 joinset.spawn(async move {
                                     Self::read_loop(
                                         track_key.clone(),
+                                        publisher_session_id,
                                         receiver,
                                         stop_receiver,
                                         cache_store,
                                         sender_map,
+                                        session_event_sender,
                                     )
                                     .await;
                                     track_key
@@ -104,10 +109,12 @@ impl DatagramReader {
 
     async fn read_loop(
         track_key: TrackKey,
+        publisher_session_id: SessionId,
         mut receiver: Box<dyn DatagramReceiver>,
         mut stop_receiver: watch::Receiver<bool>,
         cache_store: Arc<TrackCacheStore>,
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
         let mut current_group_id: Option<u64> = None;
         let mut prev_object_id: Option<u64> = None;
@@ -149,6 +156,10 @@ impl DatagramReader {
                             group_id,
                             "malformed track detected; stopping datagram ingest"
                         );
+                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+                            publisher_session_id,
+                            track_key.clone(),
+                        ));
                         cache.close_datagram_group(group_id).await;
                         cache.end_live_ingest();
                         return;

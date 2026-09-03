@@ -14,11 +14,13 @@ use crate::modules::{
         notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
         types::StreamSubgroupId,
     },
-    types::TrackKey,
+    session_event::SessionEvent,
+    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct StreamOpened {
     pub(crate) track_key: TrackKey,
+    pub(crate) publisher_session_id: SessionId,
     pub(crate) receiver: Box<dyn StreamReceiver>,
     pub(crate) parent_span: Span,
     pub(crate) stop_receiver: watch::Receiver<bool>,
@@ -33,6 +35,7 @@ impl StreamReader {
         mut receiver: mpsc::Receiver<StreamOpened>,
         cache_store: Arc<TrackCacheStore>,
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut joinset = tokio::task::JoinSet::new();
@@ -49,10 +52,12 @@ impl StreamReader {
                         );
                         joinset.spawn(Self::read_loop(
                             cmd.track_key,
+                            cmd.publisher_session_id,
                             cmd.receiver,
                             cmd.stop_receiver,
                             cache_store.clone(),
                             object_notify_producer_map.clone(),
+                            session_event_sender.clone(),
                         ).instrument(span));
                     }
                     Some(result) = joinset.join_next() => {
@@ -69,10 +74,12 @@ impl StreamReader {
 
     async fn read_loop(
         track_key: TrackKey,
+        publisher_session_id: SessionId,
         mut receiver: Box<dyn StreamReceiver>,
         mut stop_receiver: watch::Receiver<bool>,
         cache_store: Arc<TrackCacheStore>,
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
         let span = Span::current();
         let mut group_id = 0u64;
@@ -114,6 +121,10 @@ impl StreamReader {
                     if result.is_err() {
                         span.record("end_reason", "malformed_track");
                         tracing::warn!(%track_key, group_id, "malformed track detected; stopping stream ingest");
+                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+                            publisher_session_id,
+                            track_key.clone(),
+                        ));
                         cache.close_stream_subgroup(group_id, &subgroup_id).await;
                         let _ = notify.send(TrackEvent::EndOfGroup);
                         return;
@@ -153,6 +164,10 @@ impl StreamReader {
                             object_id,
                             "malformed track detected; stopping stream ingest"
                         );
+                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+                            publisher_session_id,
+                            track_key.clone(),
+                        ));
                         if has_subgroup {
                             cache.close_stream_subgroup(group_id, &subgroup_id).await;
                             let _ = notify.send(TrackEvent::EndOfGroup);
@@ -302,10 +317,14 @@ mod tests {
         })
     }
 
+    const PUBLISHER_SESSION: SessionId = 1;
+
     struct TestEnv {
         track_key: TrackKey,
         cache_store: Arc<TrackCacheStore>,
         notify_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
+        _session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
         event_receiver: tokio::sync::broadcast::Receiver<TrackEvent>,
         stop_sender: watch::Sender<bool>,
         stop_receiver: watch::Receiver<bool>,
@@ -317,10 +336,13 @@ mod tests {
         let notify_map = Arc::new(ObjectNotifyProducerMap::new());
         let event_receiver = notify_map.get_or_create(&track_key).subscribe();
         let (stop_sender, stop_receiver) = watch::channel(false);
+        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         TestEnv {
             track_key,
             cache_store,
             notify_map,
+            session_event_sender,
+            _session_event_receiver: session_event_receiver,
             event_receiver,
             stop_sender,
             stop_receiver,
@@ -354,10 +376,12 @@ mod tests {
 
         StreamReader::read_loop(
             env.track_key.clone(),
+            PUBLISHER_SESSION,
             Box::new(receiver),
             env.stop_receiver.clone(),
             env.cache_store.clone(),
             env.notify_map.clone(),
+            env.session_event_sender.clone(),
         )
         .await;
 
@@ -397,10 +421,12 @@ mod tests {
 
         StreamReader::read_loop(
             env.track_key.clone(),
+            PUBLISHER_SESSION,
             Box::new(receiver),
             env.stop_receiver.clone(),
             env.cache_store.clone(),
             env.notify_map.clone(),
+            env.session_event_sender.clone(),
         )
         .await;
 
@@ -442,10 +468,12 @@ mod tests {
 
         let read_task = tokio::spawn(StreamReader::read_loop(
             env.track_key.clone(),
+            PUBLISHER_SESSION,
             Box::new(receiver),
             env.stop_receiver.clone(),
             env.cache_store.clone(),
             env.notify_map.clone(),
+            env.session_event_sender.clone(),
         ));
 
         exhausted_receiver
@@ -485,10 +513,12 @@ mod tests {
 
         StreamReader::read_loop(
             env.track_key.clone(),
+            PUBLISHER_SESSION,
             Box::new(receiver),
             env.stop_receiver.clone(),
             env.cache_store.clone(),
             env.notify_map.clone(),
+            env.session_event_sender.clone(),
         )
         .await;
         // silence unused warnings for the fields this test does not exercise

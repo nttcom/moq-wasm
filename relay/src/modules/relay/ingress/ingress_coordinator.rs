@@ -15,6 +15,7 @@ use crate::modules::{
         },
         notifications::track_notifier::ObjectNotifyProducerMap,
     },
+    session_event::SessionEvent,
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
 };
@@ -48,6 +49,7 @@ impl IngressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamIngressCommand>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveCommand>(64);
@@ -55,9 +57,14 @@ impl IngressCoordinator {
             stream_rx,
             cache_store.clone(),
             object_notify_producer_map.clone(),
+            session_event_sender.clone(),
         );
-        let datagram_reader =
-            DatagramReader::run(datagram_rx, cache_store, object_notify_producer_map);
+        let datagram_reader = DatagramReader::run(
+            datagram_rx,
+            cache_store,
+            object_notify_producer_map,
+            session_event_sender,
+        );
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
         let session_repo_for_runner = session_repo;

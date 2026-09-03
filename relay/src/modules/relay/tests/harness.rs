@@ -12,7 +12,8 @@ use crate::modules::{
         ingress::stream_reader::{StreamOpened, StreamReader},
         notifications::track_notifier::ObjectNotifyProducerMap,
     },
-    types::TrackKey,
+    session_event::SessionEvent,
+    types::{SessionId, TrackKey},
 };
 
 mod fixtures;
@@ -29,6 +30,7 @@ use self::{
 };
 
 pub(crate) const OBJECT_COUNT: usize = 50;
+pub(crate) const PUBLISHER_SESSION_ID: SessionId = 1;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct RelayHarness {
@@ -36,6 +38,7 @@ pub(crate) struct RelayHarness {
     cache_store: Arc<TrackCacheStore>,
     notify_map: Arc<ObjectNotifyProducerMap>,
     opened_sender: mpsc::Sender<StreamOpened>,
+    session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     _stream_reader: StreamReader,
     _stop_sender: watch::Sender<bool>,
     stop_receiver: watch::Receiver<bool>,
@@ -75,18 +78,35 @@ impl RelayHarness {
         let cache_store = Arc::new(TrackCacheStore::new());
         let notify_map = Arc::new(ObjectNotifyProducerMap::new());
         let (opened_sender, opened_receiver) = mpsc::channel(16);
-        let stream_reader =
-            StreamReader::run(opened_receiver, cache_store.clone(), notify_map.clone());
+        let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
+        let stream_reader = StreamReader::run(
+            opened_receiver,
+            cache_store.clone(),
+            notify_map.clone(),
+            session_event_sender,
+        );
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
             track_key,
             cache_store,
             notify_map,
             opened_sender,
+            session_event_receiver,
             _stream_reader: stream_reader,
             _stop_sender: stop_sender,
             stop_receiver,
         }
+    }
+
+    pub(crate) fn track_key(&self) -> &TrackKey {
+        &self.track_key
+    }
+
+    pub(crate) async fn expect_malformed_track_detected(&mut self) -> SessionEvent {
+        tokio::time::timeout(RECV_TIMEOUT, self.session_event_receiver.recv())
+            .await
+            .expect("malformed detection should be reported")
+            .expect("session event channel should stay open")
     }
 
     pub(crate) async fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
@@ -94,6 +114,7 @@ impl RelayHarness {
         self.opened_sender
             .send(StreamOpened {
                 track_key: self.track_key.clone(),
+                publisher_session_id: PUBLISHER_SESSION_ID,
                 receiver,
                 parent_span: tracing::Span::none(),
                 stop_receiver: self.stop_receiver.clone(),

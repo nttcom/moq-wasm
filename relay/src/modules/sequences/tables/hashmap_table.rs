@@ -540,6 +540,15 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         self.active_upstream_subscriptions.insert(key, subscription);
     }
 
+    fn remove_upstream_subscription(
+        &self,
+        key: &UpstreamSubscriptionKey,
+    ) -> Option<ActiveUpstreamSubscription> {
+        self.active_upstream_subscriptions
+            .remove(key)
+            .map(|(_, subscription)| subscription)
+    }
+
     fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,

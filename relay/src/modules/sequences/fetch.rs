@@ -16,6 +16,7 @@ use crate::modules::{
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
     sequences::tables::table::LocalPubSubDirectory,
+    session_event::SessionEvent,
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
@@ -118,6 +119,7 @@ impl Fetch {
         table: &dyn LocalPubSubDirectory,
         cache_store: &Arc<TrackCacheStore>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
+        session_event_sender: &tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         handler: Box<dyn FetchHandler>,
@@ -229,7 +231,9 @@ impl Fetch {
                 let _fetch_ingest = FetchIngest::run(
                     forwarder.repository.clone(),
                     egress_sender.clone(),
+                    session_event_sender.clone(),
                     FetchIngestStart {
+                        track_key: target.track_key.clone(),
                         upstream_publisher_session_id: prepared.upstream_publisher_session_id,
                         downstream_subscriber_session_id: session_id,
                         request_id,

@@ -151,6 +151,10 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         key: UpstreamSubscriptionKey,
         subscription: ActiveUpstreamSubscription,
     );
+    fn remove_upstream_subscription(
+        &self,
+        key: &UpstreamSubscriptionKey,
+    ) -> Option<ActiveUpstreamSubscription>;
     fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,

@@ -42,6 +42,7 @@ impl RelayRuntime {
             repo.clone(),
             store.cache_store.clone(),
             store.object_notify_producer_map.clone(),
+            sender.clone(),
         );
         let egress = EgressCoordinator::new(
             repo.clone(),
@@ -51,6 +52,7 @@ impl RelayRuntime {
         let manager = EventHandler::run(
             repo,
             receiver,
+            sender.clone(),
             ingress.sender(),
             egress.sender(),
             route_registry,

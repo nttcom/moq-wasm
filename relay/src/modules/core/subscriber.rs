@@ -32,6 +32,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         &mut self,
         handle: &moqt::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>>;
+    async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -131,5 +132,15 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
         let receiver = self.accept_fetch_receiver(handle).await?;
         Ok(Box::new(receiver))
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.subscriber.send_fetch_cancel",
+        skip_all,
+        fields(request_id = %request_id)
+    )]
+    async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
+        self.fetch_cancel(request_id).await
     }
 }

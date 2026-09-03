@@ -14,6 +14,7 @@ use crate::modules::{
     sequences::{
         CascadingRelayContext,
         fetch::Fetch,
+        malformed_track::MalformedTrackCleanup,
         publish::Publish,
         publish_namespace::PublishNamespace,
         publish_namespace_done::PublishNamespaceDone,
@@ -43,6 +44,7 @@ pub(crate) struct EventHandler {
 /// All deps cloned from the reader into a newly spawned session worker.
 struct WorkerDeps {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
     control_message_forwarder: ControlMessageForwarder,
     local_pub_sub_directory: Arc<dyn LocalPubSubDirectory>,
     ingress_sender: mpsc::Sender<IngressCommand>,
@@ -59,6 +61,7 @@ impl EventHandler {
     pub(crate) fn run(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+        relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
         route_registry: Arc<dyn RelayRouteRegistry>,
@@ -69,6 +72,7 @@ impl EventHandler {
         let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
             relay_event_receiver,
+            relay_event_sender,
             ingress_sender,
             egress_sender,
             route_registry,
@@ -85,6 +89,7 @@ impl EventHandler {
     fn create_relay_session_event_handler(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+        relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
         ingress_sender: mpsc::Sender<IngressCommand>,
         egress_sender: mpsc::Sender<EgressCommand>,
         route_registry: Arc<dyn RelayRouteRegistry>,
@@ -145,6 +150,7 @@ impl EventHandler {
                                 let (tx, rx) = mpsc::unbounded_channel::<SessionEvent>();
                                 let deps = WorkerDeps {
                                     repo: repo.clone(),
+                                    relay_event_sender: relay_event_sender.clone(),
                                     control_message_forwarder: control_message_forwarder.clone(),
                                     local_pub_sub_directory: local_pub_sub_directory.clone(),
                                     ingress_sender: ingress_sender.clone(),
@@ -190,6 +196,7 @@ impl EventHandler {
     ) -> SessionId {
         let WorkerDeps {
             repo,
+            relay_event_sender,
             control_message_forwarder,
             local_pub_sub_directory,
             ingress_sender,
@@ -206,10 +213,11 @@ impl EventHandler {
             // event always breaks the loop, even when the session span is
             // already gone (e.g. the second terminal event in a
             // timeout-then-disconnect sequence).
-            let EventKind::FromSession(event) = event.kind;
             let is_terminal = matches!(
-                event,
-                MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
+                event.kind,
+                EventKind::FromSession(
+                    MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation()
+                )
             );
 
             let session_span = {
@@ -236,6 +244,30 @@ impl EventHandler {
                     break;
                 }
                 continue;
+            };
+            let event = match event.kind {
+                EventKind::FromSession(event) => event,
+                EventKind::MalformedTrackDetected(track_key) => {
+                    let event_span = tracing::info_span!(
+                        parent: &session_span,
+                        "relay.session.event",
+                        session_id = %session_id,
+                        event = "MalformedTrackDetected",
+                        track_key = %track_key,
+                    );
+                    MalformedTrackCleanup {}
+                        .handle(
+                            session_id,
+                            &session_span,
+                            &track_key,
+                            local_pub_sub_directory.as_ref(),
+                            &control_message_forwarder,
+                            &ingress_sender,
+                        )
+                        .instrument(event_span)
+                        .await;
+                    continue;
+                }
             };
             let event_span = Self::session_event_span(session_id, &session_span, &event);
 
@@ -361,6 +393,7 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &cache_store,
                             &egress_sender,
+                            &relay_event_sender,
                             &control_message_forwarder,
                             upstream_publisher_resolver.as_ref(),
                             handler,
