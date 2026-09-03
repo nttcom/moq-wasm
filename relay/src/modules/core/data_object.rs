@@ -34,6 +34,26 @@ impl DataObject {
         }
     }
 
+    /// Inverse of [`Self::resolve_absolute_object_id`] for the egress stream:
+    /// `prev_object_id` is the object_id of the previous object sent on the same
+    /// downstream stream (`None` right after the header).
+    pub(crate) fn with_stream_object_id_delta(
+        self,
+        prev_object_id: Option<u64>,
+        object_id: u64,
+    ) -> Self {
+        match self {
+            Self::SubgroupObject(mut field) => {
+                field.object_id_delta = match prev_object_id {
+                    None => object_id,
+                    Some(prev) => object_id.saturating_sub(prev.saturating_add(1)),
+                };
+                Self::SubgroupObject(field)
+            }
+            other => other,
+        }
+    }
+
     /// Resolves the absolute object_id of this object within its ingest stream.
     /// `prev_object_id` is the resolved object_id of the previous object on the same
     /// stream (`None` at the start of a subgroup or right after its header).
@@ -129,6 +149,20 @@ mod tests {
                 payload: Bytes::from_static(payload),
             },
         ))
+    }
+
+    #[test]
+    fn stream_object_id_delta_round_trips_through_resolution() {
+        // Arrange: an object cached at id 7 is the first one sent after the header,
+        // then id 9 follows it (one object skipped in between)
+        let first = subgroup_object(0, b"a").with_stream_object_id_delta(None, 7);
+        let second = subgroup_object(0, b"b").with_stream_object_id_delta(Some(7), 9);
+        // Act
+        let first_id = first.resolve_absolute_object_id(None);
+        let second_id = second.resolve_absolute_object_id(first_id);
+        // Assert
+        assert_eq!(first_id, Some(7));
+        assert_eq!(second_id, Some(9));
     }
 
     #[test]

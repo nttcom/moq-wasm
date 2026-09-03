@@ -175,10 +175,14 @@ impl GroupSender {
         }
 
         let mut cursor = object_id;
+        let mut prev_sent_object_id = None;
         while let Some((id, object)) = cache
             .stream_object_from_or_wait(group_id, &subgroup_id, cursor)
             .await
         {
+            let object = (*object)
+                .clone()
+                .with_stream_object_id_delta(prev_sent_object_id, id);
             tracing::debug!(
                 track_key = %track_key,
                 track_alias,
@@ -187,7 +191,7 @@ impl GroupSender {
                 object_id = id,
                 "egress sending subgroup object"
             );
-            if sender.send_object((*object).clone()).await.is_err() {
+            if sender.send_object(object).await.is_err() {
                 span.record("object_count", object_count);
                 span.record("end_reason", "send_object_failed");
                 tracing::error!(
@@ -201,6 +205,7 @@ impl GroupSender {
                 return;
             }
             object_count += 1;
+            prev_sent_object_id = Some(id);
             cursor = id + 1;
         }
         span.record("object_count", object_count);
