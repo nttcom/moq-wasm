@@ -228,3 +228,18 @@ pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
     );
     assert_eq!(payloads, expected, "objects must arrive in publish order");
 }
+
+pub(crate) fn resolve_downstream_object_ids(objects: &[DataObject]) -> Vec<u64> {
+    let mut prev_object_id = None;
+    objects
+        .iter()
+        .filter_map(|object| {
+            let object_id = object.resolve_absolute_object_id(prev_object_id);
+            prev_object_id = object_id;
+            match object {
+                DataObject::SubgroupObject(_) => object_id,
+                _ => None,
+            }
+        })
+        .collect()
+}
