@@ -53,7 +53,7 @@ async fn resolve_subscribe_largest(
 ) -> Option<moqt::Location> {
     match largest_source {
         LargestObjectSource::LocalCache => match cache_store.get(track_key) {
-            Some(cache) => cache.largest_location().await,
+            Some(cache) => cache.largest_location(),
             None => None,
         },
         LargestObjectSource::Resolved(largest) => *largest,
@@ -346,7 +346,7 @@ impl Subscribe {
 
         let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
         let cache_before_subscribe = match cache_store.get(&track_key) {
-            Some(cache) => cache.largest_location().await,
+            Some(cache) => cache.largest_location(),
             None => None,
         };
 
@@ -589,7 +589,6 @@ impl Subscribe {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::core::data_object::DataObject;
     use crate::modules::core::{
         data_receiver::fetch_receiver::UpstreamFetchReceiver,
         data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
@@ -598,46 +597,15 @@ mod tests {
     };
     use crate::modules::inter_relay::InterRelayConnectionManager;
     use crate::modules::relay::cache::track_cache::TrackCache;
-    use crate::modules::relay::types::StreamSubgroupId;
+    use crate::modules::relay::tests::harness::fixtures::cached_object::insert_closed_live_group;
     use crate::modules::route_registry::NoopRelayRouteRegistry;
     use crate::modules::sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
     };
     use crate::modules::session_repository::SessionRepository;
-    use bytes::Bytes;
-    use moqt::{ExtensionHeaders, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField};
 
-    fn make_header() -> DataObject {
-        DataObject::SubgroupHeader(SubgroupHeader::new(
-            0,
-            0,
-            SubgroupId::Value(0),
-            0,
-            false,
-            false,
-        ))
-    }
-
-    fn make_object() -> DataObject {
-        let message_type =
-            SubgroupHeader::new(0, 0, SubgroupId::Value(0), 0, false, false).message_type;
-        DataObject::SubgroupObject(SubgroupObjectField {
-            message_type,
-            object_id_delta: 0,
-            extension_headers: ExtensionHeaders::default(),
-            subgroup_object: SubgroupObject::new_payload(Bytes::from(vec![])),
-        })
-    }
-
-    // Append a single object (id 0) to `group_id` so the cache reports it as content.
-    async fn append_one_object(cache: &TrackCache, group_id: u64) {
-        let subgroup = StreamSubgroupId::Value(0);
-        let _ = cache
-            .append_live_stream_object(group_id, &subgroup, None, make_header())
-            .await;
-        let _ = cache
-            .append_live_stream_object(group_id, &subgroup, Some(0), make_object())
-            .await;
+    fn append_one_object(cache: &TrackCache, group_id: u64) {
+        insert_closed_live_group(cache, group_id, &[0]);
     }
 
     #[test]
@@ -714,7 +682,7 @@ mod tests {
         ) -> anyhow::Result<UpstreamSubscription> {
             if self.bursts_on_subscribe {
                 let cache = self.cache_store.get_or_create(&self.track_key);
-                append_one_object(&cache, 0).await;
+                append_one_object(&cache, 0);
             }
             Ok(UpstreamSubscription::from(
                 moqt::Subscription::SubscriberInitiated(moqt::SubscriberInitiatedSubscription {
@@ -860,7 +828,7 @@ mod tests {
         let track_key = TrackKey::new("ns", "catalog");
         let cache = cache_store.get_or_create(&track_key);
         for group_id in 0..=4 {
-            append_one_object(&cache, group_id).await;
+            append_one_object(&cache, group_id);
         }
 
         let largest = create_upstream_and_resolve_largest(
@@ -885,7 +853,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "catalog");
         let cache = cache_store.get_or_create(&track_key);
-        append_one_object(&cache, 3).await;
+        append_one_object(&cache, 3);
 
         let largest = create_upstream_and_resolve_largest(
             cache_store,

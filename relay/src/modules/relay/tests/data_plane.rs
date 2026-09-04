@@ -1,5 +1,10 @@
+use std::time::Duration;
+
+use crate::modules::core::data_object::DataObject;
+
 use super::harness::{
-    OBJECT_COUNT, RelayHarness, assert_full_ordered_delivery, receive_objects_until_close,
+    OBJECT_COUNT, RelayHarness, assert_full_ordered_delivery,
+    fixtures::cached_object::FIXTURE_PRIORITY, receive_objects_until_close,
     resolve_downstream_object_ids,
 };
 
@@ -97,4 +102,37 @@ async fn egress_started_mid_subgroup_delivers_absolute_object_ids() {
     let expected: Vec<u64> =
         (LARGEST_OBJECT_ID_AT_SUBSCRIBE as u64 + 1..OBJECT_COUNT as u64).collect();
     assert_eq!(resolve_downstream_object_ids(&objects), expected);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn subgroup_closed_without_objects_opens_no_downstream_stream() {
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+
+    let upstream_stream = harness.open_upstream_stream().await;
+    upstream_stream.header(0);
+    upstream_stream.fin();
+
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(200))
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn downstream_header_is_regenerated_from_the_cached_objects() {
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+
+    let upstream_stream = harness.open_upstream_stream().await;
+    upstream_stream.header(0);
+    upstream_stream.object(0);
+    upstream_stream.fin();
+
+    let objects = receive_objects_until_close(&mut egress).await;
+    let Some(DataObject::SubgroupHeader(header)) = objects.first() else {
+        panic!("downstream stream should start with a subgroup header");
+    };
+    assert_eq!(header.group_id, 0);
+    assert_eq!(header.subgroup_id, moqt::SubgroupId::Value(0));
+    assert_eq!(header.publisher_priority, FIXTURE_PRIORITY);
 }

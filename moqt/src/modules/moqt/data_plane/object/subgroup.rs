@@ -144,7 +144,7 @@ impl SubgroupHeaderType {
         matches!(self.0, 0x11 | 0x13 | 0x15 | 0x19 | 0x1B | 0x1D)
     }
 
-    fn has_end_of_group(&self) -> bool {
+    pub fn has_end_of_group(&self) -> bool {
         matches!(self.0, 0x18..=0x1D)
     }
 }
