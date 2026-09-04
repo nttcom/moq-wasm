@@ -10,14 +10,73 @@ use crate::modules::relay::{
 
 use super::location;
 
+/// What live ingest has told us about a group whose subgroups are still open.
+#[derive(Default)]
+pub(super) struct LiveGroup {
+    pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
+    pub(super) largest_seen_object_id: Option<u64>,
+}
+
+impl LiveGroup {
+    pub(super) fn has_open_stream(&self) -> bool {
+        self.open_subgroups
+            .keys()
+            .any(|key| matches!(key, SubgroupKey::Stream { .. }))
+    }
+
+    /// First position live ingest has not yet decided: the group head, or just
+    /// past the largest object seen. Positions below it that were evicted must
+    /// stay unknown, so no later claim may start before this.
+    pub(super) fn knowledge_frontier(&self, group_id: u64) -> moqt::Location {
+        location(
+            group_id,
+            self.largest_seen_object_id
+                .map_or(0, |object_id| object_id.saturating_add(1)),
+        )
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
-    pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
+    pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) known_ranges: KnownRanges,
 }
 
 impl Ledger {
+    pub(super) fn is_open(&self, key: SubgroupKey) -> bool {
+        self.live_groups
+            .get(&key.group_id())
+            .is_some_and(|live| live.open_subgroups.contains_key(&key))
+    }
+
+    fn open_keys_in_group(&self, group_id: u64) -> impl Iterator<Item = SubgroupKey> {
+        self.live_groups
+            .get(&group_id)
+            .into_iter()
+            .flat_map(|live| live.open_subgroups.keys().copied())
+    }
+
+    pub(super) fn register_live_object(&mut self, location: moqt::Location) {
+        let live = self.live_groups.get_mut(&location.group_id);
+        let frontier = live
+            .as_ref()
+            .map_or(super::location(location.group_id, 0), |live| {
+                live.knowledge_frontier(location.group_id)
+            });
+        let start = frontier.min(location);
+        self.known_ranges.insert(
+            start,
+            super::location(location.group_id, location.object_id.saturating_add(1)),
+        );
+        if let Some(live) = live {
+            live.largest_seen_object_id = Some(
+                live.largest_seen_object_id
+                    .map_or(location.object_id, |seen| seen.max(location.object_id)),
+            );
+        }
+    }
+
     pub(super) fn group_objects(
         &self,
         group_id: u64,
@@ -47,15 +106,7 @@ impl Ledger {
     }
 
     pub(super) fn has_open_subgroup_in_group(&self, group_id: u64) -> bool {
-        self.open_subgroups
-            .keys()
-            .any(|key| key.group_id() == group_id)
-    }
-
-    pub(super) fn has_open_stream_in_group(&self, group_id: u64) -> bool {
-        self.open_subgroups
-            .keys()
-            .any(|key| matches!(key, SubgroupKey::Stream { group_id: g, .. } if *g == group_id))
+        self.live_groups.contains_key(&group_id)
     }
 
     pub(super) fn has_group(&self, group_id: u64) -> bool {
@@ -68,11 +119,7 @@ impl Ledger {
             .group_objects(group_id, 0)
             .map(|object| object.subgroup_key())
             .collect();
-        keys.extend(
-            self.open_subgroups
-                .keys()
-                .filter(|key| key.group_id() == group_id),
-        );
+        keys.extend(self.open_keys_in_group(group_id));
         keys.into_iter().collect()
     }
 
@@ -83,9 +130,8 @@ impl Ledger {
             .map(|(location, _)| location.group_id)
             .collect();
         groups.extend(
-            self.open_subgroups
+            self.live_groups
                 .keys()
-                .map(|key| key.group_id())
                 .filter(|group_id| (first_group_id..=last_group_id).contains(group_id)),
         );
         groups.into_iter().collect()

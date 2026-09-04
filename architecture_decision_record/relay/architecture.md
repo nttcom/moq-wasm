@@ -189,10 +189,14 @@ from `TrackCache` over a new uni stream.
   semantics). One `Notify` per track wakes every waiter on insert, open and
   close; waiters re-check the ledger under a single read guard, so there is no
   check-order race between "object present" and "subgroup closed".
-- Knowledge: a live subgroup insert registers `[{G,0}, {G,id+1})`; closing the
-  last open stream subgroup of a group registers the whole group; fetch fills
-  register their requested range only at `Fetch::End` (guarded by the eviction
-  generation counter); datagram objects register nothing.
+- Knowledge: each open group keeps the largest object id live ingest has seen
+  (`LiveGroup`), so a live subgroup insert registers only from that frontier
+  (the group head for the first object) to the object, and closing the last
+  open stream subgroup registers only the remaining tail of the group — an
+  evicted position is never re-claimed as known (§9.2.1.3 "their state becomes
+  unknown"). Fetch fills register their requested range only at `Fetch::End`
+  (guarded by the eviction generation counter); datagram objects register
+  nothing.
 - `next_object_or_wait(key, from)` (live egress) returns the next object of that
   subgroup or `None` once the subgroup is no longer open; a subgroup that was
   never opened (fetch-fill only) therefore never blocks. `fetch_objects` walks

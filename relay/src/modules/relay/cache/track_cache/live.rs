@@ -28,30 +28,44 @@ impl Drop for LiveSubgroup<'_> {
 
 impl TrackCache {
     pub(crate) fn open_live_subgroup(&self, key: SubgroupKey) -> LiveSubgroup<'_> {
-        *self.write().open_subgroups.entry(key).or_default() += 1;
+        *self
+            .write()
+            .live_groups
+            .entry(key.group_id())
+            .or_default()
+            .open_subgroups
+            .entry(key)
+            .or_default() += 1;
         self.notify.notify_waiters();
         LiveSubgroup { cache: self, key }
     }
 
     fn close_live_subgroup(&self, key: SubgroupKey) {
         {
-            let mut ledger = self.write();
-            let Some(open_count) = ledger.open_subgroups.get_mut(&key) else {
+            let mut guard = self.write();
+            let ledger: &mut Ledger = &mut guard;
+            let group_id = key.group_id();
+            let Some(live) = ledger.live_groups.get_mut(&group_id) else {
+                return;
+            };
+            let Some(open_count) = live.open_subgroups.get_mut(&key) else {
                 return;
             };
             *open_count -= 1;
             if *open_count > 0 {
                 return;
             }
-            ledger.open_subgroups.remove(&key);
+            live.open_subgroups.remove(&key);
             // Once every live subgroup stream of the group has closed, no later
-            // subgroup for the group is assumed: the whole group becomes known.
-            if let SubgroupKey::Stream { group_id, .. } = key
-                && !ledger.has_open_stream_in_group(group_id)
-            {
+            // subgroup for the group is assumed: the rest of the group becomes
+            // known, from the live frontier so evicted positions stay unknown.
+            if matches!(key, SubgroupKey::Stream { .. }) && !live.has_open_stream() {
                 ledger
                     .known_ranges
-                    .insert(location(group_id, 0), location(group_id, 0));
+                    .insert(live.knowledge_frontier(group_id), location(group_id, 0));
+            }
+            if live.open_subgroups.is_empty() {
+                ledger.live_groups.remove(&group_id);
             }
         }
         self.notify.notify_waiters();
@@ -81,7 +95,7 @@ impl TrackCache {
     ) -> Option<Arc<CachedObject>> {
         self.wait_until(|ledger| match ledger.next_object(key, from_object_id) {
             Some(object) => Some(Some(object)),
-            None if ledger.open_subgroups.contains_key(&key) => None,
+            None if ledger.is_open(key) => None,
             None => Some(None),
         })
         .await
