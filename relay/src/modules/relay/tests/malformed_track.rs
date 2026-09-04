@@ -35,7 +35,7 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
     first_stream.object(0);
     let second_stream = harness.open_upstream_stream().await;
     second_stream.header(0);
-    second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
+    second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
 
     // Assert: the subscription ends with PUBLISH_DONE(MALFORMED_TRACK)
     let publish_done = egress.expect_publish_done().await;
@@ -88,7 +88,7 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
     first_stream.object(0);
     let second_stream = harness.open_upstream_stream().await;
     second_stream.header(0);
-    second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
+    second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
     harness.wait_track_malformed().await;
 
     // Act
@@ -113,7 +113,7 @@ async fn detection_reports_the_publisher_session_and_track() {
     first_stream.object(0);
     let second_stream = harness.open_upstream_stream().await;
     second_stream.header(0);
-    second_stream.object_with_payload(0, Bytes::from_static(b"conflicting"));
+    second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
 
     // Assert: the appender reports the detection for upstream teardown.
     let event = harness.expect_malformed_track_detected().await;
