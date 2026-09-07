@@ -57,16 +57,12 @@ impl Ledger {
             .flat_map(|live| live.open_subgroups.keys().copied())
     }
 
+    /// A live object proves only its own position (draft-14 §10.4.2: the ids
+    /// skipped by a non-zero delta cannot be inferred); the rest of the group is
+    /// decided when its last subgroup closes.
     pub(super) fn register_live_object(&mut self, location: moqt::Location) {
-        let live = self.live_groups.get_mut(&location.group_id);
-        let frontier = live
-            .as_ref()
-            .map_or(super::location(location.group_id, 0), |live| {
-                live.knowledge_frontier(location.group_id)
-            });
-        let start = frontier.min(location);
-        self.known_ranges.insert(start, after(location));
-        if let Some(live) = live {
+        self.known_ranges.insert(location, after(location));
+        if let Some(live) = self.live_groups.get_mut(&location.group_id) {
             live.largest_seen_object_id = Some(
                 live.largest_seen_object_id
                     .map_or(location.object_id, |seen| seen.max(location.object_id)),

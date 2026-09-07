@@ -474,14 +474,24 @@ mod tests {
     }
 
     #[test]
-    fn live_insert_registers_knowledge_from_the_group_head() {
+    fn live_insert_registers_only_the_received_position() {
         // Arrange
         let cache = TrackCache::new();
         // Act
         let _ = cache.insert_live(stream_object(3, 2));
-        // Assert
-        assert!(cache.covers(location(3, 0), location(3, 3)));
-        assert!(!cache.covers(location(3, 0), location(3, 4)));
+        // Assert: §10.4.2 — the skipped ids 0 and 1 stay undecided
+        assert!(cache.covers(location(3, 2), location(3, 3)));
+        assert!(!cache.covers(location(3, 0), location(3, 3)));
+    }
+
+    #[test]
+    fn closing_the_group_decides_the_tail_but_not_a_skipped_id() {
+        // Arrange: object 1 was never received
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 2]);
+        // Act / Assert: everything after the largest seen object is known absent
+        assert!(cache.covers(location(0, 3), location(0, 0)));
+        assert!(!cache.covers(location(0, 1), location(0, 2)));
     }
 
     #[test]
@@ -752,13 +762,18 @@ mod fetch_tests {
     }
 
     #[test]
-    fn resolve_fetch_range_accepts_gapped_objects_with_known_coverage() {
-        // Arrange: object 1 is not cached, but cache coverage starts before it
+    fn resolve_fetch_range_is_not_covered_across_a_skipped_object_id() {
+        // Arrange: object 1 was skipped by the publisher, so its existence is
+        // undecided (§10.4.2) and the relay must not FIN a range spanning it
         let cache = TrackCache::new();
         let _open = open_group(&cache, 0, &[0, 2]);
-        // Act / Assert: coverage, not local object-id contiguity, decides servability
+        // Act / Assert
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(0, 3)),
+            FetchRangeResolution::NotCovered
+        );
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 2), location(0, 3)),
             FetchRangeResolution::Serve {
                 end_location: location(0, 3)
             }
