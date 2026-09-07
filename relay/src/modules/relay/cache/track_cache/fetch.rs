@@ -37,14 +37,6 @@ impl TrackCache {
             return FetchRangeResolution::Serve { end_location };
         }
 
-        // In-flight tolerance: QUIC gives no cross-stream ordering, so a
-        // group's FIN can lag behind its objects (and behind later groups).
-        // If live ingest is running and every group in range has knowledge
-        // accumulating from its head, the data is arriving and only closes
-        // are pending — serve and let delivery wait (bounded: live ingress
-        // always closes its groups). This is the relay-side §9.16 pause;
-        // without it these fetches would be forwarded upstream, which ends
-        // at a publisher client that cannot serve FETCH.
         if self.serves_after_in_flight_wait(&ledger, start, end_location)
             && ledger.has_object_in(start, end_location)
         {
@@ -54,11 +46,6 @@ impl TrackCache {
         FetchRangeResolution::NotCovered
     }
 
-    /// True when the only missing knowledge in [start, end) is open tails of
-    /// live groups. Each group must have knowledge from object 0 (per-append
-    /// inserts produce exactly that for live data): a group with no knowledge
-    /// island, or one not starting at its head (evicted prefix, fetch-fill
-    /// leftovers), disqualifies the range.
     fn serves_after_in_flight_wait(
         &self,
         ledger: &Ledger,
@@ -109,15 +96,6 @@ impl TrackCache {
         requested_end
     }
 
-    /// Objects in [start, end) honoring the requested group order; within a
-    /// group, objects come out in object_id order regardless of subgroup.
-    ///
-    /// QUIC gives no cross-stream ordering, so groups in range may still be
-    /// in flight. Positions inside the track's known ranges are read without
-    /// waiting (absence there means the object does not exist); past that
-    /// knowledge frontier we wait like live egress does, bounded because live
-    /// ingress always closes its subgroups and the exclusive End Location is
-    /// checked before each wait.
     pub(crate) async fn fetch_objects(
         &self,
         start: moqt::Location,
@@ -173,7 +151,6 @@ impl TrackCache {
                     Some(object) => {
                         let object_id = object.location.object_id;
                         next_object_id = object_id.saturating_add(1);
-                        // A gap can jump past the exclusive End Location.
                         if end_exclusive.is_some_and(|end_object_id| object_id >= end_object_id) {
                             break;
                         }
@@ -181,8 +158,6 @@ impl TrackCache {
                     }
                     None if group_fully_known => break,
                     None if in_known => {
-                        // Nothing left below the knowledge frontier; move the
-                        // cursor there so the next iteration waits like live.
                         next_object_id = frontier.unwrap_or(next_object_id);
                     }
                     None => break,
