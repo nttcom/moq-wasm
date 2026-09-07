@@ -5,14 +5,14 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use bytes::Bytes;
 use media_streaming_format::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Session, SessionEvent,
-    SubgroupId, SubgroupObject, SubgroupObjectSender, Subscription, TransportProtocol,
-    WEBTRANSPORT,
+    ClientConfig, ContentExists, Endpoint, QUIC, Session, SessionEvent, TrackWriter,
+    TransportProtocol, WEBTRANSPORT,
 };
 use tokio::sync::Mutex;
 
@@ -33,27 +33,9 @@ struct ManagerState {
     backend: Option<Arc<PublisherBackend>>,
 }
 
-struct TrackInfo<T: TransportProtocol> {
-    publication: Option<Subscription>,
-    stream: Option<SubgroupObjectSender<T>>,
-    object_id: u64,
-    group_id: u64,
-}
-
-impl<T: TransportProtocol> Default for TrackInfo<T> {
-    fn default() -> Self {
-        Self {
-            publication: None,
-            stream: None,
-            object_id: 0,
-            group_id: 0,
-        }
-    }
-}
-
 struct BackendState<T: TransportProtocol> {
     announced_namespaces: HashSet<String>,
-    tracks: HashMap<(String, String), TrackInfo<T>>,
+    tracks: HashMap<(String, String), Option<TrackWriter<T>>>,
     catalogs: HashMap<String, CatalogMetadata>,
     disconnected: bool,
 }
@@ -113,7 +95,7 @@ impl MoqtManager {
         namespace: &[String],
         track_name: &str,
         rotate_group: bool,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> Result<()> {
         let url = match &self.url {
             Some(u) => u.clone(),
@@ -200,7 +182,7 @@ impl PublisherBackend {
         namespace: &[String],
         track_name: &str,
         rotate_group: bool,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> Result<()> {
         match self {
             Self::Quic(publisher) => {
@@ -319,21 +301,19 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
 
                         let publication = handler.into_subscription(track_alias);
                         let should_send_catalog = track_name == CATALOG_TRACK_NAME;
+                        let writer = TrackWriter::new(
+                            session.publisher().create_stream(&publication),
+                            now_unix_micros(),
+                        );
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();
-                        let entry = guard
+                        guard
                             .tracks
-                            .entry((namespace.clone(), track_name.clone()))
-                            .or_default();
-                        entry.publication = Some(publication);
-                        entry.stream = None;
-                        entry.object_id = 0;
-                        entry.group_id = 0;
+                            .insert((namespace.clone(), track_name.clone()), Some(writer));
                         drop(guard);
                         tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
                         if should_send_catalog
-                            && let Err(err) =
-                                Self::send_catalog_snapshot(&session, &state, &namespace).await
+                            && let Err(err) = Self::send_catalog_snapshot(&state, &namespace).await
                         {
                             tracing::warn!(%namespace, ?err, "failed to send initial catalog");
                         }
@@ -399,93 +379,24 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         namespace: &[String],
         track_name: &str,
         rotate_group: bool,
-        payload: &[u8],
+        payload: Vec<u8>,
     ) -> Result<()> {
-        let namespace_path = namespace.join("/");
-        let key = (namespace_path.clone(), track_name.to_string());
-        let (publication, mut stream, mut object_id, mut group_id) = {
+        let key = (namespace.join("/"), track_name.to_string());
+        let mut writer = {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            let entry = guard
-                .tracks
-                .get_mut(&key)
-                .ok_or_else(|| anyhow!("track not set up: {namespace_path}/{track_name}"))?;
-            (
-                entry.publication.clone().ok_or_else(|| {
-                    anyhow!("subscribe not completed: {namespace_path}/{track_name}")
-                })?,
-                entry.stream.take(),
-                entry.object_id,
-                entry.group_id,
-            )
+            match guard.tracks.get_mut(&key).and_then(Option::take) {
+                Some(writer) => writer,
+                None => return Ok(()),
+            }
         };
-
-        let send_result: Result<()> = async {
-            if rotate_group && let Some(mut current_stream) = stream.take() {
-                let eog = current_stream.create_object_field(
-                    0,
-                    empty_extension_headers(),
-                    SubgroupObject::new_status(moqt::wire::ObjectStatus::EndOfGroup as u64),
-                );
-                current_stream
-                    .send(eog)
-                    .await
-                    .context("send end-of-group object")?;
-                if let Err(err) = current_stream.close().await {
-                    tracing::warn!(?err, "failed to close previous subgroup stream");
-                }
-                group_id = group_id.saturating_add(1);
-                object_id = 0;
-            }
-
-            if stream.is_none() {
-                let uninit_stream = self
-                    .session
-                    .publisher()
-                    .create_stream(&publication)
-                    .next()
-                    .await
-                    .context("open subgroup stream")?;
-                let header =
-                    uninit_stream.create_header(group_id, SubgroupId::None, 0, false, false);
-                stream = Some(
-                    uninit_stream
-                        .send_header(header)
-                        .await
-                        .context("send subgroup header")?,
-                );
-                tracing::debug!(namespace = %namespace_path, track = %track_name, group_id, "subgroup header sent");
-            }
-
-            let stream_ref = stream
-                .as_mut()
-                .ok_or_else(|| anyhow!("subgroup stream not initialized"))?;
-            let object = stream_ref.create_object_field(
-                0,
-                empty_extension_headers(),
-                SubgroupObject::new_payload(payload.to_vec().into()),
-            );
-            stream_ref
-                .send(object)
-                .await
-                .context("send subgroup object")?;
-            tracing::trace!(namespace = %namespace_path, track = %track_name, group_id, object_id, "subgroup object sent");
-            object_id = object_id.saturating_add(1);
-            Ok(())
+        let result = write_object(&mut writer, rotate_group, payload).await;
+        if let Some(slot) = self.state.lock().await.tracks.get_mut(&key) {
+            *slot = Some(writer);
         }
-        .await;
-
-        let mut guard = self.state.lock().await;
-        if let Some(entry) = guard.tracks.get_mut(&key) {
-            if send_result.is_ok() {
-                entry.object_id = object_id;
-                entry.group_id = group_id;
-            }
-            entry.stream = stream;
-        }
-        send_result
+        result
     }
 
     async fn update_video_catalog(&self, namespace: &[String], codec: Option<&str>) -> Result<()> {
@@ -506,15 +417,16 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 metadata.video_codec = normalized_codec;
             }
             changed
-                && guard
-                    .tracks
-                    .get(&(namespace_path.clone(), CATALOG_TRACK_NAME.to_string()))
-                    .and_then(|entry| entry.publication.as_ref())
-                    .is_some()
+                && matches!(
+                    guard
+                        .tracks
+                        .get(&(namespace_path.clone(), CATALOG_TRACK_NAME.to_string())),
+                    Some(Some(_))
+                )
         };
 
         if should_send {
-            Self::send_catalog_snapshot(&self.session, &self.state, &namespace_path).await?;
+            Self::send_catalog_snapshot(&self.state, &namespace_path).await?;
         }
 
         Ok(())
@@ -541,77 +453,44 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 metadata.audio_channels = Some(channels);
             }
             changed
-                && guard
-                    .tracks
-                    .get(&(namespace_path.clone(), CATALOG_TRACK_NAME.to_string()))
-                    .and_then(|entry| entry.publication.as_ref())
-                    .is_some()
+                && matches!(
+                    guard
+                        .tracks
+                        .get(&(namespace_path.clone(), CATALOG_TRACK_NAME.to_string())),
+                    Some(Some(_))
+                )
         };
 
         if should_send {
-            Self::send_catalog_snapshot(&self.session, &self.state, &namespace_path).await?;
+            Self::send_catalog_snapshot(&self.state, &namespace_path).await?;
         }
 
         Ok(())
     }
 
     async fn send_catalog_snapshot(
-        session: &Arc<Session<T>>,
         state: &Arc<Mutex<BackendState<T>>>,
         namespace_path: &str,
     ) -> Result<()> {
         let key = (namespace_path.to_string(), CATALOG_TRACK_NAME.to_string());
-        let (publication, group_id, payload) = {
-            let mut guard = state.lock().await;
-            if guard.disconnected {
-                bail!("MoQ publisher disconnected");
-            }
-            let metadata = guard
-                .catalogs
-                .get(namespace_path)
-                .cloned()
-                .unwrap_or_default();
-            let entry = match guard.tracks.get_mut(&key) {
-                Some(entry) => entry,
-                None => return Ok(()),
-            };
-            let publication = match entry.publication.clone() {
-                Some(publication) => publication,
-                None => return Ok(()),
-            };
-            let payload = build_catalog_payload(namespace_path, &metadata)?;
-            let group_id = entry.group_id;
-            entry.group_id = entry.group_id.saturating_add(1);
-            entry.object_id = 0;
-            entry.stream = None;
-            (publication, group_id, payload)
+        let mut guard = state.lock().await;
+        if guard.disconnected {
+            bail!("MoQ publisher disconnected");
+        }
+        let metadata = guard
+            .catalogs
+            .get(namespace_path)
+            .cloned()
+            .unwrap_or_default();
+        let payload = build_catalog_payload(namespace_path, &metadata)?;
+        let Some(Some(writer)) = guard.tracks.get_mut(&key) else {
+            return Ok(());
         };
-
-        let uninit_stream = session
-            .publisher()
-            .create_stream(&publication)
-            .next()
+        writer
+            .write_group(Bytes::from(payload))
             .await
-            .context("open catalog stream")?;
-        let header = uninit_stream.create_header(group_id, SubgroupId::None, 0, false, false);
-        let mut stream = uninit_stream
-            .send_header(header)
-            .await
-            .context("send catalog subgroup header")?;
-        let object = stream.create_object_field(
-            0,
-            empty_extension_headers(),
-            SubgroupObject::new_payload(payload.into()),
-        );
-        stream
-            .send(object)
-            .await
-            .context("send catalog subgroup object")?;
-        stream
-            .close()
-            .await
-            .context("close catalog subgroup stream")?;
-        tracing::info!(namespace = %namespace_path, group_id, "catalog sent");
+            .context("send catalog group")?;
+        tracing::info!(namespace = %namespace_path, groups = writer.groups(), "catalog sent");
         Ok(())
     }
 }
@@ -622,8 +501,25 @@ impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
     }
 }
 
-fn empty_extension_headers() -> ExtensionHeaders {
-    ExtensionHeaders::default()
+async fn write_object<T: TransportProtocol>(
+    writer: &mut TrackWriter<T>,
+    rotate_group: bool,
+    payload: Vec<u8>,
+) -> Result<()> {
+    if rotate_group || writer.groups() == 0 {
+        writer.start_group().await.context("start group")?;
+    }
+    writer
+        .write(Bytes::from(payload), Vec::new())
+        .await
+        .context("send subgroup object")
+}
+
+fn now_unix_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_micros() as u64)
+        .unwrap_or(0)
 }
 
 fn is_supported_track(track_name: &str) -> bool {
