@@ -67,10 +67,10 @@ pub async fn handle_event(
             );
             queue.extend(session.accept_request(request_id)?);
             if state.recorder.is_none() {
-                match FlvRecorder::spawn(&app_name, &stream_key).await {
+                match FlvRecorder::open(&app_name, &stream_key).await {
                     Ok(recorder) => state.recorder = Some(recorder),
                     Err(err) => {
-                        eprintln!("[rtmp {label}] fail to start ffmpeg recorder: {err:?}");
+                        eprintln!("[rtmp {label}] fail to start FLV recorder: {err:?}");
                     }
                 }
             }
@@ -104,16 +104,16 @@ pub async fn handle_event(
                     state.counters.audio
                 );
             }
-            if let Some(recorder) = state.recorder.as_mut()
-                && let Err(err) = recorder.write_audio(timestamp.value, data.as_ref()).await
-            {
-                eprintln!("[rtmp {label}] write_audio failed: {err:?}");
-            }
             let tag = Tag {
                 tag_type: TagType::Audio,
                 timestamp: Timestamp::from_millis(timestamp.value as u64),
                 data: Bytes::copy_from_slice(&data),
             };
+            if let Some(recorder) = state.recorder.as_mut()
+                && let Err(err) = recorder.write_tag(&tag).await
+            {
+                eprintln!("[rtmp {label}] failed to record audio tag: {err:?}");
+            }
             handle_media_tag(state, label, &app_name, &stream_key, &tag).await;
         }
         ServerSessionEvent::VideoDataReceived {
@@ -129,16 +129,16 @@ pub async fn handle_event(
                     state.counters.video
                 );
             }
-            if let Some(recorder) = state.recorder.as_mut()
-                && let Err(err) = recorder.write_video(timestamp.value, data.as_ref()).await
-            {
-                eprintln!("[rtmp {label}] write_video failed: {err:?}");
-            }
             let tag = Tag {
                 tag_type: TagType::Video,
                 timestamp: Timestamp::from_millis(timestamp.value as u64),
                 data: Bytes::copy_from_slice(&data),
             };
+            if let Some(recorder) = state.recorder.as_mut()
+                && let Err(err) = recorder.write_tag(&tag).await
+            {
+                eprintln!("[rtmp {label}] failed to record video tag: {err:?}");
+            }
             handle_media_tag(state, label, &app_name, &stream_key, &tag).await;
         }
         ServerSessionEvent::PlayStreamRequested { request_id, .. } => {

@@ -7,7 +7,6 @@ edition = "2024"
 anyhow = "1.0.102"
 bytes = "1"
 clap = { version = "4.6.1", features = ["derive"] }
-ffmpeg-next = { version = "8.1.0", features = ["format", "codec"] }
 tokio = { version = "1.52.3", features = ["full"] }
 rml_rtmp = "0.8.0"
 srt-tokio = "0.4.4"

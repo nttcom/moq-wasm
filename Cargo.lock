@@ -2943,7 +2943,6 @@ dependencies = [
  "base64",
  "bytes",
  "clap",
- "ffmpeg-next",
  "futures",
  "media-streaming-format",
  "mediapack",
