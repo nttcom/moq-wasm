@@ -13,15 +13,14 @@ pub(crate) enum ForwardingPreference {
     Datagram,
 }
 
-/// Identity of one upstream subgroup stream, fixed by its SUBGROUP_HEADER.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SubgroupStream {
+pub(crate) struct SubgroupHeaderFields {
     pub(crate) group_id: u64,
     pub(crate) subgroup_id: u64,
     pub(crate) publisher_priority: u8,
 }
 
-impl SubgroupStream {
+impl SubgroupHeaderFields {
     pub(crate) fn key(&self) -> SubgroupKey {
         SubgroupKey::Stream {
             group_id: self.group_id,
@@ -44,7 +43,7 @@ pub(crate) struct CachedObject {
 
 impl CachedObject {
     pub(crate) fn from_subgroup_object(
-        stream: &SubgroupStream,
+        header: &SubgroupHeaderFields,
         object_id: u64,
         field: SubgroupObjectField,
     ) -> anyhow::Result<Self> {
@@ -56,27 +55,27 @@ impl CachedObject {
             status,
             extension_headers: field.extension_headers,
             payload,
-            ..Self::empty_at(stream, object_id)
+            ..Self::empty_at(header, object_id)
         })
     }
 
-    pub(crate) fn end_of_group(stream: &SubgroupStream, object_id: u64) -> Self {
+    pub(crate) fn end_of_group(header: &SubgroupHeaderFields, object_id: u64) -> Self {
         Self {
             status: ObjectStatus::EndOfGroup,
-            ..Self::empty_at(stream, object_id)
+            ..Self::empty_at(header, object_id)
         }
     }
 
-    fn empty_at(stream: &SubgroupStream, object_id: u64) -> Self {
+    fn empty_at(header: &SubgroupHeaderFields, object_id: u64) -> Self {
         Self {
             location: moqt::Location {
-                group_id: stream.group_id,
+                group_id: header.group_id,
                 object_id,
             },
             forwarding: ForwardingPreference::Subgroup {
-                subgroup_id: stream.subgroup_id,
+                subgroup_id: header.subgroup_id,
             },
-            publisher_priority: stream.publisher_priority,
+            publisher_priority: header.publisher_priority,
             status: ObjectStatus::Normal,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::new(),
@@ -267,7 +266,7 @@ mod tests {
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::cached_object::{
         datagram_object, status_object, stream_object, stream_object_in_subgroup,
-        stream_object_with_payload, subgroup_stream,
+        stream_object_with_payload, subgroup_header_fields,
     };
     use moqt::{KeyValuePair, SubgroupHeader, VariantType};
 
@@ -355,7 +354,9 @@ mod tests {
             subgroup_object: SubgroupObject::new_status(0x2),
         };
         // Act / Assert
-        assert!(CachedObject::from_subgroup_object(&subgroup_stream(0, 0), 0, field).is_err());
+        assert!(
+            CachedObject::from_subgroup_object(&subgroup_header_fields(0, 0), 0, field).is_err()
+        );
     }
 
     #[test]

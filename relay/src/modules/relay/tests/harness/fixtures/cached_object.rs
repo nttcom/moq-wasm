@@ -4,7 +4,7 @@ use tokio::time::Instant;
 
 use crate::modules::relay::{
     cache::{
-        cached_object::{CachedObject, ForwardingPreference, SubgroupStream},
+        cached_object::{CachedObject, ForwardingPreference, SubgroupHeaderFields},
         track_cache::{LiveSubgroup, TrackCache},
     },
     types::SubgroupKey,
@@ -12,8 +12,8 @@ use crate::modules::relay::{
 
 pub(crate) const FIXTURE_PRIORITY: u8 = 128;
 
-pub(crate) fn subgroup_stream(group_id: u64, subgroup_id: u64) -> SubgroupStream {
-    SubgroupStream {
+pub(crate) fn subgroup_header_fields(group_id: u64, subgroup_id: u64) -> SubgroupHeaderFields {
+    SubgroupHeaderFields {
         group_id,
         subgroup_id,
         publisher_priority: FIXTURE_PRIORITY,
@@ -21,7 +21,7 @@ pub(crate) fn subgroup_stream(group_id: u64, subgroup_id: u64) -> SubgroupStream
 }
 
 pub(crate) fn stream_key(group_id: u64) -> SubgroupKey {
-    subgroup_stream(group_id, 0).key()
+    subgroup_header_fields(group_id, 0).key()
 }
 
 pub(crate) fn stream_object(group_id: u64, object_id: u64) -> CachedObject {
