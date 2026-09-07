@@ -1671,11 +1671,6 @@ fn emit_object_datagram(
             object_id,
             publisher_priority,
             payload,
-        }
-        | DatagramField::Payload0x04 {
-            object_id,
-            publisher_priority,
-            payload,
         } => {
             if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
                 let wrapper = ObjectDatagramMessage::new(
@@ -1735,7 +1730,11 @@ fn emit_object_datagram(
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
         }
-        DatagramField::Payload0x06WithEndOfGroup {
+        DatagramField::Payload0x04 {
+            publisher_priority,
+            payload,
+        }
+        | DatagramField::Payload0x06WithEndOfGroup {
             publisher_priority,
             payload,
         } => {

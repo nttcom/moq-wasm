@@ -93,7 +93,6 @@ pub enum DatagramField {
         payload: Bytes,
     },
     Payload0x04 {
-        object_id: u64,
         publisher_priority: u8,
         payload: Bytes,
     },
@@ -135,7 +134,6 @@ impl DatagramField {
             | Self::Payload0x01 { object_id, .. }
             | Self::Payload0x02WithEndOfGroup { object_id, .. }
             | Self::Payload0x03WithEndOfGroup { object_id, .. }
-            | Self::Payload0x04 { object_id, .. }
             | Self::Status0x20 { object_id, .. }
             | Self::Status0x21 { object_id, .. } => Some(*object_id),
             _ => None,
@@ -149,10 +147,10 @@ impl DatagramField {
             | Self::Payload0x01 { object_id, .. }
             | Self::Payload0x02WithEndOfGroup { object_id, .. }
             | Self::Payload0x03WithEndOfGroup { object_id, .. }
-            | Self::Payload0x04 { object_id, .. }
             | Self::Status0x20 { object_id, .. }
             | Self::Status0x21 { object_id, .. } => *object_id,
-            Self::Payload0x05 { .. }
+            Self::Payload0x04 { .. }
+            | Self::Payload0x05 { .. }
             | Self::Payload0x06WithEndOfGroup { .. }
             | Self::Payload0x07WithEndOfGroup { .. } => 0,
         }
@@ -289,13 +287,11 @@ impl DatagramField {
                 })
             }
             val if val == DatagramTypeValue::Payload0x04 as u64 => {
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
                 let publisher_priority =
                     data.try_get_u8().log_context("publisher priority").ok()?;
                 let payload = data.clone().freeze();
                 data.advance(payload.len());
                 Some(Self::Payload0x04 {
-                    object_id,
                     publisher_priority,
                     payload,
                 })
@@ -416,11 +412,9 @@ impl DatagramField {
                 (DatagramTypeValue::Payload0x03WithEndOfGroup as u64, buf)
             }
             Self::Payload0x04 {
-                object_id,
                 publisher_priority,
                 payload,
             } => {
-                buf.put_varint(*object_id);
                 buf.put_u8(*publisher_priority);
                 buf.extend_from_slice(payload);
                 (DatagramTypeValue::Payload0x04 as u64, buf)
@@ -658,7 +652,6 @@ mod tests {
         fn payload0x04_encode_decode() {
             // setup
             let field = DatagramField::Payload0x04 {
-                object_id: 112,
                 publisher_priority: 50,
                 payload: Bytes::from(vec![21, 22, 23, 24, 25]),
             };
@@ -670,12 +663,11 @@ mod tests {
             // validation
             assert_eq!(message_type, 0x04);
             if let DatagramField::Payload0x04 {
-                object_id,
                 publisher_priority,
                 payload,
             } = decoded
             {
-                assert_eq!(object_id, 112);
+                assert_eq!(field.resolve_object_id(), 0);
                 assert_eq!(publisher_priority, 50);
                 assert_eq!(*payload, vec![21, 22, 23, 24, 25]);
             } else {
