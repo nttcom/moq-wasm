@@ -1,11 +1,10 @@
-use std::net::SocketAddr;
-
 use crate::Connecting;
 use crate::modules::moqt::data_plane::codec::control_message_decoder::ControlMessageDecoder;
 use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session::Session;
 use crate::modules::moqt::domains::session_context_factory::SessionContextFactory;
 use crate::modules::moqt::protocol::TransportProtocol;
+use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 
@@ -14,15 +13,9 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> SessionCreator<T> {
-    pub(crate) async fn create_new_connection(
-        &self,
-        remote_address: SocketAddr,
-        host: &str,
-    ) -> anyhow::Result<Connecting<T>> {
-        let transport_conn = self
-            .transport_creator
-            .create_new_transport(remote_address, host)
-            .await?;
+    pub(crate) async fn create_new_connection(&self, url: &str) -> anyhow::Result<Connecting<T>> {
+        let target = ConnectTarget::parse(url)?;
+        let transport_conn = self.transport_creator.create_new_transport(&target).await?;
         let handshake = async move {
             let (send_stream, receive_stream) = transport_conn.open_bi().await?;
             let mut moqt_receiver = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);

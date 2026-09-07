@@ -4,7 +4,7 @@
 //! handshake but is slow to send its `ClientSetup` block the establishment of
 //! other, unrelated connections.
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::UdpSocket;
 use std::path::Path;
 use std::time::Duration;
 
@@ -46,8 +46,7 @@ fn client_endpoint() -> Endpoint<QUIC> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_client_setup_does_not_block_new_connections() {
     let port = free_udp_port();
-    let remote: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let host = "127.0.0.1";
+    let url = format!("moqt://127.0.0.1:{port}");
 
     let cert_dir = std::env::temp_dir().join(format!("relay-concurrent-accept-{port}"));
     let (key_path, cert_path) = generate_certs(&cert_dir);
@@ -61,7 +60,7 @@ async fn slow_client_setup_does_not_block_new_connections() {
     // returned `Connecting` future is intentionally NOT awaited.
     let endpoint_a = client_endpoint();
     let _connecting_a = endpoint_a
-        .connect(remote, host)
+        .connect(&url)
         .await
         .expect("client A QUIC handshake should succeed");
 
@@ -69,7 +68,7 @@ async fn slow_client_setup_does_not_block_new_connections() {
     // session even while A sits idle after its handshake.
     let endpoint_b = client_endpoint();
     let result = tokio::time::timeout(Duration::from_secs(2), async {
-        endpoint_b.connect(remote, host).await?.await
+        endpoint_b.connect(&url).await?.await
     })
     .await;
 

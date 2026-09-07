@@ -1,7 +1,7 @@
 use anyhow::Ok;
 use async_trait::async_trait;
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
@@ -12,8 +12,13 @@ use quinn::rustls::{
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{
+    client_crypto::{
+        MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
+        quic_client_config,
+    },
+    connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
-    quic::{quic_connection::QUICConnection, skip_certd_validation::SkipVerification},
+    quic::quic_connection::QUICConnection,
     transport_connection_creator::TransportConnectionCreator,
 };
 
@@ -67,20 +72,10 @@ impl QUICConnectionCreator {
         Ok(server_config)
     }
 
-    fn create_client(port_num: u16, mut config: rustls::ClientConfig) -> anyhow::Result<Self> {
-        let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port_num));
-        let mut endpoint = quinn::Endpoint::client(address)?;
-
-        let alpn = &[b"moq-00"];
-        config.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
-        config.key_log = Arc::new(rustls::KeyLogFile::new());
-
-        let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(config)?,
-        ));
-        endpoint.set_default_client_config(client_config);
-
-        tracing::info!("Client ready! for QUIC: {:?}", address);
+    fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
+        let mut endpoint = client_endpoint(port_num)?;
+        endpoint.set_default_client_config(quic_client_config(crypto, MOQ_ALPN)?);
+        tracing::info!("Client ready! for QUIC: {:?}", endpoint.local_addr()?);
         Ok(QUICConnectionCreator { endpoint })
     }
 }
@@ -90,37 +85,11 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     type Connection = QUICConnection;
 
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
-        install_default_crypto_provider();
-
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().unwrap() {
-            roots.add(cert).unwrap();
-        }
-        let client_crypto = if verify_certificate {
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth()
-        } else {
-            rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(SkipVerification))
-                .with_no_client_auth()
-        };
-        Self::create_client(port_num, client_crypto)
+        Self::create_client(port_num, client_crypto(verify_certificate)?)
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        install_default_crypto_provider();
-
-        let cert = CertificateDer::from_pem_file(custom_cert_path)
-            .inspect_err(|e| tracing::error!("Creating certificate failed: {:?}", e.to_string()))?;
-
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(cert).unwrap();
-        let crypto_config = rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        Self::create_client(port_num, crypto_config)
+        Self::create_client(port_num, client_crypto_with_custom_cert(custom_cert_path)?)
     }
 
     fn server(
@@ -138,12 +107,15 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 
     async fn create_new_transport(
         &self,
-        remote_address: SocketAddr,
-        host: &str,
+        target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection> {
+        if target.transport != ClientTransport::Quic {
+            anyhow::bail!("QUIC endpoint requires a moqt:// url, got {}", target.url);
+        }
+        let remote_address = target.resolve_remote_address().await?;
         let connecting = self
             .endpoint
-            .connect(remote_address, host)
+            .connect(remote_address, &target.server_name())
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?;
         let connection = connecting
             .await

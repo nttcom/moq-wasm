@@ -1,10 +1,6 @@
-use std::{
-    net::ToSocketAddrs,
-    str::FromStr,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use moqt::{
@@ -43,16 +39,8 @@ impl<T: TransportProtocol> Client<T> {
                 verify_certificate: false,
             })?
         };
-        let url = url::Url::from_str(&moqt_url)?;
-        let host = url.host_str().unwrap();
-        let remote_address = (host, url.port_or_known_default().unwrap_or(4433))
-            .to_socket_addrs()?
-            .next()
-            .unwrap();
-
-        tracing::info!("remote_address: {} host: {}", remote_address, host);
-
-        let connecting = endpoint.connect(remote_address, host).await?;
+        tracing::info!(moqt_url, "connecting");
+        let connecting = endpoint.connect(&moqt_url).await?;
         let session = connecting.await?;
 
         let track_alias = Arc::new(AtomicU64::new(0));

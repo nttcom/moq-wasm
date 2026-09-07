@@ -5,19 +5,18 @@ use moqt::{
 };
 use tracing::info;
 
-use crate::relay_url::RelayUrl;
+use url::Url;
 
 const SUBSCRIBER_PRIORITY: u8 = 128;
 
-pub async fn connect_session(relay: &RelayUrl, insecure: bool) -> Result<Session<QUIC>> {
+pub async fn connect_session(relay: &Url, insecure: bool) -> Result<Session<QUIC>> {
     let config = ClientConfig {
         port: 0,
         verify_certificate: !insecure,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    let remote_address = relay.resolve()?;
-    info!(%remote_address, "connecting to relay");
-    let connecting = endpoint.connect(remote_address, relay.host()).await?;
+    info!(%relay, "connecting to relay");
+    let connecting = endpoint.connect(relay.as_str()).await?;
     let session = connecting.await?;
     Ok(session)
 }

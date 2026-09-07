@@ -1,6 +1,3 @@
-use std::net::ToSocketAddrs;
-use std::str::FromStr;
-
 use anyhow::{Context as _, Result};
 use moqt::{
     ClientConfig, Endpoint, FilterType, GroupOrder, QUIC, SessionEvent, Subgroup, SubgroupObject,
@@ -15,15 +12,8 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
         verify_certificate: false,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    let url = url::Url::from_str("moqt://localhost:4433")?;
-    let host = url.host_str().unwrap();
-    let remote_address = (host, url.port().unwrap())
-        .to_socket_addrs()?
-        .next()
-        .context("failed to resolve address")?;
-
-    info!(%remote_address, "connecting to relay via QUIC");
-    let connecting = endpoint.connect(remote_address, host).await?;
+    info!("connecting to relay via QUIC");
+    let connecting = endpoint.connect("moqt://localhost:4433").await?;
     let session = connecting.await?;
 
     let (_publisher, subscriber) = session.publisher_subscriber_pair();

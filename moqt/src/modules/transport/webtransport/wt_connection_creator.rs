@@ -1,7 +1,4 @@
-use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
-};
+use std::net::{Ipv6Addr, SocketAddr};
 
 use async_trait::async_trait;
 use quinn::rustls::{
@@ -11,8 +8,11 @@ use quinn::rustls::{
 
 use super::wt_connection::WtConnection;
 use crate::modules::transport::{
+    client_crypto::{
+        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
+    },
+    connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
-    quic::skip_certd_validation::SkipVerification,
     transport_connection_creator::TransportConnectionCreator,
 };
 
@@ -26,19 +26,16 @@ pub struct WtConnectionCreator {
 }
 
 impl WtConnectionCreator {
-    fn create_client(
-        port_num: u16,
-        mut crypto: rustls::ClientConfig,
-    ) -> anyhow::Result<web_transport_quinn::Client> {
-        crypto.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
-
-        let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)?,
-        ));
-        let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port_num));
-        let endpoint = quinn::Endpoint::client(address)?;
-
-        Ok(web_transport_quinn::Client::new(endpoint, client_config))
+    fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
+        let endpoint = client_endpoint(port_num)?;
+        let client_config = quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
+        tracing::info!(
+            "Client ready! for WebTransport: {:?}",
+            endpoint.local_addr()?
+        );
+        Ok(WtConnectionCreator {
+            endpoint: WtEndpoint::Client(web_transport_quinn::Client::new(endpoint, client_config)),
+        })
     }
 }
 
@@ -47,48 +44,11 @@ impl TransportConnectionCreator for WtConnectionCreator {
     type Connection = WtConnection;
 
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
-        install_default_crypto_provider();
-
-        let client = if verify_certificate {
-            let mut roots = rustls::RootCertStore::empty();
-            for cert in rustls_native_certs::load_native_certs().unwrap() {
-                roots.add(cert)?;
-            }
-            let crypto = rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            Self::create_client(port_num, crypto)?
-        } else {
-            let crypto = rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(SkipVerification))
-                .with_no_client_auth();
-            Self::create_client(port_num, crypto)?
-        };
-
-        tracing::info!("Client ready! for WebTransport port: {}", port_num);
-
-        Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Client(client),
-        })
+        Self::create_client(port_num, client_crypto(verify_certificate)?)
     }
 
     fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        install_default_crypto_provider();
-
-        // 証明書を読み込む
-        let certs: Vec<_> = CertificateDer::pem_file_iter(custom_cert_path)
-            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .inspect_err(|e| tracing::error!("Parsing certificate failed: {:?}", e))?;
-
-        let client = web_transport_quinn::ClientBuilder::new().with_server_certificates(certs)?;
-
-        tracing::info!("Client ready! for WebTransport port: {}", port_num);
-
-        Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Client(client),
-        })
+        Self::create_client(port_num, client_crypto_with_custom_cert(custom_cert_path)?)
     }
 
     fn server(
@@ -123,8 +83,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
 
     async fn create_new_transport(
         &self,
-        remote_address: SocketAddr,
-        host: &str,
+        target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection> {
         let client = match &self.endpoint {
             WtEndpoint::Client(c) => c,
@@ -132,10 +91,14 @@ impl TransportConnectionCreator for WtConnectionCreator {
                 anyhow::bail!("Cannot create_new_transport on a server endpoint")
             }
         };
-        let url: url::Url = format!("https://{}:{}", host, remote_address.port()).parse()?;
-
+        if target.transport != ClientTransport::WebTransport {
+            anyhow::bail!(
+                "WebTransport endpoint requires an https:// url, got {}",
+                target.url
+            );
+        }
         let session = client
-            .connect(url)
+            .connect(target.url.clone())
             .await
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
 

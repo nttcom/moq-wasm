@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::relay_url::RelayUrl;
+use url::Url;
+
 use crate::track::FullTrackName;
 
 #[derive(Parser, Debug)]
@@ -27,7 +28,7 @@ pub enum Container {
 #[derive(Args, Debug)]
 pub struct PublishArgs {
     #[arg(long)]
-    pub relay: RelayUrl,
+    pub relay: Url,
     #[arg(long)]
     pub track: FullTrackName,
     #[arg(long)]
@@ -41,7 +42,7 @@ pub struct PublishArgs {
 #[derive(Args, Debug)]
 pub struct SubscribeArgs {
     #[arg(long)]
-    pub relay: RelayUrl,
+    pub relay: Url,
     #[arg(long)]
     pub track: FullTrackName,
     #[arg(long)]

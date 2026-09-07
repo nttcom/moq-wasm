@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 
@@ -41,12 +41,13 @@ impl InterRelayConnectionManager {
         }
 
         let session_id = generate_session_id();
-        let remote_address = self.resolve_remote_address(relay).await?;
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
             port: 0,
             verify_certificate: false,
         })?;
-        let connecting = endpoint.connect(remote_address, &relay.host).await?;
+        let connecting = endpoint
+            .connect(&format!("moqt://{}:{}", relay.host, relay.port))
+            .await?;
         let session = connecting.await?;
         let relay_hostname = relay_hostname();
         let session_span = tracing::info_span!(
@@ -80,13 +81,5 @@ impl InterRelayConnectionManager {
             "inter-relay QUIC session established"
         );
         Ok(session_id)
-    }
-
-    async fn resolve_remote_address(&self, relay: &RelayInfo) -> anyhow::Result<SocketAddr> {
-        let address = format!("{}:{}", relay.host, relay.port);
-        tokio::net::lookup_host(address)
-            .await?
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("failed to resolve relay {}", relay.relay_id))
     }
 }

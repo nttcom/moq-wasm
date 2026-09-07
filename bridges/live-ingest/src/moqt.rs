@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::ToSocketAddrs,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -247,25 +246,12 @@ impl PublisherBackend {
 
 impl<T: TransportProtocol> ConnectedPublisher<T> {
     async fn connect(url: &url::Url) -> Result<Self> {
-        let host = url
-            .host_str()
-            .ok_or_else(|| anyhow!("missing host in moqt url"))?;
-        let port = match url.scheme() {
-            "moqt" => url.port().unwrap_or(4433),
-            "https" => url.port().unwrap_or(443),
-            scheme => bail!("unsupported scheme for transport: {scheme}"),
-        };
-        let remote_address = (host, port)
-            .to_socket_addrs()
-            .context("resolve moqt address")?
-            .next()
-            .ok_or_else(|| anyhow!("failed to resolve moqt address"))?;
         let endpoint = Endpoint::<T>::create_client(&ClientConfig {
             port: 0,
             verify_certificate: false,
         })?;
         let connecting = endpoint
-            .connect(remote_address, host)
+            .connect(url.as_str())
             .await
             .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);

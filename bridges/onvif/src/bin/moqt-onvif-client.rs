@@ -19,12 +19,10 @@ use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
-use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use url::Url;
 
 const LOC_HEADER_SENTINEL: &[u8] = b"loc:";
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
@@ -1648,25 +1646,12 @@ async fn connect_session(
     url: &str,
     insecure_skip_tls_verify: bool,
 ) -> Result<std::sync::Arc<Session<WEBTRANSPORT>>> {
-    let parsed = Url::parse(url).context("parse moqt url")?;
-    if parsed.scheme() != "https" {
-        bail!("moqt-onvif-client currently supports https:// WebTransport URLs only");
-    }
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| anyhow!("missing host in moqt url"))?;
-    let port = parsed.port().unwrap_or(443);
-    let remote_address = (host, port)
-        .to_socket_addrs()
-        .context("resolve moqt address")?
-        .next()
-        .ok_or_else(|| anyhow!("failed to resolve moqt address"))?;
     let endpoint = Endpoint::<WEBTRANSPORT>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: !insecure_skip_tls_verify,
     })?;
     let connecting = endpoint
-        .connect(remote_address, host)
+        .connect(url)
         .await
         .context("connect moqt transport")?;
     Ok(std::sync::Arc::new(
