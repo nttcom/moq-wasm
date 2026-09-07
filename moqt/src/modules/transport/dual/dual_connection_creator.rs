@@ -11,7 +11,8 @@ use quinn::rustls::{
 
 use super::dual_connection::DualConnection;
 use crate::modules::transport::{
-    crypto_provider::install_default_crypto_provider, quic::quic_connection::QUICConnection,
+    connect_target::ConnectTarget, crypto_provider::install_default_crypto_provider,
+    quic::quic_connection::QUICConnection,
     transport_connection_creator::TransportConnectionCreator,
     webtransport::wt_connection::WtConnection,
 };
@@ -85,8 +86,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
     async fn create_new_transport(
         &self,
-        _remote_address: SocketAddr,
-        _host: &str,
+        _target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection> {
         anyhow::bail!("DualProtocolCreator does not support client mode")
     }

@@ -12,6 +12,7 @@ use quinn::rustls::{
 use quinn::{self, TransportConfig, VarInt};
 
 use crate::modules::transport::{
+    connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
     quic::{quic_connection::QUICConnection, skip_certd_validation::SkipVerification},
     transport_connection_creator::TransportConnectionCreator,
@@ -138,12 +139,15 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 
     async fn create_new_transport(
         &self,
-        remote_address: SocketAddr,
-        host: &str,
+        target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection> {
+        if target.transport != ClientTransport::Quic {
+            anyhow::bail!("QUIC endpoint requires a moqt:// url, got {}", target.url);
+        }
+        let remote_address = target.resolve_remote_address().await?;
         let connecting = self
             .endpoint
-            .connect(remote_address, host)
+            .connect(remote_address, &target.server_name())
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?;
         let connection = connecting
             .await

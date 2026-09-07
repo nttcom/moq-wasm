@@ -61,13 +61,19 @@ selection is a compile-time type parameter (e.g. `Endpoint::<moqt::DUAL>`),
 not a runtime branch — except inside `DualConnection`, which wraps either
 variant behind one connection type.
 
+`connect_target.rs` — `ConnectTarget::parse(url)` maps the scheme to a
+transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
+default port 443) and resolves the host, preferring IPv4 because the client
+endpoint binds an IPv4 socket. `QUIC` / `WEBTRANSPORT` creators reject a URL
+for the other transport.
+
 ## Session establishment (`modules/moqt/domains`)
 
 Flow: `Endpoint` → `Connecting` (a boxed `Future`) → `Session`.
 
 - `Endpoint::create_client(&ClientConfig)` / `create_server(&ServerConfig)`
   build a `SessionCreator` around the transport's `ConnectionCreator`.
-- `connect()` / `accept()` return `Connecting<T>`, whose future performs the
+- `connect(url)` / `accept()` return `Connecting<T>`, whose future performs the
   transport handshake, opens/accepts the bidirectional control stream, and runs
   the SETUP exchange in `SessionContextFactory` (CLIENT_SETUP/SERVER_SETUP,
   version `0xff00000e` = draft-14).

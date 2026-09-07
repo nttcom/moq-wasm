@@ -1,6 +1,6 @@
-use std::net::SocketAddr;
-
-use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::{
+    connect_target::ConnectTarget, transport_connection::TransportConnection,
+};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -23,8 +23,7 @@ pub(crate) trait TransportConnectionCreator: Send + Sync + 'static {
         Self: Sized;
     async fn create_new_transport(
         &self,
-        remote_address: SocketAddr,
-        host: &str,
+        target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection>;
     async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection>;
 }

@@ -25,8 +25,6 @@
 //! root. Any range that resolves to the wrong object set fails an assertion.
 
 use std::env;
-use std::net::ToSocketAddrs;
-use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -64,21 +62,11 @@ async fn new_session() -> anyhow::Result<Session<QUIC>> {
 }
 
 async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session<QUIC>> {
-    let url = url::Url::from_str(relay_url)
-        .with_context(|| format!("failed to parse relay URL: {relay_url}"))?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("relay URL has no host: {relay_url}"))?;
-    let remote = (host, url.port().unwrap_or(4433))
-        .to_socket_addrs()
-        .with_context(|| format!("failed to resolve relay address: {relay_url}"))?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("relay URL resolved no socket address: {relay_url}"))?;
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
     })?;
-    let connecting = endpoint.connect(remote, host).await?;
+    let connecting = endpoint.connect(relay_url).await?;
     connecting.await
 }
 

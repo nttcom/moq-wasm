@@ -1,3 +1,4 @@
+pub(crate) mod connect_target;
 pub(crate) mod crypto_provider;
 pub(crate) mod dual;
 pub(crate) mod quic;

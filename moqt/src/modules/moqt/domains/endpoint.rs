@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use crate::{
     Connecting, TransportProtocol,
     modules::{
@@ -67,14 +65,12 @@ impl<T: TransportProtocol> Endpoint<T> {
         Ok(Self { session_creator })
     }
 
-    pub async fn connect(
-        &self,
-        remote_address: SocketAddr,
-        host: &str,
-    ) -> anyhow::Result<Connecting<T>> {
-        self.session_creator
-            .create_new_connection(remote_address, host)
-            .await
+    /// `url` selects the transport by scheme: `moqt://host[:port]` for raw
+    /// QUIC (default port 4433) and `https://host[:port][/path]` for
+    /// WebTransport (default port 443). `QUIC` and `WEBTRANSPORT` endpoints
+    /// accept only their own scheme; `DUAL` accepts both.
+    pub async fn connect(&self, url: &str) -> anyhow::Result<Connecting<T>> {
+        self.session_creator.create_new_connection(url).await
     }
 
     pub async fn accept(&mut self) -> anyhow::Result<Connecting<T>> {

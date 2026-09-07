@@ -11,6 +11,7 @@ use quinn::rustls::{
 
 use super::wt_connection::WtConnection;
 use crate::modules::transport::{
+    connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
     quic::skip_certd_validation::SkipVerification,
     transport_connection_creator::TransportConnectionCreator,
@@ -123,8 +124,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
 
     async fn create_new_transport(
         &self,
-        remote_address: SocketAddr,
-        host: &str,
+        target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection> {
         let client = match &self.endpoint {
             WtEndpoint::Client(c) => c,
@@ -132,10 +132,14 @@ impl TransportConnectionCreator for WtConnectionCreator {
                 anyhow::bail!("Cannot create_new_transport on a server endpoint")
             }
         };
-        let url: url::Url = format!("https://{}:{}", host, remote_address.port()).parse()?;
-
+        if target.transport != ClientTransport::WebTransport {
+            anyhow::bail!(
+                "WebTransport endpoint requires an https:// url, got {}",
+                target.url
+            );
+        }
         let session = client
-            .connect(url)
+            .connect(target.url.clone())
             .await
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
 

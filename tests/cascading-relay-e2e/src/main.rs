@@ -707,12 +707,8 @@ async fn connect(url: &str) -> anyhow::Result<Session<QUIC>> {
         port: 0,
         verify_certificate: false,
     })?;
-    let url = url::Url::from_str(url)?;
-    let host = url.host_str().context("missing host")?;
-    let remote_address = relay_socket_addr(url.as_str())?;
-
-    tracing::info!(%remote_address, host, "connecting to relay");
-    let connecting = endpoint.connect(remote_address, host).await?;
+    tracing::info!(url, "connecting to relay");
+    let connecting = endpoint.connect(url).await?;
     connecting.await
 }
 

@@ -14,8 +14,6 @@
 //! Carol leaves, and prints a summary.
 
 use std::env;
-use std::net::ToSocketAddrs;
-use std::str::FromStr;
 use std::time::Duration;
 
 use moqt::{
@@ -39,17 +37,11 @@ const LATE_GROUP: u64 = 4;
 async fn new_session() -> anyhow::Result<Session<QUIC>> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
-    let url = url::Url::from_str(&relay_url).unwrap();
-    let host = url.host_str().unwrap();
-    let remote = (host, url.port().unwrap_or(4433))
-        .to_socket_addrs()?
-        .next()
-        .unwrap();
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
     })?;
-    let connecting = endpoint.connect(remote, host).await?;
+    let connecting = endpoint.connect(&relay_url).await?;
     connecting.await
 }
 

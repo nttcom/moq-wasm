@@ -3,7 +3,6 @@ mod cli;
 mod loc;
 mod media;
 mod publish;
-mod relay_url;
 mod subscribe;
 mod track;
 mod transport;
