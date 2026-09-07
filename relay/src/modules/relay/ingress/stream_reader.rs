@@ -383,7 +383,7 @@ mod tests {
             let cache = self.cache();
             let mut objects = Vec::new();
             let mut cursor = 0;
-            while let Some(object) = cache.next_object_or_wait(key, cursor).await {
+            while let Some(object) = cache.next_subgroup_object_or_wait(key, cursor).await {
                 objects.push((object.location.object_id, object.status));
                 cursor = object.location.object_id + 1;
             }
@@ -394,7 +394,7 @@ mod tests {
             let cache = self.cache();
             let closed = tokio::time::timeout(
                 Duration::from_secs(1),
-                cache.next_object_or_wait(key, last_object_id + 1),
+                cache.next_subgroup_object_or_wait(key, last_object_id + 1),
             )
             .await
             .expect("subgroup should be closed, not waiting for more objects");

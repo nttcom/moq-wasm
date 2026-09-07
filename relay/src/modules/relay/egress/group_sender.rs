@@ -132,7 +132,11 @@ impl GroupSender {
             group_id: task.group_id,
             subgroup_id: task.subgroup_id,
         };
-        let Some(first) = task.cache.next_object_or_wait(key, task.object_id).await else {
+        let Some(first) = task
+            .cache
+            .next_subgroup_object_or_wait(key, task.object_id)
+            .await
+        else {
             span.record("object_count", 0u64);
             span.record("end_reason", "no_objects");
             tracing::debug!("subgroup closed before any object to send");
@@ -199,7 +203,7 @@ impl GroupSender {
             prev_sent_object_id = Some(object_id);
             next = task
                 .cache
-                .next_object_or_wait(key, object_id.saturating_add(1))
+                .next_subgroup_object_or_wait(key, object_id.saturating_add(1))
                 .await;
         }
         span.record("object_count", object_count);
@@ -216,7 +220,7 @@ impl GroupSender {
         mut sender: Box<dyn DataSender>,
     ) {
         let mut cursor = task.object_id;
-        while let Some(object) = cache.next_object_or_wait(task.key, cursor).await {
+        while let Some(object) = cache.next_subgroup_object_or_wait(task.key, cursor).await {
             let object_id = object.location.object_id;
             tracing::debug!(
                 track_alias,

@@ -74,26 +74,28 @@ impl TrackCache {
     /// Next object of `key` with id >= `from_object_id`, waiting while the
     /// subgroup is still open under live ingest. `None` once it is closed and
     /// no such object exists.
-    pub(crate) async fn next_object_or_wait(
+    pub(crate) async fn next_subgroup_object_or_wait(
         &self,
         key: SubgroupKey,
         from_object_id: u64,
     ) -> Option<Arc<CachedObject>> {
-        self.wait_until(|ledger| match ledger.next_object(key, from_object_id) {
-            Some(object) => Some(Some(object)),
-            None if ledger.open_subgroups.contains_key(&key) => None,
-            None => Some(None),
-        })
+        self.wait_until(
+            |ledger| match ledger.next_subgroup_object(key, from_object_id) {
+                Some(object) => Some(Some(object)),
+                None if ledger.open_subgroups.contains_key(&key) => None,
+                None => Some(None),
+            },
+        )
         .await
     }
 
-    pub(super) async fn next_object_in_group_or_wait(
+    pub(super) async fn next_group_object_or_wait(
         &self,
         group_id: u64,
         from_object_id: u64,
     ) -> Option<Arc<CachedObject>> {
         self.wait_until(
-            |ledger| match ledger.next_object_in_group(group_id, from_object_id) {
+            |ledger| match ledger.next_group_object(group_id, from_object_id) {
                 Some(object) => Some(Some(object)),
                 None if ledger.has_open_subgroup_in_group(group_id) => None,
                 None => Some(None),
@@ -120,53 +122,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn next_object_or_wait_returns_exact_match() {
+    async fn next_subgroup_object_or_wait_returns_exact_match() {
         // Arrange: objects at ids 0, 3, 5
         let cache = TrackCache::new();
         let _live = open_live_group(&cache, 0, &[0, 3, 5]);
         // Act
-        let object = cache.next_object_or_wait(stream_key(0), 3).await.unwrap();
+        let object = cache
+            .next_subgroup_object_or_wait(stream_key(0), 3)
+            .await
+            .unwrap();
         // Assert: the exact id is returned (inclusive lower bound)
         assert_eq!(object.location.object_id, 3);
     }
 
     #[tokio::test]
-    async fn next_object_or_wait_skips_gap_to_next_id() {
+    async fn next_subgroup_object_or_wait_skips_gap_to_next_id() {
         // Arrange: objects at ids 0, 3, 5 (no object at 1, 2, 4)
         let cache = TrackCache::new();
         let _live = open_live_group(&cache, 0, &[0, 3, 5]);
         // Act
-        let object = cache.next_object_or_wait(stream_key(0), 4).await.unwrap();
+        let object = cache
+            .next_subgroup_object_or_wait(stream_key(0), 4)
+            .await
+            .unwrap();
         // Assert
         assert_eq!(object.location.object_id, 5);
     }
 
     #[tokio::test]
-    async fn next_object_or_wait_returns_none_when_closed_and_exhausted() {
+    async fn next_subgroup_object_or_wait_returns_none_when_closed_and_exhausted() {
         // Arrange: one object at id 0, then the subgroup closes
         let cache = TrackCache::new();
         drop(open_live_group(&cache, 0, &[0]));
         // Act / Assert
-        assert!(cache.next_object_or_wait(stream_key(0), 1).await.is_none());
+        assert!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 1)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
-    async fn next_object_or_wait_returns_none_for_never_opened_subgroup() {
+    async fn next_subgroup_object_or_wait_returns_none_for_never_opened_subgroup() {
         // Arrange: a fetch fill wrote the object without any live stream
         let cache = TrackCache::new();
         let _ = cache.insert(stream_object(0, 0), InsertOrigin::Fill);
         // Act / Assert: nothing will ever close it, so waiting would hang
-        assert!(cache.next_object_or_wait(stream_key(0), 1).await.is_none());
+        assert!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 1)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
-    async fn next_object_or_wait_only_returns_objects_of_its_subgroup() {
+    async fn next_subgroup_object_or_wait_only_returns_objects_of_its_subgroup() {
         // Arrange: object 1 belongs to subgroup 1, objects 0 and 2 to subgroup 0
         let cache = TrackCache::new();
         let _live = open_live_group(&cache, 0, &[0, 2]);
         let _ = cache.insert(stream_object_in_subgroup(0, 1, 1), InsertOrigin::Live);
         // Act
-        let object = cache.next_object_or_wait(stream_key(0), 1).await.unwrap();
+        let object = cache
+            .next_subgroup_object_or_wait(stream_key(0), 1)
+            .await
+            .unwrap();
         // Assert
         assert_eq!(object.location.object_id, 2);
     }
@@ -178,7 +199,7 @@ mod tests {
         let live_cache = cache.clone();
         let waiter = tokio::spawn({
             let cache = cache.clone();
-            async move { cache.next_object_or_wait(stream_key(0), 0).await }
+            async move { cache.next_subgroup_object_or_wait(stream_key(0), 0).await }
         });
         let live = live_cache.open_live_subgroup(stream_key(0));
         tokio::task::yield_now().await;
@@ -200,7 +221,7 @@ mod tests {
         let live = cache.open_live_subgroup(stream_key(0));
         let waiter = tokio::spawn({
             let cache = cache.clone();
-            async move { cache.next_object_or_wait(stream_key(0), 0).await }
+            async move { cache.next_subgroup_object_or_wait(stream_key(0), 0).await }
         });
         tokio::task::yield_now().await;
         // Act
@@ -226,13 +247,18 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
-                cache.next_object_or_wait(stream_key(0), 0)
+                cache.next_subgroup_object_or_wait(stream_key(0), 0)
             )
             .await
             .is_err()
         );
         drop(second);
-        assert!(cache.next_object_or_wait(stream_key(0), 0).await.is_none());
+        assert!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0)
+                .await
+                .is_none()
+        );
     }
 
     #[test]

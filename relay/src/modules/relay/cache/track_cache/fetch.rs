@@ -162,10 +162,10 @@ impl TrackCache {
                 let in_known =
                     group_fully_known || frontier.is_some_and(|frontier| next_object_id < frontier);
                 let found = if in_known {
-                    self.read().next_object_in_group(group_id, next_object_id)
+                    self.read().next_group_object(group_id, next_object_id)
                 } else {
                     tokio::select! {
-                        found = self.next_object_in_group_or_wait(group_id, next_object_id) => found,
+                        found = self.next_group_object_or_wait(group_id, next_object_id) => found,
                         _ = self.malformed_track_detected() => return Err(TrackMalformed),
                     }
                 };

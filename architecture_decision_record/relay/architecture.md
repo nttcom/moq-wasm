@@ -193,7 +193,7 @@ from `TrackCache` over a new uni stream.
   last open stream subgroup of a group registers the whole group; fetch fills
   register their requested range only at `Fetch::End` (guarded by the eviction
   generation counter); datagram objects register nothing.
-- `next_object_or_wait(key, from)` (live egress) returns the next object of that
+- `next_subgroup_object_or_wait(key, from)` (live egress) returns the next object of that
   subgroup or `None` once the subgroup is no longer open; a subgroup that was
   never opened (fetch-fill only) therefore never blocks. `fetch_objects` walks
   `[start, end)` in location order, reading positions inside knowledge without
@@ -220,7 +220,7 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   opens nothing), regenerates the SUBGROUP_HEADER from that object's canonical
   properties (explicit subgroup id, priority; extensions always declared
   present so no object can lose its extension headers), and streams objects
-  until `next_object_or_wait` reports the subgroup closed. Datagram groups are
+  until `next_subgroup_object_or_wait` reports the subgroup closed. Datagram groups are
   re-emitted with the downstream track alias.
 
 ## Cascading relays (`route_registry`, `inter_relay`)

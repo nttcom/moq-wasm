@@ -28,7 +28,7 @@ impl Ledger {
             .map(|(_, object)| object)
     }
 
-    pub(super) fn next_object(
+    pub(super) fn next_subgroup_object(
         &self,
         key: SubgroupKey,
         from_object_id: u64,
@@ -38,7 +38,7 @@ impl Ledger {
             .cloned()
     }
 
-    pub(super) fn next_object_in_group(
+    pub(super) fn next_group_object(
         &self,
         group_id: u64,
         from_object_id: u64,
@@ -59,8 +59,7 @@ impl Ledger {
     }
 
     pub(super) fn has_group(&self, group_id: u64) -> bool {
-        self.next_object_in_group(group_id, 0).is_some()
-            || self.has_open_subgroup_in_group(group_id)
+        self.next_group_object(group_id, 0).is_some() || self.has_open_subgroup_in_group(group_id)
     }
 
     pub(super) fn subgroups_in_group(&self, group_id: u64) -> Vec<SubgroupKey> {
