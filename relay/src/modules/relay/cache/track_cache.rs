@@ -116,10 +116,19 @@ impl TrackCache {
                 Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
                     Err(TrackMalformed)
                 }
-                Entry::Occupied(_) => Ok(()),
+                Entry::Occupied(mut existing) => {
+                    if object.is_datagram() && !existing.get().is_datagram() {
+                        // A fetched copy arrived first; the live datagram fixes the
+                        // forwarding preference so datagram egress can find it.
+                        let mut upgraded = (**existing.get()).clone();
+                        upgraded.forwarding = ForwardingPreference::Datagram;
+                        *existing.get_mut() = Arc::new(upgraded);
+                    }
+                    Ok(false)
+                }
                 Entry::Vacant(slot) => {
                     slot.insert(Arc::new(object));
-                    Ok(())
+                    Ok(true)
                 }
             };
             if result.is_ok() && registers_knowledge {
@@ -129,11 +138,18 @@ impl TrackCache {
             }
             result
         };
-        if result.is_err() {
-            self.mark_malformed();
+        match result {
+            Ok(inserted) => {
+                if inserted {
+                    self.notify.notify_waiters();
+                }
+                Ok(())
+            }
+            Err(TrackMalformed) => {
+                self.mark_malformed();
+                Err(TrackMalformed)
+            }
         }
-        self.notify.notify_waiters();
-        result
     }
 
     pub(crate) fn has_group(&self, group_id: u64) -> bool {
@@ -433,6 +449,30 @@ mod tests {
         let outcome = cache.insert_live(stream_object_in_subgroup(0, 1, 0));
         // Assert
         assert_eq!(outcome, Err(TrackMalformed));
+    }
+
+    #[test]
+    fn live_datagram_upgrades_the_fetched_copy_to_datagram_forwarding() {
+        // Arrange: a fetch fill stored the datagram object first (§10.4.4 shape)
+        let cache = TrackCache::new();
+        let _ = cache.insert(stream_object_in_subgroup(0, 5, 5));
+        // Act
+        let _ = cache.insert_live(datagram_object(0, 5));
+        // Assert: no conflict, and datagram egress now finds the object
+        assert!(!cache.is_malformed());
+        let key = SubgroupKey::Datagram { group_id: 0 };
+        assert!(cache.read().next_subgroup_object(key, 0).is_some());
+    }
+
+    #[test]
+    fn has_group_is_true_for_a_known_group_without_objects() {
+        // Arrange: a subgroup opened and closed without objects, so the group is
+        // known complete but holds nothing
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[]);
+        // Act / Assert: the scheduler's consecutive-group walk must not stop here
+        assert!(cache.has_group(0));
+        assert!(!cache.has_group(1));
     }
 
     #[test]

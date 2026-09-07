@@ -183,17 +183,12 @@ impl StreamReader {
                         }
                     };
                     if ingest.open.insert(object).is_err() {
-                        span.record("end_reason", "malformed_track");
-                        tracing::warn!(
-                            %track_key,
-                            group_id = ingest.header.group_id,
-                            object_id,
-                            "malformed track detected; stopping stream ingest"
-                        );
-                        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+                        Self::report_malformed_track(
+                            &span,
+                            &session_event_sender,
                             publisher_session_id,
-                            track_key.clone(),
-                        ));
+                            &track_key,
+                        );
                         return;
                     }
                     if let Some(end_reason) = end_reason {
@@ -214,9 +209,19 @@ impl StreamReader {
                         && header.ends_group_on_fin
                     {
                         let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
-                        let _ = ingest
+                        if ingest
                             .open
-                            .insert(CachedObject::end_of_group(&ingest.header, end_of_group_id));
+                            .insert(CachedObject::end_of_group(&ingest.header, end_of_group_id))
+                            .is_err()
+                        {
+                            Self::report_malformed_track(
+                                &span,
+                                &session_event_sender,
+                                publisher_session_id,
+                                &track_key,
+                            );
+                            return;
+                        }
                     }
                     tracing::debug!(%track_key, "stream finished");
                     return;
@@ -237,6 +242,20 @@ impl StreamReader {
                 }
             }
         }
+    }
+
+    fn report_malformed_track(
+        span: &Span,
+        session_event_sender: &mpsc::UnboundedSender<SessionEvent>,
+        publisher_session_id: SessionId,
+        track_key: &TrackKey,
+    ) {
+        span.record("end_reason", "malformed_track");
+        tracing::warn!(%track_key, "malformed track detected; stopping stream ingest");
+        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+            publisher_session_id,
+            track_key.clone(),
+        ));
     }
 
     fn open_subgroup<'a>(
@@ -336,7 +355,7 @@ mod tests {
         cache_store: Arc<TrackCacheStore>,
         notify_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
-        _session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
+        session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
         event_receiver: tokio::sync::broadcast::Receiver<SubgroupOpened>,
         stop_sender: watch::Sender<bool>,
         stop_receiver: watch::Receiver<bool>,
@@ -355,7 +374,7 @@ mod tests {
                 cache_store,
                 notify_map,
                 session_event_sender,
-                _session_event_receiver: session_event_receiver,
+                session_event_receiver,
                 event_receiver,
                 stop_sender,
                 stop_receiver,
@@ -538,6 +557,34 @@ mod tests {
                 (2, ObjectStatus::EndOfGroup)
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn conflicting_synthesized_end_of_group_reports_the_malformed_track() {
+        // Arrange: subgroup 0 already holds a Normal object 1; a Type 0x1C stream
+        // for subgroup 1 ends after object 0, so its End of Group lands on id 1
+        let mut env = TestEnv::new();
+        env.read_loop(scripted(
+            vec![make_header(0), payload(0), payload(0)],
+            TerminalOutcome::Fin,
+        ))
+        .await;
+        // Act
+        env.read_loop(scripted(
+            vec![make_header_with(0, SubgroupId::Value(1), true), payload(0)],
+            TerminalOutcome::Fin,
+        ))
+        .await;
+        // Assert
+        assert!(env.cache().is_malformed());
+        let event = env
+            .session_event_receiver
+            .try_recv()
+            .expect("the latching insert must report the detection");
+        assert!(matches!(
+            event.kind,
+            crate::modules::session_event::EventKind::MalformedTrackDetected(_)
+        ));
     }
 
     #[tokio::test]

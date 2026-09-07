@@ -159,8 +159,9 @@ from `TrackCache` over a new uni stream.
   (Type 0x12/0x13/0x1A/0x1B, opened once that object arrives). For End-of-Group
   header types (0x18–0x1D) a clean FIN inserts an EndOfGroup status object at
   `last_id + 1`, so the signal survives header regeneration as data.
-- `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_fetch_object`,
-  origin `Fill`); no header synthesis and no per-subgroup delta state.
+- `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_fetch_object`
+  via `TrackCache::insert`, which registers no knowledge); no header synthesis and
+  no per-subgroup delta state.
 - The cache's sticky §2.5 malformed latch is only ever set inside an insert,
   so the reader (or fetch fill) that performed the latching insert is always
   present to report `MalformedTrackDetected` into the event pipeline — no
@@ -176,7 +177,7 @@ from `TrackCache` over a new uni stream.
   Wire forms are derived from it at egress (`to_subgroup_object_field` with the
   delta computed from the previously sent id, `to_object_datagram` normalised
   to explicit-id types, `to_fetch_object_field` with subgroup id = object id
-  for datagram objects per §10.4.4). `duplicate_kind` implements §8.1:
+  for datagram objects per §10.4.4). `conflicts_with` implements §8.1:
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;
   extension changes and Does Not Exist transitions are tolerated duplicates.

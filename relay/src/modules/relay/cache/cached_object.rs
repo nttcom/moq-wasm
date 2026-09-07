@@ -154,7 +154,7 @@ impl CachedObject {
     /// End of Group and End of Track, makes the track Malformed. Extension
     /// header changes and transitions involving Does Not Exist are allowed.
     pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
-        if self.forwarding != other.forwarding
+        if self.forwarding_conflicts_with(other)
             || self.publisher_priority != other.publisher_priority
         {
             return true;
@@ -163,6 +163,27 @@ impl CachedObject {
             return false;
         }
         self.status != other.status || self.payload != other.payload
+    }
+
+    /// FETCH carries no forwarding preference; a fetched copy of a datagram
+    /// object arrives as a subgroup object whose Subgroup ID is its Object ID
+    /// (draft-14 §10.4.4), so that pairing is the same object, not a conflict.
+    fn forwarding_conflicts_with(&self, other: &Self) -> bool {
+        match (self.forwarding, other.forwarding) {
+            (
+                ForwardingPreference::Subgroup { subgroup_id: a },
+                ForwardingPreference::Subgroup { subgroup_id: b },
+            ) => a != b,
+            (ForwardingPreference::Datagram, ForwardingPreference::Datagram) => false,
+            (ForwardingPreference::Subgroup { subgroup_id }, ForwardingPreference::Datagram)
+            | (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id }) => {
+                subgroup_id != self.location.object_id
+            }
+        }
+    }
+
+    pub(crate) fn is_datagram(&self) -> bool {
+        self.forwarding == ForwardingPreference::Datagram
     }
 
     pub(crate) fn to_fetch_object_field(&self) -> FetchObjectField {
@@ -308,7 +329,26 @@ mod tests {
     fn differing_subgroup_or_forwarding_preference_is_a_conflict() {
         // Arrange / Act / Assert
         assert!(stream_object(0, 0).conflicts_with(&stream_object_in_subgroup(0, 1, 0)));
-        assert!(stream_object(0, 0).conflicts_with(&datagram_object(0, 0)));
+        assert!(stream_object(0, 3).conflicts_with(&datagram_object(0, 3)));
+    }
+
+    #[test]
+    fn fetched_copy_of_a_datagram_object_is_not_a_conflict() {
+        // Arrange: §10.4.4 — the fetched copy carries subgroup id = object id
+        let fetched = stream_object_in_subgroup(0, 5, 5);
+        let live = datagram_object(0, 5);
+        // Act / Assert: both orders
+        assert!(!fetched.conflicts_with(&live));
+        assert!(!live.conflicts_with(&fetched));
+    }
+
+    #[test]
+    fn subgroup_object_with_another_subgroup_id_conflicts_with_a_datagram() {
+        // Arrange
+        let subgroup = stream_object_in_subgroup(0, 1, 5);
+        let live = datagram_object(0, 5);
+        // Act / Assert
+        assert!(subgroup.conflicts_with(&live));
     }
 
     #[test]
