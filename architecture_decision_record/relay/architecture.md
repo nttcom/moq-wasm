@@ -180,7 +180,7 @@ from `TrackCache` over a new uni stream.
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;
   extension changes and Does Not Exist transitions are tolerated duplicates.
-- `TrackCache` (`track_cache.rs` + `track_cache/{ledger,live,fetch}.rs`) is one
+- `TrackCache` (`track_cache.rs` + `track_cache/{ledger,open_subgroup}.rs`) is one
   track-level ledger behind a `std::sync::RwLock` that is never held across an
   await: `objects: BTreeMap<Location, Arc<CachedObject>>` (stream and datagram
   objects together, so identity is the key, never an entry), `open_subgroups:
