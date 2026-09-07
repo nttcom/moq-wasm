@@ -60,9 +60,10 @@ impl TrackCache {
             // subgroup for the group is assumed: the rest of the group becomes
             // known, from the live frontier so evicted positions stay unknown.
             if matches!(key, SubgroupKey::Stream { .. }) && !live.has_open_stream() {
-                ledger
-                    .known_ranges
-                    .insert(live.knowledge_frontier(group_id), location(group_id, 0));
+                ledger.known_ranges.insert(
+                    location(group_id, live.knowledge_frontier),
+                    location(group_id, 0),
+                );
             }
             if live.open_subgroups.is_empty() {
                 ledger.live_groups.remove(&group_id);

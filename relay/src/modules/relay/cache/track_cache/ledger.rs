@@ -14,7 +14,7 @@ use super::{after, location};
 #[derive(Default)]
 pub(super) struct LiveGroup {
     pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
-    pub(super) largest_seen_object_id: Option<u64>,
+    pub(super) knowledge_frontier: u64,
 }
 
 impl LiveGroup {
@@ -22,17 +22,6 @@ impl LiveGroup {
         self.open_subgroups
             .keys()
             .any(|key| matches!(key, SubgroupKey::Stream { .. }))
-    }
-
-    /// First position live ingest has not yet decided: the group head, or just
-    /// past the largest object seen. Positions below it that were evicted must
-    /// stay unknown, so no later claim may start before this.
-    pub(super) fn knowledge_frontier(&self, group_id: u64) -> moqt::Location {
-        location(
-            group_id,
-            self.largest_seen_object_id
-                .map_or(0, |object_id| object_id.saturating_add(1)),
-        )
     }
 }
 
@@ -63,10 +52,9 @@ impl Ledger {
     pub(super) fn register_live_object(&mut self, location: moqt::Location) {
         self.known_ranges.insert(location, after(location));
         if let Some(live) = self.live_groups.get_mut(&location.group_id) {
-            live.largest_seen_object_id = Some(
-                live.largest_seen_object_id
-                    .map_or(location.object_id, |seen| seen.max(location.object_id)),
-            );
+            live.knowledge_frontier = live
+                .knowledge_frontier
+                .max(location.object_id.saturating_add(1));
         }
     }
 
