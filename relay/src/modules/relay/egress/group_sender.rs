@@ -222,20 +222,17 @@ impl GroupSender {
             };
         }
         span.record("object_count", object_count);
-        match next {
-            NextObject::Aborted => {
-                // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
-                // may be missing objects, so the downstream stream is reset.
-                span.record("end_reason", "upstream_aborted");
-                if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
-                    tracing::warn!(?error, "failed to reset egress stream sender");
-                }
+        if matches!(next, NextObject::Aborted) {
+            // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
+            // may be missing objects, so the downstream stream is reset.
+            span.record("end_reason", "upstream_aborted");
+            if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
+                tracing::warn!(?error, "failed to reset egress stream sender");
             }
-            NextObject::Finished | NextObject::Object(_) => {
-                span.record("end_reason", "cache_closed");
-                if let Err(error) = sender.close().await {
-                    tracing::warn!(?error, "failed to close egress stream sender");
-                }
+        } else {
+            span.record("end_reason", "cache_closed");
+            if let Err(error) = sender.close().await {
+                tracing::warn!(?error, "failed to close egress stream sender");
             }
         }
     }

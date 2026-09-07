@@ -45,18 +45,15 @@ impl Ledger {
 
     /// Drops abort markers of groups the ledger no longer knows anything about.
     pub(super) fn forget_aborts_of_vanished_groups(&mut self) {
-        let vanished: Vec<SubgroupKey> = self
-            .aborted_subgroups
-            .iter()
-            .copied()
-            .filter(|key| {
-                self.next_group_object(key.group_id(), 0).is_none()
-                    && !self.live_groups.contains_key(&key.group_id())
-            })
-            .collect();
-        for key in vanished {
-            self.aborted_subgroups.remove(&key);
-        }
+        let (objects, live_groups) = (&self.objects, &self.live_groups);
+        self.aborted_subgroups.retain(|key| {
+            let group_id = key.group_id();
+            objects
+                .range(location(group_id, 0)..=location(group_id, u64::MAX))
+                .next()
+                .is_some()
+                || live_groups.contains_key(&group_id)
+        });
     }
 
     pub(super) fn is_open(&self, key: SubgroupKey) -> bool {
