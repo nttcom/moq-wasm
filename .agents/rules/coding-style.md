@@ -55,7 +55,6 @@ Shared by all agents (Claude Code, Codex).
 
 ## Module Structure
 - Split modules and structs based on SOLID principles with functional cohesion.
-- Keep each file under 300 lines.
 - When creating a directory module, use a same-name `.rs` file (e.g. `foo.rs` + `foo/`) instead of `foo/mod.rs`.
 
 ## Visibility
