@@ -33,14 +33,10 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     tracing_subscriber::fmt::init();
 
-    let rtmp = tokio::spawn(rtmp::run_rtmp_listener(
-        args.rtmp_addr,
-        args.moqt_url.clone(),
-    ));
-    let srt = tokio::spawn(srt::run_srt_listener(args.srt_addr));
-
-    rtmp.await??;
-    srt.await??;
+    tokio::try_join!(
+        rtmp::run_rtmp_listener(args.rtmp_addr, args.moqt_url.clone()),
+        srt::run_srt_listener(args.srt_addr, args.moqt_url),
+    )?;
 
     Ok(())
 }
