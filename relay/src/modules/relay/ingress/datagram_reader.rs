@@ -121,7 +121,6 @@ impl DatagramReader {
         cache.begin_live_ingest();
         let notify = object_notify_producer_map.get_or_create(&track_key);
         let mut current_group: Option<(u64, LiveSubgroup<'_>)> = None;
-        let mut prev_object_id: Option<u64> = None;
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
@@ -143,13 +142,11 @@ impl DatagramReader {
                         slot => {
                             let key = SubgroupKey::Datagram { group_id };
                             let (_, live) = slot.insert((group_id, cache.open_live_subgroup(key)));
-                            prev_object_id = None;
                             let _ = notify.send(TrackEvent::SubgroupOpened(key));
                             live
                         }
                     };
-                    let object_id = datagram.field.resolve_object_id(prev_object_id);
-                    prev_object_id = Some(object_id);
+                    let object_id = datagram.field.resolve_object_id();
                     if live
                         .insert(CachedObject::from_datagram(object_id, datagram))
                         .is_err()

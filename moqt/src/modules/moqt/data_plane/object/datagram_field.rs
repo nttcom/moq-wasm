@@ -142,11 +142,20 @@ impl DatagramField {
         }
     }
 
-    /// Types 0x04-0x07 omit the Object ID: it is the previous object's id + 1,
-    /// or 0 for the first object of the group.
-    pub fn resolve_object_id(&self, prev_object_id: Option<u64>) -> u64 {
-        self.object_id()
-            .unwrap_or_else(|| prev_object_id.map_or(0, |prev| prev + 1))
+    /// draft-14 §10.3.1: when the Object ID field is omitted, the Object ID is 0.
+    pub fn resolve_object_id(&self) -> u64 {
+        match self {
+            Self::Payload0x00 { object_id, .. }
+            | Self::Payload0x01 { object_id, .. }
+            | Self::Payload0x02WithEndOfGroup { object_id, .. }
+            | Self::Payload0x03WithEndOfGroup { object_id, .. }
+            | Self::Payload0x04 { object_id, .. }
+            | Self::Status0x20 { object_id, .. }
+            | Self::Status0x21 { object_id, .. } => *object_id,
+            Self::Payload0x05 { .. }
+            | Self::Payload0x06WithEndOfGroup { .. }
+            | Self::Payload0x07WithEndOfGroup { .. } => 0,
+        }
     }
 
     pub fn publisher_priority(&self) -> u8 {
@@ -494,31 +503,23 @@ mod tests {
 
         use bytes::{Buf, Bytes};
 
-        fn implicit_id_field() -> DatagramField {
-            DatagramField::Payload0x06WithEndOfGroup {
-                publisher_priority: 0,
-                payload: Bytes::new(),
-            }
-        }
-
         #[test]
-        fn explicit_object_id_wins_over_prev() {
+        fn present_object_id_is_returned_as_is() {
             let field = DatagramField::Payload0x00 {
                 object_id: 7,
                 publisher_priority: 0,
                 payload: Bytes::new(),
             };
-            assert_eq!(field.resolve_object_id(Some(3)), 7);
+            assert_eq!(field.resolve_object_id(), 7);
         }
 
         #[test]
-        fn implicit_object_id_is_prev_plus_one() {
-            assert_eq!(implicit_id_field().resolve_object_id(Some(3)), 4);
-        }
-
-        #[test]
-        fn implicit_object_id_starts_at_zero() {
-            assert_eq!(implicit_id_field().resolve_object_id(None), 0);
+        fn omitted_object_id_resolves_to_zero() {
+            let field = DatagramField::Payload0x06WithEndOfGroup {
+                publisher_priority: 0,
+                payload: Bytes::new(),
+            };
+            assert_eq!(field.resolve_object_id(), 0);
         }
 
         #[test]
