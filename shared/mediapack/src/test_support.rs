@@ -2,11 +2,12 @@ use bytes::Bytes;
 
 use crate::{
     aac::{AudioSpecificConfig, adts},
-    h264::annexb::with_start_codes,
+    h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
 };
 
 pub(crate) const FIXTURE_TS: &[u8] = include_bytes!("../fixtures/testsrc.ts");
+pub(crate) const FIXTURE_FLV: &[u8] = include_bytes!("../fixtures/testsrc.flv");
 
 pub(crate) const FIXTURE_SPS: [u8; 24] = [
     0x67, 0x42, 0xd0, 0x0b, 0xda, 0x0a, 0x37, 0xe4, 0xc0, 0x44, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00,
@@ -15,6 +16,14 @@ pub(crate) const FIXTURE_SPS: [u8; 24] = [
 pub(crate) const FIXTURE_PPS: [u8; 4] = [0x68, 0xce, 0x3c, 0x80];
 pub(crate) const IDR_SLICE: [u8; 3] = [0x65, 0x88, 0x84];
 pub(crate) const NON_IDR_SLICE: [u8; 3] = [0x41, 0x9a, 0x22];
+
+pub(crate) fn fixture_record() -> AvcDecoderConfigurationRecord {
+    AvcDecoderConfigurationRecord::from_parameter_sets(
+        vec![Bytes::from_static(&FIXTURE_SPS)],
+        vec![Bytes::from_static(&FIXTURE_PPS)],
+    )
+    .unwrap()
+}
 
 pub(crate) fn keyframe_annexb() -> Bytes {
     with_start_codes([&FIXTURE_SPS[..], &FIXTURE_PPS, &IDR_SLICE])

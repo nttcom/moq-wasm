@@ -65,3 +65,6 @@ cargo-flamegraph.trace/*
 *.opus
 *.aiff
 *.wma
+
+# mediapack test fixtures
+!shared/mediapack/fixtures/*.flv
