@@ -57,18 +57,16 @@ impl TrackCache {
         self.notify.notify_waiters();
     }
 
-    /// Both `enable()` calls register the waiter before the ledger is read, so
-    /// a `notify_waiters` firing between the check and the await cannot be lost.
+    /// `enable()` registers the waiter before the ledger is read, so a
+    /// `notify_waiters` firing between the check and the await cannot be lost.
     async fn wait_until<T>(
         &self,
         mut decide: impl FnMut(&Ledger) -> Option<T>,
     ) -> Result<T, TrackMalformed> {
         loop {
             let notified = self.notify.notified();
-            let malformed = self.malformed_notify.notified();
-            tokio::pin!(notified, malformed);
+            tokio::pin!(notified);
             notified.as_mut().enable();
-            malformed.as_mut().enable();
             if self.is_malformed() {
                 return Err(TrackMalformed);
             }
@@ -77,7 +75,7 @@ impl TrackCache {
             }
             tokio::select! {
                 _ = notified => {}
-                _ = malformed => {}
+                _ = self.malformed_track_detected() => return Err(TrackMalformed),
             }
         }
     }

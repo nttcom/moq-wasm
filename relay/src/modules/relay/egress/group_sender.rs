@@ -16,10 +16,7 @@ use crate::modules::{
         publisher::Publisher,
         subscription::DownstreamSubscription,
     },
-    relay::{
-        cache::track_cache::{TrackCache, TrackMalformed},
-        types::SubgroupKey,
-    },
+    relay::{cache::track_cache::TrackCache, types::SubgroupKey},
     types::TrackKey,
 };
 
@@ -134,23 +131,15 @@ impl GroupSender {
         else {
             unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
-        let first = match task
+        let Ok(Some(first)) = task
             .cache
             .next_subgroup_object_or_wait(task.key, task.object_id)
             .await
-        {
-            Ok(Some(first)) => first,
-            Ok(None) => {
-                span.record("object_count", 0u64);
-                span.record("end_reason", "no_objects");
-                tracing::debug!("subgroup closed before any object to send");
-                return;
-            }
-            Err(TrackMalformed) => {
-                span.record("object_count", 0u64);
-                span.record("end_reason", "malformed_track");
-                return;
-            }
+        else {
+            span.record("object_count", 0u64);
+            span.record("end_reason", "no_objects");
+            tracing::debug!("subgroup closed before any object to send");
+            return;
         };
 
         // Opening the stream awaits peer stream credit; if the subscriber
@@ -211,18 +200,11 @@ impl GroupSender {
             }
             object_count += 1;
             prev_sent_object_id = Some(object_id);
-            next = match task
+            next = task
                 .cache
                 .next_subgroup_object_or_wait(task.key, object_id.saturating_add(1))
                 .await
-            {
-                Ok(next) => next,
-                Err(TrackMalformed) => {
-                    span.record("object_count", object_count);
-                    span.record("end_reason", "malformed_track");
-                    return;
-                }
-            };
+                .unwrap_or(None);
         }
         span.record("object_count", object_count);
         span.record("end_reason", "cache_closed");

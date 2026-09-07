@@ -62,7 +62,7 @@ impl Ledger {
         self.next_group_object(group_id, 0).is_some() || self.has_open_subgroup_in_group(group_id)
     }
 
-    pub(super) fn subgroups_in_group(&self, group_id: u64) -> Vec<SubgroupKey> {
+    pub(super) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {
         let mut keys: BTreeSet<SubgroupKey> = self
             .group_objects(group_id, 0)
             .map(|object| object.subgroup_key())
@@ -72,7 +72,7 @@ impl Ledger {
                 .keys()
                 .filter(|key| key.group_id() == group_id),
         );
-        keys.into_iter().collect()
+        keys
     }
 
     pub(super) fn groups_in_range(&self, first_group_id: u64, last_group_id: u64) -> Vec<u64> {

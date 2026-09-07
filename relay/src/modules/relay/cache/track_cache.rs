@@ -1,5 +1,5 @@
 use std::{
-    collections::btree_map::Entry,
+    collections::{BTreeSet, btree_map::Entry},
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
@@ -140,7 +140,7 @@ impl TrackCache {
         self.read().has_group(group_id)
     }
 
-    pub(crate) fn subgroups_in_group(&self, group_id: u64) -> Vec<SubgroupKey> {
+    pub(crate) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {
         self.read().subgroups_in_group(group_id)
     }
 
@@ -493,13 +493,13 @@ mod tests {
         // Act / Assert
         assert_eq!(
             cache.subgroups_in_group(0),
-            vec![
+            BTreeSet::from([
                 SubgroupKey::Stream {
                     group_id: 0,
                     subgroup_id: 1
                 },
                 SubgroupKey::Datagram { group_id: 0 }
-            ]
+            ])
         );
         assert!(!cache.has_group(1));
     }
@@ -593,7 +593,7 @@ mod tests {
         // Assert
         assert!(cache.is_empty());
         assert!(cache.has_group(0));
-        assert_eq!(cache.subgroups_in_group(0), vec![stream_key(0)]);
+        assert_eq!(cache.subgroups_in_group(0), BTreeSet::from([stream_key(0)]));
     }
 
     #[tokio::test(start_paused = true)]
