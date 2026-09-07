@@ -29,9 +29,6 @@ impl LiveGroup {
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
-    /// Subgroups whose upstream stream ended without a FIN (reset, stop,
-    /// decode error): their tail is unknown, so the group can never be
-    /// declared complete and their downstream streams are reset, not FIN'd.
     pub(super) aborted_subgroups: HashSet<SubgroupKey>,
     pub(super) known_ranges: KnownRanges,
 }

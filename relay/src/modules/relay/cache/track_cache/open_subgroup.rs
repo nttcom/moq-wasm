@@ -33,13 +33,10 @@ impl Drop for OpenSubgroupGuard<'_> {
     }
 }
 
-/// Outcome of waiting for the next object of a live subgroup.
 #[derive(Debug)]
 pub(crate) enum NextObject {
     Object(Arc<CachedObject>),
-    /// Every object was received and the upstream stream ended cleanly.
     Finished,
-    /// The upstream stream ended without a FIN; objects may be missing.
     Aborted,
 }
 
@@ -99,10 +96,6 @@ impl TrackCache {
                 return;
             }
             live.open_subgroups.remove(&key);
-            // Once every live subgroup stream of the group has finished, no later
-            // subgroup for the group is assumed: the rest of the group becomes
-            // known, from the live frontier so evicted positions stay unknown.
-            // A group with an aborted subgroup is never declared complete.
             let group_complete = matches!(key, SubgroupKey::Stream { .. })
                 && !live.has_open_stream()
                 && !group_aborted;
@@ -142,9 +135,6 @@ impl TrackCache {
         }
     }
 
-    /// Next object of `key` with id >= `from_object_id`, waiting while the
-    /// subgroup is still open under live ingest; `Err` as soon as the track
-    /// is malformed.
     pub(crate) async fn next_subgroup_object_or_wait(
         &self,
         key: SubgroupKey,
