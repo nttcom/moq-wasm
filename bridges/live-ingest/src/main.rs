@@ -1,10 +1,9 @@
-mod audio;
+mod chunk_payload;
 mod ingest;
 mod moqt;
 mod publisher;
 mod rtmp;
 mod srt;
-mod video;
 
 use anyhow::Result;
 use clap::Parser;

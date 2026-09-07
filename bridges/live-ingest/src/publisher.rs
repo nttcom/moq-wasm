@@ -1,20 +1,27 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
+use mediapack::{
+    AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig,
+    h264::AvcDecoderConfigurationRecord,
+};
 
 use crate::{
-    audio::{AudioFrame, compute_aac_duration_us, pack_audio_chunk_payload},
+    chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
     moqt::MoqtManager,
-    video::{VideoFrame, pack_video_chunk_payload},
 };
 
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
+const VIDEO_TRACK: &str = "video";
+const AUDIO_TRACK: &str = "audio";
 
 pub struct MediaPublisher {
     moqt: MoqtManager,
     namespace: Vec<String>,
     namespace_ready: bool,
     audio_group_duration_us: u64,
+    video_config: Option<AvcDecoderConfigurationRecord>,
+    audio_config: Option<AudioSpecificConfig>,
 }
 
 impl MediaPublisher {
@@ -24,39 +31,71 @@ impl MediaPublisher {
             namespace,
             namespace_ready: false,
             audio_group_duration_us: 0,
+            video_config: None,
+            audio_config: None,
         }
     }
 
-    pub async fn publish_audio(&mut self, frame: AudioFrame, timestamp_us: u64) -> Result<()> {
-        let duration_us = compute_aac_duration_us(frame.sample_rate);
-        self.moqt
-            .update_audio_catalog(&self.namespace, frame.sample_rate, frame.channels)
-            .await?;
-        self.setup_namespace().await?;
-
-        let rotate_group = self.rotate_audio_group(duration_us);
-        let payload =
-            pack_audio_chunk_payload(&frame, timestamp_us, Some(duration_us), current_time_ms());
-        self.send("audio", rotate_group, &payload).await
+    pub async fn push(&mut self, event: &MediaEvent) -> Result<()> {
+        match event {
+            MediaEvent::Streams(_) => Ok(()),
+            MediaEvent::VideoConfig(config) => {
+                self.moqt
+                    .update_video_catalog(&self.namespace, Some(&config.codec_string()))
+                    .await?;
+                self.video_config = Some(config.clone());
+                Ok(())
+            }
+            MediaEvent::AudioConfig(config) => {
+                self.moqt
+                    .update_audio_catalog(
+                        &self.namespace,
+                        config.sample_rate,
+                        config.channel_count(),
+                    )
+                    .await?;
+                self.audio_config = Some(config.clone());
+                Ok(())
+            }
+            MediaEvent::Video(sample) => self.publish_video(sample).await,
+            MediaEvent::Audio(sample) => self.publish_audio(sample).await,
+        }
     }
 
-    pub async fn publish_video(&mut self, frame: VideoFrame, timestamp_us: u64) -> Result<()> {
-        if let Some(codec) = frame.codec.as_deref() {
-            self.moqt
-                .update_video_catalog(&self.namespace, Some(codec))
-                .await?;
-        }
+    async fn publish_video(&mut self, sample: &VideoSample) -> Result<()> {
         self.setup_namespace().await?;
-
+        let codec = self
+            .video_config
+            .as_ref()
+            .filter(|_| sample.is_keyframe)
+            .map(|config| config.codec_string());
         let payload = pack_video_chunk_payload(
-            frame.is_key,
-            timestamp_us,
+            sample.is_keyframe,
+            sample.pts.micros(),
             current_time_ms(),
-            &frame.data,
-            frame.codec.as_deref(),
+            &sample.data,
+            codec.as_deref(),
             None,
         );
-        self.send("video", frame.is_key, &payload).await
+        self.send(VIDEO_TRACK, sample.is_keyframe, &payload).await
+    }
+
+    async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
+        let config = self
+            .audio_config
+            .clone()
+            .context("audio sample received before its AudioSpecificConfig")?;
+        self.setup_namespace().await?;
+        let duration_us = config.frame_duration().micros();
+        let rotate_group = self.rotate_audio_group(duration_us);
+        let payload = pack_audio_chunk_payload(
+            &sample.data,
+            &config,
+            sample.pts.micros(),
+            duration_us,
+            current_time_ms(),
+        );
+        self.send(AUDIO_TRACK, rotate_group, &payload).await
     }
 
     async fn setup_namespace(&mut self) -> Result<()> {

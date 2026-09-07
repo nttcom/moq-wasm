@@ -1,12 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 
 use anyhow::Result;
+use bytes::Bytes;
+use mediapack::{
+    MediaEvent, Timestamp,
+    flv::{self, Tag, TagType},
+};
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use crate::{
-    audio::AacState, ingest::flv::FlvRecorder, moqt::MoqtManager, publisher::MediaPublisher,
-    video::AvcState,
-};
+use crate::{ingest::flv::FlvRecorder, moqt::MoqtManager, publisher::MediaPublisher};
 
 #[derive(Default)]
 pub struct RtmpCounters {
@@ -18,9 +20,12 @@ pub struct RtmpState {
     pub counters: RtmpCounters,
     pub recorder: Option<FlvRecorder>,
     pub moqt: MoqtManager,
-    pub video_states: HashMap<(String, String), AvcState>,
-    pub audio_states: HashMap<(String, String), AacState>,
-    pub publishers: HashMap<String, MediaPublisher>,
+    pub streams: HashMap<String, RtmpStream>,
+}
+
+pub struct RtmpStream {
+    demuxer: flv::Demuxer,
+    publisher: MediaPublisher,
 }
 
 impl RtmpState {
@@ -29,9 +34,7 @@ impl RtmpState {
             counters: RtmpCounters::default(),
             recorder: None,
             moqt,
-            video_states: HashMap::new(),
-            audio_states: HashMap::new(),
-            publishers: HashMap::new(),
+            streams: HashMap::new(),
         }
     }
 }
@@ -79,9 +82,7 @@ pub async fn handle_event(
             println!("[rtmp {label}] publish finished app={app_name} stream={stream_key}");
             let (namespace_path, _cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
-            let audio_key = (namespace_path.clone(), "audio".to_string());
-            state.audio_states.remove(&audio_key);
-            state.publishers.remove(&namespace_path);
+            state.streams.remove(&namespace_path);
         }
         ServerSessionEvent::StreamMetadataChanged {
             app_name,
@@ -96,14 +97,10 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
-            let (namespace_path, _stream_key) = split_namespace_and_key(&app_name, &stream_key);
-            let namespace_vec: Vec<String> =
-                namespace_path.split('/').map(|s| s.to_string()).collect();
-            let track_name = "audio".to_string();
             state.counters.audio += 1;
             if state.counters.audio == 1 || state.counters.audio.is_multiple_of(1000) {
                 println!(
-                    "[rtmp {label}] audio packets={} app={app_name} track={track_name}",
+                    "[rtmp {label}] audio packets={} app={app_name}",
                     state.counters.audio
                 );
             }
@@ -112,25 +109,12 @@ pub async fn handle_event(
             {
                 eprintln!("[rtmp {label}] write_audio failed: {err:?}");
             }
-            let key = (namespace_path.clone(), track_name.clone());
-            let audio_state = state.audio_states.entry(key).or_default();
-            let frame = match audio_state.handle_flv_audio(data.as_ref()) {
-                Ok(f) => f,
-                Err(err) => {
-                    eprintln!("[rtmp {label}] aac parse failed: {err:?}");
-                    None
-                }
+            let tag = Tag {
+                tag_type: TagType::Audio,
+                timestamp: Timestamp::from_millis(timestamp.value as u64),
+                data: Bytes::copy_from_slice(&data),
             };
-            if let Some(frame) = frame {
-                let timestamp_us = timestamp.value as u64 * 1_000;
-                let publisher = state
-                    .publishers
-                    .entry(namespace_path)
-                    .or_insert_with(|| MediaPublisher::new(state.moqt.clone(), namespace_vec));
-                if let Err(err) = publisher.publish_audio(frame, timestamp_us).await {
-                    eprintln!("[rtmp {label}] moqt send audio failed: {err:?}");
-                }
-            }
+            handle_media_tag(state, label, &app_name, &stream_key, &tag).await;
         }
         ServerSessionEvent::VideoDataReceived {
             app_name,
@@ -138,14 +122,10 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
-            let (namespace_path, _stream_key) = split_namespace_and_key(&app_name, &stream_key);
-            let namespace_vec: Vec<String> =
-                namespace_path.split('/').map(|s| s.to_string()).collect();
-            let track_name = "video".to_string();
             state.counters.video += 1;
             if state.counters.video == 1 || state.counters.video.is_multiple_of(1000) {
                 println!(
-                    "[rtmp {label}] video packets={} app={app_name} track={track_name}",
+                    "[rtmp {label}] video packets={} app={app_name}",
                     state.counters.video
                 );
             }
@@ -154,43 +134,12 @@ pub async fn handle_event(
             {
                 eprintln!("[rtmp {label}] write_video failed: {err:?}");
             }
-            let namespace = namespace_vec.as_slice();
-            let key = (namespace_path.clone(), track_name.clone());
-            let frame = match state
-                .video_states
-                .entry(key)
-                .or_default()
-                .handle_flv_video(data.as_ref())
-            {
-                Ok(f) => f,
-                Err(err) => {
-                    eprintln!("[rtmp {label}] h264 parse failed: {err:?}");
-                    None
-                }
+            let tag = Tag {
+                tag_type: TagType::Video,
+                timestamp: Timestamp::from_millis(timestamp.value as u64),
+                data: Bytes::copy_from_slice(&data),
             };
-            if let Some(frame) = frame {
-                let timestamp_us = timestamp.value as u64 * 1_000;
-                if frame.is_key {
-                    if let Some(codec) = frame.codec.as_deref() {
-                        println!(
-                            "[rtmp {label}] detected video codec from SPS: {codec} ns={:?} track={}",
-                            namespace, track_name
-                        );
-                    } else {
-                        println!(
-                            "[rtmp {label}] video codec from SPS unavailable ns={:?} track={}",
-                            namespace, track_name
-                        );
-                    }
-                }
-                let publisher = state
-                    .publishers
-                    .entry(namespace_path)
-                    .or_insert_with(|| MediaPublisher::new(state.moqt.clone(), namespace_vec));
-                if let Err(err) = publisher.publish_video(frame, timestamp_us).await {
-                    eprintln!("[rtmp {label}] moqt send video failed: {err:?}");
-                }
-            }
+            handle_media_tag(state, label, &app_name, &stream_key, &tag).await;
         }
         ServerSessionEvent::PlayStreamRequested { request_id, .. } => {
             queue.extend(session.reject_request(
@@ -205,6 +154,44 @@ pub async fn handle_event(
     }
 
     Ok(())
+}
+
+async fn handle_media_tag(
+    state: &mut RtmpState,
+    label: &str,
+    app_name: &str,
+    stream_key: &str,
+    tag: &Tag,
+) {
+    let (namespace_path, _stream_key) = split_namespace_and_key(app_name, stream_key);
+    let stream = state
+        .streams
+        .entry(namespace_path.clone())
+        .or_insert_with(|| RtmpStream {
+            demuxer: flv::Demuxer::new(),
+            publisher: MediaPublisher::new(
+                state.moqt.clone(),
+                namespace_path.split('/').map(str::to_owned).collect(),
+            ),
+        });
+    let events = match stream.demuxer.push_tag(tag) {
+        Ok(events) => events,
+        Err(err) => {
+            eprintln!("[rtmp {label}] flv parse failed: {err:?}");
+            return;
+        }
+    };
+    for event in &events {
+        if let MediaEvent::VideoConfig(config) = event {
+            println!(
+                "[rtmp {label}] detected video codec: {} ns={namespace_path}",
+                config.codec_string()
+            );
+        }
+        if let Err(err) = stream.publisher.push(event).await {
+            eprintln!("[rtmp {label}] moqt publish failed: {err:?}");
+        }
+    }
 }
 
 fn split_namespace_and_key(app_name: &str, stream_key: &str) -> (String, String) {
