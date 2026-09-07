@@ -9,7 +9,10 @@ use crate::modules::{
     core::{data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver},
     relay::{
         cache::{cached_object::CachedObject, store::TrackCacheStore, track_cache::LiveSubgroup},
-        notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
+        notifications::{
+            subgroup_opened::SubgroupOpened,
+            subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
+        },
         types::SubgroupKey,
     },
     session_event::SessionEvent,
@@ -38,7 +41,7 @@ impl DatagramReader {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<DatagramReceiveCommand>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
@@ -62,7 +65,7 @@ impl DatagramReader {
                                 stop_senders.insert(track_key.clone(), (stop_sender, publisher_session_id));
 
                                 let cache_store = cache_store.clone();
-                                let sender_map = object_notify_producer_map.clone();
+                                let sender_map = subgroup_opened_notifier_map.clone();
                                 let session_event_sender = session_event_sender.clone();
                                 joinset.spawn(async move {
                                     Self::read_loop(
@@ -114,12 +117,12 @@ impl DatagramReader {
         mut receiver: Box<dyn DatagramReceiver>,
         mut stop_receiver: watch::Receiver<bool>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
         let cache = cache_store.get_or_create(&track_key);
         cache.begin_live_ingest();
-        let notify = object_notify_producer_map.get_or_create(&track_key);
+        let notify = subgroup_opened_notifier_map.get_or_create(&track_key);
         let mut current_group: Option<(u64, LiveSubgroup<'_>)> = None;
         loop {
             let receive_result = tokio::select! {
@@ -142,7 +145,7 @@ impl DatagramReader {
                         slot => {
                             let key = SubgroupKey::Datagram { group_id };
                             let (_, live) = slot.insert((group_id, cache.open_live_subgroup(key)));
-                            let _ = notify.send(TrackEvent::SubgroupOpened(key));
+                            let _ = notify.send(SubgroupOpened(key));
                             live
                         }
                     };

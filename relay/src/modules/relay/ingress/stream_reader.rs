@@ -15,7 +15,10 @@ use crate::modules::{
             store::TrackCacheStore,
             track_cache::{LiveSubgroup, TrackCache},
         },
-        notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
+        notifications::{
+            subgroup_opened::SubgroupOpened,
+            subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
+        },
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
@@ -52,7 +55,7 @@ impl StreamReader {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<StreamOpened>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
@@ -74,7 +77,7 @@ impl StreamReader {
                             cmd.receiver,
                             cmd.stop_receiver,
                             cache_store.clone(),
-                            object_notify_producer_map.clone(),
+                            subgroup_opened_notifier_map.clone(),
                             session_event_sender.clone(),
                         ).instrument(span));
                     }
@@ -96,12 +99,12 @@ impl StreamReader {
         mut receiver: Box<dyn StreamReceiver>,
         mut stop_receiver: watch::Receiver<bool>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
         let span = Span::current();
         let cache = cache_store.get_or_create(&track_key);
-        let notify = object_notify_producer_map.get_or_create(&track_key);
+        let notify = subgroup_opened_notifier_map.get_or_create(&track_key);
         let mut header: Option<ReceivedHeader> = None;
         let mut ingest: Option<SubgroupIngest<'_>> = None;
         loop {
@@ -235,13 +238,13 @@ impl StreamReader {
 
     fn open_subgroup<'a>(
         cache: &'a TrackCache,
-        notify: &broadcast::Sender<TrackEvent>,
+        notify: &broadcast::Sender<SubgroupOpened>,
         span: &Span,
         stream: SubgroupStream,
     ) -> SubgroupIngest<'a> {
         span.record("subgroup_id", stream.subgroup_id);
         let live = cache.open_live_subgroup(stream.key());
-        let _ = notify.send(TrackEvent::SubgroupOpened(stream.key()));
+        let _ = notify.send(SubgroupOpened(stream.key()));
         SubgroupIngest {
             stream,
             live,
@@ -332,10 +335,10 @@ mod tests {
     struct TestEnv {
         track_key: TrackKey,
         cache_store: Arc<TrackCacheStore>,
-        notify_map: Arc<ObjectNotifyProducerMap>,
+        notify_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
         _session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
-        event_receiver: tokio::sync::broadcast::Receiver<TrackEvent>,
+        event_receiver: tokio::sync::broadcast::Receiver<SubgroupOpened>,
         stop_sender: watch::Sender<bool>,
         stop_receiver: watch::Receiver<bool>,
     }
@@ -344,7 +347,7 @@ mod tests {
         fn new() -> Self {
             let track_key = TrackKey::new("ns", "track");
             let cache_store = Arc::new(TrackCacheStore::new());
-            let notify_map = Arc::new(ObjectNotifyProducerMap::new());
+            let notify_map = Arc::new(SubgroupOpenedNotifierMap::new());
             let event_receiver = notify_map.get_or_create(&track_key).subscribe();
             let (stop_sender, stop_receiver) = watch::channel(false);
             let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
@@ -427,7 +430,7 @@ mod tests {
         // Assert
         assert!(matches!(
             env.event_receiver.try_recv(),
-            Ok(TrackEvent::SubgroupOpened(key)) if key == stream_key(0)
+            Ok(SubgroupOpened(key)) if key == stream_key(0)
         ));
         assert_eq!(
             env.cached_object_ids(stream_key(0)).await,
@@ -445,7 +448,7 @@ mod tests {
         // Assert
         assert!(matches!(
             env.event_receiver.try_recv(),
-            Ok(TrackEvent::SubgroupOpened(key)) if key == stream_key(0)
+            Ok(SubgroupOpened(key)) if key == stream_key(0)
         ));
         env.assert_subgroup_closed_after(stream_key(0), 0).await;
     }
@@ -572,7 +575,7 @@ mod tests {
         };
         assert!(matches!(
             env.event_receiver.try_recv(),
-            Ok(TrackEvent::SubgroupOpened(opened)) if opened == key
+            Ok(SubgroupOpened(opened)) if opened == key
         ));
         let ids: Vec<u64> = env
             .cached_object_ids(key)

@@ -26,7 +26,7 @@ optionally cascades across relays via a Redis-backed route registry.
 `RelayServer` (in `relay_server/`) wires three long-lived pieces:
 
 - `SessionRepository` (shared `Arc<Mutex<_>>`).
-- `RelayStore` — `TrackCacheStore` + `ObjectNotifyProducerMap`, the shared
+- `RelayStore` — `TrackCacheStore` + `SubgroupOpenedNotifierMap`, the shared
   data-plane state.
 - `RelayRuntime` — constructs `InterRelayConnectionManager`,
   `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
@@ -136,7 +136,7 @@ from `TrackCache` over a new uni stream.
 
 ### Shared state (`RelayStore`)
 - `TrackCacheStore` — `DashMap<TrackKey, Arc<TrackCache>>`.
-- `ObjectNotifyProducerMap` — `DashMap<TrackKey, broadcast::Sender<TrackEvent>>`
+- `SubgroupOpenedNotifierMap` — `DashMap<TrackKey, broadcast::Sender<SubgroupOpened>>`
   (capacity 256); ingress announces `SubgroupOpened(SubgroupKey)` when a live
   subgroup stream (or datagram group) starts, egress schedulers listen.
 

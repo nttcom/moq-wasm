@@ -10,7 +10,7 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         egress::runner::EgressRunner,
         ingress::stream_reader::{StreamOpened, StreamReader},
-        notifications::track_notifier::ObjectNotifyProducerMap,
+        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
@@ -36,7 +36,7 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 pub(crate) struct RelayHarness {
     track_key: TrackKey,
     cache_store: Arc<TrackCacheStore>,
-    notify_map: Arc<ObjectNotifyProducerMap>,
+    notify_map: Arc<SubgroupOpenedNotifierMap>,
     opened_sender: mpsc::Sender<StreamOpened>,
     session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     _stream_reader: StreamReader,
@@ -84,7 +84,7 @@ impl RelayHarness {
     pub(crate) fn new() -> Self {
         let track_key = TrackKey::new("ns", "track");
         let cache_store = Arc::new(TrackCacheStore::new());
-        let notify_map = Arc::new(ObjectNotifyProducerMap::new());
+        let notify_map = Arc::new(SubgroupOpenedNotifierMap::new());
         let (opened_sender, opened_receiver) = mpsc::channel(16);
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         let stream_reader = StreamReader::run(

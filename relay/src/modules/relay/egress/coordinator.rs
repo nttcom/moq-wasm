@@ -12,7 +12,7 @@ use crate::modules::{
     relay::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::runner::EgressRunner,
-        notifications::track_notifier::ObjectNotifyProducerMap,
+        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -59,7 +59,7 @@ impl EgressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -82,7 +82,7 @@ impl EgressCoordinator {
                         if let Some(handle) = Self::spawn_runner(
                             session_repo.clone(),
                             cache_store.clone(),
-                            object_notify_producer_map.clone(),
+                            subgroup_opened_notifier_map.clone(),
                             request,
                         )
                         .await
@@ -186,7 +186,7 @@ impl EgressCoordinator {
     async fn spawn_runner(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         request: EgressStartRequest,
     ) -> Option<JoinHandle<()>> {
         let publisher = session_repo
@@ -202,7 +202,7 @@ impl EgressCoordinator {
         };
 
         let cache = cache_store.get_or_create(&request.track_key);
-        let latest_info_sender = object_notify_producer_map.get_or_create(&request.track_key);
+        let subgroup_opened_sender = subgroup_opened_notifier_map.get_or_create(&request.track_key);
         let track_alias = request.downstream_subscription.track_alias();
         let egress_track_span = tracing::info_span!(
             parent: &request.parent_span,
@@ -218,7 +218,7 @@ impl EgressCoordinator {
         let runner = EgressRunner::new(
             request.track_key,
             cache,
-            latest_info_sender,
+            subgroup_opened_sender,
             publisher,
             request.downstream_subscription.clone(),
             request.ready_sender,
