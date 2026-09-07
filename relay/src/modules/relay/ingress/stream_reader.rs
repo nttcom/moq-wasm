@@ -13,7 +13,7 @@ use crate::modules::{
         cache::{
             cached_object::{CachedObject, SubgroupHeaderFields},
             store::TrackCacheStore,
-            track_cache::{LiveSubgroup, TrackCache},
+            track_cache::{OpenSubgroupGuard, TrackCache},
         },
         notifications::{
             subgroup_opened::SubgroupOpened,
@@ -47,7 +47,7 @@ struct ReceivedHeader {
 
 struct SubgroupIngest<'a> {
     header: SubgroupHeaderFields,
-    live: LiveSubgroup<'a>,
+    open: OpenSubgroupGuard<'a>,
 }
 
 impl StreamReader {
@@ -182,7 +182,7 @@ impl StreamReader {
                             return;
                         }
                     };
-                    if ingest.live.insert(object).is_err() {
+                    if ingest.open.insert(object).is_err() {
                         span.record("end_reason", "malformed_track");
                         tracing::warn!(
                             %track_key,
@@ -215,7 +215,7 @@ impl StreamReader {
                     {
                         let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
                         let _ = ingest
-                            .live
+                            .open
                             .insert(CachedObject::end_of_group(&ingest.header, end_of_group_id));
                     }
                     tracing::debug!(%track_key, "stream finished");
@@ -246,9 +246,9 @@ impl StreamReader {
         header: SubgroupHeaderFields,
     ) -> SubgroupIngest<'a> {
         span.record("subgroup_id", header.subgroup_id);
-        let live = cache.open_live_subgroup(header.key());
+        let open = cache.open_subgroup(header.key());
         let _ = notify.send(SubgroupOpened(header.key()));
-        SubgroupIngest { header, live }
+        SubgroupIngest { header, open }
     }
 }
 

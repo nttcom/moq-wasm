@@ -60,7 +60,7 @@ impl TrackCacheStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::insert_closed_live_group;
+    use crate::modules::relay::tests::harness::fixtures::cached_object::insert_closed_group;
     use std::time::Duration;
 
     #[tokio::test(start_paused = true)]
@@ -82,7 +82,7 @@ mod tests {
         let ttl = Duration::from_secs(30);
         let store = TrackCacheStore::new();
         let key = TrackKey::new("ns", "track");
-        insert_closed_live_group(&store.get_or_create(&key), 0, &[0]);
+        insert_closed_group(&store.get_or_create(&key), 0, &[0]);
 
         // Act / Assert: within the TTL the track must survive to serve FETCH.
         tokio::time::advance(Duration::from_secs(1)).await;

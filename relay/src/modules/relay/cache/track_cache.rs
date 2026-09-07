@@ -30,10 +30,10 @@ fn after(at: moqt::Location) -> moqt::Location {
 
 mod fetch;
 mod ledger;
-mod live;
+mod open_subgroup;
 
 use ledger::Ledger;
-pub(crate) use live::LiveSubgroup;
+pub(crate) use open_subgroup::OpenSubgroupGuard;
 
 pub(crate) use fetch::FetchRangeResolution;
 
@@ -209,7 +209,7 @@ mod tests {
 
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        datagram_object, insert_closed_live_group, open_live_group, stream_key, stream_object,
+        datagram_object, insert_closed_group, open_group, stream_key, stream_object,
         stream_object_in_subgroup, stream_object_with_payload,
     };
 
@@ -319,8 +319,8 @@ mod tests {
     fn largest_location_is_the_highest_object_of_the_highest_group() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 5]);
-        insert_closed_live_group(&cache, 2, &[0, 3]);
+        insert_closed_group(&cache, 0, &[0, 5]);
+        insert_closed_group(&cache, 2, &[0, 3]);
         let _ = cache.insert_live(datagram_object(2, 4));
         // Act / Assert: datagram objects count too
         assert_eq!(cache.largest_location(), Some(location(2, 4)));
@@ -331,7 +331,7 @@ mod tests {
         // Arrange
         let cache = TrackCache::new();
         let _ = cache.insert(stream_object_in_subgroup(0, 1, 0));
-        let _open = cache.open_live_subgroup(SubgroupKey::Datagram { group_id: 0 });
+        let _open = cache.open_subgroup(SubgroupKey::Datagram { group_id: 0 });
         // Act / Assert
         assert_eq!(
             cache.subgroups_in_group(0),
@@ -428,7 +428,7 @@ mod tests {
         // is what keeps egress waiters alive
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _live = open_live_group(&cache, 0, &[0]);
+        let _open = open_group(&cache, 0, &[0]);
         // Act
         tokio::time::advance(Duration::from_secs(100)).await;
         cache.evict(ttl);

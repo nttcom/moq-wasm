@@ -8,7 +8,9 @@ use tokio::{
 use crate::modules::{
     core::{data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver},
     relay::{
-        cache::{cached_object::CachedObject, store::TrackCacheStore, track_cache::LiveSubgroup},
+        cache::{
+            cached_object::CachedObject, store::TrackCacheStore, track_cache::OpenSubgroupGuard,
+        },
         notifications::{
             subgroup_opened::SubgroupOpened,
             subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
@@ -123,7 +125,7 @@ impl DatagramReader {
         let cache = cache_store.get_or_create(&track_key);
         cache.begin_live_ingest();
         let notify = subgroup_opened_notifier_map.get_or_create(&track_key);
-        let mut current_group: Option<(u64, LiveSubgroup<'_>)> = None;
+        let mut current_group: Option<(u64, OpenSubgroupGuard<'_>)> = None;
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
@@ -140,17 +142,17 @@ impl DatagramReader {
                         continue;
                     };
                     let group_id = datagram.group_id;
-                    let live = match &mut current_group {
-                        Some((current_group_id, live)) if *current_group_id == group_id => live,
+                    let open = match &mut current_group {
+                        Some((current_group_id, open)) if *current_group_id == group_id => open,
                         slot => {
                             let key = SubgroupKey::Datagram { group_id };
-                            let (_, live) = slot.insert((group_id, cache.open_live_subgroup(key)));
+                            let (_, open) = slot.insert((group_id, cache.open_subgroup(key)));
                             let _ = notify.send(SubgroupOpened(key));
-                            live
+                            open
                         }
                     };
                     let object_id = datagram.field.resolve_object_id();
-                    if live
+                    if open
                         .insert(CachedObject::from_datagram(object_id, datagram))
                         .is_err()
                     {

@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_status_object_does_not_close_live_subgroup() {
+    async fn fetch_status_object_does_not_close_subgroup() {
         // Arrange: a FETCH response can contain EndOfGroup status, but that
         // must not close the shared live GroupCache.
         let cache = Arc::new(TrackCache::new());

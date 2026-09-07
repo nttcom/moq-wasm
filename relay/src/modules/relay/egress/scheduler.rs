@@ -220,7 +220,7 @@ impl EgressScheduler {
 mod tests {
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        insert_closed_live_group, stream_key,
+        insert_closed_group, stream_key,
     };
 
     struct RunningScheduler {
@@ -277,7 +277,7 @@ mod tests {
     async fn largest_object_filter_starts_after_largest_for_stream() {
         // Arrange: object 0 of group 0 is the Largest Object at subscribe time
         let cache = Arc::new(TrackCache::new());
-        insert_closed_live_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 0, &[0]);
         // Act
         let mut scheduler =
             start_scheduler(cache, FilterType::LargestObject, Some(location(0, 0))).await;
@@ -305,7 +305,7 @@ mod tests {
         // Arrange: groups 0..=2 are cached and group 2 holds the Largest Object
         let cache = Arc::new(TrackCache::new());
         for group_id in 0..3 {
-            insert_closed_live_group(&cache, group_id, &[0]);
+            insert_closed_group(&cache, group_id, &[0]);
         }
         // Act
         let mut scheduler = start_scheduler(
@@ -366,7 +366,7 @@ mod tests {
     async fn new_upstream_largest_object_without_content_starts_from_first_object() {
         // Arrange: the cache already holds object 0, but SUBSCRIBE_OK reported no content
         let cache = Arc::new(TrackCache::new());
-        insert_closed_live_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 0, &[0]);
         // Act
         let mut scheduler = start_scheduler(cache, FilterType::LargestObject, None).await;
         // Assert
@@ -388,7 +388,7 @@ mod tests {
     async fn new_upstream_largest_object_with_content_starts_after_subscribe_ok_location() {
         // Arrange
         let cache = Arc::new(TrackCache::new());
-        insert_closed_live_group(&cache, 0, &[0, 1]);
+        insert_closed_group(&cache, 0, &[0, 1]);
         // Act
         let mut scheduler =
             start_scheduler(cache, FilterType::LargestObject, Some(location(0, 0))).await;

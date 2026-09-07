@@ -578,9 +578,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         enums::ContentExists,
-        relay::tests::harness::fixtures::cached_object::{
-            insert_closed_live_group, open_live_group,
-        },
+        relay::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{
@@ -714,7 +712,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let _live_g0 = open_live_group(&cache, 0, &[0, 2]);
+        let _open_g0 = open_group(&cache, 0, &[0, 2]);
         let start = moqt::Location {
             group_id: 0,
             object_id: 0,
@@ -739,7 +737,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let _live_g1 = open_live_group(&cache, 1, &[0, 1]);
+        let _open_g1 = open_group(&cache, 1, &[0, 1]);
         let start = moqt::Location {
             group_id: 0,
             object_id: 0,
@@ -772,7 +770,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let _live_g0 = open_live_group(&cache, 0, &[0, 1, 2]);
+        let _open_g0 = open_group(&cache, 0, &[0, 1, 2]);
         let start = moqt::Location {
             group_id: 0,
             object_id: 0,
@@ -810,7 +808,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let _live_g0 = open_live_group(&cache, 0, &[0]);
+        let _open_g0 = open_group(&cache, 0, &[0]);
         cache.begin_live_ingest();
         let result = resolve_target_and_source(
             2,
@@ -836,9 +834,9 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let _live_g0 = open_live_group(&cache, 0, &[0]);
-        insert_closed_live_group(&cache, 1, &[]);
-        let _live_g2 = open_live_group(&cache, 2, &[0]);
+        let _open_g0 = open_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 1, &[]);
+        let _open_g2 = open_group(&cache, 2, &[0]);
 
         let result = resolve_target_and_source(
             2,
@@ -864,7 +862,7 @@ mod tests {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let _live_g1 = open_live_group(&cache, 1, &[2, 3]);
+        let _open_g1 = open_group(&cache, 1, &[2, 3]);
         let start = moqt::Location {
             group_id: 1,
             object_id: 2,
@@ -950,7 +948,7 @@ mod tests {
                 object_id: 1,
             }),
         );
-        let _live_g1 = open_live_group(&cache, 1, &[0, 1]);
+        let _open_g1 = open_group(&cache, 1, &[0, 1]);
 
         let (target, source) = resolve_target_and_source(
             2,

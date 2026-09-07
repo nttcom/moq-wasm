@@ -597,7 +597,7 @@ mod tests {
     };
     use crate::modules::inter_relay::InterRelayConnectionManager;
     use crate::modules::relay::cache::track_cache::TrackCache;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::insert_closed_live_group;
+    use crate::modules::relay::tests::harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::route_registry::NoopRelayRouteRegistry;
     use crate::modules::sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
@@ -605,7 +605,7 @@ mod tests {
     use crate::modules::session_repository::SessionRepository;
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
-        insert_closed_live_group(cache, group_id, &[0]);
+        insert_closed_group(cache, group_id, &[0]);
     }
 
     #[test]

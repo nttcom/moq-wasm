@@ -5,7 +5,7 @@ use tokio::time::Instant;
 use crate::modules::relay::{
     cache::{
         cached_object::{CachedObject, ForwardingPreference, SubgroupHeaderFields},
-        track_cache::{LiveSubgroup, TrackCache},
+        track_cache::{OpenSubgroupGuard, TrackCache},
     },
     types::SubgroupKey,
 };
@@ -75,18 +75,18 @@ pub(crate) fn datagram_object(group_id: u64, object_id: u64) -> CachedObject {
 
 /// Opens subgroup 0 of `group_id` as live ingest, inserts the objects, and
 /// hands back the open subgroup so the caller decides when it closes.
-pub(crate) fn open_live_group<'a>(
+pub(crate) fn open_group<'a>(
     cache: &'a TrackCache,
     group_id: u64,
     object_ids: &[u64],
-) -> LiveSubgroup<'a> {
-    let live = cache.open_live_subgroup(stream_key(group_id));
+) -> OpenSubgroupGuard<'a> {
+    let open = cache.open_subgroup(stream_key(group_id));
     for &object_id in object_ids {
-        let _ = live.insert(stream_object(group_id, object_id));
+        let _ = open.insert(stream_object(group_id, object_id));
     }
-    live
+    open
 }
 
-pub(crate) fn insert_closed_live_group(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
-    drop(open_live_group(cache, group_id, object_ids));
+pub(crate) fn insert_closed_group(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
+    drop(open_group(cache, group_id, object_ids));
 }

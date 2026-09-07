@@ -153,7 +153,7 @@ from `TrackCache` over a new uni stream.
 - Readers convert every wire object into a canonical `CachedObject` and insert
   it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
   group id, subgroup id and priority as the per-stream context, opens the
-  subgroup in the cache (`open_live_subgroup`, an RAII guard whose drop closes
+  subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard` whose drop closes
   it on FIN, stop, error or abort) and broadcasts `SubgroupOpened`. Header
   types without an explicit subgroup id map to 0, or to the first object's id
   (Type 0x12/0x13/0x1A/0x1B, opened once that object arrives). For End-of-Group

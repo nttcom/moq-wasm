@@ -177,7 +177,7 @@ mod tests {
     use super::*;
     use crate::modules::relay::{
         tests::harness::fixtures::cached_object::{
-            datagram_object, insert_closed_live_group, open_live_group, status_object, stream_key,
+            datagram_object, insert_closed_group, open_group, status_object, stream_key,
             stream_object, stream_object_in_subgroup,
         },
         types::SubgroupKey,
@@ -214,7 +214,7 @@ mod tests {
     fn resolve_fetch_range_accepts_explicit_range() {
         // Arrange: group 0 has exactly the requested object coverage
         let cache = TrackCache::new();
-        let _live = open_live_group(&cache, 0, &[0, 1, 2]);
+        let _open = open_group(&cache, 0, &[0, 1, 2]);
         // Act / Assert
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(0, 3)),
@@ -228,7 +228,7 @@ mod tests {
     fn resolve_fetch_range_accepts_gapped_objects_with_known_coverage() {
         // Arrange: object 1 is not cached, but cache coverage starts before it
         let cache = TrackCache::new();
-        let _live = open_live_group(&cache, 0, &[0, 2]);
+        let _open = open_group(&cache, 0, &[0, 2]);
         // Act / Assert: coverage, not local object-id contiguity, decides servability
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(0, 3)),
@@ -242,8 +242,8 @@ mod tests {
     fn resolve_fetch_range_rejects_missing_group() {
         // Arrange: group 1 is absent between cached group 0 and requested group 2
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0]);
-        let _live = open_live_group(&cache, 2, &[0]);
+        insert_closed_group(&cache, 0, &[0]);
+        let _open = open_group(&cache, 2, &[0]);
         // Act / Assert: local FIN would imply group 1 has no objects
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(2, 1)),
@@ -255,7 +255,7 @@ mod tests {
     fn resolve_fetch_range_clamps_entire_open_largest_group() {
         // Arrange: end.object_id == 0 requests the full group, but it is still open
         let cache = TrackCache::new();
-        let _live = open_live_group(&cache, 0, &[0, 1, 2]);
+        let _open = open_group(&cache, 0, &[0, 1, 2]);
         // Act / Assert: unpublished tail objects are not fetched; End Location is largest + 1
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(0, 0)),
@@ -269,7 +269,7 @@ mod tests {
     fn resolve_fetch_range_accepts_entire_closed_group() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 1, 2]);
+        insert_closed_group(&cache, 0, &[0, 1, 2]);
         // Act / Assert
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(0, 0)),
@@ -283,9 +283,9 @@ mod tests {
     fn resolve_fetch_range_returns_no_objects_for_a_known_empty_group() {
         // Arrange: group 1 opened and closed without objects between two live groups
         let cache = TrackCache::new();
-        let _g0 = open_live_group(&cache, 0, &[0]);
-        insert_closed_live_group(&cache, 1, &[]);
-        let _g2 = open_live_group(&cache, 2, &[0]);
+        let _g0 = open_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 1, &[]);
+        let _g2 = open_group(&cache, 2, &[0]);
         // Act / Assert
         assert_eq!(
             cache.resolve_fetch_range(location(1, 0), location(1, 0)),
@@ -299,8 +299,8 @@ mod tests {
         // been processed yet (QUIC gives no cross-stream ordering)
         let cache = TrackCache::new();
         cache.begin_live_ingest();
-        let _g0 = open_live_group(&cache, 0, &[0, 1, 2]);
-        let _g1 = open_live_group(&cache, 1, &[0, 1]);
+        let _g0 = open_group(&cache, 0, &[0, 1, 2]);
+        let _g1 = open_group(&cache, 1, &[0, 1]);
         // Act / Assert: serve and let delivery wait for the pending closes
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(1, 2)),
@@ -314,8 +314,8 @@ mod tests {
     fn resolve_fetch_range_not_covered_for_open_groups_without_live_ingest() {
         // Arrange: same cache state, but no live ingest is running
         let cache = TrackCache::new();
-        let _g0 = open_live_group(&cache, 0, &[0, 1, 2]);
-        let _g1 = open_live_group(&cache, 1, &[0, 1]);
+        let _g0 = open_group(&cache, 0, &[0, 1, 2]);
+        let _g1 = open_group(&cache, 1, &[0, 1]);
         // Act / Assert
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(1, 2)),
@@ -329,10 +329,10 @@ mod tests {
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         cache.begin_live_ingest();
-        let _g0 = open_live_group(&cache, 0, &[0]);
+        let _g0 = open_group(&cache, 0, &[0]);
         tokio::time::advance(Duration::from_secs(11)).await;
         cache.evict(ttl);
-        let _g1 = open_live_group(&cache, 1, &[0]);
+        let _g1 = open_group(&cache, 1, &[0]);
         // Act / Assert: evicted knowledge must not be served as an in-flight wait
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(1, 1)),
@@ -344,7 +344,7 @@ mod tests {
     fn resolve_fetch_range_start_after_largest_depends_on_live_ingest() {
         // Arrange
         let cache = TrackCache::new();
-        let _live = open_live_group(&cache, 0, &[0]);
+        let _open = open_group(&cache, 0, &[0]);
         // Act / Assert: without live ingest the relay forwards upstream instead of asserting invalidity
         assert_eq!(
             cache.resolve_fetch_range(location(0, 1), location(0, 2)),
@@ -369,7 +369,7 @@ mod tests {
     fn resolve_fetch_range_uses_fetch_known_range_before_live_coverage_start() {
         // Arrange: live cache started at g3, then an upstream FETCH filled g0..g2
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 3, &[0]);
         let _ = cache.insert(stream_object(0, 0));
         cache.insert_fetch_known_range(location(0, 0), location(3, 0));
         // Act / Assert
@@ -385,9 +385,9 @@ mod tests {
     fn covers_live_range_from_first_ingested_object_to_open_largest_group() {
         // Arrange: live ingestion started at group 3, groups 3 and 4 closed, group 5 open
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 3, &[0]);
-        insert_closed_live_group(&cache, 4, &[0]);
-        let _g5 = open_live_group(&cache, 5, &[0]);
+        insert_closed_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 4, &[0]);
+        let _g5 = open_group(&cache, 5, &[0]);
         // Act / Assert
         assert!(cache.covers(location(3, 0), location(5, 1)));
         assert!(!cache.covers(location(0, 0), location(5, 1)));
@@ -398,9 +398,9 @@ mod tests {
         // Arrange: upstream FETCH filled groups 0..2, then live ingest reached group 5
         let cache = TrackCache::new();
         cache.insert_fetch_known_range(location(0, 0), location(2, 0));
-        insert_closed_live_group(&cache, 3, &[0]);
-        insert_closed_live_group(&cache, 4, &[0]);
-        let _g5 = open_live_group(&cache, 5, &[0]);
+        insert_closed_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 4, &[0]);
+        let _g5 = open_group(&cache, 5, &[0]);
         // Act / Assert
         assert!(cache.covers(location(0, 0), location(5, 1)));
         assert!(!cache.covers(location(0, 0), location(6, 0)));
@@ -410,7 +410,7 @@ mod tests {
     async fn fetch_objects_excludes_end_object() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 1, 2, 3, 4]);
+        insert_closed_group(&cache, 0, &[0, 1, 2, 3, 4]);
         // Act / Assert
         let objects = fetch(&cache, location(0, 0), location(0, 3)).await;
         assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1), (0, 2)]);
@@ -435,7 +435,7 @@ mod tests {
     async fn fetch_objects_end_object_zero_returns_entire_group() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 1, 2, 3, 4]);
+        insert_closed_group(&cache, 0, &[0, 1, 2, 3, 4]);
         // Act / Assert
         let objects = fetch(&cache, location(0, 0), location(0, 0)).await;
         assert_eq!(
@@ -448,7 +448,7 @@ mod tests {
     async fn fetch_objects_filters_range_with_gaps() {
         // Arrange: gapped object_ids 0, 3, 5, 8
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 3, 5, 8]);
+        insert_closed_group(&cache, 0, &[0, 3, 5, 8]);
         // Act / Assert: start 3 inclusive, end 8 exclusive
         let objects = fetch(&cache, location(0, 3), location(0, 8)).await;
         assert_eq!(object_ids(&objects), vec![(0, 3), (0, 5)]);
@@ -458,8 +458,8 @@ mod tests {
     async fn fetch_objects_spans_groups_with_exclusive_end() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 1, 2, 3, 4]);
-        insert_closed_live_group(&cache, 1, &[0, 1, 2, 3, 4]);
+        insert_closed_group(&cache, 0, &[0, 1, 2, 3, 4]);
+        insert_closed_group(&cache, 1, &[0, 1, 2, 3, 4]);
         // Act / Assert
         let objects = fetch(&cache, location(0, 2), location(1, 3)).await;
         assert_eq!(
@@ -472,8 +472,8 @@ mod tests {
     async fn fetch_objects_merges_subgroups_by_object_id() {
         // Arrange: one group split across even and odd object ids
         let cache = TrackCache::new();
-        let even = open_live_group(&cache, 0, &[0, 2, 4]);
-        let odd = cache.open_live_subgroup(SubgroupKey::Stream {
+        let even = open_group(&cache, 0, &[0, 2, 4]);
+        let odd = cache.open_subgroup(SubgroupKey::Stream {
             group_id: 0,
             subgroup_id: 1,
         });
@@ -494,7 +494,7 @@ mod tests {
     async fn fetch_objects_includes_datagram_objects_with_object_id_as_subgroup_id() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 0, &[0]);
         let _ = cache.insert_live(datagram_object(0, 1));
         // Act
         let objects = fetch(&cache, location(0, 0), location(0, 2)).await;
@@ -507,8 +507,8 @@ mod tests {
     async fn fetch_objects_descending_groups_keep_objects_ascending() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_live_group(&cache, 0, &[0, 1]);
-        insert_closed_live_group(&cache, 1, &[0, 1]);
+        insert_closed_group(&cache, 0, &[0, 1]);
+        insert_closed_group(&cache, 1, &[0, 1]);
         // Act
         let objects = cache
             .fetch_objects(location(0, 0), location(1, 2), moqt::GroupOrder::Descending)
@@ -523,8 +523,8 @@ mod tests {
         // Arrange: group 0 is open with no objects yet while group 1 already
         // completed — the cross-stream reordering QUIC allows
         let cache = Arc::new(TrackCache::new());
-        let live_g0 = cache.open_live_subgroup(stream_key(0));
-        insert_closed_live_group(&cache, 1, &[0, 1, 2, 3, 4]);
+        let open_g0 = cache.open_subgroup(stream_key(0));
+        insert_closed_group(&cache, 1, &[0, 1, 2, 3, 4]);
         // Act: fetch [{0,0}, {1,3}) while group 0's objects have not arrived yet
         let fetch = tokio::spawn({
             let cache = cache.clone();
@@ -536,9 +536,9 @@ mod tests {
         });
         tokio::task::yield_now().await;
         for object_id in 0..3 {
-            let _ = live_g0.insert(stream_object(0, object_id));
+            let _ = open_g0.insert(stream_object(0, object_id));
         }
-        drop(live_g0);
+        drop(open_g0);
         // Assert: the late group 0 objects are delivered, not silently dropped
         let objects = tokio::time::timeout(Duration::from_secs(5), fetch)
             .await
@@ -555,7 +555,7 @@ mod tests {
     async fn fetch_objects_aborts_when_track_goes_malformed() {
         // Arrange: a live group whose tail the fetch will wait for
         let cache = Arc::new(TrackCache::new());
-        let live = open_live_group(&cache, 0, &[0]);
+        let open = open_group(&cache, 0, &[0]);
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
@@ -566,7 +566,7 @@ mod tests {
         });
         tokio::task::yield_now().await;
         // Act: a conflicting duplicate latches the track mid-wait
-        let outcome = live.insert(stream_object_in_subgroup(0, 1, 0));
+        let outcome = open.insert(stream_object_in_subgroup(0, 1, 0));
         assert_eq!(outcome, Err(TrackMalformed));
         // Assert
         let result = tokio::time::timeout(Duration::from_secs(5), fetch)
