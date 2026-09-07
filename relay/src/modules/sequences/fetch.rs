@@ -708,7 +708,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_source_is_cache_for_known_gapped_object_ids() {
+    async fn fetch_source_is_upstream_across_a_skipped_object_id() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -729,7 +729,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(matches!(source, FetchSource::Cache(_)));
+        assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
     #[tokio::test]
