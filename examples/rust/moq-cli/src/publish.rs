@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use moqt::PublishOption;
+use moqt::{PublishOption, QUIC, TrackWriter};
 use tokio::io::AsyncReadExt;
 use tracing::info;
 
@@ -8,7 +8,7 @@ use crate::catalog;
 use crate::cli::{Container, PublishArgs};
 use crate::loc;
 use crate::media::{Frame, h264::AnnexBFramer};
-use crate::transport::{TrackWriter, connect_session};
+use crate::transport::connect_session;
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 const DRAIN_BEFORE_CLOSE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -52,9 +52,13 @@ pub async fn run(args: PublishArgs) -> Result<()> {
         "publish ok"
     );
 
-    let mut media = TrackWriter::new(publisher.create_stream(&subscription));
+    let first_group_id = unix_micros_now().max(0) as u64;
+    let mut media = TrackWriter::new(publisher.create_stream(&subscription), first_group_id);
     let mut catalog = CatalogPublisher::new(
-        TrackWriter::new(publisher.create_stream(&catalog_subscription)),
+        TrackWriter::new(
+            publisher.create_stream(&catalog_subscription),
+            first_group_id,
+        ),
         track.namespace.clone(),
         track.name.clone(),
     );
@@ -116,14 +120,14 @@ pub async fn run(args: PublishArgs) -> Result<()> {
 /// Builds the catalog once the codec is known and re-publishes it at each group
 /// boundary so subscribers that join mid-stream pick it up at the next keyframe.
 struct CatalogPublisher {
-    writer: TrackWriter,
+    writer: TrackWriter<QUIC>,
     namespace: String,
     name: String,
     payload: Option<Bytes>,
 }
 
 impl CatalogPublisher {
-    fn new(writer: TrackWriter, namespace: String, name: String) -> Self {
+    fn new(writer: TrackWriter<QUIC>, namespace: String, name: String) -> Self {
         Self {
             writer,
             namespace,

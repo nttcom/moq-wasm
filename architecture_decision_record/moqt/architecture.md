@@ -90,6 +90,24 @@ aborted in `Drop`):
 code consumes inbound control messages through
 `Session::receive_event() -> SessionEvent<T>`.
 
+### `TrackWriter` / `TrackReader` — track-level object I/O
+
+Applications that only need "one payload per object, one subgroup per group"
+use these facades instead of the data-plane factories directly:
+
+- `TrackWriter<T>` wraps `StreamDataSenderFactory<T>`. `start_group()` closes
+  the open group (sends an `EndOfGroup` status object, then FIN) and opens the
+  next one; `write()` appends a payload object with optional immutable
+  extension headers. Group ids run from the `first_group_id` given at
+  construction, object ids from 0 within each group; publisher priority is
+  fixed at 128 and the subgroup id is omitted (`SubgroupId::None`).
+- `TrackReader<T>` wraps `StreamDataReceiverFactory<T>` and yields
+  `TrackObject { group_id, object_id, extension_headers, payload }`. It resolves
+  object ids from the wire deltas, skips status objects, and moves to the next
+  subgroup stream on FIN. A decode/transport failure inside a subgroup is
+  returned as `Err` and that subgroup is dropped, so the caller can choose
+  between aborting and continuing with the next group.
+
 ### `SessionContext` — shared session state
 
 One struct owns all cross-task state:
