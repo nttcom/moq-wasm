@@ -31,6 +31,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    tracing_subscriber::fmt::init();
 
     let rtmp = tokio::spawn(rtmp::run_rtmp_listener(
         args.rtmp_addr,

@@ -2952,6 +2952,8 @@ dependencies = [
  "serde_json",
  "srt-tokio",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

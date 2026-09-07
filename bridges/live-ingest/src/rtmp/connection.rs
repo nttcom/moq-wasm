@@ -20,7 +20,7 @@ pub async fn run_rtmp_listener(addr: String, moqt_url: Option<String>) -> Result
     let listener = TcpListener::bind(&addr)
         .await
         .with_context(|| format!("bind RTMP listener on {addr}"))?;
-    println!("RTMP listening on {addr}");
+    tracing::info!(%addr, "RTMP listener started");
 
     loop {
         let (socket, peer) = listener.accept().await?;
@@ -28,14 +28,14 @@ pub async fn run_rtmp_listener(addr: String, moqt_url: Option<String>) -> Result
         let moqt = MoqtManager::new(moqt_url.clone());
         tokio::spawn(async move {
             if let Err(err) = handle_connection(socket, &label, moqt).await {
-                eprintln!("[rtmp {label}] error: {err:?}");
+                tracing::warn!(peer = %label, ?err, "RTMP connection failed");
             }
         });
     }
 }
 
 async fn handle_connection(mut socket: TcpStream, label: &str, moqt: MoqtManager) -> Result<()> {
-    println!("[rtmp {label}] handshake start");
+    tracing::debug!(peer = %label, "RTMP handshake started");
     let mut buf = [0u8; 4096];
     let leftover = perform_handshake(&mut socket, label).await?;
 
@@ -55,11 +55,11 @@ async fn handle_connection(mut socket: TcpStream, label: &str, moqt: MoqtManager
         handle_session_bytes(&mut session, &mut socket, &leftover, label, &mut state).await?;
     }
 
-    println!("[rtmp {label}] ready for streaming");
+    tracing::info!(peer = %label, "RTMP session ready");
     loop {
         let read = socket.read(&mut buf).await?;
         if read == 0 {
-            println!("[rtmp {label}] client closed");
+            tracing::info!(peer = %label, "RTMP client closed");
             break;
         }
 
@@ -96,11 +96,7 @@ async fn handle_results(
                 handle_event(session, &mut queue, event, label, state).await?;
             }
             ServerSessionResult::UnhandleableMessageReceived(payload) => {
-                eprintln!(
-                    "[rtmp {label}] unhandled message type_id={} size={}",
-                    payload.type_id,
-                    payload.data.len()
-                );
+                tracing::warn!(peer = %label, type_id = payload.type_id, size = payload.data.len(), "unhandled RTMP message");
             }
         }
     }

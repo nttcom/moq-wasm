@@ -23,7 +23,7 @@ impl FlvRecorder {
         let file = File::create(&output_path)
             .await
             .with_context(|| format!("create {}", output_path.display()))?;
-        println!("recording FLV to {}", output_path.display());
+        tracing::info!(path = %output_path.display(), "FLV recording started");
         Ok(Self {
             file,
             muxer: Muxer::new(),

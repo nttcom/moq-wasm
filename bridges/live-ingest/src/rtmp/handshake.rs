@@ -31,6 +31,6 @@ pub async fn perform_handshake(socket: &mut TcpStream, label: &str) -> Result<Ve
         }
     }
 
-    println!("[rtmp {label}] handshake completed");
+    tracing::debug!(peer = %label, "RTMP handshake completed");
     Ok(leftover)
 }

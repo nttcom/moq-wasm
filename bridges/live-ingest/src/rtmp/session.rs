@@ -51,7 +51,7 @@ pub async fn handle_event(
             request_id,
             app_name,
         } => {
-            println!("[rtmp {label}] connect app={app_name}");
+            tracing::info!(peer = %label, app = %app_name, "RTMP connect requested");
             queue.extend(session.accept_request(request_id)?);
         }
         ServerSessionEvent::PublishStreamRequested {
@@ -62,15 +62,13 @@ pub async fn handle_event(
         } => {
             let (namespace_path, cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
-            println!(
-                "[rtmp {label}] publish app={app_name} stream={cleaned_stream_key} -> ns={namespace_path} mode={mode:?}"
-            );
+            tracing::info!(peer = %label, app = %app_name, stream = %cleaned_stream_key, namespace = %namespace_path, ?mode, "RTMP publish requested");
             queue.extend(session.accept_request(request_id)?);
             if state.recorder.is_none() {
                 match FlvRecorder::open(&app_name, &stream_key).await {
                     Ok(recorder) => state.recorder = Some(recorder),
                     Err(err) => {
-                        eprintln!("[rtmp {label}] fail to start FLV recorder: {err:?}");
+                        tracing::warn!(peer = %label, ?err, "failed to start FLV recorder");
                     }
                 }
             }
@@ -79,7 +77,7 @@ pub async fn handle_event(
             app_name,
             stream_key,
         } => {
-            println!("[rtmp {label}] publish finished app={app_name} stream={stream_key}");
+            tracing::info!(peer = %label, app = %app_name, stream = %stream_key, "RTMP publish finished");
             let (namespace_path, _cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
             state.streams.remove(&namespace_path);
@@ -89,7 +87,7 @@ pub async fn handle_event(
             stream_key,
             metadata: _,
         } => {
-            println!("[rtmp {label}] metadata updated app={app_name} stream={stream_key}");
+            tracing::debug!(peer = %label, app = %app_name, stream = %stream_key, "RTMP metadata updated");
         }
         ServerSessionEvent::AudioDataReceived {
             app_name,
@@ -99,10 +97,7 @@ pub async fn handle_event(
         } => {
             state.counters.audio += 1;
             if state.counters.audio == 1 || state.counters.audio.is_multiple_of(1000) {
-                println!(
-                    "[rtmp {label}] audio packets={} app={app_name}",
-                    state.counters.audio
-                );
+                tracing::debug!(peer = %label, app = %app_name, packets = state.counters.audio, "RTMP audio packets received");
             }
             let tag = Tag {
                 tag_type: TagType::Audio,
@@ -112,7 +107,7 @@ pub async fn handle_event(
             if let Some(recorder) = state.recorder.as_mut()
                 && let Err(err) = recorder.write_tag(&tag).await
             {
-                eprintln!("[rtmp {label}] failed to record audio tag: {err:?}");
+                tracing::warn!(peer = %label, ?err, "failed to record RTMP audio tag");
             }
             handle_media_tag(state, label, &app_name, &stream_key, &tag).await;
         }
@@ -124,10 +119,7 @@ pub async fn handle_event(
         } => {
             state.counters.video += 1;
             if state.counters.video == 1 || state.counters.video.is_multiple_of(1000) {
-                println!(
-                    "[rtmp {label}] video packets={} app={app_name}",
-                    state.counters.video
-                );
+                tracing::debug!(peer = %label, app = %app_name, packets = state.counters.video, "RTMP video packets received");
             }
             let tag = Tag {
                 tag_type: TagType::Video,
@@ -137,7 +129,7 @@ pub async fn handle_event(
             if let Some(recorder) = state.recorder.as_mut()
                 && let Err(err) = recorder.write_tag(&tag).await
             {
-                eprintln!("[rtmp {label}] failed to record video tag: {err:?}");
+                tracing::warn!(peer = %label, ?err, "failed to record RTMP video tag");
             }
             handle_media_tag(state, label, &app_name, &stream_key, &tag).await;
         }
@@ -149,7 +141,7 @@ pub async fn handle_event(
             )?);
         }
         other => {
-            println!("[rtmp {label}] event {:?}", other);
+            tracing::debug!(peer = %label, event = ?other, "unhandled RTMP event");
         }
     }
 
@@ -177,19 +169,16 @@ async fn handle_media_tag(
     let events = match stream.demuxer.push_tag(tag) {
         Ok(events) => events,
         Err(err) => {
-            eprintln!("[rtmp {label}] flv parse failed: {err:?}");
+            tracing::warn!(peer = %label, ?err, "failed to parse RTMP media tag");
             return;
         }
     };
     for event in &events {
         if let MediaEvent::VideoConfig(config) = event {
-            println!(
-                "[rtmp {label}] detected video codec: {} ns={namespace_path}",
-                config.codec_string()
-            );
+            tracing::info!(peer = %label, namespace = %namespace_path, codec = %config.codec_string(), "detected video codec");
         }
         if let Err(err) = stream.publisher.push(event).await {
-            eprintln!("[rtmp {label}] moqt publish failed: {err:?}");
+            tracing::warn!(peer = %label, namespace = %namespace_path, ?err, "failed to publish RTMP media");
         }
     }
 }
