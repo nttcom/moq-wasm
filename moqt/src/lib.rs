@@ -121,6 +121,12 @@ pub use modules::moqt::domains::subscription::SubscriberInitiatedSubscription;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::subscription::Subscription;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::track_reader::TrackObject;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::track_reader::TrackReader;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::track_writer::TrackWriter;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::protocol::DUAL;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::protocol::QUIC;

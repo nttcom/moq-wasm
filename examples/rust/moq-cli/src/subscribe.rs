@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use moqt::SessionEvent;
+use moqt::{SessionEvent, TrackReader};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 use crate::catalog;
 use crate::cli::SubscribeArgs;
-use crate::transport::{TrackReader, connect_session, subscribe_track};
+use crate::transport::{connect_session, subscribe_track};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let track = &args.track;
@@ -47,14 +47,20 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
     info!("subscribed");
 
     match catalog_reader.next_object().await? {
-        Some(object) => describe_catalog(&catalog::parse(&object)?),
+        Some(object) => describe_catalog(&catalog::parse(&object.payload)?),
         None => anyhow::bail!("catalog stream ended before any object"),
     }
 
     let mut out = tokio::io::stdout();
-    while let Some(object) = media_reader.next_object().await? {
-        out.write_all(&object).await?;
-        out.flush().await?;
+    loop {
+        match media_reader.next_object().await {
+            Ok(Some(object)) => {
+                out.write_all(&object.payload).await?;
+                out.flush().await?;
+            }
+            Ok(None) => break,
+            Err(error) => tracing::warn!(%error, "group read error, advancing to next group"),
+        }
     }
 
     Ok(())
