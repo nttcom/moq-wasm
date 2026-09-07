@@ -17,6 +17,7 @@ members = [
     'examples/cross-protocol-test/publisher',
     'examples/cross-protocol-test/quic-subscriber',
     'bindings/wasm',
+    'bindings/python',
     'bridges/live-ingest',
     'bridges/onvif',
 ]
