@@ -36,10 +36,8 @@ pub(crate) struct GroupSender {
 
 struct StreamSendTask {
     track_alias: u64,
-    group_id: u64,
-    subgroup_id: u64,
+    key: SubgroupKey,
     object_id: u64,
-    track_key: TrackKey,
     cache: Arc<TrackCache>,
     factory: SharedStreamSenderFactory,
     opened_stream_count: Arc<AtomicU64>,
@@ -94,10 +92,8 @@ impl GroupSender {
                             joinset.spawn(
                                 Self::send_stream_task(StreamSendTask {
                                     track_alias,
-                                    group_id,
-                                    subgroup_id,
+                                    key: task.key,
                                     object_id: task.object_id,
-                                    track_key: self.track_key.clone(),
                                     cache: self.cache.clone(),
                                     factory,
                                     opened_stream_count: self.opened_stream_count.clone(),
@@ -128,13 +124,16 @@ impl GroupSender {
 
     async fn send_stream_task(task: StreamSendTask) {
         let span = Span::current();
-        let key = SubgroupKey::Stream {
-            group_id: task.group_id,
-            subgroup_id: task.subgroup_id,
+        let SubgroupKey::Stream {
+            group_id,
+            subgroup_id,
+        } = task.key
+        else {
+            unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
         let Some(first) = task
             .cache
-            .next_subgroup_object_or_wait(key, task.object_id)
+            .next_subgroup_object_or_wait(task.key, task.object_id)
             .await
         else {
             span.record("object_count", 0u64);
@@ -167,18 +166,18 @@ impl GroupSender {
         // its extension headers on the wire.
         let header = moqt::SubgroupHeader::new(
             task.track_alias,
-            task.group_id,
-            moqt::SubgroupId::Value(task.subgroup_id),
+            group_id,
+            moqt::SubgroupId::Value(subgroup_id),
             first.publisher_priority,
             true,
             false,
         );
         let message_type = header.message_type;
-        tracing::debug!(track_key = %task.track_key, "egress sending subgroup header");
+        tracing::debug!("egress sending subgroup header");
         if let Err(error) = sender.send_object(DataObject::SubgroupHeader(header)).await {
             span.record("object_count", 0u64);
             span.record("end_reason", "send_header_failed");
-            tracing::error!(?error, track_key = %task.track_key, "failed to send subgroup header");
+            tracing::error!(?error, "failed to send subgroup header");
             return;
         }
 
@@ -187,7 +186,7 @@ impl GroupSender {
         let mut next = Some(first);
         while let Some(object) = next {
             let object_id = object.location.object_id;
-            tracing::debug!(track_key = %task.track_key, object_id, "egress sending subgroup object");
+            tracing::debug!(object_id, "egress sending subgroup object");
             let field = object.to_subgroup_object_field(message_type, prev_sent_object_id);
             if sender
                 .send_object(DataObject::SubgroupObject(field))
@@ -196,20 +195,20 @@ impl GroupSender {
             {
                 span.record("object_count", object_count);
                 span.record("end_reason", "send_object_failed");
-                tracing::error!(track_key = %task.track_key, object_id, "failed to send subgroup object");
+                tracing::error!(object_id, "failed to send subgroup object");
                 return;
             }
             object_count += 1;
             prev_sent_object_id = Some(object_id);
             next = task
                 .cache
-                .next_subgroup_object_or_wait(key, object_id.saturating_add(1))
+                .next_subgroup_object_or_wait(task.key, object_id.saturating_add(1))
                 .await;
         }
         span.record("object_count", object_count);
         span.record("end_reason", "cache_closed");
         if let Err(error) = sender.close().await {
-            tracing::warn!(?error, track_key = %task.track_key, "failed to close egress stream sender");
+            tracing::warn!(?error, "failed to close egress stream sender");
         }
     }
 

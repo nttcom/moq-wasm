@@ -6,9 +6,7 @@ use crate::modules::{
     enums::FetchErrorCode,
     relay::{
         cache::{
-            cached_object::CachedObject,
-            duration::duration_from_env,
-            track_cache::{InsertOrigin, TrackCache},
+            cached_object::CachedObject, duration::duration_from_env, track_cache::TrackCache,
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
@@ -165,8 +163,7 @@ impl FetchIngest {
     ) -> anyhow::Result<()> {
         let (group_id, object_id) = (object.group_id, object.object_id);
         cache
-            .insert(CachedObject::from_fetch_object(object), InsertOrigin::Fill)
-            .map(|_| ())
+            .insert(CachedObject::from_fetch_object(object))
             .map_err(|_| {
                 anyhow::anyhow!(
                     "malformed track detected during fetch fill (group {group_id}, object {object_id})"

@@ -10,30 +10,22 @@ use std::{
 use tokio::sync::Notify;
 
 use crate::modules::relay::{
-    cache::cached_object::{CachedObject, DuplicateKind, ForwardingPreference},
+    cache::cached_object::{CachedObject, ForwardingPreference},
     types::SubgroupKey,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InsertStatus {
-    Inserted,
-    Duplicate,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InsertOrigin {
-    Live,
-    Fill,
-}
-
 fn location(group_id: u64, object_id: u64) -> moqt::Location {
     moqt::Location {
         group_id,
         object_id,
     }
+}
+
+fn after(at: moqt::Location) -> moqt::Location {
+    location(at.group_id, at.object_id.saturating_add(1))
 }
 
 mod fetch;
@@ -98,41 +90,53 @@ impl TrackCache {
         }
     }
 
-    pub(crate) fn insert(
+    /// Fetch fill: the object is stored but proves nothing about its
+    /// neighbours until the fill completes (`insert_fetch_known_range`).
+    pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        self.insert_with_knowledge(object, false)
+    }
+
+    /// Live ingest: a subgroup stream delivers ids in order, so the object
+    /// also proves every lower position of its group known.
+    fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        let registers_knowledge =
+            matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
+        self.insert_with_knowledge(object, registers_knowledge)
+    }
+
+    fn insert_with_knowledge(
         &self,
         object: CachedObject,
-        origin: InsertOrigin,
-    ) -> Result<InsertStatus, TrackMalformed> {
+        registers_knowledge: bool,
+    ) -> Result<(), TrackMalformed> {
         if self.is_malformed() {
             return Err(TrackMalformed);
         }
-        let location = object.location;
-        let registers_knowledge = origin == InsertOrigin::Live
-            && matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
-        let status = {
+        let at = object.location;
+        let result = {
             let mut ledger = self.write();
-            let status = match ledger.objects.entry(location) {
-                Entry::Occupied(existing) => match existing.get().duplicate_kind(&object) {
-                    DuplicateKind::Identical => Ok(InsertStatus::Duplicate),
-                    DuplicateKind::Conflict => Err(TrackMalformed),
-                },
+            let result = match ledger.objects.entry(at) {
+                Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
+                    Err(TrackMalformed)
+                }
+                Entry::Occupied(_) => Ok(()),
                 Entry::Vacant(slot) => {
                     slot.insert(Arc::new(object));
-                    Ok(InsertStatus::Inserted)
+                    Ok(())
                 }
             };
-            if status.is_ok() && registers_knowledge {
+            if result.is_ok() && registers_knowledge {
                 ledger
                     .known_ranges
-                    .insert(location.group_id_start(), location.after());
+                    .insert(location(at.group_id, 0), after(at));
             }
-            status
+            result
         };
-        if status.is_err() {
+        if result.is_err() {
             self.mark_malformed();
         }
         self.notify.notify_waiters();
-        status
+        result
     }
 
     pub(crate) fn has_group(&self, group_id: u64) -> bool {
@@ -162,8 +166,8 @@ impl TrackCache {
                 }
                 keep
             });
-            for (start, end) in Self::contiguous_runs(&removed) {
-                ledger.known_ranges.remove_range(start, end);
+            for &at in &removed {
+                ledger.known_ranges.remove_range(at, after(at));
             }
             removed.len()
         };
@@ -171,23 +175,6 @@ impl TrackCache {
             self.eviction_generation
                 .fetch_add(1, AtomicOrdering::Relaxed);
         }
-    }
-
-    /// Groups ascending, consecutive object ids (within one group) into
-    /// half-open ranges so knowledge is released exactly where objects left.
-    fn contiguous_runs(sorted: &[moqt::Location]) -> Vec<(moqt::Location, moqt::Location)> {
-        let mut runs: Vec<(moqt::Location, moqt::Location)> = Vec::new();
-        for &current in sorted {
-            match runs.last_mut() {
-                Some((start, end))
-                    if start.group_id == current.group_id && end.object_id == current.object_id =>
-                {
-                    *end = current.after();
-                }
-                _ => runs.push((current, current.after())),
-            }
-        }
-        runs
     }
 
     pub(crate) fn insert_fetch_known_range(&self, start: moqt::Location, end: moqt::Location) {
@@ -216,21 +203,6 @@ impl TrackCache {
     }
 }
 
-trait LocationExt {
-    fn after(self) -> moqt::Location;
-    fn group_id_start(self) -> moqt::Location;
-}
-
-impl LocationExt for moqt::Location {
-    fn after(self) -> moqt::Location {
-        location(self.group_id, self.object_id.saturating_add(1))
-    }
-
-    fn group_id_start(self) -> moqt::Location {
-        location(self.group_id, 0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
@@ -254,51 +226,53 @@ mod tests {
     fn identical_duplicate_keeps_first() {
         // Arrange
         let cache = TrackCache::new();
-        let first = cache.insert(
-            stream_object_with_payload(0, 0, Bytes::from_static(b"same")),
-            InsertOrigin::Live,
-        );
+        let first = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"same"),
+        ));
         // Act
-        let second = cache.insert(
-            stream_object_with_payload(0, 0, Bytes::from_static(b"same")),
-            InsertOrigin::Live,
-        );
+        let second = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"same"),
+        ));
         // Assert
-        assert_eq!(first, Ok(InsertStatus::Inserted));
-        assert_eq!(second, Ok(InsertStatus::Duplicate));
+        assert_eq!(first, Ok(()));
+        assert_eq!(second, Ok(()));
         assert!(!cache.is_malformed());
+        assert_eq!(payload_at(&cache, 0, 0), Bytes::from_static(b"same"));
     }
 
     #[test]
     fn conflicting_duplicate_latches_the_track() {
         // Arrange
         let cache = TrackCache::new();
-        let _ = cache.insert(
-            stream_object_with_payload(0, 0, Bytes::from_static(b"first")),
-            InsertOrigin::Live,
-        );
+        let _ = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"first"),
+        ));
         // Act
-        let outcome = cache.insert(
-            stream_object_with_payload(0, 0, Bytes::from_static(b"second")),
-            InsertOrigin::Live,
-        );
+        let outcome = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"second"),
+        ));
         // Assert: malformed and sticky; the first object is kept untouched
         assert_eq!(outcome, Err(TrackMalformed));
         assert!(cache.is_malformed());
         assert_eq!(payload_at(&cache, 0, 0), Bytes::from_static(b"first"));
-        assert_eq!(
-            cache.insert(stream_object(0, 1), InsertOrigin::Live),
-            Err(TrackMalformed)
-        );
+        assert_eq!(cache.insert_live(stream_object(0, 1)), Err(TrackMalformed));
     }
 
     #[test]
     fn same_object_id_in_two_subgroups_is_malformed() {
         // Arrange
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 0));
         // Act
-        let outcome = cache.insert(stream_object_in_subgroup(0, 1, 0), InsertOrigin::Live);
+        let outcome = cache.insert_live(stream_object_in_subgroup(0, 1, 0));
         // Assert
         assert_eq!(outcome, Err(TrackMalformed));
     }
@@ -308,7 +282,7 @@ mod tests {
         // Arrange
         let cache = TrackCache::new();
         // Act
-        let _ = cache.insert(stream_object(3, 2), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(3, 2));
         // Assert
         assert!(cache.covers(location(3, 0), location(3, 3)));
         assert!(!cache.covers(location(3, 0), location(3, 4)));
@@ -319,7 +293,7 @@ mod tests {
         // Arrange
         let cache = TrackCache::new();
         // Act
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Fill);
+        let _ = cache.insert(stream_object(0, 0));
         // Assert: only Fetch::End may register the filled range as known
         assert!(!cache.covers(location(0, 0), location(0, 1)));
     }
@@ -329,8 +303,8 @@ mod tests {
         // Arrange
         let cache = TrackCache::new();
         // Act
-        let _ = cache.insert(datagram_object(0, 1), InsertOrigin::Live);
-        let _ = cache.insert(datagram_object(0, 3), InsertOrigin::Live);
+        let _ = cache.insert_live(datagram_object(0, 1));
+        let _ = cache.insert_live(datagram_object(0, 3));
         // Assert: datagram-only contents never establish fetch coverage
         assert!(!cache.covers(location(0, 1), location(0, 4)));
         assert!(!cache.covers(location(0, 3), location(0, 4)));
@@ -347,7 +321,7 @@ mod tests {
         let cache = TrackCache::new();
         insert_closed_live_group(&cache, 0, &[0, 5]);
         insert_closed_live_group(&cache, 2, &[0, 3]);
-        let _ = cache.insert(datagram_object(2, 4), InsertOrigin::Live);
+        let _ = cache.insert_live(datagram_object(2, 4));
         // Act / Assert: datagram objects count too
         assert_eq!(cache.largest_location(), Some(location(2, 4)));
     }
@@ -356,7 +330,7 @@ mod tests {
     fn subgroups_in_group_lists_cached_and_open_subgroups() {
         // Arrange
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object_in_subgroup(0, 1, 0), InsertOrigin::Fill);
+        let _ = cache.insert(stream_object_in_subgroup(0, 1, 0));
         let _open = cache.open_live_subgroup(SubgroupKey::Datagram { group_id: 0 });
         // Act / Assert
         assert_eq!(
@@ -377,9 +351,9 @@ mod tests {
         // Arrange: object 0 at t=0, object 1 at t=6s, TTL=10s
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 0));
         tokio::time::advance(Duration::from_secs(6)).await;
-        let _ = cache.insert(stream_object(0, 1), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 1));
         // Act: at t=11s, object 0 is 11s old (>10), object 1 is 5s old (<=10)
         tokio::time::advance(Duration::from_secs(5)).await;
         cache.evict(ttl);
@@ -393,7 +367,7 @@ mod tests {
         // Arrange
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 0));
         // Act: age == TTL, which is not `> TTL`
         tokio::time::advance(Duration::from_secs(10)).await;
         cache.evict(ttl);
@@ -406,9 +380,9 @@ mod tests {
         // Arrange: object 0 expires before object 1
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 0));
         tokio::time::advance(Duration::from_secs(6)).await;
-        let _ = cache.insert(stream_object(0, 1), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 1));
         // Act
         tokio::time::advance(Duration::from_secs(5)).await;
         cache.evict(ttl);
@@ -422,7 +396,7 @@ mod tests {
         // Arrange: a high-location live object is older than a low-location fetched range
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(5, 0), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(5, 0));
         tokio::time::advance(Duration::from_secs(6)).await;
         cache.insert_fetch_known_range(location(0, 0), location(2, 0));
         // Act: only the live g5 object is past TTL
@@ -438,7 +412,7 @@ mod tests {
         // Arrange: a completed upstream FETCH made [g0:o0, g3:o0) known
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Fill);
+        let _ = cache.insert(stream_object(0, 0));
         cache.insert_fetch_known_range(location(0, 0), location(3, 0));
         // Act: object g0:o0 expires
         tokio::time::advance(Duration::from_secs(11)).await;
@@ -469,7 +443,7 @@ mod tests {
         // Arrange
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object(0, 0));
         // Act / Assert: nothing expired yet
         cache.evict(ttl);
         assert_eq!(cache.eviction_generation(), 0);
@@ -477,25 +451,5 @@ mod tests {
         tokio::time::advance(Duration::from_secs(11)).await;
         cache.evict(ttl);
         assert_eq!(cache.eviction_generation(), 1);
-    }
-
-    #[test]
-    fn contiguous_runs_split_on_gaps_and_group_boundaries() {
-        // Arrange
-        let removed = [
-            location(0, 3),
-            location(0, 4),
-            location(0, 6),
-            location(1, 0),
-        ];
-        // Act / Assert
-        assert_eq!(
-            TrackCache::contiguous_runs(&removed),
-            vec![
-                (location(0, 3), location(0, 5)),
-                (location(0, 6), location(0, 7)),
-                (location(1, 0), location(1, 1)),
-            ]
-        );
     }
 }

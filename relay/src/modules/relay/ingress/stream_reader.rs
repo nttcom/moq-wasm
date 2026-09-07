@@ -48,7 +48,6 @@ struct ReceivedHeader {
 struct SubgroupIngest<'a> {
     stream: SubgroupStream,
     live: LiveSubgroup<'a>,
-    last_object_id: Option<u64>,
 }
 
 impl StreamReader {
@@ -192,7 +191,6 @@ impl StreamReader {
                         ));
                         return;
                     }
-                    ingest.last_object_id = Some(object_id);
                     if let Some(end_reason) = end_reason {
                         span.record("end_reason", end_reason);
                         return;
@@ -210,7 +208,7 @@ impl StreamReader {
                     if let (Some(header), Some(ingest)) = (&header, &ingest)
                         && header.ends_group_on_fin
                     {
-                        let end_of_group_id = ingest.last_object_id.map_or(0, |id| id + 1);
+                        let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
                         let _ = ingest
                             .live
                             .insert(CachedObject::end_of_group(&ingest.stream, end_of_group_id));
@@ -245,11 +243,7 @@ impl StreamReader {
         span.record("subgroup_id", stream.subgroup_id);
         let live = cache.open_live_subgroup(stream.key());
         let _ = notify.send(SubgroupOpened(stream.key()));
-        SubgroupIngest {
-            stream,
-            live,
-            last_object_id: None,
-        }
+        SubgroupIngest { stream, live }
     }
 }
 

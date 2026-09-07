@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering as AtomicOrdering;
 
-use super::{Ledger, LocationExt, TrackCache, TrackMalformed, location};
+use super::{Ledger, TrackCache, TrackMalformed, after, location};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FetchRangeResolution {
@@ -93,7 +93,7 @@ impl TrackCache {
                 && requested_end.object_id != 0
                 && requested_end.object_id > largest.object_id.saturating_add(1))
         {
-            return largest.after();
+            return after(largest);
         }
 
         if requested_end.object_id == 0 {
@@ -103,7 +103,7 @@ impl TrackCache {
             {
                 return requested_end;
             }
-            return largest.after();
+            return after(largest);
         }
 
         requested_end
@@ -201,7 +201,6 @@ mod tests {
 
     use super::*;
     use crate::modules::relay::{
-        cache::track_cache::InsertOrigin,
         tests::harness::fixtures::cached_object::{
             datagram_object, insert_closed_live_group, open_live_group, status_object, stream_key,
             stream_object, stream_object_in_subgroup,
@@ -396,7 +395,7 @@ mod tests {
         // Arrange: live cache started at g3, then an upstream FETCH filled g0..g2
         let cache = TrackCache::new();
         insert_closed_live_group(&cache, 3, &[0]);
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Fill);
+        let _ = cache.insert(stream_object(0, 0));
         cache.insert_fetch_known_range(location(0, 0), location(3, 0));
         // Act / Assert
         assert_eq!(
@@ -446,10 +445,7 @@ mod tests {
     async fn fetch_objects_preserves_status_objects() {
         // Arrange: a fill-only group carrying positive knowledge about non-existence
         let cache = TrackCache::new();
-        let _ = cache.insert(
-            status_object(0, 2, ObjectStatus::DoesNotExist),
-            InsertOrigin::Fill,
-        );
+        let _ = cache.insert(status_object(0, 2, ObjectStatus::DoesNotExist));
         // Act
         let objects = fetch(&cache, location(0, 0), location(0, 3)).await;
         // Assert
@@ -524,7 +520,7 @@ mod tests {
         // Arrange
         let cache = TrackCache::new();
         insert_closed_live_group(&cache, 0, &[0]);
-        let _ = cache.insert(datagram_object(0, 1), InsertOrigin::Live);
+        let _ = cache.insert_live(datagram_object(0, 1));
         // Act
         let objects = fetch(&cache, location(0, 0), location(0, 2)).await;
         // Assert: §10.4.4

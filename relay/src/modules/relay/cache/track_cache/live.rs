@@ -5,7 +5,7 @@ use crate::modules::relay::{
     types::SubgroupKey,
 };
 
-use super::{InsertOrigin, InsertStatus, TrackCache, TrackMalformed, location};
+use super::{TrackCache, TrackMalformed, location};
 
 /// Live-ingest ownership of one subgroup; dropping it closes the subgroup so
 /// every exit path of a reader (FIN, stop, error, abort) closes exactly once.
@@ -15,8 +15,8 @@ pub(crate) struct LiveSubgroup<'a> {
 }
 
 impl LiveSubgroup<'_> {
-    pub(crate) fn insert(&self, object: CachedObject) -> Result<InsertStatus, TrackMalformed> {
-        self.cache.insert(object, InsertOrigin::Live)
+    pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        self.cache.insert_live(object)
     }
 }
 
@@ -167,7 +167,7 @@ mod tests {
     async fn next_subgroup_object_or_wait_returns_none_for_never_opened_subgroup() {
         // Arrange: a fetch fill wrote the object without any live stream
         let cache = TrackCache::new();
-        let _ = cache.insert(stream_object(0, 0), InsertOrigin::Fill);
+        let _ = cache.insert(stream_object(0, 0));
         // Act / Assert: nothing will ever close it, so waiting would hang
         assert!(
             cache
@@ -182,7 +182,7 @@ mod tests {
         // Arrange: object 1 belongs to subgroup 1, objects 0 and 2 to subgroup 0
         let cache = TrackCache::new();
         let _live = open_live_group(&cache, 0, &[0, 2]);
-        let _ = cache.insert(stream_object_in_subgroup(0, 1, 1), InsertOrigin::Live);
+        let _ = cache.insert_live(stream_object_in_subgroup(0, 1, 1));
         // Act
         let object = cache
             .next_subgroup_object_or_wait(stream_key(0), 1)

@@ -13,12 +13,6 @@ pub(crate) enum ForwardingPreference {
     Datagram,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DuplicateKind {
-    Identical,
-    Conflict,
-}
-
 /// Identity of one upstream subgroup stream, fixed by its SUBGROUP_HEADER.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SubgroupStream {
@@ -59,22 +53,21 @@ impl CachedObject {
             SubgroupObject::Status { code, .. } => (Self::status_from_code(code)?, Bytes::new()),
         };
         Ok(Self {
-            location: moqt::Location {
-                group_id: stream.group_id,
-                object_id,
-            },
-            forwarding: ForwardingPreference::Subgroup {
-                subgroup_id: stream.subgroup_id,
-            },
-            publisher_priority: stream.publisher_priority,
             status,
             extension_headers: field.extension_headers,
             payload,
-            received_at: Instant::now(),
+            ..Self::empty_at(stream, object_id)
         })
     }
 
     pub(crate) fn end_of_group(stream: &SubgroupStream, object_id: u64) -> Self {
+        Self {
+            status: ObjectStatus::EndOfGroup,
+            ..Self::empty_at(stream, object_id)
+        }
+    }
+
+    fn empty_at(stream: &SubgroupStream, object_id: u64) -> Self {
         Self {
             location: moqt::Location {
                 group_id: stream.group_id,
@@ -84,7 +77,7 @@ impl CachedObject {
                 subgroup_id: stream.subgroup_id,
             },
             publisher_priority: stream.publisher_priority,
-            status: ObjectStatus::EndOfGroup,
+            status: ObjectStatus::Normal,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::new(),
             received_at: Instant::now(),
@@ -161,19 +154,16 @@ impl CachedObject {
     /// Priority or Payload differ, or whose Status moves between Normal,
     /// End of Group and End of Track, makes the track Malformed. Extension
     /// header changes and transitions involving Does Not Exist are allowed.
-    pub(crate) fn duplicate_kind(&self, other: &Self) -> DuplicateKind {
+    pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
         if self.forwarding != other.forwarding
             || self.publisher_priority != other.publisher_priority
         {
-            return DuplicateKind::Conflict;
+            return true;
         }
         if self.status == ObjectStatus::DoesNotExist || other.status == ObjectStatus::DoesNotExist {
-            return DuplicateKind::Identical;
+            return false;
         }
-        if self.status != other.status || self.payload != other.payload {
-            return DuplicateKind::Conflict;
-        }
-        DuplicateKind::Identical
+        self.status != other.status || self.payload != other.payload
     }
 
     pub(crate) fn to_fetch_object_field(&self) -> FetchObjectField {
@@ -291,10 +281,7 @@ mod tests {
     #[test]
     fn identical_duplicate_is_identical() {
         // Arrange / Act / Assert
-        assert_eq!(
-            stream_object(0, 0).duplicate_kind(&stream_object(0, 0)),
-            DuplicateKind::Identical
-        );
+        assert!(!stream_object(0, 0).conflicts_with(&stream_object(0, 0)));
     }
 
     #[test]
@@ -303,7 +290,7 @@ mod tests {
         let first = stream_object_with_payload(0, 0, Bytes::from_static(b"a"));
         let second = stream_object_with_payload(0, 0, Bytes::from_static(b"b"));
         // Act / Assert
-        assert_eq!(first.duplicate_kind(&second), DuplicateKind::Conflict);
+        assert!(first.conflicts_with(&second));
     }
 
     #[test]
@@ -315,20 +302,14 @@ mod tests {
             ..stream_object(0, 0)
         };
         // Act / Assert
-        assert_eq!(first.duplicate_kind(&second), DuplicateKind::Conflict);
+        assert!(first.conflicts_with(&second));
     }
 
     #[test]
     fn differing_subgroup_or_forwarding_preference_is_a_conflict() {
         // Arrange / Act / Assert
-        assert_eq!(
-            stream_object(0, 0).duplicate_kind(&stream_object_in_subgroup(0, 1, 0)),
-            DuplicateKind::Conflict
-        );
-        assert_eq!(
-            stream_object(0, 0).duplicate_kind(&datagram_object(0, 0)),
-            DuplicateKind::Conflict
-        );
+        assert!(stream_object(0, 0).conflicts_with(&stream_object_in_subgroup(0, 1, 0)));
+        assert!(stream_object(0, 0).conflicts_with(&datagram_object(0, 0)));
     }
 
     #[test]
@@ -340,7 +321,7 @@ mod tests {
             ..stream_object(0, 0)
         };
         // Act / Assert
-        assert_eq!(first.duplicate_kind(&second), DuplicateKind::Identical);
+        assert!(!first.conflicts_with(&second));
     }
 
     #[test]
@@ -349,8 +330,8 @@ mod tests {
         let normal = stream_object(0, 0);
         let missing = status_object(0, 0, ObjectStatus::DoesNotExist);
         // Act / Assert: either arrival order is a tolerated duplicate
-        assert_eq!(normal.duplicate_kind(&missing), DuplicateKind::Identical);
-        assert_eq!(missing.duplicate_kind(&normal), DuplicateKind::Identical);
+        assert!(!normal.conflicts_with(&missing));
+        assert!(!missing.conflicts_with(&normal));
     }
 
     #[test]
@@ -359,10 +340,7 @@ mod tests {
         let normal = stream_object_with_payload(0, 0, Bytes::new());
         let end_of_group = status_object(0, 0, ObjectStatus::EndOfGroup);
         // Act / Assert
-        assert_eq!(
-            normal.duplicate_kind(&end_of_group),
-            DuplicateKind::Conflict
-        );
+        assert!(normal.conflicts_with(&end_of_group));
     }
 
     #[test]
