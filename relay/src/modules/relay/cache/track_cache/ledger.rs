@@ -8,16 +8,56 @@ use crate::modules::relay::{
     types::SubgroupKey,
 };
 
-use super::location;
+use super::{after, location};
+
+/// What live ingest has told us about a group whose subgroups are still open.
+#[derive(Default)]
+pub(super) struct LiveGroup {
+    pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
+    pub(super) knowledge_frontier: u64,
+}
+
+impl LiveGroup {
+    pub(super) fn has_open_stream(&self) -> bool {
+        self.open_subgroups
+            .keys()
+            .any(|key| matches!(key, SubgroupKey::Stream { .. }))
+    }
+}
 
 #[derive(Default)]
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
-    pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
+    pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) known_ranges: KnownRanges,
 }
 
 impl Ledger {
+    pub(super) fn is_open(&self, key: SubgroupKey) -> bool {
+        self.live_groups
+            .get(&key.group_id())
+            .is_some_and(|live| live.open_subgroups.contains_key(&key))
+    }
+
+    fn open_keys_in_group(&self, group_id: u64) -> impl Iterator<Item = SubgroupKey> {
+        self.live_groups
+            .get(&group_id)
+            .into_iter()
+            .flat_map(|live| live.open_subgroups.keys().copied())
+    }
+
+    /// A live object proves only its own position (draft-14 §10.4.2: the ids
+    /// skipped by a non-zero delta cannot be inferred); the rest of the group is
+    /// decided when its last subgroup closes.
+    pub(super) fn register_live_object(&mut self, location: moqt::Location) {
+        self.known_ranges.insert(location, after(location));
+        if let Some(live) = self.live_groups.get_mut(&location.group_id) {
+            live.knowledge_frontier = live
+                .knowledge_frontier
+                .max(location.object_id.saturating_add(1));
+        }
+    }
+
     pub(super) fn group_objects(
         &self,
         group_id: u64,
@@ -47,15 +87,7 @@ impl Ledger {
     }
 
     pub(super) fn has_open_subgroup_in_group(&self, group_id: u64) -> bool {
-        self.open_subgroups
-            .keys()
-            .any(|key| key.group_id() == group_id)
-    }
-
-    pub(super) fn has_open_stream_in_group(&self, group_id: u64) -> bool {
-        self.open_subgroups
-            .keys()
-            .any(|key| matches!(key, SubgroupKey::Stream { group_id: g, .. } if *g == group_id))
+        self.live_groups.contains_key(&group_id)
     }
 
     pub(super) fn has_group(&self, group_id: u64) -> bool {
@@ -72,11 +104,7 @@ impl Ledger {
             .group_objects(group_id, 0)
             .map(|object| object.subgroup_key())
             .collect();
-        keys.extend(
-            self.open_subgroups
-                .keys()
-                .filter(|key| key.group_id() == group_id),
-        );
+        keys.extend(self.open_keys_in_group(group_id));
         keys
     }
 
@@ -87,9 +115,8 @@ impl Ledger {
             .map(|(location, _)| location.group_id)
             .collect();
         groups.extend(
-            self.open_subgroups
+            self.live_groups
                 .keys()
-                .map(|key| key.group_id())
                 .filter(|group_id| (first_group_id..=last_group_id).contains(group_id)),
         );
         groups.into_iter().collect()
