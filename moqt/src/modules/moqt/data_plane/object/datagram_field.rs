@@ -142,6 +142,22 @@ impl DatagramField {
         }
     }
 
+    /// draft-14 §10.3.1: when the Object ID field is omitted, the Object ID is 0.
+    pub fn resolve_object_id(&self) -> u64 {
+        match self {
+            Self::Payload0x00 { object_id, .. }
+            | Self::Payload0x01 { object_id, .. }
+            | Self::Payload0x02WithEndOfGroup { object_id, .. }
+            | Self::Payload0x03WithEndOfGroup { object_id, .. }
+            | Self::Payload0x04 { object_id, .. }
+            | Self::Status0x20 { object_id, .. }
+            | Self::Status0x21 { object_id, .. } => *object_id,
+            Self::Payload0x05 { .. }
+            | Self::Payload0x06WithEndOfGroup { .. }
+            | Self::Payload0x07WithEndOfGroup { .. } => 0,
+        }
+    }
+
     pub fn publisher_priority(&self) -> u8 {
         match self {
             Self::Payload0x00 {
@@ -486,6 +502,25 @@ mod tests {
         use super::super::*;
 
         use bytes::{Buf, Bytes};
+
+        #[test]
+        fn present_object_id_is_returned_as_is() {
+            let field = DatagramField::Payload0x00 {
+                object_id: 7,
+                publisher_priority: 0,
+                payload: Bytes::new(),
+            };
+            assert_eq!(field.resolve_object_id(), 7);
+        }
+
+        #[test]
+        fn omitted_object_id_resolves_to_zero() {
+            let field = DatagramField::Payload0x06WithEndOfGroup {
+                publisher_priority: 0,
+                payload: Bytes::new(),
+            };
+            assert_eq!(field.resolve_object_id(), 0);
+        }
 
         #[test]
         fn payload0x00_encode_decode() {

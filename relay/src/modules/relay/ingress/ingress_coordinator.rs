@@ -13,7 +13,7 @@ use crate::modules::{
             datagram_reader::{DatagramReader, DatagramReceiveCommand, DatagramReceiveStart},
             stream_ingress_task::{StreamIngressCommand, StreamIngressTask, StreamReceiveStart},
         },
-        notifications::track_notifier::ObjectNotifyProducerMap,
+        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -48,7 +48,7 @@ impl IngressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamIngressCommand>(64);
@@ -56,13 +56,13 @@ impl IngressCoordinator {
         let stream_task = StreamIngressTask::new(
             stream_rx,
             cache_store.clone(),
-            object_notify_producer_map.clone(),
+            subgroup_opened_notifier_map.clone(),
             session_event_sender.clone(),
         );
         let datagram_reader = DatagramReader::run(
             datagram_rx,
             cache_store,
-            object_notify_producer_map,
+            subgroup_opened_notifier_map,
             session_event_sender,
         );
 

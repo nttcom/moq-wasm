@@ -41,13 +41,13 @@ impl RelayRuntime {
         let ingress = IngressCoordinator::new(
             repo.clone(),
             store.cache_store.clone(),
-            store.object_notify_producer_map.clone(),
+            store.subgroup_opened_notifier_map.clone(),
             sender.clone(),
         );
         let egress = EgressCoordinator::new(
             repo.clone(),
             store.cache_store.clone(),
-            store.object_notify_producer_map.clone(),
+            store.subgroup_opened_notifier_map.clone(),
         );
         let manager = EventHandler::run(
             repo,

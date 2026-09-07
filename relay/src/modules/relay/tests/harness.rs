@@ -10,13 +10,13 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         egress::runner::EgressRunner,
         ingress::stream_reader::{StreamOpened, StreamReader},
-        notifications::track_notifier::ObjectNotifyProducerMap,
+        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
 };
 
-mod fixtures;
+pub(crate) mod fixtures;
 mod mocks;
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
@@ -36,7 +36,7 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 pub(crate) struct RelayHarness {
     track_key: TrackKey,
     cache_store: Arc<TrackCacheStore>,
-    notify_map: Arc<ObjectNotifyProducerMap>,
+    notify_map: Arc<SubgroupOpenedNotifierMap>,
     opened_sender: mpsc::Sender<StreamOpened>,
     session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     _stream_reader: StreamReader,
@@ -58,6 +58,14 @@ impl EgressRunnerHandle {
             .expect("egress dropped its publisher before PUBLISH_DONE")
     }
 
+    pub(crate) async fn assert_nothing_sent_within(&mut self, window: Duration) {
+        let sent = tokio::time::timeout(window, self.sent.recv()).await;
+        assert!(
+            sent.is_err(),
+            "egress must not open or close a downstream stream: {sent:?}"
+        );
+    }
+
     pub(crate) fn assert_no_publish_done(&mut self) {
         assert!(
             self.publish_done.try_recv().is_err(),
@@ -76,7 +84,7 @@ impl RelayHarness {
     pub(crate) fn new() -> Self {
         let track_key = TrackKey::new("ns", "track");
         let cache_store = Arc::new(TrackCacheStore::new());
-        let notify_map = Arc::new(ObjectNotifyProducerMap::new());
+        let notify_map = Arc::new(SubgroupOpenedNotifierMap::new());
         let (opened_sender, opened_receiver) = mpsc::channel(16);
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         let stream_reader = StreamReader::run(
@@ -165,7 +173,7 @@ impl RelayHarness {
         let cache = self.cache_store.get_or_create(&self.track_key);
         let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
         loop {
-            if let Some(largest) = cache.largest_location().await
+            if let Some(largest) = cache.largest_location()
                 && (largest.group_id, largest.object_id) >= (expected.group_id, expected.object_id)
             {
                 return largest;
@@ -233,13 +241,17 @@ pub(crate) fn resolve_downstream_object_ids(objects: &[DataObject]) -> Vec<u64> 
     let mut prev_object_id = None;
     objects
         .iter()
-        .filter_map(|object| {
-            let object_id = object.resolve_absolute_object_id(prev_object_id);
-            prev_object_id = object_id;
-            match object {
-                DataObject::SubgroupObject(_) => object_id,
-                _ => None,
+        .filter_map(|object| match object {
+            DataObject::SubgroupObject(field) => {
+                let object_id = field.resolve_object_id(prev_object_id);
+                prev_object_id = Some(object_id);
+                Some(object_id)
             }
+            DataObject::SubgroupHeader(_) => {
+                prev_object_id = None;
+                None
+            }
+            DataObject::ObjectDatagram(_) => None,
         })
         .collect()
 }

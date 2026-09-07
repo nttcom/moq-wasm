@@ -6,10 +6,16 @@ use tokio::{
 };
 
 use crate::modules::{
-    core::data_receiver::datagram_receiver::DatagramReceiver,
+    core::{data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver},
     relay::{
-        cache::store::TrackCacheStore,
-        notifications::{track_event::TrackEvent, track_notifier::ObjectNotifyProducerMap},
+        cache::{
+            cached_object::CachedObject, store::TrackCacheStore, track_cache::OpenSubgroupGuard,
+        },
+        notifications::{
+            subgroup_opened::SubgroupOpened,
+            subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
+        },
+        types::SubgroupKey,
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
@@ -37,7 +43,7 @@ impl DatagramReader {
     pub(crate) fn run(
         mut receiver: mpsc::Receiver<DatagramReceiveCommand>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
@@ -61,7 +67,7 @@ impl DatagramReader {
                                 stop_senders.insert(track_key.clone(), (stop_sender, publisher_session_id));
 
                                 let cache_store = cache_store.clone();
-                                let sender_map = object_notify_producer_map.clone();
+                                let sender_map = subgroup_opened_notifier_map.clone();
                                 let session_event_sender = session_event_sender.clone();
                                 joinset.spawn(async move {
                                     Self::read_loop(
@@ -113,44 +119,43 @@ impl DatagramReader {
         mut receiver: Box<dyn DatagramReceiver>,
         mut stop_receiver: watch::Receiver<bool>,
         cache_store: Arc<TrackCacheStore>,
-        object_notify_producer_map: Arc<ObjectNotifyProducerMap>,
+        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) {
-        let mut current_group_id: Option<u64> = None;
-        let mut prev_object_id: Option<u64> = None;
         let cache = cache_store.get_or_create(&track_key);
         cache.begin_live_ingest();
-        let notify = object_notify_producer_map.get_or_create(&track_key);
+        let notify = subgroup_opened_notifier_map.get_or_create(&track_key);
+        let mut current_group: Option<(u64, OpenSubgroupGuard<'_>)> = None;
         loop {
             let receive_result = tokio::select! {
                 _ = stop_receiver.changed() => {
-                    if let Some(group_id) = current_group_id {
-                        cache.close_datagram_group(group_id).await;
-                    }
                     tracing::info!(%track_key, "datagram reader stopped");
-                    cache.end_live_ingest();
-                    return;
+                    break;
                 }
                 result = receiver.receive_object() => result,
             };
 
             match receive_result {
                 Ok(object) => {
-                    let group_id = object.group_id().or(current_group_id).unwrap_or(0);
-                    if current_group_id != Some(group_id) {
-                        if let Some(old_group) = current_group_id {
-                            cache.close_datagram_group(old_group).await;
+                    let DataObject::ObjectDatagram(datagram) = object else {
+                        tracing::error!(%track_key, "non-datagram object on datagram receiver");
+                        continue;
+                    };
+                    let group_id = datagram.group_id;
+                    let open = match &mut current_group {
+                        Some((current_group_id, open)) if *current_group_id == group_id => open,
+                        slot => {
+                            let key = SubgroupKey::Datagram { group_id };
+                            let (_, open) = slot.insert((group_id, cache.open_subgroup(key)));
+                            let _ = notify.send(SubgroupOpened(key));
+                            open
                         }
-                        current_group_id = Some(group_id);
-                        prev_object_id = None;
-                        let _ = notify.send(TrackEvent::DatagramOpened { group_id });
-                    }
-                    let object_id = object.resolve_absolute_object_id(prev_object_id);
-                    prev_object_id = object_id;
-                    let result = cache
-                        .append_datagram_object(group_id, object_id, object)
-                        .await;
-                    if result.is_err() {
+                    };
+                    let object_id = datagram.field.resolve_object_id();
+                    if open
+                        .insert(CachedObject::from_datagram(object_id, datagram))
+                        .is_err()
+                    {
                         tracing::warn!(
                             %track_key,
                             group_id,
@@ -160,22 +165,17 @@ impl DatagramReader {
                             publisher_session_id,
                             track_key.clone(),
                         ));
-                        cache.close_datagram_group(group_id).await;
-                        cache.end_live_ingest();
-                        return;
+                        break;
                     }
                 }
                 Err(_) => {
-                    // Ensure the last group is closed before exiting.
-                    if let Some(group_id) = current_group_id {
-                        cache.close_datagram_group(group_id).await;
-                    }
                     tracing::debug!(%track_key, "datagram receiver ended");
-                    cache.end_live_ingest();
-                    return;
+                    break;
                 }
             }
         }
+        drop(current_group);
+        cache.end_live_ingest();
     }
 }
 

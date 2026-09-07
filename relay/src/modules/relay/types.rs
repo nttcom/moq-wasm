@@ -1,16 +1,13 @@
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum StreamSubgroupId {
-    None,
-    FirstObjectIdDelta,
-    Value(u64),
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum SubgroupKey {
+    Stream { group_id: u64, subgroup_id: u64 },
+    Datagram { group_id: u64 },
 }
 
-impl From<&moqt::SubgroupId> for StreamSubgroupId {
-    fn from(value: &moqt::SubgroupId) -> Self {
-        match value {
-            moqt::SubgroupId::None => Self::None,
-            moqt::SubgroupId::FirstObjectIdDelta => Self::FirstObjectIdDelta,
-            moqt::SubgroupId::Value(id) => Self::Value(*id),
+impl SubgroupKey {
+    pub(crate) fn group_id(self) -> u64 {
+        match self {
+            Self::Stream { group_id, .. } | Self::Datagram { group_id } => group_id,
         }
     }
 }
