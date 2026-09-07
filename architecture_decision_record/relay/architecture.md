@@ -76,13 +76,19 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
   SUBSCRIBE_UPDATE, FETCH_CANCEL, TRACK_STATUS) are logged in the event span
   and dropped by the worker; they have no `sequences` entry.
-- One relay-internal event exists: `MalformedTrackDetected(session_id,
-  track_key)`, reported by the ingest path whose append latched the track
-  (not by a peer). It is routed to the upstream publisher session's worker
-  and handled by `sequences::malformed_track::MalformedTrackCleanup`: remove
-  the `ActiveUpstreamSubscription`, send upstream UNSUBSCRIBE (§2.5 MUST),
-  and stop ingress via `IngressCommand::StopTrack`. Duplicate reports are
-  idempotent (the table entry is only found once).
+- Two relay-internal events exist, both reported by the ingest path (not by
+  a peer) and routed to the upstream publisher session's worker:
+  - `MalformedTrackDetected(session_id, track_key)`, raised by the insert that
+    latched the track. Handled by
+    `sequences::malformed_track::MalformedTrackCleanup`: remove the
+    `ActiveUpstreamSubscription`, send upstream UNSUBSCRIBE (§2.5 MUST), and
+    stop ingress via `IngressCommand::StopTrack`. Duplicate reports are
+    idempotent (the table entry is only found once).
+  - `ProtocolViolationDetected { reason }`, raised when a subgroup object
+    carries an Object Status draft-14 §10.2.1.1 does not define. The worker
+    closes the session with PROTOCOL_VIOLATION (`Session::close_with_error`);
+    the resulting `ProtocolViolation` session event then drives the ordinary
+    terminal cleanup.
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
   `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
   session from the pub/sub directory, stop affected egress readers, forward

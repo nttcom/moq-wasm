@@ -380,11 +380,58 @@ impl SessionRepository {
         }
     }
 
+    pub(crate) fn close_with_protocol_violation(&self, session_id: SessionId, reason: &str) {
+        match self.sessions.get(&session_id) {
+            Some(session) => session.value().close_with_protocol_violation(reason),
+            None => tracing::debug!(session_id, "session already gone; nothing to close"),
+        }
+    }
+
     pub(crate) fn publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
         if let Some(session) = self.sessions.get(&session_id) {
             Some(session.value().as_publisher())
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::modules::core::mocks::session_repository_with_upstream_session;
+
+    #[tokio::test]
+    async fn close_with_protocol_violation_reaches_the_session() {
+        // Arrange
+        let (repository, recorded) = session_repository_with_upstream_session(7).await;
+        // Act
+        repository
+            .lock()
+            .await
+            .close_with_protocol_violation(7, "invalid object status 0x2");
+        // Assert
+        assert_eq!(
+            *recorded.protocol_violation_reasons.lock().unwrap(),
+            vec!["invalid object status 0x2".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn close_with_protocol_violation_ignores_a_departed_session() {
+        // Arrange
+        let (repository, recorded) = session_repository_with_upstream_session(7).await;
+        // Act
+        repository
+            .lock()
+            .await
+            .close_with_protocol_violation(8, "late");
+        // Assert
+        assert!(
+            recorded
+                .protocol_violation_reasons
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
     }
 }
