@@ -47,6 +47,14 @@ impl UpstreamSubgroupStream {
             .expect("ingress should be reading this stream");
     }
 
+    pub(crate) fn reset(&self) {
+        self.sender
+            .send(Err(moqt::StreamReceiveError::Closed(
+                "stream reset by peer".to_string(),
+            )))
+            .expect("ingress should be reading this stream");
+    }
+
     pub(crate) fn fin(&self) {
         self.sender
             .send(Ok(None))

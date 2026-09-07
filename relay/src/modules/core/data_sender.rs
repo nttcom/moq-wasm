@@ -12,4 +12,8 @@ pub(crate) trait DataSender: 'static + Send + Sync {
     async fn close(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
+
+    async fn reset(&mut self, _error_code: u64) -> anyhow::Result<()> {
+        Ok(())
+    }
 }

@@ -149,7 +149,7 @@ impl StreamReader {
                     };
                     let object_id = field.resolve_object_id(header.prev_object_id);
                     header.prev_object_id = Some(object_id);
-                    let ingest = ingest.get_or_insert_with(|| {
+                    let current = ingest.get_or_insert_with(|| {
                         Self::open_subgroup(
                             &cache,
                             &notify,
@@ -171,7 +171,7 @@ impl StreamReader {
                         _ => None,
                     };
                     let object = match CachedObject::from_subgroup_object(
-                        &ingest.header,
+                        &current.header,
                         object_id,
                         field,
                     ) {
@@ -190,7 +190,7 @@ impl StreamReader {
                             return;
                         }
                     };
-                    if ingest.open.insert(object).is_err() {
+                    if current.open.insert(object).is_err() {
                         Self::report_malformed_track(
                             &span,
                             &session_event_sender,
@@ -201,6 +201,9 @@ impl StreamReader {
                     }
                     if let Some(end_reason) = end_reason {
                         span.record("end_reason", end_reason);
+                        if let Some(ingest) = ingest.take() {
+                            ingest.open.finish();
+                        }
                         return;
                     }
                 }
@@ -230,6 +233,9 @@ impl StreamReader {
                             );
                             return;
                         }
+                    }
+                    if let Some(ingest) = ingest.take() {
+                        ingest.open.finish();
                     }
                     tracing::debug!(%track_key, "stream finished");
                     return;
@@ -312,7 +318,7 @@ mod tests {
             make_status_object,
         },
     };
-    use crate::modules::relay::types::SubgroupKey;
+    use crate::modules::relay::{cache::track_cache::NextObject, types::SubgroupKey};
 
     // How the scripted stream ends once all objects were consumed.
     enum TerminalOutcome {
@@ -415,7 +421,7 @@ mod tests {
             let cache = self.cache();
             let mut objects = Vec::new();
             let mut cursor = 0;
-            while let Some(object) = cache
+            while let NextObject::Object(object) = cache
                 .next_subgroup_object_or_wait(key, cursor)
                 .await
                 .unwrap()
@@ -426,15 +432,15 @@ mod tests {
             objects
         }
 
-        async fn assert_subgroup_closed_after(&self, key: SubgroupKey, last_object_id: u64) {
+        async fn subgroup_end_after(&self, key: SubgroupKey, last_object_id: u64) -> NextObject {
             let cache = self.cache();
-            let closed = tokio::time::timeout(
+            tokio::time::timeout(
                 Duration::from_secs(1),
                 cache.next_subgroup_object_or_wait(key, last_object_id + 1),
             )
             .await
-            .expect("subgroup should be closed, not waiting for more objects");
-            assert!(matches!(closed, Ok(None)));
+            .expect("subgroup should be closed, not waiting for more objects")
+            .unwrap()
         }
     }
 
@@ -469,10 +475,10 @@ mod tests {
             env.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal), (1, ObjectStatus::EndOfGroup)]
         );
-        env.assert_subgroup_closed_after(stream_key(0), 1).await;
+        assert!(env.subgroup_end_after(stream_key(0), 1).await.is_finished());
     }
 
-    async fn assert_open_subgroup_closed_on(terminal: TerminalOutcome) {
+    async fn assert_open_subgroup_ends_on(terminal: TerminalOutcome, finished: bool) {
         // Arrange
         let mut env = TestEnv::new();
         let receiver = scripted(vec![make_header(0), payload(0)], terminal);
@@ -483,22 +489,23 @@ mod tests {
             env.event_receiver.try_recv(),
             Ok(SubgroupOpened(key)) if key == stream_key(0)
         ));
-        env.assert_subgroup_closed_after(stream_key(0), 0).await;
+        let end = env.subgroup_end_after(stream_key(0), 0).await;
+        assert_eq!(end.is_finished(), finished, "unexpected end: {end:?}");
     }
 
     #[tokio::test]
-    async fn fin_closes_open_subgroup() {
-        assert_open_subgroup_closed_on(TerminalOutcome::Fin).await;
+    async fn fin_finishes_the_open_subgroup() {
+        assert_open_subgroup_ends_on(TerminalOutcome::Fin, true).await;
     }
 
     #[tokio::test]
-    async fn transport_close_closes_open_subgroup() {
-        assert_open_subgroup_closed_on(TerminalOutcome::TransportClosed).await;
+    async fn transport_close_aborts_the_open_subgroup() {
+        assert_open_subgroup_ends_on(TerminalOutcome::TransportClosed, false).await;
     }
 
     #[tokio::test]
-    async fn decode_failure_closes_open_subgroup() {
-        assert_open_subgroup_closed_on(TerminalOutcome::DecodeFailed).await;
+    async fn decode_failure_aborts_the_open_subgroup() {
+        assert_open_subgroup_ends_on(TerminalOutcome::DecodeFailed, false).await;
     }
 
     #[tokio::test]
@@ -521,8 +528,8 @@ mod tests {
             .await
             .expect("read loop should stop on signal")
             .expect("read loop should not panic");
-        // Assert
-        env.assert_subgroup_closed_after(stream_key(0), 0).await;
+        // Assert: a stopped reader cannot vouch for the subgroup's tail
+        assert!(env.subgroup_end_after(stream_key(0), 0).await.is_aborted());
     }
 
     #[tokio::test]

@@ -19,6 +19,8 @@ use crate::modules::{
 pub(crate) mod fixtures;
 mod mocks;
 
+pub(crate) use self::mocks::downstream_client::Sent;
+
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
@@ -45,7 +47,7 @@ pub(crate) struct RelayHarness {
 }
 
 pub(crate) struct EgressRunnerHandle {
-    sent: mpsc::UnboundedReceiver<Option<DataObject>>,
+    sent: mpsc::UnboundedReceiver<Sent>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
     join_handle: tokio::task::JoinHandle<()>,
 }
@@ -192,11 +194,22 @@ impl RelayHarness {
 pub(crate) async fn receive_objects_until_close(
     egress: &mut EgressRunnerHandle,
 ) -> Vec<DataObject> {
+    let (objects, end) = receive_objects_until_end(egress).await;
+    assert!(
+        matches!(end, Sent::Closed),
+        "downstream stream should end with a FIN, got {end:?}"
+    );
+    objects
+}
+
+pub(crate) async fn receive_objects_until_end(
+    egress: &mut EgressRunnerHandle,
+) -> (Vec<DataObject>, Sent) {
     let mut objects = Vec::new();
     loop {
         match tokio::time::timeout(RECV_TIMEOUT, egress.sent.recv()).await {
-            Ok(Some(Some(object))) => objects.push(object),
-            Ok(Some(None)) => return objects,
+            Ok(Some(Sent::Object(object))) => objects.push(object),
+            Ok(Some(end)) => return (objects, end),
             Ok(None) => panic!(
                 "egress dropped its sender after sending {} objects",
                 objects.len()

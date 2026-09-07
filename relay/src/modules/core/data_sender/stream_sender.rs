@@ -50,6 +50,14 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
             None => Ok(()),
         }
     }
+
+    pub(crate) async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+        match self.inner.as_mut() {
+            Some(SenderInner::Uninitialized(sender)) => sender.reset(error_code).await,
+            Some(SenderInner::HeaderSent(sender)) => sender.reset(error_code).await,
+            None => Ok(()),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -60,5 +68,9 @@ impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
 
     async fn close(&mut self) -> anyhow::Result<()> {
         StreamSender::close(self).await
+    }
+
+    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+        StreamSender::reset(self, error_code).await
     }
 }

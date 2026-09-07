@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -29,10 +29,30 @@ impl LiveGroup {
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
+    pub(super) aborted_subgroups: HashSet<SubgroupKey>,
     pub(super) known_ranges: KnownRanges,
 }
 
 impl Ledger {
+    pub(super) fn is_group_aborted(&self, group_id: u64) -> bool {
+        self.aborted_subgroups
+            .iter()
+            .any(|key| key.group_id() == group_id)
+    }
+
+    /// Drops abort markers of groups the ledger no longer knows anything about.
+    pub(super) fn forget_aborts_of_vanished_groups(&mut self) {
+        let (objects, live_groups) = (&self.objects, &self.live_groups);
+        self.aborted_subgroups.retain(|key| {
+            let group_id = key.group_id();
+            objects
+                .range(location(group_id, 0)..=location(group_id, u64::MAX))
+                .next()
+                .is_some()
+                || live_groups.contains_key(&group_id)
+        });
+    }
+
     pub(super) fn is_open(&self, key: SubgroupKey) -> bool {
         self.live_groups
             .get(&key.group_id())

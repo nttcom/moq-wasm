@@ -32,7 +32,7 @@ mod ledger;
 mod open_subgroup;
 
 use ledger::Ledger;
-pub(crate) use open_subgroup::OpenSubgroupGuard;
+pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard};
 
 pub(crate) struct TrackCache {
     ledger: RwLock<Ledger>,
@@ -180,6 +180,7 @@ impl TrackCache {
             for &at in &removed {
                 ledger.known_ranges.remove_range(at, after(at));
             }
+            ledger.forget_aborts_of_vanished_groups();
             removed.len()
         };
         if removed_count > 0 {
@@ -211,6 +212,20 @@ impl TrackCache {
             AtomicOrdering::Relaxed,
             |count| Some(count.saturating_sub(1)),
         );
+    }
+}
+
+/// Why a cache-served FETCH cannot be completed with a FIN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FetchInterrupted {
+    Malformed,
+    /// An upstream subgroup in the range ended without a FIN, so objects may be missing.
+    Incomplete,
+}
+
+impl From<TrackMalformed> for FetchInterrupted {
+    fn from(_: TrackMalformed) -> Self {
+        Self::Malformed
     }
 }
 
@@ -313,7 +328,7 @@ impl TrackCache {
         start: moqt::Location,
         end: moqt::Location,
         group_order: moqt::GroupOrder,
-    ) -> Result<Vec<moqt::FetchObjectField>, TrackMalformed> {
+    ) -> Result<Vec<moqt::FetchObjectField>, FetchInterrupted> {
         let mut groups = self.read().groups_in_range(start.group_id, end.group_id);
         if matches!(group_order, moqt::GroupOrder::Descending) {
             groups.reverse();
@@ -349,13 +364,16 @@ impl TrackCache {
                 let in_known =
                     group_fully_known || frontier.is_some_and(|frontier| next_object_id < frontier);
                 let found = if in_known {
-                    self.read().next_group_object(group_id, next_object_id)
+                    match self.read().next_group_object(group_id, next_object_id) {
+                        Some(object) => NextObject::Object(object),
+                        None => NextObject::Finished,
+                    }
                 } else {
                     self.next_group_object_or_wait(group_id, next_object_id)
                         .await?
                 };
                 match found {
-                    Some(object) => {
+                    NextObject::Object(object) => {
                         let object_id = object.location.object_id;
                         next_object_id = object_id.saturating_add(1);
                         if end_exclusive.is_some_and(|end_object_id| object_id >= end_object_id) {
@@ -363,11 +381,12 @@ impl TrackCache {
                         }
                         fetch_objects.push(object.to_fetch_object_field());
                     }
-                    None if group_fully_known => break,
-                    None if in_known => {
+                    NextObject::Aborted => return Err(FetchInterrupted::Incomplete),
+                    NextObject::Finished if group_fully_known => break,
+                    NextObject::Finished if in_known => {
                         next_object_id = frontier.unwrap_or(next_object_id);
                     }
-                    None => break,
+                    NextObject::Finished => break,
                 }
             }
         }
@@ -683,7 +702,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(11)).await;
         cache.evict(ttl);
         // Act
-        drop(open);
+        open.finish();
         // Assert: "no more objects after 1" is known, positions 0 and 1 are not
         assert!(!cache.covers(location(0, 0), location(0, 2)));
         assert!(cache.covers(location(0, 2), location(0, 0)));
@@ -1022,8 +1041,8 @@ mod fetch_tests {
         for object_id in [1, 3, 5] {
             let _ = odd.insert(stream_object_in_subgroup(0, 1, object_id));
         }
-        drop(even);
-        drop(odd);
+        even.finish();
+        odd.finish();
         // Act / Assert
         let objects = fetch(&cache, location(0, 0), location(0, 6)).await;
         assert_eq!(
@@ -1080,7 +1099,7 @@ mod fetch_tests {
         for object_id in 0..3 {
             let _ = open_g0.insert(stream_object(0, object_id));
         }
-        drop(open_g0);
+        open_g0.finish();
         // Assert: the late group 0 objects are delivered, not silently dropped
         let objects = tokio::time::timeout(Duration::from_secs(5), fetch)
             .await
@@ -1115,6 +1134,30 @@ mod fetch_tests {
             .await
             .expect("fetch must abort once the track is malformed")
             .unwrap();
-        assert!(matches!(result, Err(TrackMalformed)));
+        assert!(matches!(result, Err(FetchInterrupted::Malformed)));
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_is_incomplete_when_a_waited_subgroup_aborts() {
+        // Arrange: the fetch waits on an open group whose stream is then reset upstream
+        let cache = Arc::new(TrackCache::new());
+        let open = open_group(&cache, 0, &[0]);
+        let fetch = tokio::spawn({
+            let cache = cache.clone();
+            async move {
+                cache
+                    .fetch_objects(location(0, 0), location(0, 3), moqt::GroupOrder::Ascending)
+                    .await
+            }
+        });
+        tokio::task::yield_now().await;
+        // Act
+        drop(open);
+        // Assert: the relay must not FIN a range that may be missing objects
+        let result = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must end once the subgroup aborts")
+            .unwrap();
+        assert_eq!(result, Err(FetchInterrupted::Incomplete));
     }
 }

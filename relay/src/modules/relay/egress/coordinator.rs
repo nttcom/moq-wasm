@@ -10,7 +10,10 @@ use crate::modules::{
     core::subscription::DownstreamSubscription,
     enums::FetchErrorCode,
     relay::{
-        cache::{store::TrackCacheStore, track_cache::TrackCache},
+        cache::{
+            store::TrackCacheStore,
+            track_cache::{FetchInterrupted, TrackCache},
+        },
         egress::runner::EgressRunner,
         notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
@@ -154,12 +157,17 @@ impl EgressCoordinator {
                 .await
             {
                 Ok(objects) => objects,
-                Err(_) => {
+                Err(interrupted) => {
+                    let error_code = match interrupted {
+                        FetchInterrupted::Malformed => FetchErrorCode::MalformedTrack as u64,
+                        FetchInterrupted::Incomplete => FetchErrorCode::InternalError as u64,
+                    };
                     tracing::warn!(
                         request_id = request.request_id,
-                        "malformed track detected; resetting fetch stream"
+                        ?interrupted,
+                        "fetch cannot be completed from cache; resetting fetch stream"
                     );
-                    if let Err(e) = sender.reset(FetchErrorCode::MalformedTrack as u64).await {
+                    if let Err(e) = sender.reset(error_code).await {
                         tracing::error!(?e, "failed to reset fetch stream");
                     }
                     return;

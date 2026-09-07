@@ -91,6 +91,10 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
     pub async fn close(&mut self) -> anyhow::Result<()> {
         self.stream_sender.close().await
     }
+
+    pub async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+        self.stream_sender.reset(error_code).await
+    }
 }
 
 // ─── HeaderSent State ──────────────────────────────────────────────────────────
@@ -122,5 +126,9 @@ impl<T: TransportProtocol> StreamDataSender<T, HeaderSent> {
 
     pub async fn close(&mut self) -> anyhow::Result<()> {
         self.stream_sender.close().await
+    }
+
+    pub async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+        self.stream_sender.reset(error_code).await
     }
 }
