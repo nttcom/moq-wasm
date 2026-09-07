@@ -37,11 +37,7 @@ pub fn parse_header(data: &[u8]) -> Result<Option<AdtsHeader>> {
         "ADTS frame length {frame_length} shorter than its header"
     );
     Ok(Some(AdtsHeader {
-        config: AudioSpecificConfig {
-            object_type,
-            sample_rate,
-            channel_configuration,
-        },
+        config: AudioSpecificConfig::new(object_type, sample_rate, channel_configuration),
         frame_length,
         header_length,
     }))
@@ -126,11 +122,7 @@ mod tests {
     use super::*;
 
     fn stereo_48k() -> AudioSpecificConfig {
-        AudioSpecificConfig {
-            object_type: 2,
-            sample_rate: 48_000,
-            channel_configuration: 2,
-        }
+        AudioSpecificConfig::new(2, 48_000, 2)
     }
 
     fn adts_frame(payload: &[u8]) -> Vec<u8> {

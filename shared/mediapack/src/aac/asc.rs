@@ -14,14 +14,42 @@ pub const SAMPLE_RATES: [u32; 13] = [
 pub const AAC_LC: u8 = 2;
 pub const SAMPLES_PER_FRAME: u64 = 1_024;
 
+/// `bytes` keeps the serialized form the config was parsed from, so extension
+/// signaling (SBR/PS) survives even though only the core fields are decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioSpecificConfig {
     pub object_type: u8,
     pub sample_rate: u32,
     pub channel_configuration: u8,
+    bytes: Bytes,
 }
 
 impl AudioSpecificConfig {
+    pub fn new(object_type: u8, sample_rate: u32, channel_configuration: u8) -> Self {
+        let mut writer = BitWriter::new();
+        if object_type >= 31 {
+            writer.write_bits(31, 5);
+            writer.write_bits((object_type - 32) as u64, 6);
+        } else {
+            writer.write_bits(object_type as u64, 5);
+        }
+        match sampling_frequency_index(sample_rate) {
+            Some(index) => writer.write_bits(index as u64, 4),
+            None => {
+                writer.write_bits(15, 4);
+                writer.write_bits(sample_rate as u64, 24);
+            }
+        }
+        writer.write_bits(channel_configuration as u64, 4);
+        writer.write_bits(0, 3);
+        Self {
+            object_type,
+            sample_rate,
+            channel_configuration,
+            bytes: Bytes::from(writer.finish()),
+        }
+    }
+
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut reader = BitReader::new(data);
         let mut object_type = reader.read_bits(5)? as u8;
@@ -42,27 +70,12 @@ impl AudioSpecificConfig {
             object_type,
             sample_rate,
             channel_configuration,
+            bytes: Bytes::copy_from_slice(data),
         })
     }
 
     pub fn to_bytes(&self) -> Bytes {
-        let mut writer = BitWriter::new();
-        if self.object_type >= 31 {
-            writer.write_bits(31, 5);
-            writer.write_bits((self.object_type - 32) as u64, 6);
-        } else {
-            writer.write_bits(self.object_type as u64, 5);
-        }
-        match sampling_frequency_index(self.sample_rate) {
-            Some(index) => writer.write_bits(index as u64, 4),
-            None => {
-                writer.write_bits(15, 4);
-                writer.write_bits(self.sample_rate as u64, 24);
-            }
-        }
-        writer.write_bits(self.channel_configuration as u64, 4);
-        writer.write_bits(0, 3);
-        Bytes::from(writer.finish())
+        self.bytes.clone()
     }
 
     pub fn codec_string(&self) -> String {
@@ -101,14 +114,7 @@ mod tests {
         let config = AudioSpecificConfig::parse(&bytes).unwrap();
 
         // Assert
-        assert_eq!(
-            config,
-            AudioSpecificConfig {
-                object_type: AAC_LC,
-                sample_rate: 48_000,
-                channel_configuration: 2
-            }
-        );
+        assert_eq!(config, AudioSpecificConfig::new(AAC_LC, 48_000, 2));
         assert_eq!(config.codec_string(), "mp4a.40.2");
         assert_eq!(config.frame_duration().micros(), 21_333);
     }
@@ -116,11 +122,7 @@ mod tests {
     #[test]
     fn serializes_config_back_to_two_bytes() {
         // Arrange
-        let config = AudioSpecificConfig {
-            object_type: AAC_LC,
-            sample_rate: 44_100,
-            channel_configuration: 1,
-        };
+        let config = AudioSpecificConfig::new(AAC_LC, 44_100, 1);
 
         // Act
         let bytes = config.to_bytes();
@@ -131,13 +133,23 @@ mod tests {
     }
 
     #[test]
+    fn keeps_extended_config_bytes_from_parsed_input() {
+        // Arrange
+        let with_sbr_signaling = [0x11, 0x90, 0x56, 0xE5, 0x00];
+
+        // Act
+        let config = AudioSpecificConfig::parse(&with_sbr_signaling).unwrap();
+
+        // Assert
+        assert_eq!(config.sample_rate, 48_000);
+        assert_eq!(config.channel_configuration, 2);
+        assert_eq!(config.to_bytes().as_ref(), with_sbr_signaling);
+    }
+
+    #[test]
     fn round_trips_explicit_sample_rate_and_escaped_object_type() {
         // Arrange
-        let config = AudioSpecificConfig {
-            object_type: 42,
-            sample_rate: 50_000,
-            channel_configuration: 7,
-        };
+        let config = AudioSpecificConfig::new(42, 50_000, 7);
 
         // Act
         let parsed = AudioSpecificConfig::parse(&config.to_bytes()).unwrap();

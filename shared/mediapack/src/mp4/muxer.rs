@@ -592,8 +592,7 @@ pub(crate) mod tests {
         // Arrange
         let mut muxer = muxer_with_both_tracks();
         muxer.push(&audio(0)).unwrap();
-        let mut changed = mono_48k();
-        changed.channel_configuration = 2;
+        let changed = AudioSpecificConfig::new(2, 48_000, 2);
 
         // Act
         let result = muxer.push(&MediaEvent::AudioConfig(changed));

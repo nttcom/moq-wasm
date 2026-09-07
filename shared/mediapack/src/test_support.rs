@@ -34,11 +34,7 @@ pub(crate) fn delta_frame_annexb() -> Bytes {
 }
 
 pub(crate) fn mono_48k() -> AudioSpecificConfig {
-    AudioSpecificConfig {
-        object_type: 2,
-        sample_rate: 48_000,
-        channel_configuration: 1,
-    }
+    AudioSpecificConfig::new(2, 48_000, 1)
 }
 
 pub(crate) fn adts_frame(payload: &[u8]) -> Vec<u8> {
