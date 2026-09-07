@@ -57,28 +57,39 @@ impl TrackCache {
         self.notify.notify_waiters();
     }
 
-    /// `enable()` registers the waiter before the ledger is read, so a
-    /// `notify_waiters` firing between the check and the await cannot be lost.
-    async fn wait_until<T>(&self, mut decide: impl FnMut(&Ledger) -> Option<T>) -> T {
+    /// Both `enable()` calls register the waiter before the ledger is read, so
+    /// a `notify_waiters` firing between the check and the await cannot be lost.
+    async fn wait_until<T>(
+        &self,
+        mut decide: impl FnMut(&Ledger) -> Option<T>,
+    ) -> Result<T, TrackMalformed> {
         loop {
             let notified = self.notify.notified();
-            tokio::pin!(notified);
+            let malformed = self.malformed_notify.notified();
+            tokio::pin!(notified, malformed);
             notified.as_mut().enable();
-            if let Some(decision) = decide(&self.read()) {
-                return decision;
+            malformed.as_mut().enable();
+            if self.is_malformed() {
+                return Err(TrackMalformed);
             }
-            notified.await;
+            if let Some(decision) = decide(&self.read()) {
+                return Ok(decision);
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = malformed => {}
+            }
         }
     }
 
     /// Next object of `key` with id >= `from_object_id`, waiting while the
-    /// subgroup is still open under live ingest. `None` once it is closed and
-    /// no such object exists.
+    /// subgroup is still open under live ingest. `Ok(None)` once it is closed
+    /// and no such object exists; `Err` as soon as the track is malformed.
     pub(crate) async fn next_subgroup_object_or_wait(
         &self,
         key: SubgroupKey,
         from_object_id: u64,
-    ) -> Option<Arc<CachedObject>> {
+    ) -> Result<Option<Arc<CachedObject>>, TrackMalformed> {
         self.wait_until(
             |ledger| match ledger.next_subgroup_object(key, from_object_id) {
                 Some(object) => Some(Some(object)),
@@ -93,7 +104,7 @@ impl TrackCache {
         &self,
         group_id: u64,
         from_object_id: u64,
-    ) -> Option<Arc<CachedObject>> {
+    ) -> Result<Option<Arc<CachedObject>>, TrackMalformed> {
         self.wait_until(
             |ledger| match ledger.next_group_object(group_id, from_object_id) {
                 Some(object) => Some(Some(object)),
@@ -130,6 +141,7 @@ mod tests {
         let object = cache
             .next_subgroup_object_or_wait(stream_key(0), 3)
             .await
+            .unwrap()
             .unwrap();
         // Assert: the exact id is returned (inclusive lower bound)
         assert_eq!(object.location.object_id, 3);
@@ -144,6 +156,7 @@ mod tests {
         let object = cache
             .next_subgroup_object_or_wait(stream_key(0), 4)
             .await
+            .unwrap()
             .unwrap();
         // Assert
         assert_eq!(object.location.object_id, 5);
@@ -159,6 +172,7 @@ mod tests {
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 1)
                 .await
+                .unwrap()
                 .is_none()
         );
     }
@@ -173,6 +187,7 @@ mod tests {
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 1)
                 .await
+                .unwrap()
                 .is_none()
         );
     }
@@ -187,6 +202,7 @@ mod tests {
         let object = cache
             .next_subgroup_object_or_wait(stream_key(0), 1)
             .await
+            .unwrap()
             .unwrap();
         // Assert
         assert_eq!(object.location.object_id, 2);
@@ -210,6 +226,7 @@ mod tests {
             .await
             .expect("waiter must wake on insert")
             .unwrap()
+            .unwrap()
             .expect("the inserted object is returned");
         assert_eq!(object.location.object_id, 0);
     }
@@ -231,7 +248,7 @@ mod tests {
             .await
             .expect("waiter must wake on close")
             .unwrap();
-        assert!(result.is_none());
+        assert!(matches!(result, Ok(None)));
     }
 
     #[tokio::test]
@@ -257,6 +274,7 @@ mod tests {
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 0)
                 .await
+                .unwrap()
                 .is_none()
         );
     }

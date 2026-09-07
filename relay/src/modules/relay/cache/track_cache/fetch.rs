@@ -131,9 +131,6 @@ impl TrackCache {
             };
 
             loop {
-                if self.is_malformed() {
-                    return Err(TrackMalformed);
-                }
                 if end_exclusive.is_some_and(|end_object_id| next_object_id >= end_object_id) {
                     break;
                 }
@@ -142,10 +139,8 @@ impl TrackCache {
                 let found = if in_known {
                     self.read().next_group_object(group_id, next_object_id)
                 } else {
-                    tokio::select! {
-                        found = self.next_group_object_or_wait(group_id, next_object_id) => found,
-                        _ = self.malformed_track_detected() => return Err(TrackMalformed),
-                    }
+                    self.next_group_object_or_wait(group_id, next_object_id)
+                        .await?
                 };
                 match found {
                     Some(object) => {

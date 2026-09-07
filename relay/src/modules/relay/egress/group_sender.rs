@@ -16,7 +16,10 @@ use crate::modules::{
         publisher::Publisher,
         subscription::DownstreamSubscription,
     },
-    relay::{cache::track_cache::TrackCache, types::SubgroupKey},
+    relay::{
+        cache::track_cache::{TrackCache, TrackMalformed},
+        types::SubgroupKey,
+    },
     types::TrackKey,
 };
 
@@ -131,15 +134,23 @@ impl GroupSender {
         else {
             unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
-        let Some(first) = task
+        let first = match task
             .cache
             .next_subgroup_object_or_wait(task.key, task.object_id)
             .await
-        else {
-            span.record("object_count", 0u64);
-            span.record("end_reason", "no_objects");
-            tracing::debug!("subgroup closed before any object to send");
-            return;
+        {
+            Ok(Some(first)) => first,
+            Ok(None) => {
+                span.record("object_count", 0u64);
+                span.record("end_reason", "no_objects");
+                tracing::debug!("subgroup closed before any object to send");
+                return;
+            }
+            Err(TrackMalformed) => {
+                span.record("object_count", 0u64);
+                span.record("end_reason", "malformed_track");
+                return;
+            }
         };
 
         // Opening the stream awaits peer stream credit; if the subscriber
@@ -200,10 +211,18 @@ impl GroupSender {
             }
             object_count += 1;
             prev_sent_object_id = Some(object_id);
-            next = task
+            next = match task
                 .cache
                 .next_subgroup_object_or_wait(task.key, object_id.saturating_add(1))
-                .await;
+                .await
+            {
+                Ok(next) => next,
+                Err(TrackMalformed) => {
+                    span.record("object_count", object_count);
+                    span.record("end_reason", "malformed_track");
+                    return;
+                }
+            };
         }
         span.record("object_count", object_count);
         span.record("end_reason", "cache_closed");
@@ -219,7 +238,7 @@ impl GroupSender {
         mut sender: Box<dyn DataSender>,
     ) {
         let mut cursor = task.object_id;
-        while let Some(object) = cache.next_subgroup_object_or_wait(task.key, cursor).await {
+        while let Ok(Some(object)) = cache.next_subgroup_object_or_wait(task.key, cursor).await {
             let object_id = object.location.object_id;
             tracing::debug!(
                 track_alias,

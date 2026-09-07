@@ -385,7 +385,11 @@ mod tests {
             let cache = self.cache();
             let mut objects = Vec::new();
             let mut cursor = 0;
-            while let Some(object) = cache.next_subgroup_object_or_wait(key, cursor).await {
+            while let Some(object) = cache
+                .next_subgroup_object_or_wait(key, cursor)
+                .await
+                .unwrap()
+            {
                 objects.push((object.location.object_id, object.status));
                 cursor = object.location.object_id + 1;
             }
@@ -400,7 +404,7 @@ mod tests {
             )
             .await
             .expect("subgroup should be closed, not waiting for more objects");
-            assert!(closed.is_none());
+            assert!(matches!(closed, Ok(None)));
         }
     }
 
