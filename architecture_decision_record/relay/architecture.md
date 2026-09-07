@@ -159,8 +159,12 @@ from `TrackCache` over a new uni stream.
 - Readers convert every wire object into a canonical `CachedObject` and insert
   it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
   group id, subgroup id and priority as the per-stream context, opens the
-  subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard` whose drop closes
-  it on FIN, stop, error or abort) and broadcasts `SubgroupOpened`. Header
+  subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard`) and
+  broadcasts `SubgroupOpened`. Only a FIN or an End of Group / End of Track
+  object `finish`es the guard; every other end (RESET_STREAM, stop, decode
+  error, task abort) drops it, which marks the subgroup aborted: its group is
+  never declared complete (draft-14 §10.4.2) and egress resets, rather than
+  FINs, the downstream stream (§10.4.3). Header
   types without an explicit subgroup id map to 0, or to the first object's id
   (Type 0x12/0x13/0x1A/0x1B, opened once that object arrives). For End-of-Group
   header types (0x18–0x1D) a clean FIN inserts an EndOfGroup status object at
@@ -205,8 +209,8 @@ from `TrackCache` over a new uni stream.
   their requested range only at `Fetch::End` (guarded by the eviction
   generation counter); datagram objects register nothing.
 - `next_subgroup_object_or_wait(key, from)` (live egress) returns the next object of that
-  subgroup or `None` once the subgroup is no longer open; a subgroup that was
-  never opened (fetch-fill only) therefore never blocks. `fetch_objects` walks
+  subgroup, `Finished` once it closed cleanly, or `Aborted` once it closed without
+  a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks. `fetch_objects` walks
   `[start, end)` in location order, reading positions inside knowledge without
   waiting and waiting past the frontier only while some subgroup of the group
   is open.
@@ -231,7 +235,8 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   opens nothing), regenerates the SUBGROUP_HEADER from that object's canonical
   properties (explicit subgroup id, priority; extensions always declared
   present so no object can lose its extension headers), and streams objects
-  until `next_subgroup_object_or_wait` reports the subgroup closed. Datagram groups are
+  until `next_subgroup_object_or_wait` reports the subgroup finished (FIN
+  downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Datagram groups are
   re-emitted with the downstream track alias.
 
 ## Cascading relays (`route_registry`, `inter_relay`)

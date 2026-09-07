@@ -9,27 +9,41 @@ use crate::modules::core::{
     subscription::DownstreamSubscription,
 };
 
+/// What the downstream side observed on its data streams.
+#[derive(Debug)]
+pub(crate) enum Sent {
+    Object(DataObject),
+    Closed,
+    Reset(u64),
+}
+
 struct MockDataSender {
-    sent: mpsc::UnboundedSender<Option<DataObject>>,
+    sent: mpsc::UnboundedSender<Sent>,
 }
 
 #[async_trait::async_trait]
 impl DataSender for MockDataSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         self.sent
-            .send(Some(object))
+            .send(Sent::Object(object))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 
     async fn close(&mut self) -> anyhow::Result<()> {
         self.sent
-            .send(None)
+            .send(Sent::Closed)
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+
+    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+        self.sent
+            .send(Sent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 }
 
 struct MockStreamSenderFactory {
-    sent: mpsc::UnboundedSender<Option<DataObject>>,
+    sent: mpsc::UnboundedSender<Sent>,
 }
 
 #[async_trait::async_trait]
@@ -50,12 +64,12 @@ pub(crate) struct SentPublishDone {
 }
 
 pub(crate) struct MockPublisher {
-    sent: mpsc::UnboundedSender<Option<DataObject>>,
+    sent: mpsc::UnboundedSender<Sent>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
 }
 
 pub(crate) struct MockPublisherObservers {
-    pub(crate) sent: mpsc::UnboundedReceiver<Option<DataObject>>,
+    pub(crate) sent: mpsc::UnboundedReceiver<Sent>,
     pub(crate) publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
 }
 

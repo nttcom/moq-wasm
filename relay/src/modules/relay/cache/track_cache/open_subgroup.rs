@@ -8,21 +8,56 @@ use crate::modules::relay::{
 use super::{TrackCache, TrackMalformed, location};
 
 /// Live-ingest ownership of one subgroup; dropping it closes the subgroup so
-/// every exit path of a reader (FIN, stop, error, abort) closes exactly once.
+/// every exit path of a reader closes exactly once. Only `finish` marks the
+/// subgroup complete (upstream FIN or End of Group); a plain drop — reset,
+/// stop, decode error, task abort — leaves its tail unknown (draft-14 §10.4.3).
 pub(crate) struct OpenSubgroupGuard<'a> {
     cache: &'a TrackCache,
     key: SubgroupKey,
+    finished: bool,
 }
 
 impl OpenSubgroupGuard<'_> {
     pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
         self.cache.insert_live(object)
     }
+
+    pub(crate) fn finish(mut self) {
+        self.finished = true;
+    }
 }
 
 impl Drop for OpenSubgroupGuard<'_> {
     fn drop(&mut self) {
-        self.cache.close_subgroup(self.key);
+        self.cache.close_subgroup(self.key, self.finished);
+    }
+}
+
+/// Outcome of waiting for the next object of a live subgroup.
+#[derive(Debug)]
+pub(crate) enum NextObject {
+    Object(Arc<CachedObject>),
+    /// Every object was received and the upstream stream ended cleanly.
+    Finished,
+    /// The upstream stream ended without a FIN; objects may be missing.
+    Aborted,
+}
+
+#[cfg(test)]
+impl NextObject {
+    pub(crate) fn unwrap(self) -> Arc<CachedObject> {
+        match self {
+            Self::Object(object) => object,
+            other => panic!("expected an object, got {other:?}"),
+        }
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        matches!(self, Self::Finished)
+    }
+
+    pub(crate) fn is_aborted(&self) -> bool {
+        matches!(self, Self::Aborted)
     }
 }
 
@@ -37,14 +72,22 @@ impl TrackCache {
             .entry(key)
             .or_default() += 1;
         self.notify.notify_waiters();
-        OpenSubgroupGuard { cache: self, key }
+        OpenSubgroupGuard {
+            cache: self,
+            key,
+            finished: false,
+        }
     }
 
-    fn close_subgroup(&self, key: SubgroupKey) {
+    fn close_subgroup(&self, key: SubgroupKey, finished: bool) {
         {
             let mut guard = self.write();
             let ledger: &mut Ledger = &mut guard;
             let group_id = key.group_id();
+            if !finished {
+                ledger.aborted_subgroups.insert(key);
+            }
+            let group_aborted = ledger.is_group_aborted(group_id);
             let Some(live) = ledger.live_groups.get_mut(&group_id) else {
                 return;
             };
@@ -56,10 +99,14 @@ impl TrackCache {
                 return;
             }
             live.open_subgroups.remove(&key);
-            // Once every live subgroup stream of the group has closed, no later
+            // Once every live subgroup stream of the group has finished, no later
             // subgroup for the group is assumed: the rest of the group becomes
             // known, from the live frontier so evicted positions stay unknown.
-            if matches!(key, SubgroupKey::Stream { .. }) && !live.has_open_stream() {
+            // A group with an aborted subgroup is never declared complete.
+            let group_complete = matches!(key, SubgroupKey::Stream { .. })
+                && !live.has_open_stream()
+                && !group_aborted;
+            if group_complete {
                 ledger.known_ranges.insert(
                     location(group_id, live.knowledge_frontier),
                     location(group_id, 0),
@@ -96,18 +143,19 @@ impl TrackCache {
     }
 
     /// Next object of `key` with id >= `from_object_id`, waiting while the
-    /// subgroup is still open under live ingest. `Ok(None)` once it is closed
-    /// and no such object exists; `Err` as soon as the track is malformed.
+    /// subgroup is still open under live ingest; `Err` as soon as the track
+    /// is malformed.
     pub(crate) async fn next_subgroup_object_or_wait(
         &self,
         key: SubgroupKey,
         from_object_id: u64,
-    ) -> Result<Option<Arc<CachedObject>>, TrackMalformed> {
+    ) -> Result<NextObject, TrackMalformed> {
         self.wait_until(
             |ledger| match ledger.next_subgroup_object(key, from_object_id) {
-                Some(object) => Some(Some(object)),
+                Some(object) => Some(NextObject::Object(object)),
                 None if ledger.is_open(key) => None,
-                None => Some(None),
+                None if ledger.aborted_subgroups.contains(&key) => Some(NextObject::Aborted),
+                None => Some(NextObject::Finished),
             },
         )
         .await
@@ -117,12 +165,13 @@ impl TrackCache {
         &self,
         group_id: u64,
         from_object_id: u64,
-    ) -> Result<Option<Arc<CachedObject>>, TrackMalformed> {
+    ) -> Result<NextObject, TrackMalformed> {
         self.wait_until(
             |ledger| match ledger.next_group_object(group_id, from_object_id) {
-                Some(object) => Some(Some(object)),
+                Some(object) => Some(NextObject::Object(object)),
                 None if ledger.has_open_subgroup_in_group(group_id) => None,
-                None => Some(None),
+                None if ledger.is_group_aborted(group_id) => Some(NextObject::Aborted),
+                None => Some(NextObject::Finished),
             },
         )
         .await
@@ -176,22 +225,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn next_subgroup_object_or_wait_returns_none_when_closed_and_exhausted() {
-        // Arrange: one object at id 0, then the subgroup closes
+    async fn next_subgroup_object_or_wait_is_finished_when_closed_and_exhausted() {
+        // Arrange: one object at id 0, then the subgroup finishes
         let cache = TrackCache::new();
-        drop(open_group(&cache, 0, &[0]));
+        open_group(&cache, 0, &[0]).finish();
         // Act / Assert
         assert!(
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 1)
                 .await
                 .unwrap()
-                .is_none()
+                .is_finished()
         );
     }
 
     #[tokio::test]
-    async fn next_subgroup_object_or_wait_returns_none_for_never_opened_subgroup() {
+    async fn next_subgroup_object_or_wait_is_finished_for_never_opened_subgroup() {
         // Arrange: a fetch fill wrote the object without any live stream
         let cache = TrackCache::new();
         let _ = cache.insert(stream_object(0, 0));
@@ -201,7 +250,7 @@ mod tests {
                 .next_subgroup_object_or_wait(stream_key(0), 1)
                 .await
                 .unwrap()
-                .is_none()
+                .is_finished()
         );
     }
 
@@ -240,7 +289,7 @@ mod tests {
             .expect("waiter must wake on insert")
             .unwrap()
             .unwrap()
-            .expect("the inserted object is returned");
+            .unwrap();
         assert_eq!(object.location.object_id, 0);
     }
 
@@ -255,13 +304,33 @@ mod tests {
         });
         tokio::task::yield_now().await;
         // Act
+        open.finish();
+        // Assert
+        let result = tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter must wake on close")
+            .unwrap();
+        assert!(matches!(result, Ok(NextObject::Finished)));
+    }
+
+    #[tokio::test]
+    async fn waiter_learns_that_a_dropped_subgroup_was_aborted() {
+        // Arrange: the reader ends without a FIN (reset, stop, decode error, task abort)
+        let cache = Arc::new(TrackCache::new());
+        let open = cache.open_subgroup(stream_key(0));
+        let waiter = tokio::spawn({
+            let cache = cache.clone();
+            async move { cache.next_subgroup_object_or_wait(stream_key(0), 0).await }
+        });
+        tokio::task::yield_now().await;
+        // Act
         drop(open);
         // Assert
         let result = tokio::time::timeout(Duration::from_secs(1), waiter)
             .await
             .expect("waiter must wake on close")
             .unwrap();
-        assert!(matches!(result, Ok(None)));
+        assert!(matches!(result, Ok(NextObject::Aborted)));
     }
 
     #[tokio::test]
@@ -271,7 +340,7 @@ mod tests {
         let first = cache.open_subgroup(stream_key(0));
         let second = cache.open_subgroup(stream_key(0));
         // Act
-        drop(first);
+        first.finish();
         // Assert: still open, so a waiter would keep waiting
         assert!(cache.has_group(0));
         assert!(
@@ -282,13 +351,13 @@ mod tests {
             .await
             .is_err()
         );
-        drop(second);
+        second.finish();
         assert!(
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 0)
                 .await
                 .unwrap()
-                .is_none()
+                .is_finished()
         );
     }
 
@@ -301,12 +370,29 @@ mod tests {
             group_id: 0,
             subgroup_id: 1,
         });
-        // Act / Assert: one subgroup closing leaves the group open
-        drop(first);
+        // Act / Assert: one subgroup finishing leaves the group open
+        first.finish();
         assert!(!cache.covers(location(0, 0), location(0, 0)));
-        // Act / Assert: the last one closing completes the group
-        drop(second);
+        // Act / Assert: the last one finishing completes the group
+        second.finish();
         assert!(cache.covers(location(0, 0), location(0, 0)));
+    }
+
+    #[test]
+    fn an_aborted_subgroup_keeps_the_group_from_completing() {
+        // Arrange: subgroup 1 is reset upstream while subgroup 0 finishes cleanly
+        let cache = TrackCache::new();
+        let finished = open_group(&cache, 0, &[0]);
+        let aborted = cache.open_subgroup(SubgroupKey::Stream {
+            group_id: 0,
+            subgroup_id: 1,
+        });
+        // Act
+        drop(aborted);
+        finished.finish();
+        // Assert: the tail of the group stays unknown (§10.4.3)
+        assert!(!cache.covers(location(0, 1), location(0, 0)));
+        assert!(cache.covers(location(0, 0), location(0, 1)));
     }
 
     #[test]

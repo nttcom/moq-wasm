@@ -17,7 +17,7 @@ use crate::modules::{
         subscription::DownstreamSubscription,
     },
     relay::{
-        cache::track_cache::{TrackCache, TrackMalformed},
+        cache::track_cache::{NextObject, TrackCache, TrackMalformed},
         types::SubgroupKey,
     },
     types::TrackKey,
@@ -26,6 +26,9 @@ use crate::modules::{
 use super::scheduler::GroupSendTask;
 
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
+
+/// draft-14 §10.4.3 RESET_STREAM error code INTERNAL_ERROR.
+const DATA_STREAM_INTERNAL_ERROR: u64 = 0x0;
 
 /// Receives `GroupSendTask` entries and spawns per-subgroup send tasks.
 pub(crate) struct GroupSender {
@@ -134,14 +137,14 @@ impl GroupSender {
         else {
             unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
-        let Ok(Some(first)) = task
+        let Ok(NextObject::Object(first)) = task
             .cache
             .next_subgroup_object_or_wait(task.key, task.object_id)
             .await
         else {
             span.record("object_count", 0u64);
             span.record("end_reason", "no_objects");
-            tracing::debug!("subgroup closed before any object to send");
+            tracing::debug!("subgroup ended before any object to send");
             return;
         };
 
@@ -186,8 +189,8 @@ impl GroupSender {
 
         let mut object_count = 0u64;
         let mut prev_sent_object_id = None;
-        let mut next = Some(first);
-        while let Some(object) = next {
+        let mut next = NextObject::Object(first);
+        while let NextObject::Object(object) = next {
             let object_id = object.location.object_id;
             tracing::debug!(object_id, "egress sending subgroup object");
             let field = object.to_subgroup_object_field(message_type, prev_sent_object_id);
@@ -219,9 +222,21 @@ impl GroupSender {
             };
         }
         span.record("object_count", object_count);
-        span.record("end_reason", "cache_closed");
-        if let Err(error) = sender.close().await {
-            tracing::warn!(?error, "failed to close egress stream sender");
+        match next {
+            NextObject::Aborted => {
+                // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
+                // may be missing objects, so the downstream stream is reset.
+                span.record("end_reason", "upstream_aborted");
+                if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
+                    tracing::warn!(?error, "failed to reset egress stream sender");
+                }
+            }
+            NextObject::Finished | NextObject::Object(_) => {
+                span.record("end_reason", "cache_closed");
+                if let Err(error) = sender.close().await {
+                    tracing::warn!(?error, "failed to close egress stream sender");
+                }
+            }
         }
     }
 
@@ -232,7 +247,9 @@ impl GroupSender {
         mut sender: Box<dyn DataSender>,
     ) {
         let mut cursor = task.object_id;
-        while let Ok(Some(object)) = cache.next_subgroup_object_or_wait(task.key, cursor).await {
+        while let Ok(NextObject::Object(object)) =
+            cache.next_subgroup_object_or_wait(task.key, cursor).await
+        {
             let object_id = object.location.object_id;
             tracing::debug!(
                 track_alias,

@@ -145,6 +145,9 @@ impl DatagramReader {
                     let open = match &mut current_group {
                         Some((current_group_id, open)) if *current_group_id == group_id => open,
                         slot => {
+                            if let Some((_, previous)) = slot.take() {
+                                previous.finish();
+                            }
                             let key = SubgroupKey::Datagram { group_id };
                             let (_, open) = slot.insert((group_id, cache.open_subgroup(key)));
                             let _ = notify.send(SubgroupOpened(key));

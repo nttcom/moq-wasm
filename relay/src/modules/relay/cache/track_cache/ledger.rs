@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -29,10 +29,36 @@ impl LiveGroup {
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
+    /// Subgroups whose upstream stream ended without a FIN (reset, stop,
+    /// decode error): their tail is unknown, so the group can never be
+    /// declared complete and their downstream streams are reset, not FIN'd.
+    pub(super) aborted_subgroups: HashSet<SubgroupKey>,
     pub(super) known_ranges: KnownRanges,
 }
 
 impl Ledger {
+    pub(super) fn is_group_aborted(&self, group_id: u64) -> bool {
+        self.aborted_subgroups
+            .iter()
+            .any(|key| key.group_id() == group_id)
+    }
+
+    /// Drops abort markers of groups the ledger no longer knows anything about.
+    pub(super) fn forget_aborts_of_vanished_groups(&mut self) {
+        let vanished: Vec<SubgroupKey> = self
+            .aborted_subgroups
+            .iter()
+            .copied()
+            .filter(|key| {
+                self.next_group_object(key.group_id(), 0).is_none()
+                    && !self.live_groups.contains_key(&key.group_id())
+            })
+            .collect();
+        for key in vanished {
+            self.aborted_subgroups.remove(&key);
+        }
+    }
+
     pub(super) fn is_open(&self, key: SubgroupKey) -> bool {
         self.live_groups
             .get(&key.group_id())

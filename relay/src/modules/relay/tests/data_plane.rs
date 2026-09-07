@@ -3,9 +3,9 @@ use std::time::Duration;
 use crate::modules::core::data_object::DataObject;
 
 use super::harness::{
-    OBJECT_COUNT, RelayHarness, assert_full_ordered_delivery,
+    OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery,
     fixtures::cached_object::FIXTURE_PRIORITY, receive_objects_until_close,
-    resolve_downstream_object_ids,
+    receive_objects_until_end, resolve_downstream_object_ids,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -135,4 +135,28 @@ async fn downstream_header_is_regenerated_from_the_cached_objects() {
     assert_eq!(header.group_id, 0);
     assert_eq!(header.subgroup_id, moqt::SubgroupId::Value(0));
     assert_eq!(header.publisher_priority, FIXTURE_PRIORITY);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upstream_reset_is_relayed_as_a_downstream_reset() {
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+
+    let upstream_stream = harness.open_upstream_stream().await;
+    upstream_stream.header(0);
+    for index in 0..3 {
+        upstream_stream.object(index);
+    }
+    upstream_stream.reset();
+
+    let (objects, end) = receive_objects_until_end(&mut egress).await;
+    assert_eq!(
+        resolve_downstream_object_ids(&objects),
+        vec![0, 1, 2],
+        "objects received before the reset are still forwarded"
+    );
+    assert!(
+        matches!(end, Sent::Reset(0)),
+        "a partial subgroup must be reset downstream with INTERNAL_ERROR, got {end:?}"
+    );
 }
