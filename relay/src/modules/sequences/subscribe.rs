@@ -670,6 +670,10 @@ mod tests {
         async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
             std::future::pending().await
         }
+
+        fn close_with_protocol_violation(&self, _reason: &str) {
+            unimplemented!("not used in subscribe tests")
+        }
     }
 
     #[async_trait::async_trait]

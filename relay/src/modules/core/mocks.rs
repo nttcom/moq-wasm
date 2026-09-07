@@ -18,6 +18,7 @@ use crate::modules::{
 pub(crate) struct RecordedControlMessages {
     pub(crate) unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
+    pub(crate) protocol_violation_reasons: Arc<Mutex<Vec<String>>>,
 }
 
 pub(crate) struct MockUpstreamSession {
@@ -60,6 +61,14 @@ impl Session for MockUpstreamSession {
 
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
         std::future::pending().await
+    }
+
+    fn close_with_protocol_violation(&self, reason: &str) {
+        self.recorded
+            .protocol_violation_reasons
+            .lock()
+            .unwrap()
+            .push(reason.to_string());
     }
 }
 

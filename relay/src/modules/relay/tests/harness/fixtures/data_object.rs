@@ -31,10 +31,11 @@ pub(crate) fn make_payload_object(object_id_delta: u64, payload: Bytes) -> DataO
 }
 
 pub(crate) fn make_status_object(object_id_delta: u64, status: ObjectStatus) -> DataObject {
-    make_subgroup_object(
-        object_id_delta,
-        moqt::SubgroupObject::new_status(u8::from(status) as u64),
-    )
+    make_raw_status_object(object_id_delta, u8::from(status) as u64)
+}
+
+pub(crate) fn make_raw_status_object(object_id_delta: u64, code: u64) -> DataObject {
+    make_subgroup_object(object_id_delta, moqt::SubgroupObject::new_status(code))
 }
 
 fn make_subgroup_object(object_id_delta: u64, subgroup_object: moqt::SubgroupObject) -> DataObject {

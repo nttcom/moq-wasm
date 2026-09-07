@@ -268,6 +268,18 @@ impl EventHandler {
                         .await;
                     continue;
                 }
+                EventKind::ProtocolViolationDetected { reason } => {
+                    tracing::error!(
+                        parent: &session_span,
+                        session_id,
+                        %reason,
+                        "protocol violation detected; closing session"
+                    );
+                    repo.lock()
+                        .await
+                        .close_with_protocol_violation(session_id, &reason);
+                    continue;
+                }
             };
             let event_span = Self::session_event_span(session_id, &session_span, &event);
 

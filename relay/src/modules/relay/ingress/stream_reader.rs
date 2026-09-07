@@ -177,8 +177,16 @@ impl StreamReader {
                     ) {
                         Ok(object) => object,
                         Err(error) => {
-                            span.record("end_reason", "invalid_status");
+                            // draft-14 §10.2.1.1: an unknown Object Status is a
+                            // protocol error; the upstream session is terminated.
+                            span.record("end_reason", "protocol_violation");
                             tracing::error!(%track_key, %error, object_id, "invalid object status");
+                            let _ = session_event_sender.send(
+                                SessionEvent::protocol_violation_detected(
+                                    publisher_session_id,
+                                    format!("{error} on object {object_id}"),
+                                ),
+                            );
                             return;
                         }
                     };
@@ -299,7 +307,10 @@ mod tests {
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::{
         cached_object::stream_key,
-        data_object::{make_header, make_header_with, make_payload_object, make_status_object},
+        data_object::{
+            make_header, make_header_with, make_payload_object, make_raw_status_object,
+            make_status_object,
+        },
     };
     use crate::modules::relay::types::SubgroupKey;
 
@@ -584,6 +595,32 @@ mod tests {
         assert!(matches!(
             event.kind,
             crate::modules::session_event::EventKind::MalformedTrackDetected(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_object_status_terminates_the_publisher_session() {
+        // Arrange: status code 0x2 is not defined by draft-14 §10.2.1.1
+        let mut env = TestEnv::new();
+        let receiver = scripted(
+            vec![make_header(0), payload(0), make_raw_status_object(0, 0x2)],
+            TerminalOutcome::Fin,
+        );
+        // Act
+        env.read_loop(receiver).await;
+        // Assert: the object is not cached and the session is reported for termination
+        assert_eq!(
+            env.cached_object_ids(stream_key(0)).await,
+            vec![(0, ObjectStatus::Normal)]
+        );
+        let event = env
+            .session_event_receiver
+            .try_recv()
+            .expect("the reader must report the protocol violation");
+        assert_eq!(event.session_id, PUBLISHER_SESSION);
+        assert!(matches!(
+            event.kind,
+            crate::modules::session_event::EventKind::ProtocolViolationDetected { .. }
         ));
     }
 
