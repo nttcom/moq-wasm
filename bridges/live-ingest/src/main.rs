@@ -1,6 +1,7 @@
 mod audio;
 mod ingest;
 mod moqt;
+mod publisher;
 mod rtmp;
 mod srt;
 mod video;
