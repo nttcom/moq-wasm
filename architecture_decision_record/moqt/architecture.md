@@ -54,18 +54,23 @@ Three zero-sized markers implement it:
 | --- | --- | --- |
 | `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on negotiated ALPN | **server-only**; accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client-side constructors `bail!`. |
+| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection (`connect_with` for raw QUIC, `web_transport_quinn::Client` for WebTransport). |
 
 The whole session stack is generic over `T: TransportProtocol`, so protocol
 selection is a compile-time type parameter (e.g. `Endpoint::<moqt::DUAL>`),
 not a runtime branch — except inside `DualConnection`, which wraps either
 variant behind one connection type.
 
-`connect_target.rs` — `ConnectTarget::parse(url)` maps the scheme to a
-transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
-default port 443) and resolves the host, preferring IPv4 because the client
-endpoint binds an IPv4 socket. `QUIC` / `WEBTRANSPORT` creators reject a URL
-for the other transport.
+Client-side helpers shared by the three creators:
+
+- `connect_target.rs` — `ConnectTarget::parse(url)` maps the scheme to a
+  transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
+  default port 443) and resolves the host, preferring IPv4 because the client
+  endpoint binds an IPv4 socket. `QUIC` / `WEBTRANSPORT` creators reject a URL
+  for the other transport.
+- `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
+  custom CA file), the `quinn::ClientConfig` per ALPN, and the client
+  `quinn::Endpoint`.
 
 ## Session establishment (`modules/moqt/domains`)
 

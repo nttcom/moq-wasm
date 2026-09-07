@@ -11,26 +11,67 @@ use quinn::rustls::{
 
 use super::dual_connection::DualConnection;
 use crate::modules::transport::{
-    connect_target::ConnectTarget, crypto_provider::install_default_crypto_provider,
+    client_crypto::{
+        MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
+        quic_client_config,
+    },
+    connect_target::{ClientTransport, ConnectTarget},
+    crypto_provider::install_default_crypto_provider,
     quic::quic_connection::QUICConnection,
     transport_connection_creator::TransportConnectionCreator,
     webtransport::wt_connection::WtConnection,
 };
 
-pub struct DualProtocolCreator {
+enum DualEndpoint {
+    Server(quinn::Endpoint),
+    Client(Box<DualClient>),
+}
+
+/// One UDP socket serves both transports: raw QUIC connects with the
+/// `moq-00` ALPN via `connect_with`, WebTransport reuses the same endpoint
+/// through `web_transport_quinn::Client` with the `h3` ALPN.
+struct DualClient {
     endpoint: quinn::Endpoint,
+    quic_config: quinn::ClientConfig,
+    web_transport: web_transport_quinn::Client,
+}
+
+pub struct DualProtocolCreator {
+    endpoint: DualEndpoint,
+}
+
+impl DualProtocolCreator {
+    fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
+        let endpoint = client_endpoint(port_num)?;
+        let quic_config = quic_client_config(crypto.clone(), MOQ_ALPN)?;
+        let web_transport_config =
+            quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
+        let web_transport =
+            web_transport_quinn::Client::new(endpoint.clone(), web_transport_config);
+        tracing::info!(
+            "Client ready! for Dual Protocol: {:?}",
+            endpoint.local_addr()?
+        );
+        Ok(DualProtocolCreator {
+            endpoint: DualEndpoint::Client(Box::new(DualClient {
+                endpoint,
+                quic_config,
+                web_transport,
+            })),
+        })
+    }
 }
 
 #[async_trait]
 impl TransportConnectionCreator for DualProtocolCreator {
     type Connection = DualConnection;
 
-    fn client(_port_num: u16, _verify_certificate: bool) -> anyhow::Result<Self> {
-        anyhow::bail!("DualProtocolCreator does not support client mode")
+    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
+        Self::create_client(port_num, client_crypto(verify_certificate)?)
     }
 
-    fn client_with_custom_cert(_port_num: u16, _custom_cert_path: &str) -> anyhow::Result<Self> {
-        anyhow::bail!("DualProtocolCreator does not support client mode")
+    fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
+        Self::create_client(port_num, client_crypto_with_custom_cert(custom_cert_path)?)
     }
 
     fn server(
@@ -81,19 +122,59 @@ impl TransportConnectionCreator for DualProtocolCreator {
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for Dual Protocol: {:?}", address);
 
-        Ok(DualProtocolCreator { endpoint })
+        Ok(DualProtocolCreator {
+            endpoint: DualEndpoint::Server(endpoint),
+        })
     }
 
     async fn create_new_transport(
         &self,
-        _target: &ConnectTarget,
+        target: &ConnectTarget,
     ) -> anyhow::Result<Self::Connection> {
-        anyhow::bail!("DualProtocolCreator does not support client mode")
+        let client = match &self.endpoint {
+            DualEndpoint::Client(client) => client,
+            DualEndpoint::Server(_) => {
+                anyhow::bail!("Cannot create_new_transport on a server endpoint")
+            }
+        };
+        match target.transport {
+            ClientTransport::Quic => {
+                let remote_address = target.resolve_remote_address().await?;
+                let connection = client
+                    .endpoint
+                    .connect_with(
+                        client.quic_config.clone(),
+                        remote_address,
+                        &target.server_name(),
+                    )
+                    .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?
+                    .await
+                    .inspect_err(|e| {
+                        tracing::error!("failed to create connection: {:?}", e.to_string())
+                    })?;
+                Ok(DualConnection::Quic(QUICConnection::new(connection)))
+            }
+            ClientTransport::WebTransport => {
+                let session = client
+                    .web_transport
+                    .connect(target.url.clone())
+                    .await
+                    .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
+                Ok(DualConnection::WebTransport(Box::new(WtConnection::new(
+                    session,
+                ))))
+            }
+        }
     }
 
     async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
-        let incoming = self
-            .endpoint
+        let endpoint = match &self.endpoint {
+            DualEndpoint::Server(endpoint) => endpoint,
+            DualEndpoint::Client(_) => {
+                anyhow::bail!("Cannot accept_new_transport on a client endpoint")
+            }
+        };
+        let incoming = endpoint
             .accept()
             .await
             .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
@@ -128,5 +209,100 @@ impl TransportConnectionCreator for DualProtocolCreator {
         } else {
             anyhow::bail!("Unsupported ALPN: {:?}", String::from_utf8_lossy(&alpn))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::UdpSocket, path::Path, time::Duration};
+
+    use rcgen::{CertifiedKey, generate_simple_self_signed};
+
+    use crate::{ClientConfig, DUAL, Endpoint, ServerConfig, Session};
+
+    fn free_udp_port() -> u16 {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket.local_addr().unwrap().port()
+    }
+
+    fn write_self_signed_cert(dir: &Path) -> ServerConfig {
+        let CertifiedKey { cert, signing_key } =
+            generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+                .unwrap();
+        std::fs::create_dir_all(dir).unwrap();
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        std::fs::write(&cert_path, cert.pem()).unwrap();
+        std::fs::write(&key_path, signing_key.serialize_pem()).unwrap();
+        ServerConfig {
+            port: 0,
+            cert_path: cert_path.to_string_lossy().into_owned(),
+            key_path: key_path.to_string_lossy().into_owned(),
+            keep_alive_interval_sec: 5,
+        }
+    }
+
+    fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session<DUAL>>) {
+        let port = free_udp_port();
+        let cert_dir = std::env::temp_dir().join(format!("moqt-dual-client-{name}-{port}"));
+        let mut server_config = write_self_signed_cert(&cert_dir);
+        server_config.port = port;
+        let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+        (port, accept)
+    }
+
+    fn dual_client() -> Endpoint<DUAL> {
+        Endpoint::<DUAL>::create_client(&ClientConfig {
+            port: 0,
+            verify_certificate: false,
+        })
+        .unwrap()
+    }
+
+    async fn connect_and_accept(
+        url: &str,
+        accept: tokio::task::JoinHandle<Session<DUAL>>,
+    ) -> anyhow::Result<()> {
+        let client = tokio::time::timeout(Duration::from_secs(5), async {
+            dual_client().connect(url).await?.await
+        })
+        .await??;
+        let server = tokio::time::timeout(Duration::from_secs(5), accept).await??;
+        drop((client, server));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dual_client_connects_over_raw_quic_with_moqt_scheme() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("quic");
+
+        // Act
+        let result = connect_and_accept(&format!("moqt://127.0.0.1:{port}"), accept).await;
+
+        // Assert
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dual_client_connects_over_web_transport_with_https_scheme() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("wt");
+
+        // Act
+        let result = connect_and_accept(&format!("https://127.0.0.1:{port}/moq"), accept).await;
+
+        // Assert
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dual_client_rejects_unknown_scheme() {
+        // Act
+        let result = dual_client().connect("http://127.0.0.1:1").await;
+
+        // Assert
+        assert!(result.is_err());
     }
 }
