@@ -234,17 +234,18 @@ impl CachedObject {
         let publisher_priority = self.publisher_priority;
         let extension_headers = (!self.extension_headers.key_value_pairs.is_empty())
             .then(|| self.extension_headers.clone());
+        // draft-14 §10.2.1.1: zero-length objects encode their status explicitly.
         let field = match (self.status, self.payload.is_empty(), extension_headers) {
-            (ObjectStatus::Normal, _, None) => DatagramField::Payload0x00 {
+            (status, true, None) => DatagramField::Status0x20 {
                 object_id,
                 publisher_priority,
-                payload: self.payload.clone(),
+                status,
             },
-            (ObjectStatus::Normal, _, Some(extension_headers)) => DatagramField::Payload0x01 {
+            (status, true, Some(extension_headers)) => DatagramField::Status0x21 {
                 object_id,
                 publisher_priority,
                 extension_headers,
-                payload: self.payload.clone(),
+                status,
             },
             (ObjectStatus::EndOfGroup, false, None) => DatagramField::Payload0x02WithEndOfGroup {
                 object_id,
@@ -259,16 +260,16 @@ impl CachedObject {
                     payload: self.payload.clone(),
                 }
             }
-            (status, _, None) => DatagramField::Status0x20 {
+            (_, false, None) => DatagramField::Payload0x00 {
                 object_id,
                 publisher_priority,
-                status,
+                payload: self.payload.clone(),
             },
-            (status, _, Some(extension_headers)) => DatagramField::Status0x21 {
+            (_, false, Some(extension_headers)) => DatagramField::Payload0x01 {
                 object_id,
                 publisher_priority,
                 extension_headers,
-                status,
+                payload: self.payload.clone(),
             },
         };
         ObjectDatagram::new(track_alias, self.location.group_id, field)
@@ -442,6 +443,24 @@ mod tests {
             DatagramField::Status0x20 {
                 object_id: 5,
                 status: ObjectStatus::DoesNotExist,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn zero_length_normal_datagram_is_emitted_as_an_explicit_status() {
+        // Arrange
+        let cached = CachedObject {
+            forwarding: ForwardingPreference::Datagram,
+            ..stream_object_with_payload(0, 4, Bytes::new())
+        };
+        // Act / Assert: §10.2.1.1
+        assert!(matches!(
+            cached.to_object_datagram(0).field,
+            DatagramField::Status0x20 {
+                object_id: 4,
+                status: ObjectStatus::Normal,
                 ..
             }
         ));

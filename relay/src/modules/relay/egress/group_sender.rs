@@ -16,7 +16,10 @@ use crate::modules::{
         publisher::Publisher,
         subscription::DownstreamSubscription,
     },
-    relay::{cache::track_cache::TrackCache, types::SubgroupKey},
+    relay::{
+        cache::track_cache::{TrackCache, TrackMalformed},
+        types::SubgroupKey,
+    },
     types::TrackKey,
 };
 
@@ -200,11 +203,20 @@ impl GroupSender {
             }
             object_count += 1;
             prev_sent_object_id = Some(object_id);
-            next = task
+            next = match task
                 .cache
                 .next_subgroup_object_or_wait(task.key, object_id.saturating_add(1))
                 .await
-                .unwrap_or(None);
+            {
+                Ok(next) => next,
+                // The runner terminates the subscription with PUBLISH_DONE; a FIN
+                // here would claim the partial subgroup is complete.
+                Err(TrackMalformed) => {
+                    span.record("object_count", object_count);
+                    span.record("end_reason", "malformed_track");
+                    return;
+                }
+            };
         }
         span.record("object_count", object_count);
         span.record("end_reason", "cache_closed");
