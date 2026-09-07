@@ -1,8 +1,11 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::h264::avcc::length_prefixed;
+use crate::h264::{
+    avcc::length_prefixed,
+    nal::{NalUnitType, nal_unit_type},
+};
 
-pub const START_CODE: [u8; 4] = [0, 0, 0, 1];
+const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 pub fn nal_units(data: &[u8]) -> NalUnits<'_> {
     NalUnits { data, position: 0 }
@@ -55,6 +58,12 @@ pub fn annexb_to_avcc(data: &[u8], nal_length_size: usize) -> Bytes {
     length_prefixed(nal_units(data), nal_length_size)
 }
 
+pub fn annexb_to_avcc_without_parameter_sets(data: &[u8], nal_length_size: usize) -> Bytes {
+    let nals = nal_units(data)
+        .filter(|nal| !nal_unit_type(nal).is_some_and(NalUnitType::is_parameter_set));
+    length_prefixed(nals, nal_length_size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,6 +110,20 @@ mod tests {
             avcc.as_ref(),
             [0, 0, 0, 2, 0x65, 0xCC, 0, 0, 0, 3, 0x41, 0xDD, 0xEE]
         );
+    }
+
+    #[test]
+    fn drops_parameter_sets_when_converting_samples() {
+        // Arrange
+        let stream = [
+            0, 0, 0, 1, 0x67, 0xAA, 0, 0, 0, 1, 0x68, 0xBB, 0, 0, 1, 0x65, 0xCC,
+        ];
+
+        // Act
+        let avcc = annexb_to_avcc_without_parameter_sets(&stream, 2);
+
+        // Assert
+        assert_eq!(avcc.as_ref(), [0, 2, 0x65, 0xCC]);
     }
 
     #[test]

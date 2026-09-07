@@ -1,20 +1,22 @@
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
 
+use anyhow::Context;
+
 use crate::{
     flv::tag::{Tag, TagType, encode_tag, file_header},
-    h264::{annexb::nal_units, avcc::length_prefixed, nal::nal_unit_type},
+    h264::{AvcDecoderConfigurationRecord, annexb::annexb_to_avcc_without_parameter_sets},
     sample::{MediaEvent, StreamSet, Timestamp},
 };
 
 const AVC_SEQUENCE_HEADER: [u8; 5] = [0x17, 0x00, 0, 0, 0];
 const AAC_SEQUENCE_HEADER: [u8; 2] = [0xAF, 0x00];
 const AAC_RAW: [u8; 2] = [0xAF, 0x01];
-const NAL_LENGTH_SIZE: usize = 4;
 
 pub struct Muxer {
     header_written: bool,
     streams: StreamSet,
+    video_config: Option<AvcDecoderConfigurationRecord>,
     last_video_timestamp: Timestamp,
 }
 
@@ -26,6 +28,7 @@ impl Default for Muxer {
                 has_video: true,
                 has_audio: true,
             },
+            video_config: None,
             last_video_timestamp: Timestamp::ZERO,
         }
     }
@@ -45,6 +48,7 @@ impl Muxer {
                 return Ok(Bytes::new());
             }
             MediaEvent::VideoConfig(config) => {
+                self.video_config = Some(config.clone());
                 let mut data = BytesMut::from(&AVC_SEQUENCE_HEADER[..]);
                 data.put_slice(&config.to_bytes());
                 Tag {
@@ -54,6 +58,11 @@ impl Muxer {
                 }
             }
             MediaEvent::Video(sample) => {
+                let nal_length_size = self
+                    .video_config
+                    .as_ref()
+                    .context("video sample before its configuration")?
+                    .nal_length_size as usize;
                 self.last_video_timestamp = sample.dts;
                 let composition_offset_ms =
                     (sample.pts.micros() as i64 - sample.dts.micros() as i64) / 1_000;
@@ -61,9 +70,10 @@ impl Muxer {
                 data.put_u8(if sample.is_keyframe { 0x17 } else { 0x27 });
                 data.put_u8(0x01);
                 data.put_slice(&(composition_offset_ms as i32).to_be_bytes()[1..]);
-                let nals = nal_units(&sample.data)
-                    .filter(|nal| !nal_unit_type(nal).is_some_and(|kind| kind.is_parameter_set()));
-                data.put_slice(&length_prefixed(nals, NAL_LENGTH_SIZE));
+                data.put_slice(&annexb_to_avcc_without_parameter_sets(
+                    &sample.data,
+                    nal_length_size,
+                ));
                 Tag {
                     tag_type: TagType::Video,
                     timestamp: sample.dts,
@@ -155,6 +165,44 @@ mod tests {
 
         // Assert
         assert_eq!(decoded, events);
+    }
+
+    #[test]
+    fn length_prefixes_with_the_configured_nal_length_size() {
+        // Arrange
+        let mut config = fixture_record();
+        config.nal_length_size = 2;
+        let mut muxer = Muxer::new();
+        let mut demuxer = Demuxer::new();
+        let sample = MediaEvent::Video(VideoSample {
+            data: delta_frame_annexb(),
+            is_keyframe: false,
+            pts: Timestamp::from_millis(40),
+            dts: Timestamp::from_millis(40),
+        });
+
+        // Act
+        let mut flv = BytesMut::from(
+            muxer
+                .push(&MediaEvent::VideoConfig(config))
+                .unwrap()
+                .as_ref(),
+        );
+        flv.put_slice(&muxer.push(&sample).unwrap());
+        let decoded = demuxer.push(&flv).unwrap();
+
+        // Assert
+        assert_eq!(decoded.last(), Some(&sample));
+    }
+
+    #[test]
+    fn rejects_video_before_configuration() {
+        // Arrange
+        let mut muxer = Muxer::new();
+        let sample = fixture_events().pop().unwrap();
+
+        // Act / Assert
+        assert!(muxer.push(&sample).is_err());
     }
 
     #[test]

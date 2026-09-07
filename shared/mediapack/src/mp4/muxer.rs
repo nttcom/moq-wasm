@@ -2,10 +2,8 @@ use anyhow::{Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
-    aac::AudioSpecificConfig,
-    h264::{
-        AvcDecoderConfigurationRecord, annexb::nal_units, avcc::length_prefixed, nal::nal_unit_type,
-    },
+    aac::{AudioSpecificConfig, asc::SAMPLES_PER_FRAME},
+    h264::{AvcDecoderConfigurationRecord, annexb::annexb_to_avcc_without_parameter_sets},
     sample::{MediaEvent, StreamSet, VideoSample},
 };
 
@@ -13,12 +11,10 @@ const VIDEO_TRACK_ID: u32 = 1;
 const AUDIO_TRACK_ID: u32 = 2;
 const VIDEO_TIMESCALE: u32 = 90_000;
 const MOVIE_TIMESCALE: u32 = 1_000;
-const NAL_LENGTH_SIZE: usize = 4;
 const SYNC_SAMPLE_FLAGS: u32 = 0x0200_0000;
 const NON_SYNC_SAMPLE_FLAGS: u32 = 0x0101_0000;
 const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x0002_0000;
 const TRUN_FLAGS: u32 = 0x0001 | 0x0100 | 0x0200 | 0x0400 | 0x0800;
-const AAC_SAMPLES_PER_FRAME: u32 = 1_024;
 
 #[derive(Default)]
 pub struct Fmp4Muxer {
@@ -85,8 +81,12 @@ impl Fmp4Muxer {
         let Some(sample) = self.pending_video.take() else {
             return Ok(Bytes::new());
         };
+        let nal_length_size = self
+            .video_config
+            .as_ref()
+            .map_or(4, |config| config.nal_length_size as usize);
         let duration = self.last_video_duration;
-        Ok(self.video_fragment(&sample, duration))
+        Ok(self.video_fragment(&sample, duration, nal_length_size))
     }
 
     fn configs_ready(&self) -> bool {
@@ -97,10 +97,11 @@ impl Fmp4Muxer {
     fn fragment(&mut self, event: &MediaEvent) -> Result<Bytes> {
         match event {
             MediaEvent::Video(sample) => {
-                ensure!(
-                    self.video_config.is_some(),
-                    "video sample without configuration"
-                );
+                let nal_length_size = self
+                    .video_config
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("video sample without configuration"))?
+                    .nal_length_size as usize;
                 let Some(previous) = self.pending_video.replace(sample.clone()) else {
                     return Ok(Bytes::new());
                 };
@@ -109,7 +110,7 @@ impl Fmp4Muxer {
                     .saturating_sub(previous.dts)
                     .ticks(VIDEO_TIMESCALE) as u32;
                 self.last_video_duration = duration;
-                Ok(self.video_fragment(&previous, duration))
+                Ok(self.video_fragment(&previous, duration, nal_length_size))
             }
             MediaEvent::Audio(sample) => {
                 let config = self
@@ -120,7 +121,7 @@ impl Fmp4Muxer {
                 Ok(self.moof_mdat(
                     AUDIO_TRACK_ID,
                     sample.pts.ticks(timescale),
-                    AAC_SAMPLES_PER_FRAME,
+                    SAMPLES_PER_FRAME as u32,
                     SYNC_SAMPLE_FLAGS,
                     0,
                     &sample.data,
@@ -130,10 +131,13 @@ impl Fmp4Muxer {
         }
     }
 
-    fn video_fragment(&mut self, sample: &VideoSample, duration: u32) -> Bytes {
-        let nals = nal_units(&sample.data)
-            .filter(|nal| !nal_unit_type(nal).is_some_and(|kind| kind.is_parameter_set()));
-        let data = length_prefixed(nals, NAL_LENGTH_SIZE);
+    fn video_fragment(
+        &mut self,
+        sample: &VideoSample,
+        duration: u32,
+        nal_length_size: usize,
+    ) -> Bytes {
+        let data = annexb_to_avcc_without_parameter_sets(&sample.data, nal_length_size);
         let composition_offset =
             sample.pts.ticks(VIDEO_TIMESCALE) as i64 - sample.dts.ticks(VIDEO_TIMESCALE) as i64;
         let flags = if sample.is_keyframe {
