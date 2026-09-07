@@ -5,6 +5,7 @@ use tracing::Span;
 
 use crate::Publisher;
 use crate::Subscriber;
+use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
@@ -81,6 +82,13 @@ impl<T: TransportProtocol> Session<T> {
 
     pub fn publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {
         (self.publisher(), self.subscriber())
+    }
+
+    /// Terminates the session (draft-14 §3.4): the peer receives `code` and
+    /// `reason` on the transport close, and this side observes
+    /// `SessionEvent::ProtocolViolation`.
+    pub fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
+        self.inner.close_with_error(code, reason);
     }
 
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent<T>> {
