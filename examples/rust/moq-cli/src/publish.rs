@@ -52,9 +52,13 @@ pub async fn run(args: PublishArgs) -> Result<()> {
         "publish ok"
     );
 
-    let mut media = TrackWriter::new(publisher.create_stream(&subscription), 0);
+    let first_group_id = unix_micros_now().max(0) as u64;
+    let mut media = TrackWriter::new(publisher.create_stream(&subscription), first_group_id);
     let mut catalog = CatalogPublisher::new(
-        TrackWriter::new(publisher.create_stream(&catalog_subscription), 0),
+        TrackWriter::new(
+            publisher.create_stream(&catalog_subscription),
+            first_group_id,
+        ),
         track.namespace.clone(),
         track.name.clone(),
     );
