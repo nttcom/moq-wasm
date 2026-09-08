@@ -155,8 +155,13 @@ fn install_sink_callbacks(
                 let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                 let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
                 let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-                let pts = timestamp(buffer.pts());
-                let dts = buffer.dts().map_or(pts, |_| timestamp(buffer.dts()));
+                let segment = sample
+                    .segment()
+                    .and_then(|segment| segment.downcast_ref::<gst::ClockTime>());
+                let pts = running_timestamp(segment, buffer.pts());
+                let dts = buffer
+                    .dts()
+                    .map_or(pts, |_| running_timestamp(segment, buffer.dts()));
                 match parameter_sets.track(map.as_slice()) {
                     Ok(Some(unit)) => {
                         if let Some(config) = unit.config_changed {
@@ -207,8 +212,18 @@ fn forward_bus_errors(
     Ok(())
 }
 
-fn timestamp(clock_time: Option<gst::ClockTime>) -> Timestamp {
-    Timestamp::from_micros(clock_time.map_or(0, |time| time.useconds()))
+/// Encoders shift PTS (and the segment with it) to keep DTS non-negative;
+/// running time undoes that shift so outputs stay on the input timeline.
+fn running_timestamp(
+    segment: Option<&gst::FormattedSegment<gst::ClockTime>>,
+    clock_time: Option<gst::ClockTime>,
+) -> Timestamp {
+    let running = clock_time.map(|time| {
+        segment
+            .and_then(|segment| segment.to_running_time(time))
+            .unwrap_or(time)
+    });
+    Timestamp::from_micros(running.map_or(0, |time| time.useconds()))
 }
 
 #[cfg(test)]
@@ -279,6 +294,8 @@ mod tests {
         assert_eq!(video.len(), samples.len());
         assert!(video[0].is_keyframe);
         assert!(video.windows(2).all(|pair| pair[0].pts < pair[1].pts));
+        assert_eq!(video[0].pts, samples[0].pts);
+        assert_eq!(video[0].dts, samples[0].pts);
         assert!(outputs.iter().all(|output| output.rendition == 0));
     }
 
