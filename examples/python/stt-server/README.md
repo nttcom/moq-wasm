@@ -70,16 +70,17 @@ uv sync
 openssl req -x509 -nodes -days 1 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
   -keyout key.pem -out cert.pem -subj /CN=localhost \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-GEMINI_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
+uv run --env-file .env uvicorn stt_server.app:app --port 8000
 ```
 
 The Gemini stages read `GEMINI_API_KEY` from the process environment (the
-`google-genai` SDK also accepts `GOOGLE_API_KEY`). Keep the key out of the
-shell history and out of git: put `export GEMINI_API_KEY=...` in a file only
-you can read and source it before starting the server.
+`google-genai` SDK also accepts `GOOGLE_API_KEY`). To keep the key out of the
+shell history and out of git, write `GEMINI_API_KEY=...` into the gitignored
+`.env` and let uv load it:
 
 ```bash
-chmod 600 .env && . ./.env   # .env is gitignored
+chmod 600 .env
+uv run --env-file .env uvicorn stt_server.app:app --port 8000
 ```
 
 `uv sync` builds `bindings/python` with maturin (Rust toolchain required).
@@ -103,7 +104,7 @@ relay certificate, so reuse it:
 
 ```bash
 MOQT_PORT=4433 MOQT_CERT=../../../relay/keys/cert.pem MOQT_KEY=../../../relay/keys/key.pem \
-  GEMINI_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
+  uv run --env-file .env uvicorn stt_server.app:app --port 8000
 # in another shell, from the repository root
 make browser
 BROWSER_EXAMPLE_PATH=/moq-wasm/examples/stt/index.html make chrome
