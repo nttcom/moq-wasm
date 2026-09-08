@@ -12,6 +12,7 @@ import pytest
 
 from stt_server.app import SttHub
 from stt_server.audio import AudioCodec, audio_tracks_from_catalog, parse_audio_object
+from stt_server.stt.base import PcmFormat, Transcript
 from stt_server.stt.wav_file import WavFileBackend
 
 TIMEOUT_SEC = 10
@@ -196,4 +197,56 @@ async def test_publish_namespace_makes_the_server_subscribe_audio(hub_and_client
     # Assert
     assert set(writers) == {"catalog", "audio_64kbps"}
     assert wav_peak(wav_backend.path) > 8000
+    serve.cancel()
+
+
+class EchoingBackend:
+    """Reports the byte count of every PCM chunk as a final transcript."""
+
+    pcm_format = PcmFormat(16000)
+
+    def __init__(self) -> None:
+        self.on_transcript = None
+
+    async def start(self, on_transcript) -> None:
+        self.on_transcript = on_transcript
+
+    async def send_pcm(self, pcm: bytes) -> None:
+        self.on_transcript(Transcript(text=f"{len(pcm)} bytes", is_final=True))
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_transcripts_are_published_on_the_transcript_track(self_signed_cert, monkeypatch):
+    # Arrange
+    monkeypatch.setattr("stt_server.app.create_backend", lambda _label: EchoingBackend())
+    port = free_udp_port()
+    server = moqt.listen(port, *self_signed_cert)
+    hub = SttHub()
+    serve = asyncio.ensure_future(hub.serve(server))
+    client = await asyncio.wait_for(moqt.connect(f"moqt://127.0.0.1:{port}", insecure=True), TIMEOUT_SEC)
+    transcript_reader = await asyncio.wait_for(client.subscribe(NAMESPACE, "transcript"), TIMEOUT_SEC)
+    audio_writer = await asyncio.wait_for(client.publish(NAMESPACE, "audio"), TIMEOUT_SEC)
+
+    # Act
+    await write_audio(audio_writer, opus_packets(seconds=0.5))
+    received = await asyncio.wait_for(transcript_reader.next_object(), TIMEOUT_SEC)
+
+    # Assert
+    transcript = json.loads(received.payload)
+    assert transcript["track"] == "audio"
+    assert transcript["final"] is True
+    assert transcript["text"].endswith("bytes")
+    assert hub.stats()["transcript_subscribers"] == {NAMESPACE: 1}
+    serve.cancel()
+
+
+async def test_other_tracks_cannot_be_subscribed(hub_and_client, wav_backend):
+    # Arrange
+    hub, client, serve = await hub_and_client()
+
+    # Act / Assert
+    with pytest.raises(RuntimeError):
+        await asyncio.wait_for(client.subscribe(NAMESPACE, "audio"), TIMEOUT_SEC)
     serve.cancel()

@@ -19,6 +19,18 @@ Object payloads may be bare `EncodedAudioChunk` bytes (browser, LOC) or the
 metadata's codec wins over the catalog. Opus and AAC (`mp4a.40.x`) are
 decoded with PyAV and resampled to the backend's PCM format.
 
+## Transcript track
+
+Transcripts are published back over MoQT: subscribe to
+`<namespace>/transcript` (`TRANSCRIPT_TRACK_NAME`) on any session and each
+transcript arrives as its own group with a JSON payload:
+
+```json
+{"track": "audio", "text": "こんにちは", "final": true, "at": 1725700000.123}
+```
+
+Any other SUBSCRIBE is rejected; the server only consumes audio tracks.
+
 ## Backends
 
 | `STT_BACKEND` | Service | PCM sent | Credentials |

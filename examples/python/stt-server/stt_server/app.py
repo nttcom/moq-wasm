@@ -3,15 +3,19 @@
 Audio tracks reach this process either as PUBLISH (publisher-initiated) or
 after a PUBLISH_NAMESPACE, in which case the server subscribes to the
 namespace's catalog and to every audio track it lists. Each audio track is
-decoded to PCM16 and streamed into one speech-to-text session.
+decoded to PCM16 and streamed into one speech-to-text session. Transcripts
+are published back on `<namespace>/transcript` to every session that
+subscribes to it, one JSON object per transcript.
 """
 
 import asyncio
 import collections
 import contextlib
+import json
 import logging
 import os
 from dataclasses import dataclass, field
+from typing import Callable
 
 import moqt
 from fastapi import FastAPI
@@ -30,6 +34,7 @@ MOQT_PORT = int(os.environ.get("MOQT_PORT", "4433"))
 MOQT_CERT = os.environ.get("MOQT_CERT", "cert.pem")
 MOQT_KEY = os.environ.get("MOQT_KEY", "key.pem")
 FALLBACK_AUDIO_TRACK_NAME = os.environ.get("AUDIO_TRACK_NAME", "audio")
+TRANSCRIPT_TRACK_NAME = os.environ.get("TRANSCRIPT_TRACK_NAME", "transcript")
 FALLBACK_AUDIO_CODEC = AudioCodec(name="opus", sample_rate=48000, channels=1)
 TRANSCRIPT_HISTORY = 200
 
@@ -37,6 +42,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
 log = logging.getLogger("stt")
 
 TrackKey = tuple[str, str]
+TranscriptListener = Callable[[TrackKey, Transcript], None]
 
 
 @dataclass
@@ -53,10 +59,17 @@ class Transcription:
     is created on the first object, once the codec is known from the object
     itself, the catalog, or the fallback."""
 
-    def __init__(self, track: TrackKey, codec: AudioCodec | None, backend: SpeechToText) -> None:
+    def __init__(
+        self,
+        track: TrackKey,
+        codec: AudioCodec | None,
+        backend: SpeechToText,
+        listener: TranscriptListener,
+    ) -> None:
         self.track = track
         self.codec = codec
         self.backend = backend
+        self.listener = listener
         self.state = TranscriptionState()
         self._decoder: AudioDecoder | None = None
 
@@ -88,6 +101,36 @@ class Transcription:
         self.state.transcripts.append(transcript)
         marker = "final" if transcript.is_final else "interim"
         log.info("%s/%s [%s] %s", self.track[0], self.track[1], marker, transcript.text)
+        self.listener(self.track, transcript)
+
+
+class TranscriptPublisher:
+    """Fans transcripts of one namespace out to every subscriber of its
+    transcript track. Each transcript is its own group so late subscribers
+    start cleanly at the next one."""
+
+    def __init__(self) -> None:
+        self.subscribers: list[moqt.TrackWriter] = []
+
+    @staticmethod
+    def encode(track: TrackKey, transcript: Transcript) -> bytes:
+        return json.dumps(
+            {
+                "track": track[1],
+                "text": transcript.text,
+                "final": transcript.is_final,
+                "at": transcript.received_at,
+            },
+            ensure_ascii=False,
+        ).encode()
+
+    async def publish(self, payload: bytes) -> None:
+        for writer in list(self.subscribers):
+            try:
+                await writer.write_group(payload)
+            except RuntimeError as error:
+                log.info("dropping transcript subscriber: %s", error)
+                self.subscribers.remove(writer)
 
 
 class SttHub:
@@ -95,6 +138,7 @@ class SttHub:
         self.sessions = 0
         self.audio_tracks: dict[TrackKey, AudioTrack] = {}
         self.transcriptions: dict[TrackKey, Transcription] = {}
+        self.transcript_publishers: dict[str, TranscriptPublisher] = {}
 
     async def serve(self, server: moqt.Server) -> None:
         async for session in server:
@@ -114,8 +158,12 @@ class SttHub:
                         reader = await event.accept()
                         log.info("publish accepted %s", key)
                         asyncio.ensure_future(self.consume_track(key, reader))
+                    case moqt.SubscribeRequest() if event.name == TRANSCRIPT_TRACK_NAME:
+                        writer = await event.accept()
+                        self.transcript_publisher(event.namespace).subscribers.append(writer)
+                        log.info("transcript subscriber added for %s", event.namespace)
                     case moqt.SubscribeRequest():
-                        await event.reject(0, "this server only consumes tracks")
+                        await event.reject(0, f"only {TRANSCRIPT_TRACK_NAME} can be subscribed")
                     case moqt.SubscribeNamespaceRequest():
                         await event.reject(0, "this server only consumes tracks")
                     case moqt.Disconnected() | moqt.ProtocolViolation():
@@ -142,9 +190,22 @@ class SttHub:
             log.info("ignoring non-audio track %s", key)
             return
         codec = self.audio_tracks[key].codec if key in self.audio_tracks else None
-        transcription = Transcription(key, codec, create_backend(f"{key[0]}_{key[1]}".replace("/", "_")))
+        transcription = Transcription(
+            key,
+            codec,
+            create_backend(f"{key[0]}_{key[1]}".replace("/", "_")),
+            self.publish_transcript,
+        )
         self.transcriptions[key] = transcription
         await transcription.run(reader)
+
+    def transcript_publisher(self, namespace: str) -> TranscriptPublisher:
+        return self.transcript_publishers.setdefault(namespace, TranscriptPublisher())
+
+    def publish_transcript(self, track: TrackKey, transcript: Transcript) -> None:
+        publisher = self.transcript_publisher(track[0])
+        if publisher.subscribers:
+            asyncio.ensure_future(publisher.publish(TranscriptPublisher.encode(track, transcript)))
 
     def register_catalog(self, namespace: str, catalog_json: bytes) -> list[AudioTrack]:
         tracks = audio_tracks_from_catalog(namespace, catalog_json)
@@ -166,6 +227,10 @@ class SttHub:
                     "transcripts": len(transcription.state.transcripts),
                 }
                 for (namespace, name), transcription in self.transcriptions.items()
+            },
+            "transcript_subscribers": {
+                namespace: len(publisher.subscribers)
+                for namespace, publisher in self.transcript_publishers.items()
             },
         }
 
