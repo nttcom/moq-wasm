@@ -1,0 +1,15 @@
+[package]
+name = "transcode"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+mediapack = { path = "../mediapack" }
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+bytes = "1"
