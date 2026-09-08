@@ -41,7 +41,7 @@ async fn handle_connection(mut socket: TcpStream, label: &str, moqt: MoqtManager
 
     let (mut session, initial_results) =
         ServerSession::new(ServerSessionConfig::new()).context("create RTMP session")?;
-    let mut state = RtmpState::new(moqt);
+    let mut state = RtmpState::new(moqt, label.to_string());
 
     handle_results(
         &mut session,

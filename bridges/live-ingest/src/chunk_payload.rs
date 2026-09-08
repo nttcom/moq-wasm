@@ -9,7 +9,6 @@ pub fn pack_video_chunk_payload(
     sent_at_ms: u64,
     data: &[u8],
     codec_info: Option<&str>,
-    description_base64: Option<&str>,
 ) -> Vec<u8> {
     let meta = serde_json::json!({
         "type": if is_key { "key" } else { "delta" },
@@ -17,7 +16,7 @@ pub fn pack_video_chunk_payload(
         "duration": 0i64,
         "sentAt": sent_at_ms as i64,
         "codec": codec_info,
-        "descriptionBase64": description_base64,
+        "descriptionBase64": serde_json::Value::Null,
     });
     pack(&meta, data)
 }
@@ -69,8 +68,7 @@ mod tests {
         let data = [0, 0, 0, 1, 0x65];
 
         // Act
-        let payload =
-            pack_video_chunk_payload(true, 1_000, 2_000, &data, Some("avc1.42C01E"), None);
+        let payload = pack_video_chunk_payload(true, 1_000, 2_000, &data, Some("avc1.42C01E"));
         let (meta, coded) = split(&payload);
 
         // Assert

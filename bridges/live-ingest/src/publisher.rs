@@ -75,7 +75,6 @@ impl MediaPublisher {
             current_time_ms(),
             &sample.data,
             codec.as_deref(),
-            None,
         );
         self.send(VIDEO_TRACK, sample.is_keyframe, &payload).await
     }
