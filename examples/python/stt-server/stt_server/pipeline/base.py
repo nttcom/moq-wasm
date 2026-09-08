@@ -34,12 +34,28 @@ class TextToSpeech(Protocol):
     async def synthesize(self, text: str) -> SynthesizedSpeech: ...
 
 
+Stage = Literal["vad", "stt", "llm", "tts", "turn"]
+
+
 @dataclass(frozen=True)
-class TextEvent:
-    kind: Literal["transcript", "reply"]
-    text: str
+class TurnEvent:
+    """One step of one conversation turn. `elapsed_ms` is how long the stage
+    took, `text` the transcript or the reply where the stage produces one."""
+
+    turn: int
+    stage: Stage
+    state: Literal["start", "done", "failed"]
+    elapsed_ms: float | None = None
+    text: str | None = None
+    detail: dict | None = None
     at: float = field(default_factory=time.time)
 
 
-PipelineEvent = TextEvent | SynthesizedSpeech
+@dataclass(frozen=True)
+class ReplyAudio:
+    turn: int
+    speech: SynthesizedSpeech
+
+
+PipelineEvent = TurnEvent | ReplyAudio
 EventSink = Callable[[PipelineEvent], Awaitable[None]]

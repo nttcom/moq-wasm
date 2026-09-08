@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from stt_server.pipeline.base import PIPELINE_SAMPLE_RATE, SynthesizedSpeech, TextEvent
+from stt_server.pipeline.base import (
+    PIPELINE_SAMPLE_RATE,
+    ReplyAudio,
+    SynthesizedSpeech,
+    TurnEvent,
+)
 from stt_server.pipeline.runner import VoicePipeline
 from stt_server.pipeline.stt.whisper_local import WhisperLocalStt
 from stt_server.pipeline.tts.gemini import pcm_sample_rate
@@ -58,28 +63,45 @@ class FakeVadSession:
         return np.array([[probability]]), inputs["h"], inputs["c"]
 
 
-async def collect_events(pipeline: VoicePipeline, pcm: bytes) -> list:
-    await pipeline.feed(pcm)
+async def collect_events(pipeline: VoicePipeline, pcm: bytes, marker: dict | None = None) -> list:
+    await pipeline.feed(pcm, marker)
     await pipeline.close()
     return pipeline.sink.events
 
 
-async def test_every_stage_runs_in_order_for_one_utterance():
+def timeline(events: list) -> list[tuple]:
+    return [
+        (event.turn, event.stage, event.state) if isinstance(event, TurnEvent) else (event.turn, "audio", "done")
+        for event in events
+    ]
+
+
+async def test_every_stage_reports_start_and_duration_for_one_turn():
     # Arrange
     sink = RecordingSink()
     pipeline = VoicePipeline(EnergyVad(), FakeStt(), FakeLlm(), FakeTts(), sink)
 
     # Act
-    events = await collect_events(pipeline, tone(1.5) + silence(0.6))
+    events = await collect_events(pipeline, tone(1.5) + silence(0.6), {"group_id": 3, "object_id": 9})
 
     # Assert
-    assert [(type(event), getattr(event, "kind", None)) for event in events] == [
-        (TextEvent, "transcript"),
-        (TextEvent, "reply"),
-        (SynthesizedSpeech, None),
+    assert timeline(events) == [
+        (1, "vad", "done"),
+        (1, "stt", "start"),
+        (1, "stt", "done"),
+        (1, "llm", "start"),
+        (1, "llm", "done"),
+        (1, "tts", "start"),
+        (1, "audio", "done"),
+        (1, "tts", "done"),
+        (1, "turn", "done"),
     ]
-    assert events[1].text == f"reply to '{events[0].text}'"
-    assert events[2].sample_rate == 24000
+    assert events[0].detail["audio"] == {"group_id": 3, "object_id": 9}
+    assert events[0].detail["utterance_sec"] > 1.5
+    transcript, reply = events[2].text, events[4].text
+    assert reply == f"reply to '{transcript}'"
+    assert isinstance(events[6], ReplyAudio) and events[6].speech.sample_rate == 24000
+    assert all(event.elapsed_ms is not None for event in events if isinstance(event, TurnEvent) and event.state == "done")
 
 
 async def test_llm_and_tts_are_optional():
@@ -91,7 +113,7 @@ async def test_llm_and_tts_are_optional():
     events = await collect_events(pipeline, tone(1.5) + silence(0.6))
 
     # Assert
-    assert [event.kind for event in events] == ["transcript"]
+    assert timeline(events) == [(1, "vad", "done"), (1, "stt", "start"), (1, "stt", "done"), (1, "turn", "done")]
 
 
 async def test_a_failing_stage_does_not_stop_later_utterances():
@@ -103,7 +125,18 @@ async def test_a_failing_stage_does_not_stop_later_utterances():
     events = await collect_events(pipeline, tone(2.5))
 
     # Assert
-    assert [event.text for event in events] == ["utterance 2", "utterance 3"]
+    assert [(event.turn, event.stage, event.state) for event in events if event.stage == "stt"] == [
+        (1, "stt", "start"),
+        (1, "stt", "failed"),
+        (2, "stt", "start"),
+        (2, "stt", "done"),
+        (3, "stt", "start"),
+        (3, "stt", "done"),
+    ]
+    assert [event.text for event in events if event.state == "done" and event.stage == "stt"] == [
+        "utterance 2",
+        "utterance 3",
+    ]
 
 
 def test_energy_vad_discards_silence_only_buffers():

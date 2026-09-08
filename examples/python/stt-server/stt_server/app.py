@@ -4,9 +4,14 @@ Audio tracks reach this process either as PUBLISH (publisher-initiated) or
 after a PUBLISH_NAMESPACE, in which case the server subscribes to the
 namespace's catalog and to every audio track it lists. Each audio track is
 decoded to PCM16 and fed to one `VoicePipeline` (VAD → STT → LLM → TTS).
-Results go back over MoQT: transcripts and replies as JSON objects on
-`<namespace>/transcript`, synthesized speech as Opus on `<namespace>/reply`,
-to every session that subscribes to those tracks.
+
+Two tracks report back to whoever subscribes to them:
+
+- `<namespace>/pipeline` carries JSON. Group 0 describes the pipeline itself
+  (nodes and edges) so a client can draw it; group N carries the events of
+  conversation turn N, one object per stage transition.
+- `<namespace>/reply` carries the synthesized speech as Opus, one group per
+  turn, with the same group id as the turn's events.
 """
 
 import asyncio
@@ -14,6 +19,7 @@ import contextlib
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 
 import moqt
 from fastapi import FastAPI
@@ -27,35 +33,80 @@ from .audio import (
     encode_opus,
     parse_audio_object,
 )
-from .pipeline import build_pipeline, pipeline_summary
-from .pipeline.base import PipelineEvent, SynthesizedSpeech, TextEvent
+from .pipeline import build_pipeline, pipeline_summary, stage_labels
+from .pipeline.base import PipelineEvent, ReplyAudio, TurnEvent
 
 MOQT_PORT = int(os.environ.get("MOQT_PORT", "4433"))
 MOQT_CERT = os.environ.get("MOQT_CERT", "cert.pem")
 MOQT_KEY = os.environ.get("MOQT_KEY", "key.pem")
 FALLBACK_AUDIO_TRACK_NAME = "audio"
-TRANSCRIPT_TRACK_NAME = "transcript"
+PIPELINE_TRACK_NAME = "pipeline"
 REPLY_TRACK_NAME = "reply"
-RESULT_TRACK_NAMES = {TRANSCRIPT_TRACK_NAME, REPLY_TRACK_NAME}
+RESULT_TRACK_NAMES = {PIPELINE_TRACK_NAME, REPLY_TRACK_NAME}
 FALLBACK_AUDIO_CODEC = AudioCodec(name="opus", sample_rate=48000, channels=1)
+TOPOLOGY_GROUP_ID = 0
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(message)s")
 log = logging.getLogger("voice")
 
 TrackKey = tuple[str, str]
-Subscribers = dict[TrackKey, list[moqt.TrackWriter]]
 
 
-async def write_group(writers: list[moqt.TrackWriter], objects: list[bytes]) -> None:
-    """One group per subscriber; a subscriber whose session ended is dropped."""
-    for writer in list(writers):
-        try:
-            await writer.start_group()
-            for payload in objects:
-                await writer.write(payload)
-        except RuntimeError as error:
-            log.info("dropping subscriber: %s", error)
-            writers.remove(writer)
+@dataclass
+class ResultWriter:
+    """A subscriber of a result track. Groups are numbered by turn, so the
+    open group has to be remembered: reopening the same id would be rejected."""
+
+    writer: moqt.TrackWriter
+    open_group: int | None = None
+
+    async def append(self, group_id: int, objects: list[bytes]) -> None:
+        if self.open_group != group_id:
+            await self.writer.start_group(group_id)
+            self.open_group = group_id
+        for payload in objects:
+            await self.writer.write(payload)
+
+
+@dataclass
+class Subscribers:
+    tracks: dict[TrackKey, list[ResultWriter]] = field(default_factory=dict)
+
+    def of(self, key: TrackKey) -> list[ResultWriter]:
+        return self.tracks.setdefault(key, [])
+
+    async def write_objects(self, key: TrackKey, group_id: int, objects: list[bytes]) -> None:
+        """Appends to `group_id` on every subscriber of the track; a subscriber
+        whose session ended is dropped."""
+        writers = self.tracks.get(key, [])
+        for writer in list(writers):
+            try:
+                await writer.append(group_id, objects)
+            except RuntimeError as error:
+                log.info("dropping subscriber of %s: %s", key, error)
+                writers.remove(writer)
+
+
+def pipeline_topology(audio_track_name: str) -> dict:
+    """The graph a client draws: the two client endpoints, the two MoQT tracks
+    carrying audio in and speech out, and the stages in between."""
+    stages = stage_labels()
+    nodes = [
+        {"id": "mic", "kind": "client", "label": "Microphone"},
+        {"id": "audio", "kind": "track", "label": f"{audio_track_name} track"},
+        {"id": "vad", "kind": "stage", "label": "VAD", "impl": stages["vad"]},
+        {"id": "stt", "kind": "stage", "label": "STT", "impl": stages["stt"]},
+        {"id": "llm", "kind": "stage", "label": "LLM", "impl": stages["llm"]},
+        {"id": "tts", "kind": "stage", "label": "TTS", "impl": stages["tts"]},
+        {"id": "reply", "kind": "track", "label": f"{REPLY_TRACK_NAME} track"},
+        {"id": "player", "kind": "client", "label": "Playback"},
+    ]
+    order = [node["id"] for node in nodes]
+    return {
+        "type": "topology",
+        "nodes": nodes,
+        "edges": [[source, target] for source, target in zip(order, order[1:])],
+    }
 
 
 class Conversation:
@@ -81,7 +132,9 @@ class Conversation:
                 pcm = self._decoder_for(packet.codec).decode(packet.data)
                 if pcm:
                     self.pcm_bytes += len(pcm)
-                    await self.pipeline.feed(pcm)
+                    await self.pipeline.feed(
+                        pcm, {"group_id": obj.group_id, "object_id": obj.object_id}
+                    )
         except RuntimeError as error:
             log.info("track %s closed by the transport: %s", self.track, error)
         finally:
@@ -91,21 +144,51 @@ class Conversation:
     async def publish_event(self, event: PipelineEvent) -> None:
         namespace, name = self.track
         match event:
-            case TextEvent():
-                log.info("%s/%s [%s] %s", namespace, name, event.kind, event.text)
-                record = {"type": event.kind, "track": name, "text": event.text, "at": event.at}
+            case TurnEvent():
+                record = {"type": "turn_event", "track": name} | {
+                    key: value
+                    for key, value in (
+                        ("turn", event.turn),
+                        ("stage", event.stage),
+                        ("state", event.state),
+                        ("elapsed_ms", round(event.elapsed_ms, 1) if event.elapsed_ms else None),
+                        ("text", event.text),
+                        ("detail", event.detail),
+                        ("at", event.at),
+                    )
+                    if value is not None
+                }
+                if event.text:
+                    log.info(
+                        "%s/%s turn %d %s: %s", namespace, name, event.turn, event.stage, event.text
+                    )
                 payload = json.dumps(record, ensure_ascii=False).encode()
-                await write_group(self.result_writers(TRANSCRIPT_TRACK_NAME), [payload])
-            case SynthesizedSpeech():
-                writers = self.result_writers(REPLY_TRACK_NAME)
-                if not writers:
+                await self.subscribers.write_objects(
+                    (namespace, PIPELINE_TRACK_NAME), event.turn, [payload]
+                )
+            case ReplyAudio():
+                if not self.subscribers.of((namespace, REPLY_TRACK_NAME)):
                     return
-                packets = encode_opus(event.pcm, event.sample_rate)
-                log.info("%s/%s [reply audio] %d packets", namespace, name, len(packets))
-                await write_group(writers, packets)
-
-    def result_writers(self, track_name: str) -> list[moqt.TrackWriter]:
-        return self.subscribers.get((self.track[0], track_name), [])
+                packets = encode_opus(event.speech.pcm, event.speech.sample_rate)
+                log.info(
+                    "%s/%s turn %d reply audio: %d packets", namespace, name, event.turn, len(packets)
+                )
+                await self.subscribers.write_objects(
+                    (namespace, REPLY_TRACK_NAME), event.turn, packets
+                )
+                # The reply group stays open until the next turn, so the count
+                # is what tells a subscriber the turn's audio is complete.
+                announcement = {
+                    "type": "reply_audio",
+                    "turn": event.turn,
+                    "packets": len(packets),
+                    "sec": round(len(event.speech.pcm) / (event.speech.sample_rate * 2), 3),
+                }
+                await self.subscribers.write_objects(
+                    (namespace, PIPELINE_TRACK_NAME),
+                    event.turn,
+                    [json.dumps(announcement).encode()],
+                )
 
     def _decoder_for(self, codec_from_object: AudioCodec | None) -> AudioDecoder:
         if self._decoder is None:
@@ -120,7 +203,7 @@ class VoiceHub:
         self.sessions = 0
         self.audio_tracks: dict[TrackKey, AudioTrack] = {}
         self.conversations: dict[TrackKey, Conversation] = {}
-        self.subscribers: Subscribers = {}
+        self.subscribers = Subscribers()
 
     async def serve(self, server: moqt.Server) -> None:
         async for session in server:
@@ -141,9 +224,7 @@ class VoiceHub:
                         log.info("publish accepted %s", key)
                         asyncio.ensure_future(self.consume_track(key, reader))
                     case moqt.SubscribeRequest() if event.name in RESULT_TRACK_NAMES:
-                        writer = await event.accept()
-                        self.subscribers.setdefault((event.namespace, event.name), []).append(writer)
-                        log.info("%s subscriber added for %s", event.name, event.namespace)
+                        await self.add_result_subscriber(event)
                     case moqt.SubscribeRequest():
                         await event.reject(0, f"only {sorted(RESULT_TRACK_NAMES)} can be subscribed")
                     case moqt.SubscribeNamespaceRequest():
@@ -153,6 +234,22 @@ class VoiceHub:
         finally:
             self.sessions -= 1
             log.info("session ended")
+
+    async def add_result_subscriber(self, request: moqt.SubscribeRequest) -> None:
+        """Result tracks number their groups by turn, so the writer starts at
+        group 0 rather than the default wall-clock group id."""
+        writer = ResultWriter(await request.accept(first_group_id=TOPOLOGY_GROUP_ID))
+        self.subscribers.of((request.namespace, request.name)).append(writer)
+        log.info("%s subscriber added for %s", request.name, request.namespace)
+        if request.name == PIPELINE_TRACK_NAME:
+            topology = pipeline_topology(self.audio_track_name(request.namespace))
+            await writer.append(
+                TOPOLOGY_GROUP_ID, [json.dumps(topology, ensure_ascii=False).encode()]
+            )
+
+    def audio_track_name(self, namespace: str) -> str:
+        names = [name for (space, name) in self.audio_tracks if space == namespace]
+        return names[0] if names else FALLBACK_AUDIO_TRACK_NAME
 
     async def subscribe_namespace(self, session: moqt.Session, namespace: str) -> None:
         catalog_reader = await session.subscribe(namespace, CATALOG_TRACK_NAME)
@@ -197,10 +294,14 @@ class VoiceHub:
                 f"{namespace}/{name}": {
                     "objects_received": conversation.objects_received,
                     "pcm_bytes": conversation.pcm_bytes,
+                    "turns": conversation.pipeline.turns,
                 }
                 for (namespace, name), conversation in self.conversations.items()
             },
-            "subscribers": {f"{ns}/{name}": len(writers) for (ns, name), writers in self.subscribers.items()},
+            "subscribers": {
+                f"{ns}/{name}": len(writers)
+                for (ns, name), writers in self.subscribers.tracks.items()
+            },
         }
 
 

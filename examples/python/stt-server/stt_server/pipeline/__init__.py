@@ -71,6 +71,11 @@ def pipeline_summary() -> dict[str, str]:
     return {stage: _selected(stage) for stage in DEFAULTS}
 
 
+def stage_labels() -> dict[str, str]:
+    """Stage id → the implementation serving it, for the pipeline topology."""
+    return {stage: _selected(stage) for stage in DEFAULTS}
+
+
 def build_pipeline(sink: EventSink) -> VoicePipeline:
     return VoicePipeline(
         vad=_factory("vad", VAD_FACTORIES)(),

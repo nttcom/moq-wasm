@@ -89,32 +89,83 @@ def test_bare_payload_is_a_codec_packet_without_metadata():
     assert packet.data == b"\xf8\x78\x72" and packet.codec is None
 
 
-async def test_published_audio_yields_transcript_reply_and_speech(hub_and_client):
+async def read_turn(reader: moqt.TrackReader) -> tuple[list[dict], list[int]]:
+    """Collects one turn's pipeline objects, up to and including its `turn` event."""
+    events, groups = [], []
+    while True:
+        obj = await wait(reader.next_object())
+        events.append(json.loads(obj.payload))
+        groups.append(obj.group_id)
+        if events[-1].get("stage") == "turn":
+            return events, groups
+
+
+def stage(events: list[dict], name: str, state: str) -> dict:
+    return next(
+        event for event in events if event.get("stage") == name and event.get("state") == state
+    )
+
+
+async def test_the_topology_is_the_first_object_of_the_pipeline_track(hub_and_client):
+    # Arrange
+    _hub, client = hub_and_client
+
+    # Act
+    pipeline_reader = await wait(client.subscribe(NAMESPACE, "pipeline"))
+    first = await wait(pipeline_reader.next_object())
+    topology = json.loads(first.payload)
+
+    # Assert
+    assert first.group_id == 0
+    assert topology["type"] == "topology"
+    assert [node["id"] for node in topology["nodes"]] == [
+        "mic", "audio", "vad", "stt", "llm", "tts", "reply", "player",
+    ]
+    assert ["vad", "stt"] in topology["edges"]
+
+
+async def test_a_turn_reports_every_stage_in_the_group_named_after_it(hub_and_client):
     # Arrange
     hub, client = hub_and_client
-    transcript_reader = await wait(client.subscribe(NAMESPACE, "transcript"))
+    pipeline_reader = await wait(client.subscribe(NAMESPACE, "pipeline"))
     reply_reader = await wait(client.subscribe(NAMESPACE, "reply"))
+    await wait(pipeline_reader.next_object())
     catalog_writer = await wait(client.publish(NAMESPACE, "catalog"))
     await catalog_writer.write_group(CATALOG)
-    audio_writer = await wait(client.publish(NAMESPACE, "audio_64kbps"))
+    audio_writer = await wait(client.publish(NAMESPACE, "audio_64kbps", first_group_id=100))
 
     # Act
     await write_audio(audio_writer, speech_packets())
-    transcript = json.loads((await wait(transcript_reader.next_object())).payload)
-    reply = json.loads((await wait(transcript_reader.next_object())).payload)
+    events, groups = await read_turn(pipeline_reader)
     reply_audio = await wait(reply_reader.next_object())
 
-    # Assert
-    assert transcript["type"] == "transcript" and transcript["track"] == "audio_64kbps"
-    assert reply == {**reply, "type": "reply", "text": f"reply to '{transcript['text']}'"}
-    assert reply_audio.object_id == 0 and len(reply_audio.payload) > 0
-    assert hub.stats()["subscribers"] == {f"{NAMESPACE}/transcript": 1, f"{NAMESPACE}/reply": 1}
+    # Assert: every object of turn 1 rides in group 1, audio included
+    assert set(groups) == {1} and reply_audio.group_id == 1
+    assert {event["turn"] for event in events} == {1}
+    assert [(event.get("stage"), event.get("state")) for event in events if event["type"] == "turn_event"] == [
+        ("vad", "done"),
+        ("stt", "start"),
+        ("stt", "done"),
+        ("llm", "start"),
+        ("llm", "done"),
+        ("tts", "start"),
+        ("tts", "done"),
+        ("turn", "done"),
+    ]
+    vad, transcript = stage(events, "vad", "done"), stage(events, "stt", "done")
+    assert vad["detail"]["audio"]["group_id"] == 100 and vad["detail"]["utterance_sec"] > 1.0
+    assert stage(events, "llm", "done")["text"] == f"reply to '{transcript['text']}'"
+    assert stage(events, "turn", "done")["elapsed_ms"] > 0
+    announcement = next(event for event in events if event["type"] == "reply_audio")
+    assert announcement["packets"] > 0 and len(reply_audio.payload) > 0
+    assert hub.stats()["subscribers"] == {f"{NAMESPACE}/pipeline": 1, f"{NAMESPACE}/reply": 1}
 
 
 async def test_publish_namespace_makes_the_server_subscribe_audio(hub_and_client):
     # Arrange
     hub, client = hub_and_client
-    transcript_reader = await wait(client.subscribe(NAMESPACE, "transcript"))
+    pipeline_reader = await wait(client.subscribe(NAMESPACE, "pipeline"))
+    await wait(pipeline_reader.next_object())
     announce = asyncio.ensure_future(client.publish_namespace(NAMESPACE))
     writers: dict[str, moqt.TrackWriter] = {}
     while len(writers) < 2:
@@ -127,11 +178,11 @@ async def test_publish_namespace_makes_the_server_subscribe_audio(hub_and_client
 
     # Act
     await write_audio(writers["audio_64kbps"], speech_packets())
-    transcript = json.loads((await wait(transcript_reader.next_object())).payload)
+    events, _groups = await read_turn(pipeline_reader)
 
     # Assert
     assert set(writers) == {"catalog", "audio_64kbps"}
-    assert transcript["type"] == "transcript"
+    assert stage(events, "stt", "done")["text"]
 
 
 async def test_other_tracks_cannot_be_subscribed(hub_and_client):

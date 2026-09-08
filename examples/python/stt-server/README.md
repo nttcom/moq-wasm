@@ -2,10 +2,10 @@
 
 A FastAPI process that listens for MoQT sessions, decodes the audio tracks it
 receives and runs each one through a `VAD → STT → LLM → TTS` pipeline. Every
-stage is chosen by an environment variable, and results go back over MoQT:
-transcripts and replies as JSON on `<namespace>/transcript`, synthesized
-speech as Opus on `<namespace>/reply`. Transcripts are also logged; `GET /`
-reports counters and the active pipeline.
+stage is chosen by an environment variable, and the pipeline reports itself
+back over MoQT: its structure and every stage transition on
+`<namespace>/pipeline`, the synthesized speech on `<namespace>/reply`.
+Transcripts are also logged; `GET /` reports counters and the active pipeline.
 
 ## Pipeline stages
 
@@ -51,16 +51,47 @@ decoded with PyAV.
 
 ## Result tracks
 
-Subscribe to `<namespace>/transcript` for JSON objects, one group each:
+One conversation turn is one MoQT **group id**, on both result tracks.
 
-```json
-{"type": "transcript", "track": "audio", "text": "こんにちは", "at": 1725700000.1}
-{"type": "reply", "track": "audio", "text": "こんにちは。ご用件は何でしょう?", "at": 1725700001.4}
-```
+`<namespace>/pipeline` carries JSON, one object per event:
 
-Subscribe to `<namespace>/reply` for the spoken reply:
-one group per reply, one 20 ms Opus packet (48 kHz mono) per object. Any
-other SUBSCRIBE is rejected.
+- group 0 is the pipeline itself, sent to every new subscriber, so a client can
+  draw it without knowing the server's configuration:
+
+  ```json
+  {"type":"topology",
+   "nodes":[{"id":"mic","kind":"client","label":"Microphone"},
+            {"id":"vad","kind":"stage","label":"VAD","impl":"silero"}, "..."],
+   "edges":[["mic","audio"],["audio","vad"],"..."]}
+  ```
+
+- group N carries turn N as it happens: `vad` reports the utterance and the
+  audio object that completed it, then each stage reports `start` and `done`
+  with its duration, and `turn` closes the group.
+
+  ```json
+  {"type":"turn_event","turn":1,"stage":"vad","state":"done","elapsed_ms":1620.0,
+   "detail":{"utterance_sec":1.62,"audio":{"group_id":100,"object_id":37}}}
+  {"type":"turn_event","turn":1,"stage":"stt","state":"done","elapsed_ms":410.2,"text":"こんにちは"}
+  {"type":"reply_audio","turn":1,"packets":249,"sec":4.98}
+  {"type":"turn_event","turn":1,"stage":"turn","state":"done","elapsed_ms":9310.4}
+  ```
+
+`<namespace>/reply` carries the spoken reply for turn N in group N: one 20 ms
+Opus packet (48 kHz mono) per object. The `reply_audio` event announces how
+many packets the turn has, which is how a subscriber knows the audio is
+complete — the group itself stays open until the next turn.
+
+Any other SUBSCRIBE is rejected.
+
+## Turn latency
+
+The `vad` event names the audio object whose arrival completed the utterance.
+A publisher knows when it sent that object, so it can place the start of the
+turn on its own clock: `sent_at(audio) - utterance_sec`. Adding the moment its
+playback of the reply finishes gives the turn end to end, in one clock, with
+the server's stage durations explaining where the time went. The browser
+example does exactly this.
 
 ## Run
 
@@ -97,8 +128,10 @@ PIPELINE_LLM=none PIPELINE_TTS=none uv run uvicorn stt_server.app:app --port 800
 ## Browser example
 
 `examples/browser/examples/stt` captures the microphone with getUserMedia,
-encodes it to Opus with WebCodecs, publishes it over WebTransport, shows the
-transcript track and plays the reply track. The server must present a
+encodes it to Opus with WebCodecs and publishes it over WebTransport. It draws
+the pipeline with React Flow from the topology object, lights each node as the
+stage events arrive, plays the reply track, and times every turn from the
+start of speech to the end of playback. The server must present a
 certificate the browser accepts; the repository's Chrome launcher pins the
 relay certificate, so reuse it:
 
@@ -123,6 +156,7 @@ uv sync --group dev && uv run pytest
 ```
 
 The tests drive the pipeline with fake STT/LLM/TTS stages over real MoQT
-sessions (both PUBLISH and PUBLISH_NAMESPACE flows), check the transcript and
-reply tracks, and exercise both VADs on synthesized tones and silence.
-Deepgram, OpenAI and Gemini are not called by the tests.
+sessions (both PUBLISH and PUBLISH_NAMESPACE flows), check the topology object
+and that a turn's events and its audio share one group id, and exercise both
+VADs on synthesized tones and silence. Deepgram, OpenAI and Gemini are not
+called by the tests.
