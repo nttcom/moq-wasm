@@ -2,7 +2,10 @@ use std::{net::UdpSocket, path::Path, time::Duration};
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
-use crate::{ClientConfig, DUAL, Endpoint, ServerConfig, Session};
+use crate::{
+    ClientConfig, DUAL, DataReceiver, Endpoint, FilterType, ServerConfig, Session, SessionEvent,
+    Subscription, TrackReader,
+};
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -60,4 +63,32 @@ pub(crate) async fn connect_sessions(
     .await??;
     let server = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept).await??;
     Ok((client, server))
+}
+
+/// Answers the client's PUBLISH with PUBLISH_OK and registers the object
+/// receiver for its track alias.
+pub(crate) async fn accept_publish(server: &Session<DUAL>) -> Subscription {
+    let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+        panic!("expected PUBLISH from the client");
+    };
+    let subscription = handler.ok(128, FilterType::LargestObject, 0).await.unwrap();
+    handler.accept_data_receiver().await;
+    subscription
+}
+
+/// The data receiver resolves only once the first object has arrived, so
+/// this must run after the publisher has sent something.
+pub(crate) async fn subscribed_track_reader(
+    server: &Session<DUAL>,
+    subscription: &Subscription,
+) -> TrackReader<DUAL> {
+    let DataReceiver::Stream(factory) = server
+        .subscriber()
+        .accept_data_receiver(subscription)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a subgroup stream receiver");
+    };
+    TrackReader::new(factory)
 }
