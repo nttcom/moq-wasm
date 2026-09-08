@@ -23,7 +23,8 @@ bridges/live-ingest/recordings/
 
 log/*
 
-/.env
+.env
+.env.local
 test-results
 
 cargo-flamegraph.trace/*

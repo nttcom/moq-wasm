@@ -73,6 +73,15 @@ openssl req -x509 -nodes -days 1 -newkey ec -pkeyopt ec_paramgen_curve:prime256v
 GEMINI_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
 ```
 
+The Gemini stages read `GEMINI_API_KEY` from the process environment (the
+`google-genai` SDK also accepts `GOOGLE_API_KEY`). Keep the key out of the
+shell history and out of git: put `export GEMINI_API_KEY=...` in a file only
+you can read and source it before starting the server.
+
+```bash
+chmod 600 .env && . ./.env   # .env is gitignored
+```
+
 `uv sync` builds `bindings/python` with maturin (Rust toolchain required).
 Whisper downloads its model from Hugging Face on first use. Environment:
 `MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`. The HTTP port only serves
