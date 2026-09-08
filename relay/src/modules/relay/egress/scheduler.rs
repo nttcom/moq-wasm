@@ -150,9 +150,9 @@ impl EgressScheduler {
         }
     }
 
-    /// Re-schedules consecutive cached groups after `group_id`, recovering
-    /// groups whose open events were lost to receiver lag. Duplicates are
-    /// filtered by the `scheduled` set.
+    /// Re-schedules cached groups after `group_id`, recovering groups whose
+    /// open events were lost to receiver lag. Duplicates are filtered by the
+    /// `scheduled` set.
     async fn recover_lagged_groups(&self, group_id: u64, scheduled: &mut HashSet<SubgroupKey>) {
         if matches!(self.group_order, GroupOrder::Descending) {
             return;
@@ -167,8 +167,11 @@ impl EgressScheduler {
         .await;
     }
 
-    /// Schedules consecutive cached groups starting at the filter Start
-    /// Location.
+    /// Schedules every cached group at or after the filter Start Location.
+    ///
+    /// The Start Location is a lower bound (§9.7), not a group that has to
+    /// exist: group ids may start anywhere and skip values (§2.3.1), so the
+    /// first cached group can lie above the start group.
     ///
     /// With starts clamped to the subscribe-time Largest Object this never
     /// replays the past; what it covers is delivery that events cannot:
@@ -180,20 +183,18 @@ impl EgressScheduler {
         start: &moqt::Location,
         scheduled: &mut HashSet<SubgroupKey>,
     ) {
-        let mut next = start.group_id;
-        while self.cache.has_group(next) {
-            let object_id = if next == start.group_id {
+        for group_id in self.cache.groups_at_or_after(start.group_id) {
+            let object_id = if group_id == start.group_id {
                 start.object_id
             } else {
                 0
             };
-            for key in self.cache.subgroups_in_group(next) {
+            for key in self.cache.subgroups_in_group(group_id) {
                 let _ = self.schedule(key, object_id, scheduled).await;
             }
             if matches!(self.group_order, GroupOrder::Descending) {
                 return;
             }
-            next += 1;
         }
     }
 
@@ -360,6 +361,55 @@ mod tests {
             .await
             .expect("a task should be scheduled");
         assert_eq!(task.key, stream_key(5));
+    }
+
+    // The cached counterpart of the event case above: a first group that was
+    // ingested before the scheduler subscribed to open events is only
+    // reachable through the cache, and its id need not be the start group.
+    #[tokio::test]
+    async fn start_location_is_lower_bound_for_first_cached_group() {
+        // Arrange: no content at subscribe time, group 5 already cached and closed
+        let cache = Arc::new(TrackCache::new());
+        insert_closed_group(&cache, 5, &[0]);
+        // Act
+        let mut scheduler = start_scheduler(cache, FilterType::NextGroupStart, None).await;
+        // Assert
+        let task = scheduler
+            .task_receiver
+            .recv()
+            .await
+            .expect("a task should be scheduled");
+        assert_eq!(
+            task,
+            GroupSendTask {
+                key: stream_key(5),
+                object_id: 0
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn next_group_start_schedules_cached_groups_across_a_group_id_gap() {
+        // Arrange: group 3 holds the Largest Object; the publisher skipped to group 7
+        let cache = Arc::new(TrackCache::new());
+        insert_closed_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 7, &[0]);
+        // Act
+        let mut scheduler =
+            start_scheduler(cache, FilterType::NextGroupStart, Some(location(3, 0))).await;
+        // Assert
+        let task = scheduler
+            .task_receiver
+            .recv()
+            .await
+            .expect("a task should be scheduled");
+        assert_eq!(
+            task,
+            GroupSendTask {
+                key: stream_key(7),
+                object_id: 0
+            }
+        );
     }
 
     #[tokio::test]

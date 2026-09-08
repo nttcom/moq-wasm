@@ -150,8 +150,13 @@ impl TrackCache {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn has_group(&self, group_id: u64) -> bool {
         self.read().has_group(group_id)
+    }
+
+    pub(crate) fn groups_at_or_after(&self, group_id: u64) -> Vec<u64> {
+        self.read().groups_in_range(group_id, u64::MAX)
     }
 
     pub(crate) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {
@@ -479,17 +484,6 @@ mod tests {
         assert!(!cache.is_malformed());
         let key = SubgroupKey::Datagram { group_id: 0 };
         assert!(cache.read().next_subgroup_object(key, 0).is_some());
-    }
-
-    #[test]
-    fn has_group_is_true_for_a_known_group_without_objects() {
-        // Arrange: a subgroup opened and closed without objects, so the group is
-        // known complete but holds nothing
-        let cache = TrackCache::new();
-        insert_closed_group(&cache, 0, &[]);
-        // Act / Assert: the scheduler's consecutive-group walk must not stop here
-        assert!(cache.has_group(0));
-        assert!(!cache.has_group(1));
     }
 
     #[test]

@@ -46,6 +46,42 @@ async fn egress_start_racing_ingest_burst_delivers_all_objects() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn next_group_start_delivers_a_first_group_with_nonzero_id_cached_before_egress_started() {
+    const FIRST_GROUP_ID: u64 = 1_757_300_000_000_000;
+
+    let harness = RelayHarness::new();
+    let no_content_before_subscribe = None;
+
+    let upstream_stream = harness.open_upstream_stream().await;
+    upstream_stream.header(FIRST_GROUP_ID);
+    upstream_stream.object(0);
+    upstream_stream.fin();
+    harness
+        .wait_largest_location(moqt::Location {
+            group_id: FIRST_GROUP_ID,
+            object_id: 0,
+        })
+        .await;
+
+    let mut egress = harness
+        .start_egress_with_filter(
+            moqt::FilterType::NextGroupStart,
+            no_content_before_subscribe,
+        )
+        .await;
+
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert!(
+        matches!(
+            objects.first(),
+            Some(DataObject::SubgroupHeader(header)) if header.group_id == FIRST_GROUP_ID
+        ),
+        "downstream stream should start with the first group's subgroup header"
+    );
+    assert_eq!(resolve_downstream_object_ids(&objects), vec![0]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn egress_started_with_pre_subscribe_snapshot_delivers_head_objects_cached_mid_burst() {
     const IN_FLIGHT_BEFORE_EGRESS_START: usize = 10;
 

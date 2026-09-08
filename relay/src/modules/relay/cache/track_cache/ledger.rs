@@ -110,6 +110,7 @@ impl Ledger {
         self.live_groups.contains_key(&group_id)
     }
 
+    #[cfg(test)]
     pub(super) fn has_group(&self, group_id: u64) -> bool {
         self.next_group_object(group_id, 0).is_some()
             || self.has_open_subgroup_in_group(group_id)
