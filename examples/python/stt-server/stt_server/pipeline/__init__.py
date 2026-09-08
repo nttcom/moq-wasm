@@ -15,10 +15,7 @@ from .vad.energy import EnergyVad
 from .vad.silero import SileroVad
 
 DEFAULTS = {"vad": "silero", "stt": "whisper", "llm": "gemini", "tts": "gemini"}
-
-
-def _language() -> str:
-    return os.environ.get("STT_LANGUAGE", "ja")
+LANGUAGE = os.environ.get("STT_LANGUAGE", "ja")
 
 
 VAD_FACTORIES: dict[str, Callable[[], VoiceActivityDetector]] = {
@@ -29,17 +26,17 @@ VAD_FACTORIES: dict[str, Callable[[], VoiceActivityDetector]] = {
     "energy": lambda: EnergyVad(silence_rms=int(os.environ.get("ENERGY_SILENCE_RMS", "300"))),
 }
 
-STT_FACTORIES: dict[str, Callable[[str], SpeechToText]] = {
-    "whisper": lambda _label: WhisperLocalStt(
+STT_FACTORIES: dict[str, Callable[[], SpeechToText]] = {
+    "whisper": lambda: WhisperLocalStt(
         model_name=os.environ.get("WHISPER_MODEL", "small"),
         device=os.environ.get("WHISPER_DEVICE", "cpu"),
         compute_type=os.environ.get("WHISPER_COMPUTE_TYPE", "int8"),
-        language=_language(),
+        language=LANGUAGE,
         no_speech_threshold=float(os.environ.get("WHISPER_NO_SPEECH_THRESHOLD", "0.6")),
     ),
-    "deepgram": lambda _label: DeepgramStt(api_key=os.environ["DEEPGRAM_API_KEY"], language=_language()),
-    "openai": lambda _label: OpenAiTranscribeStt(api_key=os.environ["OPENAI_API_KEY"], language=_language()),
-    "wav": lambda label: WavFileStt(Path(os.environ.get("TRANSCRIPT_DIR", "recordings")) / label),
+    "deepgram": lambda: DeepgramStt(api_key=os.environ["DEEPGRAM_API_KEY"], language=LANGUAGE),
+    "openai": lambda: OpenAiTranscribeStt(api_key=os.environ["OPENAI_API_KEY"], language=LANGUAGE),
+    "wav": lambda: WavFileStt(Path(os.environ.get("TRANSCRIPT_DIR", "recordings"))),
 }
 
 LLM_FACTORIES: dict[str, Callable[[], LanguageModel | None]] = {
@@ -75,10 +72,10 @@ def pipeline_summary() -> dict[str, str]:
     return {stage: _selected(stage) for stage in DEFAULTS}
 
 
-def build_pipeline(track_label: str, sink: EventSink) -> VoicePipeline:
+def build_pipeline(sink: EventSink) -> VoicePipeline:
     return VoicePipeline(
         vad=_factory("vad", VAD_FACTORIES)(),
-        stt=_factory("stt", STT_FACTORIES)(track_label),
+        stt=_factory("stt", STT_FACTORIES)(),
         llm=_factory("llm", LLM_FACTORIES)(),
         tts=_factory("tts", TTS_FACTORIES)(),
         sink=sink,

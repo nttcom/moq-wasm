@@ -119,39 +119,22 @@ OPUS_SAMPLE_RATE = 48000
 OPUS_BITRATE = 64_000
 
 
-class OpusEncoder:
-    """Encodes mono PCM of any rate into 20 ms Opus packets at 48 kHz. One
-    encoder per reply stream; `flush()` emits the trailing partial frame and
-    starts a fresh codec state for the next reply."""
-
-    def __init__(self) -> None:
-        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
-        self._pts = 0
-        self.context = self._new_context()
-
-    def encode(self, pcm: bytes, pcm_format: PcmFormat) -> list[bytes]:
-        frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
-        frame.sample_rate = pcm_format.sample_rate
-        frame.planes[0].update(pcm)
-        packets = []
-        for resampled in self.resampler.resample(frame):
-            resampled.pts = self._pts
-            self._pts += resampled.samples
-            packets += [bytes(packet) for packet in self.context.encode(resampled)]
-        return packets
-
-    def flush(self) -> list[bytes]:
-        packets = [bytes(packet) for packet in self.context.encode(None)]
-        self.context = self._new_context()
-        self._pts = 0
-        return packets
-
-    @staticmethod
-    def _new_context() -> av.AudioCodecContext:
-        context = av.CodecContext.create("libopus", "w")
-        context.sample_rate = OPUS_SAMPLE_RATE
-        context.layout = "mono"
-        context.format = "s16"
-        context.bit_rate = OPUS_BITRATE
-        context.open()
-        return context
+def encode_opus(pcm: bytes, pcm_format: PcmFormat) -> list[bytes]:
+    """Encodes one mono PCM buffer into 20 ms Opus packets at 48 kHz."""
+    context = av.CodecContext.create("libopus", "w")
+    context.sample_rate = OPUS_SAMPLE_RATE
+    context.layout = "mono"
+    context.format = "s16"
+    context.bit_rate = OPUS_BITRATE
+    context.open()
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
+    frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
+    frame.sample_rate = pcm_format.sample_rate
+    frame.planes[0].update(pcm)
+    packets = []
+    pts = 0
+    for resampled in resampler.resample(frame):
+        resampled.pts = pts
+        pts += resampled.samples
+        packets += [bytes(packet) for packet in context.encode(resampled)]
+    return packets + [bytes(packet) for packet in context.encode(None)]

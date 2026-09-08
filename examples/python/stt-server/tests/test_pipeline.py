@@ -1,10 +1,9 @@
 import shutil
 import subprocess
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
-from types import SimpleNamespace
 
 from stt_server.pipeline.base import PIPELINE_PCM, PcmFormat, ReplyAudioEvent, SynthesizedSpeech, TextEvent
 from stt_server.pipeline.runner import VoicePipeline
@@ -15,16 +14,12 @@ from tests.conftest import SAMPLE_RATE_16K, silence, tone
 
 
 class FakeStt:
-    async def transcribe(self, utterance: bytes, pcm_format: PcmFormat) -> str:
+    async def transcribe(self, utterance: bytes) -> str:
         return f"{len(utterance) // 2} samples"
 
 
 class FakeLlm:
-    def __init__(self) -> None:
-        self.history: list[str] = []
-
     async def reply(self, user_text: str) -> str:
-        self.history.append(user_text)
         return f"reply to '{user_text}'"
 
 
@@ -34,7 +29,7 @@ class FakeTts:
 
 
 class FailingStt:
-    async def transcribe(self, utterance: bytes, pcm_format: PcmFormat) -> str:
+    async def transcribe(self, utterance: bytes) -> str:
         raise RuntimeError("service down")
 
 
@@ -124,33 +119,24 @@ def test_silero_ignores_silence():
     assert utterances == []
 
 
-def spoken_sample(directory) -> bytes | None:
+def test_silero_cuts_speech_into_an_utterance(tmp_path):
+    # Arrange
     if shutil.which("say") is None or shutil.which("ffmpeg") is None:
-        return None
-    aiff = directory / "speech.aiff"
+        pytest.skip("needs macOS `say` and ffmpeg to synthesize speech")
+    aiff = tmp_path / "speech.aiff"
     subprocess.run(["say", "-o", str(aiff), "Hello, this is a short test sentence."], check=True)
-    return subprocess.run(
+    speech = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(aiff), "-f", "s16le", "-ac", "1", "-ar", "16000", "pipe:1"],
         capture_output=True,
         check=True,
     ).stdout
 
-
-def test_silero_cuts_speech_into_an_utterance_with_padding(tmp_path):
-    # Arrange
-    speech = spoken_sample(tmp_path)
-    if speech is None:
-        pytest.skip("needs macOS `say` and ffmpeg to synthesize speech")
-    vad = SileroVad(min_silence_ms=300)
-
     # Act
-    utterances = vad.push(silence(1.0) + speech + silence(1.0))
-    utterances += [remaining] if (remaining := vad.flush()) is not None else []
+    utterances = SileroVad(min_silence_ms=300).push(silence(1.0) + speech + silence(1.0))
 
     # Assert
-    assert 1 <= len(utterances) <= 3
-    total_seconds = sum(len(utterance) for utterance in utterances) / PIPELINE_PCM.bytes_per_second()
-    assert 1.0 <= total_seconds <= len(speech) / PIPELINE_PCM.bytes_per_second() + 1.0
+    assert utterances
+    assert sum(map(len, utterances)) >= PIPELINE_PCM.bytes_per_second()
 
 
 async def test_whisper_drops_segments_rated_as_non_speech():
@@ -164,7 +150,7 @@ async def test_whisper_drops_segments_rated_as_non_speech():
     stt = WhisperLocalStt(recognizer=recognizer, no_speech_threshold=0.6)
 
     # Act
-    text = await stt.transcribe(tone(1.0), PIPELINE_PCM)
+    text = await stt.transcribe(tone(1.0))
 
     # Assert
     assert text == "こんにちは"

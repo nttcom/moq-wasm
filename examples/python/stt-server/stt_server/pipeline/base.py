@@ -25,7 +25,9 @@ class VoiceActivityDetector(Protocol):
 
 
 class SpeechToText(Protocol):
-    async def transcribe(self, utterance: bytes, pcm_format: PcmFormat) -> str: ...
+    """Transcribes one utterance of `PIPELINE_PCM`."""
+
+    async def transcribe(self, utterance: bytes) -> str: ...
 
 
 class LanguageModel(Protocol):

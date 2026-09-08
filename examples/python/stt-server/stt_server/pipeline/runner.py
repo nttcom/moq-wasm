@@ -4,7 +4,6 @@ import logging
 from .base import (
     EventSink,
     LanguageModel,
-    PIPELINE_PCM,
     ReplyAudioEvent,
     SpeechToText,
     TextEvent,
@@ -60,7 +59,7 @@ class VoicePipeline:
                 log.exception("pipeline stage failed: %s", error)
 
     async def _process(self, utterance: bytes) -> None:
-        text = (await self.stt.transcribe(utterance, PIPELINE_PCM)).strip()
+        text = (await self.stt.transcribe(utterance)).strip()
         if not text:
             return
         await self.sink(TextEvent("transcript", text))

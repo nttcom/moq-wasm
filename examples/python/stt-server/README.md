@@ -4,8 +4,8 @@ A FastAPI process that listens for MoQT sessions, decodes the audio tracks it
 receives and runs each one through a `VAD → STT → LLM → TTS` pipeline. Every
 stage is chosen by an environment variable, and results go back over MoQT:
 transcripts and replies as JSON on `<namespace>/transcript`, synthesized
-speech as Opus on `<namespace>/reply`. `GET /` reports counters and the
-active pipeline, `GET /transcripts` the recent events.
+speech as Opus on `<namespace>/reply`. Transcripts are also logged; `GET /`
+reports counters and the active pipeline.
 
 ## Pipeline stages
 
@@ -51,15 +51,14 @@ decoded with PyAV.
 
 ## Result tracks
 
-Subscribe to `<namespace>/transcript` (`TRANSCRIPT_TRACK_NAME`) for JSON
-objects, one group each:
+Subscribe to `<namespace>/transcript` for JSON objects, one group each:
 
 ```json
 {"type": "transcript", "track": "audio", "text": "こんにちは", "at": 1725700000.1}
 {"type": "reply", "track": "audio", "text": "こんにちは。ご用件は何でしょう?", "at": 1725700001.4}
 ```
 
-Subscribe to `<namespace>/reply` (`REPLY_TRACK_NAME`) for the spoken reply:
+Subscribe to `<namespace>/reply` for the spoken reply:
 one group per reply, one 20 ms Opus packet (48 kHz mono) per object. Any
 other SUBSCRIBE is rejected.
 
@@ -76,8 +75,8 @@ GEMINI_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
 
 `uv sync` builds `bindings/python` with maturin (Rust toolchain required).
 Whisper downloads its model from Hugging Face on first use. Environment:
-`MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`. The HTTP port is only for
-`GET /` and `GET /transcripts`; clients connect to the MoQT port.
+`MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`. The HTTP port only serves
+`GET /`; clients connect to the MoQT port.
 
 Transcription only, no Gemini key needed:
 

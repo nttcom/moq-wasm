@@ -1,10 +1,11 @@
-import math
 import socket
-import struct
 import subprocess
 
-import av
+import numpy as np
 import pytest
+
+from stt_server.audio import encode_opus
+from stt_server.pipeline.base import PcmFormat
 
 SAMPLE_RATE_16K = 16000
 
@@ -35,10 +36,8 @@ def free_udp_port() -> int:
 
 
 def tone(seconds: float, sample_rate: int = SAMPLE_RATE_16K, amplitude: int = 8000, frequency: int = 300) -> bytes:
-    return b"".join(
-        struct.pack("<h", int(amplitude * math.sin(2 * math.pi * frequency * i / sample_rate)))
-        for i in range(int(seconds * sample_rate))
-    )
+    samples = np.arange(int(seconds * sample_rate))
+    return (amplitude * np.sin(2 * np.pi * frequency * samples / sample_rate)).astype(np.int16).tobytes()
 
 
 def silence(seconds: float, sample_rate: int = SAMPLE_RATE_16K) -> bytes:
@@ -46,19 +45,4 @@ def silence(seconds: float, sample_rate: int = SAMPLE_RATE_16K) -> bytes:
 
 
 def opus_packets(pcm_48k_mono: bytes) -> list[bytes]:
-    encoder = av.CodecContext.create("libopus", "w")
-    encoder.sample_rate = 48000
-    encoder.layout = "mono"
-    encoder.format = "s16"
-    encoder.open()
-    frame_size = encoder.frame_size or 960
-    packets = []
-    for offset in range(0, len(pcm_48k_mono), frame_size * 2):
-        chunk = pcm_48k_mono[offset : offset + frame_size * 2]
-        frame = av.AudioFrame(format="s16", layout="mono", samples=len(chunk) // 2)
-        frame.sample_rate = 48000
-        frame.pts = offset // 2
-        frame.planes[0].update(chunk)
-        packets += [bytes(packet) for packet in encoder.encode(frame)]
-    packets += [bytes(packet) for packet in encoder.encode(None)]
-    return packets
+    return encode_opus(pcm_48k_mono, PcmFormat(48000))

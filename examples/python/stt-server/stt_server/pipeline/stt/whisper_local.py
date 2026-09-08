@@ -4,8 +4,6 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from ..base import PcmFormat
-
 log = logging.getLogger("stt.whisper")
 
 Recognizer = Callable[[np.ndarray], Sequence]
@@ -32,9 +30,7 @@ class WhisperLocalStt:
         self.no_speech_threshold = no_speech_threshold
         self._recognizer = recognizer
 
-    async def transcribe(self, utterance: bytes, pcm_format: PcmFormat) -> str:
-        if pcm_format.sample_rate != 16000:
-            raise ValueError(f"whisper expects 16 kHz PCM, got {pcm_format}")
+    async def transcribe(self, utterance: bytes) -> str:
         loop = asyncio.get_running_loop()
         if self._recognizer is None:
             self._recognizer = await loop.run_in_executor(None, self._load_model)

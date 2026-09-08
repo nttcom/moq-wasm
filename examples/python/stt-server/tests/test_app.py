@@ -1,5 +1,6 @@
 import asyncio
 import json
+import struct
 
 import moqt
 import pytest
@@ -8,7 +9,7 @@ from stt_server.app import VoiceHub
 from stt_server.audio import AudioCodec, audio_tracks_from_catalog, parse_audio_object
 from stt_server.pipeline.runner import VoicePipeline
 from stt_server.pipeline.vad.energy import EnergyVad
-from tests.conftest import free_udp_port, opus_packets, tone
+from tests.conftest import free_udp_port, opus_packets, silence, tone
 from tests.test_pipeline import FakeLlm, FakeStt, FakeTts
 
 TIMEOUT_SEC = 30
@@ -26,7 +27,7 @@ CATALOG = json.dumps(
 
 @pytest.fixture
 def fake_pipeline(monkeypatch):
-    def build(_label, sink):
+    def build(sink):
         return VoicePipeline(EnergyVad(), FakeStt(), FakeLlm(), FakeTts(), sink)
 
     monkeypatch.setattr("stt_server.app.build_pipeline", build)
@@ -48,7 +49,7 @@ async def wait(awaitable):
 
 
 def speech_packets() -> list[bytes]:
-    return opus_packets(tone(1.5, sample_rate=48000) + bytes(2 * 48000))
+    return opus_packets(tone(1.5, sample_rate=48000) + silence(1.0, 48000))
 
 
 async def write_audio(writer: moqt.TrackWriter, packets: list[bytes]) -> None:
@@ -69,8 +70,6 @@ def test_catalog_lists_only_audio_tracks():
 
 def test_live_ingest_payload_framing_is_unwrapped():
     # Arrange
-    import struct
-
     meta = json.dumps({"codec": "mp4a.40.2", "sampleRate": 44100, "channels": 2, "descriptionBase64": "EhA="}).encode()
     payload = struct.pack(">I", len(meta)) + meta + b"\x01\x02\x03"
 
