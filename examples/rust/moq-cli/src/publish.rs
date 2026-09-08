@@ -91,7 +91,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
                 .context("first frame is not a keyframe (no SPS yet)")?;
             catalog.maybe_publish(&frame, &codec).await?;
             if frame.keyframe {
-                media.start_group().await?;
+                media.start_group(None).await?;
             }
             let origin =
                 *capture_origin.get_or_insert_with(|| unix_micros_now() - frame.timestamp.0);
@@ -146,7 +146,7 @@ impl CatalogPublisher {
             info!(codec = %codec, "codec resolved");
         }
         let payload = self.payload.clone().expect("catalog payload built above");
-        self.writer.write_group(payload).await
+        self.writer.write_group(payload, None).await
     }
 
     async fn finish(self) -> Result<()> {

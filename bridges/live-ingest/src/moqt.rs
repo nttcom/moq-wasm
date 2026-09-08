@@ -528,7 +528,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             return Ok(());
         };
         writer
-            .write_group(Bytes::from(payload))
+            .write_group(Bytes::from(payload), None)
             .await
             .context("send catalog group")?;
         tracing::info!(namespace = %namespace_path, groups = writer.groups(), "catalog sent");
@@ -548,7 +548,7 @@ async fn write_object<T: TransportProtocol>(
     payload: Vec<u8>,
 ) -> Result<()> {
     if rotate_group || writer.groups() == 0 {
-        writer.start_group().await.context("start group")?;
+        writer.start_group(None).await.context("start group")?;
     }
     writer
         .write(Bytes::from(payload), Vec::new())

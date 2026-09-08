@@ -1,4 +1,4 @@
-"""Turns MoQT audio objects into PCM16 for a speech-to-text backend."""
+"""Decodes MoQT audio objects to PCM16 for the pipeline and encodes reply PCM to Opus."""
 
 import base64
 import json
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import av
 
-from .stt.base import PcmFormat
+from .pipeline.base import PIPELINE_SAMPLE_RATE
 
 CATALOG_TRACK_NAME = "catalog"
 
@@ -97,25 +97,44 @@ def parse_audio_object(payload: bytes) -> AudioPacket:
 
 
 class AudioDecoder:
-    """Decodes one codec stream and resamples every frame to `target`."""
+    """Decodes one codec stream and resamples every frame to `PIPELINE_SAMPLE_RATE`."""
 
-    def __init__(self, codec: AudioCodec, target: PcmFormat) -> None:
+    def __init__(self, codec: AudioCodec) -> None:
         self.context = av.CodecContext.create(codec.ffmpeg_decoder(), "r")
         self.context.sample_rate = codec.sample_rate
         self.context.layout = "mono" if codec.channels == 1 else "stereo"
         if codec.description:
             self.context.extradata = codec.description
-        self.target = target
-        self.resampler = av.AudioResampler(
-            format="s16",
-            layout="mono" if target.channels == 1 else "stereo",
-            rate=target.sample_rate,
-        )
+        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=PIPELINE_SAMPLE_RATE)
 
     def decode(self, packet: bytes) -> bytes:
         pcm = bytearray()
         for frame in self.context.decode(av.Packet(packet)):
             for resampled in self.resampler.resample(frame):
-                byte_length = resampled.samples * 2 * self.target.channels
-                pcm += bytes(resampled.planes[0])[:byte_length]
+                pcm += bytes(resampled.planes[0])[: resampled.samples * 2]
         return bytes(pcm)
+
+
+OPUS_SAMPLE_RATE = 48000
+OPUS_BITRATE = 64_000
+
+
+def encode_opus(pcm: bytes, sample_rate: int) -> list[bytes]:
+    """Encodes one mono PCM buffer into 20 ms Opus packets at 48 kHz."""
+    context = av.CodecContext.create("libopus", "w")
+    context.sample_rate = OPUS_SAMPLE_RATE
+    context.layout = "mono"
+    context.format = "s16"
+    context.bit_rate = OPUS_BITRATE
+    context.open()
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
+    frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
+    frame.sample_rate = sample_rate
+    frame.planes[0].update(pcm)
+    packets = []
+    pts = 0
+    for resampled in resampler.resample(frame):
+        resampled.pts = pts
+        pts += resampled.samples
+        packets += [bytes(packet) for packet in context.encode(resampled)]
+    return packets + [bytes(packet) for packet in context.encode(None)]

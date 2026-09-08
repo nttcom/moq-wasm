@@ -3,72 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoQT Speech-to-Text</title>
-    <link rel="stylesheet" href="../media/media.css" />
+    <title>MoQT Voice Pipeline</title>
   </head>
   <body>
-    <div class="page">
-      <header class="hero">
-        <div>
-          <span class="pill">Speech-to-Text</span>
-          <h1>MoQT Speech-to-Text</h1>
-          <p>
-            Captures the microphone with getUserMedia, encodes it to Opus with WebCodecs, publishes it to the
-            <code>examples/python/stt-server</code> over WebTransport and shows the transcripts it publishes back.
-          </p>
-        </div>
-      </header>
-      <div id="app">
-        <form name="form" id="form" class="control-grid">
-          <section class="card stack">
-            <h2>Connection</h2>
-            <label for="url">Server URL:</label>
-            <input type="url" name="url" id="url" value="https://127.0.0.1:4433" data-testid="stt-url-input" />
-            <div id="urlPresets" class="preset-bar"></div>
-            <label for="namespace">Track namespace:</label>
-            <input type="text" name="namespace" id="namespace" value="stt/demo" data-testid="stt-namespace-input" />
-            <div class="button-row">
-              <button type="button" id="startBtn" data-testid="stt-start-button">Connect &amp; start microphone</button>
-              <button type="button" id="stopBtn" data-testid="stt-stop-button" disabled>Stop</button>
-            </div>
-          </section>
-
-          <section class="card stack">
-            <h2>Status</h2>
-            <div class="status-list">
-              <div class="status-item">
-                <span class="status-label">Connection</span>
-                <span id="stt-connection-status" class="status-value" data-testid="stt-connection-status"
-                  >Not connected</span
-                >
-              </div>
-              <div class="status-item">
-                <span class="status-label">Microphone</span>
-                <span id="stt-capture-status" class="status-value" data-testid="stt-capture-status">Idle</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Audio objects sent</span>
-                <span id="stt-send-status" class="status-value" data-testid="stt-send-status">0</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Transcript track</span>
-                <span id="stt-transcript-status" class="status-value" data-testid="stt-transcript-status"
-                  >Not subscribed</span
-                >
-              </div>
-            </div>
-          </section>
-
-          <section class="card stack full">
-            <h2>Transcripts</h2>
-            <p class="hint">
-              Objects received on <code>&lt;namespace&gt;/transcript</code>. Interim results are shown in grey.
-            </p>
-            <div id="transcripts" data-testid="stt-transcripts"></div>
-          </section>
-        </form>
-      </div>
-    </div>
-    <script type="module" src="./main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
