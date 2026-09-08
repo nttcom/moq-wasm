@@ -7,16 +7,20 @@ each other's data without a relay. `GET /` reports session and track counters.
 
 ## Run
 
+`uv sync` builds `bindings/python` with maturin (Rust toolchain required) and
+installs it together with FastAPI and uvicorn into `.venv`.
+
 ```bash
 cd examples/python/echo-server
-uv venv && source .venv/bin/activate
-uv pip install maturin && (cd ../../../bindings/python && maturin develop)
-uv pip install fastapi uvicorn
+uv sync
 openssl req -x509 -nodes -days 1 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
   -keyout key.pem -out cert.pem -subj /CN=localhost \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-uvicorn echo_server:app --port 8000
+uv run uvicorn echo_server:app --port 8000
 ```
+
+After changing the Rust side, rebuild the module with
+`uv sync --reinstall-package moqt`.
 
 Environment: `MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`.
 
