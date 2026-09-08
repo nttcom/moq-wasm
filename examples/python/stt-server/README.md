@@ -62,6 +62,26 @@ STT_BACKEND=deepgram DEEPGRAM_API_KEY=... uv run uvicorn stt_server.app:app --po
 
 Environment: `MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`.
 
+## Browser example
+
+`examples/browser/examples/stt` captures the microphone with getUserMedia,
+encodes it to Opus with WebCodecs, publishes it over WebTransport and shows
+the transcript track. The server must present a certificate the browser
+accepts; the repository's Chrome launcher pins the relay certificate, so
+reuse it:
+
+```bash
+STT_BACKEND=whisper MOQT_PORT=4433 \
+  MOQT_CERT=../../../relay/keys/cert.pem MOQT_KEY=../../../relay/keys/key.pem \
+  uv run uvicorn stt_server.app:app --port 8000
+# in another shell, from the repository root
+make browser
+BROWSER_EXAMPLE_PATH=/moq-wasm/examples/stt/index.html make chrome
+```
+
+(`cargo run -p relay` once generates `relay/keys/`; stop the relay before
+starting the server on the same port.)
+
 ## Test
 
 ```bash
