@@ -29,6 +29,18 @@ Publish a generated test video and sine audio stream:
 make ffmpeg-rtmp
 ```
 
+## Publish Test SRT
+
+Publish an MPEG-TS test stream with the namespace `live/test`:
+
+```shell
+make ffmpeg-srt
+```
+
+The bridge uses the SRT stream ID as the MoQT namespace: either the `r=` resource
+of an access-control stream ID (`#!::r=live/test,m=publish`) or a plain path
+(`live/test`). Connections without a stream ID publish under `srt/live`.
+
 ## Direct CLI Options
 
 Use `cargo run` directly when you need options that are not exposed by the Makefile helpers.

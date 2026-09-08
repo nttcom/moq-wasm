@@ -6,7 +6,7 @@ LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)"
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed
 
 # Applications
 relay:
@@ -41,6 +41,15 @@ ffmpeg-rtmp:
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
 		-f flv "rtmp://localhost:1935/live/test"
+
+ffmpeg-srt:
+	ffmpeg -re \
+		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
+		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
+		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
+		-g 60 -sc_threshold 0 \
+		-c:a aac -ar 48000 -ac 2 \
+		-f mpegts "srt://localhost:9000?mode=caller&streamid=live/test"
 
 # ONVIF Bridges
 onvif:
