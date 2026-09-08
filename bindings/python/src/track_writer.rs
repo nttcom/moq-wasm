@@ -39,7 +39,12 @@ fn finished_error() -> anyhow::Error {
 
 #[pymethods]
 impl TrackWriter {
-    fn start_group<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (group_id = None))]
+    fn start_group<'py>(
+        &self,
+        py: Python<'py>,
+        group_id: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             inner
@@ -47,7 +52,7 @@ impl TrackWriter {
                 .await
                 .as_mut()
                 .ok_or_else(finished_error)?
-                .start_group()
+                .start_group(group_id)
                 .await?;
             Ok(())
         })
@@ -74,7 +79,13 @@ impl TrackWriter {
         })
     }
 
-    fn write_group<'py>(&self, py: Python<'py>, payload: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (payload, group_id = None))]
+    fn write_group<'py>(
+        &self,
+        py: Python<'py>,
+        payload: Vec<u8>,
+        group_id: Option<u64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         future_into_py(py, async move {
             inner
@@ -82,7 +93,7 @@ impl TrackWriter {
                 .await
                 .as_mut()
                 .ok_or_else(finished_error)?
-                .write_group(Bytes::from(payload))
+                .write_group(Bytes::from(payload), group_id)
                 .await?;
             Ok(())
         })
