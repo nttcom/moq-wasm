@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import av
 
-from .stt.base import PcmFormat
+from .pipeline.base import PcmFormat
 
 CATALOG_TRACK_NAME = "catalog"
 
@@ -119,3 +119,49 @@ class AudioDecoder:
                 byte_length = resampled.samples * 2 * self.target.channels
                 pcm += bytes(resampled.planes[0])[:byte_length]
         return bytes(pcm)
+
+
+OPUS_PCM = PcmFormat(48000)
+OPUS_FRAME_SAMPLES = 960
+
+
+class OpusEncoder:
+    """Encodes PCM of any rate into 20 ms Opus packets at 48 kHz mono. One
+    encoder per reply stream; `flush()` emits the trailing partial frame and
+    starts a fresh codec state for the next reply."""
+
+    def __init__(self, bitrate: int = 64_000) -> None:
+        self.bitrate = bitrate
+        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_PCM.sample_rate)
+        self._pts = 0
+        self.context = self._new_context()
+
+    def encode(self, pcm: bytes, pcm_format: PcmFormat) -> list[bytes]:
+        frame = av.AudioFrame(
+            format="s16",
+            layout="mono" if pcm_format.channels == 1 else "stereo",
+            samples=len(pcm) // (2 * pcm_format.channels),
+        )
+        frame.sample_rate = pcm_format.sample_rate
+        frame.planes[0].update(pcm)
+        packets = []
+        for resampled in self.resampler.resample(frame):
+            resampled.pts = self._pts
+            self._pts += resampled.samples
+            packets += [bytes(packet) for packet in self.context.encode(resampled)]
+        return packets
+
+    def flush(self) -> list[bytes]:
+        packets = [bytes(packet) for packet in self.context.encode(None)]
+        self.context = self._new_context()
+        self._pts = 0
+        return packets
+
+    def _new_context(self) -> av.AudioCodecContext:
+        context = av.CodecContext.create("libopus", "w")
+        context.sample_rate = OPUS_PCM.sample_rate
+        context.layout = "mono"
+        context.format = "s16"
+        context.bit_rate = self.bitrate
+        context.open()
+        return context

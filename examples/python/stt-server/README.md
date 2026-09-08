@@ -1,58 +1,67 @@
-# MoQT speech-to-text server (FastAPI)
+# MoQT voice pipeline server (FastAPI)
 
 A FastAPI process that listens for MoQT sessions, decodes the audio tracks it
-receives to PCM16 and streams them into a speech-to-text backend. Transcripts
-are logged and exposed at `GET /transcripts`; `GET /` reports counters.
+receives and runs each one through a `VAD → STT → LLM → TTS` pipeline. Every
+stage is chosen by an environment variable, and results go back over MoQT:
+transcripts and replies as JSON on `<namespace>/transcript`, synthesized
+speech as Opus on `<namespace>/reply`. `GET /` reports counters and the
+active pipeline, `GET /transcripts` the recent events.
+
+## Pipeline stages
+
+| Stage | Variable | Choices (default first) | Credentials |
+| --- | --- | --- | --- |
+| VAD | `PIPELINE_VAD` | `silero` (ONNX model bundled with faster-whisper), `energy` (RMS threshold) | – |
+| STT | `PIPELINE_STT` | `whisper` (faster-whisper, local), `deepgram` (pre-recorded API), `openai` (audio transcriptions API), `wav` (debug: writes utterances) | `DEEPGRAM_API_KEY` / `OPENAI_API_KEY` |
+| LLM | `PIPELINE_LLM` | `gemini`, `echo` (repeats the transcript, for local testing), `none` | `GEMINI_API_KEY` |
+| TTS | `PIPELINE_TTS` | `gemini` (24 kHz PCM, re-encoded to Opus), `none` | `GEMINI_API_KEY` |
+
+The VAD cuts the 16 kHz mono stream into utterances; each utterance is
+transcribed, the transcript is sent to the LLM, and the reply is synthesized.
+`none` stops the pipeline after the previous stage, so `PIPELINE_LLM=none`
+gives a transcription-only server. Stage failures are logged and the next
+utterance is processed.
+
+A new implementation is a class satisfying the protocol in
+`stt_server/pipeline/base.py` (`VoiceActivityDetector`, `SpeechToText`,
+`LanguageModel` or `TextToSpeech`) plus an entry in the matching factory table
+in `stt_server/pipeline/__init__.py`.
+
+Tuning: `STT_LANGUAGE` (default `ja`), `SILERO_THRESHOLD` (0.5),
+`SILERO_MIN_SILENCE_MS` (500), `ENERGY_SILENCE_RMS` (300), `WHISPER_MODEL`
+(`small`), `WHISPER_DEVICE` (`cpu`), `WHISPER_COMPUTE_TYPE` (`int8`),
+`WHISPER_NO_SPEECH_THRESHOLD` (0.6, segments Whisper rates as non-speech are
+dropped), `GEMINI_MODEL` (`gemini-2.5-flash`), `LLM_SYSTEM_PROMPT`,
+`GEMINI_TTS_MODEL` (`gemini-2.5-flash-preview-tts`), `GEMINI_TTS_VOICE` (`Kore`).
 
 ## How audio reaches the server
 
 - **PUBLISH** (moq-cli, bridges/live-ingest, the Python bindings): every
   track is accepted. `catalog` objects are parsed for audio tracks; a track
-  named in the catalog with `role: audio` / an audio codec is transcribed, as
+  named in the catalog with `role: audio` / an audio codec is processed, as
   is a track named `AUDIO_TRACK_NAME` (default `audio`) when no catalog
   arrived.
-- **PUBLISH_NAMESPACE** (the browser call example): the server subscribes to
+- **PUBLISH_NAMESPACE** (the browser example): the server subscribes to
   `<namespace>/catalog`, then to every audio track the catalog lists.
 
 Object payloads may be bare `EncodedAudioChunk` bytes (browser, LOC) or the
 `bridges/live-ingest` framing (4-byte length + JSON metadata + frame); the
 metadata's codec wins over the catalog. Opus and AAC (`mp4a.40.x`) are
-decoded with PyAV and resampled to the backend's PCM format.
+decoded with PyAV.
 
-## Transcript track
+## Result tracks
 
-Transcripts are published back over MoQT: subscribe to
-`<namespace>/transcript` (`TRANSCRIPT_TRACK_NAME`) on any session and each
-transcript arrives as its own group with a JSON payload:
+Subscribe to `<namespace>/transcript` (`TRANSCRIPT_TRACK_NAME`) for JSON
+objects, one group each:
 
 ```json
-{"track": "audio", "text": "こんにちは", "final": true, "at": 1725700000.123}
+{"type": "transcript", "track": "audio", "text": "こんにちは", "at": 1725700000.1}
+{"type": "reply", "track": "audio", "text": "こんにちは。ご用件は何でしょう?", "at": 1725700001.4}
 ```
 
-Any other SUBSCRIBE is rejected; the server only consumes audio tracks.
-
-## Backends
-
-| `STT_BACKEND` | Service | PCM sent | Credentials |
-| --- | --- | --- | --- |
-| `wav` (default) | none: writes `TRANSCRIPT_DIR/<track>.wav` | 16 kHz mono | – |
-| `deepgram` | Deepgram live API (`nova-3`) | 16 kHz mono linear16 | `DEEPGRAM_API_KEY` |
-| `openai` | OpenAI Realtime transcription (`gpt-4o-transcribe`) | 24 kHz mono pcm16 | `OPENAI_API_KEY` |
-| `whisper` | faster-whisper on this machine (`uv sync --group whisper`) | 16 kHz mono, per utterance | – |
-
-`STT_LANGUAGE` (default `ja`) is passed to the service. Whisper is a batch
-model: audio is cut into utterances at pauses (`SpeechSegmenter`, at most
-`WHISPER_MAX_SEGMENT_SEC`, default 10 s) and each utterance is transcribed on
-a worker thread. `WHISPER_MODEL` (default `small`), `WHISPER_DEVICE` (`cpu`)
-and `WHISPER_COMPUTE_TYPE` (`int8`) select the model; the first run downloads
-it from Hugging Face. Whisper hallucinates stock phrases on silence, so three
-gates suppress it: buffers whose 20 ms frames never exceed
-`WHISPER_SILENCE_RMS` (default 300, int16 RMS) are not transcribed,
-faster-whisper's VAD runs unless `WHISPER_VAD_FILTER=0`, and result segments
-with `no_speech_prob` above `WHISPER_NO_SPEECH_THRESHOLD` (default 0.6) are
-dropped. Raise `WHISPER_SILENCE_RMS` for a noisy microphone. A new service is one
-class implementing `stt_server.stt.base.SpeechToText` (`pcm_format`,
-`start`, `send_pcm`, `close`) plus a branch in `create_backend`.
+Subscribe to `<namespace>/reply` (`REPLY_TRACK_NAME`) for the spoken reply:
+one group per reply, one 20 ms Opus packet (48 kHz mono) per object. Any
+other SUBSCRIBE is rejected.
 
 ## Run
 
@@ -62,30 +71,41 @@ uv sync
 openssl req -x509 -nodes -days 1 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
   -keyout key.pem -out cert.pem -subj /CN=localhost \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-STT_BACKEND=deepgram DEEPGRAM_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
+GEMINI_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
 ```
 
-Environment: `MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`.
+`uv sync` builds `bindings/python` with maturin (Rust toolchain required).
+Whisper downloads its model from Hugging Face on first use. Environment:
+`MOQT_PORT` (default 4433), `MOQT_CERT`, `MOQT_KEY`. The HTTP port is only for
+`GET /` and `GET /transcripts`; clients connect to the MoQT port.
+
+Transcription only, no Gemini key needed:
+
+```bash
+PIPELINE_LLM=none PIPELINE_TTS=none uv run uvicorn stt_server.app:app --port 8000
+```
 
 ## Browser example
 
 `examples/browser/examples/stt` captures the microphone with getUserMedia,
-encodes it to Opus with WebCodecs, publishes it over WebTransport and shows
-the transcript track. The server must present a certificate the browser
-accepts; the repository's Chrome launcher pins the relay certificate, so
-reuse it:
+encodes it to Opus with WebCodecs, publishes it over WebTransport, shows the
+transcript track and plays the reply track. The server must present a
+certificate the browser accepts; the repository's Chrome launcher pins the
+relay certificate, so reuse it:
 
 ```bash
-STT_BACKEND=whisper MOQT_PORT=4433 \
-  MOQT_CERT=../../../relay/keys/cert.pem MOQT_KEY=../../../relay/keys/key.pem \
-  uv run uvicorn stt_server.app:app --port 8000
+MOQT_PORT=4433 MOQT_CERT=../../../relay/keys/cert.pem MOQT_KEY=../../../relay/keys/key.pem \
+  GEMINI_API_KEY=... uv run uvicorn stt_server.app:app --port 8000
 # in another shell, from the repository root
 make browser
 BROWSER_EXAMPLE_PATH=/moq-wasm/examples/stt/index.html make chrome
 ```
 
-(`cargo run -p relay` once generates `relay/keys/`; stop the relay before
-starting the server on the same port.)
+`cargo run -p relay` once generates `relay/keys/`; stop the relay before
+starting the server on the same port. `make chrome` launches Chrome with
+`--use-fake-device-for-media-stream`, i.e. a beeping fake microphone; drop
+that flag (and `--use-fake-ui-for-media-stream`) from `scripts/chrome_mac.sh`
+to use the real one.
 
 ## Test
 
@@ -93,6 +113,8 @@ starting the server on the same port.)
 uv sync --group dev && uv run pytest
 ```
 
-The tests publish an Opus sine wave through the Python bindings, over both
-the PUBLISH and PUBLISH_NAMESPACE flows, and check the decoded PCM that the
-`wav` backend received.
+The tests drive the pipeline with fake STT/LLM/TTS stages over real MoQT
+sessions (both PUBLISH and PUBLISH_NAMESPACE flows), check the transcript and
+reply tracks, and exercise the Silero VAD on silence and, where macOS `say`
+is available, on synthesized speech. Deepgram, OpenAI and Gemini are not
+called by the tests.

@@ -1,15 +1,18 @@
 [project]
 name = "moqt-stt-server"
 version = "0.1.0"
-description = "FastAPI app that receives MoQT audio tracks, decodes them to PCM and streams them to a speech-to-text backend"
+description = "FastAPI app that receives MoQT audio tracks and runs a VAD → STT → LLM → TTS voice pipeline, publishing results back over MoQT"
 requires-python = ">=3.10"
 dependencies = [
     "av>=14",
     "fastapi>=0.115",
+    "faster-whisper>=1.1",
+    "google-genai>=1.0",
+    "httpx>=0.27",
     "moqt",
     "numpy>=1.26",
+    "onnxruntime<1.24",
     "uvicorn>=0.30",
-    "websockets>=13",
 ]
 
 [tool.uv.sources]
@@ -17,7 +20,6 @@ moqt = { path = "../../../bindings/python" }
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
-whisper = ["faster-whisper>=1.1", "onnxruntime<1.24"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

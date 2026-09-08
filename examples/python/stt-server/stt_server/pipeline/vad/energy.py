@@ -1,24 +1,23 @@
 import numpy as np
 
+from ..base import PIPELINE_PCM
 
-class SpeechSegmenter:
-    """Cuts a PCM16 mono stream into utterances for a batch recognizer: a
-    segment ends after `silence_sec` of low energy once at least `min_sec`
-    is buffered, or unconditionally at `max_sec`. Buffers that never rose
-    above `silence_rms` are discarded instead of emitted, because Whisper
-    hallucinates text on silence."""
+
+class EnergyVad:
+    """RMS-threshold segmentation: an utterance ends after `silence_sec` of
+    low energy once at least `min_sec` is buffered, or unconditionally at
+    `max_sec`. Buffers that never exceeded `silence_rms` are discarded."""
 
     FRAME_SEC = 0.02
 
     def __init__(
         self,
-        sample_rate: int,
         min_sec: float = 1.0,
         max_sec: float = 10.0,
         silence_sec: float = 0.4,
         silence_rms: int = 300,
     ) -> None:
-        self.sample_rate = sample_rate
+        sample_rate = PIPELINE_PCM.sample_rate
         self.min_samples = int(min_sec * sample_rate)
         self.max_samples = int(max_sec * sample_rate)
         self.silence_frames = int(silence_sec / self.FRAME_SEC)
@@ -28,9 +27,9 @@ class SpeechSegmenter:
         self._trailing_silent_frames = 0
         self._has_speech = False
 
-    def push(self, pcm: bytes) -> list[np.ndarray]:
+    def push(self, pcm: bytes) -> list[bytes]:
         samples = np.frombuffer(pcm, dtype=np.int16)
-        segments = []
+        utterances = []
         for start in range(0, len(samples), self.frame_samples):
             frame = samples[start : start + self.frame_samples]
             self._buffer = np.concatenate([self._buffer, frame])
@@ -42,21 +41,21 @@ class SpeechSegmenter:
                 self._has_speech = True
             pause = self._trailing_silent_frames >= self.silence_frames
             if len(self._buffer) >= self.max_samples or (pause and len(self._buffer) >= self.min_samples):
-                segment = self._take()
-                if segment is not None:
-                    segments.append(segment)
-        return segments
+                utterance = self._take()
+                if utterance is not None:
+                    utterances.append(utterance)
+        return utterances
 
-    def flush(self) -> np.ndarray | None:
+    def flush(self) -> bytes | None:
         if len(self._buffer) < self.frame_samples:
             self._reset()
             return None
         return self._take()
 
-    def _take(self) -> np.ndarray | None:
-        segment = self._buffer if self._has_speech else None
+    def _take(self) -> bytes | None:
+        utterance = self._buffer.tobytes() if self._has_speech else None
         self._reset()
-        return segment
+        return utterance
 
     def _reset(self) -> None:
         self._buffer = np.zeros(0, dtype=np.int16)
