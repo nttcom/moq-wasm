@@ -14,7 +14,8 @@
           <h1>MoQT Speech-to-Text</h1>
           <p>
             Captures the microphone with getUserMedia, encodes it to Opus with WebCodecs, publishes it to the
-            <code>examples/python/stt-server</code> over WebTransport and shows the transcripts it publishes back.
+            <code>examples/python/stt-server</code> over WebTransport, shows the transcripts and replies it publishes
+            back and plays the spoken reply.
           </p>
         </div>
       </header>
@@ -51,7 +52,7 @@
                 <span id="stt-send-status" class="status-value" data-testid="stt-send-status">0</span>
               </div>
               <div class="status-item">
-                <span class="status-label">Transcript track</span>
+                <span class="status-label">Result tracks</span>
                 <span id="stt-transcript-status" class="status-value" data-testid="stt-transcript-status"
                   >Not subscribed</span
                 >
@@ -62,7 +63,8 @@
           <section class="card stack full">
             <h2>Transcripts</h2>
             <p class="hint">
-              Objects received on <code>&lt;namespace&gt;/transcript</code>. Interim results are shown in grey.
+              Objects received on <code>&lt;namespace&gt;/transcript</code>; replies are green and their audio from
+              <code>&lt;namespace&gt;/reply</code> is played.
             </p>
             <div id="transcripts" data-testid="stt-transcripts"></div>
           </section>

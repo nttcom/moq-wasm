@@ -9,13 +9,15 @@ const AUTH_INFO = 'secret'
 const CATALOG_TRACK_NAME = 'catalog'
 const AUDIO_TRACK_NAME = 'audio'
 const TRANSCRIPT_TRACK_NAME = 'transcript'
+const REPLY_TRACK_NAME = 'reply'
+const REPLY_SAMPLE_RATE = 48_000
 const AUDIO_SAMPLE_RATE = 48_000
 const AUDIO_BITRATE = 64_000
 const AUDIO_CHUNKS_PER_GROUP = 50
 const FILTER_TYPE_NEXT_GROUP_START = 1
 const OBJECT_STATUS_END_OF_GROUP = 3
 
-type TranscriptObject = { track: string; text: string; final: boolean; at: number }
+type TranscriptObject = { type: 'transcript' | 'reply'; track: string; text: string; at: number }
 
 type AudioEncoderWorkerMessage =
   | {
@@ -77,15 +79,68 @@ async function sendCatalog(client: MOQTClient, trackAlias: bigint): Promise<void
 
 function appendTranscript(transcript: TranscriptObject): void {
   const container = document.getElementById('transcripts') as HTMLDivElement
-  const interim = container.querySelector<HTMLDivElement>('[data-interim="true"]')
-  const line = interim ?? document.createElement('div')
-  line.textContent = transcript.text
-  line.dataset.interim = transcript.final ? 'false' : 'true'
-  line.style.color = transcript.final ? '' : '#888'
-  if (!interim) {
-    container.appendChild(line)
-  }
+  const line = document.createElement('div')
+  line.dataset.kind = transcript.type
+  line.textContent = `${transcript.type === 'reply' ? 'assistant' : 'you'}: ${transcript.text}`
+  line.style.color = transcript.type === 'reply' ? '#1a6' : ''
+  container.appendChild(line)
   container.scrollTop = container.scrollHeight
+}
+
+/** Plays the reply track: each object is one Opus packet, decoded with
+ * WebCodecs and scheduled back to back on an AudioContext. */
+class ReplyPlayer {
+  private readonly audioContext = new AudioContext({ sampleRate: REPLY_SAMPLE_RATE })
+  private nextStartTime = 0
+  private readonly decoder = new AudioDecoder({
+    output: (audioData) => this.play(audioData),
+    error: (error) => console.error('[stt] reply decode failed', error)
+  })
+  private timestamp = 0
+
+  constructor() {
+    this.decoder.configure({ codec: 'opus', sampleRate: REPLY_SAMPLE_RATE, numberOfChannels: 1 })
+  }
+
+  feed(packet: Uint8Array): void {
+    this.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: this.timestamp, data: packet }))
+    this.timestamp += 20_000
+  }
+
+  private play(audioData: AudioData): void {
+    const buffer = this.audioContext.createBuffer(1, audioData.numberOfFrames, audioData.sampleRate)
+    const channel = new Float32Array(audioData.numberOfFrames)
+    audioData.copyTo(channel, { planeIndex: 0, format: 'f32-planar' })
+    buffer.copyToChannel(channel, 0)
+    audioData.close()
+    const source = this.audioContext.createBufferSource()
+    source.buffer = buffer
+    source.connect(this.audioContext.destination)
+    const startTime = Math.max(this.audioContext.currentTime, this.nextStartTime)
+    source.start(startTime)
+    this.nextStartTime = startTime + buffer.duration
+  }
+
+  async close(): Promise<void> {
+    this.decoder.close()
+    await this.audioContext.close()
+  }
+}
+
+let replyPlayer: ReplyPlayer | null = null
+
+async function subscribeReplies(): Promise<void> {
+  const { subscribeOk } = await moqtClient.subscribe(trackNamespace, REPLY_TRACK_NAME, AUTH_INFO, {
+    filterType: FILTER_TYPE_NEXT_GROUP_START,
+    forward: true
+  })
+  replyPlayer = new ReplyPlayer()
+  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
+    if (object.objectPayloadLength === 0) {
+      return
+    }
+    replyPlayer?.feed(new Uint8Array(object.objectPayload))
+  })
 }
 
 async function subscribeTranscripts(): Promise<void> {
@@ -100,7 +155,10 @@ async function subscribeTranscripts(): Promise<void> {
     }
     appendTranscript(JSON.parse(decoder.decode(object.objectPayload)) as TranscriptObject)
   })
-  setStatusText('stt-transcript-status', `Subscribed: ${trackNamespace.join('/')}/${TRANSCRIPT_TRACK_NAME}`)
+  setStatusText(
+    'stt-transcript-status',
+    `Subscribed: ${trackNamespace.join('/')}/${TRANSCRIPT_TRACK_NAME}, ${REPLY_TRACK_NAME}`
+  )
 }
 
 function handleIncomingSubscribes(): void {
@@ -214,6 +272,7 @@ async function start(): Promise<void> {
 
     handleIncomingSubscribes()
     await subscribeTranscripts()
+    await subscribeReplies()
     await moqtClient.publishNamespace(trackNamespace, AUTH_INFO)
     startAudioEncoding(mediaStream)
     stopBtn.disabled = false
@@ -230,6 +289,8 @@ async function stop(): Promise<void> {
   audioEncoderWorker.onmessage = null
   mediaStream?.getTracks().forEach((track) => track.stop())
   mediaStream = null
+  await replyPlayer?.close()
+  replyPlayer = null
   await moqtClient.disconnect()
   setStatusText('stt-connection-status', 'Disconnected')
   setStatusText('stt-capture-status', 'Idle')
