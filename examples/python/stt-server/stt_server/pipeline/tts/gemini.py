@@ -7,15 +7,11 @@ GEMINI_TTS_PCM = PcmFormat(24000)
 
 
 class GeminiTts:
-    """Gemini speech generation; the API returns raw 24 kHz mono PCM16."""
+    """Gemini speech generation; the API returns raw 24 kHz mono PCM16. The
+    SDK reads GEMINI_API_KEY (or GOOGLE_API_KEY) from the environment."""
 
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "gemini-2.5-flash-preview-tts",
-        voice: str = "Kore",
-    ) -> None:
-        self._client = genai.Client(api_key=api_key)
+    def __init__(self, model: str, voice: str) -> None:
+        self._client = genai.Client()
         self.model = model
         self.voice = voice
 

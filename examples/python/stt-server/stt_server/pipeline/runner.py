@@ -6,10 +6,9 @@ from .base import (
     LanguageModel,
     PIPELINE_PCM,
     ReplyAudioEvent,
-    ReplyTextEvent,
     SpeechToText,
+    TextEvent,
     TextToSpeech,
-    TranscriptEvent,
     VoiceActivityDetector,
 )
 
@@ -64,13 +63,13 @@ class VoicePipeline:
         text = (await self.stt.transcribe(utterance, PIPELINE_PCM)).strip()
         if not text:
             return
-        await self.sink(TranscriptEvent(text=text))
+        await self.sink(TextEvent("transcript", text))
         if self.llm is None:
             return
         reply = (await self.llm.reply(text)).strip()
         if not reply:
             return
-        await self.sink(ReplyTextEvent(text=reply))
+        await self.sink(TextEvent("reply", reply))
         if self.tts is None:
             return
         await self.sink(ReplyAudioEvent(speech=await self.tts.synthesize(reply)))

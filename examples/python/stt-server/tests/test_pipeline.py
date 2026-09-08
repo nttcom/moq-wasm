@@ -4,16 +4,11 @@ import subprocess
 import numpy as np
 import pytest
 
-from stt_server.pipeline.base import (
-    PIPELINE_PCM,
-    PcmFormat,
-    ReplyAudioEvent,
-    ReplyTextEvent,
-    SynthesizedSpeech,
-    TranscriptEvent,
-)
+from types import SimpleNamespace
+
+from stt_server.pipeline.base import PIPELINE_PCM, PcmFormat, ReplyAudioEvent, SynthesizedSpeech, TextEvent
 from stt_server.pipeline.runner import VoicePipeline
-from stt_server.pipeline.stt.whisper_local import RecognizedSegment, WhisperLocalStt
+from stt_server.pipeline.stt.whisper_local import WhisperLocalStt
 from stt_server.pipeline.vad.energy import EnergyVad
 from stt_server.pipeline.vad.silero import SileroVad
 from tests.conftest import SAMPLE_RATE_16K, silence, tone
@@ -67,7 +62,11 @@ async def test_every_stage_runs_in_order_for_one_utterance():
     events = await collect_events(pipeline, tone(1.5) + silence(0.6))
 
     # Assert
-    assert [type(event) for event in events] == [TranscriptEvent, ReplyTextEvent, ReplyAudioEvent]
+    assert [(type(event), getattr(event, "kind", None)) for event in events] == [
+        (TextEvent, "transcript"),
+        (TextEvent, "reply"),
+        (ReplyAudioEvent, None),
+    ]
     assert events[1].text == f"reply to '{events[0].text}'"
     assert events[2].speech.pcm_format == PcmFormat(24000)
 
@@ -81,7 +80,7 @@ async def test_llm_and_tts_are_optional():
     events = await collect_events(pipeline, tone(1.5) + silence(0.6))
 
     # Assert
-    assert [type(event) for event in events] == [TranscriptEvent]
+    assert [event.kind for event in events] == ["transcript"]
 
 
 async def test_a_failing_stage_does_not_stop_later_utterances():
@@ -156,10 +155,10 @@ def test_silero_cuts_speech_into_an_utterance_with_padding(tmp_path):
 
 async def test_whisper_drops_segments_rated_as_non_speech():
     # Arrange
-    def recognizer(_audio: np.ndarray) -> list[RecognizedSegment]:
+    def recognizer(_audio: np.ndarray) -> list:
         return [
-            RecognizedSegment("ご視聴ありがとうございました", no_speech_prob=0.95),
-            RecognizedSegment("こんにちは", no_speech_prob=0.05),
+            SimpleNamespace(text=" ご視聴ありがとうございました", no_speech_prob=0.95),
+            SimpleNamespace(text=" こんにちは", no_speech_prob=0.05),
         ]
 
     stt = WhisperLocalStt(recognizer=recognizer, no_speech_threshold=0.6)

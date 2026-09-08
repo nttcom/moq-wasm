@@ -8,15 +8,11 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 class GeminiLlm:
-    """One Gemini chat per pipeline; the SDK keeps the conversation history."""
+    """One Gemini chat per pipeline. The SDK reads GEMINI_API_KEY (or
+    GOOGLE_API_KEY) from the environment and keeps the conversation history."""
 
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "gemini-2.5-flash",
-        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-    ) -> None:
-        self._chat = genai.Client(api_key=api_key).aio.chats.create(
+    def __init__(self, model: str, system_prompt: str) -> None:
+        self._chat = genai.Client().aio.chats.create(
             model=model,
             config=types.GenerateContentConfig(system_instruction=system_prompt),
         )

@@ -1,7 +1,6 @@
 import asyncio
 import logging
-from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -9,14 +8,7 @@ from ..base import PcmFormat
 
 log = logging.getLogger("stt.whisper")
 
-
-@dataclass(frozen=True)
-class RecognizedSegment:
-    text: str
-    no_speech_prob: float
-
-
-Recognizer = Callable[[np.ndarray], list[RecognizedSegment]]
+Recognizer = Callable[[np.ndarray], Sequence]
 
 
 class WhisperLocalStt:
@@ -41,17 +33,17 @@ class WhisperLocalStt:
         self._recognizer = recognizer
 
     async def transcribe(self, utterance: bytes, pcm_format: PcmFormat) -> str:
-        if pcm_format.sample_rate != 16000 or pcm_format.channels != 1:
-            raise ValueError(f"whisper expects 16 kHz mono PCM, got {pcm_format}")
+        if pcm_format.sample_rate != 16000:
+            raise ValueError(f"whisper expects 16 kHz PCM, got {pcm_format}")
         loop = asyncio.get_running_loop()
         if self._recognizer is None:
             self._recognizer = await loop.run_in_executor(None, self._load_model)
         audio = np.frombuffer(utterance, dtype=np.int16).astype(np.float32) / 32768.0
         segments = await loop.run_in_executor(None, self._recognizer, audio)
         return " ".join(
-            segment.text
+            segment.text.strip()
             for segment in segments
-            if segment.text and segment.no_speech_prob <= self.no_speech_threshold
+            if segment.text.strip() and segment.no_speech_prob <= self.no_speech_threshold
         )
 
     def _load_model(self) -> Recognizer:
@@ -59,9 +51,4 @@ class WhisperLocalStt:
 
         log.info("loading whisper model %s on %s (%s)", self.model_name, self.device, self.compute_type)
         model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type)
-
-        def recognize(audio: np.ndarray) -> list[RecognizedSegment]:
-            segments, _ = model.transcribe(audio, language=self.language, beam_size=5)
-            return [RecognizedSegment(segment.text.strip(), segment.no_speech_prob) for segment in segments]
-
-        return recognize
+        return lambda audio: list(model.transcribe(audio, language=self.language, beam_size=5)[0])

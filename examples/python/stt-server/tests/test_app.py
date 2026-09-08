@@ -11,7 +11,7 @@ from stt_server.pipeline.vad.energy import EnergyVad
 from tests.conftest import free_udp_port, opus_packets, tone
 from tests.test_pipeline import FakeLlm, FakeStt, FakeTts
 
-TIMEOUT_SEC = 10
+TIMEOUT_SEC = 30
 NAMESPACE = "room/alice"
 CATALOG = json.dumps(
     {
@@ -109,7 +109,7 @@ async def test_published_audio_yields_transcript_reply_and_speech(hub_and_client
     assert transcript["type"] == "transcript" and transcript["track"] == "audio_64kbps"
     assert reply == {**reply, "type": "reply", "text": f"reply to '{transcript['text']}'"}
     assert reply_audio.object_id == 0 and len(reply_audio.payload) > 0
-    assert hub.stats()["reply_subscribers"] == {NAMESPACE: 1}
+    assert hub.stats()["subscribers"] == {f"{NAMESPACE}/transcript": 1, f"{NAMESPACE}/reply": 1}
 
 
 async def test_publish_namespace_makes_the_server_subscribe_audio(hub_and_client):

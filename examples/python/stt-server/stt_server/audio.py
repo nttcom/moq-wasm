@@ -1,4 +1,4 @@
-"""Turns MoQT audio objects into PCM16 for a speech-to-text backend."""
+"""Decodes MoQT audio objects to PCM16 for the pipeline and encodes reply PCM to Opus."""
 
 import base64
 import json
@@ -105,43 +105,32 @@ class AudioDecoder:
         self.context.layout = "mono" if codec.channels == 1 else "stereo"
         if codec.description:
             self.context.extradata = codec.description
-        self.target = target
-        self.resampler = av.AudioResampler(
-            format="s16",
-            layout="mono" if target.channels == 1 else "stereo",
-            rate=target.sample_rate,
-        )
+        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=target.sample_rate)
 
     def decode(self, packet: bytes) -> bytes:
         pcm = bytearray()
         for frame in self.context.decode(av.Packet(packet)):
             for resampled in self.resampler.resample(frame):
-                byte_length = resampled.samples * 2 * self.target.channels
-                pcm += bytes(resampled.planes[0])[:byte_length]
+                pcm += bytes(resampled.planes[0])[: resampled.samples * 2]
         return bytes(pcm)
 
 
-OPUS_PCM = PcmFormat(48000)
-OPUS_FRAME_SAMPLES = 960
+OPUS_SAMPLE_RATE = 48000
+OPUS_BITRATE = 64_000
 
 
 class OpusEncoder:
-    """Encodes PCM of any rate into 20 ms Opus packets at 48 kHz mono. One
+    """Encodes mono PCM of any rate into 20 ms Opus packets at 48 kHz. One
     encoder per reply stream; `flush()` emits the trailing partial frame and
     starts a fresh codec state for the next reply."""
 
-    def __init__(self, bitrate: int = 64_000) -> None:
-        self.bitrate = bitrate
-        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_PCM.sample_rate)
+    def __init__(self) -> None:
+        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
         self._pts = 0
         self.context = self._new_context()
 
     def encode(self, pcm: bytes, pcm_format: PcmFormat) -> list[bytes]:
-        frame = av.AudioFrame(
-            format="s16",
-            layout="mono" if pcm_format.channels == 1 else "stereo",
-            samples=len(pcm) // (2 * pcm_format.channels),
-        )
+        frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
         frame.sample_rate = pcm_format.sample_rate
         frame.planes[0].update(pcm)
         packets = []
@@ -157,11 +146,12 @@ class OpusEncoder:
         self._pts = 0
         return packets
 
-    def _new_context(self) -> av.AudioCodecContext:
+    @staticmethod
+    def _new_context() -> av.AudioCodecContext:
         context = av.CodecContext.create("libopus", "w")
-        context.sample_rate = OPUS_PCM.sample_rate
+        context.sample_rate = OPUS_SAMPLE_RATE
         context.layout = "mono"
         context.format = "s16"
-        context.bit_rate = self.bitrate
+        context.bit_rate = OPUS_BITRATE
         context.open()
         return context

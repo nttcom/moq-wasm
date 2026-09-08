@@ -1,17 +1,16 @@
 import time
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Protocol
+from typing import Awaitable, Callable, Literal, Protocol
 
 
 @dataclass(frozen=True)
 class PcmFormat:
-    """Signed 16-bit little-endian interleaved PCM."""
+    """Signed 16-bit little-endian mono PCM."""
 
     sample_rate: int
-    channels: int = 1
 
     def bytes_per_second(self) -> int:
-        return self.sample_rate * self.channels * 2
+        return self.sample_rate * 2
 
 
 PIPELINE_PCM = PcmFormat(16000)
@@ -46,13 +45,8 @@ class TextToSpeech(Protocol):
 
 
 @dataclass(frozen=True)
-class TranscriptEvent:
-    text: str
-    at: float = field(default_factory=time.time)
-
-
-@dataclass(frozen=True)
-class ReplyTextEvent:
+class TextEvent:
+    kind: Literal["transcript", "reply"]
     text: str
     at: float = field(default_factory=time.time)
 
@@ -63,5 +57,5 @@ class ReplyAudioEvent:
     at: float = field(default_factory=time.time)
 
 
-PipelineEvent = TranscriptEvent | ReplyTextEvent | ReplyAudioEvent
+PipelineEvent = TextEvent | ReplyAudioEvent
 EventSink = Callable[[PipelineEvent], Awaitable[None]]

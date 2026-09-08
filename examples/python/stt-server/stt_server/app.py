@@ -15,7 +15,7 @@ import contextlib
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from typing import Callable
 
 import moqt
 from fastapi import FastAPI
@@ -29,16 +29,8 @@ from .audio import (
     audio_tracks_from_catalog,
     parse_audio_object,
 )
-from .pipeline import (
-    PIPELINE_PCM,
-    PipelineEvent,
-    ReplyAudioEvent,
-    ReplyTextEvent,
-    TranscriptEvent,
-    VoicePipeline,
-    build_pipeline,
-    pipeline_summary,
-)
+from .pipeline import build_pipeline, pipeline_summary
+from .pipeline.base import PIPELINE_PCM, PipelineEvent, ReplyAudioEvent, TextEvent
 
 MOQT_PORT = int(os.environ.get("MOQT_PORT", "4433"))
 MOQT_CERT = os.environ.get("MOQT_CERT", "cert.pem")
@@ -46,6 +38,7 @@ MOQT_KEY = os.environ.get("MOQT_KEY", "key.pem")
 FALLBACK_AUDIO_TRACK_NAME = os.environ.get("AUDIO_TRACK_NAME", "audio")
 TRANSCRIPT_TRACK_NAME = os.environ.get("TRANSCRIPT_TRACK_NAME", "transcript")
 REPLY_TRACK_NAME = os.environ.get("REPLY_TRACK_NAME", "reply")
+RESULT_TRACK_NAMES = {TRANSCRIPT_TRACK_NAME, REPLY_TRACK_NAME}
 FALLBACK_AUDIO_CODEC = AudioCodec(name="opus", sample_rate=48000, channels=1)
 EVENT_HISTORY = 200
 
@@ -72,46 +65,52 @@ class TrackFanout:
                 self.writers.remove(writer)
 
 
-@dataclass
-class ConversationState:
-    objects_received: int = 0
-    pcm_bytes: int = 0
-    events: collections.deque[dict] = field(default_factory=lambda: collections.deque(maxlen=EVENT_HISTORY))
-
-
 class Conversation:
-    """Reads one audio track, decodes it and feeds the pipeline. The decoder
-    is created on the first object, once the codec is known from the object
+    """Reads one audio track, decodes it and feeds the pipeline; pipeline
+    events are published on the namespace's result tracks. The decoder is
+    created on the first object, once the codec is known from the object
     itself, the catalog, or the fallback."""
 
-    def __init__(
-        self,
-        track: TrackKey,
-        codec: AudioCodec | None,
-        pipeline: VoicePipeline,
-        state: ConversationState,
-    ) -> None:
+    def __init__(self, track: TrackKey, codec: AudioCodec | None, fanout: "Callable[[str], TrackFanout]") -> None:
         self.track = track
         self.codec = codec
-        self.pipeline = pipeline
-        self.state = state
+        self.fanout = fanout
+        self.pipeline = build_pipeline("_".join(track).replace("/", "_"), self.publish_event)
+        self.encoder = OpusEncoder()
+        self.objects_received = 0
+        self.pcm_bytes = 0
+        self.events: collections.deque[dict] = collections.deque(maxlen=EVENT_HISTORY)
         self._decoder: AudioDecoder | None = None
 
     async def run(self, reader: moqt.TrackReader) -> None:
         await self.pipeline.start()
         try:
             async for obj in reader:
-                self.state.objects_received += 1
+                self.objects_received += 1
                 packet = parse_audio_object(obj.payload)
                 pcm = self._decoder_for(packet.codec).decode(packet.data)
                 if pcm:
-                    self.state.pcm_bytes += len(pcm)
+                    self.pcm_bytes += len(pcm)
                     await self.pipeline.feed(pcm)
         except RuntimeError as error:
             log.info("track %s closed by the transport: %s", self.track, error)
         finally:
             await self.pipeline.close()
             log.info("track ended %s", self.track)
+
+    async def publish_event(self, event: PipelineEvent) -> None:
+        namespace, name = self.track
+        match event:
+            case TextEvent():
+                record = {"type": event.kind, "track": name, "text": event.text, "at": event.at}
+                log.info("%s/%s [%s] %s", namespace, name, event.kind, event.text)
+                payload = json.dumps(record, ensure_ascii=False).encode()
+                await self.fanout(TRANSCRIPT_TRACK_NAME).write_group([payload])
+            case ReplyAudioEvent():
+                packets = self.encoder.encode(event.speech.pcm, event.speech.pcm_format) + self.encoder.flush()
+                record = {"type": "reply_audio", "track": name, "packets": len(packets), "at": event.at}
+                await self.fanout(REPLY_TRACK_NAME).write_group(packets)
+        self.events.append(record)
 
     def _decoder_for(self, codec_from_object: AudioCodec | None) -> AudioDecoder:
         if self._decoder is None:
@@ -126,8 +125,7 @@ class VoiceHub:
         self.sessions = 0
         self.audio_tracks: dict[TrackKey, AudioTrack] = {}
         self.conversations: dict[TrackKey, Conversation] = {}
-        self.transcript_fanouts: dict[str, TrackFanout] = {}
-        self.reply_fanouts: dict[str, TrackFanout] = {}
+        self.fanouts: dict[TrackKey, TrackFanout] = {}
 
     async def serve(self, server: moqt.Server) -> None:
         async for session in server:
@@ -147,18 +145,12 @@ class VoiceHub:
                         reader = await event.accept()
                         log.info("publish accepted %s", key)
                         asyncio.ensure_future(self.consume_track(key, reader))
-                    case moqt.SubscribeRequest() if event.name == TRANSCRIPT_TRACK_NAME:
+                    case moqt.SubscribeRequest() if event.name in RESULT_TRACK_NAMES:
                         writer = await event.accept()
-                        self.fanout(self.transcript_fanouts, event.namespace).writers.append(writer)
-                        log.info("transcript subscriber added for %s", event.namespace)
-                    case moqt.SubscribeRequest() if event.name == REPLY_TRACK_NAME:
-                        writer = await event.accept()
-                        self.fanout(self.reply_fanouts, event.namespace).writers.append(writer)
-                        log.info("reply subscriber added for %s", event.namespace)
+                        self.fanouts.setdefault((event.namespace, event.name), TrackFanout()).writers.append(writer)
+                        log.info("%s subscriber added for %s", event.name, event.namespace)
                     case moqt.SubscribeRequest():
-                        await event.reject(
-                            0, f"only {TRANSCRIPT_TRACK_NAME} and {REPLY_TRACK_NAME} can be subscribed"
-                        )
+                        await event.reject(0, f"only {sorted(RESULT_TRACK_NAMES)} can be subscribed")
                     case moqt.SubscribeNamespaceRequest():
                         await event.reject(0, "this server only consumes tracks")
                     case moqt.Disconnected() | moqt.ProtocolViolation():
@@ -185,37 +177,11 @@ class VoiceHub:
             log.info("ignoring non-audio track %s", key)
             return
         codec = self.audio_tracks[key].codec if key in self.audio_tracks else None
-        state = ConversationState()
-        encoder = OpusEncoder()
-
-        async def sink(event: PipelineEvent) -> None:
-            await self.publish_event(key, event, encoder, state)
-
-        pipeline = build_pipeline("_".join(key).replace("/", "_"), sink)
-        conversation = Conversation(key, codec, pipeline, state)
+        conversation = Conversation(
+            key, codec, lambda name: self.fanouts.setdefault((key[0], name), TrackFanout())
+        )
         self.conversations[key] = conversation
         await conversation.run(reader)
-
-    async def publish_event(
-        self, key: TrackKey, event: PipelineEvent, encoder: OpusEncoder, state: ConversationState
-    ) -> None:
-        namespace, name = key
-        match event:
-            case TranscriptEvent() | ReplyTextEvent():
-                kind = "transcript" if isinstance(event, TranscriptEvent) else "reply"
-                record = {"type": kind, "track": name, "text": event.text, "at": event.at}
-                log.info("%s/%s [%s] %s", namespace, name, kind, event.text)
-                payload = json.dumps(record, ensure_ascii=False).encode()
-                await self.fanout(self.transcript_fanouts, namespace).write_group([payload])
-            case ReplyAudioEvent():
-                packets = encoder.encode(event.speech.pcm, event.speech.pcm_format) + encoder.flush()
-                record = {"type": "reply_audio", "track": name, "packets": len(packets), "at": event.at}
-                await self.fanout(self.reply_fanouts, namespace).write_group(packets)
-        state.events.append(record)
-
-    @staticmethod
-    def fanout(fanouts: dict[str, TrackFanout], namespace: str) -> TrackFanout:
-        return fanouts.setdefault(namespace, TrackFanout())
 
     def register_catalog(self, namespace: str, catalog_json: bytes) -> list[AudioTrack]:
         tracks = audio_tracks_from_catalog(namespace, catalog_json)
@@ -233,19 +199,18 @@ class VoiceHub:
             "sessions": self.sessions,
             "tracks": {
                 f"{namespace}/{name}": {
-                    "objects_received": conversation.state.objects_received,
-                    "pcm_bytes": conversation.state.pcm_bytes,
-                    "events": len(conversation.state.events),
+                    "objects_received": conversation.objects_received,
+                    "pcm_bytes": conversation.pcm_bytes,
+                    "recent_events": len(conversation.events),
                 }
                 for (namespace, name), conversation in self.conversations.items()
             },
-            "transcript_subscribers": {ns: len(f.writers) for ns, f in self.transcript_fanouts.items()},
-            "reply_subscribers": {ns: len(f.writers) for ns, f in self.reply_fanouts.items()},
+            "subscribers": {f"{ns}/{name}": len(fanout.writers) for (ns, name), fanout in self.fanouts.items()},
         }
 
     def events(self) -> dict[str, list[dict]]:
         return {
-            f"{namespace}/{name}": list(conversation.state.events)
+            f"{namespace}/{name}": list(conversation.events)
             for (namespace, name), conversation in self.conversations.items()
         }
 

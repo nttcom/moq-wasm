@@ -10,8 +10,7 @@ const CATALOG_TRACK_NAME = 'catalog'
 const AUDIO_TRACK_NAME = 'audio'
 const TRANSCRIPT_TRACK_NAME = 'transcript'
 const REPLY_TRACK_NAME = 'reply'
-const REPLY_SAMPLE_RATE = 48_000
-const AUDIO_SAMPLE_RATE = 48_000
+const OPUS_SAMPLE_RATE = 48_000
 const AUDIO_BITRATE = 64_000
 const AUDIO_CHUNKS_PER_GROUP = 50
 const FILTER_TYPE_NEXT_GROUP_START = 1
@@ -64,7 +63,7 @@ function buildCatalogJson(namespace: string[]): string {
         isLive: true,
         codec: 'opus',
         bitrate: AUDIO_BITRATE,
-        samplerate: AUDIO_SAMPLE_RATE,
+        samplerate: OPUS_SAMPLE_RATE,
         channelConfig: 'mono'
       }
     ]
@@ -80,7 +79,6 @@ async function sendCatalog(client: MOQTClient, trackAlias: bigint): Promise<void
 function appendTranscript(transcript: TranscriptObject): void {
   const container = document.getElementById('transcripts') as HTMLDivElement
   const line = document.createElement('div')
-  line.dataset.kind = transcript.type
   line.textContent = `${transcript.type === 'reply' ? 'assistant' : 'you'}: ${transcript.text}`
   line.style.color = transcript.type === 'reply' ? '#1a6' : ''
   container.appendChild(line)
@@ -90,7 +88,7 @@ function appendTranscript(transcript: TranscriptObject): void {
 /** Plays the reply track: each object is one Opus packet, decoded with
  * WebCodecs and scheduled back to back on an AudioContext. */
 class ReplyPlayer {
-  private readonly audioContext = new AudioContext({ sampleRate: REPLY_SAMPLE_RATE })
+  private readonly audioContext = new AudioContext({ sampleRate: OPUS_SAMPLE_RATE })
   private nextStartTime = 0
   private readonly decoder = new AudioDecoder({
     output: (audioData) => this.play(audioData),
@@ -99,7 +97,7 @@ class ReplyPlayer {
   private timestamp = 0
 
   constructor() {
-    this.decoder.configure({ codec: 'opus', sampleRate: REPLY_SAMPLE_RATE, numberOfChannels: 1 })
+    this.decoder.configure({ codec: 'opus', sampleRate: OPUS_SAMPLE_RATE, numberOfChannels: 1 })
   }
 
   feed(packet: Uint8Array): void {
@@ -129,32 +127,25 @@ class ReplyPlayer {
 
 let replyPlayer: ReplyPlayer | null = null
 
-async function subscribeReplies(): Promise<void> {
-  const { subscribeOk } = await moqtClient.subscribe(trackNamespace, REPLY_TRACK_NAME, AUTH_INFO, {
+async function subscribeResultTrack(trackName: string, onPayload: (payload: Uint8Array) => void): Promise<void> {
+  const { subscribeOk } = await moqtClient.subscribe(trackNamespace, trackName, AUTH_INFO, {
     filterType: FILTER_TYPE_NEXT_GROUP_START,
     forward: true
   })
-  replyPlayer = new ReplyPlayer()
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    if (object.objectPayloadLength === 0) {
-      return
+    if (object.objectPayloadLength > 0) {
+      onPayload(new Uint8Array(object.objectPayload))
     }
-    replyPlayer?.feed(new Uint8Array(object.objectPayload))
   })
 }
 
-async function subscribeTranscripts(): Promise<void> {
-  const { subscribeOk } = await moqtClient.subscribe(trackNamespace, TRANSCRIPT_TRACK_NAME, AUTH_INFO, {
-    filterType: FILTER_TYPE_NEXT_GROUP_START,
-    forward: true
-  })
+async function subscribeResultTracks(): Promise<void> {
   const decoder = new TextDecoder()
-  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    if (object.objectPayloadLength === 0) {
-      return
-    }
-    appendTranscript(JSON.parse(decoder.decode(object.objectPayload)) as TranscriptObject)
-  })
+  await subscribeResultTrack(TRANSCRIPT_TRACK_NAME, (payload) =>
+    appendTranscript(JSON.parse(decoder.decode(payload)) as TranscriptObject)
+  )
+  replyPlayer = new ReplyPlayer()
+  await subscribeResultTrack(REPLY_TRACK_NAME, (payload) => replyPlayer?.feed(payload))
   setStatusText(
     'stt-transcript-status',
     `Subscribed: ${trackNamespace.join('/')}/${TRANSCRIPT_TRACK_NAME}, ${REPLY_TRACK_NAME}`
@@ -246,7 +237,7 @@ function startAudioEncoding(stream: MediaStream): void {
 
   audioEncoderWorker.postMessage({
     type: 'config',
-    config: { codec: 'opus', sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: 1, bitrate: AUDIO_BITRATE }
+    config: { codec: 'opus', sampleRate: OPUS_SAMPLE_RATE, numberOfChannels: 1, bitrate: AUDIO_BITRATE }
   })
   const processor = new MediaStreamTrackProcessor({ track: audioTrack })
   const audioStream = processor.readable
@@ -271,8 +262,7 @@ async function start(): Promise<void> {
     setStatusText('stt-connection-status', `Connected: ${url}`)
 
     handleIncomingSubscribes()
-    await subscribeTranscripts()
-    await subscribeReplies()
+    await subscribeResultTracks()
     await moqtClient.publishNamespace(trackNamespace, AUTH_INFO)
     startAudioEncoding(mediaStream)
     stopBtn.disabled = false

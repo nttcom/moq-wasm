@@ -8,7 +8,7 @@ from ..base import PcmFormat
 def pcm_to_wav(pcm: bytes, pcm_format: PcmFormat) -> bytes:
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as writer:
-        writer.setnchannels(pcm_format.channels)
+        writer.setnchannels(1)
         writer.setsampwidth(2)
         writer.setframerate(pcm_format.sample_rate)
         writer.writeframes(pcm)

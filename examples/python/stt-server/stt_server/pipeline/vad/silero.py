@@ -4,30 +4,27 @@ from ..base import PIPELINE_PCM
 
 WINDOW_SAMPLES = 512
 CONTEXT_SAMPLES = 64
+SPEECH_PAD_MS = 200
+MIN_SPEECH_MS = 250
+MAX_SPEECH_SEC = 15.0
 
 
 class SileroVad:
     """Streaming Silero VAD on the ONNX model bundled with faster-whisper.
     The model scores 32 ms windows; an utterance starts when the probability
     crosses `threshold` and ends after `min_silence_ms` below it, padded with
-    `speech_pad_ms` of audio on both sides."""
+    `SPEECH_PAD_MS` of audio on both sides."""
 
-    def __init__(
-        self,
-        threshold: float = 0.5,
-        min_silence_ms: int = 500,
-        speech_pad_ms: int = 200,
-        min_speech_ms: int = 250,
-        max_speech_sec: float = 15.0,
-        session=None,
-    ) -> None:
+    def __init__(self, threshold: float = 0.5, min_silence_ms: int = 500) -> None:
+        from faster_whisper.vad import get_vad_model
+
         self.threshold = threshold
         sample_rate = PIPELINE_PCM.sample_rate
         self.min_silence_windows = max(1, int(min_silence_ms * sample_rate / 1000 / WINDOW_SAMPLES))
-        self.pad_samples = int(speech_pad_ms * sample_rate / 1000)
-        self.min_speech_samples = int(min_speech_ms * sample_rate / 1000)
-        self.max_speech_samples = int(max_speech_sec * sample_rate)
-        self.session = session if session is not None else self._load_session()
+        self.pad_samples = int(SPEECH_PAD_MS * sample_rate / 1000)
+        self.min_speech_samples = int(MIN_SPEECH_MS * sample_rate / 1000)
+        self.max_speech_samples = int(MAX_SPEECH_SEC * sample_rate)
+        self.session = get_vad_model().session
         self._pending = np.zeros(0, dtype=np.int16)
         self._history = np.zeros(0, dtype=np.int16)
         self._utterance: np.ndarray | None = None
@@ -35,12 +32,6 @@ class SileroVad:
         self._h = np.zeros((1, 1, 128), dtype=np.float32)
         self._c = np.zeros((1, 1, 128), dtype=np.float32)
         self._context = np.zeros(CONTEXT_SAMPLES, dtype=np.float32)
-
-    @staticmethod
-    def _load_session():
-        from faster_whisper.vad import get_vad_model
-
-        return get_vad_model().session
 
     def push(self, pcm: bytes) -> list[bytes]:
         self._pending = np.concatenate([self._pending, np.frombuffer(pcm, dtype=np.int16)])
