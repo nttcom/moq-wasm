@@ -14,6 +14,7 @@ export const mediaSubscriberPath =
   "/moq-wasm/examples/media/subscriber/index.html";
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
+export const liveViewerPath = "/moq-wasm/examples/live-viewer/index.html";
 export const serverKeysDir = resolve(repoRoot, "relay", "keys");
 export const certPath = resolve(serverKeysDir, "cert.pem");
 export const keyPath = resolve(serverKeysDir, "key.pem");

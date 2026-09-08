@@ -6,7 +6,7 @@ LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)"
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
 relay:
@@ -101,6 +101,9 @@ browser-e2e-media:
 	node scripts/run-media-e2e.mjs
 
 # Two-relay call E2E: brings up relay-a/relay-b via docker compose, then Playwright.
+browser-e2e-live-viewer:
+	node scripts/run-live-viewer-e2e.mjs
+
 browser-e2e-call:
 	node scripts/setup-media-e2e.mjs
 	node scripts/run-call-e2e.mjs

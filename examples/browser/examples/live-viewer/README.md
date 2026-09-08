@@ -17,6 +17,17 @@ make chrome                 # 自己署名証明書の relay に接続するた�
 Chrome で `examples/live-viewer/index.html` を開き、relay URL と namespace（RTMP は `app/stream`、
 SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackNamespace=...` でも指定できます。
 
+## 巻き戻し
+
+`-10s` / `-30s` は relay のキャッシュに残っている group を FETCH で取り出し、review canvas に
+capture timestamp のとおりのペースで再生します。`Back to live` でライブ表示へ戻ります。
+
+- 何秒戻るかは、ライブ再生中に観測した capture timestamp から求めます。bridge は group id を
+  壁時計で採番し、group はエンコーダの keyframe ごとに切り替わるため、group id の差は秒数になりません。
+- 取得範囲は publisher が書き込みを終えた group までに制限します。開いている group に伸ばすと
+  relay のキャッシュを外れて上流へ転送され、FETCH を提供しない bridge が `NOT_SUPPORTED` を返します。
+- relay のキャッシュ保持は既定 30 秒（`RELAY_CACHE_TTL_SECS`）です。それより前へは戻れません。
+
 ## ペイロード形式
 
 live-ingest は各 object を `[meta_len (u32 BE)][meta JSON][coded data]` で送り、ブラウザ publisher は

@@ -74,6 +74,26 @@
             </label>
           </section>
 
+          <section class="card stack">
+            <h2>Rewind</h2>
+            <p class="hint">relay のキャッシュに残っている範囲を FETCH で取り出して再生します。</p>
+            <div class="button-row">
+              <button type="button" id="rewind10Btn" data-testid="live-viewer-rewind-10-button">-10s</button>
+              <button type="button" id="rewind30Btn" data-testid="live-viewer-rewind-30-button">-30s</button>
+              <button type="button" id="liveBtn" data-testid="live-viewer-live-button">Back to live</button>
+            </div>
+            <div class="status-list">
+              <div class="status-item">
+                <span class="status-label">Mode</span>
+                <span id="rewind-status" class="status-value" data-testid="live-viewer-rewind-status">Live</span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Buffered</span>
+                <span id="rewind-buffer" class="status-value" data-testid="live-viewer-rewind-buffer">0.0s</span>
+              </div>
+            </div>
+          </section>
+
           <section class="card stack full">
             <div class="card-title-row">
               <h2>Playback</h2>
@@ -84,6 +104,7 @@
             <div class="media-grid">
               <div class="playback-panel">
                 <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
+                <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
                 <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
               </div>
             </div>
