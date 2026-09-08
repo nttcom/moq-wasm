@@ -35,7 +35,8 @@ export default defineConfig({
         onvif: resolve(__dirname, 'examples/onvif/index.html'),
         call: resolve(__dirname, 'examples/call/index.html'),
         webcodecs: resolve(__dirname, 'examples/webcodecs/index.html'),
-        'remote-monitoring': resolve(__dirname, 'examples/remote-monitoring/index.html')
+        'remote-monitoring': resolve(__dirname, 'examples/remote-monitoring/index.html'),
+        stt: resolve(__dirname, 'examples/stt/index.html')
       }
     }
   }
