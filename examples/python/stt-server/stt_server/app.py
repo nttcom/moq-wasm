@@ -97,12 +97,15 @@ class Conversation:
                 payload = json.dumps(record, ensure_ascii=False).encode()
                 await write_group(self.result_writers(TRANSCRIPT_TRACK_NAME), [payload])
             case SynthesizedSpeech():
+                writers = self.result_writers(REPLY_TRACK_NAME)
+                if not writers:
+                    return
                 packets = encode_opus(event.pcm, event.sample_rate)
                 log.info("%s/%s [reply audio] %d packets", namespace, name, len(packets))
-                await write_group(self.result_writers(REPLY_TRACK_NAME), packets)
+                await write_group(writers, packets)
 
     def result_writers(self, track_name: str) -> list[moqt.TrackWriter]:
-        return self.subscribers.setdefault((self.track[0], track_name), [])
+        return self.subscribers.get((self.track[0], track_name), [])
 
     def _decoder_for(self, codec_from_object: AudioCodec | None) -> AudioDecoder:
         if self._decoder is None:

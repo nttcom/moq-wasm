@@ -81,7 +81,7 @@ class SileroVad:
         utterance = self._utterance
         self._utterance = None
         self._silent_windows = 0
-        self._history = window[-self.pad_samples :]
+        self._history = utterance[-self.pad_samples :]
         if len(utterance) - self.pad_samples < self.min_speech_samples:
             return None
         return utterance.tobytes()
