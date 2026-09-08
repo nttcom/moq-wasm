@@ -2,7 +2,7 @@ import io
 import wave
 from pathlib import Path
 
-from ..base import PIPELINE_PCM
+from ..base import PIPELINE_SAMPLE_RATE
 
 
 def pcm_to_wav(pcm: bytes) -> bytes:
@@ -10,7 +10,7 @@ def pcm_to_wav(pcm: bytes) -> bytes:
     with wave.open(buffer, "wb") as writer:
         writer.setnchannels(1)
         writer.setsampwidth(2)
-        writer.setframerate(PIPELINE_PCM.sample_rate)
+        writer.setframerate(PIPELINE_SAMPLE_RATE)
         writer.writeframes(pcm)
     return buffer.getvalue()
 
@@ -28,4 +28,4 @@ class WavFileStt:
         self.count += 1
         path = self.directory / f"utterance-{self.count:04d}.wav"
         path.write_bytes(pcm_to_wav(utterance))
-        return f"[wav] {len(utterance) / PIPELINE_PCM.bytes_per_second():.1f}s written to {path}"
+        return f"[wav] {len(utterance) / (PIPELINE_SAMPLE_RATE * 2):.1f}s written to {path}"

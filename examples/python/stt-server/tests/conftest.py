@@ -5,9 +5,10 @@ import numpy as np
 import pytest
 
 from stt_server.audio import encode_opus
-from stt_server.pipeline.base import PcmFormat
 
 SAMPLE_RATE_16K = 16000
+TONE_AMPLITUDE = 8000
+TONE_HZ = 300
 
 
 @pytest.fixture(scope="session")
@@ -35,9 +36,9 @@ def free_udp_port() -> int:
         return sock.getsockname()[1]
 
 
-def tone(seconds: float, sample_rate: int = SAMPLE_RATE_16K, amplitude: int = 8000, frequency: int = 300) -> bytes:
+def tone(seconds: float, sample_rate: int = SAMPLE_RATE_16K) -> bytes:
     samples = np.arange(int(seconds * sample_rate))
-    return (amplitude * np.sin(2 * np.pi * frequency * samples / sample_rate)).astype(np.int16).tobytes()
+    return (TONE_AMPLITUDE * np.sin(2 * np.pi * TONE_HZ * samples / sample_rate)).astype(np.int16).tobytes()
 
 
 def silence(seconds: float, sample_rate: int = SAMPLE_RATE_16K) -> bytes:
@@ -45,4 +46,4 @@ def silence(seconds: float, sample_rate: int = SAMPLE_RATE_16K) -> bytes:
 
 
 def opus_packets(pcm_48k_mono: bytes) -> list[bytes]:
-    return encode_opus(pcm_48k_mono, PcmFormat(48000))
+    return encode_opus(pcm_48k_mono, 48000)

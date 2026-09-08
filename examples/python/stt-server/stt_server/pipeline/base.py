@@ -2,22 +2,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Literal, Protocol
 
-
-@dataclass(frozen=True)
-class PcmFormat:
-    """Signed 16-bit little-endian mono PCM."""
-
-    sample_rate: int
-
-    def bytes_per_second(self) -> int:
-        return self.sample_rate * 2
-
-
-PIPELINE_PCM = PcmFormat(16000)
+PIPELINE_SAMPLE_RATE = 16000
+"""Stages exchange signed 16-bit little-endian mono PCM at this rate."""
 
 
 class VoiceActivityDetector(Protocol):
-    """Cuts the incoming PCM stream (`PIPELINE_PCM`) into utterances."""
+    """Cuts the incoming PCM stream into utterances."""
 
     def push(self, pcm: bytes) -> list[bytes]: ...
 
@@ -25,8 +15,6 @@ class VoiceActivityDetector(Protocol):
 
 
 class SpeechToText(Protocol):
-    """Transcribes one utterance of `PIPELINE_PCM`."""
-
     async def transcribe(self, utterance: bytes) -> str: ...
 
 
@@ -39,7 +27,7 @@ class LanguageModel(Protocol):
 @dataclass(frozen=True)
 class SynthesizedSpeech:
     pcm: bytes
-    pcm_format: PcmFormat
+    sample_rate: int
 
 
 class TextToSpeech(Protocol):
@@ -53,11 +41,5 @@ class TextEvent:
     at: float = field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
-class ReplyAudioEvent:
-    speech: SynthesizedSpeech
-    at: float = field(default_factory=time.time)
-
-
-PipelineEvent = TextEvent | ReplyAudioEvent
+PipelineEvent = TextEvent | SynthesizedSpeech
 EventSink = Callable[[PipelineEvent], Awaitable[None]]

@@ -23,7 +23,7 @@ VAD_FACTORIES: dict[str, Callable[[], VoiceActivityDetector]] = {
         threshold=float(os.environ.get("SILERO_THRESHOLD", "0.5")),
         min_silence_ms=int(os.environ.get("SILERO_MIN_SILENCE_MS", "500")),
     ),
-    "energy": lambda: EnergyVad(silence_rms=int(os.environ.get("ENERGY_SILENCE_RMS", "300"))),
+    "energy": lambda: EnergyVad(),
 }
 
 STT_FACTORIES: dict[str, Callable[[], SpeechToText]] = {

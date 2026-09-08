@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..base import PIPELINE_PCM
+from ..base import PIPELINE_SAMPLE_RATE
 
 
 class EnergyVad:
@@ -9,18 +9,13 @@ class EnergyVad:
     `max_sec`. Buffers that never exceeded `silence_rms` are discarded."""
 
     FRAME_SEC = 0.02
+    SILENCE_SEC = 0.4
 
-    def __init__(
-        self,
-        min_sec: float = 1.0,
-        max_sec: float = 10.0,
-        silence_sec: float = 0.4,
-        silence_rms: int = 300,
-    ) -> None:
-        sample_rate = PIPELINE_PCM.sample_rate
+    def __init__(self, min_sec: float = 1.0, max_sec: float = 10.0, silence_rms: int = 300) -> None:
+        sample_rate = PIPELINE_SAMPLE_RATE
         self.min_samples = int(min_sec * sample_rate)
         self.max_samples = int(max_sec * sample_rate)
-        self.silence_frames = int(silence_sec / self.FRAME_SEC)
+        self.silence_frames = int(self.SILENCE_SEC / self.FRAME_SEC)
         self.silence_rms = silence_rms
         self.frame_samples = int(self.FRAME_SEC * sample_rate)
         self._buffer = np.zeros(0, dtype=np.int16)

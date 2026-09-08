@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import av
 
-from .pipeline.base import PcmFormat
+from .pipeline.base import PIPELINE_SAMPLE_RATE
 
 CATALOG_TRACK_NAME = "catalog"
 
@@ -97,15 +97,16 @@ def parse_audio_object(payload: bytes) -> AudioPacket:
 
 
 class AudioDecoder:
-    """Decodes one codec stream and resamples every frame to `target`."""
+    """Decodes one codec stream and resamples every frame to mono PCM16 at
+    `target_sample_rate`."""
 
-    def __init__(self, codec: AudioCodec, target: PcmFormat) -> None:
+    def __init__(self, codec: AudioCodec, target_sample_rate: int = PIPELINE_SAMPLE_RATE) -> None:
         self.context = av.CodecContext.create(codec.ffmpeg_decoder(), "r")
         self.context.sample_rate = codec.sample_rate
         self.context.layout = "mono" if codec.channels == 1 else "stereo"
         if codec.description:
             self.context.extradata = codec.description
-        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=target.sample_rate)
+        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=target_sample_rate)
 
     def decode(self, packet: bytes) -> bytes:
         pcm = bytearray()
@@ -119,7 +120,7 @@ OPUS_SAMPLE_RATE = 48000
 OPUS_BITRATE = 64_000
 
 
-def encode_opus(pcm: bytes, pcm_format: PcmFormat) -> list[bytes]:
+def encode_opus(pcm: bytes, sample_rate: int) -> list[bytes]:
     """Encodes one mono PCM buffer into 20 ms Opus packets at 48 kHz."""
     context = av.CodecContext.create("libopus", "w")
     context.sample_rate = OPUS_SAMPLE_RATE
@@ -129,7 +130,7 @@ def encode_opus(pcm: bytes, pcm_format: PcmFormat) -> list[bytes]:
     context.open()
     resampler = av.AudioResampler(format="s16", layout="mono", rate=OPUS_SAMPLE_RATE)
     frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
-    frame.sample_rate = pcm_format.sample_rate
+    frame.sample_rate = sample_rate
     frame.planes[0].update(pcm)
     packets = []
     pts = 0

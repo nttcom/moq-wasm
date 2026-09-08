@@ -4,7 +4,6 @@ import logging
 from .base import (
     EventSink,
     LanguageModel,
-    ReplyAudioEvent,
     SpeechToText,
     TextEvent,
     TextToSpeech,
@@ -16,8 +15,9 @@ log = logging.getLogger("pipeline")
 
 class VoicePipeline:
     """VAD → STT → LLM → TTS for one audio track. `feed()` only runs the VAD;
-    utterances are processed by a worker task so the track reader never waits
-    for a model or a remote service. LLM and TTS are optional stages."""
+    utterances are processed by a worker task started here, so the track
+    reader never waits for a model or a remote service. LLM and TTS are
+    optional stages."""
 
     def __init__(
         self,
@@ -33,9 +33,6 @@ class VoicePipeline:
         self.tts = tts
         self.sink = sink
         self._utterances: asyncio.Queue[bytes | None] = asyncio.Queue()
-        self._worker: asyncio.Task | None = None
-
-    async def start(self) -> None:
         self._worker = asyncio.ensure_future(self._run_worker())
 
     async def feed(self, pcm: bytes) -> None:
@@ -47,9 +44,7 @@ class VoicePipeline:
         if remaining is not None:
             self._utterances.put_nowait(remaining)
         self._utterances.put_nowait(None)
-        if self._worker is not None:
-            await self._worker
-            self._worker = None
+        await self._worker
 
     async def _run_worker(self) -> None:
         while (utterance := await self._utterances.get()) is not None:
@@ -71,4 +66,4 @@ class VoicePipeline:
         await self.sink(TextEvent("reply", reply))
         if self.tts is None:
             return
-        await self.sink(ReplyAudioEvent(speech=await self.tts.synthesize(reply)))
+        await self.sink(await self.tts.synthesize(reply))

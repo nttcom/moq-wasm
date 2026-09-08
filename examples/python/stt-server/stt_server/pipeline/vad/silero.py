@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..base import PIPELINE_PCM
+from ..base import PIPELINE_SAMPLE_RATE
 
 WINDOW_SAMPLES = 512
 CONTEXT_SAMPLES = 64
@@ -15,16 +15,14 @@ class SileroVad:
     crosses `threshold` and ends after `min_silence_ms` below it, padded with
     `SPEECH_PAD_MS` of audio on both sides."""
 
-    def __init__(self, threshold: float = 0.5, min_silence_ms: int = 500) -> None:
-        from faster_whisper.vad import get_vad_model
-
+    def __init__(self, threshold: float, min_silence_ms: int, session=None) -> None:
         self.threshold = threshold
-        sample_rate = PIPELINE_PCM.sample_rate
+        sample_rate = PIPELINE_SAMPLE_RATE
         self.min_silence_windows = max(1, int(min_silence_ms * sample_rate / 1000 / WINDOW_SAMPLES))
         self.pad_samples = int(SPEECH_PAD_MS * sample_rate / 1000)
         self.min_speech_samples = int(MIN_SPEECH_MS * sample_rate / 1000)
         self.max_speech_samples = int(MAX_SPEECH_SEC * sample_rate)
-        self.session = get_vad_model().session
+        self.session = session if session is not None else self._onnx_session()
         self._pending = np.zeros(0, dtype=np.int16)
         self._history = np.zeros(0, dtype=np.int16)
         self._utterance: np.ndarray | None = None
@@ -32,6 +30,12 @@ class SileroVad:
         self._h = np.zeros((1, 1, 128), dtype=np.float32)
         self._c = np.zeros((1, 1, 128), dtype=np.float32)
         self._context = np.zeros(CONTEXT_SAMPLES, dtype=np.float32)
+
+    @staticmethod
+    def _onnx_session():
+        from faster_whisper.vad import get_vad_model
+
+        return get_vad_model().session
 
     def push(self, pcm: bytes) -> list[bytes]:
         self._pending = np.concatenate([self._pending, np.frombuffer(pcm, dtype=np.int16)])
@@ -48,7 +52,7 @@ class SileroVad:
         utterance = self._utterance
         self._utterance = None
         self._silent_windows = 0
-        if utterance is None or len(utterance) < self.min_speech_samples:
+        if utterance is None or len(utterance) - self.pad_samples < self.min_speech_samples:
             return None
         return utterance.tobytes()
 

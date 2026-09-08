@@ -27,8 +27,8 @@ A new implementation is a class satisfying the protocol in
 `LanguageModel` or `TextToSpeech`) plus an entry in the matching factory table
 in `stt_server/pipeline/__init__.py`.
 
-Tuning: `STT_LANGUAGE` (default `ja`), `SILERO_THRESHOLD` (0.5),
-`SILERO_MIN_SILENCE_MS` (500), `ENERGY_SILENCE_RMS` (300), `WHISPER_MODEL`
+Tuning: `STT_LANGUAGE` (default `ja`), `SILERO_THRESHOLD` (0.5; raise it for a
+noisy microphone), `SILERO_MIN_SILENCE_MS` (500), `WHISPER_MODEL`
 (`small`), `WHISPER_DEVICE` (`cpu`), `WHISPER_COMPUTE_TYPE` (`int8`),
 `WHISPER_NO_SPEECH_THRESHOLD` (0.6, segments Whisper rates as non-speech are
 dropped), `GEMINI_MODEL` (`gemini-2.5-flash`), `LLM_SYSTEM_PROMPT`,

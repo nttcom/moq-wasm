@@ -42,17 +42,15 @@ class WhisperLocalStt:
         self._recognizer = recognizer
 
     async def transcribe(self, utterance: bytes) -> str:
-        loop = asyncio.get_running_loop()
-        if self._recognizer is None:
-            self._recognizer = await loop.run_in_executor(None, self._recognizer_for_config)
         audio = np.frombuffer(utterance, dtype=np.int16).astype(np.float32) / 32768.0
-        segments = await loop.run_in_executor(None, self._recognizer, audio)
+        recognizer = self._recognizer or self._recognize
+        segments = await asyncio.get_running_loop().run_in_executor(None, recognizer, audio)
         return " ".join(
             segment.text.strip()
             for segment in segments
             if segment.text.strip() and segment.no_speech_prob <= self.no_speech_threshold
         )
 
-    def _recognizer_for_config(self) -> Recognizer:
+    def _recognize(self, audio: np.ndarray) -> Sequence:
         model = _load_model(self.model_name, self.device, self.compute_type)
-        return lambda audio: list(model.transcribe(audio, language=self.language, beam_size=5)[0])
+        return list(model.transcribe(audio, language=self.language, beam_size=5)[0])

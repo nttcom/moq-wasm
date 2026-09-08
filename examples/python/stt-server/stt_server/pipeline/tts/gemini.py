@@ -1,9 +1,9 @@
 from google import genai
 from google.genai import types
 
-from ..base import PcmFormat, SynthesizedSpeech
+from ..base import SynthesizedSpeech
 
-GEMINI_TTS_PCM = PcmFormat(24000)
+GEMINI_TTS_SAMPLE_RATE = 24000
 
 
 class GeminiTts:
@@ -31,5 +31,5 @@ class GeminiTts:
         for candidate in response.candidates or []:
             for part in candidate.content.parts or []:
                 if part.inline_data is not None and part.inline_data.data:
-                    return SynthesizedSpeech(pcm=part.inline_data.data, pcm_format=GEMINI_TTS_PCM)
+                    return SynthesizedSpeech(pcm=part.inline_data.data, sample_rate=GEMINI_TTS_SAMPLE_RATE)
         raise RuntimeError("Gemini TTS returned no audio")

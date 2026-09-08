@@ -28,7 +28,7 @@ from .audio import (
     parse_audio_object,
 )
 from .pipeline import build_pipeline, pipeline_summary
-from .pipeline.base import PIPELINE_PCM, PipelineEvent, ReplyAudioEvent, TextEvent
+from .pipeline.base import PipelineEvent, SynthesizedSpeech, TextEvent
 
 MOQT_PORT = int(os.environ.get("MOQT_PORT", "4433"))
 MOQT_CERT = os.environ.get("MOQT_CERT", "cert.pem")
@@ -74,7 +74,6 @@ class Conversation:
         self._decoder: AudioDecoder | None = None
 
     async def run(self, reader: moqt.TrackReader) -> None:
-        await self.pipeline.start()
         try:
             async for obj in reader:
                 self.objects_received += 1
@@ -97,8 +96,8 @@ class Conversation:
                 record = {"type": event.kind, "track": name, "text": event.text, "at": event.at}
                 payload = json.dumps(record, ensure_ascii=False).encode()
                 await write_group(self.result_writers(TRANSCRIPT_TRACK_NAME), [payload])
-            case ReplyAudioEvent():
-                packets = encode_opus(event.speech.pcm, event.speech.pcm_format)
+            case SynthesizedSpeech():
+                packets = encode_opus(event.pcm, event.sample_rate)
                 log.info("%s/%s [reply audio] %d packets", namespace, name, len(packets))
                 await write_group(self.result_writers(REPLY_TRACK_NAME), packets)
 
@@ -109,7 +108,7 @@ class Conversation:
         if self._decoder is None:
             codec = codec_from_object or self.codec or FALLBACK_AUDIO_CODEC
             log.info("decoding %s as %s", self.track, codec)
-            self._decoder = AudioDecoder(codec, PIPELINE_PCM)
+            self._decoder = AudioDecoder(codec)
         return self._decoder
 
 
@@ -175,7 +174,7 @@ class VoiceHub:
         try:
             await conversation.run(reader)
         finally:
-            del self.conversations[key]
+            self.conversations.pop(key, None)
 
     def register_catalog(self, namespace: str, catalog_json: bytes) -> list[AudioTrack]:
         tracks = audio_tracks_from_catalog(namespace, catalog_json)
