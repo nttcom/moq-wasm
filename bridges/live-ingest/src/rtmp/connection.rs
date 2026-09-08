@@ -14,9 +14,9 @@ use super::{
     handshake::perform_handshake,
     session::{RtmpState, handle_event},
 };
-use crate::moqt::MoqtManager;
+use crate::publisher::IngestOptions;
 
-pub async fn run_rtmp_listener(addr: String, moqt_url: Option<String>) -> Result<()> {
+pub async fn run_rtmp_listener(addr: String, options: IngestOptions) -> Result<()> {
     let listener = TcpListener::bind(&addr)
         .await
         .with_context(|| format!("bind RTMP listener on {addr}"))?;
@@ -25,23 +25,27 @@ pub async fn run_rtmp_listener(addr: String, moqt_url: Option<String>) -> Result
     loop {
         let (socket, peer) = listener.accept().await?;
         let label = peer.to_string();
-        let moqt = MoqtManager::new(moqt_url.clone());
+        let options = options.clone();
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(socket, &label, moqt).await {
+            if let Err(err) = handle_connection(socket, &label, &options).await {
                 tracing::warn!(peer = %label, ?err, "RTMP connection failed");
             }
         });
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, label: &str, moqt: MoqtManager) -> Result<()> {
+async fn handle_connection(
+    mut socket: TcpStream,
+    label: &str,
+    options: &IngestOptions,
+) -> Result<()> {
     tracing::debug!(peer = %label, "RTMP handshake started");
     let mut buf = [0u8; 4096];
     let leftover = perform_handshake(&mut socket, label).await?;
 
     let (mut session, initial_results) =
         ServerSession::new(ServerSessionConfig::new()).context("create RTMP session")?;
-    let mut state = RtmpState::new(moqt, label.to_string());
+    let mut state = RtmpState::new(options, label.to_string());
 
     handle_results(
         &mut session,

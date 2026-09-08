@@ -4,29 +4,32 @@ use mediapack::mpegts;
 use srt_tokio::{ConnectionRequest, SrtListener};
 use tokio::task;
 
-use crate::{moqt::MoqtManager, publisher::MediaPublisher};
+use crate::{
+    moqt::MoqtManager,
+    publisher::{IngestOptions, MediaPublisher},
+};
 
 const DEFAULT_NAMESPACE: &str = "srt/live";
 const ACCESS_CONTROL_PREFIX: &str = "#!::";
 
-pub async fn run_srt_listener(addr: String, moqt_url: Option<String>) -> Result<()> {
+pub async fn run_srt_listener(addr: String, options: IngestOptions) -> Result<()> {
     let (_listener, mut incoming) = SrtListener::builder()
         .bind(addr.as_str())
         .await
         .with_context(|| format!("bind SRT listener on {addr}"))?;
     tracing::info!(%addr, "SRT listener started");
     while let Some(request) = incoming.incoming().next().await {
-        task::spawn(handle_request(request, MoqtManager::new(moqt_url.clone())));
+        task::spawn(handle_request(request, options.clone()));
     }
     Ok(())
 }
 
-async fn handle_request(request: ConnectionRequest, moqt: MoqtManager) {
+async fn handle_request(request: ConnectionRequest, options: IngestOptions) {
     let stream_id = request.stream_id().map(ToString::to_string);
     let namespace = namespace_from_stream_id(stream_id.as_deref());
     let remote = request.remote();
     tracing::info!(%remote, ?stream_id, namespace = %namespace.join("/"), "SRT publisher connected");
-    match publish(request, moqt, namespace).await {
+    match publish(request, &options, namespace).await {
         Ok(packets) => tracing::info!(%remote, packets, "SRT stream ended"),
         Err(err) => tracing::warn!(%remote, ?err, "SRT publisher failed"),
     }
@@ -34,12 +37,16 @@ async fn handle_request(request: ConnectionRequest, moqt: MoqtManager) {
 
 async fn publish(
     request: ConnectionRequest,
-    moqt: MoqtManager,
+    options: &IngestOptions,
     namespace: Vec<String>,
 ) -> Result<u64> {
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
-    let mut publisher = MediaPublisher::new(moqt, namespace);
+    let mut publisher = MediaPublisher::new(
+        MoqtManager::new(options.moqt_url.clone()),
+        namespace,
+        options.transcode,
+    );
     let mut packets = 0_u64;
     while let Some(packet) = socket.next().await {
         let (_, data) = packet?;

@@ -8,7 +8,11 @@ use mediapack::{
 };
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use crate::{ingest::flv::FlvRecorder, moqt::MoqtManager, publisher::MediaPublisher};
+use crate::{
+    ingest::flv::FlvRecorder,
+    moqt::MoqtManager,
+    publisher::{IngestOptions, MediaPublisher},
+};
 
 #[derive(Default)]
 pub struct RtmpCounters {
@@ -21,6 +25,7 @@ pub struct RtmpState {
     pub counters: RtmpCounters,
     pub recorder: Option<FlvRecorder>,
     pub moqt: MoqtManager,
+    transcode: bool,
     pub streams: HashMap<String, RtmpStream>,
 }
 
@@ -30,12 +35,13 @@ pub struct RtmpStream {
 }
 
 impl RtmpState {
-    pub fn new(moqt: MoqtManager, label: String) -> Self {
+    pub fn new(options: &IngestOptions, label: String) -> Self {
         Self {
             label,
             counters: RtmpCounters::default(),
             recorder: None,
-            moqt,
+            moqt: MoqtManager::new(options.moqt_url.clone()),
+            transcode: options.transcode,
             streams: HashMap::new(),
         }
     }
@@ -64,6 +70,7 @@ impl RtmpState {
                 publisher: MediaPublisher::new(
                     self.moqt.clone(),
                     namespace_path.split('/').map(str::to_owned).collect(),
+                    self.transcode,
                 ),
             });
         let events = match stream.demuxer.push_tag(&tag) {

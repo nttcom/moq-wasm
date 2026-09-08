@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -10,13 +10,14 @@ use media_streaming_format::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
+use mediapack::h264::AvcDecoderConfigurationRecord;
 use moqt::{
     ClientConfig, ContentExists, Endpoint, QUIC, Session, SessionEvent, TrackWriter,
     TransportProtocol, WEBTRANSPORT,
 };
 use tokio::sync::Mutex;
 
-const VIDEO_TRACK_NAME: &str = "video";
+pub(crate) const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
 const CHAT_TRACK_NAME: &str = "chat";
@@ -51,9 +52,29 @@ impl<T: TransportProtocol> Default for BackendState<T> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoTrackInfo {
+    pub label: String,
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl VideoTrackInfo {
+    pub fn from_record(record: &AvcDecoderConfigurationRecord, label: String) -> Result<Self> {
+        let sps = record.sequence_parameter_set()?;
+        Ok(Self {
+            label,
+            codec: record.codec_string(),
+            width: sps.width,
+            height: sps.height,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CatalogMetadata {
-    video_codec: Option<String>,
+    video_tracks: BTreeMap<String, VideoTrackInfo>,
     audio_sample_rate: Option<u32>,
     audio_channels: Option<u8>,
 }
@@ -111,7 +132,8 @@ impl MoqtManager {
     pub async fn update_video_catalog(
         &self,
         namespace: &[String],
-        codec: Option<&str>,
+        track_name: &str,
+        info: VideoTrackInfo,
     ) -> Result<()> {
         let url = match &self.url {
             Some(u) => u.clone(),
@@ -120,7 +142,7 @@ impl MoqtManager {
 
         self.ensure_backend(&url)
             .await?
-            .update_video_catalog(namespace, codec)
+            .update_video_catalog(namespace, track_name, info)
             .await
     }
 
@@ -198,10 +220,23 @@ impl PublisherBackend {
         }
     }
 
-    async fn update_video_catalog(&self, namespace: &[String], codec: Option<&str>) -> Result<()> {
+    async fn update_video_catalog(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        info: VideoTrackInfo,
+    ) -> Result<()> {
         match self {
-            Self::Quic(publisher) => publisher.update_video_catalog(namespace, codec).await,
-            Self::WebTransport(publisher) => publisher.update_video_catalog(namespace, codec).await,
+            Self::Quic(publisher) => {
+                publisher
+                    .update_video_catalog(namespace, track_name, info)
+                    .await
+            }
+            Self::WebTransport(publisher) => {
+                publisher
+                    .update_video_catalog(namespace, track_name, info)
+                    .await
+            }
         }
     }
 
@@ -281,7 +316,11 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     SessionEvent::Subscribe(handler) => {
                         let namespace = handler.track_namespace.clone();
                         let track_name = handler.track_name.clone();
-                        if !is_supported_track(&track_name) {
+                        let supported = {
+                            let guard = state.lock().await;
+                            is_supported_track(&track_name, guard.catalogs.get(&namespace))
+                        };
+                        if !supported {
                             if let Err(err) = handler
                                 .error(0, format!("unsupported track: {track_name}"))
                                 .await
@@ -399,12 +438,13 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         result
     }
 
-    async fn update_video_catalog(&self, namespace: &[String], codec: Option<&str>) -> Result<()> {
+    async fn update_video_catalog(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        info: VideoTrackInfo,
+    ) -> Result<()> {
         let namespace_path = namespace.join("/");
-        let normalized_codec = codec
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned);
 
         let should_send = {
             let mut guard = self.state.lock().await;
@@ -412,9 +452,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 bail!("MoQ publisher disconnected");
             }
             let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            let changed = metadata.video_codec != normalized_codec;
+            let changed = metadata.video_tracks.get(track_name) != Some(&info);
             if changed {
-                metadata.video_codec = normalized_codec;
+                metadata.video_tracks.insert(track_name.to_string(), info);
             }
             changed
                 && matches!(
@@ -483,6 +523,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             .cloned()
             .unwrap_or_default();
         let payload = build_catalog_payload(namespace_path, &metadata)?;
+        tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
         let Some(Some(writer)) = guard.tracks.get_mut(&key) else {
             return Ok(());
         };
@@ -515,11 +556,11 @@ async fn write_object<T: TransportProtocol>(
         .context("send subgroup object")
 }
 
-fn is_supported_track(track_name: &str) -> bool {
+fn is_supported_track(track_name: &str, metadata: Option<&CatalogMetadata>) -> bool {
     matches!(
         track_name,
-        VIDEO_TRACK_NAME | AUDIO_TRACK_NAME | CATALOG_TRACK_NAME | CHAT_TRACK_NAME
-    )
+        AUDIO_TRACK_NAME | CATALOG_TRACK_NAME | CHAT_TRACK_NAME
+    ) || metadata.is_some_and(|metadata| metadata.video_tracks.contains_key(track_name))
 }
 
 fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Vec<u8>> {
@@ -529,29 +570,32 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         AUDIO_TRACK_NAME.to_string(),
     ]);
 
-    let tracks = vec![
-        Track {
+    let alt_group = (metadata.video_tracks.len() > 1).then_some(1);
+    let mut tracks: Vec<Track> = metadata
+        .video_tracks
+        .iter()
+        .map(|(name, info)| Track {
             namespace: namespace.clone(),
-            name: VIDEO_TRACK_NAME.to_string(),
+            name: name.clone(),
             packaging: Packaging::Known(KnownPackaging::Loc),
             event_type: None,
             role: Some(TrackRole::Known(KnownTrackRole::Video)),
             is_live: true,
             target_latency: None,
-            label: Some("Video".to_string()),
+            label: Some(info.label.clone()),
             render_group: None,
-            alt_group: None,
+            alt_group,
             init_data: None,
             depends: None,
             temporal_id: None,
             spatial_id: None,
-            codec: metadata.video_codec.clone(),
+            codec: Some(info.codec.clone()),
             mime_type: Some("video/h264".to_string()),
             framerate: Some(30.0),
             timescale: None,
             bitrate: None,
-            width: None,
-            height: None,
+            width: Some(info.width),
+            height: Some(info.height),
             sample_rate: None,
             channel_config: None,
             display_width: None,
@@ -559,7 +603,9 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             lang: None,
             parent_name: None,
             track_duration: None,
-        },
+        })
+        .collect();
+    tracks.extend([
         Track {
             namespace: namespace.clone(),
             name: AUDIO_TRACK_NAME.to_string(),
@@ -620,7 +666,7 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             parent_name: None,
             track_duration: None,
         },
-    ];
+    ]);
 
     let catalog = Catalog {
         version: Some(1),
