@@ -14,7 +14,7 @@ reports counters and the active pipeline.
 | VAD | `PIPELINE_VAD` | `silero` (ONNX model bundled with faster-whisper), `energy` (RMS threshold) | – |
 | STT | `PIPELINE_STT` | `whisper` (faster-whisper, local), `deepgram` (pre-recorded API), `openai` (audio transcriptions API), `wav` (debug: writes utterances) | `DEEPGRAM_API_KEY` / `OPENAI_API_KEY` |
 | LLM | `PIPELINE_LLM` | `gemini`, `echo` (repeats the transcript, for local testing), `none` | `GEMINI_API_KEY` |
-| TTS | `PIPELINE_TTS` | `gemini` (24 kHz PCM, re-encoded to Opus), `none` | `GEMINI_API_KEY` |
+| TTS | `PIPELINE_TTS` | `gemini` (mono PCM, re-encoded to Opus), `none` | `GEMINI_API_KEY` |
 
 The VAD cuts the 16 kHz mono stream into utterances; each utterance is
 transcribed, the transcript is sent to the LLM, and the reply is synthesized.
@@ -31,8 +31,8 @@ Tuning: `STT_LANGUAGE` (default `ja`), `SILERO_THRESHOLD` (0.5; raise it for a
 noisy microphone), `SILERO_MIN_SILENCE_MS` (500), `WHISPER_MODEL`
 (`small`), `WHISPER_DEVICE` (`cpu`), `WHISPER_COMPUTE_TYPE` (`int8`),
 `WHISPER_NO_SPEECH_THRESHOLD` (0.6, segments Whisper rates as non-speech are
-dropped), `GEMINI_MODEL` (`gemini-2.5-flash`), `LLM_SYSTEM_PROMPT`,
-`GEMINI_TTS_MODEL` (`gemini-2.5-flash-preview-tts`), `GEMINI_TTS_VOICE` (`Kore`).
+dropped), `GEMINI_MODEL` (`gemini-3.6-flash`), `LLM_SYSTEM_PROMPT`,
+`GEMINI_TTS_MODEL` (`gemini-3.1-flash-tts-preview`), `GEMINI_TTS_VOICE` (`Kore`).
 
 ## How audio reaches the server
 

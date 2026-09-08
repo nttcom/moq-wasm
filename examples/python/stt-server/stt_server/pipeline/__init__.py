@@ -40,7 +40,7 @@ STT_FACTORIES: dict[str, Callable[[], SpeechToText]] = {
 
 LLM_FACTORIES: dict[str, Callable[[], LanguageModel | None]] = {
     "gemini": lambda: GeminiLlm(
-        model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
+        model=os.environ.get("GEMINI_MODEL", "gemini-3.6-flash"),
         system_prompt=os.environ.get("LLM_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
     ),
     "echo": lambda: EchoLlm(),
@@ -49,7 +49,7 @@ LLM_FACTORIES: dict[str, Callable[[], LanguageModel | None]] = {
 
 TTS_FACTORIES: dict[str, Callable[[], TextToSpeech | None]] = {
     "gemini": lambda: GeminiTts(
-        model=os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts"),
+        model=os.environ.get("GEMINI_TTS_MODEL", "gemini-3.1-flash-tts-preview"),
         voice=os.environ.get("GEMINI_TTS_VOICE", "Kore"),
     ),
     "none": lambda: None,

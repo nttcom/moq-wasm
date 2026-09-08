@@ -5,6 +5,7 @@ import numpy as np
 from stt_server.pipeline.base import PIPELINE_SAMPLE_RATE, SynthesizedSpeech, TextEvent
 from stt_server.pipeline.runner import VoicePipeline
 from stt_server.pipeline.stt.whisper_local import WhisperLocalStt
+from stt_server.pipeline.tts.gemini import pcm_sample_rate
 from stt_server.pipeline.vad.energy import EnergyVad
 from stt_server.pipeline.vad.silero import WINDOW_SAMPLES, SileroVad
 from tests.conftest import silence, tone
@@ -166,3 +167,9 @@ async def test_whisper_drops_segments_rated_as_non_speech():
 
     # Assert
     assert text == "こんにちは"
+
+
+def test_the_tts_sample_rate_comes_from_the_response_mime_type():
+    # Act / Assert
+    assert pcm_sample_rate("audio/l16; rate=24000; channels=1") == 24000
+    assert pcm_sample_rate("audio/L16;codec=pcm;rate=16000") == 16000

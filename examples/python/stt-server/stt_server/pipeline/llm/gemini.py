@@ -12,7 +12,10 @@ class GeminiLlm:
     GOOGLE_API_KEY) from the environment and keeps the conversation history."""
 
     def __init__(self, model: str, system_prompt: str) -> None:
-        self._chat = genai.Client().aio.chats.create(
+        # The client owns the HTTP transport and closes it when collected, so
+        # it has to outlive the chat.
+        self._client = genai.Client()
+        self._chat = self._client.aio.chats.create(
             model=model,
             config=types.GenerateContentConfig(system_instruction=system_prompt),
         )
