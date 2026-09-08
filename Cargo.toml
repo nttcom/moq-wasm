@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     'shared/packages',
+    'shared/mediapack',
     'shared/media-streaming-format',
     'moqt',
     'relay',
