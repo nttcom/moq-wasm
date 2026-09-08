@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoQT Live Viewer</title>
+    <link rel="stylesheet" href="../media/media.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <span class="pill">Live Viewer</span>
+          <h1>MoQT Live Viewer</h1>
+          <p>RTMP / SRT から live-ingest bridge が配信した映像を、画質を切り替えながら視聴します。</p>
+        </div>
+      </header>
+      <div id="app">
+        <div class="control-grid subscriber-grid">
+          <section class="card stack">
+            <h2>Stream</h2>
+            <label for="url">Relay URL:</label>
+            <input type="url" id="url" value="https://127.0.0.1:4433" data-testid="live-viewer-url-input" />
+            <div id="urlPresets" class="preset-bar">Preset:</div>
+            <label for="namespace"
+              >Track Namespace:
+              <input type="text" id="namespace" value="live/test" data-testid="live-viewer-namespace-input" />
+            </label>
+            <p class="hint">RTMP は <code>app/stream</code>、SRT は stream ID がそのまま namespace になります。</p>
+            <div class="button-row">
+              <button type="button" id="watchBtn" data-testid="live-viewer-watch-button">Watch</button>
+              <button type="button" id="stopBtn" data-testid="live-viewer-stop-button">Stop</button>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <h2>Status</h2>
+            <div class="status-list">
+              <div class="status-item">
+                <span class="status-label">Connection</span>
+                <span id="connection-status" class="status-value" data-testid="live-viewer-connection-status">
+                  Not connected
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Catalog</span>
+                <span id="catalog-status" class="status-value" data-testid="live-viewer-catalog-status">
+                  Catalog not loaded yet
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Playback</span>
+                <span id="playback-status" class="status-value" data-testid="live-viewer-playback-status">
+                  Playback idle
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card stack">
+            <h2>Quality</h2>
+            <label for="video-track"
+              >Video track:
+              <select id="video-track" data-testid="live-viewer-video-track-select"></select>
+            </label>
+            <p class="hint">live-ingest を <code>--transcode</code> で起動すると下位画質が選べます。</p>
+            <label for="audio-track"
+              >Audio track:
+              <select id="audio-track" data-testid="live-viewer-audio-track-select"></select>
+            </label>
+            <label class="field-row">
+              <input type="checkbox" id="bypass-jitter-buffer" checked />
+              Bypass jitter buffer (lowest latency)
+            </label>
+          </section>
+
+          <section class="card stack full">
+            <div class="card-title-row">
+              <h2>Playback</h2>
+              <div class="playback-meta">
+                <span id="video-stats" data-testid="live-viewer-video-stats">-</span>
+              </div>
+            </div>
+            <div class="media-grid">
+              <div class="playback-panel">
+                <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
+                <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
+              </div>
+            </div>
+          </section>
+
+          <section class="card stack full">
+            <h2>Console</h2>
+            <div id="logPanel" data-testid="live-viewer-log-panel"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="../../utils/preserveQueryLinks.js"></script>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
