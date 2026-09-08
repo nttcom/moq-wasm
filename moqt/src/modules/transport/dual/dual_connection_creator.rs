@@ -214,72 +214,15 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::UdpSocket, path::Path, time::Duration};
-
-    use rcgen::{CertifiedKey, generate_simple_self_signed};
-
-    use crate::{ClientConfig, DUAL, Endpoint, ServerConfig, Session};
-
-    fn free_udp_port() -> u16 {
-        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket.local_addr().unwrap().port()
-    }
-
-    fn write_self_signed_cert(dir: &Path) -> ServerConfig {
-        let CertifiedKey { cert, signing_key } =
-            generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
-                .unwrap();
-        std::fs::create_dir_all(dir).unwrap();
-        let cert_path = dir.join("cert.pem");
-        let key_path = dir.join("key.pem");
-        std::fs::write(&cert_path, cert.pem()).unwrap();
-        std::fs::write(&key_path, signing_key.serialize_pem()).unwrap();
-        ServerConfig {
-            port: 0,
-            cert_path: cert_path.to_string_lossy().into_owned(),
-            key_path: key_path.to_string_lossy().into_owned(),
-            keep_alive_interval_sec: 5,
-        }
-    }
-
-    fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session<DUAL>>) {
-        let port = free_udp_port();
-        let cert_dir = std::env::temp_dir().join(format!("moqt-dual-client-{name}-{port}"));
-        let mut server_config = write_self_signed_cert(&cert_dir);
-        server_config.port = port;
-        let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
-        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
-        (port, accept)
-    }
-
-    fn dual_client() -> Endpoint<DUAL> {
-        Endpoint::<DUAL>::create_client(&ClientConfig {
-            port: 0,
-            verify_certificate: false,
-        })
-        .unwrap()
-    }
-
-    async fn connect_and_accept(
-        url: &str,
-        accept: tokio::task::JoinHandle<Session<DUAL>>,
-    ) -> anyhow::Result<()> {
-        let client = tokio::time::timeout(Duration::from_secs(5), async {
-            dual_client().connect(url).await?.await
-        })
-        .await??;
-        let server = tokio::time::timeout(Duration::from_secs(5), accept).await??;
-        drop((client, server));
-        Ok(())
-    }
+    use crate::modules::test_support::{connect_sessions, dual_client, spawn_dual_server};
 
     #[tokio::test]
     async fn dual_client_connects_over_raw_quic_with_moqt_scheme() {
         // Arrange
-        let (port, accept) = spawn_dual_server("quic");
+        let (port, accept) = spawn_dual_server("dual-quic");
 
         // Act
-        let result = connect_and_accept(&format!("moqt://127.0.0.1:{port}"), accept).await;
+        let result = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept).await;
 
         // Assert
         result.unwrap();
@@ -288,10 +231,10 @@ mod tests {
     #[tokio::test]
     async fn dual_client_connects_over_web_transport_with_https_scheme() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wt");
+        let (port, accept) = spawn_dual_server("dual-wt");
 
         // Act
-        let result = connect_and_accept(&format!("https://127.0.0.1:{port}/moq"), accept).await;
+        let result = connect_sessions(&format!("https://127.0.0.1:{port}/moq"), accept).await;
 
         // Assert
         result.unwrap();

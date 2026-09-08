@@ -59,8 +59,8 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
             group_id,
             subgroup_id,
             publisher_priority,
-            end_of_group,
             has_extensions,
+            end_of_group,
         )
     }
 
