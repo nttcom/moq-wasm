@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     'shared/packages',
     'shared/mediapack',
+    'shared/transcode',
     'shared/media-streaming-format',
     'moqt',
     'relay',
