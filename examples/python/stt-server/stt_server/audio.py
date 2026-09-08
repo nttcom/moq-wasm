@@ -97,16 +97,15 @@ def parse_audio_object(payload: bytes) -> AudioPacket:
 
 
 class AudioDecoder:
-    """Decodes one codec stream and resamples every frame to mono PCM16 at
-    `target_sample_rate`."""
+    """Decodes one codec stream and resamples every frame to `PIPELINE_SAMPLE_RATE`."""
 
-    def __init__(self, codec: AudioCodec, target_sample_rate: int = PIPELINE_SAMPLE_RATE) -> None:
+    def __init__(self, codec: AudioCodec) -> None:
         self.context = av.CodecContext.create(codec.ffmpeg_decoder(), "r")
         self.context.sample_rate = codec.sample_rate
         self.context.layout = "mono" if codec.channels == 1 else "stereo"
         if codec.description:
             self.context.extradata = codec.description
-        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=target_sample_rate)
+        self.resampler = av.AudioResampler(format="s16", layout="mono", rate=PIPELINE_SAMPLE_RATE)
 
     def decode(self, packet: bytes) -> bytes:
         pcm = bytearray()

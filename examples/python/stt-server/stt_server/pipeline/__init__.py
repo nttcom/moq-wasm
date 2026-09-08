@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from typing import Callable
 
 from .base import EventSink, LanguageModel, SpeechToText, TextToSpeech, VoiceActivityDetector
@@ -36,7 +35,7 @@ STT_FACTORIES: dict[str, Callable[[], SpeechToText]] = {
     ),
     "deepgram": lambda: DeepgramStt(api_key=os.environ["DEEPGRAM_API_KEY"], language=LANGUAGE),
     "openai": lambda: OpenAiTranscribeStt(api_key=os.environ["OPENAI_API_KEY"], language=LANGUAGE),
-    "wav": lambda: WavFileStt(Path(os.environ.get("TRANSCRIPT_DIR", "recordings"))),
+    "wav": lambda: WavFileStt(),
 }
 
 LLM_FACTORIES: dict[str, Callable[[], LanguageModel | None]] = {

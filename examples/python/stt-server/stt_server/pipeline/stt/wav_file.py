@@ -19,7 +19,7 @@ class WavFileStt:
     """Debug stage: writes every utterance to `directory` and reports the
     file name instead of a transcript."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path = Path("recordings")) -> None:
         self.directory = directory
         self.count = 0
 

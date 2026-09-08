@@ -114,6 +114,5 @@ uv sync --group dev && uv run pytest
 
 The tests drive the pipeline with fake STT/LLM/TTS stages over real MoQT
 sessions (both PUBLISH and PUBLISH_NAMESPACE flows), check the transcript and
-reply tracks, and exercise the Silero VAD on silence and, where macOS `say`
-is available, on synthesized speech. Deepgram, OpenAI and Gemini are not
-called by the tests.
+reply tracks, and exercise both VADs on synthesized tones and silence.
+Deepgram, OpenAI and Gemini are not called by the tests.
