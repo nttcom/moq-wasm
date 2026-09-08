@@ -229,7 +229,12 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   computes the delivery start per draft-14 filter type (`NextGroupStart`,
   `LargestObject`, `AbsoluteStart`, `AbsoluteRange`; an absolute start at or
   below Largest is clamped to Largest+1), and emits one `GroupSendTask` per
-  `SubgroupKey`.
+  `SubgroupKey`. It subscribes to open events first and then schedules every
+  cached group at or after the start, so a group that ingress opened and
+  closed before the scheduler existed is still delivered. The start is a
+  lower bound in both paths: group ids may begin anywhere and skip values
+  (§2.3.1), so the first delivered group is the first one at or above the
+  start, not the start group itself.
 - `GroupSender` — one task per subgroup: waits for the first object to send,
   only then opens the downstream uni stream (a subgroup that closes empty
   opens nothing), regenerates the SUBGROUP_HEADER from that object's canonical
@@ -263,6 +268,9 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   `UpstreamCreationSerializer` per-track lock with a double-check.
 - **SUBSCRIBE_OK matches egress**: the largest location advertised downstream
   is the same value the egress scheduler starts from.
+- **Start Location is a lower bound**: egress delivers the first group at or
+  above the start whether it arrives as an open event or is already cached;
+  neither path requires the start group id itself to exist.
 - **First-publisher-wins ingress**: one active reader per track; stop is
   owner-checked.
 - **Cache identity is the key**: a cached object is self-contained (§8.1 "MUST

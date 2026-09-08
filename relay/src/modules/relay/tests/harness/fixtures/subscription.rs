@@ -1,6 +1,6 @@
 use crate::modules::core::subscription::DownstreamSubscription;
 
-pub(crate) fn make_largest_object_subscription() -> DownstreamSubscription {
+pub(crate) fn make_subscription(filter_type: moqt::FilterType) -> DownstreamSubscription {
     DownstreamSubscription::from(moqt::Subscription::SubscriberInitiated(
         moqt::SubscriberInitiatedSubscription {
             request_id: 0,
@@ -10,7 +10,7 @@ pub(crate) fn make_largest_object_subscription() -> DownstreamSubscription {
             expires: 0,
             group_order: moqt::GroupOrder::Ascending,
             content_exists: moqt::ContentExists::False,
-            filter_type: moqt::FilterType::LargestObject,
+            filter_type,
             delivery_timeout: None,
         },
     ))

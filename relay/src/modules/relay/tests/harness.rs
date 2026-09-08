@@ -24,7 +24,7 @@ pub(crate) use self::mocks::downstream_client::Sent;
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
-    fixtures::subscription::make_largest_object_subscription,
+    fixtures::subscription::make_subscription,
     mocks::{
         downstream_client::{MockPublisher, SentPublishDone},
         upstream_client::UpstreamSubgroupStream,
@@ -138,6 +138,15 @@ impl RelayHarness {
         &self,
         largest_location: Option<moqt::Location>,
     ) -> EgressRunnerHandle {
+        self.start_egress_with_filter(moqt::FilterType::LargestObject, largest_location)
+            .await
+    }
+
+    pub(crate) async fn start_egress_with_filter(
+        &self,
+        filter_type: moqt::FilterType,
+        largest_location: Option<moqt::Location>,
+    ) -> EgressRunnerHandle {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
         let runner = EgressRunner::new(
@@ -145,7 +154,7 @@ impl RelayHarness {
             self.cache_store.get_or_create(&self.track_key),
             self.notify_map.get_or_create(&self.track_key),
             Box::new(publisher),
-            make_largest_object_subscription(),
+            make_subscription(filter_type),
             ready_sender,
             largest_location,
         );
