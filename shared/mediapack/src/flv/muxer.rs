@@ -210,7 +210,7 @@ mod tests {
         // Arrange
         let mut muxer = Muxer::new();
         let tag = Tag {
-            tag_type: TagType::ScriptData,
+            tag_type: TagType::Other(18),
             timestamp: Timestamp::ZERO,
             data: Bytes::from_static(&[1]),
         };

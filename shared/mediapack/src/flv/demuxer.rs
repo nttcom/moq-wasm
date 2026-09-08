@@ -5,9 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     flv::tag::{Tag, TagType, parse_file_header, parse_tag},
     h264::{
-        AvcDecoderConfigurationRecord, NalUnitType,
-        annexb::{nal_units, with_start_codes},
-        avcc::avcc_to_annexb,
+        AvcDecoderConfigurationRecord, NalUnitType, annexb::nal_units, avcc::avcc_to_annexb,
         nal::nal_unit_type,
     },
     sample::{AudioSample, MediaEvent, Timestamp, VideoSample},
@@ -55,7 +53,7 @@ impl Demuxer {
         match tag.tag_type {
             TagType::Video => self.push_video_tag(tag.timestamp, &tag.data),
             TagType::Audio => self.push_audio_tag(tag.timestamp, &tag.data),
-            TagType::ScriptData | TagType::Other(_) => Ok(Vec::new()),
+            TagType::Other(_) => Ok(Vec::new()),
         }
     }
 
@@ -85,7 +83,7 @@ impl Demuxer {
                 let annexb = avcc_to_annexb(body, config.nal_length_size as usize)?;
                 let is_keyframe = frame_type == FRAME_TYPE_KEY;
                 let data = if is_keyframe && !contains_sps(&annexb) {
-                    join(config.parameter_sets_annexb(), annexb)
+                    Bytes::from([config.parameter_sets_annexb().as_ref(), &annexb].concat())
                 } else {
                     annexb
                 };
@@ -129,10 +127,6 @@ fn contains_sps(annexb: &[u8]) -> bool {
     nal_units(annexb).any(|nal| nal_unit_type(nal) == Some(NalUnitType::Sps))
 }
 
-fn join(first: Bytes, second: Bytes) -> Bytes {
-    with_start_codes(nal_units(&first).chain(nal_units(&second)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,7 +134,8 @@ mod tests {
         h264::annexb::annexb_to_avcc,
         sample::StreamSet,
         test_support::{
-            FIXTURE_FLV, IDR_SLICE, delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k,
+            FIXTURE_FLV, IDR_SLICE, audio_samples, count_events, delta_frame_annexb,
+            fixture_record, keyframe_annexb, mono_48k, video_samples,
         },
     };
 
@@ -169,7 +164,7 @@ mod tests {
     fn converts_avc_tags_to_annexb_samples() {
         // Arrange
         let mut demuxer = Demuxer::new();
-        let bare_idr = with_start_codes([&IDR_SLICE[..]]);
+        let bare_idr = crate::h264::annexb::with_start_codes([&IDR_SLICE[..]]);
 
         // Act
         let config_events = demuxer.push_tag(&sequence_header_tag()).unwrap();
@@ -260,34 +255,18 @@ mod tests {
                 has_audio: true
             })
         );
-        let video: Vec<_> = events
-            .iter()
-            .filter_map(|event| match event {
-                MediaEvent::Video(sample) => Some(sample),
-                _ => None,
-            })
-            .collect();
-        let audio_count = events
-            .iter()
-            .filter(|event| matches!(event, MediaEvent::Audio(_)))
-            .count();
+        let video = video_samples(&events);
         assert_eq!(video.len(), 9);
         assert_eq!(video.iter().filter(|sample| sample.is_keyframe).count(), 2);
-        assert_eq!(audio_count, 30);
+        assert_eq!(audio_samples(&events).len(), 30);
         assert!(video[0].is_keyframe);
         assert!(contains_sps(&video[0].data));
         assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, MediaEvent::VideoConfig(_)))
-                .count(),
+            count_events(&events, |event| matches!(event, MediaEvent::VideoConfig(_))),
             1
         );
         assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, MediaEvent::AudioConfig(_)))
-                .count(),
+            count_events(&events, |event| matches!(event, MediaEvent::AudioConfig(_))),
             1
         );
     }

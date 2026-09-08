@@ -12,8 +12,8 @@ use crate::{
     },
     mpegts::parser::{
         CLOCK_RATE, ElementaryStream, PAT_PID, PacketReader, STREAM_TYPE_AAC_ADTS,
-        STREAM_TYPE_H264, TsPacket, parse_packet, parse_pat, parse_pes_header, parse_pmt,
-        parse_section,
+        STREAM_TYPE_H264, TsPacket, parse_packet, parse_pat_pmt_pid, parse_pes_header, parse_pmt,
+        parse_section_body,
     },
     sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
 };
@@ -106,15 +106,13 @@ impl Demuxer {
         } else {
             buffer.extend_from_slice(packet.payload);
         }
-        let Some(section) = parse_section(buffer)? else {
+        let Some(body) = parse_section_body(buffer)? else {
             return Ok(());
         };
         if packet.pid == PAT_PID {
-            self.pmt_pid = parse_pat(section.body)
-                .first()
-                .map(|program| program.pmt_pid);
+            self.pmt_pid = parse_pat_pmt_pid(body);
         } else {
-            let streams = parse_pmt(section.body)?;
+            let streams = parse_pmt(body)?;
             self.register_streams(&streams, events);
         }
         self.sections.remove(&packet.pid);
@@ -125,14 +123,16 @@ impl Demuxer {
         let mut stream_set = StreamSet::default();
         for stream in streams {
             let kind = match stream.stream_type {
-                STREAM_TYPE_H264 => StreamKind::H264,
-                STREAM_TYPE_AAC_ADTS => StreamKind::AacAdts,
+                STREAM_TYPE_H264 => {
+                    stream_set.has_video = true;
+                    StreamKind::H264
+                }
+                STREAM_TYPE_AAC_ADTS => {
+                    stream_set.has_audio = true;
+                    StreamKind::AacAdts
+                }
                 _ => continue,
             };
-            match kind {
-                StreamKind::H264 => stream_set.has_video = true,
-                StreamKind::AacAdts => stream_set.has_audio = true,
-            }
             self.streams.entry(stream.pid).or_insert_with(|| PesStream {
                 kind,
                 pending: BytesMut::new(),
@@ -262,8 +262,9 @@ mod tests {
     use crate::{
         mpegts::parser::PACKET_SIZE,
         test_support::{
-            FIXTURE_TS, IDR_SLICE, NON_IDR_SLICE, adts_frame, delta_frame_annexb, keyframe_annexb,
-            mono_48k, pat_section, pes_packet, pmt_section, ts_packets,
+            FIXTURE_TS, IDR_SLICE, NON_IDR_SLICE, adts_frame, audio_samples, count_events,
+            delta_frame_annexb, keyframe_annexb, mono_48k, pat_section, pes_packet, pmt_section,
+            ts_packets, video_samples,
         },
     };
 
@@ -294,26 +295,6 @@ mod tests {
             &pes_packet(0xE0, 93_000, None, &delta_frame_annexb()),
         ));
         stream
-    }
-
-    fn video_samples(events: &[MediaEvent]) -> Vec<&VideoSample> {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                MediaEvent::Video(sample) => Some(sample),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn audio_samples(events: &[MediaEvent]) -> Vec<&AudioSample> {
-        events
-            .iter()
-            .filter_map(|event| match event {
-                MediaEvent::Audio(sample) => Some(sample),
-                _ => None,
-            })
-            .collect()
     }
 
     #[test]
@@ -414,10 +395,7 @@ mod tests {
         assert_eq!(video.iter().filter(|sample| sample.is_keyframe).count(), 2);
         assert_eq!(audio.len(), 30);
         assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, MediaEvent::VideoConfig(_)))
-                .count(),
+            count_events(&events, |event| matches!(event, MediaEvent::VideoConfig(_))),
             1
         );
         assert_eq!(video[0].pts, Timestamp::from_ticks(127_920, CLOCK_RATE));

@@ -1,19 +1,18 @@
 use anyhow::{Result, ensure};
 use bytes::{Bytes, BytesMut};
 
-pub const PACKET_SIZE: usize = 188;
-pub const SYNC_BYTE: u8 = 0x47;
-pub const PAT_PID: u16 = 0x0000;
-pub const CLOCK_RATE: u32 = 90_000;
-pub const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
-pub const STREAM_TYPE_H264: u8 = 0x1B;
+pub(crate) const PACKET_SIZE: usize = 188;
+pub(crate) const SYNC_BYTE: u8 = 0x47;
+pub(crate) const PAT_PID: u16 = 0x0000;
+pub(crate) const CLOCK_RATE: u32 = 90_000;
+pub(crate) const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
+pub(crate) const STREAM_TYPE_H264: u8 = 0x1B;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TsPacket<'a> {
     pub pid: u16,
     pub payload_unit_start: bool,
     pub transport_error: bool,
-    pub continuity_counter: u8,
     pub payload: &'a [u8],
 }
 
@@ -42,7 +41,6 @@ pub fn parse_packet(packet: &[u8]) -> Result<TsPacket<'_>> {
         pid: u16::from_be_bytes([packet[1] & 0x1F, packet[2]]),
         payload_unit_start: packet[1] & 0x40 != 0,
         transport_error: packet[1] & 0x80 != 0,
-        continuity_counter: packet[3] & 0x0F,
         payload,
     })
 }
@@ -103,13 +101,7 @@ impl PacketReader {
 const SECTION_HEADER_LENGTH: usize = 8;
 const CRC_LENGTH: usize = 4;
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Section<'a> {
-    pub table_id: u8,
-    pub body: &'a [u8],
-}
-
-pub fn parse_section(data: &[u8]) -> Result<Option<Section<'_>>> {
+pub fn parse_section_body(data: &[u8]) -> Result<Option<&[u8]>> {
     if data.len() < 3 {
         return Ok(None);
     }
@@ -122,26 +114,15 @@ pub fn parse_section(data: &[u8]) -> Result<Option<Section<'_>>> {
         total_length >= SECTION_HEADER_LENGTH + CRC_LENGTH,
         "PSI section too short: {total_length} bytes"
     );
-    Ok(Some(Section {
-        table_id: data[0],
-        body: &data[SECTION_HEADER_LENGTH..total_length - CRC_LENGTH],
-    }))
+    Ok(Some(
+        &data[SECTION_HEADER_LENGTH..total_length - CRC_LENGTH],
+    ))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Program {
-    pub number: u16,
-    pub pmt_pid: u16,
-}
-
-pub fn parse_pat(body: &[u8]) -> Vec<Program> {
+pub fn parse_pat_pmt_pid(body: &[u8]) -> Option<u16> {
     body.chunks_exact(4)
-        .map(|entry| Program {
-            number: u16::from_be_bytes([entry[0], entry[1]]),
-            pmt_pid: u16::from_be_bytes([entry[2] & 0x1F, entry[3]]),
-        })
-        .filter(|program| program.number != 0)
-        .collect()
+        .find(|entry| entry[..2] != [0, 0])
+        .map(|entry| u16::from_be_bytes([entry[2] & 0x1F, entry[3]]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +150,6 @@ pub fn parse_pmt(body: &[u8]) -> Result<Vec<ElementaryStream>> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct PesHeader {
-    pub stream_id: u8,
     pub pts: Option<u64>,
     pub dts: Option<u64>,
     pub header_length: usize,
@@ -192,7 +172,6 @@ pub fn parse_pes_header(data: &[u8]) -> Result<Option<PesHeader>> {
     let pts = (pts_dts_flags & 0b10 != 0).then(|| read_timestamp(&data[9..14]));
     let dts = (pts_dts_flags == 0b11).then(|| read_timestamp(&data[14..19]));
     Ok(Some(PesHeader {
-        stream_id: data[3],
         pts,
         dts,
         header_length,
@@ -223,7 +202,6 @@ mod tests {
         // Assert
         assert_eq!(parsed.pid, 0x100);
         assert!(parsed.payload_unit_start);
-        assert_eq!(parsed.continuity_counter, 5);
         assert_eq!(parsed.payload, [1, 2, 3]);
     }
 
@@ -251,17 +229,11 @@ mod tests {
         let pmt = pmt_section(&[(0x100, STREAM_TYPE_H264), (0x101, STREAM_TYPE_AAC_ADTS)]);
 
         // Act
-        let programs = parse_pat(parse_section(&pat[1..]).unwrap().unwrap().body);
-        let streams = parse_pmt(parse_section(&pmt[1..]).unwrap().unwrap().body).unwrap();
+        let pmt_pid = parse_pat_pmt_pid(parse_section_body(&pat[1..]).unwrap().unwrap());
+        let streams = parse_pmt(parse_section_body(&pmt[1..]).unwrap().unwrap()).unwrap();
 
         // Assert
-        assert_eq!(
-            programs,
-            [Program {
-                number: 1,
-                pmt_pid: 0x1000
-            }]
-        );
+        assert_eq!(pmt_pid, Some(0x1000));
         assert_eq!(
             streams,
             [
@@ -283,7 +255,7 @@ mod tests {
         let pmt = pmt_section(&[(0x100, STREAM_TYPE_H264)]);
 
         // Act
-        let section = parse_section(&pmt[1..pmt.len() - 1]).unwrap();
+        let section = parse_section_body(&pmt[1..pmt.len() - 1]).unwrap();
 
         // Assert
         assert!(section.is_none());
@@ -298,7 +270,6 @@ mod tests {
         let header = parse_pes_header(&pes).unwrap().unwrap();
 
         // Assert
-        assert_eq!(header.stream_id, 0xE0);
         assert_eq!(header.pts, Some(0x1_2345_6789));
         assert_eq!(header.dts, Some(0x1_2345_6700));
         assert_eq!(&pes[header.header_length..], [0xAA]);

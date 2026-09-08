@@ -1,9 +1,10 @@
 use bytes::Bytes;
 
 use crate::{
-    aac::{AudioSpecificConfig, adts},
+    aac::{AudioSpecificConfig, adts::HEADER_LENGTH},
     h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
+    sample::{AudioSample, MediaEvent, VideoSample},
 };
 
 pub(crate) const FIXTURE_TS: &[u8] = include_bytes!("../fixtures/testsrc.ts");
@@ -38,11 +39,42 @@ pub(crate) fn mono_48k() -> AudioSpecificConfig {
 }
 
 pub(crate) fn adts_frame(payload: &[u8]) -> Vec<u8> {
-    let mut frame = adts::write_header(&mono_48k(), payload.len())
-        .unwrap()
-        .to_vec();
+    let frame_length = payload.len() + HEADER_LENGTH;
+    let mut frame = vec![
+        0xFF,
+        0xF1,
+        0x4C,
+        0x40 | (frame_length >> 11) as u8 & 0x03,
+        (frame_length >> 3) as u8,
+        ((frame_length as u8 & 0x07) << 5) | 0x1F,
+        0xFC,
+    ];
     frame.extend_from_slice(payload);
     frame
+}
+
+pub(crate) fn video_samples(events: &[MediaEvent]) -> Vec<&VideoSample> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            MediaEvent::Video(sample) => Some(sample),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn audio_samples(events: &[MediaEvent]) -> Vec<&AudioSample> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            MediaEvent::Audio(sample) => Some(sample),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn count_events(events: &[MediaEvent], matches: impl Fn(&MediaEvent) -> bool) -> usize {
+    events.iter().filter(|event| matches(event)).count()
 }
 
 pub(crate) fn ts_packet(

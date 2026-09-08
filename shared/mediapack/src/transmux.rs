@@ -111,21 +111,8 @@ mod tests {
     use super::*;
     use crate::{
         mp4::muxer::tests::boxes,
-        test_support::{FIXTURE_FLV, FIXTURE_TS},
+        test_support::{FIXTURE_FLV, FIXTURE_TS, audio_samples, video_samples},
     };
-
-    fn count_samples(events: &[MediaEvent]) -> (usize, usize) {
-        (
-            events
-                .iter()
-                .filter(|event| matches!(event, MediaEvent::Video(_)))
-                .count(),
-            events
-                .iter()
-                .filter(|event| matches!(event, MediaEvent::Audio(_)))
-                .count(),
-        )
-    }
 
     #[test]
     fn transmuxes_mpegts_to_flv_preserving_samples() {
@@ -144,7 +131,8 @@ mod tests {
 
         // Assert
         assert!(output.starts_with(b"FLV"));
-        assert_eq!(count_samples(&events), (9, 30));
+        assert_eq!(video_samples(&events).len(), 9);
+        assert_eq!(audio_samples(&events).len(), 30);
     }
 
     #[test]

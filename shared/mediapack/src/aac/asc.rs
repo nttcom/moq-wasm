@@ -11,7 +11,6 @@ pub const SAMPLE_RATES: [u32; 13] = [
     7_350,
 ];
 
-pub const AAC_LC: u8 = 2;
 pub const SAMPLES_PER_FRAME: u64 = 1_024;
 
 /// `bytes` keeps the serialized form the config was parsed from, so extension
@@ -114,7 +113,7 @@ mod tests {
         let config = AudioSpecificConfig::parse(&bytes).unwrap();
 
         // Assert
-        assert_eq!(config, AudioSpecificConfig::new(AAC_LC, 48_000, 2));
+        assert_eq!(config, AudioSpecificConfig::new(2, 48_000, 2));
         assert_eq!(config.codec_string(), "mp4a.40.2");
         assert_eq!(config.frame_duration().micros(), 21_333);
     }
@@ -122,7 +121,7 @@ mod tests {
     #[test]
     fn serializes_config_back_to_two_bytes() {
         // Arrange
-        let config = AudioSpecificConfig::new(AAC_LC, 44_100, 1);
+        let config = AudioSpecificConfig::new(2, 44_100, 1);
 
         // Act
         let bytes = config.to_bytes();

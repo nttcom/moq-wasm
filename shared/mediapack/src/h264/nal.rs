@@ -4,49 +4,20 @@ use crate::bits::BitReader;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NalUnitType {
-    NonIdrSlice,
-    SlicePartitionA,
-    SlicePartitionB,
-    SlicePartitionC,
     IdrSlice,
-    Sei,
     Sps,
     Pps,
-    AccessUnitDelimiter,
-    EndOfSequence,
-    EndOfStream,
-    FillerData,
     Other(u8),
 }
 
 impl NalUnitType {
     pub fn from_header(header: u8) -> Self {
         match header & 0x1F {
-            1 => Self::NonIdrSlice,
-            2 => Self::SlicePartitionA,
-            3 => Self::SlicePartitionB,
-            4 => Self::SlicePartitionC,
             5 => Self::IdrSlice,
-            6 => Self::Sei,
             7 => Self::Sps,
             8 => Self::Pps,
-            9 => Self::AccessUnitDelimiter,
-            10 => Self::EndOfSequence,
-            11 => Self::EndOfStream,
-            12 => Self::FillerData,
             other => Self::Other(other),
         }
-    }
-
-    pub fn is_vcl(self) -> bool {
-        matches!(
-            self,
-            Self::NonIdrSlice
-                | Self::SlicePartitionA
-                | Self::SlicePartitionB
-                | Self::SlicePartitionC
-                | Self::IdrSlice
-        )
     }
 
     pub fn is_parameter_set(self) -> bool {
@@ -56,24 +27,6 @@ impl NalUnitType {
 
 pub fn nal_unit_type(nal: &[u8]) -> Option<NalUnitType> {
     nal.first().map(|header| NalUnitType::from_header(*header))
-}
-
-pub fn starts_new_access_unit(nal: &[u8]) -> bool {
-    match nal_unit_type(nal) {
-        Some(
-            NalUnitType::AccessUnitDelimiter
-            | NalUnitType::Sps
-            | NalUnitType::Pps
-            | NalUnitType::Sei,
-        ) => true,
-        Some(NalUnitType::Other(14..=18)) => true,
-        Some(kind) if kind.is_vcl() => first_mb_in_slice(nal) == Some(0),
-        _ => false,
-    }
-}
-
-fn first_mb_in_slice(nal: &[u8]) -> Option<u64> {
-    BitReader::new(nal.get(1..)?).read_ue().ok()
 }
 
 pub fn rbsp_from_nal_payload(payload: &[u8]) -> Vec<u8> {
@@ -188,13 +141,6 @@ impl SequenceParameterSet {
             height: height as u32,
         })
     }
-
-    pub fn codec_string(&self) -> String {
-        format!(
-            "avc1.{:02X}{:02X}{:02X}",
-            self.profile_idc, self.constraint_flags, self.level_idc
-        )
-    }
 }
 
 fn skip_scaling_list(reader: &mut BitReader, size: usize) -> Result<()> {
@@ -226,7 +172,14 @@ mod tests {
         let parsed = SequenceParameterSet::parse(&sps).unwrap();
 
         // Assert
-        assert_eq!(parsed.codec_string(), "avc1.42D00B");
+        assert_eq!(
+            (
+                parsed.profile_idc,
+                parsed.constraint_flags,
+                parsed.level_idc
+            ),
+            (0x42, 0xD0, 0x0B)
+        );
         assert_eq!((parsed.width, parsed.height), (160, 90));
     }
 
@@ -247,23 +200,9 @@ mod tests {
 
         // Act / Assert
         assert_eq!(nal_unit_type(&idr), Some(NalUnitType::IdrSlice));
-        assert!(NalUnitType::IdrSlice.is_vcl());
         assert_eq!(nal_unit_type(&sps), Some(NalUnitType::Sps));
         assert!(NalUnitType::Sps.is_parameter_set());
-        assert_eq!(NalUnitType::from_header(0x7E), NalUnitType::Other(30));
-    }
-
-    #[test]
-    fn detects_access_unit_boundaries_from_first_mb_in_slice() {
-        // Arrange
-        let first_slice = [0x65, 0b1000_0000];
-        let later_slice = [0x41, 0b0100_0000];
-
-        // Act / Assert
-        assert!(starts_new_access_unit(&first_slice));
-        assert!(!starts_new_access_unit(&later_slice));
-        assert!(starts_new_access_unit(&[0x09, 0xF0]));
-        assert!(!starts_new_access_unit(&[0x0C]));
+        assert_eq!(NalUnitType::from_header(0x41), NalUnitType::Other(1));
     }
 
     #[test]

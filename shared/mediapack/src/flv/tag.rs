@@ -3,9 +3,9 @@ use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::sample::{StreamSet, Timestamp};
 
-pub const FILE_HEADER_LENGTH: usize = 9;
-pub const TAG_HEADER_LENGTH: usize = 11;
-pub const PREVIOUS_TAG_SIZE_LENGTH: usize = 4;
+const FILE_HEADER_LENGTH: usize = 9;
+const TAG_HEADER_LENGTH: usize = 11;
+const PREVIOUS_TAG_SIZE_LENGTH: usize = 4;
 const FLAG_VIDEO: u8 = 0x01;
 const FLAG_AUDIO: u8 = 0x04;
 
@@ -13,7 +13,6 @@ const FLAG_AUDIO: u8 = 0x04;
 pub enum TagType {
     Audio,
     Video,
-    ScriptData,
     Other(u8),
 }
 
@@ -22,7 +21,6 @@ impl TagType {
         match value {
             8 => Self::Audio,
             9 => Self::Video,
-            18 => Self::ScriptData,
             other => Self::Other(other),
         }
     }
@@ -31,7 +29,6 @@ impl TagType {
         match self {
             Self::Audio => 8,
             Self::Video => 9,
-            Self::ScriptData => 18,
             Self::Other(value) => value,
         }
     }

@@ -1,10 +1,9 @@
 use anyhow::{Result, ensure};
 use bytes::{Bytes, BytesMut};
 
-use crate::aac::asc::{AudioSpecificConfig, SAMPLE_RATES, sampling_frequency_index};
+use crate::aac::asc::{AudioSpecificConfig, SAMPLE_RATES};
 
-pub const HEADER_LENGTH: usize = 7;
-const MAX_FRAME_LENGTH: usize = (1 << 13) - 1;
+pub(crate) const HEADER_LENGTH: usize = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdtsHeader {
@@ -41,31 +40,6 @@ pub fn parse_header(data: &[u8]) -> Result<Option<AdtsHeader>> {
         frame_length,
         header_length,
     }))
-}
-
-pub fn write_header(config: &AudioSpecificConfig, payload_length: usize) -> Result<[u8; 7]> {
-    ensure!(
-        (1..=4).contains(&config.object_type),
-        "ADTS cannot signal audio object type {}",
-        config.object_type
-    );
-    let frequency_index = sampling_frequency_index(config.sample_rate)
-        .ok_or_else(|| anyhow::anyhow!("ADTS cannot signal sample rate {}", config.sample_rate))?;
-    let frame_length = payload_length + HEADER_LENGTH;
-    ensure!(
-        frame_length <= MAX_FRAME_LENGTH,
-        "ADTS frame too long: {frame_length}"
-    );
-    let channels = config.channel_configuration;
-    Ok([
-        0xFF,
-        0xF1,
-        ((config.object_type - 1) << 6) | (frequency_index << 2) | (channels >> 2),
-        ((channels & 0x03) << 6) | ((frame_length >> 11) as u8 & 0x03),
-        (frame_length >> 3) as u8,
-        ((frame_length as u8 & 0x07) << 5) | 0x1F,
-        0xFC,
-    ])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,10 +80,6 @@ impl AdtsReader {
         Ok(frames)
     }
 
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-    }
-
     fn discard_until_sync_word(&mut self) {
         let sync = (0..self.buffer.len()).find(|index| has_sync_word(&self.buffer[*index..]));
         let keep_from = sync.unwrap_or(self.buffer.len().saturating_sub(1));
@@ -120,16 +90,7 @@ impl AdtsReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn stereo_48k() -> AudioSpecificConfig {
-        AudioSpecificConfig::new(2, 48_000, 2)
-    }
-
-    fn adts_frame(payload: &[u8]) -> Vec<u8> {
-        let mut frame = write_header(&stereo_48k(), payload.len()).unwrap().to_vec();
-        frame.extend_from_slice(payload);
-        frame
-    }
+    use crate::test_support::{adts_frame, mono_48k};
 
     #[test]
     fn header_round_trips() {
@@ -140,7 +101,7 @@ mod tests {
         let header = parse_header(&frame).unwrap().unwrap();
 
         // Assert
-        assert_eq!(header.config, stereo_48k());
+        assert_eq!(header.config, mono_48k());
         assert_eq!(header.frame_length, 10);
         assert_eq!(header.header_length, 7);
     }
