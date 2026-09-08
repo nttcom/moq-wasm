@@ -39,5 +39,8 @@ def create_backend(track_label: str) -> SpeechToText:
                 compute_type=os.environ.get("WHISPER_COMPUTE_TYPE", "int8"),
                 language=language,
                 max_segment_sec=float(os.environ.get("WHISPER_MAX_SEGMENT_SEC", "10")),
+                silence_rms=int(os.environ.get("WHISPER_SILENCE_RMS", "300")),
+                no_speech_threshold=float(os.environ.get("WHISPER_NO_SPEECH_THRESHOLD", "0.6")),
+                vad_filter=os.environ.get("WHISPER_VAD_FILTER", "1") != "0",
             )
     raise ValueError(f"unknown STT_BACKEND: {name}")

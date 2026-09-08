@@ -45,7 +45,12 @@ model: audio is cut into utterances at pauses (`SpeechSegmenter`, at most
 `WHISPER_MAX_SEGMENT_SEC`, default 10 s) and each utterance is transcribed on
 a worker thread. `WHISPER_MODEL` (default `small`), `WHISPER_DEVICE` (`cpu`)
 and `WHISPER_COMPUTE_TYPE` (`int8`) select the model; the first run downloads
-it from Hugging Face. A new service is one
+it from Hugging Face. Whisper hallucinates stock phrases on silence, so three
+gates suppress it: buffers whose 20 ms frames never exceed
+`WHISPER_SILENCE_RMS` (default 300, int16 RMS) are not transcribed,
+faster-whisper's VAD runs unless `WHISPER_VAD_FILTER=0`, and result segments
+with `no_speech_prob` above `WHISPER_NO_SPEECH_THRESHOLD` (default 0.6) are
+dropped. Raise `WHISPER_SILENCE_RMS` for a noisy microphone. A new service is one
 class implementing `stt_server.stt.base.SpeechToText` (`pcm_format`,
 `start`, `send_pcm`, `close`) plus a branch in `create_backend`.
 

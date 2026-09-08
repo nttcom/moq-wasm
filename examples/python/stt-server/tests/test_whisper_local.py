@@ -5,7 +5,7 @@ import struct
 import numpy as np
 
 from stt_server.stt.segmenter import SpeechSegmenter
-from stt_server.stt.whisper_local import WhisperLocalBackend
+from stt_server.stt.whisper_local import RecognizedSegment, WhisperLocalBackend
 
 SAMPLE_RATE = 16000
 
@@ -58,9 +58,9 @@ async def test_backend_transcribes_each_segment_off_the_reader_path():
     # Arrange
     seen: list[np.ndarray] = []
 
-    def fake_transcribe(audio: np.ndarray) -> str:
+    def fake_transcribe(audio: np.ndarray) -> list[RecognizedSegment]:
         seen.append(audio)
-        return f"segment {len(seen)}"
+        return [RecognizedSegment(f"segment {len(seen)}", no_speech_prob=0.1)]
 
     transcripts = []
     backend = WhisperLocalBackend(transcribe=fake_transcribe, max_segment_sec=1.0)
@@ -74,3 +74,46 @@ async def test_backend_transcribes_each_segment_off_the_reader_path():
     assert [transcript.text for transcript in transcripts] == ["segment 1", "segment 2", "segment 3"]
     assert all(transcript.is_final for transcript in transcripts)
     assert seen[0].dtype == np.float32 and abs(seen[0]).max() <= 1.0
+
+
+def test_silence_only_buffers_are_discarded():
+    # Arrange
+    segmenter = SpeechSegmenter(SAMPLE_RATE, min_sec=1.0, max_sec=2.0)
+
+    # Act
+    segments = segmenter.push(silence(5.0))
+
+    # Assert
+    assert segments == []
+    assert segmenter.flush() is None
+
+
+def test_speech_followed_by_long_silence_yields_only_the_speech():
+    # Arrange
+    segmenter = SpeechSegmenter(SAMPLE_RATE, min_sec=1.0, max_sec=2.0)
+
+    # Act
+    segments = segmenter.push(tone(1.2) + silence(6.0))
+
+    # Assert
+    assert len(segments) == 1
+
+
+async def test_segments_whisper_rates_as_non_speech_are_dropped():
+    # Arrange
+    def fake_transcribe(_audio: np.ndarray) -> list[RecognizedSegment]:
+        return [
+            RecognizedSegment("ご視聴ありがとうございました", no_speech_prob=0.95),
+            RecognizedSegment("こんにちは", no_speech_prob=0.05),
+        ]
+
+    transcripts = []
+    backend = WhisperLocalBackend(transcribe=fake_transcribe, max_segment_sec=1.0, no_speech_threshold=0.6)
+    await backend.start(transcripts.append)
+
+    # Act
+    await backend.send_pcm(tone(1.0))
+    await backend.close()
+
+    # Assert
+    assert [transcript.text for transcript in transcripts] == ["こんにちは"]
