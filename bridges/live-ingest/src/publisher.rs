@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use anyhow::{Context, Result};
 use mediapack::{
     AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig,
@@ -8,7 +6,7 @@ use mediapack::{
 
 use crate::{
     chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
-    moqt::MoqtManager,
+    moqt::{MoqtManager, now_unix},
 };
 
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
@@ -72,7 +70,7 @@ impl MediaPublisher {
         let payload = pack_video_chunk_payload(
             sample.is_keyframe,
             sample.pts.micros(),
-            current_time_ms(),
+            now_unix().as_millis() as u64,
             &sample.data,
             codec.as_deref(),
         );
@@ -94,7 +92,7 @@ impl MediaPublisher {
             &config,
             sample.pts.micros(),
             duration_us,
-            current_time_ms(),
+            now_unix().as_millis() as u64,
         );
         self.moqt
             .send_object(&self.namespace, AUDIO_TRACK, rotate_group, payload)
@@ -120,11 +118,4 @@ impl MediaPublisher {
         };
         rotate
     }
-}
-
-fn current_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }

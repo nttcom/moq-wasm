@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -303,7 +303,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         let should_send_catalog = track_name == CATALOG_TRACK_NAME;
                         let writer = TrackWriter::new(
                             session.publisher().create_stream(&publication),
-                            now_unix_micros(),
+                            now_unix().as_micros() as u64,
                         );
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();
@@ -515,13 +515,6 @@ async fn write_object<T: TransportProtocol>(
         .context("send subgroup object")
 }
 
-fn now_unix_micros() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_micros() as u64)
-        .unwrap_or(0)
-}
-
 fn is_supported_track(track_name: &str) -> bool {
     matches!(
         track_name,
@@ -635,7 +628,7 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         add_tracks: None,
         remove_tracks: None,
         clone_tracks: None,
-        generated_at: Some(now_unix_ms()),
+        generated_at: Some(now_unix().as_millis() as u64),
         is_complete: Some(true),
         tracks: Some(tracks),
     };
@@ -651,9 +644,8 @@ fn channel_config_label(channels: u8) -> String {
     }
 }
 
-fn now_unix_ms() -> u64 {
+pub(crate) fn now_unix() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64
 }
