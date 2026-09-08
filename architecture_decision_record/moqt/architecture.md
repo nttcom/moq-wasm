@@ -113,11 +113,18 @@ use these facades instead of the data-plane factories directly:
   construction, object ids from 0 within each group; publisher priority is
   fixed at 128 and the subgroup id is omitted (`SubgroupId::None`).
 - `TrackReader<T>` wraps `StreamDataReceiverFactory<T>` and yields
-  `TrackObject { group_id, object_id, extension_headers, payload }`. It resolves
-  object ids from the wire deltas, skips status objects, and moves to the next
-  subgroup stream on FIN. A decode/transport failure inside a subgroup is
-  returned as `Err` and that subgroup is dropped, so the caller can choose
-  between aborting and continuing with the next group.
+  `TrackObject { group_id, subgroup_id, object_id, extension_headers, payload }`
+  in arrival order. Subgroup streams are read **concurrently**: an accept task
+  takes every new stream from the factory and spawns one reader task per
+  stream; readers feed a bounded channel (64 objects) so a slow consumer
+  applies QUIC flow control to the publisher instead of buffering without
+  bound. Ordering is therefore only guaranteed within a subgroup (draft-14
+  §10.4); consumers that need cross-subgroup order sort by the ids themselves.
+  `subgroup_id` is resolved as the wire says (absent field → 0, "first object
+  id" types → the first object's id). Object ids come from the wire deltas,
+  status objects are skipped, a failure inside one stream is returned as `Err`
+  while the other streams keep being read, and `Ok(None)` means the factory
+  has no more streams.
 
 ### `SessionContext` — shared session state
 

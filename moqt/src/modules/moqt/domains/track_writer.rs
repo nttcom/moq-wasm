@@ -120,36 +120,12 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        DUAL, DataReceiver, FilterType, PublishOption, Session, SessionEvent, Subscription,
-        TrackReader, TrackWriter,
-        modules::test_support::{HANDSHAKE_TIMEOUT, connect_sessions, spawn_dual_server},
+        PublishOption, TrackWriter,
+        modules::test_support::{
+            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
+            subscribed_track_reader,
+        },
     };
-
-    async fn accept_publish(server: &Session<DUAL>) -> Subscription {
-        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
-            panic!("expected PUBLISH from the client");
-        };
-        let subscription = handler.ok(128, FilterType::LargestObject, 0).await.unwrap();
-        handler.accept_data_receiver().await;
-        subscription
-    }
-
-    /// The data receiver resolves only once the first object has arrived, so
-    /// this must run after the writer has sent something.
-    async fn track_reader(
-        server: &Session<DUAL>,
-        subscription: &Subscription,
-    ) -> TrackReader<DUAL> {
-        let DataReceiver::Stream(factory) = server
-            .subscriber()
-            .accept_data_receiver(subscription)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a subgroup stream receiver");
-        };
-        TrackReader::new(factory)
-    }
 
     #[tokio::test]
     async fn objects_arrive_with_their_immutable_extensions_and_ids() {
@@ -183,7 +159,7 @@ mod tests {
             .await
             .unwrap();
         writer.finish().await.unwrap();
-        let mut reader = track_reader(&server, &accepted).await;
+        let mut reader = subscribed_track_reader(&server, &accepted).await;
         let first = reader.next_object().await.unwrap().unwrap();
         let second = reader.next_object().await.unwrap().unwrap();
 
