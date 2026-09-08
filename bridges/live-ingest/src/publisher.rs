@@ -73,6 +73,9 @@ impl MediaPublisher {
 
     async fn publish_video(&mut self, sample: &VideoSample) -> Result<()> {
         self.setup_namespace().await?;
+        if let Some(renditions) = &self.renditions {
+            renditions.push(sample);
+        }
         let payload = video_payload(sample, self.video_codec.as_deref());
         self.moqt
             .send_object(
@@ -81,11 +84,7 @@ impl MediaPublisher {
                 sample.is_keyframe,
                 payload,
             )
-            .await?;
-        if let Some(renditions) = &self.renditions {
-            renditions.push(sample);
-        }
-        Ok(())
+            .await
     }
 
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
