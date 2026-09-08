@@ -2,6 +2,10 @@
 
 Live ingest bridge for publishing RTMP or SRT media into MoQT.
 
+## Prerequisites
+
+`--transcode` needs GStreamer; see `shared/transcode/README.md` for the packages.
+
 ## Run
 
 Run the bridge:
@@ -20,6 +24,10 @@ Override the relay URL when needed:
 ```shell
 LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest
 ```
+
+Add lower renditions with `LIVE_INGEST_TRANSCODE=1 make live-ingest`. Each rendition
+below the source resolution (720p / 480p / 360p) is published as `video_<height>p`
+next to `video`, and the catalog lists them in one `altGroup` with `width` / `height`.
 
 ## Publish Test RTMP
 
@@ -57,3 +65,4 @@ Options:
 - `--rtmp-addr`: RTMP listen address
 - `--srt-addr`: SRT listen address
 - `--moqt-url`: MoQT relay URL
+- `--transcode`: re-encode video into the standard renditions below the source resolution

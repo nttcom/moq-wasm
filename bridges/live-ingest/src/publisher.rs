@@ -1,36 +1,43 @@
 use anyhow::{Context, Result};
-use mediapack::{
-    AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig,
-    h264::AvcDecoderConfigurationRecord,
-};
+use mediapack::{AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig};
 
 use crate::{
     chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
-    moqt::{MoqtManager, now_unix},
+    moqt::{MoqtManager, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
+    renditions::RenditionFanout,
 };
 
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
-const VIDEO_TRACK: &str = "video";
 const AUDIO_TRACK: &str = "audio";
+
+#[derive(Clone)]
+pub struct IngestOptions {
+    pub moqt_url: Option<String>,
+    pub transcode: bool,
+}
 
 pub struct MediaPublisher {
     moqt: MoqtManager,
     namespace: Vec<String>,
+    transcode: bool,
     namespace_ready: bool,
     audio_group_duration_us: u64,
-    video_config: Option<AvcDecoderConfigurationRecord>,
+    video_codec: Option<String>,
     audio_config: Option<AudioSpecificConfig>,
+    renditions: Option<RenditionFanout>,
 }
 
 impl MediaPublisher {
-    pub fn new(moqt: MoqtManager, namespace: Vec<String>) -> Self {
+    pub fn new(moqt: MoqtManager, namespace: Vec<String>, transcode: bool) -> Self {
         Self {
             moqt,
             namespace,
+            transcode,
             namespace_ready: false,
             audio_group_duration_us: 0,
-            video_config: None,
+            video_codec: None,
             audio_config: None,
+            renditions: None,
         }
     }
 
@@ -38,11 +45,15 @@ impl MediaPublisher {
         match event {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
+                let info = VideoTrackInfo::from_record(config, "Video".to_string())?;
+                self.video_codec = Some(info.codec.clone());
+                if self.transcode && self.renditions.is_none() {
+                    self.renditions =
+                        RenditionFanout::run(self.moqt.clone(), self.namespace.clone(), &info)?;
+                }
                 self.moqt
-                    .update_video_catalog(&self.namespace, Some(&config.codec_string()))
-                    .await?;
-                self.video_config = Some(config.clone());
-                Ok(())
+                    .update_video_catalog(&self.namespace, VIDEO_TRACK_NAME, info)
+                    .await
             }
             MediaEvent::AudioConfig(config) => {
                 self.moqt
@@ -62,21 +73,19 @@ impl MediaPublisher {
 
     async fn publish_video(&mut self, sample: &VideoSample) -> Result<()> {
         self.setup_namespace().await?;
-        let codec = self
-            .video_config
-            .as_ref()
-            .filter(|_| sample.is_keyframe)
-            .map(|config| config.codec_string());
-        let payload = pack_video_chunk_payload(
-            sample.is_keyframe,
-            sample.pts.micros(),
-            now_unix().as_millis() as u64,
-            &sample.data,
-            codec.as_deref(),
-        );
+        let payload = video_payload(sample, self.video_codec.as_deref());
         self.moqt
-            .send_object(&self.namespace, VIDEO_TRACK, sample.is_keyframe, payload)
-            .await
+            .send_object(
+                &self.namespace,
+                VIDEO_TRACK_NAME,
+                sample.is_keyframe,
+                payload,
+            )
+            .await?;
+        if let Some(renditions) = &self.renditions {
+            renditions.push(sample);
+        }
+        Ok(())
     }
 
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
@@ -118,4 +127,14 @@ impl MediaPublisher {
         };
         rotate
     }
+}
+
+pub fn video_payload(sample: &VideoSample, codec: Option<&str>) -> Vec<u8> {
+    pack_video_chunk_payload(
+        sample.is_keyframe,
+        sample.pts.micros(),
+        now_unix().as_millis() as u64,
+        &sample.data,
+        codec.filter(|_| sample.is_keyframe),
+    )
 }
