@@ -1,0 +1,22 @@
+[project]
+name = "moqt-stt-server"
+version = "0.1.0"
+description = "FastAPI app that receives MoQT audio tracks, decodes them to PCM and streams them to a speech-to-text backend"
+requires-python = ">=3.10"
+dependencies = [
+    "av>=14",
+    "fastapi>=0.115",
+    "moqt",
+    "uvicorn>=0.30",
+    "websockets>=13",
+]
+
+[tool.uv.sources]
+moqt = { path = "../../../bindings/python" }
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
