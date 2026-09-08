@@ -23,6 +23,9 @@ while let Some(output) = transcoder.next().await {
 }
 ```
 
+`input()` returns a cloneable `TranscodeInput` with the same `push` / `finish`, so a
+blocking feeder thread can own the input while an async task drains `next()`.
+
 `ladder_for` never upscales: it returns the standard heights (1080/720/480/360) strictly
 below the source height with matching bitrates. Call `finish()` to flush the encoders;
 `next()` returns `None` once every rendition has ended.

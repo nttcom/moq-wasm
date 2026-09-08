@@ -22,9 +22,41 @@ enum Message {
 
 pub struct Transcoder {
     pipeline: gst::Pipeline,
-    source: AppSrc,
+    input: TranscodeInput,
     message_receiver: mpsc::UnboundedReceiver<Message>,
     open_renditions: usize,
+}
+
+#[derive(Clone)]
+pub struct TranscodeInput {
+    source: AppSrc,
+}
+
+impl TranscodeInput {
+    pub fn push(&self, sample: &VideoSample) -> Result<()> {
+        let mut buffer = gst::Buffer::from_slice(sample.data.clone());
+        {
+            let buffer = buffer
+                .get_mut()
+                .ok_or_else(|| anyhow!("fresh buffer is shared"))?;
+            buffer.set_pts(gst::ClockTime::from_useconds(sample.pts.micros()));
+            buffer.set_dts(gst::ClockTime::from_useconds(sample.dts.micros()));
+            if !sample.is_keyframe {
+                buffer.set_flags(gst::BufferFlags::DELTA_UNIT);
+            }
+        }
+        self.source
+            .push_buffer(buffer)
+            .map(|_| ())
+            .map_err(|error| anyhow!("push sample into transcoder: {error:?}"))
+    }
+
+    pub fn finish(&self) -> Result<()> {
+        self.source
+            .end_of_stream()
+            .map(|_| ())
+            .map_err(|error| anyhow!("signal end of stream: {error:?}"))
+    }
 }
 
 impl Transcoder {
@@ -55,35 +87,22 @@ impl Transcoder {
             .context("start transcode pipeline")?;
         Ok(Self {
             pipeline,
-            source,
+            input: TranscodeInput { source },
             message_receiver,
             open_renditions: renditions.len(),
         })
     }
 
+    pub fn input(&self) -> TranscodeInput {
+        self.input.clone()
+    }
+
     pub fn push(&self, sample: &VideoSample) -> Result<()> {
-        let mut buffer = gst::Buffer::from_slice(sample.data.clone());
-        {
-            let buffer = buffer
-                .get_mut()
-                .ok_or_else(|| anyhow!("fresh buffer is shared"))?;
-            buffer.set_pts(gst::ClockTime::from_useconds(sample.pts.micros()));
-            buffer.set_dts(gst::ClockTime::from_useconds(sample.dts.micros()));
-            if !sample.is_keyframe {
-                buffer.set_flags(gst::BufferFlags::DELTA_UNIT);
-            }
-        }
-        self.source
-            .push_buffer(buffer)
-            .map(|_| ())
-            .map_err(|error| anyhow!("push sample into transcoder: {error:?}"))
+        self.input.push(sample)
     }
 
     pub fn finish(&self) -> Result<()> {
-        self.source
-            .end_of_stream()
-            .map(|_| ())
-            .map_err(|error| anyhow!("signal end of stream: {error:?}"))
+        self.input.finish()
     }
 
     pub async fn next(&mut self) -> Option<Result<TranscodedEvent>> {
