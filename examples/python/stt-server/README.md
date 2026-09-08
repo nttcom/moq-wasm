@@ -26,8 +26,14 @@ decoded with PyAV and resampled to the backend's PCM format.
 | `wav` (default) | none: writes `TRANSCRIPT_DIR/<track>.wav` | 16 kHz mono | – |
 | `deepgram` | Deepgram live API (`nova-3`) | 16 kHz mono linear16 | `DEEPGRAM_API_KEY` |
 | `openai` | OpenAI Realtime transcription (`gpt-4o-transcribe`) | 24 kHz mono pcm16 | `OPENAI_API_KEY` |
+| `whisper` | faster-whisper on this machine (`uv sync --group whisper`) | 16 kHz mono, per utterance | – |
 
-`STT_LANGUAGE` (default `ja`) is passed to the service. A new service is one
+`STT_LANGUAGE` (default `ja`) is passed to the service. Whisper is a batch
+model: audio is cut into utterances at pauses (`SpeechSegmenter`, at most
+`WHISPER_MAX_SEGMENT_SEC`, default 10 s) and each utterance is transcribed on
+a worker thread. `WHISPER_MODEL` (default `small`), `WHISPER_DEVICE` (`cpu`)
+and `WHISPER_COMPUTE_TYPE` (`int8`) select the model; the first run downloads
+it from Hugging Face. A new service is one
 class implementing `stt_server.stt.base.SpeechToText` (`pcm_format`,
 `start`, `send_pcm`, `close`) plus a branch in `create_backend`.
 

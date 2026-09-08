@@ -7,6 +7,7 @@ dependencies = [
     "av>=14",
     "fastapi>=0.115",
     "moqt",
+    "numpy>=1.26",
     "uvicorn>=0.30",
     "websockets>=13",
 ]
@@ -16,6 +17,7 @@ moqt = { path = "../../../bindings/python" }
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+whisper = ["faster-whisper>=1.1", "onnxruntime<1.24"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
