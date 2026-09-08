@@ -1,15 +1,11 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 use crate::{
     aac::{AdtsReader, AudioSpecificConfig},
-    h264::{
-        AvcDecoderConfigurationRecord, NalUnitType,
-        annexb::{nal_units, with_start_codes},
-        nal::nal_unit_type,
-    },
+    h264::ParameterSetTracker,
     mpegts::parser::{
         CLOCK_RATE, ElementaryStream, PAT_PID, PacketReader, STREAM_TYPE_AAC_ADTS,
         STREAM_TYPE_H264, TsPacket, parse_packet, parse_pat_pmt_pid, parse_pes_header, parse_pmt,
@@ -42,9 +38,7 @@ enum StreamKind {
 
 #[derive(Default)]
 struct VideoTrack {
-    sps: Vec<Bytes>,
-    pps: Vec<Bytes>,
-    config: Option<AvcDecoderConfigurationRecord>,
+    parameter_sets: ParameterSetTracker,
     last_pts: Timestamp,
 }
 
@@ -179,55 +173,17 @@ fn emit_video(
     dts: Option<Timestamp>,
     events: &mut Vec<MediaEvent>,
 ) -> Result<()> {
-    let nals: Vec<&[u8]> = nal_units(payload).collect();
-    if nals.is_empty() {
+    let Some(unit) = video.parameter_sets.track(payload)? else {
         return Ok(());
-    }
-    let mut is_keyframe = false;
-    let mut inline_sps = Vec::new();
-    let mut inline_pps = Vec::new();
-    for nal in &nals {
-        match nal_unit_type(nal) {
-            Some(NalUnitType::IdrSlice) => is_keyframe = true,
-            Some(NalUnitType::Sps) => inline_sps.push(Bytes::copy_from_slice(nal)),
-            Some(NalUnitType::Pps) => inline_pps.push(Bytes::copy_from_slice(nal)),
-            _ => {}
-        }
-    }
-    if !inline_sps.is_empty() {
-        video.sps = inline_sps.clone();
-    }
-    if !inline_pps.is_empty() {
-        video.pps = inline_pps.clone();
-    }
-    if !video.sps.is_empty() && !video.pps.is_empty() {
-        let config = AvcDecoderConfigurationRecord::from_parameter_sets(
-            video.sps.clone(),
-            video.pps.clone(),
-        )?;
-        if video.config.as_ref() != Some(&config) {
-            events.push(MediaEvent::VideoConfig(config.clone()));
-            video.config = Some(config);
-        }
-    }
-
-    let data = if is_keyframe && inline_sps.is_empty() {
-        with_start_codes(
-            video
-                .sps
-                .iter()
-                .chain(video.pps.iter())
-                .map(|set| set.as_ref())
-                .chain(nals.iter().copied()),
-        )
-    } else {
-        with_start_codes(nals)
     };
+    if let Some(config) = unit.config_changed {
+        events.push(MediaEvent::VideoConfig(config));
+    }
     let pts = pts.unwrap_or(video.last_pts);
     video.last_pts = pts;
     events.push(MediaEvent::Video(VideoSample {
-        data,
-        is_keyframe,
+        data: unit.data,
+        is_keyframe: unit.is_keyframe,
         pts,
         dts: dts.unwrap_or(pts),
     }));
@@ -260,6 +216,11 @@ fn emit_audio(
 mod tests {
     use super::*;
     use crate::{
+        h264::{
+            NalUnitType,
+            annexb::{nal_units, with_start_codes},
+            nal::nal_unit_type,
+        },
         mpegts::parser::PACKET_SIZE,
         test_support::{
             FIXTURE_TS, IDR_SLICE, NON_IDR_SLICE, adts_frame, audio_samples, count_events,
