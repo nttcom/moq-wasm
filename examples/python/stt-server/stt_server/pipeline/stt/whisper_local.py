@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from functools import lru_cache
 from typing import Callable, Sequence
 
 import numpy as np
@@ -7,6 +8,16 @@ import numpy as np
 log = logging.getLogger("stt.whisper")
 
 Recognizer = Callable[[np.ndarray], Sequence]
+
+
+@lru_cache(maxsize=None)
+def _load_model(model_name: str, device: str, compute_type: str):
+    """One model per configuration: a process can serve several tracks, and
+    the weights are hundreds of megabytes."""
+    from faster_whisper import WhisperModel
+
+    log.info("loading whisper model %s on %s (%s)", model_name, device, compute_type)
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
 
 
 class WhisperLocalStt:
@@ -33,7 +44,7 @@ class WhisperLocalStt:
     async def transcribe(self, utterance: bytes) -> str:
         loop = asyncio.get_running_loop()
         if self._recognizer is None:
-            self._recognizer = await loop.run_in_executor(None, self._load_model)
+            self._recognizer = await loop.run_in_executor(None, self._recognizer_for_config)
         audio = np.frombuffer(utterance, dtype=np.int16).astype(np.float32) / 32768.0
         segments = await loop.run_in_executor(None, self._recognizer, audio)
         return " ".join(
@@ -42,9 +53,6 @@ class WhisperLocalStt:
             if segment.text.strip() and segment.no_speech_prob <= self.no_speech_threshold
         )
 
-    def _load_model(self) -> Recognizer:
-        from faster_whisper import WhisperModel
-
-        log.info("loading whisper model %s on %s (%s)", self.model_name, self.device, self.compute_type)
-        model = WhisperModel(self.model_name, device=self.device, compute_type=self.compute_type)
+    def _recognizer_for_config(self) -> Recognizer:
+        model = _load_model(self.model_name, self.device, self.compute_type)
         return lambda audio: list(model.transcribe(audio, language=self.language, beam_size=5)[0])

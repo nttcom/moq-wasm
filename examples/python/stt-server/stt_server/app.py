@@ -172,7 +172,10 @@ class VoiceHub:
         codec = self.audio_tracks[key].codec if key in self.audio_tracks else None
         conversation = Conversation(key, codec, self.subscribers)
         self.conversations[key] = conversation
-        await conversation.run(reader)
+        try:
+            await conversation.run(reader)
+        finally:
+            del self.conversations[key]
 
     def register_catalog(self, namespace: str, catalog_json: bytes) -> list[AudioTrack]:
         tracks = audio_tracks_from_catalog(namespace, catalog_json)
