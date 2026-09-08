@@ -5,15 +5,18 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
+bytes = "1"
 clap = { version = "4.6.1", features = ["derive"] }
-ffmpeg-next = { version = "8.1.0", features = ["format", "codec"] }
 tokio = { version = "1.52.3", features = ["full"] }
 rml_rtmp = "0.8.0"
 srt-tokio = "0.4.4"
 futures = "0.3.32"
 moqt = { path = "../../moqt" }
 media-streaming-format = { path = "../../shared/media-streaming-format" }
+mediapack = { path = "../../shared/mediapack" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 base64 = "0.22"
 url = "2.5.8"
+tracing = "0.1"
+tracing-subscriber = "0.3"

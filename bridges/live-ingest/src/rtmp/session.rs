@@ -1,17 +1,14 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
-use anyhow::Error;
 use anyhow::Result;
+use bytes::Bytes;
+use mediapack::{
+    MediaEvent, Timestamp,
+    flv::{self, Tag, TagType},
+};
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use crate::{
-    audio::{AacState, compute_aac_duration_us, pack_audio_chunk_payload},
-    ingest::flv::FlvRecorder,
-    moqt::MoqtManager,
-    video::{AvcState, pack_video_chunk_payload},
-};
-
-const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
+use crate::{ingest::flv::FlvRecorder, moqt::MoqtManager, publisher::MediaPublisher};
 
 #[derive(Default)]
 pub struct RtmpCounters {
@@ -19,57 +16,70 @@ pub struct RtmpCounters {
     pub video: u64,
 }
 
-#[derive(Default)]
-pub struct AudioTrackState {
-    pub parser: AacState,
-    pub current_group_duration_us: u64,
-}
-
-impl AudioTrackState {
-    fn handle_flv_audio(&mut self, data: &[u8]) -> Result<Option<crate::audio::AudioFrame>> {
-        self.parser.handle_flv_audio(data)
-    }
-
-    fn should_rotate_before_frame(&mut self, frame_duration_us: u64) -> bool {
-        if self.current_group_duration_us == 0 {
-            self.current_group_duration_us = frame_duration_us;
-            return false;
-        }
-
-        if self
-            .current_group_duration_us
-            .saturating_add(frame_duration_us)
-            > AUDIO_GROUP_ROTATION_INTERVAL_US
-        {
-            self.current_group_duration_us = frame_duration_us;
-            return true;
-        }
-
-        self.current_group_duration_us = self
-            .current_group_duration_us
-            .saturating_add(frame_duration_us);
-        false
-    }
-}
-
 pub struct RtmpState {
+    label: String,
     pub counters: RtmpCounters,
     pub recorder: Option<FlvRecorder>,
-    pub moqt: Option<MoqtManager>,
-    pub video_states: HashMap<(String, String), AvcState>,
-    pub audio_states: HashMap<(String, String), AudioTrackState>,
-    pub published_namespaces: HashSet<String>,
+    pub moqt: MoqtManager,
+    pub streams: HashMap<String, RtmpStream>,
+}
+
+pub struct RtmpStream {
+    demuxer: flv::Demuxer,
+    publisher: MediaPublisher,
 }
 
 impl RtmpState {
-    pub fn new(moqt: MoqtManager) -> Self {
+    pub fn new(moqt: MoqtManager, label: String) -> Self {
         Self {
+            label,
             counters: RtmpCounters::default(),
             recorder: None,
-            moqt: Some(moqt),
-            video_states: HashMap::new(),
-            audio_states: HashMap::new(),
-            published_namespaces: HashSet::new(),
+            moqt,
+            streams: HashMap::new(),
+        }
+    }
+
+    async fn handle_media_tag(&mut self, app_name: &str, stream_key: &str, tag: Tag) {
+        let label = self.label.as_str();
+        let counter = match tag.tag_type {
+            TagType::Audio => &mut self.counters.audio,
+            _ => &mut self.counters.video,
+        };
+        *counter += 1;
+        if *counter == 1 || counter.is_multiple_of(1000) {
+            tracing::debug!(peer = %label, app = %app_name, tag_type = ?tag.tag_type, packets = *counter, "RTMP media packets received");
+        }
+        if let Some(recorder) = self.recorder.as_mut()
+            && let Err(err) = recorder.write_tag(&tag).await
+        {
+            tracing::warn!(peer = %label, ?err, tag_type = ?tag.tag_type, "failed to record RTMP tag");
+        }
+        let (namespace_path, _stream_key) = split_namespace_and_key(app_name, stream_key);
+        let stream = self
+            .streams
+            .entry(namespace_path.clone())
+            .or_insert_with(|| RtmpStream {
+                demuxer: flv::Demuxer::new(),
+                publisher: MediaPublisher::new(
+                    self.moqt.clone(),
+                    namespace_path.split('/').map(str::to_owned).collect(),
+                ),
+            });
+        let events = match stream.demuxer.push_tag(&tag) {
+            Ok(events) => events,
+            Err(err) => {
+                tracing::warn!(peer = %label, ?err, "failed to parse RTMP media tag");
+                return;
+            }
+        };
+        for event in &events {
+            if let MediaEvent::VideoConfig(config) = event {
+                tracing::info!(peer = %label, namespace = %namespace_path, codec = %config.codec_string(), "detected video codec");
+            }
+            if let Err(err) = stream.publisher.push(event).await {
+                tracing::warn!(peer = %label, namespace = %namespace_path, ?err, "failed to publish RTMP media");
+            }
         }
     }
 }
@@ -86,7 +96,7 @@ pub async fn handle_event(
             request_id,
             app_name,
         } => {
-            println!("[rtmp {label}] connect app={app_name}");
+            tracing::info!(peer = %label, app = %app_name, "RTMP connect requested");
             queue.extend(session.accept_request(request_id)?);
         }
         ServerSessionEvent::PublishStreamRequested {
@@ -97,15 +107,13 @@ pub async fn handle_event(
         } => {
             let (namespace_path, cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
-            println!(
-                "[rtmp {label}] publish app={app_name} stream={cleaned_stream_key} -> ns={namespace_path} mode={mode:?}"
-            );
+            tracing::info!(peer = %label, app = %app_name, stream = %cleaned_stream_key, namespace = %namespace_path, ?mode, "RTMP publish requested");
             queue.extend(session.accept_request(request_id)?);
             if state.recorder.is_none() {
-                match FlvRecorder::spawn(&app_name, &stream_key).await {
+                match FlvRecorder::open(&app_name, &stream_key).await {
                     Ok(recorder) => state.recorder = Some(recorder),
                     Err(err) => {
-                        eprintln!("[rtmp {label}] fail to start ffmpeg recorder: {err:?}");
+                        tracing::warn!(peer = %label, ?err, "failed to start FLV recorder");
                     }
                 }
             }
@@ -114,18 +122,17 @@ pub async fn handle_event(
             app_name,
             stream_key,
         } => {
-            println!("[rtmp {label}] publish finished app={app_name} stream={stream_key}");
+            tracing::info!(peer = %label, app = %app_name, stream = %stream_key, "RTMP publish finished");
             let (namespace_path, _cleaned_stream_key) =
                 split_namespace_and_key(&app_name, &stream_key);
-            let audio_key = (namespace_path, "audio".to_string());
-            state.audio_states.remove(&audio_key);
+            state.streams.remove(&namespace_path);
         }
         ServerSessionEvent::StreamMetadataChanged {
             app_name,
             stream_key,
             metadata: _,
         } => {
-            println!("[rtmp {label}] metadata updated app={app_name} stream={stream_key}");
+            tracing::debug!(peer = %label, app = %app_name, stream = %stream_key, "RTMP metadata updated");
         }
         ServerSessionEvent::AudioDataReceived {
             app_name,
@@ -133,79 +140,12 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
-            let (namespace_path, _stream_key) = split_namespace_and_key(&app_name, &stream_key);
-            let namespace_vec: Vec<String> =
-                namespace_path.split('/').map(|s| s.to_string()).collect();
-            let track_name = "audio".to_string();
-            state.counters.audio += 1;
-            if state.counters.audio == 1 || state.counters.audio.is_multiple_of(1000) {
-                println!(
-                    "[rtmp {label}] audio packets={} app={app_name} track={track_name}",
-                    state.counters.audio
-                );
-            }
-            if let Some(recorder) = state.recorder.as_mut()
-                && let Err(err) = recorder.write_audio(timestamp.value, data.as_ref()).await
-            {
-                eprintln!("[rtmp {label}] write_audio failed: {err:?}");
-            }
-            if let Some(moqt) = state.moqt.clone() {
-                let key = (namespace_path.clone(), track_name.clone());
-                let (frame, rotate_group) = {
-                    let audio_track_state = state.audio_states.entry(key).or_default();
-                    let frame = match audio_track_state.handle_flv_audio(data.as_ref()) {
-                        Ok(f) => f,
-                        Err(err) => {
-                            eprintln!("[rtmp {label}] aac parse failed: {err:?}");
-                            None
-                        }
-                    };
-                    let rotate_group = frame
-                        .as_ref()
-                        .map(|frame| {
-                            audio_track_state.should_rotate_before_frame(compute_aac_duration_us(
-                                frame.sample_rate,
-                            ))
-                        })
-                        .unwrap_or(false);
-                    (frame, rotate_group)
-                };
-                if let Some(frame) = frame {
-                    let duration_us = compute_aac_duration_us(frame.sample_rate);
-                    if let Err(err) = moqt
-                        .update_audio_catalog(&namespace_vec, frame.sample_rate, frame.channels)
-                        .await
-                    {
-                        eprintln!("[rtmp {label}] moqt update audio catalog failed: {err:?}");
-                    }
-                    if let Err(err) =
-                        publish_namespace_if_needed(state, &moqt, &namespace_path, &namespace_vec)
-                            .await
-                    {
-                        eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
-                    }
-                    let timestamp_us = timestamp.value as u64 * 1_000;
-                    let duration_us = Some(duration_us);
-                    let sent_at_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    let payload =
-                        pack_audio_chunk_payload(&frame, timestamp_us, duration_us, sent_at_ms);
-                    if let Err(err) = moqt
-                        .send_object(
-                            &namespace_vec,
-                            &track_name,
-                            rotate_group,
-                            payload.as_slice(),
-                        )
-                        .await
-                        && !is_expected_pre_subscribe_send_error(&err)
-                    {
-                        eprintln!("[rtmp {label}] moqt send audio failed: {err:?}");
-                    }
-                }
-            }
+            let tag = Tag {
+                tag_type: TagType::Audio,
+                timestamp: Timestamp::from_millis(timestamp.value as u64),
+                data: Bytes::copy_from_slice(&data),
+            };
+            state.handle_media_tag(&app_name, &stream_key, tag).await;
         }
         ServerSessionEvent::VideoDataReceived {
             app_name,
@@ -213,90 +153,12 @@ pub async fn handle_event(
             data,
             timestamp,
         } => {
-            let (namespace_path, _stream_key) = split_namespace_and_key(&app_name, &stream_key);
-            let namespace_vec: Vec<String> =
-                namespace_path.split('/').map(|s| s.to_string()).collect();
-            let track_name = "video".to_string();
-            state.counters.video += 1;
-            if state.counters.video == 1 || state.counters.video.is_multiple_of(1000) {
-                println!(
-                    "[rtmp {label}] video packets={} app={app_name} track={track_name}",
-                    state.counters.video
-                );
-            }
-            if let Some(recorder) = state.recorder.as_mut()
-                && let Err(err) = recorder.write_video(timestamp.value, data.as_ref()).await
-            {
-                eprintln!("[rtmp {label}] write_video failed: {err:?}");
-            }
-            if let Some(moqt) = state.moqt.clone() {
-                let namespace = namespace_vec.as_slice();
-                let key = (namespace_path.clone(), track_name.clone());
-                let frame = match state
-                    .video_states
-                    .entry(key)
-                    .or_default()
-                    .handle_flv_video(data.as_ref())
-                {
-                    Ok(f) => f,
-                    Err(err) => {
-                        eprintln!("[rtmp {label}] h264 parse failed: {err:?}");
-                        None
-                    }
-                };
-                if let Some(frame) = frame {
-                    if let Some(codec) = frame.codec.as_deref()
-                        && let Err(err) = moqt.update_video_catalog(namespace, Some(codec)).await
-                    {
-                        eprintln!("[rtmp {label}] moqt update video catalog failed: {err:?}");
-                    }
-                    if let Err(err) =
-                        publish_namespace_if_needed(state, &moqt, &namespace_path, &namespace_vec)
-                            .await
-                    {
-                        eprintln!("[rtmp {label}] moqt setup failed: {err:?}");
-                    }
-                    // RTMP timestamp は ms 単位なので μs へ拡張
-                    let timestamp_us = timestamp.value as u64 * 1_000;
-                    let sent_at_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    let include_codec = frame.is_key;
-                    let payload = pack_video_chunk_payload(
-                        frame.is_key,
-                        timestamp_us,
-                        sent_at_ms,
-                        frame.data.as_slice(),
-                        if include_codec {
-                            frame.codec.as_deref()
-                        } else {
-                            None
-                        },
-                        None,
-                    );
-                    if frame.is_key {
-                        if let Some(codec) = frame.codec.as_deref() {
-                            println!(
-                                "[rtmp {label}] detected video codec from SPS: {codec} ns={:?} track={}",
-                                namespace, track_name
-                            );
-                        } else {
-                            println!(
-                                "[rtmp {label}] video codec from SPS unavailable ns={:?} track={}",
-                                namespace, track_name
-                            );
-                        }
-                    }
-                    if let Err(err) = moqt
-                        .send_object(namespace, &track_name, frame.is_key, payload.as_slice())
-                        .await
-                        && !is_expected_pre_subscribe_send_error(&err)
-                    {
-                        eprintln!("[rtmp {label}] moqt send video failed: {err:?}");
-                    }
-                }
-            }
+            let tag = Tag {
+                tag_type: TagType::Video,
+                timestamp: Timestamp::from_millis(timestamp.value as u64),
+                data: Bytes::copy_from_slice(&data),
+            };
+            state.handle_media_tag(&app_name, &stream_key, tag).await;
         }
         ServerSessionEvent::PlayStreamRequested { request_id, .. } => {
             queue.extend(session.reject_request(
@@ -306,7 +168,7 @@ pub async fn handle_event(
             )?);
         }
         other => {
-            println!("[rtmp {label}] event {:?}", other);
+            tracing::debug!(peer = %label, event = ?other, "unhandled RTMP event");
         }
     }
 
@@ -322,26 +184,4 @@ fn split_namespace_and_key(app_name: &str, stream_key: &str) -> (String, String)
     } else {
         (app_name.to_string(), stream_key.to_string())
     }
-}
-
-async fn publish_namespace_if_needed(
-    state: &mut RtmpState,
-    moqt: &MoqtManager,
-    namespace_path: &str,
-    namespace_vec: &[String],
-) -> Result<()> {
-    if state.published_namespaces.contains(namespace_path) {
-        return Ok(());
-    }
-
-    moqt.setup_namespace(namespace_vec).await?;
-    state
-        .published_namespaces
-        .insert(namespace_path.to_string());
-    Ok(())
-}
-
-fn is_expected_pre_subscribe_send_error(err: &Error) -> bool {
-    let message = err.to_string();
-    message.contains("track not set up:") || message.contains("subscribe not completed:")
 }

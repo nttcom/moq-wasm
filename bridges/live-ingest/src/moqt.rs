@@ -275,7 +275,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 let event = match session.receive_event().await {
                     Ok(event) => event,
                     Err(err) => {
-                        eprintln!("[moqt] event loop ended: {err:?}");
+                        tracing::warn!(?err, "MoQT event loop ended");
                         let mut guard = state.lock().await;
                         guard.disconnected = true;
                         break;
@@ -285,24 +285,15 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 match event {
                     SessionEvent::PublishNamespace(handler) => {
                         if let Err(err) = handler.ok().await {
-                            eprintln!(
-                                "[moqt] failed to ack publish_namespace ns={}: {err:?}",
-                                handler.track_namespace
-                            );
+                            tracing::warn!(namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
                         }
                     }
                     SessionEvent::PublishNamespaceDone(handler) => {
-                        eprintln!(
-                            "[moqt] publish_namespace_done ns={}",
-                            handler.track_namespace
-                        );
+                        tracing::info!(namespace = %handler.track_namespace, "PUBLISH_NAMESPACE_DONE received");
                     }
                     SessionEvent::SubscribeNameSpace(handler) => {
                         if let Err(err) = handler.ok().await {
-                            eprintln!(
-                                "[moqt] failed to ack subscribe_namespace prefix={}: {err:?}",
-                                handler.track_namespace_prefix
-                            );
+                            tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
                         }
                     }
                     SessionEvent::Subscribe(handler) => {
@@ -313,10 +304,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                                 .error(0, format!("unsupported track: {track_name}"))
                                 .await
                             {
-                                eprintln!(
-                                    "[moqt] failed to reject subscribe ns={} track={}: {err:?}",
-                                    namespace, track_name
-                                );
+                                tracing::warn!(%namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
                             }
                             continue;
                         }
@@ -324,10 +312,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         let track_alias = match handler.ok(1_000_000, ContentExists::False).await {
                             Ok(track_alias) => track_alias,
                             Err(err) => {
-                                eprintln!(
-                                    "[moqt] failed to accept subscribe ns={} track={}: {err:?}",
-                                    namespace, track_name
-                                );
+                                tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
                                 continue;
                             }
                         };
@@ -345,28 +330,19 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         entry.object_id = 0;
                         entry.group_id = 0;
                         drop(guard);
-                        println!(
-                            "[moqt] subscribe accepted ns={} track={} alias={}",
-                            namespace, track_name, track_alias
-                        );
+                        tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
                         if should_send_catalog
                             && let Err(err) =
                                 Self::send_catalog_snapshot(&session, &state, &namespace).await
                         {
-                            eprintln!(
-                                "[moqt] failed to send initial catalog ns={}: {err:?}",
-                                namespace
-                            );
+                            tracing::warn!(%namespace, ?err, "failed to send initial catalog");
                         }
                     }
                     SessionEvent::Unsubscribe(handler) => {
-                        println!("[moqt] unsubscribe received id={}", handler.subscribe_id());
+                        tracing::info!(request_id = %handler.subscribe_id(), "UNSUBSCRIBE received");
                     }
                     SessionEvent::UnsubscribeNamespace(handler) => {
-                        println!(
-                            "[moqt] unsubscribe_namespace received prefix={}",
-                            handler.track_namespace_prefix()
-                        );
+                        tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => {
                         let mut guard = state.lock().await;
@@ -374,10 +350,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         break;
                     }
                     SessionEvent::Publish(handler) => {
-                        eprintln!(
-                            "[moqt] unexpected publish request ns={} track={}",
-                            handler.track_namespace, handler.track_name
-                        );
+                        tracing::warn!(namespace = %handler.track_namespace, track = %handler.track_name, "unexpected PUBLISH received");
                     }
                     SessionEvent::Fetch(_) => {
                         todo!()
@@ -390,7 +363,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     | SessionEvent::SubscribeUpdate(_)
                     | SessionEvent::FetchCancel(_)
                     | SessionEvent::TrackStatus(_)) => {
-                        println!("[moqt] unhandled control message: {event:?}");
+                        tracing::debug!(?event, "unhandled control message");
                     }
                 }
             }
@@ -416,7 +389,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 .with_context(|| format!("publish_namespace {}", namespace_path))?;
             let mut guard = self.state.lock().await;
             guard.announced_namespaces.insert(namespace_path.clone());
-            println!("[moqt] namespace published ns={namespace_path}");
+            tracing::info!(namespace = %namespace_path, "namespace published");
         }
         Ok(())
     }
@@ -461,7 +434,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     .await
                     .context("send end-of-group object")?;
                 if let Err(err) = current_stream.close().await {
-                    eprintln!("[moqt] failed to close previous subgroup stream: {err:?}");
+                    tracing::warn!(?err, "failed to close previous subgroup stream");
                 }
                 group_id = group_id.saturating_add(1);
                 object_id = 0;
@@ -483,10 +456,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         .await
                         .context("send subgroup header")?,
                 );
-                println!(
-                    "[moqt] subgroup header sent ns={} track={} group_id={}",
-                    namespace_path, track_name, group_id
-                );
+                tracing::debug!(namespace = %namespace_path, track = %track_name, group_id, "subgroup header sent");
             }
 
             let stream_ref = stream
@@ -501,10 +471,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 .send(object)
                 .await
                 .context("send subgroup object")?;
-            println!(
-                "[moqt] subgroup object sent ns={} track={} group_id={} object_id={}",
-                namespace_path, track_name, group_id, object_id
-            );
+            tracing::trace!(namespace = %namespace_path, track = %track_name, group_id, object_id, "subgroup object sent");
             object_id = object_id.saturating_add(1);
             Ok(())
         }
@@ -644,10 +611,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             .close()
             .await
             .context("close catalog subgroup stream")?;
-        println!(
-            "[moqt] catalog sent ns={} group_id={}",
-            namespace_path, group_id
-        );
+        tracing::info!(namespace = %namespace_path, group_id, "catalog sent");
         Ok(())
     }
 }

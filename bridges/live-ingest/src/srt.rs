@@ -8,7 +8,7 @@ pub async fn run_srt_listener(addr: String) -> Result<()> {
         .bind(addr.as_str())
         .await
         .with_context(|| format!("bind SRT listener on {addr}"))?;
-    println!("SRT listening on {addr}");
+    tracing::info!(%addr, "SRT listener started");
 
     while let Some(request) = incoming.incoming().next().await {
         task::spawn(handle_request(request));
@@ -23,7 +23,7 @@ async fn handle_request(request: ConnectionRequest) {
         .map(|id| id.to_string())
         .unwrap_or_else(|| "<no-streamid>".to_string());
     let remote = request.remote();
-    println!("[srt {remote}] incoming stream_id={stream_id}");
+    tracing::info!(%remote, %stream_id, "SRT caller connected");
 
     let result: Result<()> = async {
         let mut socket = request.accept(None).await?;
@@ -34,20 +34,17 @@ async fn handle_request(request: ConnectionRequest) {
             count += 1;
 
             if count == 1 || count.is_multiple_of(200) {
-                println!(
-                    "[srt {remote}] packets={count} stream_id={stream_id} last_size={}",
-                    data.len()
-                );
+                tracing::debug!(%remote, %stream_id, packets = count, last_size = data.len(), "SRT packets received");
             }
             // Not implemented: Forward data to MoQT server
         }
 
-        println!("[srt {remote}] stream ended stream_id={stream_id} total_packets={count}");
+        tracing::info!(%remote, %stream_id, total_packets = count, "SRT stream ended");
         Ok(())
     }
     .await;
 
     if let Err(err) = result {
-        eprintln!("[srt {remote}] error stream_id={stream_id}: {err:?}");
+        tracing::warn!(%remote, %stream_id, ?err, "SRT connection failed");
     }
 }

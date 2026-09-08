@@ -2941,16 +2941,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "bytes",
  "clap",
- "ffmpeg-next",
  "futures",
  "media-streaming-format",
+ "mediapack",
  "moqt",
  "rml_rtmp",
  "serde",
  "serde_json",
  "srt-tokio",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
