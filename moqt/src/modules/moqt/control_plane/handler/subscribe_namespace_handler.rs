@@ -24,7 +24,6 @@ pub struct SubscribeNamespaceHandler<T: TransportProtocol> {
     request_id: u64,
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
-    pub authorization_token: Option<String>,
     guard: ResponseGuard<T>,
 }
 
@@ -44,7 +43,6 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
             request_id: subscribe_namespace.request_id,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
-            authorization_token: None,
         }
     }
 

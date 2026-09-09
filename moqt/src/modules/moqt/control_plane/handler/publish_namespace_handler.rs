@@ -24,7 +24,6 @@ pub struct PublishNamespaceHandler<T: TransportProtocol> {
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,
-    pub authorization_token: Option<String>,
     guard: ResponseGuard<T>,
 }
 
@@ -44,7 +43,6 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
             request_id: publish_namespace.request_id,
             track_namespace: publish_namespace.track_namespace.join("/"),
             track_namespace_tuple: publish_namespace.track_namespace,
-            authorization_token: None,
         }
     }
 

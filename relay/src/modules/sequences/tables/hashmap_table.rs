@@ -643,10 +643,6 @@ mod tests {
             true
         }
 
-        fn _authorization_token(&self) -> Option<String> {
-            None
-        }
-
         fn _delivery_timeout(&self) -> Option<u64> {
             None
         }

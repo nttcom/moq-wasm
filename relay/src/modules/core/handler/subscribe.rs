@@ -14,7 +14,6 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn _group_order(&self) -> GroupOrder;
     fn _forward(&self) -> bool;
     fn _filter_type(&self) -> FilterType;
-    fn _authorization_token(&self) -> Option<String>;
     fn _max_cache_duration(&self) -> Option<u64>;
     fn _delivery_timeout(&self) -> Option<u64>;
     fn allocate_track_alias(&self) -> u64;
@@ -51,9 +50,6 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     }
     fn _filter_type(&self) -> FilterType {
         FilterType::from(self.filter_type)
-    }
-    fn _authorization_token(&self) -> Option<String> {
-        self.authorization_token.clone()
     }
     fn _max_cache_duration(&self) -> Option<u64> {
         self.max_cache_duration

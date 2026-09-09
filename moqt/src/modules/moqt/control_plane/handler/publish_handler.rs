@@ -29,7 +29,6 @@ pub struct PublishHandler<T: TransportProtocol> {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
-    pub authorization_token: Option<String>,
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
     guard: ResponseGuard<T>,
@@ -53,7 +52,6 @@ impl<T: TransportProtocol> PublishHandler<T> {
             group_order: publish_message.group_order,
             content_exists: publish_message.content_exists,
             forward: publish_message.forward,
-            authorization_token: None,
             max_cache_duration: None,
             delivery_timeout: None,
         }
