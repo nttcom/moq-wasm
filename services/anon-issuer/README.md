@@ -42,3 +42,14 @@ npm test
 
 The Dockerfile expects the repository root as build context:
 `docker build -f services/anon-issuer/Dockerfile .`
+
+## Deployment
+
+This is the only public part of the authentication setup: place it behind the
+public load balancer, with `ANON_TRUST_PROXY=true` so the rate limit keys on
+the client address forwarded by the balancer, and list the deployed example
+origins (for example the GitHub Pages origin) in `ANON_ALLOWED_ORIGINS`.
+
+`ANON_SECRET` must equal the `secret` of the `anon` row in the VTS
+`apps.json`. Source both from the same secret store entry so a rotation
+changes them together; after rotating, restart the issuer and the VTS.
