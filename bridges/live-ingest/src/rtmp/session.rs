@@ -40,7 +40,7 @@ impl RtmpState {
             label,
             counters: RtmpCounters::default(),
             recorder: None,
-            moqt: MoqtManager::new(options.moqt_url.clone()),
+            moqt: MoqtManager::new(options.moqt.clone()),
             transcode: options.transcode,
             streams: HashMap::new(),
         }

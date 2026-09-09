@@ -25,9 +25,15 @@ const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
 /// FETCH_ERROR code NOT_SUPPORTED, draft-ietf-moq-transport-14 §13.1.5.
 const FETCH_NOT_SUPPORTED: u64 = 0x3;
 
+#[derive(Debug, Clone)]
+pub struct MoqtTarget {
+    pub url: String,
+    pub auth_token: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct MoqtManager {
-    url: Option<String>,
+    target: Option<MoqtTarget>,
     inner: Arc<Mutex<ManagerState>>,
 }
 
@@ -95,21 +101,20 @@ enum PublisherBackend {
 }
 
 impl MoqtManager {
-    pub fn new(url: Option<String>) -> Self {
+    pub fn new(target: Option<MoqtTarget>) -> Self {
         Self {
-            url,
+            target,
             inner: Arc::new(Mutex::new(ManagerState::default())),
         }
     }
 
     /// Announce namespace (once) and prepare tracks (video/audio) by waiting for SubscribeOk.
     pub async fn setup_namespace(&self, namespace: &[String]) -> Result<()> {
-        let url = match &self.url {
-            Some(u) => u.clone(),
-            None => return Ok(()), // MoQ 出力なし
+        let Some(target) = &self.target else {
+            return Ok(());
         };
 
-        self.ensure_backend(&url)
+        self.ensure_backend(target)
             .await?
             .setup_namespace(namespace)
             .await
@@ -122,12 +127,11 @@ impl MoqtManager {
         rotate_group: bool,
         payload: Vec<u8>,
     ) -> Result<()> {
-        let url = match &self.url {
-            Some(u) => u.clone(),
-            None => return Ok(()),
+        let Some(target) = &self.target else {
+            return Ok(());
         };
 
-        self.ensure_backend(&url)
+        self.ensure_backend(target)
             .await?
             .send_object(namespace, track_name, rotate_group, payload)
             .await
@@ -139,12 +143,11 @@ impl MoqtManager {
         track_name: &str,
         info: VideoTrackInfo,
     ) -> Result<()> {
-        let url = match &self.url {
-            Some(u) => u.clone(),
-            None => return Ok(()),
+        let Some(target) = &self.target else {
+            return Ok(());
         };
 
-        self.ensure_backend(&url)
+        self.ensure_backend(target)
             .await?
             .update_video_catalog(namespace, track_name, info)
             .await
@@ -156,21 +159,20 @@ impl MoqtManager {
         sample_rate: u32,
         channels: u8,
     ) -> Result<()> {
-        let url = match &self.url {
-            Some(u) => u.clone(),
-            None => return Ok(()),
+        let Some(target) = &self.target else {
+            return Ok(());
         };
 
-        self.ensure_backend(&url)
+        self.ensure_backend(target)
             .await?
             .update_audio_catalog(namespace, sample_rate, channels)
             .await
     }
 
-    async fn ensure_backend(&self, url: &str) -> Result<Arc<PublisherBackend>> {
+    async fn ensure_backend(&self, target: &MoqtTarget) -> Result<Arc<PublisherBackend>> {
         let mut guard = self.inner.lock().await;
         if guard.backend.is_none() {
-            guard.backend = Some(Arc::new(PublisherBackend::connect(url).await?));
+            guard.backend = Some(Arc::new(PublisherBackend::connect(target).await?));
         }
         let backend = guard
             .backend
@@ -183,14 +185,19 @@ impl MoqtManager {
 }
 
 impl PublisherBackend {
-    async fn connect(url: &str) -> Result<Self> {
-        let parsed = url::Url::parse(url).context("parse moqt url")?;
+    async fn connect(target: &MoqtTarget) -> Result<Self> {
+        let parsed = url::Url::parse(&target.url).context("parse moqt url")?;
+        let client_config = ClientConfig {
+            port: 0,
+            verify_certificate: false,
+            authorization_token: target.auth_token.clone(),
+        };
         match parsed.scheme() {
             "moqt" => Ok(Self::Quic(
-                ConnectedPublisher::<QUIC>::connect(&parsed).await?,
+                ConnectedPublisher::<QUIC>::connect(&parsed, &client_config).await?,
             )),
             "https" => Ok(Self::WebTransport(
-                ConnectedPublisher::<WEBTRANSPORT>::connect(&parsed).await?,
+                ConnectedPublisher::<WEBTRANSPORT>::connect(&parsed, &client_config).await?,
             )),
             scheme => bail!("unsupported moqt url scheme: {scheme}"),
         }
@@ -266,12 +273,8 @@ impl PublisherBackend {
 }
 
 impl<T: TransportProtocol> ConnectedPublisher<T> {
-    async fn connect(url: &url::Url) -> Result<Self> {
-        let endpoint = Endpoint::<T>::create_client(&ClientConfig {
-            port: 0,
-            verify_certificate: false,
-            authorization_token: None,
-        })?;
+    async fn connect(url: &url::Url, client_config: &ClientConfig) -> Result<Self> {
+        let endpoint = Endpoint::<T>::create_client(client_config)?;
         let connecting = endpoint
             .connect(url.as_str())
             .await

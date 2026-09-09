@@ -43,7 +43,7 @@ async fn publish(
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
     let mut publisher = MediaPublisher::new(
-        MoqtManager::new(options.moqt_url.clone()),
+        MoqtManager::new(options.moqt.clone()),
         namespace,
         options.transcode,
     );
