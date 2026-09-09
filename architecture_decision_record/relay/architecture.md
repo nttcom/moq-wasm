@@ -20,7 +20,9 @@ optionally cascades across relays via a Redis-backed route registry.
    `REDIS_URL` (optional), and the authentication mode (`AuthConfig`):
    `AUTH_VTS_URL` + `AUTH_RELAY_TOKEN` enable token verification;
    otherwise `AUTH_DISABLED=true` must be set explicitly or startup fails.
-   `AUTH_VTS_URL` wins when both are present.
+   `AUTH_VTS_URL` wins when both are present. `AUTH_MAX_TOKEN_TTL_SECONDS`
+   (default 86400) and `AUTH_CLOCK_LEEWAY_SECONDS` (default 60) form the
+   `ClaimPolicy` the relay applies to token times.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
@@ -185,9 +187,17 @@ per-request authorization gate under "Event pipeline".
 - `token_verifier.rs` — `TokenVerifier` trait with
   `VerifyError::{Unauthorized, Unavailable}`; the split lets callers map a
   rejected token and an unreachable VTS to different termination codes.
+- `token_claims.rs` — `build_verified_token(SignedToken, ClaimPolicy, now)`:
+  the relay, not the VTS, decides what a signed token means. It requires
+  `iat` and `exp`, applies the clock leeway, rejects client tokens whose
+  `exp - iat` exceeds the maximum ttl (relay tokens are exempt), and checks
+  the `publish` / `subscribe` path shape. Time semantics live here so the
+  relay's expiry task and its acceptance decision share one clock.
 - `vts_token_verifier.rs` — `reqwest` implementation: `POST {AUTH_VTS_URL}`
-  with `{"token"}`; 200 → `VerifiedToken`, 401 → `Unauthorized`, anything
-  else or a transport error → `Unavailable`. 3 s timeout.
+  with `{"token"}`. The VTS only vouches for the signature and the appId; 200
+  carries `{ appId, isRelay, claims }` with the raw JWT payload, which is
+  handed to `build_verified_token`. 401 → `Unauthorized`, anything else or a
+  transport error → `Unavailable`. 3 s timeout.
 - `session_authenticator.rs` — `SessionAuthenticator::{Disabled, Enabled}`
   built from `AuthConfig`; combines the pieces above into the CLIENT_SETUP
   decision described under "Session intake".

@@ -35,8 +35,12 @@ impl SessionAuthenticator {
                 );
                 Ok(Self::Disabled)
             }
-            AuthConfig::Vts { verify_url, .. } => Ok(Self::Enabled {
-                verifier: Arc::new(VtsTokenVerifier::new(verify_url.clone())?),
+            AuthConfig::Vts {
+                verify_url,
+                claim_policy,
+                ..
+            } => Ok(Self::Enabled {
+                verifier: Arc::new(VtsTokenVerifier::new(verify_url.clone(), *claim_policy)?),
             }),
         }
     }

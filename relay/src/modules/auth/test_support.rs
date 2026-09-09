@@ -1,4 +1,9 @@
-use std::{net::UdpSocket, path::Path, sync::Arc, time::Duration};
+use std::{
+    net::UdpSocket,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use moqt::{
@@ -22,6 +27,10 @@ use crate::{
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+// Picking a free port and binding it are two steps; tests spawning relays in
+// parallel must not interleave them or two relays race for the same port.
+static PORT_BIND_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) fn client_setup(authorization_token: Vec<AuthorizationToken>) -> ClientSetup {
     ClientSetup::new(
@@ -88,6 +97,7 @@ fn write_self_signed_cert(dir: &Path) -> (String, String) {
 
 /// Starts a relay whose client endpoint verifies every token as `token`.
 pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
+    let _bind_guard = PORT_BIND_LOCK.lock().unwrap();
     let port = free_udp_port();
     let cert_dir = std::env::temp_dir().join(format!("relay-auth-test-{port}"));
     let (key_path, cert_path) = write_self_signed_cert(&cert_dir);
