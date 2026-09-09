@@ -560,6 +560,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "auth-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "moqt",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
