@@ -81,3 +81,53 @@ docker compose up -d relay-a relay-b
 
 `vts` is reachable only inside the compose network; `anon-issuer` is published
 on port 8080.
+
+## Deployment
+
+The VTS must be reachable only from the relays: put it on the relays' private
+network and do not publish its port. The relay is pointed at it with
+`AUTH_VTS_URL=http://<vts-host>:8081/verify` and authenticates its own
+inter-relay connections with a token minted for the relay row:
+
+```
+node bin/mint.mjs --apps apps.json --app-id <relay-app-id> --publish "" --subscribe "" --ttl 8760h
+```
+
+### Where `apps.json` lives
+
+`apps.json` contains every signing secret, so it is stored in a secret store
+(GCP Secret Manager, AWS Secrets Manager, HashiCorp Vault, or the equivalent)
+and mounted into the container as a file. The VTS code only reads
+`VTS_APPS_FILE`, so local compose (bind mount of `apps.example.json`) and
+production (secret store mount) run the same code. On GCP with Secret
+Manager:
+
+```
+gcloud secrets create vts-apps --replication-policy=automatic
+gcloud secrets versions add vts-apps --data-file=apps.json
+# Cloud Run: mount the secret as a file and point VTS_APPS_FILE at it
+gcloud run deploy vts --image <image> \
+  --set-secrets=/etc/vts/apps.json=vts-apps:latest \
+  --set-env-vars=VTS_APPS_FILE=/etc/vts/apps.json --ingress=internal
+```
+
+The same secret feeds the anon issuer's `ANON_SECRET` (the `anon` row) so the
+two never drift.
+
+### Adding an app or rotating a secret
+
+1. Edit `apps.json` (new row, or a new `secret` for an existing `appId`).
+2. Register it as a new secret version:
+   `gcloud secrets versions add vts-apps --data-file=apps.json`.
+3. Restart the VTS (new Cloud Run revision, or a rollout restart); it reads the
+   file at startup. Run two instances if the few seconds of restart, during
+   which relays answer new connections with `INTERNAL_ERROR`, matter.
+4. Tokens signed with a replaced secret fail with `invalid_signature` from the
+   next connection; sessions already established stay up until their `exp`
+   (at most 24 h for client tokens). Re-mint and redistribute relay tokens if
+   the relay row changed.
+
+A database (for example Cloud SQL) is not needed at this scale: the file is
+changed a few times a month by the operators. Should tenant onboarding become
+self-service or frequent, only `src/apps.mjs` (the lookup) has to change; the
+`/verify` contract, the relay, and the issuer stay as they are.
