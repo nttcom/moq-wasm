@@ -22,6 +22,8 @@ const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
+/// FETCH_ERROR code NOT_SUPPORTED, draft-ietf-moq-transport-14 §13.1.5.
+const FETCH_NOT_SUPPORTED: u64 = 0x3;
 
 #[derive(Clone)]
 pub struct MoqtManager {
@@ -384,8 +386,17 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     SessionEvent::Publish(handler) => {
                         tracing::warn!(namespace = %handler.track_namespace, track = %handler.track_name, "unexpected PUBLISH received");
                     }
-                    SessionEvent::Fetch(_) => {
-                        todo!()
+                    SessionEvent::Fetch(handler) => {
+                        let request_id = handler.request_id;
+                        if let Err(err) = handler
+                            .error(
+                                FETCH_NOT_SUPPORTED,
+                                "live ingest does not serve FETCH".to_string(),
+                            )
+                            .await
+                        {
+                            tracing::warn!(request_id, ?err, "failed to reject FETCH");
+                        }
                     }
                     event @ (SessionEvent::GoAway(_)
                     | SessionEvent::MaxRequestId(_)
