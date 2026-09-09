@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
+  ANON_ISSUER_URL,
   arrangeCallClient,
   enableMedia,
   getCatalogStatus,
@@ -377,5 +378,26 @@ test('chat message sent by one client is displayed on the receiving client', asy
   } finally {
     await alice.context.close()
     await bob.context.close()
+  }
+})
+
+test('auth mode: joining without the anon issuer is rejected by the relay', async ({ browser }) => {
+  test.skip(!ANON_ISSUER_URL, 'only meaningful when the relays require a token (CALL_E2E_AUTH=true)')
+
+  // Arrange: issuer を指定せずにページを開いたクライアントを用意する。
+  const client = await arrangeCallClient(browser, { withIssuer: false })
+
+  try {
+    // Act: トークン無しのまま relay-a に入室を試みる。
+    await client.page.roomNameInput.fill(`e2e-auth-${Date.now()}`)
+    await client.page.userNameInput.fill('mallory')
+    await client.page.relayARadio.click()
+    await client.page.submitButton.click()
+
+    // Assert: relay が CLIENT_SETUP を拒否し、入室エラーが表示されてルーム画面に進まないことを確認する。
+    await expect(client.page.joinError).toBeVisible({ timeout: 30_000 })
+    await expect(client.page.roomName).toHaveCount(0)
+  } finally {
+    await client.context.close()
   }
 })

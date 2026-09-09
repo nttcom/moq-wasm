@@ -8,6 +8,8 @@
 // them and skips docker compose up to avoid port-allocation conflicts.
 
 import { spawn, execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   assertPathExists,
   certPath,
@@ -26,6 +28,9 @@ import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
 const callIndexPath = "/moq-wasm/examples/call/index.html";
 const defaultRelayAUrl = "https://127.0.0.1:4433";
 const defaultRelayBUrl = "https://127.0.0.1:4434";
+const anonIssuerUrl = "http://127.0.0.1:8080/anon-token";
+const vtsAppsFile = "services/vts/apps.example.json";
+const relayAppId = "11111111-2222-3333-4444-555555555555";
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
@@ -57,6 +62,11 @@ async function main() {
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
+  const authMode = process.env.CALL_E2E_AUTH === "true";
+  const composeArgs = authMode ? ["compose", "--profile", "auth"] : ["compose"];
+  const composeServices = authMode
+    ? ["redis", "vts", "anon-issuer", "relay-a", "relay-b"]
+    : ["redis", "relay-a", "relay-b"];
 
   const cleanup = async () => {
     await Promise.allSettled(
@@ -65,7 +75,7 @@ async function main() {
     if (ownedDockerServices) {
       await runCommand(
         resolveCommandName("docker"),
-        ["compose", "stop", "relay-a", "relay-b", "redis"],
+        [...composeArgs, "stop", ...composeServices],
         { cwd: repoRoot },
       ).catch(() => {});
     }
@@ -75,6 +85,11 @@ async function main() {
 
   try {
     const relaysAlreadyRunning = areRelayPortsAlreadyBound();
+    if (relaysAlreadyRunning && authMode) {
+      throw new Error(
+        "[setup] Relay ports 4433/4434 are already occupied; CALL_E2E_AUTH needs relays started by this run (stop the existing containers first).",
+      );
+    }
 
     if (relaysAlreadyRunning) {
       console.error(
@@ -96,13 +111,28 @@ async function main() {
         );
       }
 
+      let composeEnv = process.env;
+      if (authMode) {
+        console.error("[setup] Building vts and anon-issuer docker images...");
+        await runCommand(
+          resolveCommandName("docker"),
+          [...composeArgs, "build", "vts", "anon-issuer"],
+          { cwd: repoRoot },
+        );
+        composeEnv = {
+          ...process.env,
+          AUTH_VTS_URL: "http://vts:8081/verify",
+          AUTH_RELAY_TOKEN: await mintRelayToken(),
+          ANON_ALLOWED_ORIGINS: new URL(baseUrl).origin,
+        };
+      }
       console.error(
-        "[setup] Starting redis, relay-a, relay-b via docker compose...",
+        `[setup] Starting ${composeServices.join(", ")} via docker compose...`,
       );
       await runCommand(
         resolveCommandName("docker"),
-        ["compose", "up", "-d", "redis", "relay-a", "relay-b"],
-        { cwd: repoRoot },
+        [...composeArgs, "up", "-d", "--wait", ...composeServices],
+        { cwd: repoRoot, env: composeEnv },
       );
       ownedDockerServices = true;
     }
@@ -153,12 +183,40 @@ async function main() {
           MEDIA_E2E_BASE_URL: baseUrl,
           CALL_E2E_RELAY_A_URL: relayAUrl,
           CALL_E2E_RELAY_B_URL: relayBUrl,
+          ...(authMode ? { CALL_E2E_ANON_ISSUER_URL: anonIssuerUrl } : {}),
         },
       },
     );
   } finally {
     await cleanup();
   }
+}
+
+// Mints the token the relays present to each other on the inner port, using
+// the same apps.example.json the compose vts service mounts.
+async function mintRelayToken() {
+  if (!existsSync(resolve(repoRoot, "services/vts/node_modules"))) {
+    await runCommand(resolveCommandName("npm"), ["ci"], {
+      cwd: resolve(repoRoot, "services/vts"),
+    });
+  }
+  return execFileSync(
+    process.execPath,
+    [
+      "services/vts/bin/mint.mjs",
+      "--apps",
+      vtsAppsFile,
+      "--app-id",
+      relayAppId,
+      "--publish",
+      "",
+      "--subscribe",
+      "",
+      "--ttl",
+      "8760h",
+    ],
+    { cwd: repoRoot, encoding: "utf8" },
+  ).trim();
 }
 
 function getCallRelayUrl(envName, defaultUrl) {

@@ -32,7 +32,11 @@ function App() {
       {!session ? (
         <>
           <JoinRoomForm onJoin={handleJoin} />
-          {joinError && <p className="text-red-500 text-center mt-4">{joinError.message}</p>}
+          {joinError && (
+            <p className="text-red-500 text-center mt-4" data-testid="join-error">
+              {joinError.message}
+            </p>
+          )}
           {isInitializing && <p className="text-blue-500 text-center mt-2">Connecting to MoQT relay...</p>}
         </>
       ) : (

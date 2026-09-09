@@ -3,6 +3,8 @@ import { CALL_INDEX_PATH } from '../playwright.helpers'
 
 export const RELAY_A_URL = process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
 export const RELAY_B_URL = process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
+// Set by scripts/run-call-e2e.mjs in CALL_E2E_AUTH mode; the pages fetch an anon token from it.
+export const ANON_ISSUER_URL = process.env.CALL_E2E_ANON_ISSUER_URL || undefined
 
 export interface CallClientPageModel {
   page: Page
@@ -17,6 +19,11 @@ export interface CallClientPageModel {
   toggleMicrophoneButton: Locator
   chatInput: Locator
   chatSendButton: Locator
+  joinError: Locator
+}
+
+export interface ArrangeCallClientOptions {
+  withIssuer?: boolean
 }
 
 export interface CallE2EClient {
@@ -36,7 +43,7 @@ let callClientCounter = 0
 const FORWARDED_CONSOLE_TEXT_PATTERN =
   /\[call\]\[publisher\]\[video\]|\[call\]\[subscriber\]\[video\]|\[call\]\[media-element\]\[video\]|\[call\]\[catalog\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
-async function openCallPage(page: Page): Promise<void> {
+async function openCallPage(page: Page, withIssuer: boolean): Promise<void> {
   const params = new URLSearchParams({
     keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
@@ -47,6 +54,9 @@ async function openCallPage(page: Page): Promise<void> {
     relayBUrl: RELAY_B_URL,
     debugVideoPipeline: '1'
   })
+  if (withIssuer && ANON_ISSUER_URL) {
+    params.set('anonIssuerUrl', ANON_ISSUER_URL)
+  }
   await page.goto(`${CALL_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })
 }
 
@@ -73,11 +83,15 @@ function createCallClientPageModel(page: Page): CallClientPageModel {
     toggleCameraButton: page.getByTestId('toggle-camera-button'),
     toggleMicrophoneButton: page.getByTestId('toggle-microphone-button'),
     chatInput: page.getByTestId('chat-message-input'),
-    chatSendButton: page.getByTestId('chat-send-button')
+    chatSendButton: page.getByTestId('chat-send-button'),
+    joinError: page.getByTestId('join-error')
   }
 }
 
-export async function arrangeCallClient(browser: Browser): Promise<CallE2EClient> {
+export async function arrangeCallClient(
+  browser: Browser,
+  { withIssuer = true }: ArrangeCallClientOptions = {}
+): Promise<CallE2EClient> {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']
@@ -85,7 +99,7 @@ export async function arrangeCallClient(browser: Browser): Promise<CallE2EClient
   const rawPage = await context.newPage()
   const label = `call-client-${++callClientCounter}`
   forwardFilteredPageConsole(rawPage, label)
-  await openCallPage(rawPage)
+  await openCallPage(rawPage, withIssuer)
   return {
     context,
     page: createCallClientPageModel(rawPage)
