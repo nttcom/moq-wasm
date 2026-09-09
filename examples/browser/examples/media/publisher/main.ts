@@ -20,6 +20,7 @@ import {
   parseTrackNamespace,
   setStatusText
 } from '../common'
+import { resolveAuthToken } from '../../../utils/auth'
 
 let mediaStream: MediaStream | null = null
 const ENABLE_AUDIO_PUBLISH = false
@@ -222,7 +223,7 @@ function sendSetupButtonClickHandler(): void {
       const versions = new BigUint64Array('0xff00000E'.split(',').map(BigInt))
       const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
-      await moqtClient.sendClientSetup(versions, maxSubscribeId)
+      await moqtClient.sendClientSetup(versions, maxSubscribeId, await resolveAuthToken())
       setSetupStatus('Setup acknowledged')
       console.info('[MediaPublisher] CLIENT_SETUP sent', { maxSubscribeId: maxSubscribeId.toString() })
     } catch (error) {

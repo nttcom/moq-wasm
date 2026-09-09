@@ -1,6 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { FetchObjectMessage, SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
+import { resolveAuthToken } from '../../../../utils/auth'
 
 const log = (...args: unknown[]) => console.log('[mon][session]', ...args)
 
@@ -8,7 +9,7 @@ export class MonitorSession {
   private readonly client = new MoqtClientWrapper()
 
   async connect(relayUrl: string): Promise<void> {
-    await this.client.connect(relayUrl)
+    await this.client.connect(relayUrl, { authToken: await resolveAuthToken() })
     log('connected', { relayUrl })
     this.client.setOnConnectionClosedHandler(() => log('connection closed'))
   }

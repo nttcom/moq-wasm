@@ -38,6 +38,7 @@ export interface ConnectOptions {
   sendSetup?: boolean
   versions?: BigUint64Array
   maxRequestId?: bigint
+  authToken?: string
 }
 
 export interface PublishNamespaceOptions {
@@ -166,7 +167,7 @@ export class MoqtClientWrapper {
 
       const versions = options.versions ?? new BigUint64Array([0xff00000en])
       const maxRequestId = options.maxRequestId ?? 100n
-      await this.client.sendClientSetup(versions, maxRequestId)
+      await this.client.sendClientSetup(versions, maxRequestId, options.authToken)
       await receiveServerSetup
     } catch (error) {
       this.cleanupClient()
@@ -181,12 +182,12 @@ export class MoqtClientWrapper {
     }
   }
 
-  async sendClientSetup(versions: BigUint64Array, maxRequestId: bigint): Promise<void> {
+  async sendClientSetup(versions: BigUint64Array, maxRequestId: bigint, authToken?: string): Promise<void> {
     const client = this.requireConnectedClient()
     const receiveServerSetup = new Promise<void>((resolve) => {
       this.serverSetupResolve = resolve
     })
-    await client.sendClientSetup(versions, maxRequestId)
+    await client.sendClientSetup(versions, maxRequestId, authToken)
     await receiveServerSetup
   }
 

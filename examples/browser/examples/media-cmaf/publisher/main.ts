@@ -12,6 +12,7 @@ import {
   MediaStreamVideoTrackSource,
   MediaStreamAudioTrackSource
 } from 'mediabunny'
+import { resolveAuthToken } from '../../../utils/auth'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
@@ -193,7 +194,7 @@ const sendSetupButtonClickHandler = (): void => {
     const form = getFormElement()
     const versions = new BigUint64Array('0xff00000E'.split(',').map(BigInt))
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-    await moqtClient.sendClientSetup(versions, maxSubscribeId)
+    await moqtClient.sendClientSetup(versions, maxSubscribeId, await resolveAuthToken())
   })
 }
 

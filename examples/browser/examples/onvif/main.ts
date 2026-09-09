@@ -2,6 +2,7 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
+import { resolveAuthToken } from '../../utils/auth'
 
 const moqtClient = new MoqtClientWrapper()
 let audioDecoderWorker: Worker | null = null
@@ -1313,7 +1314,7 @@ async function connect(): Promise<void> {
     updateStatus('disconnected', false)
   })
 
-  await moqtClient.sendClientSetup(new BigUint64Array([0xff00000en]), maxSubscribeId)
+  await moqtClient.sendClientSetup(new BigUint64Array([0xff00000en]), maxSubscribeId, await resolveAuthToken())
 
   moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
     if (!isSuccess) {

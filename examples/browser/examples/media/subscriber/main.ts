@@ -10,6 +10,7 @@ import {
   type MediaCatalogTrack
 } from '../catalog'
 import { initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../common'
+import { resolveAuthToken } from '../../../utils/auth'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -311,7 +312,7 @@ function sendSetupButtonClickHandler(): void {
     const versions = toBigUint64Array('0xff00000E')
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
-    await moqtClient.sendClientSetup(versions, maxSubscribeId)
+    await moqtClient.sendClientSetup(versions, maxSubscribeId, await resolveAuthToken())
     setSetupStatus('Setup acknowledged')
   })
 }
