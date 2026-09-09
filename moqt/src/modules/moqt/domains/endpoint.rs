@@ -1,5 +1,5 @@
 use crate::{
-    Connecting, TransportProtocol,
+    Accepting, Connecting, TransportProtocol,
     modules::{
         moqt::domains::session_creator::SessionCreator,
         transport::transport_connection_creator::TransportConnectionCreator,
@@ -73,7 +73,7 @@ impl<T: TransportProtocol> Endpoint<T> {
         self.session_creator.create_new_connection(url).await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Connecting<T>> {
+    pub async fn accept(&mut self) -> anyhow::Result<Accepting<T>> {
         self.session_creator.accept_new_connection().await
     }
 }

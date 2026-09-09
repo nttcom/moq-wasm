@@ -3,8 +3,8 @@ use std::{net::UdpSocket, path::Path, time::Duration};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 use crate::{
-    ClientConfig, DUAL, DataReceiver, Endpoint, FilterType, ServerConfig, Session, SessionEvent,
-    Subscription, TrackReader,
+    ClientConfig, DUAL, DataReceiver, Endpoint, FilterType, Handshake, ServerConfig, Session,
+    SessionEvent, Subscription, TrackReader,
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -32,14 +32,25 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
 }
 
 /// Starts a DUAL server on a free port whose accept loop resolves the first
-/// incoming session; returns the port and the accept task.
-pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session<DUAL>>) {
+/// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
+/// returns the port and the accept task.
+pub(crate) fn spawn_dual_server_handshake(
+    name: &str,
+) -> (u16, tokio::task::JoinHandle<Handshake<DUAL>>) {
     let port = free_udp_port();
     let cert_dir = std::env::temp_dir().join(format!("moqt-test-{name}-{port}"));
     let mut server_config = write_self_signed_cert(&cert_dir);
     server_config.port = port;
     let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+    (port, accept)
+}
+
+/// Starts a DUAL server on a free port whose accept loop resolves the first
+/// incoming session; returns the port and the accept task.
+pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session<DUAL>>) {
+    let (port, handshake) = spawn_dual_server_handshake(name);
+    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
 }
 

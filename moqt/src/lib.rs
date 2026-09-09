@@ -95,6 +95,8 @@ pub use modules::moqt::data_plane::stream::stream_data_sender_factory::StreamDat
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_receiver::StreamReceiveError;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::accepting::Accepting;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::connecting::Connecting;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::endpoint::ClientConfig;
@@ -104,6 +106,8 @@ pub use modules::moqt::domains::endpoint::Endpoint;
 pub use modules::moqt::domains::endpoint::ServerConfig;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::fetch_handle::FetchHandle;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::handshake::Handshake;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::publisher::Publisher;
 #[cfg(not(target_arch = "wasm32"))]

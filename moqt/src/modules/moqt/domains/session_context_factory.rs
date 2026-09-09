@@ -41,23 +41,6 @@ impl SessionContextFactory {
         ))
     }
 
-    pub(crate) async fn server<T: TransportProtocol>(
-        transport_connection: T::Connection,
-        send_stream: T::SendStream,
-        receive_stream: &mut BiStreamReceiver<T>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
-    ) -> anyhow::Result<SessionContext<T>> {
-        let mut send_stream = BiStreamSender::new(send_stream);
-        Self::setup_server(&mut send_stream, receive_stream).await?;
-
-        Ok(SessionContext::new(
-            transport_connection,
-            send_stream,
-            AtomicU64::new(1),
-            event_sender,
-        ))
-    }
-
     async fn setup_client<T: TransportProtocol>(
         send_stream: &mut BiStreamSender<T>,
         receive_stream: &mut BiStreamReceiver<T>,
@@ -104,10 +87,9 @@ impl SessionContextFactory {
         }
     }
 
-    async fn setup_server<T: TransportProtocol>(
-        send_stream: &mut BiStreamSender<T>,
+    pub(crate) async fn receive_client_setup<T: TransportProtocol>(
         receive_stream: &mut BiStreamReceiver<T>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ClientSetup> {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
             Ok(None) => {
@@ -125,12 +107,18 @@ impl SessionContextFactory {
                     "Received client setup. supported_versions: {:?}",
                     client_setup.supported_versions
                 );
+                Ok(client_setup)
             }
             _ => {
                 tracing::error!("Protocol violation.");
                 anyhow::bail!("Protocol violation.")
             }
-        };
+        }
+    }
+
+    pub(crate) async fn send_server_setup<T: TransportProtocol>(
+        send_stream: &mut BiStreamSender<T>,
+    ) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
             path: None,
             max_request_id: 1000,
