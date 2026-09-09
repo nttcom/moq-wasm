@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use moqt::TerminationErrorCode;
+
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{
@@ -19,15 +21,39 @@ use crate::modules::{
 pub(crate) struct RecordedControlMessages {
     pub(crate) unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
-    pub(crate) protocol_violation_reasons: Arc<Mutex<Vec<String>>>,
+    closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
+}
+
+impl RecordedControlMessages {
+    pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
+        self.closes.lock().unwrap().clone()
+    }
 }
 
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
 }
 
+pub(crate) fn mock_session() -> (Arc<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session: Arc<dyn Session> = Arc::new(MockUpstreamSession {
+        recorded: recorded.clone(),
+    });
+    (session, recorded)
+}
+
 pub(crate) async fn session_repository_with_upstream_session(
     session_id: SessionId,
+) -> (
+    Arc<tokio::sync::Mutex<SessionRepository>>,
+    RecordedControlMessages,
+) {
+    session_repository_with_upstream_session_token(session_id, VerifiedToken::full_access()).await
+}
+
+pub(crate) async fn session_repository_with_upstream_session_token(
+    session_id: SessionId,
+    verified_token: VerifiedToken,
 ) -> (
     Arc<tokio::sync::Mutex<SessionRepository>>,
     RecordedControlMessages,
@@ -44,7 +70,7 @@ pub(crate) async fn session_repository_with_upstream_session(
                 }),
                 session_span: tracing::Span::none(),
                 peer: SessionPeer::Client,
-                verified_token: VerifiedToken::full_access(),
+                verified_token,
             },
             session_event_sender,
         )
@@ -68,12 +94,12 @@ impl Session for MockUpstreamSession {
         std::future::pending().await
     }
 
-    fn close_with_protocol_violation(&self, reason: &str) {
+    fn close(&self, code: TerminationErrorCode, reason: &str) {
         self.recorded
-            .protocol_violation_reasons
+            .closes
             .lock()
             .unwrap()
-            .push(reason.to_string());
+            .push((code, reason.to_string()));
     }
 }
 

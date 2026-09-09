@@ -9,7 +9,7 @@ pub(crate) trait Session: 'static + Send + Sync {
     fn as_publisher(&self) -> Box<dyn Publisher>;
     fn as_subscriber(&self) -> Box<dyn Subscriber>;
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent>;
-    fn close_with_protocol_violation(&self, reason: &str);
+    fn close(&self, code: moqt::TerminationErrorCode, reason: &str);
 }
 
 #[async_trait]
@@ -22,8 +22,8 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
         Box::new(self.subscriber())
     }
 
-    fn close_with_protocol_violation(&self, reason: &str) {
-        self.close_with_error(moqt::TerminationErrorCode::ProtocolViolation, reason);
+    fn close(&self, code: moqt::TerminationErrorCode, reason: &str) {
+        self.close_with_error(code, reason);
     }
 
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {

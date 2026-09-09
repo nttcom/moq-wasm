@@ -672,7 +672,7 @@ mod tests {
             std::future::pending().await
         }
 
-        fn close_with_protocol_violation(&self, _reason: &str) {
+        fn close(&self, _code: moqt::TerminationErrorCode, _reason: &str) {
             unimplemented!("not used in subscribe tests")
         }
     }

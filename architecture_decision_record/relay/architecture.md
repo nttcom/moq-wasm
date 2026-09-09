@@ -54,7 +54,12 @@ transport connection to a per-connection task owned by `SessionIntake`:
 4. the session is boxed as `dyn core::session::Session` and added to
    `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`
    or `Relay { relay_id }` — the endpoint it arrived on) and its
-   `VerifiedToken`, which later requests are authorized against.
+   `VerifiedToken`, which later requests are authorized against;
+5. for a client token (`is_relay == false`) with an `exp`, the repository
+   starts a `SessionExpiryTask` that closes the session with
+   `EXPIRED_AUTH_TOKEN (0x18)` when the token expires. Clients are expected to
+   obtain a fresh token and reconnect. Relay sessions and the disabled-auth
+   `full_access()` token never expire.
 
 ### `modules/core` — transport-erased `moqt` facade
 The relay never handles `moqt::Session<T>` generically beyond intake. `core`
@@ -186,6 +191,11 @@ per-request authorization gate under "Event pipeline".
 - `session_authenticator.rs` — `SessionAuthenticator::{Disabled, Enabled}`
   built from `AuthConfig`; combines the pieces above into the CLIENT_SETUP
   decision described under "Session intake".
+- `request_gate.rs` — `authorize_request` / `reject_unauthorized`, the
+  per-request gate described under "Event pipeline".
+- `session_expiry_task.rs` — `SessionExpiryTask` (owns its `JoinHandle`,
+  aborted on drop) that sleeps until `expires_at` and closes the session via a
+  `Weak<dyn Session>` so a departed session is a no-op.
 
 ## Data plane
 
