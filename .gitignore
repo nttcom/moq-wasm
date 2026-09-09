@@ -24,6 +24,7 @@ bridges/live-ingest/recordings/
 log/*
 
 /.env
+services/*/apps.json
 test-results
 
 cargo-flamegraph.trace/*
