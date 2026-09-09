@@ -44,9 +44,11 @@ test("minted token verifies with the claims given on the command line", async ()
   );
 
   // Assert
-  assert.equal(result.claims.publish, "site1/cam1");
-  assert.equal(result.claims.subscribe, "");
-  assert.ok(result.claims.exp - Math.floor(Date.now() / 1000) <= 30 * 60);
+  assert.equal(result.verified.claims.publish, "site1/cam1");
+  assert.equal(result.verified.claims.subscribe, "");
+  assert.ok(
+    result.verified.claims.exp - Math.floor(Date.now() / 1000) <= 30 * 60,
+  );
 });
 
 test("unknown appId exits with status 1", async () => {

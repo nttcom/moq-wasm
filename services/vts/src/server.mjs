@@ -4,16 +4,16 @@ import { verifyToken } from "./verify.mjs";
 
 const MAX_BODY_BYTES = 16 * 1024;
 
-export function createVtsServer(apps, verifyOptions = {}) {
+export function createVtsServer(apps) {
   return http.createServer((request, response) => {
-    handle(request, response, apps, verifyOptions).catch((error) => {
+    handle(request, response, apps).catch((error) => {
       console.error("unhandled error", error);
       sendJson(response, 500, { error: "internal_error" });
     });
   });
 }
 
-async function handle(request, response, apps, verifyOptions) {
+async function handle(request, response, apps) {
   if (request.method === "GET" && request.url === "/healthz") {
     sendJson(response, 200, { status: "ok" });
     return;
@@ -27,16 +27,16 @@ async function handle(request, response, apps, verifyOptions) {
     sendJson(response, 400, { error: "invalid_request" });
     return;
   }
-  const result = await verifyToken(body.token, apps, verifyOptions);
+  const result = await verifyToken(body.token, apps);
   if (result.error) {
     console.info(`verify rejected: ${result.error}`);
     sendJson(response, 401, { error: result.error });
     return;
   }
   console.info(
-    `verify ok: appId=${result.claims.appId} isRelay=${result.claims.isRelay}`,
+    `verify ok: appId=${result.verified.appId} isRelay=${result.verified.isRelay}`,
   );
-  sendJson(response, 200, result.claims);
+  sendJson(response, 200, result.verified);
 }
 
 async function readJsonBody(request) {

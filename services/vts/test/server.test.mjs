@@ -8,7 +8,7 @@ let server;
 let baseUrl;
 
 before(async () => {
-  server = createVtsServer(testApps(), { now: NOW });
+  server = createVtsServer(testApps());
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -34,10 +34,14 @@ test("POST /verify returns 200 with the claims for a valid token", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     appId: "APP",
-    publish: "site1",
-    subscribe: "site1",
     isRelay: false,
-    exp: NOW + 3600,
+    claims: {
+      appId: "APP",
+      publish: "site1",
+      subscribe: "site1",
+      iat: NOW,
+      exp: NOW + 3600,
+    },
   });
 });
 
