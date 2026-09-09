@@ -47,11 +47,11 @@ struct MoqtArgs {
     auth_token: Option<String>,
 
     /// Track namespace for publishing video (slash-separated)
-    #[arg(long, default_value = "onvif/client")]
+    #[arg(long, default_value = "anon/onvif/client")]
     publish_namespace: String,
 
     /// Track namespace for subscribing to commands (slash-separated)
-    #[arg(long, default_value = "onvif/viewer")]
+    #[arg(long, default_value = "anon/onvif/viewer")]
     subscribe_namespace: String,
 
     /// Track name prefix for video streams

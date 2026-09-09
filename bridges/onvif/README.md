@@ -38,14 +38,14 @@ set `MOQT_DOCKER_RELAY_HOST`/`LOCAL_RELAY_HOST` to force a specific relay host.
 
 ## MoQT Track Layout
 
-`make onvif` publishes to namespace `onvif/client` and subscribes to commands from namespace `onvif/viewer`.
+`make onvif` publishes to namespace `anon/onvif/client` and subscribes to commands from namespace `anon/onvif/viewer`.
 
 | Role                    | Namespace      | Track name        |
 | ----------------------- | -------------- | ----------------- |
-| Catalog                 | `onvif/client` | `catalog`         |
-| Video (profile N)       | `onvif/client` | `video/profile_N` |
-| Audio (profile N)       | `onvif/client` | `audio/profile_N` |
-| PTZ command (subscribe) | `onvif/viewer` | `command`         |
+| Catalog                 | `anon/onvif/client` | `catalog`         |
+| Video (profile N)       | `anon/onvif/client` | `video/profile_N` |
+| Audio (profile N)       | `anon/onvif/client` | `audio/profile_N` |
+| PTZ command (subscribe) | `anon/onvif/viewer` | `command`         |
 
 Profile indices start at 1 and correspond to the ONVIF media profiles returned by the camera.
 All names are configurable via CLI flags (`--publish-namespace`, `--subscribe-namespace`, `--video-track`, `--audio-track`, `--catalog-track`, `--command-track`).

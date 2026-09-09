@@ -64,8 +64,8 @@ onvif:
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \
 		--moqt-url $(ONVIF_MOQT_URL) \
-		--publish-namespace onvif/client \
-		--subscribe-namespace onvif/viewer \
+		--publish-namespace anon/onvif/client \
+		--subscribe-namespace anon/onvif/viewer \
 		--video-track video \
 		--audio-track audio \
 		--catalog-track catalog \
