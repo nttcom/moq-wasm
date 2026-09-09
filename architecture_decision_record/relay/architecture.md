@@ -138,6 +138,29 @@ Joining from the downstream subscription's start location), reply FETCH_OK,
 then delegate to `EgressCommand::StartFetch`, which serves the range entirely
 from `TrackCache` over a new uni stream.
 
+## Authentication and authorization (`modules/auth`)
+
+Pure building blocks; wiring into session intake and the event pipeline is
+described in the sections above once connected.
+
+- `verified_token.rs` — `VerifiedToken`, the claims returned by the Verify
+  Token Service (VTS): `app_id`, optional `publish` / `subscribe` namespace
+  paths (already split on `/`; the empty claim `""` is the app root, i.e. an
+  empty path), `is_relay`, and `expires_at`.
+- `authorize.rs` — `authorize(token, Operation, namespace_tuple)`: rejects a
+  namespace whose element contains `/`, requires the first element to equal
+  the token's `app_id` unless `is_relay`, then requires the granted path to be
+  an element-wise prefix of the remaining tuple.
+- `client_setup_token.rs` — `extract_token(&ClientSetup)`: the first
+  AUTHORIZATION TOKEN parameter must be `USE_VALUE` with Token Type `0` and a
+  UTF-8 value (the JWT). Other alias types are not supported by design.
+- `token_verifier.rs` — `TokenVerifier` trait with
+  `VerifyError::{Unauthorized, Unavailable}`; the split lets callers map a
+  rejected token and an unreachable VTS to different termination codes.
+- `vts_token_verifier.rs` — `reqwest` implementation: `POST {AUTH_VTS_URL}`
+  with `{"token"}`; 200 → `VerifiedToken`, 401 → `Unauthorized`, anything
+  else or a transport error → `Unavailable`. 3 s timeout.
+
 ## Data plane
 
 ### Shared state (`RelayStore`)

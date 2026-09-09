@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+pub(crate) mod auth;
 pub(crate) mod control_message_forwarder;
 pub(crate) mod core;
 pub(crate) mod enums;
