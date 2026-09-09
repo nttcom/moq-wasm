@@ -1,0 +1,17 @@
+{
+  "name": "moqt-anon-issuer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Issues short-lived anonymous MoQT tokens for public demo clients",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "jose": "^6.0.0"
+  }
+}
