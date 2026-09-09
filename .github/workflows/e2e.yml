@@ -99,6 +99,7 @@ jobs:
       fetch: ${{ steps.filter.outputs.fetch }}
       multipub: ${{ steps.filter.outputs.multipub }}
       dedup: ${{ steps.filter.outputs.dedup }}
+      auth: ${{ steps.filter.outputs.auth }}
       relay: ${{ steps.filter.outputs.relay }}
       relay_image_source: ${{ steps.filter.outputs.relay_image_source }}
     steps:
@@ -125,6 +126,7 @@ jobs:
             fetch=true
             multipub=true
             dedup=true
+            auth=true
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -143,6 +145,7 @@ jobs:
             fetch=false
             multipub=false
             dedup=false
+            auth=false
 
             while IFS= read -r path; do
               case "$path" in
@@ -198,10 +201,16 @@ jobs:
                   dedup=true
                   ;;
               esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/auth-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|services/*|tests/auth-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  auth=true
+                  ;;
+              esac
             done < changed-files.txt
           fi
 
-          if [[ "$call" == "true" || "$cascading" == "true" || "$cache_eviction" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" ]]; then
+          if [[ "$call" == "true" || "$cascading" == "true" || "$cache_eviction" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" || "$auth" == "true" ]]; then
             relay=true
           else
             relay=false
@@ -227,6 +236,8 @@ jobs:
             echo "fetch=$fetch"
             echo "multipub=$multipub"
             echo "dedup=$dedup"
+
+            echo "auth=$auth"
             echo "relay=$relay"
             echo "relay_image_source=$relay_image_source"
           } >> "$GITHUB_OUTPUT"
@@ -599,6 +610,69 @@ jobs:
         env:
           CI: "true"
         run: ./scripts/cascading-relay-e2e.sh
+
+  auth_e2e:
+    needs: [changes, relay_image_local, relay_image]
+    if: ${{ always() && needs.changes.outputs.auth == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+
+      - name: Download local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
+        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: relay-image-local
+          path: ${{ runner.temp }}/relay-image
+
+      - name: Load local relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
+        run: |
+          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
+          docker tag moqt-relay:local-source moqt-relay:local
+
+      - name: Log in to GHCR
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prebuilt relay image
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        run: |
+          docker pull "${{ needs.relay_image.outputs.image }}"
+          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
+
+      - name: Log out from GHCR
+        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        run: docker logout ghcr.io
+
+      - name: Run auth E2E
+        env:
+          CI: "true"
+        run: ./scripts/auth-e2e.sh
 
   cache_eviction_e2e:
     needs: [changes, relay_image_local, relay_image]
