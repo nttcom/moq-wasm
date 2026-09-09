@@ -81,6 +81,14 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 - `SessionRepository::start_session_event_forwarding` spawns a forwarder task
   per session that pumps `moqt` events into the relay-wide unbounded channel,
   stopping after `Disconnected` / `ProtocolViolation`.
+- Before dispatching, each session worker runs
+  `auth::request_gate::authorize_request` against the session's
+  `VerifiedToken` (looked up once when the worker starts). PUBLISH and
+  PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE
+  and standalone FETCH need `subscribe`; joining FETCH and every other
+  message pass through (they reference an already authorized request). A
+  denied request is answered with the message's `*_ERROR` carrying
+  `UNAUTHORIZED (0x1)` and the sequence is never invoked.
 - `EventHandler` implements a **reader/worker** structure: the single reader
   only dispatches to per-session unbounded channels, so a slow or blocked
   session can never head-of-line-block another (unit tests in

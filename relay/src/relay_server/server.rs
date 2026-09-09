@@ -21,10 +21,10 @@ use crate::{
     },
 };
 
-struct RelayServerDeps {
-    route_registry: Arc<dyn RelayRouteRegistry>,
-    authenticator: SessionAuthenticator,
-    relay_token: Option<String>,
+pub(crate) struct RelayServerDeps {
+    pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
+    pub(crate) authenticator: SessionAuthenticator,
+    pub(crate) relay_token: Option<String>,
 }
 
 pub struct RelayServer {
@@ -79,7 +79,7 @@ impl RelayServer {
         ))
     }
 
-    fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
+    pub(crate) fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
         let RelayServerDeps {
             route_registry,
             authenticator,

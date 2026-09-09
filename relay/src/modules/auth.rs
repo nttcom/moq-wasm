@@ -1,6 +1,6 @@
-#[allow(dead_code)]
 pub(crate) mod authorize;
 pub(crate) mod client_setup_token;
+pub(crate) mod request_gate;
 pub(crate) mod session_authenticator;
 #[cfg(test)]
 pub(crate) mod test_support;

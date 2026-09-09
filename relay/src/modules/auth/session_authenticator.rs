@@ -86,41 +86,16 @@ impl SessionAuthenticator {
 mod tests {
     use std::sync::Arc;
 
-    use async_trait::async_trait;
     use moqt::{TerminationErrorCode, wire::AuthorizationToken};
 
     use super::SessionAuthenticator;
     use crate::modules::{
         auth::{
-            test_support::client_setup,
-            token_verifier::{TokenVerifier, VerifyError},
+            test_support::{StubOutcome, StubVerifier, client_setup},
             verified_token::VerifiedToken,
         },
         session_repository::SessionPeer,
     };
-
-    enum StubOutcome {
-        Verified(VerifiedToken),
-        Unauthorized,
-        Unavailable,
-    }
-
-    struct StubVerifier(StubOutcome);
-
-    #[async_trait]
-    impl TokenVerifier for StubVerifier {
-        async fn verify(&self, _token: &str) -> Result<VerifiedToken, VerifyError> {
-            match &self.0 {
-                StubOutcome::Verified(token) => Ok(token.clone()),
-                StubOutcome::Unauthorized => {
-                    Err(VerifyError::Unauthorized("invalid_signature".to_string()))
-                }
-                StubOutcome::Unavailable => Err(VerifyError::Unavailable(anyhow::anyhow!(
-                    "connection refused"
-                ))),
-            }
-        }
-    }
 
     fn enabled(outcome: StubOutcome) -> SessionAuthenticator {
         SessionAuthenticator::Enabled {

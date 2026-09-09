@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
-    enums::FilterType,
+    enums::{FilterType, PublishErrorCode},
     inter_relay::InterRelayConnectionManager,
     relay::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     route_registry::RelayRouteRegistry,
@@ -28,7 +28,7 @@ enum RegisterUpstreamSubscriptionError {
 impl RegisterUpstreamSubscriptionError {
     fn code(&self) -> u64 {
         match self {
-            Self::IngressStartFailed => 0,
+            Self::IngressStartFailed => PublishErrorCode::InternalError as u64,
         }
     }
 

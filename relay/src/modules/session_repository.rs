@@ -296,7 +296,6 @@ impl SessionRepository {
             .map(|peer| peer.value().clone())
     }
 
-    #[allow(dead_code)]
     pub(crate) fn verified_token(&self, session_id: SessionId) -> Option<Arc<VerifiedToken>> {
         self.session_tokens
             .get(&session_id)

@@ -1,6 +1,7 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::publish_namespace::PublishNamespaceHandler,
+    enums::PublishNamespaceErrorCode,
     inter_relay::InterRelayConnectionManager,
     route_registry::{RegisterNamespacePublisherError, RelayRouteRegistry, RouteStatus},
     sequences::{
@@ -103,7 +104,10 @@ impl PublishNamespace {
             // TODO: Session close.
             tracing::error!("Failed to register publish namespace");
             match handler
-                .error(0, "Failed to register publish namespace".to_string())
+                .error(
+                    PublishNamespaceErrorCode::InternalError as u64,
+                    "Failed to register publish namespace".to_string(),
+                )
                 .await
             {
                 Ok(_) => tracing::info!("send `PUBLISH_NAMESPACE_ERROR` ok"),
@@ -182,7 +186,10 @@ impl PublishNamespace {
             Err(RegisterNamespacePublisherError::Conflict) => {
                 tracing::warn!(track_namespace = %track_namespace, "namespace already has an active publisher");
                 match handler
-                    .error(0, "namespace already published".to_string())
+                    .error(
+                        PublishNamespaceErrorCode::InternalError as u64,
+                        "namespace already published".to_string(),
+                    )
                     .await
                 {
                     Ok(_) => tracing::info!("sent `PUBLISH_NAMESPACE_ERROR` ok"),

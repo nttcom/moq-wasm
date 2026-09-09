@@ -17,6 +17,7 @@ pub(crate) struct SubscribeOption {
 #[async_trait]
 pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn track_namespace(&self) -> &str;
+    fn track_namespace_tuple(&self) -> &[String];
     fn track_name(&self) -> &str;
     fn track_alias(&self) -> u64;
     fn _group_order(&self) -> GroupOrder;
@@ -40,6 +41,9 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
 impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
     fn track_namespace(&self) -> &str {
         &self.track_namespace
+    }
+    fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
     }
     fn track_name(&self) -> &str {
         &self.track_name
