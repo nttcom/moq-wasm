@@ -12,7 +12,7 @@ Content-Type: application/json
 { "token": "eyJhbGci..." }
 
 200 OK
-{ "appId": "...", "publish": "site1", "subscribe": null, "isRelay": false, "exp": 1759678000 }
+{ "appId": "...", "isRelay": false, "claims": { "appId": "...", "publish": "site1", "iat": 1759591600, "exp": 1759678000 } }
 
 401 Unauthorized
 { "error": "invalid_signature" }
@@ -20,19 +20,23 @@ Content-Type: application/json
 GET /healthz -> 200 { "status": "ok" }
 ```
 
-`error` values, in the order they are checked: `malformed_token`,
-`unknown_app`, `invalid_signature`, `expired`, `not_yet_valid`,
-`ttl_too_long` (client tokens longer than 24 h), `invalid_claims`
-(`publish` / `subscribe` not a string, or a path with an empty element).
+The VTS answers one question: was this token signed with the secret of a
+registered app, and is that app a relay? `claims` is the JWT payload as
+signed. What the claims mean, including `exp`, `iat`, the maximum lifetime
+and the shape of `publish` / `subscribe`, is decided by the relay, so the
+relay's clock and policy apply consistently to accepting a session and to
+expiring it later.
+
+`error` values, in the order they are checked: `malformed_token` (not a JWT,
+or no string `appId`), `unknown_app`, `invalid_signature` (also returned for
+any algorithm other than HS256).
 
 ## Configuration
 
-| Variable                    | Default              | Meaning                                      |
-| --------------------------- | -------------------- | -------------------------------------------- |
-| `VTS_APPS_FILE`             | `/etc/vts/apps.json` | Registered apps (see below)                  |
-| `VTS_PORT`                  | `8081`               | Listen port                                  |
-| `VTS_MAX_TOKEN_TTL_SECONDS` | `86400`              | Upper bound of `exp - iat` for client tokens |
-| `VTS_CLOCK_LEEWAY_SECONDS`  | `60`                 | Tolerance applied to `exp` and `iat`         |
+| Variable        | Default              | Meaning                     |
+| --------------- | -------------------- | --------------------------- |
+| `VTS_APPS_FILE` | `/etc/vts/apps.json` | Registered apps (see below) |
+| `VTS_PORT`      | `8081`               | Listen port                 |
 
 `apps.json` is a JSON array; `apps.example.json` holds local development
 values. Never commit a real file: `services/*/apps.json` is ignored.

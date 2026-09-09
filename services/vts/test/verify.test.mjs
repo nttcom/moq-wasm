@@ -14,30 +14,34 @@ import {
 
 const apps = testApps();
 
-test("valid token yields the claims", async () => {
+test("valid token yields the appId, the relay flag and the raw claims", async () => {
   // Arrange
   const token = await appToken({ publish: "site1/cam1", subscribe: "site1" });
 
   // Act
-  const result = await verifyToken(token, apps, { now: NOW + 10 });
+  const result = await verifyToken(token, apps);
 
   // Assert
   assert.deepEqual(result, {
-    claims: {
+    verified: {
       appId: APP_ID,
-      publish: "site1/cam1",
-      subscribe: "site1",
       isRelay: false,
-      exp: NOW + 3600,
+      claims: {
+        appId: APP_ID,
+        publish: "site1/cam1",
+        subscribe: "site1",
+        iat: NOW,
+        exp: NOW + 3600,
+      },
     },
   });
 });
 
-test("an absent claim is returned as null", async () => {
+test("relay app is flagged as relay", async () => {
   // Arrange
   const token = await signToken(
-    { appId: APP_ID, publish: "site1" },
-    "app-secret",
+    { appId: RELAY_ID, publish: "", subscribe: "" },
+    RELAY_SECRET,
     {
       now: NOW,
       ttlSeconds: 60,
@@ -45,27 +49,26 @@ test("an absent claim is returned as null", async () => {
   );
 
   // Act
-  const result = await verifyToken(token, apps, { now: NOW });
+  const result = await verifyToken(token, apps);
 
   // Assert
-  assert.equal(result.claims.subscribe, null);
+  assert.equal(result.verified.isRelay, true);
 });
 
-test("empty string claim is the app root and is kept as is", async () => {
+test("time claims are passed through, not judged", async () => {
   // Arrange
-  const token = await appToken({ publish: "", subscribe: "" });
+  const expired = await appToken({}, { now: NOW - 7200, ttlSeconds: 60 });
 
   // Act
-  const result = await verifyToken(token, apps, { now: NOW });
+  const result = await verifyToken(expired, apps);
 
   // Assert
-  assert.equal(result.claims.publish, "");
-  assert.equal(result.claims.subscribe, "");
+  assert.equal(result.verified.claims.exp, NOW - 7200 + 60);
 });
 
 test("token that is not a JWT is malformed", async () => {
   // Act / Assert
-  assert.deepEqual(await verifyToken("not-a-jwt", apps, { now: NOW }), {
+  assert.deepEqual(await verifyToken("not-a-jwt", apps), {
     error: "malformed_token",
   });
 });
@@ -78,7 +81,7 @@ test("token without appId is malformed", async () => {
   });
 
   // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
+  assert.deepEqual(await verifyToken(token, apps), {
     error: "malformed_token",
   });
 });
@@ -88,9 +91,7 @@ test("unknown appId is rejected before the signature is checked", async () => {
   const token = await appToken({ appId: "NOBODY" });
 
   // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
-    error: "unknown_app",
-  });
+  assert.deepEqual(await verifyToken(token, apps), { error: "unknown_app" });
 });
 
 test("token signed with another secret is rejected", async () => {
@@ -98,99 +99,8 @@ test("token signed with another secret is rejected", async () => {
   const token = await appToken({}, { secret: "wrong-secret" });
 
   // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
+  assert.deepEqual(await verifyToken(token, apps), {
     error: "invalid_signature",
-  });
-});
-
-test("expired token is rejected beyond the leeway", async () => {
-  // Arrange
-  const token = await appToken({}, { ttlSeconds: 60 });
-
-  // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW + 121 }), {
-    error: "expired",
-  });
-});
-
-test("token that expired within the leeway is still accepted", async () => {
-  // Arrange
-  const token = await appToken({}, { ttlSeconds: 60 });
-
-  // Act
-  const result = await verifyToken(token, apps, { now: NOW + 90 });
-
-  // Assert
-  assert.ok(result.claims);
-});
-
-test("token issued in the future is rejected beyond the leeway", async () => {
-  // Arrange
-  const token = await appToken({}, { now: NOW + 120 });
-
-  // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
-    error: "not_yet_valid",
-  });
-});
-
-test("client token longer than the maximum ttl is rejected", async () => {
-  // Arrange
-  const token = await appToken({}, { ttlSeconds: 24 * 3600 + 1 });
-
-  // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
-    error: "ttl_too_long",
-  });
-});
-
-test("relay token may outlive the maximum ttl", async () => {
-  // Arrange
-  const token = await signToken(
-    { appId: RELAY_ID, publish: "", subscribe: "" },
-    RELAY_SECRET,
-    { now: NOW, ttlSeconds: 365 * 24 * 3600 },
-  );
-
-  // Act
-  const result = await verifyToken(token, apps, { now: NOW });
-
-  // Assert
-  assert.equal(result.claims.isRelay, true);
-  assert.equal(result.claims.exp, NOW + 365 * 24 * 3600);
-});
-
-test("path with an empty element is rejected", async () => {
-  // Arrange
-  const token = await appToken({ publish: "site1//cam1" });
-
-  // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
-    error: "invalid_claims",
-  });
-});
-
-test("non-string path claim is rejected", async () => {
-  // Arrange
-  const token = await appToken({ subscribe: ["site1"] });
-
-  // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
-    error: "invalid_claims",
-  });
-});
-
-test("token without exp is rejected", async () => {
-  // Arrange
-  const { SignJWT } = await import("jose");
-  const token = await new SignJWT({ appId: APP_ID })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt(NOW)
-    .sign(new TextEncoder().encode("app-secret"));
-
-  // Act / Assert
-  assert.deepEqual(await verifyToken(token, apps, { now: NOW }), {
-    error: "invalid_claims",
   });
 });
 
@@ -203,7 +113,7 @@ test("unsigned token is rejected", async () => {
     .encode();
 
   // Act
-  const result = await verifyToken(token, apps, { now: NOW });
+  const result = await verifyToken(token, apps);
 
   // Assert
   assert.ok(result.error);
