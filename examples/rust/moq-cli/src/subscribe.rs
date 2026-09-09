@@ -11,7 +11,7 @@ use crate::transport::{connect_session, subscribe_track};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let track = &args.track;
-    let session = Arc::new(connect_session(&args.relay, args.insecure).await?);
+    let session = Arc::new(connect_session(&args.relay).await?);
 
     tokio::spawn({
         let session = session.clone();

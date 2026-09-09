@@ -27,7 +27,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     }
 
     let track = &args.track;
-    let session = connect_session(&args.relay, args.insecure).await?;
+    let session = connect_session(&args.relay).await?;
 
     let publisher = session.publisher();
     let subscription = publisher
