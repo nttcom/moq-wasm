@@ -68,3 +68,16 @@ npm test
 
 The Dockerfile expects the repository root as build context:
 `docker build -f services/vts/Dockerfile .`
+
+## Local stack with authentication
+
+```
+docker compose --profile auth up -d
+export AUTH_VTS_URL=http://vts:8081/verify
+export AUTH_RELAY_TOKEN=$(node services/vts/bin/mint.mjs --apps services/vts/apps.example.json \
+  --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 8760h)
+docker compose up -d relay-a relay-b
+```
+
+`vts` is reachable only inside the compose network; `anon-issuer` is published
+on port 8080.
