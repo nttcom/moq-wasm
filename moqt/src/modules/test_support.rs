@@ -54,12 +54,16 @@ pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Ses
     (port, accept)
 }
 
+pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
+    Endpoint::<DUAL>::create_client(&config).unwrap()
+}
+
 pub(crate) fn dual_client() -> Endpoint<DUAL> {
-    Endpoint::<DUAL>::create_client(&ClientConfig {
+    dual_client_with_config(ClientConfig {
         port: 0,
         verify_certificate: false,
+        authorization_token: None,
     })
-    .unwrap()
 }
 
 /// Connects a DUAL client to the server started by `spawn_dual_server` and

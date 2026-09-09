@@ -44,6 +44,7 @@ impl InterRelayConnectionManager {
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
             port: 0,
             verify_certificate: false,
+            authorization_token: None,
         })?;
         let connecting = endpoint
             .connect(&format!("moqt://{}:{}", relay.host, relay.port))

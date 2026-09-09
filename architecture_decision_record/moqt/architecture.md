@@ -82,7 +82,10 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 - `connect(url)` returns `Connecting<T>`, whose future performs the transport
   handshake, opens the bidirectional control stream, and runs the whole SETUP
   exchange in `SessionContextFactory` (sends CLIENT_SETUP, awaits SERVER_SETUP,
-  version `0xff00000e` = draft-14). On success a `Session<T>` is created.
+  version `0xff00000e` = draft-14). `ClientConfig.authorization_token`, when
+  set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
+  `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session<T>` is
+  created.
 - `accept()` returns `Accepting<T>`, whose future performs the transport
   handshake, accepts the control stream, and stops after CLIENT_SETUP is
   received (`SessionContextFactory::receive_client_setup`). It resolves to a

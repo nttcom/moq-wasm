@@ -39,6 +39,7 @@ fn client_endpoint() -> Endpoint<QUIC> {
     Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
+        authorization_token: None,
     })
     .unwrap()
 }

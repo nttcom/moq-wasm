@@ -1,14 +1,15 @@
-use std::sync::atomic::AtomicU64;
-
 use crate::{
-    SessionEvent, TransportProtocol,
+    TransportProtocol,
     modules::moqt::{
         control_plane::{
             constants::{self, MOQ_TRANSPORT_VERSION},
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
-                    client_setup::ClientSetup, parameters::setup_parameters::SetupParameter,
+                    client_setup::ClientSetup,
+                    parameters::{
+                        authorization_token::AuthorizationToken, setup_parameters::SetupParameter,
+                    },
                     server_setup::ServerSetup,
                 },
             },
@@ -17,38 +18,23 @@ use crate::{
             bi_stream_sender::BiStreamSender, received_message::ReceivedMessage,
             stream_receiver::BiStreamReceiver,
         },
-        domains::session_context::SessionContext,
     },
 };
 
 pub(crate) struct SessionContextFactory;
 
 impl SessionContextFactory {
-    pub(crate) async fn client<T: TransportProtocol>(
-        transport_connection: T::Connection,
-        send_stream: T::SendStream,
-        receive_stream: &mut BiStreamReceiver<T>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
-    ) -> anyhow::Result<SessionContext<T>> {
-        let mut send_stream = BiStreamSender::new(send_stream);
-        Self::setup_client(&mut send_stream, receive_stream).await?;
-
-        Ok(SessionContext::new(
-            transport_connection,
-            send_stream,
-            AtomicU64::new(1),
-            event_sender,
-        ))
-    }
-
-    async fn setup_client<T: TransportProtocol>(
+    pub(crate) async fn send_client_setup<T: TransportProtocol>(
         send_stream: &mut BiStreamSender<T>,
-        receive_stream: &mut BiStreamReceiver<T>,
+        authorization_token: Option<&str>,
     ) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
             path: None,
             max_request_id: 1000,
-            authorization_token: vec![],
+            authorization_token: authorization_token
+                .map(AuthorizationToken::use_value_utf8)
+                .into_iter()
+                .collect(),
             max_auth_token_cache_size: None,
             authority: None,
             moq_implementation: Some("MOQ-WASM".to_string()),
@@ -60,7 +46,12 @@ impl SessionContextFactory {
             .await
             .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))?;
         tracing::info!("Sent client setup.");
+        Ok(())
+    }
 
+    pub(crate) async fn receive_server_setup<T: TransportProtocol>(
+        receive_stream: &mut BiStreamReceiver<T>,
+    ) -> anyhow::Result<()> {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
             Ok(None) => {
