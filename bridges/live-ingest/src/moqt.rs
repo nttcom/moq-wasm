@@ -13,7 +13,7 @@ use media_streaming_format::{
 use mediapack::h264::AvcDecoderConfigurationRecord;
 use moqt::{
     ClientConfig, ContentExists, Endpoint, QUIC, Session, SessionEvent, TrackWriter,
-    TransportProtocol, WEBTRANSPORT,
+    TransportProtocol, TransportSendError, WEBTRANSPORT,
 };
 use tokio::sync::Mutex;
 
@@ -37,6 +37,7 @@ struct ManagerState {
 struct BackendState<T: TransportProtocol> {
     announced_namespaces: HashSet<String>,
     tracks: HashMap<(String, String), Option<TrackWriter<T>>>,
+    subscribed_tracks: HashMap<u64, (String, String)>,
     catalogs: HashMap<String, CatalogMetadata>,
     disconnected: bool,
 }
@@ -46,6 +47,7 @@ impl<T: TransportProtocol> Default for BackendState<T> {
         Self {
             announced_namespaces: HashSet::new(),
             tracks: HashMap::new(),
+            subscribed_tracks: HashMap::new(),
             catalogs: HashMap::new(),
             disconnected: false,
         }
@@ -338,6 +340,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                             }
                         };
 
+                        let request_id = handler.request_id();
                         let publication = handler.into_subscription(track_alias);
                         let should_send_catalog = track_name == CATALOG_TRACK_NAME;
                         let writer = TrackWriter::new(
@@ -346,9 +349,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         );
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();
-                        guard
-                            .tracks
-                            .insert((namespace.clone(), track_name.clone()), Some(writer));
+                        let key = (namespace.clone(), track_name.clone());
+                        guard.tracks.insert(key.clone(), Some(writer));
+                        guard.subscribed_tracks.insert(request_id, key);
                         drop(guard);
                         tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
                         if should_send_catalog
@@ -358,7 +361,17 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         }
                     }
                     SessionEvent::Unsubscribe(handler) => {
-                        tracing::info!(request_id = %handler.subscribe_id(), "UNSUBSCRIBE received");
+                        let request_id = handler.subscribe_id();
+                        let mut guard = state.lock().await;
+                        match guard.subscribed_tracks.remove(&request_id) {
+                            Some(key) => {
+                                guard.tracks.remove(&key);
+                                tracing::info!(request_id, namespace = %key.0, track_name = %key.1, "UNSUBSCRIBE received; track released");
+                            }
+                            None => {
+                                tracing::warn!(request_id, "UNSUBSCRIBE for unknown request");
+                            }
+                        }
                     }
                     SessionEvent::UnsubscribeNamespace(handler) => {
                         tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
@@ -432,6 +445,13 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             }
         };
         let result = write_object(&mut writer, rotate_group, payload).await;
+        if let Err(error) = &result
+            && is_stopped_by_peer(error)
+        {
+            tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
+            self.state.lock().await.tracks.remove(&key);
+            return Ok(());
+        }
         if let Some(slot) = self.state.lock().await.tracks.get_mut(&key) {
             *slot = Some(writer);
         }
@@ -690,8 +710,37 @@ fn channel_config_label(channels: u8) -> String {
     }
 }
 
+fn is_stopped_by_peer(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<TransportSendError>(),
+            Some(TransportSendError::Stopped { .. } | TransportSendError::InvalidStopped { .. })
+        )
+    })
+}
+
 pub(crate) fn now_unix() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_stop_sending_through_context_layers() {
+        // Arrange
+        let stopped = anyhow::Error::new(TransportSendError::InvalidStopped { code: 0 })
+            .context("send subgroup object");
+        let lost = anyhow::Error::new(TransportSendError::ConnectionLost {
+            reason: "timeout".into(),
+        })
+        .context("send subgroup object");
+
+        // Act / Assert
+        assert!(is_stopped_by_peer(&stopped));
+        assert!(!is_stopped_by_peer(&lost));
+    }
 }
