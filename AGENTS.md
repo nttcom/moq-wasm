@@ -56,6 +56,7 @@ Application and integration components (draft reference is normally not required
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node scripts/run-media-e2e.mjs`
 - E2E Test (call): `node scripts/run-call-e2e.mjs`
+- E2E Test (auth): `./scripts/auth-e2e.sh`
 - VTS test: `npm --prefix services/vts test`
 - anon-issuer test: `npm --prefix services/anon-issuer test`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
