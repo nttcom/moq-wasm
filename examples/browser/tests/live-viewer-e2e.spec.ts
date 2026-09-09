@@ -1,41 +1,67 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
+import { arrangeLiveViewerE2ESession, type LiveViewerPageModel } from './live-viewer-e2e-arrange'
 
-const PAGE_PATH = '/moq-wasm/examples/live-viewer/index.html'
-const MOQT_URL = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-const NAMESPACE = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? 'live'
-
-test('live viewer plays the ingested stream and switches renditions', async ({ page }) => {
+test('live viewer plays the ingested stream, switches renditions and rewinds', async ({ browser }) => {
   // Arrange
-  await page.goto(`${PAGE_PATH}?moqtUrl=${encodeURIComponent(MOQT_URL)}&trackNamespace=${NAMESPACE}`, {
-    waitUntil: 'domcontentloaded'
-  })
+  const { context, viewer } = await arrangeLiveViewerE2ESession(browser)
 
-  // Act
-  await page.getByTestId('live-viewer-watch-button').click()
+  try {
+    // Act
+    await viewer.watchButton.click()
 
-  // Assert
-  await expect(page.getByTestId('live-viewer-connection-status')).toContainText('Connected:')
-  await expect(page.getByTestId('live-viewer-catalog-status')).toContainText(/Catalog loaded: [1-9]/)
-  await expect(page.getByTestId('live-viewer-playback-status')).toContainText('Playing')
-  await expectVideoPlaying(page)
+    // Assert
+    await expect(viewer.connectionStatus).toContainText('Connected:')
+    await expect(viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
+    await expect(viewer.playbackStatus).toContainText('Playing')
+    await expectVideoDecoded(viewer)
 
-  // Act: 下位画質へ切り替える
-  const select = page.getByTestId('live-viewer-video-track-select')
-  const renditions = await select.locator('option').allInnerTexts()
-  expect(renditions.length).toBeGreaterThan(1)
-  await select.selectOption({ index: 1 })
+    // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
+    await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
+    await viewer.rewind10Button.click()
 
-  // Assert
-  await expect(page.getByTestId('live-viewer-playback-status')).toContainText('video_')
-  await expectVideoPlaying(page)
+    // Assert
+    await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    await expect(viewer.playbackStatus).toContainText('Reviewing')
+    await expect(viewer.reviewCanvas).toBeVisible()
+    await expect
+      .poll(async () => viewer.reviewCanvas.evaluate((element) => (element as HTMLCanvasElement).width), {
+        timeout: 30_000
+      })
+      .toBeGreaterThan(0)
+
+    // Act
+    await viewer.liveButton.click()
+
+    // Assert
+    await expect(viewer.rewindStatus).toContainText('Live')
+    await expect(viewer.video).toBeVisible()
+    await expect(viewer.playbackStatus).toContainText('Playing')
+
+    // Act: 下位画質へ切り替える
+    const renditions = await viewer.videoTrackSelect.locator('option').allInnerTexts()
+    expect(renditions.length).toBeGreaterThan(1)
+    await viewer.videoTrackSelect.selectOption({ index: 1 })
+
+    // Assert: 元の track を解除して rendition を購読し直す
+    await expect(viewer.logPanel).toContainText('unsubscribed video')
+    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p/)
+    await expect(viewer.rewindBuffer).toHaveText('0.0s')
+  } finally {
+    await context.close()
+  }
 })
 
-async function expectVideoPlaying(page: Page): Promise<void> {
-  const video = page.getByTestId('live-viewer-video')
+async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {
   await expect
-    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).readyState), { timeout: 30_000 })
+    .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).readyState), {
+      timeout: 30_000
+    })
     .toBeGreaterThanOrEqual(2)
   await expect
-    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
+    .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
     .toBeGreaterThan(0)
+}
+
+async function parseSeconds(locator: Locator): Promise<number> {
+  return Number.parseFloat((await locator.innerText()).replace('s', ''))
 }

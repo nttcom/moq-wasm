@@ -7,8 +7,13 @@ runs:
     - shell: bash
       run: |
         set -euo pipefail
-        apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        # Container jobs run as root; jobs on the runner host need sudo.
+        privileged=""
+        if [ "$(id -u)" -ne 0 ]; then
+          privileged="sudo"
+        fi
+        $privileged apt-get update
+        $privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
           ffmpeg \
           pkg-config \
           libavutil-dev \

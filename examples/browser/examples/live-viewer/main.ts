@@ -8,9 +8,14 @@ import {
   type MediaCatalogTrack
 } from '../media/catalog'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
+import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
+const TIMELINE_CAPACITY = 64
+const REWIND_GROUP_COUNT = 4n
+const FETCH_IDLE_MS = 400
+const FETCH_DEADLINE_MS = 8_000
 
 type MediaKind = 'video' | 'audio'
 
@@ -35,6 +40,9 @@ let videoWriter: WritableStreamDefaultWriter<VideoFrame> | undefined
 let audioWriter: WritableStreamDefaultWriter<AudioData> | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
+const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+let reviewing = false
+let reviewGeneration = 0
 
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
@@ -42,6 +50,9 @@ element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopS
 element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video'))
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio'))
 element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
+element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
+element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
+element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
 startRendering()
 
 async function watchStream(): Promise<void> {
@@ -59,6 +70,7 @@ async function watchStream(): Promise<void> {
 }
 
 async function stopStream(): Promise<void> {
+  backToLive()
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
@@ -149,6 +161,10 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   }
 
   await unsubscribeTrack(kind)
+  if (kind === 'video') {
+    timeline.reset()
+    setStatusText('rewind-buffer', '0.0s')
+  }
   const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === trackName)
   if (!track) {
     return
@@ -164,7 +180,14 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     const chunk = parseIngestChunk(new Uint8Array(object.objectPayload), object.locHeader)
     if (kind === 'video') {
       videoObjectCount += 1
-      setStatusText('playback-status', `Playing ${trackName}`)
+      timeline.record(groupId, chunk.locHeader)
+      setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
+      if (!reviewing) {
+        setStatusText('playback-status', `Playing ${trackName}`)
+      }
+    }
+    if (reviewing && kind === 'video') {
+      return
     }
     worker.postMessage(
       {
@@ -307,4 +330,139 @@ function element<T extends HTMLElement>(id: string): T {
     throw new Error(`missing element: ${id}`)
   }
   return found as T
+}
+
+async function rewind(seconds: number): Promise<void> {
+  const subscription = subscriptions.get('video')
+  const target = timeline.resolveRewindTarget(seconds)
+  const newestClosed = timeline.newestClosed
+  if (!subscription || !target || !newestClosed) {
+    setStatusText('rewind-status', 'Rewind unavailable: nothing buffered yet')
+    return
+  }
+
+  const endGroup =
+    target.groupId + REWIND_GROUP_COUNT < newestClosed.groupId
+      ? target.groupId + REWIND_GROUP_COUNT
+      : newestClosed.groupId
+
+  const generation = ++reviewGeneration
+  reviewing = true
+  const behind = timeline.secondsBehindLive(target.groupId)
+  setStatusText('rewind-status', `Rewound ${behind.toFixed(1)}s`)
+  setStatusText('playback-status', 'Reviewing')
+  const frames: ReviewFrame[] = []
+  let lastArrival = performance.now()
+  try {
+    await moqtClient.fetch(trackNamespace(), subscription.name, target.groupId, 0n, endGroup, 0n, {
+      onObject: (message) => {
+        if (generation !== reviewGeneration) {
+          return
+        }
+        lastArrival = performance.now()
+        const frame = toReviewFrame(message)
+        if (frame) {
+          frames.push(frame)
+        }
+      }
+    })
+  } catch (error) {
+    backToLive()
+    setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
+    appendLog('error', `fetch: ${getErrorMessage(error)}`)
+    return
+  }
+
+  await waitForFetchIdle(() => lastArrival, generation)
+
+  appendLog('info', `fetched ${frames.length} objects from group ${target.groupId}`)
+  await playReview(sortReviewFrames(frames), generation)
+}
+
+/// FETCH_OK only acknowledges the request. The objects follow on their own
+/// stream and no completion event is surfaced, so wait for the arrivals to go
+/// quiet before replaying them.
+async function waitForFetchIdle(lastArrival: () => number, generation: number): Promise<void> {
+  const deadline = performance.now() + FETCH_DEADLINE_MS
+  while (generation === reviewGeneration && performance.now() < deadline) {
+    if (performance.now() - lastArrival() > FETCH_IDLE_MS) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
+async function playReview(frames: ReviewFrame[], generation: number): Promise<void> {
+  const canvas = element<HTMLCanvasElement>('review')
+  const context = canvas.getContext('2d')
+  const config = pendingReviewConfig()
+  if (frames.length === 0 || !context || !config) {
+    backToLive()
+    setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
+    return
+  }
+
+  element<HTMLVideoElement>('video').hidden = true
+  canvas.hidden = false
+  const decoder = new VideoDecoder({
+    output: (frame) => {
+      if (generation !== reviewGeneration) {
+        frame.close()
+        return
+      }
+      canvas.width = frame.displayWidth
+      canvas.height = frame.displayHeight
+      context.drawImage(frame, 0, 0)
+      frame.close()
+    },
+    error: (error) => appendLog('error', `review decoder: ${error.message}`)
+  })
+  decoder.configure(config)
+
+  const origin = frames[0].captureMicros ?? 0
+  for (const frame of frames) {
+    if (generation !== reviewGeneration) {
+      break
+    }
+    decoder.decode(
+      new EncodedVideoChunk({
+        type: frame.objectId === 0n ? 'key' : 'delta',
+        timestamp: (frame.captureMicros ?? origin) - origin,
+        data: frame.data
+      })
+    )
+    await pace(frame, frames)
+  }
+  await decoder.flush().catch(() => undefined)
+  decoder.close()
+  if (generation === reviewGeneration) {
+    setStatusText('rewind-status', 'Rewind finished')
+  }
+}
+
+function pendingReviewConfig(): VideoDecoderConfig | undefined {
+  const track = videoTracks.find((candidate) => candidate.name === subscriptions.get('video')?.name)
+  if (!track?.codec) {
+    return undefined
+  }
+  return { codec: track.codec, optimizeForLatency: true }
+}
+
+async function pace(frame: ReviewFrame, frames: ReviewFrame[]): Promise<void> {
+  const next = frames[frames.indexOf(frame) + 1]
+  const delayMs =
+    next?.captureMicros !== undefined && frame.captureMicros !== undefined
+      ? (next.captureMicros - frame.captureMicros) / 1_000
+      : 0
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 1_000)))
+  }
+}
+
+function backToLive(): void {
+  reviewGeneration += 1
+  reviewing = false
+  element<HTMLCanvasElement>('review').hidden = true
+  element<HTMLVideoElement>('video').hidden = false
+  setStatusText('rewind-status', 'Live')
 }

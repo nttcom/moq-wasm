@@ -1,4 +1,4 @@
-import { type LocHeader } from './loc'
+import { type LocHeader, readLocHeader } from './loc'
 
 /// The live-ingest bridge prefixes each object with its own metadata:
 /// `[meta_len (u32 BE)][meta JSON][coded data]`. Browser publishers instead send
@@ -35,7 +35,7 @@ export function parseIngestChunk(payload: Uint8Array, locHeader?: LocHeader): In
   const [meta, dataOffset] = metadata
   return {
     data: payload.subarray(dataOffset),
-    locHeader: locHeader ?? buildLocHeaderFromMetadata(meta),
+    locHeader: resolveLocHeader(meta, locHeader),
     codec: meta.codec ?? undefined,
     descriptionBase64: meta.descriptionBase64 ?? undefined,
     sampleRate: meta.sampleRate,
@@ -61,6 +61,15 @@ function readMetadata(payload: Uint8Array): [IngestChunkMetadata, number] | unde
   } catch (_error) {
     return undefined
   }
+}
+
+/// The bridge sends empty extension headers, so the timestamp it packed into
+/// the metadata envelope is the only capture time available.
+function resolveLocHeader(meta: IngestChunkMetadata, locHeader?: LocHeader): LocHeader | undefined {
+  if (readLocHeader(locHeader).captureTimestampMicros !== undefined) {
+    return locHeader
+  }
+  return buildLocHeaderFromMetadata(meta) ?? locHeader
 }
 
 function buildLocHeaderFromMetadata(meta: IngestChunkMetadata): LocHeader | undefined {
