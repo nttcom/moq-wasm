@@ -25,5 +25,6 @@ Without the parameter no token is sent, which is what relays running with
 cannot be reached, connecting fails instead of silently continuing without a
 token.
 
-`anon` tokens only grant namespaces whose first element is `anon`, so use
-namespaces such as `anon/room/main` against an authenticated relay.
+`anon` tokens only grant namespaces whose first element is `anon`, so every
+example defaults to namespaces such as `anon/live/test`; keep that prefix when
+you type your own against an authenticated relay.

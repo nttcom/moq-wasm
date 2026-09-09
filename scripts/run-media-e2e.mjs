@@ -50,7 +50,7 @@ async function main() {
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
-  const namespace = process.env.MEDIA_E2E_NAMESPACE ?? `e2e/${Date.now()}`;
+  const namespace = process.env.MEDIA_E2E_NAMESPACE ?? `anon/e2e/${Date.now()}`;
   const moqtUrl = getDefaultMoqtUrl();
 
   const cleanup = async () => {

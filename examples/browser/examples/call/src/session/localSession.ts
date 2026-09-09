@@ -11,6 +11,7 @@ import { CallMediaController } from '../media/callMediaController'
 import { parseCallCatalogTracks } from '../media/callCatalog'
 import type { CallCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import { resolveAuthToken } from '../../../../utils/auth'
+import { buildNamespacePrefix, buildTrackNamespace, parseTrackNamespace } from './trackNamespace'
 
 interface LocalSessionOptions {
   roomName: string
@@ -78,11 +79,11 @@ export class LocalSession {
   }
 
   get trackNamespace(): string[] {
-    return [this.roomName, this.localMember.name]
+    return buildTrackNamespace(this.roomName, this.localMember.name)
   }
 
   get trackNamespacePrefix(): string[] {
-    return [this.roomName]
+    return buildNamespacePrefix(this.roomName)
   }
 
   setOnPublishNamespaceHandler(handler: ((publishNamespace: PublishNamespaceMessage) => void) | null): void {
@@ -195,7 +196,7 @@ export class LocalSession {
     const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, authInfo)
     const trackAlias = subscribeOk.trackAlias
     this.subscribeTrackAliases.set(requestId, trackAlias)
-    const remoteUser = trackNamespace[1] ?? `alias-${trackAlias.toString()}`
+    const remoteUser = parseTrackNamespace(trackNamespace)?.userName ?? `alias-${trackAlias.toString()}`
 
     const resolvedRole = role ?? this.resolveTrackRole(trackName)
     if (resolvedRole === 'chat') {

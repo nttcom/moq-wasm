@@ -10,7 +10,7 @@ export class PublisherSession {
   readonly namespace: string[]
 
   constructor(location: string, camId: CameraId) {
-    this.namespace = [location, camId]
+    this.namespace = ['anon', location, camId]
     log('created', { namespace: this.namespace })
   }
 

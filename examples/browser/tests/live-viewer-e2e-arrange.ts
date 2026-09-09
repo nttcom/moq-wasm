@@ -2,7 +2,7 @@ import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { LIVE_VIEWER_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? 'live/e2e'
+const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? 'anon/live/e2e'
 
 export const liveViewerE2EConfig = {
   moqtUrl,
