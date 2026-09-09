@@ -163,6 +163,10 @@ One struct owns all cross-task state:
 - `handler/*` — received-message facades handed to the application inside
   `SessionEvent` (e.g. `SubscribeHandler::ok(...)`, `::error(...)`). They keep
   an `Arc<SessionContext>` so responding does not require the `Session`.
+  Namespace-carrying handlers expose the track namespace both as the wire
+  tuple (`track_namespace_tuple`) and as the `/`-joined string
+  (`track_namespace`); the tuple is authoritative because a tuple element may
+  itself contain `/`.
 - `enums.rs` — `SessionEvent<T>` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14

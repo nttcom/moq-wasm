@@ -23,6 +23,7 @@ pub struct PublishHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     pub request_id: u64,
     pub track_namespace: String,
+    pub track_namespace_tuple: Vec<String>,
     pub track_name: String,
     pub track_alias: u64,
     pub group_order: GroupOrder,
@@ -46,6 +47,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
             guard,
             request_id: publish_message.request_id,
             track_namespace: publish_message.track_namespace_tuple.join("/"),
+            track_namespace_tuple: publish_message.track_namespace_tuple,
             track_name: publish_message.track_name,
             track_alias: publish_message.track_alias,
             group_order: publish_message.group_order,
@@ -133,5 +135,43 @@ impl<T: TransportProtocol> PublishHandler<T> {
             .send(ControlMessageType::PublishError, err.encode())
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::PublishOption;
+    use crate::{
+        SessionEvent,
+        modules::test_support::{connect_sessions, spawn_dual_server},
+    };
+
+    #[tokio::test]
+    async fn exposes_track_namespace_as_tuple_and_joined_string() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("publish-handler-namespace");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .publisher()
+                .publish(
+                    "a/b/c".to_string(),
+                    "track".to_string(),
+                    PublishOption::default(),
+                )
+                .await
+        });
+
+        // Act
+        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH from the client");
+        };
+
+        // Assert
+        assert_eq!(handler.track_namespace_tuple, vec!["a", "b", "c"]);
+        assert_eq!(handler.track_namespace, "a/b/c");
+        request.abort();
     }
 }
