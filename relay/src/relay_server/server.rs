@@ -3,23 +3,34 @@ use std::sync::Arc;
 use moqt::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::relay_server::{runtime::RelayRuntime, store::RelayStore};
+use crate::relay_server::{
+    runtime::{CascadingDeps, RelayRuntime},
+    store::RelayStore,
+};
 use crate::{
     RelayConfig,
     modules::{
+        auth::session_authenticator::SessionAuthenticator,
         route_registry::{
             NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
             RouteStatus,
         },
         session_event::SessionEvent,
-        session_handler::SessionHandler,
+        session_handler::{SessionHandler, SessionIntake},
         session_repository::{SessionPeer, SessionRepository},
     },
 };
 
+struct RelayServerDeps {
+    route_registry: Arc<dyn RelayRouteRegistry>,
+    authenticator: SessionAuthenticator,
+    relay_token: Option<String>,
+}
+
 pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     sender: UnboundedSender<SessionEvent>,
+    authenticator: Arc<SessionAuthenticator>,
     _store: Arc<RelayStore>,
     _runtime: RelayRuntime,
     key_path: String,
@@ -27,9 +38,16 @@ pub struct RelayServer {
 }
 
 impl RelayServer {
-    pub fn new(key_path: &str, cert_path: &str) -> Self {
-        let route_registry: Arc<dyn RelayRouteRegistry> = Arc::new(NoopRelayRouteRegistry);
-        Self::new_with_route_registry(key_path, cert_path, route_registry)
+    pub fn new_unauthenticated(key_path: &str, cert_path: &str) -> Self {
+        Self::new_with_deps(
+            key_path,
+            cert_path,
+            RelayServerDeps {
+                route_registry: Arc::new(NoopRelayRouteRegistry),
+                authenticator: SessionAuthenticator::Disabled,
+                relay_token: None,
+            },
+        )
     }
 
     pub async fn new_with_config(
@@ -49,25 +67,39 @@ impl RelayServer {
         } else {
             Arc::new(NoopRelayRouteRegistry)
         };
-        Ok(Self::new_with_route_registry(
+        let authenticator = SessionAuthenticator::from_config(&config.auth)?;
+        Ok(Self::new_with_deps(
             key_path,
             cert_path,
-            route_registry,
+            RelayServerDeps {
+                route_registry,
+                authenticator,
+                relay_token: config.auth.relay_token(),
+            },
         ))
     }
 
-    fn new_with_route_registry(
-        key_path: &str,
-        cert_path: &str,
-        route_registry: Arc<dyn RelayRouteRegistry>,
-    ) -> Self {
+    fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
+        let RelayServerDeps {
+            route_registry,
+            authenticator,
+            relay_token,
+        } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
         let store = RelayStore::new();
-        let (sender, runtime) = RelayRuntime::new(repo.clone(), &store, route_registry);
+        let (sender, runtime) = RelayRuntime::new(
+            repo.clone(),
+            &store,
+            CascadingDeps {
+                route_registry,
+                relay_token,
+            },
+        );
 
         Self {
             repo,
             sender,
+            authenticator: Arc::new(authenticator),
             _store: store,
             _runtime: runtime,
             key_path: key_path.to_string(),
@@ -90,9 +122,12 @@ impl RelayServer {
 
         SessionHandler::run::<T>(
             server_config,
-            self.repo.clone(),
-            self.sender.clone(),
-            accepted_peer,
+            SessionIntake {
+                repo: self.repo.clone(),
+                relay_session_event_sender: self.sender.clone(),
+                accepted_peer,
+                authenticator: self.authenticator.clone(),
+            },
         )
     }
 

@@ -15,7 +15,7 @@ export function registerSignalHandlers(cleanup) {
 export function spawnProcess(label, command, args, options) {
   const child = spawn(command, args, {
     cwd: options.cwd,
-    env: process.env,
+    env: options.env ?? process.env,
     detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });

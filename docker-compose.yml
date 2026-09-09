@@ -38,6 +38,7 @@ services:
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
+      AUTH_DISABLED: ${AUTH_DISABLED:-true}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
@@ -64,6 +65,7 @@ services:
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
+      AUTH_DISABLED: ${AUTH_DISABLED:-true}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}

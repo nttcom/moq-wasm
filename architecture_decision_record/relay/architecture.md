@@ -17,7 +17,10 @@ optionally cascades across relays via a Redis-backed route registry.
 2. Generate self-signed certs under `relay/keys/` if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PORT` (default 4433), `RELAY_INNER_PORT` (default port+1),
-   `REDIS_URL` (optional).
+   `REDIS_URL` (optional), and the authentication mode (`AuthConfig`):
+   `AUTH_VTS_URL` + `AUTH_RELAY_TOKEN` enable token verification;
+   otherwise `AUTH_DISABLED=true` must be set explicitly or startup fails.
+   `AUTH_VTS_URL` wins when both are present.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
@@ -36,10 +39,22 @@ optionally cascades across relays via a Redis-backed route registry.
 ## Control plane
 
 ### Session intake
-`SessionHandler` runs one accept loop per endpoint. Each accepted `moqt`
-session is boxed as `dyn core::session::Session` and added to
-`SessionRepository` tagged with a `SessionPeer` (`Client` or
-`Relay { relay_id }`) — the peer kind of the endpoint it arrived on.
+`SessionHandler` runs one accept loop per endpoint and hands every accepted
+transport connection to a per-connection task owned by `SessionIntake`:
+
+1. await the `moqt::Accepting` future → `Handshake` (CLIENT_SETUP received,
+   SERVER_SETUP not yet sent);
+2. `SessionAuthenticator::authenticate(client_setup, accepted_peer)` — in
+   `Disabled` mode this yields `VerifiedToken::full_access()`; in `Enabled`
+   mode it extracts the JWT, calls the `TokenVerifier`, and checks that
+   `is_relay` matches the endpoint (client port ⇔ `false`, inner port ⇔
+   `true`). Failures call `Handshake::reject` with `UNAUTHORIZED` (missing or
+   rejected token, endpoint mismatch) or `INTERNAL_ERROR` (VTS unreachable);
+3. `Handshake::accept()` sends SERVER_SETUP;
+4. the session is boxed as `dyn core::session::Session` and added to
+   `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`
+   or `Relay { relay_id }` — the endpoint it arrived on) and its
+   `VerifiedToken`, which later requests are authorized against.
 
 ### `modules/core` — transport-erased `moqt` facade
 The relay never handles `moqt::Session<T>` generically beyond intake. `core`
@@ -140,8 +155,8 @@ from `TrackCache` over a new uni stream.
 
 ## Authentication and authorization (`modules/auth`)
 
-Pure building blocks; wiring into session intake and the event pipeline is
-described in the sections above once connected.
+Building blocks; the session intake wiring is described above, the
+per-request authorization gate under "Event pipeline".
 
 - `verified_token.rs` — `VerifiedToken`, the claims returned by the Verify
   Token Service (VTS): `app_id`, optional `publish` / `subscribe` namespace
@@ -160,6 +175,9 @@ described in the sections above once connected.
 - `vts_token_verifier.rs` — `reqwest` implementation: `POST {AUTH_VTS_URL}`
   with `{"token"}`; 200 → `VerifiedToken`, 401 → `Unauthorized`, anything
   else or a transport error → `Unavailable`. 3 s timeout.
+- `session_authenticator.rs` — `SessionAuthenticator::{Disabled, Enabled}`
+  built from `AuthConfig`; combines the pieces above into the CLIENT_SETUP
+  decision described under "Session intake".
 
 ## Data plane
 
@@ -278,9 +296,11 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   `SubscribeNamespace` registers the subscriber route when the first client
   subscriber for a prefix appears.
 - `InterRelayConnectionManager` lazily dials the remote relay's inner endpoint
-  over raw QUIC (`moqt::QUIC`, certificate verification disabled) and
-  registers the session as `SessionPeer::Relay`, reusing it afterwards. From
-  then on the remote relay behaves like any upstream publisher session.
+  over raw QUIC (`moqt::QUIC`, certificate verification disabled), presenting
+  this relay's own JWT (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
+  session as `SessionPeer::Relay` with `VerifiedToken::full_access()`, reusing
+  it afterwards. From then on the remote relay behaves like any upstream
+  publisher session.
 
 ## Key invariants
 

@@ -11,6 +11,18 @@ pub(crate) struct VerifiedToken {
     pub(crate) expires_at: Option<SystemTime>,
 }
 
+impl VerifiedToken {
+    pub(crate) fn full_access() -> Self {
+        Self {
+            app_id: String::new(),
+            publish: Some(vec![]),
+            subscribe: Some(vec![]),
+            is_relay: true,
+            expires_at: None,
+        }
+    }
+}
+
 pub(crate) fn parse_namespace_path(claim: &str) -> NamespacePath {
     if claim.is_empty() {
         return vec![];

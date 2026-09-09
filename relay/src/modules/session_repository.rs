@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use tracing::{Instrument, Span};
 
 use crate::modules::{
+    auth::verified_token::VerifiedToken,
     core::{
         publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
         subscriber::Subscriber,
@@ -18,6 +19,15 @@ pub(crate) struct SessionRepository {
     sessions: DashMap<SessionId, Arc<dyn Session>>,
     session_spans: DashMap<SessionId, Span>,
     session_peers: DashMap<SessionId, SessionPeer>,
+    session_tokens: DashMap<SessionId, Arc<VerifiedToken>>,
+}
+
+pub(crate) struct NewSession {
+    pub(crate) session_id: SessionId,
+    pub(crate) session: Box<dyn Session>,
+    pub(crate) session_span: Span,
+    pub(crate) peer: SessionPeer,
+    pub(crate) verified_token: VerifiedToken,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,57 +229,35 @@ impl SessionRepository {
             sessions: DashMap::new(),
             session_spans: DashMap::new(),
             session_peers: DashMap::new(),
+            session_tokens: DashMap::new(),
         }
     }
 
-    pub(crate) async fn add_client(
+    pub(crate) async fn add(
         &mut self,
-        session_id: SessionId,
-        session: Box<dyn Session>,
+        new_session: NewSession,
         relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
     ) {
-        self.add_with_peer(
+        let NewSession {
             session_id,
             session,
-            relay_session_event_sender,
             session_span,
-            SessionPeer::Client,
-        )
-        .await;
-    }
-
-    pub(crate) async fn add_relay(
-        &mut self,
-        session_id: SessionId,
-        session: Box<dyn Session>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
-        relay_id: Option<String>,
-    ) {
-        self.add_with_peer(
-            session_id,
-            session,
-            relay_session_event_sender,
-            session_span,
-            SessionPeer::Relay { relay_id },
-        )
-        .await;
-    }
-
-    async fn add_with_peer(
-        &mut self,
-        session_id: SessionId,
-        session: Box<dyn Session>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
-        peer: SessionPeer,
-    ) {
+            peer,
+            verified_token,
+        } = new_session;
         let arc_session: Arc<dyn Session> = Arc::from(session);
-        tracing::info!(session_id = %session_id, peer = ?peer, "session peer classified");
+        tracing::info!(
+            session_id = %session_id,
+            peer = ?peer,
+            app_id = %verified_token.app_id,
+            is_relay = verified_token.is_relay,
+            "session peer classified"
+        );
         self.sessions.insert(session_id, arc_session.clone());
         self.session_spans.insert(session_id, session_span.clone());
         self.session_peers.insert(session_id, peer);
+        self.session_tokens
+            .insert(session_id, Arc::new(verified_token));
         self.start_session_event_forwarding(
             session_id,
             Arc::downgrade(&arc_session),
@@ -282,6 +270,7 @@ impl SessionRepository {
         let session_removed = self.sessions.remove(&session_id).is_some();
         let session_span_removed = self.session_spans.remove(&session_id).is_some();
         let session_peer_removed = self.session_peers.remove(&session_id).is_some();
+        self.session_tokens.remove(&session_id);
         self.session_event_forward_task_registry.remove(&session_id);
         tracing::info!(
             session_id = %session_id,
@@ -305,6 +294,13 @@ impl SessionRepository {
         self.session_peers
             .get(&session_id)
             .map(|peer| peer.value().clone())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn verified_token(&self, session_id: SessionId) -> Option<Arc<VerifiedToken>> {
+        self.session_tokens
+            .get(&session_id)
+            .map(|token| token.value().clone())
     }
 
     pub(crate) fn is_client_session(&self, session_id: SessionId) -> bool {
@@ -396,7 +392,24 @@ impl SessionRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::core::mocks::session_repository_with_upstream_session;
+    use crate::modules::{
+        auth::verified_token::VerifiedToken, core::mocks::session_repository_with_upstream_session,
+    };
+
+    #[tokio::test]
+    async fn verified_token_is_kept_until_the_session_is_removed() {
+        // Arrange
+        let (repository, _recorded) = session_repository_with_upstream_session(7).await;
+
+        // Act
+        let stored = repository.lock().await.verified_token(7);
+        repository.lock().await.remove(7);
+        let after_remove = repository.lock().await.verified_token(7);
+
+        // Assert
+        assert_eq!(stored.as_deref(), Some(&VerifiedToken::full_access()));
+        assert!(after_remove.is_none());
+    }
 
     #[tokio::test]
     async fn close_with_protocol_violation_reaches_the_session() {

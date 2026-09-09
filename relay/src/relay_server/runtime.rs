@@ -16,6 +16,11 @@ use crate::modules::{
 };
 use crate::relay_server::store::RelayStore;
 
+pub(crate) struct CascadingDeps {
+    pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
+    pub(crate) relay_token: Option<String>,
+}
+
 pub(crate) struct RelayRuntime {
     _ingress: IngressCoordinator,
     _egress: EgressCoordinator,
@@ -27,12 +32,17 @@ impl RelayRuntime {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         store: &Arc<RelayStore>,
-        route_registry: Arc<dyn RelayRouteRegistry>,
+        cascading: CascadingDeps,
     ) -> (UnboundedSender<SessionEvent>, Self) {
+        let CascadingDeps {
+            route_registry,
+            relay_token,
+        } = cascading;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
         let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
             repo.clone(),
             sender.clone(),
+            relay_token,
         ));
         let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
             route_registry.clone(),

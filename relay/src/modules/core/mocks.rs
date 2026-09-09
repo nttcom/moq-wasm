@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::modules::{
+    auth::verified_token::VerifiedToken,
     core::{
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
         handler::publish::SubscribeOption,
@@ -10,7 +11,7 @@ use crate::modules::{
         subscriber::Subscriber,
         subscription::UpstreamSubscription,
     },
-    session_repository::SessionRepository,
+    session_repository::{NewSession, SessionPeer, SessionRepository},
     types::SessionId,
 };
 
@@ -35,13 +36,17 @@ pub(crate) async fn session_repository_with_upstream_session(
     let mut repository = SessionRepository::new();
     let (session_event_sender, _session_event_receiver) = tokio::sync::mpsc::unbounded_channel();
     repository
-        .add_client(
-            session_id,
-            Box::new(MockUpstreamSession {
-                recorded: recorded.clone(),
-            }),
+        .add(
+            NewSession {
+                session_id,
+                session: Box::new(MockUpstreamSession {
+                    recorded: recorded.clone(),
+                }),
+                session_span: tracing::Span::none(),
+                peer: SessionPeer::Client,
+                verified_token: VerifiedToken::full_access(),
+            },
             session_event_sender,
-            tracing::Span::none(),
         )
         .await;
     (Arc::new(tokio::sync::Mutex::new(repository)), recorded)

@@ -589,6 +589,7 @@ impl Subscribe {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::auth::verified_token::VerifiedToken;
     use crate::modules::core::{
         data_receiver::fetch_receiver::UpstreamFetchReceiver,
         data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
@@ -602,7 +603,7 @@ mod tests {
     use crate::modules::sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
     };
-    use crate::modules::session_repository::SessionRepository;
+    use crate::modules::session_repository::{NewSession, SessionPeer, SessionRepository};
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);
@@ -761,16 +762,20 @@ mod tests {
         let (session_event_sender, _session_event_receiver) =
             tokio::sync::mpsc::unbounded_channel();
         repository
-            .add_client(
-                PUBLISHER_SESSION,
-                Box::new(MockUpstreamSession {
-                    cache_store: cache_store.clone(),
-                    track_key: track_key.clone(),
-                    content_exists,
-                    bursts_on_subscribe,
-                }),
+            .add(
+                NewSession {
+                    session_id: PUBLISHER_SESSION,
+                    session: Box::new(MockUpstreamSession {
+                        cache_store: cache_store.clone(),
+                        track_key: track_key.clone(),
+                        content_exists,
+                        bursts_on_subscribe,
+                    }),
+                    session_span: tracing::Span::none(),
+                    peer: SessionPeer::Client,
+                    verified_token: VerifiedToken::full_access(),
+                },
                 session_event_sender.clone(),
-                tracing::Span::none(),
             )
             .await;
         let repository = Arc::new(tokio::sync::Mutex::new(repository));
@@ -782,6 +787,7 @@ mod tests {
             Arc::new(InterRelayConnectionManager::new(
                 repository.clone(),
                 session_event_sender,
+                None,
             )),
         );
         let serializer = UpstreamCreationSerializer::new();

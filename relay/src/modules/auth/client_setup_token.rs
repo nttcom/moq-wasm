@@ -35,23 +35,10 @@ pub(crate) fn extract_token(client_setup: &ClientSetup) -> Result<String, SetupT
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use moqt::wire::{AuthorizationToken, ClientSetup, SetupParameter};
+    use moqt::wire::AuthorizationToken;
 
     use super::{SetupTokenError, extract_token};
-
-    fn client_setup(authorization_token: Vec<AuthorizationToken>) -> ClientSetup {
-        ClientSetup::new(
-            vec![moqt::wire::MOQ_TRANSPORT_VERSION],
-            SetupParameter {
-                path: None,
-                max_request_id: 1,
-                authorization_token,
-                max_auth_token_cache_size: None,
-                authority: None,
-                moq_implementation: None,
-            },
-        )
-    }
+    use crate::modules::auth::test_support::client_setup;
 
     #[test]
     fn use_value_token_of_type_zero_is_returned_as_string() {

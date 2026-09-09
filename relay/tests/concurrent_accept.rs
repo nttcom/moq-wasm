@@ -52,7 +52,7 @@ async fn slow_client_setup_does_not_block_new_connections() {
     let cert_dir = std::env::temp_dir().join(format!("relay-concurrent-accept-{port}"));
     let (key_path, cert_path) = generate_certs(&cert_dir);
 
-    let server = RelayServer::new(&key_path, &cert_path);
+    let server = RelayServer::new_unauthenticated(&key_path, &cert_path);
     // Keep the handler alive for the duration of the test (Drop aborts it).
     let _handler = server.spawn_client_transport::<QUIC>(port);
 
