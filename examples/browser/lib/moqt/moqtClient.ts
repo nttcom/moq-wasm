@@ -24,7 +24,7 @@ import {
 type SetupResolver = ((value: void) => void) | null
 type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
 type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
-type FetchResponseHandler = ((response: FetchOkMessage | RequestErrorMessage) => void) | null
+type PendingFetchResolver = { resolve: (response: FetchOkMessage) => void; reject: (error: Error) => void }
 type FetchObjectHandler = ((message: FetchObjectMessage) => void) | null
 type SubscribeResponseHandler = ((response: SubscribeOkMessage | RequestErrorMessage) => void) | null
 type NamespaceResponseHandler = ((response: NamespaceOkMessage | RequestErrorMessage) => void) | null
@@ -125,12 +125,12 @@ export class MoqtClientWrapper {
   private onObjectDatagramHandler: ObjectDatagramHandler = null
   private onObjectDatagramStatusHandler: ObjectDatagramStatusHandler = null
   private onSubgroupHeaderHandler: SubgroupHeaderHandler = null
-  private onFetchResponseHandler: FetchResponseHandler = null
   private readonly fetchObjectHandlers = new Map<bigint, FetchObjectHandler>()
   private readonly subscriptionState: SubscriptionStateStore
   private readonly pendingPublishNamespace = new Map<bigint, PendingVoidResolver>()
   private readonly pendingSubscribeNamespace = new Map<bigint, PendingVoidResolver>()
   private readonly pendingSubscribe = new Map<bigint, PendingSubscribeResolver>()
+  private readonly pendingFetch = new Map<bigint, PendingFetchResolver>()
   private readonly subscriptionTrackAliases = new Map<bigint, bigint>()
   private nextRequestId = 0n
 
@@ -353,7 +353,7 @@ export class MoqtClientWrapper {
     if (options.onObject) {
       this.setOnFetchObjectHandler(requestId, options.onObject)
     }
-    const response = this.awaitFetchOk()
+    const response = this.awaitFetchResponse(requestId)
     try {
       await client.sendFetch(requestId, trackNamespace, trackName, startGroupId, startObjectId, endGroupId, endObjectId)
       const fetchOk = await response
@@ -362,6 +362,7 @@ export class MoqtClientWrapper {
       if (options.onObject) {
         this.clearFetchObjectHandler(requestId)
       }
+      this.pendingFetch.delete(requestId)
       throw error
     }
   }
@@ -376,7 +377,7 @@ export class MoqtClientWrapper {
     if (options.onObject) {
       this.setOnFetchObjectHandler(requestId, options.onObject)
     }
-    const response = this.awaitFetchOk()
+    const response = this.awaitFetchResponse(requestId)
     try {
       await client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart)
       const fetchOk = await response
@@ -385,20 +386,14 @@ export class MoqtClientWrapper {
       if (options.onObject) {
         this.clearFetchObjectHandler(requestId)
       }
+      this.pendingFetch.delete(requestId)
       throw error
     }
   }
 
-  private awaitFetchOk(): Promise<FetchOkMessage> {
+  private awaitFetchResponse(requestId: bigint): Promise<FetchOkMessage> {
     return new Promise<FetchOkMessage>((resolve, reject) => {
-      this.onFetchResponseHandler = (msg) => {
-        this.onFetchResponseHandler = null
-        if (msg instanceof FetchOkMessage) {
-          resolve(msg)
-        } else {
-          reject(new Error(`FETCH_ERROR: ${(msg as RequestErrorMessage).reasonPhrase}`))
-        }
-      }
+      this.pendingFetch.set(requestId, { resolve, reject })
     })
   }
 
@@ -561,7 +556,16 @@ export class MoqtClientWrapper {
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
     })
     this.client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
-      this.onFetchResponseHandler?.(response)
+      const pending = this.pendingFetch.get(response.requestId)
+      if (!pending) {
+        return
+      }
+      this.pendingFetch.delete(response.requestId)
+      if (isRequestError(response)) {
+        pending.reject(new Error(`FETCH_ERROR ${response.errorCode}: ${response.reasonPhrase}`))
+      } else {
+        pending.resolve(response)
+      }
     })
     this.client.onFetchObject((message: FetchObjectMessage) => {
       const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
@@ -614,6 +618,7 @@ export class MoqtClientWrapper {
     this.pendingPublishNamespace.clear()
     this.pendingSubscribeNamespace.clear()
     this.pendingSubscribe.clear()
+    this.pendingFetch.clear()
     this.subscriptionTrackAliases.clear()
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
