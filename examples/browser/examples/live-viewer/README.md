@@ -45,6 +45,20 @@ LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
 ```
 
+## Packaging
+
+The gear menu selects how the media tracks are received. `LOC` subscribes to
+the `loc` tracks and decodes them with WebCodecs into a MediaStream; `CMAF`
+subscribes to the `_cmaf` siblings the bridge publishes alongside them
+(draft-ietf-moq-cmsf-01) and feeds their fragments to a MediaSource on the
+same video element, with the init segment taken from the catalog `initData`.
+Switching packaging re-subscribes both tracks at the current quality.
+
+In CMAF mode the seek bar and rewind targets are built from the MSF media
+timeline, because CMAF objects carry no LOC capture timestamp, and review
+playback appends the fetched fragments to a fresh MediaSource instead of
+drawing them on the canvas. Review plays video only in either mode.
+
 ## Player controls
 
 The seek bar, the rewind buttons and the quality menu sit on the video itself

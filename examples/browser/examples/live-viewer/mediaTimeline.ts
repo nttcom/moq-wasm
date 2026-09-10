@@ -62,8 +62,8 @@ export class MediaTimeline {
     this.records = []
   }
 
-  entries(): readonly MediaTimelineRecord[] {
-    return this.records
+  encodedAtMsFor(groupId: bigint): number | undefined {
+    return this.records.find((record) => record.groupId === groupId)?.encodedAtMs
   }
 
   /// Presentation times are measured from the start of the broadcast, so any
