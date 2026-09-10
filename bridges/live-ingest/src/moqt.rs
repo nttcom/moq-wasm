@@ -603,15 +603,6 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         AUDIO_TRACK_NAME.to_string(),
     ]);
 
-    let media_tracks = Some(
-        metadata
-            .video_tracks
-            .keys()
-            .cloned()
-            .chain([AUDIO_TRACK_NAME.to_string()])
-            .collect(),
-    );
-
     let alt_group = (metadata.video_tracks.len() > 1).then_some(1);
     let mut tracks: Vec<Track> = metadata
         .video_tracks
@@ -690,7 +681,7 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             render_group: None,
             alt_group: None,
             init_data: None,
-            depends: media_tracks,
+            depends: Some(vec![VIDEO_TRACK_NAME.to_string()]),
             temporal_id: None,
             spatial_id: None,
             codec: None,
