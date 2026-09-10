@@ -167,8 +167,8 @@ async function subscribeCatalog(): Promise<void> {
 async function applyCatalog(payload: string): Promise<void> {
   try {
     const catalog = parse_msf_catalog_json(payload)
-    videoTracks = extractCatalogVideoTracks(catalog)
-    audioTracks = extractCatalogAudioTracks(catalog)
+    videoTracks = extractCatalogVideoTracks(catalog).filter(isLocTrack)
+    audioTracks = extractCatalogAudioTracks(catalog).filter(isLocTrack)
     setStatusText('catalog-status', `Catalog loaded: ${videoTracks.length} video / ${audioTracks.length} audio`)
     const changed = renderTrackOptions()
     await subscribeMediaTimeline(catalog)
@@ -206,6 +206,12 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
     renderSeekbar()
   })
   appendLog('info', `subscribed ${trackNamespace().join('/')}/${track.name}`)
+}
+
+/// The bridge lists a CMAF sibling next to every LOC track; the WebCodecs
+/// decoders below only take the LOC ones.
+function isLocTrack(track: MediaCatalogTrack): boolean {
+  return track.packaging !== 'cmaf'
 }
 
 function renderTrackOptions(): boolean {
