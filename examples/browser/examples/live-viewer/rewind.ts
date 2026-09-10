@@ -20,13 +20,16 @@ export class GroupTimeline {
   constructor(private readonly capacity: number) {}
 
   record(groupId: bigint, locHeader?: LocHeader): void {
-    this.joinGroupId ??= groupId
-    if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
-      return
-    }
-
     const captureMicros = readLocHeader(locHeader).captureTimestampMicros
     if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
+      return
+    }
+    this.recordCapture(groupId, captureMicros)
+  }
+
+  recordCapture(groupId: bigint, captureMicros: number): void {
+    this.joinGroupId ??= groupId
+    if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
       return
     }
 
