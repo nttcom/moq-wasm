@@ -29,7 +29,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert: 軸は配信開始から始まり、FETCH できる区間はその一部として示される
     await expect(viewer.seekStart).toHaveText(/^0:0\d$/)
     const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
-      offset: Number.parseFloat((element as HTMLElement).style.marginLeft),
+      offset: Number.parseFloat((element as HTMLElement).style.left),
       width: Number.parseFloat((element as HTMLElement).style.width)
     }))
     expect(replayable.offset).toBeGreaterThan(0)
@@ -55,11 +55,18 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     const [atPosition, broadcast] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
     expect(atPosition).toBeLessThan(broadcast)
 
+    const thumbBefore = await thumbValue(viewer)
+    const playedBefore = await playedWidth(viewer)
+
     // Assert: 1 ウィンドウ分 (4 group = 8 秒) を超えて再生が続く
     await expect
       .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 30_000 })
       .toBeGreaterThan(atPosition + 9)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects/)
+
+    // Assert: つまみはシークした位置に留まり、再生の進みは塗りが表す
+    expect(await thumbValue(viewer)).toBeCloseTo(thumbBefore, 1)
+    expect(await playedWidth(viewer)).toBeGreaterThan(playedBefore)
 
     // Act
     await viewer.seekbar.press('End')
@@ -143,4 +150,12 @@ function parseClock(text: string): number {
 
 function elapsedAtPosition(seekElapsed: string): number {
   return parseClock(seekElapsed.split(' / ')[0])
+}
+
+async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {
+  return viewer.seekbar.evaluate((element) => (element as HTMLInputElement).valueAsNumber)
+}
+
+async function playedWidth(viewer: LiveViewerPageModel): Promise<number> {
+  return viewer.seekReviewProgress.evaluate((element) => Number.parseFloat((element as HTMLElement).style.width))
 }
