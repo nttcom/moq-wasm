@@ -45,6 +45,17 @@ LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
 ```
 
+## Player controls
+
+The seek bar, the rewind buttons and the quality menu sit on the video itself
+rather than in their own cards. The gear opens the video and audio track
+selection along with the jitter buffer switch, and closes on a second click, on
+Escape, or on a click outside it.
+
+The `LIVE` button returns to the live edge. It is translucent with a red dot
+while playback is live and filled while playback is behind the live edge, so the
+button doubles as the indicator for which of the two the viewer is watching.
+
 ## Seek bar
 
 The slider below the video spans the whole broadcast: its left end is the start,

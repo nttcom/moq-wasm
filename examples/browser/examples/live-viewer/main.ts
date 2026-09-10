@@ -67,6 +67,18 @@ element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', app
 element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
 element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
+element<HTMLButtonElement>('qualityBtn').addEventListener('click', () => toggleQualityMenu())
+document.addEventListener('click', (event) => {
+  const quality = element<HTMLDivElement>('quality-menu').parentElement
+  if (quality && !quality.contains(event.target as Node)) {
+    toggleQualityMenu(false)
+  }
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    toggleQualityMenu(false)
+  }
+})
 seekbar.addEventListener('input', () => {
   seeking = true
   renderSeekPosition(seekbar.valueAsNumber, Number(seekbar.max))
@@ -588,8 +600,16 @@ function backToLive(): void {
 /// The axis runs from the start of the broadcast, which the media timeline
 /// places, so the bar keeps its meaning as cache retention grows. Until the
 /// first timeline object arrives it falls back to the replayable window.
+function toggleQualityMenu(open?: boolean): void {
+  const menu = element<HTMLDivElement>('quality-menu')
+  const expanded = open ?? menu.hidden
+  menu.hidden = !expanded
+  element<HTMLButtonElement>('qualityBtn').setAttribute('aria-expanded', String(expanded))
+}
+
 function renderSeekbar(): void {
   setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
+  element<HTMLButtonElement>('liveBtn').classList.toggle('reviewing', reviewing)
   if (seeking) {
     return
   }
