@@ -63,6 +63,10 @@ impl<T: TransportProtocol> TrackWriter<T> {
         self.next_group_id - self.first_group_id
     }
 
+    pub fn current_group_id(&self) -> Option<u64> {
+        self.group.as_ref().map(|_| self.next_group_id - 1)
+    }
+
     async fn finish_current_group(&mut self) -> anyhow::Result<()> {
         match self.group.take() {
             Some(group) => group.finish().await,
@@ -158,12 +162,14 @@ mod tests {
             .write(Bytes::from_static(b"without"), vec![])
             .await
             .unwrap();
+        let current_group_id = writer.current_group_id();
         writer.finish().await.unwrap();
         let mut reader = subscribed_track_reader(&server, &accepted).await;
         let first = reader.next_object().await.unwrap().unwrap();
         let second = reader.next_object().await.unwrap().unwrap();
 
         // Assert
+        assert_eq!(current_group_id, Some(7));
         assert_eq!((first.group_id, first.object_id), (7, 0));
         assert_eq!(first.payload, Bytes::from_static(b"with"));
         assert_eq!(
