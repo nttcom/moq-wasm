@@ -41,17 +41,31 @@ impl<T: TransportProtocol> TrackWriter<T> {
         payload: Bytes,
         immutable_extensions: Vec<Bytes>,
     ) -> anyhow::Result<()> {
+        self.write_with_extension_headers(
+            payload,
+            ExtensionHeaders::from_immutable_extensions(immutable_extensions),
+        )
+        .await
+    }
+
+    pub async fn write_with_extension_headers(
+        &mut self,
+        payload: Bytes,
+        extension_headers: ExtensionHeaders,
+    ) -> anyhow::Result<()> {
         self.group
             .as_mut()
             .context("write before start_group")?
-            .write_object(payload, immutable_extensions)
+            .write_object(payload, extension_headers)
             .await
     }
 
     pub async fn write_group(&mut self, payload: Bytes) -> anyhow::Result<()> {
         self.finish_current_group().await?;
         let mut group = self.open_group().await?;
-        group.write_object(payload, vec![]).await?;
+        group
+            .write_object(payload, ExtensionHeaders::default())
+            .await?;
         group.finish().await
     }
 
@@ -97,9 +111,8 @@ impl<T: TransportProtocol> GroupSender<T> {
     async fn write_object(
         &mut self,
         payload: Bytes,
-        immutable_extensions: Vec<Bytes>,
+        extension_headers: ExtensionHeaders,
     ) -> anyhow::Result<()> {
-        let extension_headers = ExtensionHeaders::from_immutable_extensions(immutable_extensions);
         let field = self.sender.create_object_field(
             0,
             extension_headers,
@@ -124,7 +137,7 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        PublishOption, TrackWriter,
+        ExtensionHeaders, KeyValuePair, PublishOption, TrackWriter, VariantType,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
             subscribed_track_reader,
@@ -162,11 +175,22 @@ mod tests {
             .write(Bytes::from_static(b"without"), vec![])
             .await
             .unwrap();
+        writer
+            .write_with_extension_headers(
+                Bytes::from_static(b"keyed"),
+                ExtensionHeaders::new(vec![KeyValuePair {
+                    key: 2,
+                    value: VariantType::Even(42),
+                }]),
+            )
+            .await
+            .unwrap();
         let current_group_id = writer.current_group_id();
         writer.finish().await.unwrap();
         let mut reader = subscribed_track_reader(&server, &accepted).await;
         let first = reader.next_object().await.unwrap().unwrap();
         let second = reader.next_object().await.unwrap().unwrap();
+        let third = reader.next_object().await.unwrap().unwrap();
 
         // Assert
         assert_eq!(current_group_id, Some(7));
@@ -179,5 +203,13 @@ mod tests {
         assert_eq!((second.group_id, second.object_id), (7, 1));
         assert_eq!(second.payload, Bytes::from_static(b"without"));
         assert!(second.extension_headers.immutable_extensions().is_empty());
+        assert_eq!((third.group_id, third.object_id), (7, 2));
+        assert_eq!(
+            third.extension_headers.key_value_pairs,
+            vec![KeyValuePair {
+                key: 2,
+                value: VariantType::Even(42),
+            }]
+        );
     }
 }

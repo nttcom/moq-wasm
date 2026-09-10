@@ -5,15 +5,16 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use base64::{Engine, engine::general_purpose};
 use bytes::Bytes;
 use media_streaming_format::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
-use mediapack::h264::AvcDecoderConfigurationRecord;
+use mediapack::{aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord};
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, QUIC, Session, SessionEvent, TrackWriter,
-    TransportProtocol, TransportSendError, WEBTRANSPORT,
+    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Session, SessionEvent,
+    TrackWriter, TransportProtocol, TransportSendError, WEBTRANSPORT,
 };
 use tokio::sync::Mutex;
 
@@ -86,8 +87,13 @@ impl VideoTrackInfo {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CatalogMetadata {
     video_tracks: BTreeMap<String, VideoTrackInfo>,
-    audio_sample_rate: Option<u32>,
-    audio_channels: Option<u8>,
+    audio_config: Option<AudioSpecificConfig>,
+}
+
+pub(crate) struct OutgoingObject {
+    pub(crate) rotate_group: bool,
+    pub(crate) extension_headers: ExtensionHeaders,
+    pub(crate) payload: Bytes,
 }
 
 struct ConnectedPublisher<T: TransportProtocol> {
@@ -125,8 +131,7 @@ impl MoqtManager {
         &self,
         namespace: &[String],
         track_name: &str,
-        rotate_group: bool,
-        payload: Vec<u8>,
+        object: OutgoingObject,
     ) -> Result<Option<u64>> {
         let Some(target) = &self.target else {
             return Ok(None);
@@ -134,7 +139,7 @@ impl MoqtManager {
 
         self.ensure_backend(target)
             .await?
-            .send_object(namespace, track_name, rotate_group, payload)
+            .send_object(namespace, track_name, object)
             .await
     }
 
@@ -157,8 +162,7 @@ impl MoqtManager {
     pub async fn update_audio_catalog(
         &self,
         namespace: &[String],
-        sample_rate: u32,
-        channels: u8,
+        config: AudioSpecificConfig,
     ) -> Result<()> {
         let Some(target) = &self.target else {
             return Ok(());
@@ -166,7 +170,7 @@ impl MoqtManager {
 
         self.ensure_backend(target)
             .await?
-            .update_audio_catalog(namespace, sample_rate, channels)
+            .update_audio_catalog(namespace, config)
             .await
     }
 
@@ -215,19 +219,12 @@ impl PublisherBackend {
         &self,
         namespace: &[String],
         track_name: &str,
-        rotate_group: bool,
-        payload: Vec<u8>,
+        object: OutgoingObject,
     ) -> Result<Option<u64>> {
         match self {
-            Self::Quic(publisher) => {
-                publisher
-                    .send_object(namespace, track_name, rotate_group, payload)
-                    .await
-            }
+            Self::Quic(publisher) => publisher.send_object(namespace, track_name, object).await,
             Self::WebTransport(publisher) => {
-                publisher
-                    .send_object(namespace, track_name, rotate_group, payload)
-                    .await
+                publisher.send_object(namespace, track_name, object).await
             }
         }
     }
@@ -255,19 +252,12 @@ impl PublisherBackend {
     async fn update_audio_catalog(
         &self,
         namespace: &[String],
-        sample_rate: u32,
-        channels: u8,
+        config: AudioSpecificConfig,
     ) -> Result<()> {
         match self {
-            Self::Quic(publisher) => {
-                publisher
-                    .update_audio_catalog(namespace, sample_rate, channels)
-                    .await
-            }
+            Self::Quic(publisher) => publisher.update_audio_catalog(namespace, config).await,
             Self::WebTransport(publisher) => {
-                publisher
-                    .update_audio_catalog(namespace, sample_rate, channels)
-                    .await
+                publisher.update_audio_catalog(namespace, config).await
             }
         }
     }
@@ -446,8 +436,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         &self,
         namespace: &[String],
         track_name: &str,
-        rotate_group: bool,
-        payload: Vec<u8>,
+        object: OutgoingObject,
     ) -> Result<Option<u64>> {
         let key = (namespace.join("/"), track_name.to_string());
         let mut writer = {
@@ -460,7 +449,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 None => return Ok(None),
             }
         };
-        let result = write_object(&mut writer, rotate_group, payload).await;
+        let result = write_object(&mut writer, object).await;
         if let Err(error) = &result
             && is_stopped_by_peer(error)
         {
@@ -511,8 +500,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     async fn update_audio_catalog(
         &self,
         namespace: &[String],
-        sample_rate: u32,
-        channels: u8,
+        config: AudioSpecificConfig,
     ) -> Result<()> {
         let namespace_path = namespace.join("/");
 
@@ -522,11 +510,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                 bail!("MoQ publisher disconnected");
             }
             let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            let changed = metadata.audio_sample_rate != Some(sample_rate)
-                || metadata.audio_channels != Some(channels);
+            let changed = metadata.audio_config.as_ref() != Some(&config);
             if changed {
-                metadata.audio_sample_rate = Some(sample_rate);
-                metadata.audio_channels = Some(channels);
+                metadata.audio_config = Some(config);
             }
             changed
                 && matches!(
@@ -580,14 +566,13 @@ impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
 
 async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
-    rotate_group: bool,
-    payload: Vec<u8>,
+    object: OutgoingObject,
 ) -> Result<Option<u64>> {
-    if rotate_group || writer.groups() == 0 {
+    if object.rotate_group || writer.groups() == 0 {
         writer.start_group().await.context("start group")?;
     }
     writer
-        .write(Bytes::from(payload), Vec::new())
+        .write_with_extension_headers(object.payload, object.extension_headers)
         .await
         .context("send subgroup object")?;
     Ok(writer.current_group_id())
@@ -656,7 +641,10 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             label: Some("Audio".to_string()),
             render_group: None,
             alt_group: None,
-            init_data: None,
+            init_data: metadata
+                .audio_config
+                .as_ref()
+                .map(|config| general_purpose::STANDARD.encode(config.to_bytes())),
             depends: None,
             temporal_id: None,
             spatial_id: None,
@@ -667,8 +655,14 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             bitrate: None,
             width: None,
             height: None,
-            sample_rate: metadata.audio_sample_rate,
-            channel_config: metadata.audio_channels.map(channel_config_label),
+            sample_rate: metadata
+                .audio_config
+                .as_ref()
+                .map(|config| config.sample_rate),
+            channel_config: metadata
+                .audio_config
+                .as_ref()
+                .map(|config| channel_config_label(config.channel_count())),
             display_width: None,
             display_height: None,
             lang: None,
