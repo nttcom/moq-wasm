@@ -43,6 +43,9 @@ let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 let reviewing = false
 let reviewGeneration = 0
+let reviewCaptureMicros: number | undefined
+let seeking = false
+const seekbar = element<HTMLInputElement>('seekbar')
 
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
@@ -53,6 +56,26 @@ element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', app
 element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
 element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
+seekbar.addEventListener('input', () => {
+  seeking = true
+  renderSeekPosition(seekbar.valueAsNumber, Number(seekbar.max))
+})
+seekbar.addEventListener('change', () => {
+  const captureSeconds = seekbar.valueAsNumber
+  const atLiveEdge = captureSeconds >= Number(seekbar.max)
+  seeking = false
+  if (atLiveEdge) {
+    backToLive()
+  } else if (timeline.latest) {
+    void rewind(timeline.latest.captureMicros / 1_000_000 - captureSeconds)
+  }
+})
+for (const event of ['pointercancel', 'blur']) {
+  seekbar.addEventListener(event, () => {
+    seeking = false
+    renderSeekbar()
+  })
+}
 startRendering()
 
 async function watchStream(): Promise<void> {
@@ -70,6 +93,7 @@ async function watchStream(): Promise<void> {
 }
 
 async function stopStream(): Promise<void> {
+  timeline.reset()
   backToLive()
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
@@ -160,11 +184,11 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     return
   }
 
-  await unsubscribeTrack(kind)
   if (kind === 'video') {
     timeline.reset()
-    setStatusText('rewind-buffer', '0.0s')
+    backToLive()
   }
+  await unsubscribeTrack(kind)
   const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === trackName)
   if (!track) {
     return
@@ -181,7 +205,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     if (kind === 'video') {
       videoObjectCount += 1
       timeline.record(groupId, chunk.locHeader)
-      setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
+      renderSeekbar()
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
       }
@@ -348,6 +372,8 @@ async function rewind(seconds: number): Promise<void> {
 
   const generation = ++reviewGeneration
   reviewing = true
+  reviewCaptureMicros = target.captureMicros
+  renderSeekbar()
   const behind = timeline.secondsBehindLive(target.groupId)
   setStatusText('rewind-status', `Rewound ${behind.toFixed(1)}s`)
   setStatusText('playback-status', 'Reviewing')
@@ -367,6 +393,9 @@ async function rewind(seconds: number): Promise<void> {
       }
     })
   } catch (error) {
+    if (generation !== reviewGeneration) {
+      return
+    }
     backToLive()
     setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
     appendLog('error', `fetch: ${getErrorMessage(error)}`)
@@ -375,6 +404,9 @@ async function rewind(seconds: number): Promise<void> {
 
   await waitForFetchIdle(() => lastArrival, generation)
 
+  if (generation !== reviewGeneration) {
+    return
+  }
   appendLog('info', `fetched ${frames.length} objects from group ${target.groupId}`)
   await playReview(sortReviewFrames(frames), generation)
 }
@@ -404,6 +436,7 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<vo
 
   element<HTMLVideoElement>('video').hidden = true
   canvas.hidden = false
+  const origin = frames[0].captureMicros ?? 0
   const decoder = new VideoDecoder({
     output: (frame) => {
       if (generation !== reviewGeneration) {
@@ -413,13 +446,14 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<vo
       canvas.width = frame.displayWidth
       canvas.height = frame.displayHeight
       context.drawImage(frame, 0, 0)
+      reviewCaptureMicros = origin + frame.timestamp
+      renderSeekbar()
       frame.close()
     },
     error: (error) => appendLog('error', `review decoder: ${error.message}`)
   })
   decoder.configure(config)
 
-  const origin = frames[0].captureMicros ?? 0
   for (const frame of frames) {
     if (generation !== reviewGeneration) {
       break
@@ -462,7 +496,32 @@ async function pace(frame: ReviewFrame, frames: ReviewFrame[]): Promise<void> {
 function backToLive(): void {
   reviewGeneration += 1
   reviewing = false
+  seeking = false
+  reviewCaptureMicros = undefined
+  renderSeekbar()
   element<HTMLCanvasElement>('review').hidden = true
   element<HTMLVideoElement>('video').hidden = false
   setStatusText('rewind-status', 'Live')
+}
+
+function renderSeekbar(): void {
+  setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
+  if (seeking) {
+    return
+  }
+  const latest = (timeline.latest?.captureMicros ?? 0) / 1_000_000
+  seekbar.min = String(latest - timeline.span)
+  seekbar.max = String(latest)
+  seekbar.disabled = !timeline.newestClosed || timeline.span <= 0
+  const position = reviewCaptureMicros === undefined ? latest : reviewCaptureMicros / 1_000_000
+  seekbar.value = String(Math.min(latest, Math.max(Number(seekbar.min), position)))
+  setStatusText('seek-start', `-${timeline.span.toFixed(1)}s`)
+  renderSeekPosition(position, latest)
+}
+
+function renderSeekPosition(position: number, latest: number): void {
+  const behind = Math.max(0, latest - position)
+  const label = behind < 0.1 ? 'LIVE' : `-${behind.toFixed(1)}s`
+  setStatusText('seek-position', label)
+  seekbar.setAttribute('aria-valuetext', behind < 0.1 ? 'Live' : `${behind.toFixed(1)} seconds behind live`)
 }
