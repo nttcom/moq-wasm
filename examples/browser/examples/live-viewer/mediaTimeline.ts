@@ -62,6 +62,10 @@ export class MediaTimeline {
     this.records = []
   }
 
+  entries(): readonly MediaTimelineRecord[] {
+    return this.records
+  }
+
   /// Presentation times are measured from the start of the broadcast, so any
   /// record places that start on the capture timestamp axis the seek bar uses.
   broadcastStartMicros(): number | undefined {
