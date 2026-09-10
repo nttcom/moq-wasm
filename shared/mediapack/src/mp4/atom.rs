@@ -1,3 +1,5 @@
+use std::iter;
+
 use anyhow::{Result, ensure};
 
 pub(crate) const HEADER_LENGTH: usize = 8;
@@ -7,29 +9,19 @@ pub(crate) struct Atom<'a> {
     pub payload: &'a [u8],
 }
 
-pub(crate) struct Atoms<'a> {
-    data: &'a [u8],
-}
-
-pub(crate) fn atoms(data: &[u8]) -> Atoms<'_> {
-    Atoms { data }
-}
-
-impl<'a> Iterator for Atoms<'a> {
-    type Item = Atom<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (size, kind) = peek(self.data)?;
-        if size > self.data.len() {
+pub(crate) fn atoms(mut data: &[u8]) -> impl Iterator<Item = Atom<'_>> {
+    iter::from_fn(move || {
+        let (size, kind) = peek(data)?;
+        if size > data.len() {
             return None;
         }
         let atom = Atom {
             kind,
-            payload: &self.data[HEADER_LENGTH..size],
+            payload: &data[HEADER_LENGTH..size],
         };
-        self.data = &self.data[size..];
+        data = &data[size..];
         Some(atom)
-    }
+    })
 }
 
 /// Returns the size and kind of the atom starting at `data`, once its header is
