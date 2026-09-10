@@ -24,7 +24,6 @@ Application and integration components (draft reference is normally not required
 | `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/vts` | Verify Token Service (Node.js): verifies client JWTs for the relay over HTTP |
-| `services/anon-issuer` | Public issuer (Node.js) of short-lived `anon` tokens for demo clients |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
@@ -58,7 +57,6 @@ Application and integration components (draft reference is normally not required
 - E2E Test (call): `node scripts/run-call-e2e.mjs`
 - E2E Test (auth): `./scripts/auth-e2e.sh`
 - VTS test: `npm --prefix services/vts test`
-- anon-issuer test: `npm --prefix services/anon-issuer test`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines

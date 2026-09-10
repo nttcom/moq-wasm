@@ -83,8 +83,7 @@ export AUTH_RELAY_TOKEN=$(node services/vts/bin/mint.mjs --apps services/vts/app
 docker compose up -d relay-a relay-b
 ```
 
-`vts` is reachable only inside the compose network; `anon-issuer` is published
-on port 8080.
+`vts` is reachable only inside the compose network.
 
 ## Deployment
 
@@ -114,9 +113,6 @@ gcloud run deploy vts --image <image> \
   --set-secrets=/etc/vts/apps.json=vts-apps:latest \
   --set-env-vars=VTS_APPS_FILE=/etc/vts/apps.json --ingress=internal
 ```
-
-The same secret feeds the anon issuer's `ANON_SECRET` (the `anon` row) so the
-two never drift.
 
 ### Adding an app or rotating a secret
 

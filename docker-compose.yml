@@ -47,25 +47,6 @@ services:
       timeout: 3s
       retries: 10
 
-  anon-issuer:
-    image: moqt-anon-issuer:local
-    build:
-      context: .
-      dockerfile: services/anon-issuer/Dockerfile
-    profiles:
-      - auth
-    environment:
-      ANON_ISSUER_PORT: "8080"
-      ANON_SECRET: ${ANON_SECRET:-local-dev-secret-for-anon-change-me}
-      ANON_ALLOWED_ORIGINS: ${ANON_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
-      interval: 2s
-      timeout: 3s
-      retries: 10
-
   relay-a:
     image: moqt-relay:local
     env_file:

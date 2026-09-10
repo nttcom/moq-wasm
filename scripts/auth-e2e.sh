@@ -10,7 +10,6 @@ export RELAY_LOG_FILTER="${RELAY_LOG_FILTER:-relay=info,moqt=info}"
 APPS_FILE="services/vts/apps.example.json"
 APP_ID="ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e"
 RELAY_APP_ID="11111111-2222-3333-4444-555555555555"
-ANON_ISSUER_URL="http://127.0.0.1:8080/anon-token"
 LOGS_PID=""
 RESULT_LOG="$(mktemp)"
 
@@ -50,7 +49,7 @@ if docker image inspect moqt-relay:local >/dev/null 2>&1; then
 else
   docker compose build relay-common
 fi
-docker compose --profile auth build vts anon-issuer
+docker compose --profile auth build vts
 
 if [[ ! -d services/vts/node_modules ]]; then
   npm --prefix services/vts ci
@@ -62,15 +61,14 @@ export AUTH_RELAY_TOKEN
 AUTH_RELAY_TOKEN="$(mint --app-id "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
 export AUTH_VTS_URL="http://vts:8081/verify"
 
-docker compose --profile auth up -d --wait redis vts anon-issuer relay-a relay-b
-docker compose --profile auth logs -f --no-color relay-a relay-b vts anon-issuer &
+docker compose --profile auth up -d --wait redis vts relay-a relay-b
+docker compose --profile auth logs -f --no-color relay-a relay-b vts &
 LOGS_PID=$!
 
 RELAY_A_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
 RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
 echo "Using relay URLs: $RELAY_A_URL, $RELAY_B_URL"
 
-ANON_TOKEN="$(curl -fsS -X POST "$ANON_ISSUER_URL" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).token))')"
 # Minted last so that its short lifetime starts as close to the run as possible.
 SHORT_TOKEN="$(mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl 30s)"
 
@@ -78,7 +76,6 @@ if ! AUTH_E2E_APP_ID="$APP_ID" \
   AUTH_E2E_APP_TOKEN="$APP_TOKEN" \
   AUTH_E2E_SHORT_TOKEN="$SHORT_TOKEN" \
   AUTH_E2E_RELAY_TOKEN="$AUTH_RELAY_TOKEN" \
-  AUTH_E2E_ANON_TOKEN="$ANON_TOKEN" \
   cargo run -p auth-e2e -- \
     --relay-a-url "$RELAY_A_URL" \
     --relay-b-url "$RELAY_B_URL" 2>&1 | tee "$RESULT_LOG"; then
