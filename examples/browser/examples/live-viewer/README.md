@@ -58,3 +58,17 @@ changes clear the timeline and cancel pending review playback. The observed
 range is not a guarantee of relay cache retention: an evicted group can no longer
 be replayed. A failed seek reports the FETCH error and holds the requested
 position, so pick another position or press Live to resume.
+
+## Broadcast elapsed time
+
+The label under the slider reads `position / broadcast`, both measured from the
+start of the broadcast. The numbers come from the MSF media timeline track
+(draft-ietf-moq-msf-00 section 7), which the bridge publishes as a JSON array of
+`[presentation time, [group id, object id], encode wallclock]` records covering
+the groups the relay still caches. The viewer finds it in the catalog by its
+`mediatimeline` packaging and subscribes to it alongside the media tracks.
+
+A capture timestamp resolves to a presentation time by offsetting from the
+newest record at or before it, so the reading survives a video quality change
+even though renditions number their groups independently. The label shows
+`--:-- / --:--` until the first timeline object arrives.
