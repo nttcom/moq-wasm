@@ -4,7 +4,9 @@ use mediapack::{AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig};
 use crate::{
     chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
     media_timeline::MediaTimeline,
-    moqt::{MoqtManager, MoqtTarget, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
+    moqt::{
+        MoqtManager, MoqtTarget, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix,
+    },
     renditions::RenditionFanout,
 };
 
