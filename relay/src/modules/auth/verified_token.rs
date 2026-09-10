@@ -21,6 +21,16 @@ impl VerifiedToken {
             expires_at: None,
         }
     }
+
+    pub(crate) fn anonymous() -> Self {
+        Self {
+            app_id: "anon".to_string(),
+            publish: Some(vec![]),
+            subscribe: Some(vec![]),
+            is_relay: false,
+            expires_at: None,
+        }
+    }
 }
 
 pub(crate) fn parse_namespace_path(claim: &str) -> NamespacePath {

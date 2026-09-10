@@ -50,8 +50,11 @@ transport connection to a per-connection task owned by `SessionIntake`:
    `Disabled` mode this yields `VerifiedToken::full_access()`; in `Enabled`
    mode it extracts the JWT, calls the `TokenVerifier`, and checks that
    `is_relay` matches the endpoint (client port ⇔ `false`, inner port ⇔
-   `true`). Failures call `Handshake::reject` with `UNAUTHORIZED` (missing or
-   rejected token, endpoint mismatch) or `INTERNAL_ERROR` (VTS unreachable);
+   `true`). A client that presents no token on the client endpoint is
+   accepted with `VerifiedToken::anonymous()` (scope `anon/**`); a missing
+   token on the inter-relay endpoint is rejected. Other failures call
+   `Handshake::reject` with `UNAUTHORIZED` (rejected token, endpoint mismatch)
+   or `INTERNAL_ERROR` (VTS unreachable);
 3. `Handshake::accept()` sends SERVER_SETUP;
 4. the session is boxed as `dyn core::session::Session` and added to
    `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`

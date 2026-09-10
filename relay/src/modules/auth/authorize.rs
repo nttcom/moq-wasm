@@ -230,6 +230,29 @@ mod tests {
     }
 
     #[test]
+    fn anonymous_token_reaches_only_the_anon_namespace() {
+        // Arrange
+        let token = VerifiedToken::anonymous();
+
+        // Act / Assert
+        assert!(authorize(&token, Operation::Publish, &namespace(&["anon", "room"])).is_ok());
+        assert!(
+            authorize(
+                &token,
+                Operation::Subscribe,
+                &namespace(&["anon", "room", "cam"])
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            authorize(&token, Operation::Publish, &namespace(&["APP", "room"]))
+                .unwrap_err()
+                .reason,
+            "namespace does not belong to the token's appId"
+        );
+    }
+
+    #[test]
     fn relay_token_still_rejects_slash_in_elements() {
         // Arrange
         let token = relay_token();

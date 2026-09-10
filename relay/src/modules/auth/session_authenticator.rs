@@ -6,7 +6,7 @@ use crate::{
     AuthConfig,
     modules::{
         auth::{
-            client_setup_token::extract_token,
+            client_setup_token::{SetupTokenError, extract_token},
             token_verifier::{TokenVerifier, VerifyError},
             verified_token::VerifiedToken,
             vts_token_verifier::VtsTokenVerifier,
@@ -53,10 +53,21 @@ impl SessionAuthenticator {
         let Self::Enabled { verifier } = self else {
             return Ok(VerifiedToken::full_access());
         };
-        let token = extract_token(client_setup).map_err(|error| Rejected {
-            code: TerminationErrorCode::Unauthorized,
-            reason: error.to_string(),
-        })?;
+        let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
+        let token = match extract_token(client_setup) {
+            Ok(token) => token,
+            // A client that presents no token is accepted with the anonymous
+            // scope (anon/**); the inter-relay endpoint still requires a token.
+            Err(SetupTokenError::Missing) if !relay_endpoint => {
+                return Ok(VerifiedToken::anonymous());
+            }
+            Err(error) => {
+                return Err(Rejected {
+                    code: TerminationErrorCode::Unauthorized,
+                    reason: error.to_string(),
+                });
+            }
+        };
         let verified = verifier.verify(&token).await.map_err(|error| match error {
             VerifyError::Unauthorized(reason) => Rejected {
                 code: TerminationErrorCode::Unauthorized,
@@ -70,7 +81,6 @@ impl SessionAuthenticator {
                 }
             }
         })?;
-        let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
         if verified.is_relay != relay_endpoint {
             let reason = if verified.is_relay {
                 "relay token presented on the client endpoint"
@@ -144,13 +154,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_token_is_unauthorized() {
+    async fn missing_token_on_client_endpoint_is_anonymous() {
+        // Arrange
+        let authenticator = enabled(StubOutcome::Verified(app_token()));
+
+        // Act
+        let token = authenticator
+            .authenticate(&client_setup(vec![]), &SessionPeer::Client)
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(token, VerifiedToken::anonymous());
+    }
+
+    #[tokio::test]
+    async fn missing_token_on_inter_relay_endpoint_is_unauthorized() {
         // Arrange
         let authenticator = enabled(StubOutcome::Verified(app_token()));
 
         // Act
         let rejected = authenticator
-            .authenticate(&client_setup(vec![]), &SessionPeer::Client)
+            .authenticate(
+                &client_setup(vec![]),
+                &SessionPeer::Relay { relay_id: None },
+            )
             .await
             .unwrap_err();
 
