@@ -27,6 +27,8 @@ export interface LiveViewerPageModel {
   seekbar: Locator
   seekPosition: Locator
   seekElapsed: Locator
+  seekStart: Locator
+  seekAvailableWindow: Locator
   video: Locator
   reviewCanvas: Locator
   logPanel: Locator
@@ -61,6 +63,8 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     seekbar: page.getByTestId('live-viewer-seekbar'),
     seekPosition: page.getByTestId('live-viewer-seek-position'),
     seekElapsed: page.getByTestId('live-viewer-seek-elapsed'),
+    seekStart: page.getByTestId('live-viewer-seek-start'),
+    seekAvailableWindow: page.getByTestId('live-viewer-seek-available-window'),
     video: page.getByTestId('live-viewer-video'),
     reviewCanvas: page.getByTestId('live-viewer-review-canvas'),
     logPanel: page.getByTestId('live-viewer-log-panel')

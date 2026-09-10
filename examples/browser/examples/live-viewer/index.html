@@ -124,8 +124,15 @@
                     aria-valuetext="Live"
                     data-testid="live-viewer-seekbar"
                   />
+                  <div class="seek-availability" data-testid="live-viewer-seek-availability">
+                    <div
+                      id="seek-available-window"
+                      class="seek-availability-window"
+                      data-testid="live-viewer-seek-available-window"
+                    ></div>
+                  </div>
                   <div class="playback-meta">
-                    <span id="seek-start">-0.0s</span>
+                    <span id="seek-start" data-testid="live-viewer-seek-start">--:--</span>
                     <span id="seek-elapsed" data-testid="live-viewer-seek-elapsed">--:-- / --:--</span>
                     <span>Live</span>
                   </div>

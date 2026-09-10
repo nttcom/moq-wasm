@@ -72,14 +72,27 @@ seekbar.addEventListener('input', () => {
   renderSeekPosition(seekbar.valueAsNumber, Number(seekbar.max))
 })
 seekbar.addEventListener('change', () => {
-  const captureSeconds = seekbar.valueAsNumber
-  const atLiveEdge = captureSeconds >= Number(seekbar.max)
   seeking = false
-  if (atLiveEdge) {
+  seekTo(seekbar.valueAsNumber)
+})
+/// The axis spans the whole broadcast but only the replayable window can be
+/// fetched, so Home lands on that window instead of on a position the relay no
+/// longer holds.
+seekbar.addEventListener('keydown', (event) => {
+  if (event.key === 'End') {
+    event.preventDefault()
+    seeking = false
     backToLive()
-  } else if (timeline.latest) {
-    void rewind(timeline.latest.captureMicros / 1_000_000 - captureSeconds)
+    return
   }
+  if (event.key !== 'Home') {
+    return
+  }
+  event.preventDefault()
+  seeking = false
+  const start = replayableStartSeconds()
+  seekbar.value = String(start)
+  seekTo(start)
 })
 for (const event of ['pointercancel', 'blur']) {
   seekbar.addEventListener(event, () => {
@@ -572,19 +585,56 @@ function backToLive(): void {
   setStatusText('rewind-status', 'Live')
 }
 
+/// The axis runs from the start of the broadcast, which the media timeline
+/// places, so the bar keeps its meaning as cache retention grows. Until the
+/// first timeline object arrives it falls back to the replayable window.
 function renderSeekbar(): void {
   setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
   if (seeking) {
     return
   }
-  const latest = (timeline.latest?.captureMicros ?? 0) / 1_000_000
-  seekbar.min = String(latest - timeline.span)
+  const latest = liveEdgeSeconds()
+  const replayableStart = replayableStartSeconds()
+  const broadcastStart = mediaTimeline.broadcastStartMicros()
+  seekbar.min = String(broadcastStart === undefined ? replayableStart : broadcastStart / 1_000_000)
   seekbar.max = String(latest)
   seekbar.disabled = !timeline.newestClosed || timeline.span <= 0
   const position = reviewCaptureMicros === undefined ? latest : reviewCaptureMicros / 1_000_000
   seekbar.value = String(Math.min(latest, Math.max(Number(seekbar.min), position)))
-  setStatusText('seek-start', `-${timeline.span.toFixed(1)}s`)
+  renderReplayableWindow(replayableStart, latest)
   renderSeekPosition(position, latest)
+}
+
+function renderReplayableWindow(replayableStart: number, latest: number): void {
+  const min = Number(seekbar.min)
+  const axis = latest - min
+  const window = element<HTMLDivElement>('seek-available-window')
+  const offset = axis > 0 ? (replayableStart - min) / axis : 0
+  window.style.marginLeft = `${(offset * 100).toFixed(3)}%`
+  window.style.width = `${((1 - offset) * 100).toFixed(3)}%`
+  const elapsed = mediaTimeline.elapsedMsAt(min * 1_000_000)
+  setStatusText('seek-start', elapsed === undefined ? '--:--' : formatElapsed(elapsed))
+}
+
+function liveEdgeSeconds(): number {
+  return (timeline.latest?.captureMicros ?? 0) / 1_000_000
+}
+
+function replayableStartSeconds(): number {
+  return liveEdgeSeconds() - timeline.span
+}
+
+/// `seekbar.max` is frozen while a drag is in progress, so comparing against it
+/// rather than against the live edge keeps the right end meaning "go live" even
+/// when a group arrives mid-gesture.
+function seekTo(captureSeconds: number): void {
+  if (captureSeconds >= Number(seekbar.max)) {
+    backToLive()
+    return
+  }
+  if (timeline.latest) {
+    void rewind(liveEdgeSeconds() - captureSeconds)
+  }
 }
 
 function renderSeekPosition(position: number, latest: number): void {
