@@ -1,0 +1,29 @@
+#review {
+  width: 100%;
+  border-radius: 16px;
+}
+
+.seek-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+#seekbar {
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+#seekbar:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+#seek-position {
+  font-family: var(--font-mono);
+  color: var(--accent-strong);
+}
