@@ -1,0 +1,13 @@
+[project]
+name = "moqt-echo-server"
+version = "0.1.0"
+description = "FastAPI app that accepts MoQT sessions and echoes published tracks back to subscribers"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "moqt",
+]
+
+[tool.uv.sources]
+moqt = { path = "../../../bindings/python" }
