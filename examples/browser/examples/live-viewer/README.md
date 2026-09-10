@@ -65,6 +65,11 @@ replay, which is the only part a seek resolves. Dragging outside it reports the
 FETCH failure and holds the position; Home jumps to the oldest replayable position
 rather than to the start of the broadcast, and End returns to live.
 
+While review playback runs, the thumb stays on the position that was seeked to
+and a fill from it carries the movement, because the decoder emits frames in
+bursts and a thumb that followed each one read as jitter. The fill and the
+readouts step a second at a time for the same reason.
+
 The position label shows seconds behind live and follows review playback, and the
 label under the slider reads the elapsed time at the axis start. Seeking starts at
 the preceding closed keyframe group and uses the same bounded FETCH replay as the

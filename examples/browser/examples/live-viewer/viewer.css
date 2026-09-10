@@ -63,9 +63,25 @@
 }
 
 .seek-availability-window {
-  height: 100%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.85);
+}
+
+/* How far review playback has run from the position that was seeked to. The
+   thumb marks that position and stays put, so this fill carries the movement. */
+.seek-review-progress {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--accent-2);
+}
+
+.seek-review-progress[hidden] {
+  display: none;
 }
 
 #seekbar {
