@@ -44,3 +44,16 @@ MEDIA_E2E_MOQT_URL=https://127.0.0.1:4433 \
 LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
 ```
+
+## Seek bar
+
+The slider below the video shows the time range observed on the selected video
+track. Drag it or use the arrow keys to choose a position; Home selects the
+oldest observed group and End returns to live. The position label shows seconds
+behind live and follows review playback. Seeking starts at the preceding closed
+keyframe group and uses the same bounded FETCH replay as the rewind buttons.
+
+The slider is disabled until a closed group is available. Stop and video quality
+changes clear the timeline and cancel pending review playback. The observed
+range is not a guarantee of relay cache retention: an evicted group can no longer
+be replayed, in which case the viewer reports the FETCH failure and returns live.
