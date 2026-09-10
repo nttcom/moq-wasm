@@ -74,7 +74,7 @@ cargo test -p moq-cli
 
 - **catalog 取得**: 後から join した subscriber に届けるため publisher が各キーフレーム（group 境界）で catalog を再送している。正しい形は「一度だけ publish、subscriber は joining fetch（`Subscriber::fetch_relative_joining`）で取得」。
 - **LOC payload**: payload=生 annex-b。Object Header Extension に Capture Timestamp を 0xB（ImmutableExtensions）で `"loc:"+JSON(packages::loc::LocHeader)` として入れている 。spec §2.3.1.1 は本来 Capture Timestamp を ID=2 の bare varint で送る。moqt crate の `ExtensionHeaders` が3種（`0x3c`/`0x3e`/`0xb`）ハードコードで任意 ID を送れないため 0xB 相乗り。
-- spec: `spec/draft-ietf-moq-loc-01.txt`(LOC) / `draft-ietf-moq-msf-00.txt`(MSF) / `draft-ietf-moq-transport-14.txt`(MoQT)
+- spec: `spec/draft-ietf-moq-loc-01.txt`(LOC) / `draft-ietf-moq-msf-01.txt`(MSF) / `draft-ietf-moq-transport-14.txt`(MoQT)
 
 ## 実装状況
 

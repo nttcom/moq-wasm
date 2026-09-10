@@ -91,7 +91,7 @@ position, so pick another position or press Live to resume.
 
 The label under the slider reads `position / broadcast`, both measured from the
 start of the broadcast. The numbers come from the MSF media timeline track
-(draft-ietf-moq-msf-00 section 7), which the bridge publishes as a JSON array of
+(draft-ietf-moq-msf-01 section 7), which the bridge publishes as a JSON array of
 `[presentation time, [group id, object id], encode wallclock]` records covering
 the groups the relay still caches. The viewer finds it in the catalog by its
 `mediatimeline` packaging and subscribes to it alongside the media tracks.

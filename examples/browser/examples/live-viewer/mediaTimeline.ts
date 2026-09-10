@@ -10,7 +10,7 @@ export type MediaTimelineRecord = {
   encodedAtMs: number
 }
 
-/// draft-ietf-moq-msf-00 §7.1: a media timeline is an array of records whose
+/// draft-ietf-moq-msf-01 §7.1.1: a media timeline is an array of records whose
 /// ordinal positions hold the media presentation timestamp in milliseconds, the
 /// MOQT Location as `[group id, object id]`, and the wallclock time the media
 /// was encoded at in milliseconds since the Unix epoch.
