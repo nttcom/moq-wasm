@@ -1,3 +1,4 @@
+mod group_alignment;
 mod ingest;
 mod loc_object;
 mod media_timeline;
