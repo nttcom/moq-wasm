@@ -141,6 +141,20 @@
                       >
                         &#x21BA;30
                       </button>
+                      <select
+                        id="speed"
+                        class="viewer-speed"
+                        disabled
+                        aria-label="Playback speed"
+                        title="再生速度（CMAF の巻き戻し中のみ）"
+                        data-testid="live-viewer-speed-select"
+                      >
+                        <option value="0.5">0.5x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                      </select>
                       <div class="viewer-quality">
                         <button
                           type="button"
