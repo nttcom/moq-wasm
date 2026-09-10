@@ -29,6 +29,14 @@ Add lower renditions with `LIVE_INGEST_TRANSCODE=1 make live-ingest`. Each rendi
 below the source resolution (720p / 480p / 360p) is published as `video_<height>p`
 next to `video`, and the catalog lists them in one `altGroup` with `width` / `height`.
 
+## Track Format
+
+Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
+codec bitstream, H.264 in Annex-B and raw AAC frames, and the capture timestamp
+travels as MoQT extension header 2. The audio track's AudioSpecificConfig is
+published Base64-encoded as the catalog `initData`; the video track carries its
+parameter sets in band and has none.
+
 ## Publish Test RTMP
 
 Publish a generated test video and sine audio stream:
