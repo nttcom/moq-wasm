@@ -1,7 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
-import { resolveAuthToken } from '../../../../utils/auth'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)
 
@@ -15,7 +14,7 @@ export class PublisherSession {
   }
 
   async connect(relayUrl: string): Promise<void> {
-    await this.client.connect(relayUrl, { authToken: await resolveAuthToken() })
+    await this.client.connect(relayUrl)
     log('connected', { relayUrl })
 
     await this.client.publishNamespace(this.namespace, 'secret')

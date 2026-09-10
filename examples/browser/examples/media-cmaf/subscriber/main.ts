@@ -4,7 +4,6 @@ import { AUTH_INFO } from '../const'
 import { getFormElement } from '../utils'
 import { extractCatalogVideoTracks, extractCatalogAudioTracks, type MediaCatalogTrack } from '../catalog'
 import { configureRelayUrlControls } from '../../../utils/relayPresets'
-import { resolveAuthToken } from '../../../utils/auth'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -752,7 +751,7 @@ const sendSetupButtonClickHandler = (): void => {
     const form = getFormElement()
     const versions = toBigUint64Array('0xff00000E')
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
-    await moqtClient.sendClientSetup(versions, maxSubscribeId, await resolveAuthToken())
+    await moqtClient.sendClientSetup(versions, maxSubscribeId)
   })
 }
 

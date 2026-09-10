@@ -28,9 +28,9 @@ import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
 const callIndexPath = "/moq-wasm/examples/call/index.html";
 const defaultRelayAUrl = "https://127.0.0.1:4433";
 const defaultRelayBUrl = "https://127.0.0.1:4434";
-const anonIssuerUrl = "http://127.0.0.1:8080/anon-token";
 const vtsAppsFile = "services/vts/apps.example.json";
 const relayAppId = "11111111-2222-3333-4444-555555555555";
+const callAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
@@ -65,7 +65,7 @@ async function main() {
   const authMode = process.env.CALL_E2E_AUTH === "true";
   const composeArgs = authMode ? ["compose", "--profile", "auth"] : ["compose"];
   const composeServices = authMode
-    ? ["redis", "vts", "anon-issuer", "relay-a", "relay-b"]
+    ? ["redis", "vts", "relay-a", "relay-b"]
     : ["redis", "relay-a", "relay-b"];
 
   const cleanup = async () => {
@@ -113,17 +113,16 @@ async function main() {
 
       let composeEnv = process.env;
       if (authMode) {
-        console.error("[setup] Building vts and anon-issuer docker images...");
+        console.error("[setup] Building vts docker image...");
         await runCommand(
           resolveCommandName("docker"),
-          [...composeArgs, "build", "vts", "anon-issuer"],
+          [...composeArgs, "build", "vts"],
           { cwd: repoRoot },
         );
         composeEnv = {
           ...process.env,
           AUTH_VTS_URL: "http://vts:8081/verify",
-          AUTH_RELAY_TOKEN: await mintRelayToken(),
-          ANON_ALLOWED_ORIGINS: new URL(baseUrl).origin,
+          AUTH_RELAY_TOKEN: mintToken(relayAppId, "8760h"),
         };
       }
       console.error(
@@ -183,7 +182,7 @@ async function main() {
           MEDIA_E2E_BASE_URL: baseUrl,
           CALL_E2E_RELAY_A_URL: relayAUrl,
           CALL_E2E_RELAY_B_URL: relayBUrl,
-          ...(authMode ? { CALL_E2E_ANON_ISSUER_URL: anonIssuerUrl } : {}),
+          ...(authMode ? { CALL_E2E_JWT: mintToken(callAppId, "12h") } : {}),
         },
       },
     );
@@ -192,12 +191,14 @@ async function main() {
   }
 }
 
-// Mints the token the relays present to each other on the inner port, using
-// the same apps.example.json the compose vts service mounts.
-async function mintRelayToken() {
+// Mints a token (root scope) for an appId with the mint CLI, using the same
+// apps.example.json the compose vts service mounts. Client tokens must stay
+// within the relay's 24h ttl cap; relay tokens are exempt.
+function mintToken(appId, ttl) {
   if (!existsSync(resolve(repoRoot, "services/vts/node_modules"))) {
-    await runCommand(resolveCommandName("npm"), ["ci"], {
+    execFileSync(resolveCommandName("npm"), ["ci"], {
       cwd: resolve(repoRoot, "services/vts"),
+      stdio: "inherit",
     });
   }
   return execFileSync(
@@ -207,13 +208,13 @@ async function mintRelayToken() {
       "--apps",
       vtsAppsFile,
       "--app-id",
-      relayAppId,
+      appId,
       "--publish",
       "",
       "--subscribe",
       "",
       "--ttl",
-      "8760h",
+      ttl,
     ],
     { cwd: repoRoot, encoding: "utf8" },
   ).trim();

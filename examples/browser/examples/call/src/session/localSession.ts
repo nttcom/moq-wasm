@@ -10,7 +10,7 @@ import { ChatMessage } from '../types/chat'
 import { CallMediaController } from '../media/callMediaController'
 import { parseCallCatalogTracks } from '../media/callCatalog'
 import type { CallCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
-import { resolveAuthToken } from '../../../../utils/auth'
+import { readCallAuth } from './authToken'
 import { buildNamespacePrefix, buildTrackNamespace, parseTrackNamespace } from './trackNamespace'
 
 interface LocalSessionOptions {
@@ -135,7 +135,7 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Connecting)
     try {
-      await this.client.connect(this.relayUrl, { authToken: await resolveAuthToken() })
+      await this.client.connect(this.relayUrl, { authToken: readCallAuth().token })
       this.transitionToState(LocalSessionState.Ready)
       await this.publishNamespace(this.trackNamespace, this.defaultAuthInfo)
     } catch (error) {

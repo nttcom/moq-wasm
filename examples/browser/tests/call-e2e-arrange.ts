@@ -4,7 +4,9 @@ import { CALL_INDEX_PATH } from '../playwright.helpers'
 export const RELAY_A_URL = process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
 export const RELAY_B_URL = process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
 // Set by scripts/run-call-e2e.mjs in CALL_E2E_AUTH mode; the pages fetch an anon token from it.
-export const ANON_ISSUER_URL = process.env.CALL_E2E_ANON_ISSUER_URL || undefined
+// Set by scripts/run-call-e2e.mjs in CALL_E2E_AUTH mode: an app-scoped JWT the
+// pages present via ?jwt=. Absent outside auth mode (tokenless anonymous).
+export const CALL_JWT = process.env.CALL_E2E_JWT || undefined
 
 export interface CallClientPageModel {
   page: Page
@@ -23,7 +25,8 @@ export interface CallClientPageModel {
 }
 
 export interface ArrangeCallClientOptions {
-  withIssuer?: boolean
+  // Overrides the default JWT (CALL_JWT). Pass an invalid token to exercise rejection.
+  jwt?: string
 }
 
 export interface CallE2EClient {
@@ -43,7 +46,7 @@ let callClientCounter = 0
 const FORWARDED_CONSOLE_TEXT_PATTERN =
   /\[call\]\[publisher\]\[video\]|\[call\]\[subscriber\]\[video\]|\[call\]\[media-element\]\[video\]|\[call\]\[catalog\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
-async function openCallPage(page: Page, withIssuer: boolean): Promise<void> {
+async function openCallPage(page: Page, jwt: string | undefined): Promise<void> {
   const params = new URLSearchParams({
     keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
@@ -54,8 +57,8 @@ async function openCallPage(page: Page, withIssuer: boolean): Promise<void> {
     relayBUrl: RELAY_B_URL,
     debugVideoPipeline: '1'
   })
-  if (withIssuer && ANON_ISSUER_URL) {
-    params.set('anonIssuerUrl', ANON_ISSUER_URL)
+  if (jwt) {
+    params.set('jwt', jwt)
   }
   await page.goto(`${CALL_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })
 }
@@ -90,7 +93,7 @@ function createCallClientPageModel(page: Page): CallClientPageModel {
 
 export async function arrangeCallClient(
   browser: Browser,
-  { withIssuer = true }: ArrangeCallClientOptions = {}
+  { jwt = CALL_JWT }: ArrangeCallClientOptions = {}
 ): Promise<CallE2EClient> {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
@@ -99,7 +102,7 @@ export async function arrangeCallClient(
   const rawPage = await context.newPage()
   const label = `call-client-${++callClientCounter}`
   forwardFilteredPageConsole(rawPage, label)
-  await openCallPage(rawPage, withIssuer)
+  await openCallPage(rawPage, jwt)
   return {
     context,
     page: createCallClientPageModel(rawPage)

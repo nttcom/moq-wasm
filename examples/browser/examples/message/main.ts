@@ -11,7 +11,6 @@ import {
 } from '../../pkg/moqt_client_wasm'
 import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { configureRelayUrlControls } from '../../utils/relayPresets'
-import { resolveAuthToken } from '../../utils/auth'
 
 type HTMLFormControls = HTMLFormElement & {
   elements: HTMLFormControlsCollection
@@ -496,9 +495,8 @@ function setupActionButtons(): void {
     const form = getForm()
     const versionsInput = getField(form, 'versions').value
     const maxRequestId = BigInt(getField(form, 'max-subscribe-id').value)
-    const authToken = await resolveAuthToken()
     await sendControlMessage('CLIENT_SETUP', () =>
-      moqtClient.sendClientSetup(toBigUint64Array(versionsInput), maxRequestId, authToken)
+      moqtClient.sendClientSetup(toBigUint64Array(versionsInput), maxRequestId)
     )
   })
 

@@ -9,7 +9,6 @@ import {
 } from '../media/catalog'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
-import { resolveAuthToken } from '../../utils/auth'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
@@ -60,7 +59,7 @@ async function watchStream(): Promise<void> {
   try {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
-    await moqtClient.connect(url, { authToken: await resolveAuthToken() })
+    await moqtClient.connect(url)
     setStatusText('connection-status', `Connected: ${url}`)
     appendLog('info', `connected to ${url}`)
     await subscribeCatalog()

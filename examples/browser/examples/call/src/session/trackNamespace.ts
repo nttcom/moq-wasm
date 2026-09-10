@@ -1,4 +1,6 @@
-const CALL_NAMESPACE_ROOT = 'anon'
+import { readCallAuth } from './authToken'
+
+const CALL_NAMESPACE_ROOT = readCallAuth().namespaceRoot
 
 export type ParsedTrackNamespace = {
   roomName: string
