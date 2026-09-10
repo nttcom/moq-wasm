@@ -1,4 +1,4 @@
-//! Authentication e2e against two relays backed by the VTS and the anon issuer.
+//! Authentication e2e against two relays backed by the VTS.
 //!
 //! Driven by `scripts/auth-e2e.sh`, which starts the compose stack with the
 //! `auth` profile, mints the tokens and passes them through the environment:
@@ -7,7 +7,6 @@
 //! - `AUTH_E2E_APP_TOKEN`   long-lived token for that app
 //! - `AUTH_E2E_SHORT_TOKEN` same claims, expires within a minute
 //! - `AUTH_E2E_RELAY_TOKEN` a relay token (must be rejected on the client port)
-//! - `AUTH_E2E_ANON_TOKEN`  token obtained from the anon issuer
 //!
 //! `--scenario vts-down` runs only the check that connecting fails while the
 //! VTS is unreachable.
@@ -46,7 +45,6 @@ struct Tokens {
     app: String,
     short: String,
     relay: String,
-    anon: String,
 }
 
 impl Config {
@@ -88,7 +86,6 @@ impl Tokens {
             app: required("AUTH_E2E_APP_TOKEN")?,
             short: required("AUTH_E2E_SHORT_TOKEN")?,
             relay: required("AUTH_E2E_RELAY_TOKEN")?,
-            anon: required("AUTH_E2E_ANON_TOKEN")?,
         })
     }
 }
@@ -127,7 +124,6 @@ async fn run_all(config: &Config, tokens: Tokens) -> anyhow::Result<()> {
         tokens.short.clone(),
     ));
 
-    expect_handshake_rejected(&config.relay_a_url, None, "no token").await?;
     expect_handshake_rejected(&config.relay_a_url, Some("not-a-jwt"), "garbage token").await?;
     expect_handshake_rejected(
         &config.relay_a_url,
@@ -138,7 +134,7 @@ async fn run_all(config: &Config, tokens: Tokens) -> anyhow::Result<()> {
 
     cross_relay_pub_sub(config, &tokens, &run_id).await?;
     app_token_is_scoped(&config.relay_a_url, &tokens).await?;
-    anon_token_reaches_only_anon(&config.relay_a_url, &tokens, &run_id).await?;
+    tokenless_anon_reaches_only_anon(&config.relay_a_url, &tokens, &run_id).await?;
 
     expiry.await??;
     Ok(())
@@ -248,26 +244,30 @@ async fn app_token_is_scoped(url: &str, tokens: &Tokens) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn anon_token_reaches_only_anon(
+async fn tokenless_anon_reaches_only_anon(
     url: &str,
     tokens: &Tokens,
     run_id: &str,
 ) -> anyhow::Result<()> {
-    let session = connect(url, Some(&tokens.anon)).await?;
+    // No token: the relay accepts the session with the anonymous scope.
+    let session = connect(url, None).await?;
     session
         .publisher()
         .publish_namespace(format!("anon/demo/{run_id}"))
         .await
-        .context("anon token failed to publish under anon/")?;
+        .context("tokenless session failed to publish under anon/")?;
 
     let error = session
         .publisher()
         .publish_namespace(format!("{}/site1", tokens.app_id))
         .await
         .err()
-        .context("anon token unexpectedly published under another appId")?;
-    expect_unauthorized(error, "PUBLISH_NAMESPACE APP/site1 with anon token")?;
-    tracing::info!("anon token confined to anon/");
+        .context("tokenless session unexpectedly published under another appId")?;
+    expect_unauthorized(
+        error,
+        "PUBLISH_NAMESPACE APP/site1 with a tokenless session",
+    )?;
+    tracing::info!("tokenless session confined to anon/");
     Ok(())
 }
 
