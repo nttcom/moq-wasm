@@ -37,6 +37,7 @@ Timestamps are `Timestamp` values in microseconds with conversions to and from
 | `mpegts::Demuxer` / `mpegts::Muxer` | TS bytes and events; muxing writes PAT/PMT, PES, PCR, and ADTS |
 | `flv::Demuxer` / `flv::Muxer` | FLV file streams and RTMP tag payloads (`push_tag`) |
 | `mp4::Demuxer` / `mp4::Fmp4Muxer` | Fragmented MP4; muxing writes an init segment plus one fragment per sample |
+| `mp4::Fmp4TrackMuxer` | One track per muxer with the init segment returned apart from the fragments, the shape draft-ietf-moq-cmsf-01 §3.1/§3.3 gives a MoQT track |
 | `loc` | `Muxer`, `Demuxer`, and transport-independent `LocObject` with typed extensions |
 | `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions) |
 | `aac` | AudioSpecificConfig and ADTS parsing |
