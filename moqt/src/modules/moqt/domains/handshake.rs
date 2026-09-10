@@ -41,8 +41,14 @@ impl<T: TransportProtocol> Handshake<T> {
         Ok(Session::new(self.receive_stream, context, event_receiver))
     }
 
-    pub fn reject(self, code: TerminationErrorCode, reason: &str) {
+    pub async fn reject(self, code: TerminationErrorCode, reason: &str) {
         self.transport_connection.close(code as u32, reason);
+        // Wait for the WebTransport CLOSE_SESSION capsule (carrying the code and
+        // reason) to be delivered before this connection is dropped; otherwise
+        // the QUIC connection is torn down first and the browser only sees a
+        // generic "Connection lost." (web-transport-quinn's close() flushes the
+        // capsule in a background task).
+        self.transport_connection.closed().await;
     }
 }
 
@@ -114,7 +120,9 @@ mod tests {
             .unwrap();
 
         // Act
-        handshake.reject(TerminationErrorCode::Unauthorized, "test");
+        handshake
+            .reject(TerminationErrorCode::Unauthorized, "test")
+            .await;
         let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, client)
             .await
             .unwrap()
