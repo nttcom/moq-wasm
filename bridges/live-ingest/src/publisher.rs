@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::{
     AudioSample, MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig,
-    loc::Muxer as LocMuxer,
+    loc::Muxer as LocMuxer, mp4::Fmp4TrackMuxer,
 };
 use moqt::ExtensionHeaders;
 
@@ -14,7 +14,7 @@ use crate::{
     media_timeline::MediaTimeline,
     moqt::{
         GroupBoundary, MoqtManager, OutgoingObject, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
-        VideoTrackInfo, now_unix,
+        VideoTrackInfo, cmaf_track_name, now_unix,
     },
     renditions::RenditionFanout,
 };
@@ -43,6 +43,8 @@ pub struct MediaPublisher {
     /// instant for the same presentation time.
     loc: Arc<OnceLock<LocMuxer>>,
     alignment: Arc<GroupAlignment>,
+    video_cmaf: Option<Fmp4TrackMuxer>,
+    audio_cmaf: Option<Fmp4TrackMuxer>,
 }
 
 impl MediaPublisher {
@@ -58,6 +60,8 @@ impl MediaPublisher {
             timeline: MediaTimeline::new(),
             loc: Arc::new(OnceLock::new()),
             alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
+            video_cmaf: None,
+            audio_cmaf: None,
         }
     }
 
@@ -65,6 +69,7 @@ impl MediaPublisher {
         match event {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
+                self.video_cmaf = Some(Fmp4TrackMuxer::video(config.clone()));
                 let info = VideoTrackInfo::from_record(config, "Video".to_string())?;
                 if self.transcode && self.renditions.is_none() {
                     self.renditions = RenditionFanout::run(
@@ -80,6 +85,7 @@ impl MediaPublisher {
                     .await
             }
             MediaEvent::AudioConfig(config) => {
+                self.audio_cmaf = Some(Fmp4TrackMuxer::audio(config.clone()));
                 self.moqt
                     .update_audio_catalog(&self.namespace, config.clone())
                     .await?;
@@ -117,10 +123,36 @@ impl MediaPublisher {
                 },
             )
             .await?;
+        self.publish_cmaf_video(sample).await?;
         let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
             return Ok(());
         };
         self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
+            .await
+    }
+
+    async fn publish_cmaf_video(&mut self, sample: &VideoSample) -> Result<()> {
+        let Some(muxer) = &mut self.video_cmaf else {
+            return Ok(());
+        };
+        let Some(fragment) = muxer.push(&MediaEvent::Video(sample.clone()))? else {
+            return Ok(());
+        };
+        let group = if fragment.is_keyframe {
+            GroupBoundary::At(self.alignment.keyframe(fragment.presentation_time.micros()))
+        } else {
+            GroupBoundary::Within
+        };
+        self.moqt
+            .send_object(
+                &self.namespace,
+                &cmaf_track_name(VIDEO_TRACK_NAME),
+                OutgoingObject {
+                    group,
+                    extension_headers: ExtensionHeaders::default(),
+                    payload: fragment.data,
+                },
+            )
             .await
     }
 
@@ -172,6 +204,31 @@ impl MediaPublisher {
                     group,
                     extension_headers: extension_headers(&object),
                     payload: object.payload,
+                },
+            )
+            .await?;
+        self.publish_cmaf_audio(sample, group).await
+    }
+
+    async fn publish_cmaf_audio(
+        &mut self,
+        sample: &AudioSample,
+        group: GroupBoundary,
+    ) -> Result<()> {
+        let Some(muxer) = &mut self.audio_cmaf else {
+            return Ok(());
+        };
+        let Some(fragment) = muxer.push(&MediaEvent::Audio(sample.clone()))? else {
+            return Ok(());
+        };
+        self.moqt
+            .send_object(
+                &self.namespace,
+                &cmaf_track_name(AUDIO_TRACK),
+                OutgoingObject {
+                    group,
+                    extension_headers: ExtensionHeaders::default(),
+                    payload: fragment.data,
                 },
             )
             .await

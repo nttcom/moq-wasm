@@ -212,7 +212,7 @@ function matchesRole(
   if (expectedRole === 'mediatimeline') {
     return trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline'
   }
-  if (trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline') {
+  if (trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline' || trackPackaging === 'cmaf') {
     return false
   }
   if (expectedRole === 'video') {
