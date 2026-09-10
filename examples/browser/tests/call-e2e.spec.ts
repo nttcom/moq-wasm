@@ -396,6 +396,7 @@ test('auth mode: joining without the anon issuer is rejected by the relay', asyn
 
     // Assert: relay が CLIENT_SETUP を拒否し、入室エラーが表示されてルーム画面に進まないことを確認する。
     await expect(client.page.joinError).toBeVisible({ timeout: 30_000 })
+    await expect(client.page.joinError).toContainText('AUTHORIZATION TOKEN')
     await expect(client.page.roomName).toHaveCount(0)
   } finally {
     await client.context.close()

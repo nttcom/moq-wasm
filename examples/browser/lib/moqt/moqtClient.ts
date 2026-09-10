@@ -27,7 +27,11 @@ type FetchResponseHandler = ((response: FetchOkMessage | RequestErrorMessage) =>
 type FetchObjectHandler = ((message: FetchObjectMessage) => void) | null
 type SubscribeResponseHandler = ((response: SubscribeOkMessage | RequestErrorMessage) => void) | null
 type NamespaceResponseHandler = ((response: NamespaceOkMessage | RequestErrorMessage) => void) | null
-type ConnectionClosedHandler = (() => void) | null
+export interface ConnectionCloseInfo {
+  closeCode?: number
+  reason?: string
+}
+type ConnectionClosedHandler = ((info: ConnectionCloseInfo) => void) | null
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
 type ObjectDatagramStatusHandler = ((message: ObjectDatagramStatusMessage) => void) | null
@@ -215,7 +219,7 @@ export class MoqtClientWrapper {
     return this.client
   }
 
-  setOnConnectionClosedHandler(handler: (() => void) | null): void {
+  setOnConnectionClosedHandler(handler: ((info: ConnectionCloseInfo) => void) | null): void {
     this.onConnectionClosedHandler = handler
   }
 
@@ -569,7 +573,7 @@ export class MoqtClientWrapper {
       const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
       handler?.(message)
     })
-    this.client.onConnectionClosed(() => this.handleConnectionClosed())
+    this.client.onConnectionClosed((info: ConnectionCloseInfo | null) => this.handleConnectionClosed(info ?? {}))
   }
 
   private async sendSubgroupTextForAlias(trackAlias: bigint, text: string): Promise<void> {
@@ -605,10 +609,10 @@ export class MoqtClientWrapper {
     return requestId
   }
 
-  private handleConnectionClosed(): void {
-    this.pendingServerSetup?.reject(new Error('connection closed before SERVER_SETUP was received'))
+  private handleConnectionClosed(info: ConnectionCloseInfo): void {
+    this.pendingServerSetup?.reject(new Error(describeConnectionClose(info)))
     this.cleanupClient()
-    this.onConnectionClosedHandler?.()
+    this.onConnectionClosedHandler?.(info)
   }
 
   private cleanupClient(): void {
@@ -654,4 +658,12 @@ const defaultIncomingPublishNamespaceHandler: IncomingPublishNamespaceHandler = 
 
 const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ code, respondError }) => {
   await respondError(BigInt(code || 500), 'subscribe rejected')
+}
+
+function describeConnectionClose(info: ConnectionCloseInfo): string {
+  if (info.closeCode === undefined) {
+    return 'connection closed before SERVER_SETUP was received'
+  }
+  const reason = info.reason ? `: ${info.reason}` : ''
+  return `relay closed the connection before SERVER_SETUP (code ${info.closeCode}${reason})`
 }
