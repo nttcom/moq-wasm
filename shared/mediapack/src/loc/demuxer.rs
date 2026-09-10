@@ -21,10 +21,7 @@ pub struct Demuxer {
 
 enum Track {
     Video(ParameterSetTracker),
-    Audio {
-        config: AudioSpecificConfig,
-        announced: bool,
-    },
+    Audio(AudioSpecificConfig),
 }
 
 impl Demuxer {
@@ -39,10 +36,7 @@ impl Demuxer {
 
     pub fn audio(config: AudioSpecificConfig) -> Self {
         Self {
-            track: Track::Audio {
-                config,
-                announced: false,
-            },
+            track: Track::Audio(config),
             capture_origin: None,
             last_pts: Timestamp::ZERO,
             announced: false,
@@ -55,8 +49,11 @@ impl Demuxer {
             self.announced = true;
             events.push(MediaEvent::Streams(StreamSet {
                 has_video: matches!(self.track, Track::Video(_)),
-                has_audio: matches!(self.track, Track::Audio { .. }),
+                has_audio: matches!(self.track, Track::Audio(_)),
             }));
+            if let Track::Audio(config) = &self.track {
+                events.push(MediaEvent::AudioConfig(config.clone()));
+            }
         }
 
         let pts = self.presentation_timestamp(object);
@@ -76,11 +73,7 @@ impl Demuxer {
                     dts: pts,
                 }));
             }
-            Track::Audio { config, announced } => {
-                if !*announced {
-                    *announced = true;
-                    events.push(MediaEvent::AudioConfig(config.clone()));
-                }
+            Track::Audio(_) => {
                 events.push(MediaEvent::Audio(AudioSample {
                     data: object.payload.clone(),
                     pts,
@@ -293,8 +286,10 @@ mod tests {
 
         // Act
         let events = demuxer.push(&object).unwrap();
+        let subsequent = demuxer.push(&object).unwrap();
 
         // Assert
+        assert!(matches!(subsequent.as_slice(), [MediaEvent::Audio(_)]));
         assert_eq!(
             events,
             [
