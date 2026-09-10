@@ -17,6 +17,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.connectionStatus).toContainText('Connected:')
     await expect(viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
     await expect(viewer.playbackStatus).toContainText('Playing')
+    await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expectVideoDecoded(viewer)
 
     // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
@@ -40,6 +41,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
     await expect(viewer.playbackStatus).toContainText('Reviewing')
+    await expect(viewer.liveButton).toHaveClass(/reviewing/)
     await expect(viewer.reviewCanvas).toBeVisible()
     await expect
       .poll(async () => viewer.reviewCanvas.evaluate((element) => (element as HTMLCanvasElement).width), {
@@ -65,6 +67,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect(viewer.rewindStatus).toContainText('Live')
     await expect(viewer.seekPosition).toHaveText('LIVE')
+    await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expect(viewer.video).toBeVisible()
     await expect(viewer.playbackStatus).toContainText('Playing')
 
@@ -94,7 +97,9 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.reviewCanvas).toBeHidden()
 
-    // Act: 下位画質へ切り替える
+    // Act: 歯車から下位画質へ切り替える
+    await viewer.qualityButton.click()
+    await expect(viewer.qualityMenu).toBeVisible()
     const renditions = await viewer.videoTrackSelect.locator('option').allInnerTexts()
     expect(renditions.length).toBeGreaterThan(1)
     await viewer.videoTrackSelect.selectOption({ index: 1 })
