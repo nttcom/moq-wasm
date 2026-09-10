@@ -9,11 +9,12 @@ use mediapack::{
 use moqt::ExtensionHeaders;
 
 use crate::{
+    group_alignment::GroupAlignment,
     loc_object::extension_headers,
     media_timeline::MediaTimeline,
     moqt::{
-        MoqtManager, OutgoingObject, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo,
-        now_unix,
+        GroupBoundary, MoqtManager, OutgoingObject, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
+        VideoTrackInfo, now_unix,
     },
     renditions::RenditionFanout,
 };
@@ -41,6 +42,7 @@ pub struct MediaPublisher {
     /// first sample arrives. Renditions share it so every track stamps the same
     /// instant for the same presentation time.
     loc: Arc<OnceLock<LocMuxer>>,
+    alignment: Arc<GroupAlignment>,
 }
 
 impl MediaPublisher {
@@ -55,6 +57,7 @@ impl MediaPublisher {
             renditions: None,
             timeline: MediaTimeline::new(),
             loc: Arc::new(OnceLock::new()),
+            alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
         }
     }
 
@@ -69,6 +72,7 @@ impl MediaPublisher {
                         self.namespace.clone(),
                         &info,
                         self.loc.clone(),
+                        self.alignment.clone(),
                     )?;
                 }
                 self.moqt
@@ -99,21 +103,21 @@ impl MediaPublisher {
             return Ok(());
         };
         let captured_at = object.capture_timestamp();
-        let group_id = self
-            .moqt
+        let keyframe_group = sample
+            .is_keyframe
+            .then(|| self.alignment.keyframe(sample.pts.micros()));
+        self.moqt
             .send_object(
                 &self.namespace,
                 VIDEO_TRACK_NAME,
                 OutgoingObject {
-                    rotate_group: sample.is_keyframe,
+                    group: keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At),
                     extension_headers: extension_headers(&object),
                     payload: object.payload,
                 },
             )
             .await?;
-        let (Some(group_id), Some(captured_at)) =
-            (group_id.filter(|_| sample.is_keyframe), captured_at)
-        else {
+        let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
             return Ok(());
         };
         self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
@@ -133,13 +137,12 @@ impl MediaPublisher {
                 &self.namespace,
                 TIMELINE_TRACK_NAME,
                 OutgoingObject {
-                    rotate_group: true,
+                    group: GroupBoundary::Next,
                     extension_headers: ExtensionHeaders::default(),
                     payload: Bytes::from(self.timeline.document()?),
                 },
             )
-            .await?;
-        Ok(())
+            .await
     }
 
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
@@ -150,7 +153,11 @@ impl MediaPublisher {
             .frame_duration()
             .micros();
         self.setup_namespace().await?;
-        let rotate_group = self.rotate_audio_group(frame_duration_us);
+        let group = if self.rotate_audio_group(frame_duration_us) {
+            GroupBoundary::Next
+        } else {
+            GroupBoundary::Join
+        };
         let Some(object) = self
             .loc_muxer(sample.pts)
             .push(&MediaEvent::Audio(sample.clone()))
@@ -162,13 +169,12 @@ impl MediaPublisher {
                 &self.namespace,
                 AUDIO_TRACK,
                 OutgoingObject {
-                    rotate_group,
+                    group,
                     extension_headers: extension_headers(&object),
                     payload: object.payload,
                 },
             )
-            .await?;
-        Ok(())
+            .await
     }
 
     fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {

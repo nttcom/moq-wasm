@@ -37,6 +37,17 @@ travels as MoQT extension header 2. The audio track's AudioSpecificConfig is
 published Base64-encoded as the catalog `initData`; the video track carries its
 parameter sets in band and has none.
 
+## Group Alignment
+
+The source video track and its transcoded renditions form a CMSF switching set
+(draft-ietf-moq-cmsf-01 §3.2): the transcoder is asked for a keyframe at every
+source keyframe and each rendition group takes the group id the source assigned
+to that presentation time, so the same group id names the same instant on every
+track. A rendition that misses a source keyframe keeps writing into its current
+group and announces the skipped ids with the Prior Group ID Gap header when it
+catches up. Re-subscribing to a track continues its group numbering rather than
+restarting it.
+
 ## Publish Test RTMP
 
 Publish a generated test video and sine audio stream:
