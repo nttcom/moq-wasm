@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use bytes::Bytes;
 
 use crate::{
@@ -18,6 +18,7 @@ pub struct TrackWriter<T: TransportProtocol> {
     first_group_id: u64,
     next_group_id: u64,
     group: Option<GroupSender<T>>,
+    pending_group_gap: Option<u64>,
 }
 
 impl<T: TransportProtocol> TrackWriter<T> {
@@ -27,6 +28,7 @@ impl<T: TransportProtocol> TrackWriter<T> {
             first_group_id,
             next_group_id: first_group_id,
             group: None,
+            pending_group_gap: None,
         }
     }
 
@@ -34,6 +36,28 @@ impl<T: TransportProtocol> TrackWriter<T> {
         self.finish_current_group().await?;
         self.group = Some(self.open_group().await?);
         Ok(())
+    }
+
+    /// Opens a group with a chosen id so tracks of a switching set can start
+    /// their groups at the same ids. Ids skipped over are announced on the new
+    /// group's first object with the Prior Group ID Gap extension header of
+    /// draft-ietf-moq-transport-14; a writer that has not opened a group yet
+    /// may start anywhere.
+    pub async fn start_group_at(&mut self, group_id: u64) -> anyhow::Result<()> {
+        if self.groups() == 0 {
+            self.first_group_id = group_id;
+        } else {
+            ensure!(
+                group_id >= self.next_group_id,
+                "group {group_id} precedes the next group {}",
+                self.next_group_id
+            );
+            if group_id > self.next_group_id {
+                self.pending_group_gap = Some(group_id - self.next_group_id);
+            }
+        }
+        self.next_group_id = group_id;
+        self.start_group().await
     }
 
     pub async fn write(
@@ -51,8 +75,11 @@ impl<T: TransportProtocol> TrackWriter<T> {
     pub async fn write_with_extension_headers(
         &mut self,
         payload: Bytes,
-        extension_headers: ExtensionHeaders,
+        mut extension_headers: ExtensionHeaders,
     ) -> anyhow::Result<()> {
+        if let Some(gap) = self.pending_group_gap.take() {
+            extension_headers.push_prior_group_id_gap(gap);
+        }
         self.group
             .as_mut()
             .context("write before start_group")?
@@ -75,6 +102,10 @@ impl<T: TransportProtocol> TrackWriter<T> {
 
     pub fn groups(&self) -> u64 {
         self.next_group_id - self.first_group_id
+    }
+
+    pub fn next_group_id(&self) -> u64 {
+        self.next_group_id
     }
 
     pub fn current_group_id(&self) -> Option<u64> {
@@ -211,5 +242,55 @@ mod tests {
                 value: VariantType::Even(42),
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn chosen_group_ids_announce_the_ids_they_skip() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("track-writer-groups");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let publisher = client.publisher();
+        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                accept_publish(&server)
+            )
+        })
+        .await
+        .unwrap();
+        let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
+
+        // Act: the first group may start anywhere, the next one skips 4 and 5
+        writer.start_group_at(3).await.unwrap();
+        writer
+            .write(Bytes::from_static(b"a"), vec![])
+            .await
+            .unwrap();
+        writer.start_group_at(6).await.unwrap();
+        writer
+            .write(Bytes::from_static(b"b"), vec![])
+            .await
+            .unwrap();
+        writer
+            .write(Bytes::from_static(b"c"), vec![])
+            .await
+            .unwrap();
+        let next_group_id = writer.next_group_id();
+        writer.finish().await.unwrap();
+        let mut reader = subscribed_track_reader(&server, &accepted).await;
+        let first = reader.next_object().await.unwrap().unwrap();
+        let second = reader.next_object().await.unwrap().unwrap();
+        let third = reader.next_object().await.unwrap().unwrap();
+
+        // Assert
+        assert_eq!(next_group_id, 7);
+        assert_eq!((first.group_id, first.object_id), (3, 0));
+        assert!(first.extension_headers.prior_group_id_gap().is_empty());
+        assert_eq!((second.group_id, second.object_id), (6, 0));
+        assert_eq!(second.extension_headers.prior_group_id_gap(), vec![2]);
+        assert_eq!((third.group_id, third.object_id), (6, 1));
+        assert!(third.extension_headers.prior_group_id_gap().is_empty());
     }
 }
