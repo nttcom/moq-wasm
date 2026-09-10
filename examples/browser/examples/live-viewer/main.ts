@@ -19,6 +19,7 @@ const REWIND_GROUP_COUNT = 4n
 const FETCH_IDLE_MS = 400
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
+const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 
 type MediaKind = 'video' | 'audio'
 
@@ -54,7 +55,8 @@ const mediaTimeline = new MediaTimeline()
 let mediaTimelineTrackName: string | undefined
 let reviewing = false
 let reviewGeneration = 0
-let reviewCaptureMicros: number | undefined
+let reviewAnchorMicros: number | undefined
+let reviewPlayheadMicros: number | undefined
 let seeking = false
 const seekbar = element<HTMLInputElement>('seekbar')
 
@@ -67,9 +69,21 @@ element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', app
 element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
 element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
+element<HTMLButtonElement>('qualityBtn').addEventListener('click', () => toggleQualityMenu())
+document.addEventListener('click', (event) => {
+  const quality = element<HTMLDivElement>('quality-menu').parentElement
+  if (quality && !quality.contains(event.target as Node)) {
+    toggleQualityMenu(false)
+  }
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    toggleQualityMenu(false)
+  }
+})
 seekbar.addEventListener('input', () => {
   seeking = true
-  renderSeekPosition(seekbar.valueAsNumber, Number(seekbar.max))
+  renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max))
 })
 seekbar.addEventListener('change', () => {
   seeking = false
@@ -418,7 +432,8 @@ async function rewind(seconds: number): Promise<void> {
 
   const generation = ++reviewGeneration
   reviewing = true
-  reviewCaptureMicros = target.captureMicros
+  reviewAnchorMicros = target.captureMicros
+  reviewPlayheadMicros = target.captureMicros
   renderSeekbar()
   setStatusText('playback-status', 'Reviewing')
   await review(target.groupId, generation)
@@ -529,8 +544,7 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
       canvas.width = frame.displayWidth
       canvas.height = frame.displayHeight
       context.drawImage(frame, 0, 0)
-      reviewCaptureMicros = origin + frame.timestamp
-      renderSeekbar()
+      advanceReviewPlayhead(origin + frame.timestamp)
       frame.close()
     },
     error: (error) => appendLog('error', `review decoder: ${error.message}`)
@@ -578,7 +592,8 @@ function backToLive(): void {
   reviewGeneration += 1
   reviewing = false
   seeking = false
-  reviewCaptureMicros = undefined
+  reviewAnchorMicros = undefined
+  reviewPlayheadMicros = undefined
   renderSeekbar()
   element<HTMLCanvasElement>('review').hidden = true
   element<HTMLVideoElement>('video').hidden = false
@@ -588,8 +603,16 @@ function backToLive(): void {
 /// The axis runs from the start of the broadcast, which the media timeline
 /// places, so the bar keeps its meaning as cache retention grows. Until the
 /// first timeline object arrives it falls back to the replayable window.
+function toggleQualityMenu(open?: boolean): void {
+  const menu = element<HTMLDivElement>('quality-menu')
+  const expanded = open ?? menu.hidden
+  menu.hidden = !expanded
+  element<HTMLButtonElement>('qualityBtn').setAttribute('aria-expanded', String(expanded))
+}
+
 function renderSeekbar(): void {
   setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
+  element<HTMLButtonElement>('liveBtn').classList.toggle('reviewing', reviewing)
   if (seeking) {
     return
   }
@@ -599,10 +622,35 @@ function renderSeekbar(): void {
   seekbar.min = String(broadcastStart === undefined ? replayableStart : broadcastStart / 1_000_000)
   seekbar.max = String(latest)
   seekbar.disabled = !timeline.newestClosed || timeline.span <= 0
-  const position = reviewCaptureMicros === undefined ? latest : reviewCaptureMicros / 1_000_000
-  seekbar.value = String(Math.min(latest, Math.max(Number(seekbar.min), position)))
+  const anchor = reviewAnchorMicros === undefined ? latest : reviewAnchorMicros / 1_000_000
+  const playhead = reviewPlayheadMicros === undefined ? latest : reviewPlayheadMicros / 1_000_000
+  seekbar.value = String(Math.min(latest, Math.max(Number(seekbar.min), anchor)))
   renderReplayableWindow(replayableStart, latest)
-  renderSeekPosition(position, latest)
+  renderReviewProgress(anchor, playhead, latest)
+  renderSeekPosition(anchor, playhead, latest)
+}
+
+/// The decoder emits frames in bursts, so the readout steps a second at a time
+/// instead of following every frame. The thumb stays on the position that was
+/// seeked to and the progress fill carries the movement.
+function advanceReviewPlayhead(captureMicros: number): void {
+  if (reviewPlayheadMicros !== undefined && Math.abs(captureMicros - reviewPlayheadMicros) < REVIEW_PLAYHEAD_STEP_US) {
+    return
+  }
+  reviewPlayheadMicros = captureMicros
+  renderSeekbar()
+}
+
+function renderReviewProgress(anchor: number, playhead: number, latest: number): void {
+  const played = element<HTMLDivElement>('seek-review-progress')
+  const min = Number(seekbar.min)
+  const axis = latest - min
+  played.hidden = !reviewing || axis <= 0
+  if (played.hidden) {
+    return
+  }
+  played.style.left = `${(((anchor - min) / axis) * 100).toFixed(3)}%`
+  played.style.width = `${((Math.max(0, playhead - anchor) / axis) * 100).toFixed(3)}%`
 }
 
 function renderReplayableWindow(replayableStart: number, latest: number): void {
@@ -610,7 +658,7 @@ function renderReplayableWindow(replayableStart: number, latest: number): void {
   const axis = latest - min
   const window = element<HTMLDivElement>('seek-available-window')
   const offset = axis > 0 ? (replayableStart - min) / axis : 0
-  window.style.marginLeft = `${(offset * 100).toFixed(3)}%`
+  window.style.left = `${(offset * 100).toFixed(3)}%`
   window.style.width = `${((1 - offset) * 100).toFixed(3)}%`
   const elapsed = mediaTimeline.elapsedMsAt(min * 1_000_000)
   setStatusText('seek-start', elapsed === undefined ? '--:--' : formatElapsed(elapsed))
@@ -637,12 +685,13 @@ function seekTo(captureSeconds: number): void {
   }
 }
 
-function renderSeekPosition(position: number, latest: number): void {
-  const behind = Math.max(0, latest - position)
+function renderSeekPosition(anchor: number, playhead: number, latest: number): void {
+  const behind = Math.max(0, latest - playhead)
   const label = behind < 0.1 ? 'LIVE' : `-${behind.toFixed(1)}s`
   setStatusText('seek-position', label)
-  seekbar.setAttribute('aria-valuetext', behind < 0.1 ? 'Live' : `${behind.toFixed(1)} seconds behind live`)
-  renderSeekElapsed(position, latest)
+  const thumbBehind = Math.max(0, latest - anchor)
+  seekbar.setAttribute('aria-valuetext', thumbBehind < 0.1 ? 'Live' : `${thumbBehind.toFixed(1)} seconds behind live`)
+  renderSeekElapsed(playhead, latest)
 }
 
 function renderSeekElapsed(position: number, latest: number): void {

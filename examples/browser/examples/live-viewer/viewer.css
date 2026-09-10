@@ -1,43 +1,222 @@
-#review {
-  width: 100%;
+.viewer-stage {
+  position: relative;
+  border: 1px solid var(--border);
   border-radius: 16px;
+  overflow: hidden;
+  background: #0c1111;
 }
 
-.seek-controls {
+.viewer-stage video,
+.viewer-stage canvas {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.viewer-stage video[hidden],
+.viewer-stage canvas[hidden] {
+  display: none;
+}
+
+.viewer-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
   display: grid;
+  gap: 6px;
+  padding: 40px 14px 12px;
+  background: linear-gradient(to top, rgba(4, 14, 14, 0.95) 0%, rgba(4, 14, 14, 0.95) 72%, rgba(4, 14, 14, 0) 100%);
+}
+
+.viewer-readout {
+  display: flex;
+  justify-content: space-between;
   gap: 8px;
-  margin-top: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+#seek-position {
+  color: #fff;
+}
+
+.viewer-seek {
+  position: relative;
+  display: grid;
+}
+
+/* The track shows the whole broadcast dimmed and the replayable window bright,
+   so the input paints only its thumb on top of it. */
+.seek-availability {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.seek-availability-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* How far review playback has run from the position that was seeked to. The
+   thumb marks that position and stays put, so this fill carries the movement. */
+.seek-review-progress {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--accent-2);
+}
+
+.seek-review-progress[hidden] {
+  display: none;
 }
 
 #seekbar {
+  position: relative;
   width: 100%;
-  min-height: 32px;
+  height: 18px;
   margin: 0;
   padding: 0;
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
   cursor: pointer;
+}
+
+#seekbar::-webkit-slider-runnable-track,
+#seekbar::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+#seekbar::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+#seekbar::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+
+#seekbar:focus-visible {
+  border-radius: 999px;
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 3px;
 }
 
 #seekbar:disabled {
   cursor: default;
-  opacity: 0.5;
 }
 
-#seek-position {
+#seekbar:disabled::-webkit-slider-thumb {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-button,
+.viewer-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
   font-family: var(--font-mono);
-  color: var(--accent-strong);
+  font-size: 0.78rem;
+  cursor: pointer;
 }
 
-.seek-availability {
-  height: 4px;
-  margin-top: -4px;
-  border-radius: 2px;
-  background: rgba(16, 42, 42, 0.12);
-  overflow: hidden;
+.viewer-button:hover,
+.viewer-live:hover {
+  background: rgba(255, 255, 255, 0.28);
 }
 
-.seek-availability-window {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent-strong);
+.viewer-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4d4f;
+}
+
+/* Reviewing means the viewer is behind the live edge, so the button that
+   returns there is filled instead of translucent. */
+.viewer-live.reviewing {
+  background: var(--accent-2);
+  color: #2b1109;
+}
+
+.viewer-live.reviewing .viewer-live-dot {
+  background: rgba(43, 17, 9, 0.55);
+}
+
+.viewer-quality {
+  position: relative;
+  margin-left: auto;
+}
+
+.viewer-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: grid;
+  gap: 10px;
+  min-width: 232px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(6, 20, 20, 0.96);
+  box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.8);
+}
+
+.viewer-menu[hidden] {
+  display: none;
+}
+
+.viewer-menu label {
+  display: grid;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.82rem;
+}
+
+.viewer-menu select {
+  width: 100%;
+}
+
+.viewer-menu .field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

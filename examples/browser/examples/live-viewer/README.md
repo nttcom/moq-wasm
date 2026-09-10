@@ -45,6 +45,17 @@ LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
 ```
 
+## Player controls
+
+The seek bar, the rewind buttons and the quality menu sit on the video itself
+rather than in their own cards. The gear opens the video and audio track
+selection along with the jitter buffer switch, and closes on a second click, on
+Escape, or on a click outside it.
+
+The `LIVE` button returns to the live edge. It is translucent with a red dot
+while playback is live and filled while playback is behind the live edge, so the
+button doubles as the indicator for which of the two the viewer is watching.
+
 ## Seek bar
 
 The slider below the video spans the whole broadcast: its left end is the start,
@@ -53,6 +64,11 @@ underneath marks the part of that range the relay still caches and can therefore
 replay, which is the only part a seek resolves. Dragging outside it reports the
 FETCH failure and holds the position; Home jumps to the oldest replayable position
 rather than to the start of the broadcast, and End returns to live.
+
+While review playback runs, the thumb stays on the position that was seeked to
+and a fill from it carries the movement, because the decoder emits frames in
+bursts and a thumb that followed each one read as jitter. The fill and the
+readouts step a second at a time for the same reason.
 
 The position label shows seconds behind live and follows review playback, and the
 label under the slider reads the elapsed time at the axis start. Seeking starts at

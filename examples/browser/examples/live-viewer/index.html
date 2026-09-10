@@ -55,35 +55,6 @@
                   Playback idle
                 </span>
               </div>
-            </div>
-          </section>
-
-          <section class="card stack">
-            <h2>Quality</h2>
-            <label for="video-track"
-              >Video track:
-              <select id="video-track" data-testid="live-viewer-video-track-select"></select>
-            </label>
-            <p class="hint">live-ingest を <code>--transcode</code> で起動すると下位画質が選べます。</p>
-            <label for="audio-track"
-              >Audio track:
-              <select id="audio-track" data-testid="live-viewer-audio-track-select"></select>
-            </label>
-            <label class="field-row">
-              <input type="checkbox" id="bypass-jitter-buffer" checked />
-              Bypass jitter buffer (lowest latency)
-            </label>
-          </section>
-
-          <section class="card stack">
-            <h2>Rewind</h2>
-            <p class="hint">relay のキャッシュに残っている範囲を FETCH で取り出して再生します。</p>
-            <div class="button-row">
-              <button type="button" id="rewind10Btn" data-testid="live-viewer-rewind-10-button">-10s</button>
-              <button type="button" id="rewind30Btn" data-testid="live-viewer-rewind-30-button">-30s</button>
-              <button type="button" id="liveBtn" data-testid="live-viewer-live-button">Back to live</button>
-            </div>
-            <div class="status-list">
               <div class="status-item">
                 <span class="status-label">Mode</span>
                 <span id="rewind-status" class="status-value" data-testid="live-viewer-rewind-status">Live</span>
@@ -104,40 +75,108 @@
             </div>
             <div class="media-grid">
               <div class="playback-panel">
-                <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
-                <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
-                <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
-                <div class="seek-controls">
-                  <div class="playback-meta">
-                    <label for="seekbar">Playback position</label>
-                    <output id="seek-position" for="seekbar" data-testid="live-viewer-seek-position">LIVE</output>
+                <div class="viewer-stage">
+                  <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
+                  <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
+                  <div class="viewer-overlay">
+                    <div class="viewer-readout">
+                      <span id="seek-start" data-testid="live-viewer-seek-start">--:--</span>
+                      <span id="seek-elapsed" data-testid="live-viewer-seek-elapsed">--:-- / --:--</span>
+                      <output id="seek-position" for="seekbar" data-testid="live-viewer-seek-position">LIVE</output>
+                    </div>
+                    <div class="viewer-seek">
+                      <div class="seek-availability" data-testid="live-viewer-seek-availability">
+                        <div
+                          id="seek-available-window"
+                          class="seek-availability-window"
+                          data-testid="live-viewer-seek-available-window"
+                        ></div>
+                        <div
+                          id="seek-review-progress"
+                          class="seek-review-progress"
+                          hidden
+                          data-testid="live-viewer-seek-review-progress"
+                        ></div>
+                      </div>
+                      <input
+                        id="seekbar"
+                        type="range"
+                        min="0"
+                        max="0"
+                        step="any"
+                        value="0"
+                        disabled
+                        aria-describedby="seek-hint"
+                        aria-valuetext="Live"
+                        data-testid="live-viewer-seekbar"
+                      />
+                    </div>
+                    <div class="viewer-controls">
+                      <button
+                        type="button"
+                        id="liveBtn"
+                        class="viewer-live"
+                        data-testid="live-viewer-live-button"
+                        aria-label="Back to live"
+                      >
+                        <span class="viewer-live-dot" aria-hidden="true"></span>LIVE
+                      </button>
+                      <button
+                        type="button"
+                        id="rewind10Btn"
+                        class="viewer-button"
+                        data-testid="live-viewer-rewind-10-button"
+                        aria-label="Rewind 10 seconds"
+                        title="10 秒戻る"
+                      >
+                        &#x21BA;10
+                      </button>
+                      <button
+                        type="button"
+                        id="rewind30Btn"
+                        class="viewer-button"
+                        data-testid="live-viewer-rewind-30-button"
+                        aria-label="Rewind 30 seconds"
+                        title="30 秒戻る"
+                      >
+                        &#x21BA;30
+                      </button>
+                      <div class="viewer-quality">
+                        <button
+                          type="button"
+                          id="qualityBtn"
+                          class="viewer-button"
+                          aria-expanded="false"
+                          aria-controls="quality-menu"
+                          data-testid="live-viewer-quality-button"
+                          aria-label="Quality settings"
+                          title="画質と音声"
+                        >
+                          &#x2699;
+                        </button>
+                        <div id="quality-menu" class="viewer-menu" hidden data-testid="live-viewer-quality-menu">
+                          <label for="video-track"
+                            >Video track
+                            <select id="video-track" data-testid="live-viewer-video-track-select"></select>
+                          </label>
+                          <label for="audio-track"
+                            >Audio track
+                            <select id="audio-track" data-testid="live-viewer-audio-track-select"></select>
+                          </label>
+                          <label class="field-row">
+                            <input type="checkbox" id="bypass-jitter-buffer" checked />
+                            Bypass jitter buffer
+                          </label>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <input
-                    id="seekbar"
-                    type="range"
-                    min="0"
-                    max="0"
-                    step="any"
-                    value="0"
-                    disabled
-                    aria-describedby="seek-hint"
-                    aria-valuetext="Live"
-                    data-testid="live-viewer-seekbar"
-                  />
-                  <div class="seek-availability" data-testid="live-viewer-seek-availability">
-                    <div
-                      id="seek-available-window"
-                      class="seek-availability-window"
-                      data-testid="live-viewer-seek-available-window"
-                    ></div>
-                  </div>
-                  <div class="playback-meta">
-                    <span id="seek-start" data-testid="live-viewer-seek-start">--:--</span>
-                    <span id="seek-elapsed" data-testid="live-viewer-seek-elapsed">--:-- / --:--</span>
-                    <span>Live</span>
-                  </div>
-                  <p class="hint" id="seek-hint">受信済みの範囲をシークします。右端でライブへ戻ります。</p>
                 </div>
+                <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
+                <p class="hint" id="seek-hint">
+                  配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
+                  <code>--transcode</code> で live-ingest を起動すると歯車から下位画質が選べます。
+                </p>
               </div>
             </div>
           </section>
