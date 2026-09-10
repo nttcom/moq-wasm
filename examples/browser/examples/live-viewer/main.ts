@@ -396,7 +396,6 @@ async function rewind(seconds: number): Promise<void> {
     if (generation !== reviewGeneration) {
       return
     }
-    backToLive()
     setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
     appendLog('error', `fetch: ${getErrorMessage(error)}`)
     return
@@ -429,7 +428,6 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<vo
   const context = canvas.getContext('2d')
   const config = pendingReviewConfig()
   if (frames.length === 0 || !context || !config) {
-    backToLive()
     setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
     return
   }

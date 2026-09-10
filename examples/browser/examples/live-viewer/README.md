@@ -56,4 +56,5 @@ keyframe group and uses the same bounded FETCH replay as the rewind buttons.
 The slider is disabled until a closed group is available. Stop and video quality
 changes clear the timeline and cancel pending review playback. The observed
 range is not a guarantee of relay cache retention: an evicted group can no longer
-be replayed, in which case the viewer reports the FETCH failure and returns live.
+be replayed. A failed seek reports the FETCH error and holds the requested
+position, so pick another position or press Live to resume.
