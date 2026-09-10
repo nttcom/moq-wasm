@@ -4,10 +4,7 @@ use bytes::{Bytes, BytesMut};
 use crate::{
     aac::AudioSpecificConfig,
     flv::tag::{Tag, TagType, parse_file_header, parse_tag},
-    h264::{
-        AvcDecoderConfigurationRecord, NalUnitType, annexb::nal_units, avcc::avcc_to_annexb,
-        nal::nal_unit_type,
-    },
+    h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
     sample::{AudioSample, MediaEvent, Timestamp, VideoSample},
 };
 
@@ -82,8 +79,8 @@ impl Demuxer {
                     .context("FLV AVC NALU received before sequence header")?;
                 let annexb = avcc_to_annexb(body, config.nal_length_size as usize)?;
                 let is_keyframe = frame_type == FRAME_TYPE_KEY;
-                let data = if is_keyframe && !contains_sps(&annexb) {
-                    Bytes::from([config.parameter_sets_annexb().as_ref(), &annexb].concat())
+                let data = if is_keyframe {
+                    config.with_parameter_sets(annexb)
                 } else {
                     annexb
                 };
@@ -121,10 +118,6 @@ impl Demuxer {
             _ => Ok(Vec::new()),
         }
     }
-}
-
-fn contains_sps(annexb: &[u8]) -> bool {
-    nal_units(annexb).any(|nal| nal_unit_type(nal) == Some(NalUnitType::Sps))
 }
 
 #[cfg(test)]
@@ -260,7 +253,10 @@ mod tests {
         assert_eq!(video.iter().filter(|sample| sample.is_keyframe).count(), 2);
         assert_eq!(audio_samples(&events).len(), 30);
         assert!(video[0].is_keyframe);
-        assert!(contains_sps(&video[0].data));
+        assert_eq!(
+            video[0].data,
+            fixture_record().with_parameter_sets(video[0].data.clone())
+        );
         assert_eq!(
             count_events(&events, |event| matches!(event, MediaEvent::VideoConfig(_))),
             1
