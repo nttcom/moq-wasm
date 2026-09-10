@@ -13,8 +13,8 @@ Library components (draft-governed):
 | --- | --- | --- |
 | `moqt` | Core MoQT protocol implementation | `spec/draft-ietf-moq-transport-14.txt` |
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
-| `shared/media-streaming-format` | Object format for content transported over MoQT | `spec/draft-ietf-moq-msf-00.txt` |
-| `shared/packages` | Low-overhead container used internally by `media-streaming-format` | `spec/draft-ietf-moq-msf-00.txt` |
+| `shared/media-streaming-format` | Object format for content transported over MoQT | `spec/draft-ietf-moq-msf-01.txt` |
+| `shared/packages` | Low-overhead container used internally by `media-streaming-format` | `spec/draft-ietf-moq-msf-01.txt` |
 
 Application and integration components (draft reference is normally not required):
 
