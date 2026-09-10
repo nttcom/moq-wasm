@@ -1555,6 +1555,8 @@ fn build_catalog_tracks(
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
         });
         tracks.push(Track {
             namespace: namespace_label.clone(),
@@ -1597,6 +1599,8 @@ fn build_catalog_tracks(
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
         });
     }
     tracks
