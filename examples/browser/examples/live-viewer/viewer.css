@@ -27,3 +27,17 @@
   font-family: var(--font-mono);
   color: var(--accent-strong);
 }
+
+.seek-availability {
+  height: 4px;
+  margin-top: -4px;
+  border-radius: 2px;
+  background: rgba(16, 42, 42, 0.12);
+  overflow: hidden;
+}
+
+.seek-availability-window {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-strong);
+}

@@ -24,6 +24,16 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
+
+    // Assert: 軸は配信開始から始まり、FETCH できる区間はその一部として示される
+    await expect(viewer.seekStart).toHaveText(/^0:0\d$/)
+    const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
+      offset: Number.parseFloat((element as HTMLElement).style.marginLeft),
+      width: Number.parseFloat((element as HTMLElement).style.width)
+    }))
+    expect(replayable.offset).toBeGreaterThan(0)
+    expect(replayable.width).toBeLessThan(100)
+
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
