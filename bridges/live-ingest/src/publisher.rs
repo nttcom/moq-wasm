@@ -3,7 +3,8 @@ use mediapack::{AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig};
 
 use crate::{
     chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
-    moqt::{MoqtManager, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
+    media_timeline::MediaTimeline,
+    moqt::{MoqtManager, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
     renditions::RenditionFanout,
 };
 
@@ -25,6 +26,7 @@ pub struct MediaPublisher {
     video_codec: Option<String>,
     audio_config: Option<AudioSpecificConfig>,
     renditions: Option<RenditionFanout>,
+    timeline: MediaTimeline,
 }
 
 impl MediaPublisher {
@@ -38,6 +40,7 @@ impl MediaPublisher {
             video_codec: None,
             audio_config: None,
             renditions: None,
+            timeline: MediaTimeline::new(),
         }
     }
 
@@ -76,15 +79,41 @@ impl MediaPublisher {
         if let Some(renditions) = &self.renditions {
             renditions.push(sample);
         }
-        let payload = video_payload(sample, self.video_codec.as_deref());
-        self.moqt
+        let encoded_at_ms = now_unix().as_millis() as u64;
+        let payload = video_payload(sample, self.video_codec.as_deref(), encoded_at_ms);
+        let group_id = self
+            .moqt
             .send_object(
                 &self.namespace,
                 VIDEO_TRACK_NAME,
                 sample.is_keyframe,
                 payload,
             )
+            .await?;
+        let Some(group_id) = group_id.filter(|_| sample.is_keyframe) else {
+            return Ok(());
+        };
+        self.publish_timeline(group_id, sample.pts.micros(), encoded_at_ms)
             .await
+    }
+
+    async fn publish_timeline(
+        &mut self,
+        group_id: u64,
+        presentation_us: u64,
+        encoded_at_ms: u64,
+    ) -> Result<()> {
+        self.timeline
+            .record(group_id, presentation_us, encoded_at_ms);
+        self.moqt
+            .send_object(
+                &self.namespace,
+                TIMELINE_TRACK_NAME,
+                true,
+                self.timeline.document()?,
+            )
+            .await?;
+        Ok(())
     }
 
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
@@ -104,7 +133,8 @@ impl MediaPublisher {
         );
         self.moqt
             .send_object(&self.namespace, AUDIO_TRACK, rotate_group, payload)
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn setup_namespace(&mut self) -> Result<()> {
@@ -128,11 +158,11 @@ impl MediaPublisher {
     }
 }
 
-pub fn video_payload(sample: &VideoSample, codec: Option<&str>) -> Vec<u8> {
+pub fn video_payload(sample: &VideoSample, codec: Option<&str>, encoded_at_ms: u64) -> Vec<u8> {
     pack_video_chunk_payload(
         sample.is_keyframe,
         sample.pts.micros(),
-        now_unix().as_millis() as u64,
+        encoded_at_ms,
         &sample.data,
         codec.filter(|_| sample.is_keyframe),
     )

@@ -7,7 +7,7 @@ use tokio::{
 use transcode::{Rendition, TranscodedEvent, Transcoder, ladder_for};
 
 use crate::{
-    moqt::{MoqtManager, VIDEO_TRACK_NAME, VideoTrackInfo},
+    moqt::{MoqtManager, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
     publisher::video_payload,
 };
 
@@ -107,9 +107,10 @@ async fn publish_output(
         }
         MediaEvent::Video(sample) => {
             tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
-            let payload = video_payload(&sample, codec.as_deref());
+            let payload = video_payload(&sample, codec.as_deref(), now_unix().as_millis() as u64);
             moqt.send_object(namespace, &track, sample.is_keyframe, payload)
-                .await
+                .await?;
+            Ok(())
         }
         _ => Ok(()),
     }
