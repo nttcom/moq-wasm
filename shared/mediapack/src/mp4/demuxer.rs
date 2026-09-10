@@ -31,6 +31,7 @@ const AUDIO_SAMPLE_ENTRY: &[u8] = b"mp4a";
 const DEFAULT_TIMESCALE: u32 = 90_000;
 const AAC_LC_OBJECT_TYPE: u8 = 2;
 
+#[derive(Default)]
 pub struct Demuxer {
     buffer: BytesMut,
     tracks: BTreeMap<u32, Track>,
@@ -68,19 +69,9 @@ struct SampleEntry {
     is_sync: bool,
 }
 
-impl Default for Demuxer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Demuxer {
     pub fn new() -> Self {
-        Self {
-            buffer: BytesMut::new(),
-            tracks: BTreeMap::new(),
-            pending: None,
-        }
+        Self::default()
     }
 
     pub fn push(&mut self, data: &[u8]) -> Result<Vec<MediaEvent>> {
