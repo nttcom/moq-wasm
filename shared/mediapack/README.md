@@ -3,16 +3,20 @@
 Container and bitstream toolkit for the media that flows through this workspace.
 It has no dependency on GStreamer or FFmpeg; everything is parsed and written in Rust.
 
-```
-RTMP tags / FLV bytes ─┐                      ┌─> H.264 + AAC samples (MoQT publishers)
-                       ├─> MediaEvent stream ─┼─> FLV   (flv::Muxer)
-SRT / MPEG-TS bytes ───┘                      └─> fMP4  (mp4::Fmp4Muxer)
-```
+| Format | Demux | Mux |
+| --- | --- | --- |
+| MPEG-TS | `mpegts::Demuxer` | `mpegts::Muxer` |
+| FLV | `flv::Demuxer` | `flv::Muxer` |
+| fMP4 | `mp4::Demuxer` | `mp4::Fmp4Muxer` |
+| LoC | `loc::Demuxer` | `loc::Muxer` |
+
+All four formats share H.264/AAC `MediaEvent`s. MPEG-TS, FLV, and fMP4 can
+be converted in either direction through `Transmuxer`.
 
 ## Model
 
-Every demuxer turns bytes into `MediaEvent`s and every muxer turns `MediaEvent`s back
-into bytes, so any input can feed any output.
+Demuxers turn container bytes or LoC objects into `MediaEvent`s; muxers produce
+the corresponding container bytes or objects.
 
 | Event | Meaning |
 | --- | --- |
@@ -30,9 +34,10 @@ Timestamps are `Timestamp` values in microseconds with conversions to and from
 | Module | Contents |
 | --- | --- |
 | `mpegts::parser` | TS packet alignment and parsing, PAT/PMT sections, PES headers |
-| `mpegts::Demuxer` | Push-based demuxer: TS bytes in, `MediaEvent`s out |
+| `mpegts::Demuxer` / `mpegts::Muxer` | TS bytes and events; muxing writes PAT/PMT, PES, PCR, and ADTS |
 | `flv::Demuxer` / `flv::Muxer` | FLV file streams and RTMP tag payloads (`push_tag`) |
-| `mp4::Fmp4Muxer` | Init segment plus one `moof`/`mdat` fragment per sample |
+| `mp4::Demuxer` / `mp4::Fmp4Muxer` | Fragmented MP4; muxing writes an init segment plus one fragment per sample |
+| `loc` | `Muxer`, `Demuxer`, and transport-independent `LocObject` with typed extensions |
 | `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions) |
 | `aac` | AudioSpecificConfig and ADTS parsing |
 | `transmux` | `Transmuxer` (push API) and `transmux()` (Read/Write API) |
@@ -61,8 +66,48 @@ sample duration. Call `finish()` to flush the last sample.
 cargo run -p mediapack --example transmux -- mpegts fmp4 in.ts out.mp4
 ```
 
+LoC carries individual objects with extension headers and a payload, rather
+than a byte stream. Use `loc::Muxer` and `loc::Demuxer` directly, outside the
+`Read`/`Write` transmux API. Route video and audio to separate MoQ tracks;
+provide the audio configuration from the catalog to `loc::Demuxer::audio`.
+
+```rust
+use mediapack::{MediaEvent, Timestamp, loc};
+
+let muxer = loc::Muxer::new(Timestamp::from_micros(1_700_000_000_000_000));
+let mut video_demuxer = loc::Demuxer::video();
+for event in &events {
+    if matches!(event, MediaEvent::Video(_)) {
+        if let Some(object) = muxer.push(event) {
+            let decoded_events = video_demuxer.push(&object)?;
+        }
+    }
+}
+```
+
+The LoC muxer adds the capture origin to each sample's PTS and keeps H.264
+payloads in Annex-B form with in-band parameter sets. Configuration events
+produce no object. The demuxer measures PTS from the first capture timestamp
+on its track and sets video DTS equal to PTS; separate decode timestamps and
+cross-track clock alignment are not represented by this API.
+
+The fMP4 demuxer reads H.264/AAC initialization segments and fragments with
+explicit `trun` data offsets relative to `moof`, followed by `mdat`. This includes
+the output of `Fmp4Muxer` and the FFmpeg fixture command below; unfragmented
+MP4 is outside its scope. Call `finish()` to detect incomplete final input.
+The MPEG-TS muxer emits complete packets on each `push()` and needs no flush.
+
 ## Fixtures
 
 `fixtures/testsrc.ts` and `fixtures/testsrc.flv` are 0.6 s of ffmpeg `testsrc`
 (160x90, H.264 baseline, 2 keyframes) with a mono 48 kHz AAC sine tone. They
 drive the chunked demux and transmux tests.
+
+`fixtures/testsrc.mp4` is a fragmented remux of `testsrc.ts`, generated from
+within the fixtures directory:
+
+```shell
+ffmpeg -i testsrc.ts -c copy -bsf:a aac_adtstoasc \
+  -movflags frag_keyframe+empty_moov+default_base_moof \
+  -frag_duration 200000 testsrc.mp4
+```

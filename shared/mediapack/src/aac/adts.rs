@@ -1,9 +1,10 @@
 use anyhow::{Result, ensure};
 use bytes::{Bytes, BytesMut};
 
-use crate::aac::asc::{AudioSpecificConfig, SAMPLE_RATES};
+use crate::aac::asc::{AudioSpecificConfig, SAMPLE_RATES, sampling_frequency_index};
 
 pub(crate) const HEADER_LENGTH: usize = 7;
+const MAX_FRAME_LENGTH: usize = (1 << 13) - 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdtsHeader {
@@ -40,6 +41,41 @@ pub fn parse_header(data: &[u8]) -> Result<Option<AdtsHeader>> {
         frame_length,
         header_length,
     }))
+}
+
+pub fn write_header(
+    config: &AudioSpecificConfig,
+    payload_length: usize,
+) -> Result<[u8; HEADER_LENGTH]> {
+    ensure!(
+        (1..=4).contains(&config.object_type),
+        "ADTS cannot signal audio object type {}",
+        config.object_type
+    );
+    let frequency_index = sampling_frequency_index(config.sample_rate)
+        .ok_or_else(|| anyhow::anyhow!("ADTS cannot signal sample rate {}", config.sample_rate))?;
+    let frame_length = payload_length + HEADER_LENGTH;
+    ensure!(
+        frame_length <= MAX_FRAME_LENGTH,
+        "ADTS frame too long: {frame_length}"
+    );
+    let channels = config.channel_configuration;
+    Ok([
+        0xFF,
+        0xF1,
+        ((config.object_type - 1) << 6) | (frequency_index << 2) | (channels >> 2),
+        ((channels & 0x03) << 6) | ((frame_length >> 11) as u8 & 0x03),
+        (frame_length >> 3) as u8,
+        ((frame_length as u8 & 0x07) << 5) | 0x1F,
+        0xFC,
+    ])
+}
+
+pub fn frame(config: &AudioSpecificConfig, payload: &[u8]) -> Result<Bytes> {
+    let mut out = BytesMut::with_capacity(HEADER_LENGTH + payload.len());
+    out.extend_from_slice(&write_header(config, payload.len())?);
+    out.extend_from_slice(payload);
+    Ok(out.freeze())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +127,30 @@ impl AdtsReader {
 mod tests {
     use super::*;
     use crate::test_support::{adts_frame, mono_48k};
+
+    #[test]
+    fn written_frames_parse_back() {
+        // Arrange
+        let config = mono_48k();
+
+        // Act
+        let frame = frame(&config, &[1, 2, 3]).unwrap();
+        let header = parse_header(&frame).unwrap().unwrap();
+
+        // Assert
+        assert_eq!(header.config, config);
+        assert_eq!(header.frame_length, frame.len());
+        assert_eq!(&frame[header.header_length..], [1, 2, 3]);
+    }
+
+    #[test]
+    fn rejects_a_sample_rate_adts_cannot_signal() {
+        // Arrange
+        let config = AudioSpecificConfig::new(2, 50_000, 2);
+
+        // Act / Assert
+        assert!(write_header(&config, 1).is_err());
+    }
 
     #[test]
     fn header_round_trips() {

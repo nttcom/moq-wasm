@@ -59,16 +59,14 @@ impl ParameterSetTracker {
                 config_changed = Some(config);
             }
         }
-        let data = if is_keyframe && !has_inline_sps {
-            with_start_codes(
-                self.sps
-                    .iter()
-                    .chain(self.pps.iter())
-                    .map(|set| set.as_ref())
-                    .chain(nals),
+        let data = with_start_codes(nals);
+        let data = if is_keyframe {
+            self.config.as_ref().map_or_else(
+                || data.clone(),
+                |config| config.with_parameter_sets(data.clone()),
             )
         } else {
-            with_start_codes(nals)
+            data
         };
         Ok(Some(TrackedAccessUnit {
             data,

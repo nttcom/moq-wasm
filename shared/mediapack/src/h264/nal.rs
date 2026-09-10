@@ -7,6 +7,7 @@ pub enum NalUnitType {
     IdrSlice,
     Sps,
     Pps,
+    AccessUnitDelimiter,
     Other(u8),
 }
 
@@ -16,6 +17,7 @@ impl NalUnitType {
             5 => Self::IdrSlice,
             7 => Self::Sps,
             8 => Self::Pps,
+            9 => Self::AccessUnitDelimiter,
             other => Self::Other(other),
         }
     }
@@ -203,6 +205,10 @@ mod tests {
         assert_eq!(nal_unit_type(&sps), Some(NalUnitType::Sps));
         assert!(NalUnitType::Sps.is_parameter_set());
         assert_eq!(NalUnitType::from_header(0x41), NalUnitType::Other(1));
+        assert_eq!(
+            NalUnitType::from_header(0x09),
+            NalUnitType::AccessUnitDelimiter
+        );
     }
 
     #[test]

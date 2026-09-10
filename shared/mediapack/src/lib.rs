@@ -5,6 +5,7 @@ mod test_support;
 pub mod aac;
 pub mod flv;
 pub mod h264;
+pub mod loc;
 pub mod mp4;
 pub mod mpegts;
 pub mod sample;

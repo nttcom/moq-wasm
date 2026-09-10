@@ -1,7 +1,10 @@
 use anyhow::{Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::h264::{annexb::with_start_codes, nal::SequenceParameterSet};
+use crate::h264::{
+    annexb::{nal_units, with_start_codes},
+    nal::{NalUnitType, SequenceParameterSet, nal_unit_type},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AvcDecoderConfigurationRecord {
@@ -92,6 +95,32 @@ impl AvcDecoderConfigurationRecord {
             .first()
             .ok_or_else(|| anyhow::anyhow!("no SPS in AVC configuration record"))?;
         SequenceParameterSet::parse(sps)
+    }
+
+    /// Keyframes must be decodable on their own, so a keyframe that carries no
+    /// SPS gets the record's parameter sets. They follow an access unit
+    /// delimiter, which H.264 §7.4.1.2.3 requires to stay first.
+    pub fn with_parameter_sets(&self, annexb: Bytes) -> Bytes {
+        let units: Vec<&[u8]> = nal_units(&annexb).collect();
+        if units
+            .iter()
+            .any(|nal| nal_unit_type(nal) == Some(NalUnitType::Sps))
+        {
+            return annexb;
+        }
+        let parameter_sets = self.parameter_sets_annexb();
+        let Some((delimiter, rest)) = units
+            .split_first()
+            .filter(|(first, _)| nal_unit_type(first) == Some(NalUnitType::AccessUnitDelimiter))
+        else {
+            return Bytes::from([parameter_sets.as_ref(), &annexb].concat());
+        };
+        with_start_codes(
+            [*delimiter]
+                .into_iter()
+                .chain(nal_units(&parameter_sets))
+                .chain(rest.iter().copied()),
+        )
     }
 
     pub fn parameter_sets_annexb(&self) -> Bytes {
@@ -222,6 +251,37 @@ mod tests {
 
         // Act / Assert
         assert!(avcc_to_annexb(&avcc, 4).is_err());
+    }
+
+    #[test]
+    fn prepends_parameter_sets_only_when_the_frame_lacks_them() {
+        // Arrange
+        let record = AvcDecoderConfigurationRecord::parse(&record_bytes()).unwrap();
+        let bare = Bytes::from_static(&[0, 0, 0, 1, 0x65, 0x88]);
+
+        // Act
+        let completed = record.with_parameter_sets(bare.clone());
+        let after_delimiter = record
+            .with_parameter_sets(Bytes::from([&[0, 0, 0, 1, 0x09, 0xF0][..], &bare].concat()));
+        let untouched = record.with_parameter_sets(record.parameter_sets_annexb());
+
+        // Assert
+        assert_eq!(
+            completed,
+            Bytes::from([record.parameter_sets_annexb().as_ref(), &bare].concat())
+        );
+        assert_eq!(untouched, record.parameter_sets_annexb());
+        assert_eq!(
+            after_delimiter,
+            Bytes::from(
+                [
+                    &[0, 0, 0, 1, 0x09, 0xF0][..],
+                    record.parameter_sets_annexb().as_ref(),
+                    &bare
+                ]
+                .concat()
+            )
+        );
     }
 
     #[test]

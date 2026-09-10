@@ -68,3 +68,4 @@ cargo-flamegraph.trace/*
 
 # mediapack test fixtures
 !shared/mediapack/fixtures/*.flv
+!shared/mediapack/fixtures/*.mp4
