@@ -4,10 +4,12 @@ import { parseIngestChunk } from '../../utils/media/ingestChunk'
 import {
   MEDIA_CATALOG_TRACK_NAME,
   extractCatalogAudioTracks,
+  extractCatalogMediaTimelineTracks,
   extractCatalogVideoTracks,
   type MediaCatalogTrack
 } from '../media/catalog'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
+import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 
 const AUTH_INFO = 'secret'
@@ -41,6 +43,8 @@ let audioWriter: WritableStreamDefaultWriter<AudioData> | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+const mediaTimeline = new MediaTimeline()
+let mediaTimelineTrackName: string | undefined
 let reviewing = false
 let reviewGeneration = 0
 let reviewCaptureMicros: number | undefined
@@ -94,6 +98,8 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   timeline.reset()
+  mediaTimeline.reset()
+  mediaTimelineTrackName = undefined
   backToLive()
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
@@ -132,6 +138,7 @@ async function applyCatalog(payload: string): Promise<void> {
     audioTracks = extractCatalogAudioTracks(catalog)
     setStatusText('catalog-status', `Catalog loaded: ${videoTracks.length} video / ${audioTracks.length} audio`)
     const changed = renderTrackOptions()
+    await subscribeMediaTimeline(catalog)
     if (changed) {
       await resubscribe('video')
       await resubscribe('audio')
@@ -140,6 +147,32 @@ async function applyCatalog(payload: string): Promise<void> {
     setStatusText('catalog-status', `Catalog error: ${getErrorMessage(error)}`)
     appendLog('error', `catalog: ${getErrorMessage(error)}`)
   }
+}
+
+async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
+  const [track] = extractCatalogMediaTimelineTracks(catalog)
+  if (!track || mediaTimelineTrackName) {
+    return
+  }
+
+  mediaTimelineTrackName = track.name
+  const { subscribeOk } = await moqtClient.subscribe(trackNamespace(), track.name, AUTH_INFO, {
+    forward: true
+  })
+  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
+    const { data } = parseIngestChunk(new Uint8Array(object.objectPayload))
+    if (data.byteLength === 0) {
+      return
+    }
+    try {
+      mediaTimeline.replace(new TextDecoder().decode(data))
+    } catch (error) {
+      appendLog('error', `media timeline: ${getErrorMessage(error)}`)
+      return
+    }
+    renderSeekbar()
+  })
+  appendLog('info', `subscribed ${trackNamespace().join('/')}/${track.name}`)
 }
 
 function renderTrackOptions(): boolean {
@@ -522,4 +555,16 @@ function renderSeekPosition(position: number, latest: number): void {
   const label = behind < 0.1 ? 'LIVE' : `-${behind.toFixed(1)}s`
   setStatusText('seek-position', label)
   seekbar.setAttribute('aria-valuetext', behind < 0.1 ? 'Live' : `${behind.toFixed(1)} seconds behind live`)
+  renderSeekElapsed(position, latest)
+}
+
+function renderSeekElapsed(position: number, latest: number): void {
+  const elapsed = mediaTimeline.elapsedMsAt(position * 1_000_000)
+  const broadcast = mediaTimeline.elapsedMsAt(latest * 1_000_000)
+  setStatusText(
+    'seek-elapsed',
+    elapsed === undefined || broadcast === undefined
+      ? '--:-- / --:--'
+      : `${formatElapsed(elapsed)} / ${formatElapsed(broadcast)}`
+  )
 }

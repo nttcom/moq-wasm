@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 pub(crate) const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
+pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
 /// FETCH_ERROR code NOT_SUPPORTED, draft-ietf-moq-transport-14 §13.1.5.
@@ -121,10 +122,10 @@ impl MoqtManager {
         track_name: &str,
         rotate_group: bool,
         payload: Vec<u8>,
-    ) -> Result<()> {
+    ) -> Result<Option<u64>> {
         let url = match &self.url {
             Some(u) => u.clone(),
-            None => return Ok(()),
+            None => return Ok(None),
         };
 
         self.ensure_backend(&url)
@@ -209,7 +210,7 @@ impl PublisherBackend {
         track_name: &str,
         rotate_group: bool,
         payload: Vec<u8>,
-    ) -> Result<()> {
+    ) -> Result<Option<u64>> {
         match self {
             Self::Quic(publisher) => {
                 publisher
@@ -443,7 +444,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         track_name: &str,
         rotate_group: bool,
         payload: Vec<u8>,
-    ) -> Result<()> {
+    ) -> Result<Option<u64>> {
         let key = (namespace.join("/"), track_name.to_string());
         let mut writer = {
             let mut guard = self.state.lock().await;
@@ -452,7 +453,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             }
             match guard.tracks.get_mut(&key).and_then(Option::take) {
                 Some(writer) => writer,
-                None => return Ok(()),
+                None => return Ok(None),
             }
         };
         let result = write_object(&mut writer, rotate_group, payload).await;
@@ -461,7 +462,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
             self.state.lock().await.tracks.remove(&key);
-            return Ok(());
+            return Ok(None);
         }
         if let Some(slot) = self.state.lock().await.tracks.get_mut(&key) {
             *slot = Some(writer);
@@ -577,20 +578,21 @@ async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
     rotate_group: bool,
     payload: Vec<u8>,
-) -> Result<()> {
+) -> Result<Option<u64>> {
     if rotate_group || writer.groups() == 0 {
         writer.start_group().await.context("start group")?;
     }
     writer
         .write(Bytes::from(payload), Vec::new())
         .await
-        .context("send subgroup object")
+        .context("send subgroup object")?;
+    Ok(writer.current_group_id())
 }
 
 fn is_supported_track(track_name: &str, metadata: Option<&CatalogMetadata>) -> bool {
     matches!(
         track_name,
-        AUDIO_TRACK_NAME | CATALOG_TRACK_NAME | CHAT_TRACK_NAME
+        AUDIO_TRACK_NAME | CATALOG_TRACK_NAME | CHAT_TRACK_NAME | TIMELINE_TRACK_NAME
     ) || metadata.is_some_and(|metadata| metadata.video_tracks.contains_key(track_name))
 }
 
@@ -661,6 +663,36 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             height: None,
             sample_rate: metadata.audio_sample_rate,
             channel_config: metadata.audio_channels.map(channel_config_label),
+            display_width: None,
+            display_height: None,
+            lang: None,
+            parent_name: None,
+            track_duration: None,
+        },
+        Track {
+            namespace: namespace.clone(),
+            name: TIMELINE_TRACK_NAME.to_string(),
+            packaging: Packaging::Known(KnownPackaging::MediaTimeline),
+            event_type: None,
+            role: Some(TrackRole::Known(KnownTrackRole::MediaTimeline)),
+            is_live: true,
+            target_latency: None,
+            label: Some("Media timeline".to_string()),
+            render_group: None,
+            alt_group: None,
+            init_data: None,
+            depends: Some(vec![VIDEO_TRACK_NAME.to_string()]),
+            temporal_id: None,
+            spatial_id: None,
+            codec: None,
+            mime_type: Some("application/json".to_string()),
+            framerate: None,
+            timescale: None,
+            bitrate: None,
+            width: None,
+            height: None,
+            sample_rate: None,
+            channel_config: None,
             display_width: None,
             display_height: None,
             lang: None,
