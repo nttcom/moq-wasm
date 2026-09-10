@@ -162,12 +162,21 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect.poll(async () => currentTime(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
 
+    // Act: 巻き戻し中だけ倍速を選べる
+    await expect(viewer.speedSelect).toBeEnabled()
+    await viewer.speedSelect.selectOption('2')
+
+    // Assert
+    await expect.poll(async () => playbackRate(viewer)).toBe(2)
+
     // Act
     await viewer.liveButton.click()
 
     // Assert
     await expect(viewer.rewindStatus).toContainText('Live')
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
+    await expect(viewer.speedSelect).toBeDisabled()
+    await expect.poll(async () => playbackRate(viewer)).toBe(1)
     await expect.poll(async () => currentTime(viewer), { timeout: 20_000 }).toBeGreaterThan(1)
   } finally {
     await context.close()
@@ -180,6 +189,10 @@ async function videoSource(viewer: LiveViewerPageModel): Promise<string> {
 
 async function currentTime(viewer: LiveViewerPageModel): Promise<number> {
   return viewer.video.evaluate((element) => (element as HTMLVideoElement).currentTime)
+}
+
+async function playbackRate(viewer: LiveViewerPageModel): Promise<number> {
+  return viewer.video.evaluate((element) => (element as HTMLVideoElement).playbackRate)
 }
 
 async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {
