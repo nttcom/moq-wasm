@@ -38,6 +38,8 @@ pub fn build_video_catalog(namespace: &str, media_track: &str, codec: &str) -> C
         lang: None,
         parent_name: None,
         track_duration: None,
+        max_grp_sap_starting_type: None,
+        max_obj_sap_starting_type: None,
     };
     Catalog {
         version: Some(1),
@@ -62,6 +64,7 @@ pub fn parse(bytes: &[u8]) -> Result<Catalog> {
 pub fn packaging_str(packaging: &Packaging) -> String {
     match packaging {
         Packaging::Known(KnownPackaging::Loc) => "loc".to_string(),
+        Packaging::Known(KnownPackaging::Cmaf) => "cmaf".to_string(),
         Packaging::Known(KnownPackaging::MediaTimeline) => "media-timeline".to_string(),
         Packaging::Known(KnownPackaging::EventTimeline) => "event-timeline".to_string(),
         Packaging::Other(s) => s.clone(),
