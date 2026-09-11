@@ -84,19 +84,18 @@ button doubles as the indicator for which of the two the viewer is watching.
 The slider below the video spans the whole broadcast: its left end is the start,
 placed by the MSF media timeline, and its right end is the live edge. The thin bar
 underneath marks the part of that range the relay still caches and can therefore
-replay, which is the only part a seek resolves. Dragging outside it reports the
-FETCH failure and holds the position; Home jumps to the oldest replayable position
-rather than to the start of the broadcast, and End returns to live.
+replay, which is the only part a seek resolves. Home jumps to the oldest
+replayable position rather than to the start of the broadcast, and End returns to
+live.
 
 While review playback runs, the thumb stays on the position that was seeked to
 and a fill from it carries the movement, because the decoder emits frames in
 bursts and a thumb that followed each one read as jitter. The fill and the
 readouts step a second at a time for the same reason.
 
-The position label shows seconds behind live and follows review playback, and the
-label under the slider reads the elapsed time at the axis start. Seeking starts at
-the preceding closed keyframe group and uses the same bounded FETCH replay as the
-rewind buttons.
+The position label shows seconds behind live and follows review playback. Seeking
+starts at the preceding closed keyframe group and uses the same bounded FETCH
+replay as the rewind buttons.
 
 Review playback does not stop at the end of the fetched window: the next
 bounded FETCH is issued while the current window plays, so playback keeps
@@ -112,8 +111,9 @@ position, so pick another position or press Live to resume.
 
 ## Broadcast elapsed time
 
-The label under the slider reads `position / broadcast`, both measured from the
-start of the broadcast. The numbers come from the MSF media timeline track
+The readout above the slider shows `position / broadcast`, both measured from the
+start of the broadcast, and the label at its left end the elapsed time at the axis
+start. The numbers come from the MSF media timeline track
 (draft-ietf-moq-msf-01 section 7), which the bridge publishes as a JSON array of
 `[presentation time, [group id, object id], encode wallclock]` records covering
 the groups the relay still caches. The viewer finds it in the catalog by its

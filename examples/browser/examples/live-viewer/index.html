@@ -85,7 +85,7 @@
                       <output id="seek-position" for="seekbar" data-testid="live-viewer-seek-position">LIVE</output>
                     </div>
                     <div class="viewer-seek">
-                      <div class="seek-availability" data-testid="live-viewer-seek-availability">
+                      <div class="seek-availability">
                         <div
                           id="seek-available-window"
                           class="seek-availability-window"
@@ -160,15 +160,14 @@
                           type="button"
                           id="qualityBtn"
                           class="viewer-button"
-                          aria-expanded="false"
-                          aria-controls="quality-menu"
+                          popovertarget="quality-menu"
                           data-testid="live-viewer-quality-button"
                           aria-label="Quality settings"
                           title="画質と音声"
                         >
                           &#x2699;
                         </button>
-                        <div id="quality-menu" class="viewer-menu" hidden data-testid="live-viewer-quality-menu">
+                        <div id="quality-menu" class="viewer-menu" popover data-testid="live-viewer-quality-menu">
                           <label for="video-track"
                             >Video track
                             <select id="video-track" data-testid="live-viewer-video-track-select"></select>

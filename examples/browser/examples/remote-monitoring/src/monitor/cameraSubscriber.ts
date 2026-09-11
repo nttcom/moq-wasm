@@ -2,17 +2,11 @@ import type { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
 import { type DeserializedChunk } from '../../../../utils/media/chunk'
 import { readLocHeader, bytesToBase64, type LocHeader } from '../../../../utils/media/loc'
+import { base64ToUint8Array } from '../../../../utils/media/base64'
 
 export type ReviewFrame = { payload: Uint8Array; locHeader: unknown }
 
 const log = (...args: unknown[]) => console.log('[mon][decoder]', ...args)
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
 
 export class CameraSubscriber {
   private readonly worker: Worker

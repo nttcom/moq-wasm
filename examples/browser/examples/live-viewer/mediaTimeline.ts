@@ -3,50 +3,21 @@ const MILLIS_PER_SECOND = 1_000
 const SECONDS_PER_MINUTE = 60
 const SECONDS_PER_HOUR = 3_600
 
-export type MediaTimelineRecord = {
+type MediaTimelineRecord = {
   presentationTimeMs: number
   groupId: bigint
-  objectId: bigint
   encodedAtMs: number
 }
 
-/// draft-ietf-moq-msf-01 §7.1.1: a media timeline is an array of records whose
-/// ordinal positions hold the media presentation timestamp in milliseconds, the
-/// MOQT Location as `[group id, object id]`, and the wallclock time the media
-/// was encoded at in milliseconds since the Unix epoch.
-export function parseMediaTimeline(document: string): MediaTimelineRecord[] {
-  const parsed: unknown = JSON.parse(document)
-  if (!Array.isArray(parsed)) {
-    return []
-  }
+/// draft-ietf-moq-msf-01 §7.1.1: `[presentation time ms, [group id, object id], encode wallclock ms]`.
+type MediaTimelineEntry = [number, [number, number], number]
 
-  return parsed.flatMap((entry) => {
-    const record = readRecord(entry)
-    return record ? [record] : []
-  })
-}
-
-function readRecord(entry: unknown): MediaTimelineRecord | undefined {
-  if (!Array.isArray(entry) || !Array.isArray(entry[1])) {
-    return undefined
-  }
-
-  const [presentationTimeMs, location, encodedAtMs] = entry as [unknown, unknown[], unknown]
-  const [groupId, objectId] = location
-  if (![presentationTimeMs, groupId, objectId, encodedAtMs].every(isFiniteNumber)) {
-    return undefined
-  }
-
-  return {
-    presentationTimeMs: presentationTimeMs as number,
-    groupId: BigInt(groupId as number),
-    objectId: BigInt(objectId as number),
-    encodedAtMs: encodedAtMs as number
-  }
-}
-
-function isFiniteNumber(value: unknown): boolean {
-  return typeof value === 'number' && Number.isFinite(value)
+function parseMediaTimeline(document: string): MediaTimelineRecord[] {
+  return (JSON.parse(document) as MediaTimelineEntry[]).map(([presentationTimeMs, [groupId], encodedAtMs]) => ({
+    presentationTimeMs,
+    groupId: BigInt(groupId),
+    encodedAtMs
+  }))
 }
 
 export class MediaTimeline {
@@ -91,7 +62,7 @@ export class MediaTimeline {
   }
 
   private recordAtOrBefore(captureMs: number): MediaTimelineRecord | undefined {
-    return this.records.filter((record) => record.encodedAtMs <= captureMs).pop()
+    return this.records.findLast((record) => record.encodedAtMs <= captureMs)
   }
 }
 
