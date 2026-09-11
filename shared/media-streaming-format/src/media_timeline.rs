@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-/// One media timeline record, draft-ietf-moq-msf-00 §7.1. The ordinal position
+/// One media timeline record in the explicit entry format of
+/// draft-ietf-moq-msf-01 §7.1.1. The ordinal position
 /// of each item defines its type: the media presentation timestamp in
 /// milliseconds, the MOQT Location as `[group id, object id]`, and the wallclock
 /// time at which the media was encoded in milliseconds since the Unix epoch.

@@ -52,8 +52,10 @@ impl MediaTimeline {
     }
 }
 
+/// draft-ietf-moq-msf-01 §7.1.1 wants the presentation timestamp as the floor in
+/// integral milliseconds, not rounded to the nearest one.
 fn millis_from_micros(micros: u64) -> u64 {
-    (micros + MICROS_PER_MILLI / 2) / MICROS_PER_MILLI
+    micros / MICROS_PER_MILLI
 }
 
 #[cfg(test)]
@@ -67,9 +69,9 @@ mod tests {
 
         // Act
         timeline.record(700, 0, 1_759_924_158_381);
-        timeline.record(701, 2_002_400, 1_759_924_160_383);
+        timeline.record(701, 2_002_900, 1_759_924_160_383);
 
-        // Assert
+        // Assert: 2_002_900 micros floors to 2002 rather than rounding to 2003
         assert_eq!(
             timeline.document().unwrap(),
             br#"[[0,[700,0],1759924158381],[2002,[701,0],1759924160383]]"#

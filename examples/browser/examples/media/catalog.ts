@@ -207,7 +207,7 @@ function matchesRole(
   if (!expectedRole) {
     return true
   }
-  /// draft-ietf-moq-msf-00 §7.2 requires the packaging; the role of §5.1.14 is
+  /// draft-ietf-moq-msf-01 §7.2 requires the packaging; the role of §5.2.6 is
   /// optional, so either one identifies a media timeline track.
   if (expectedRole === 'mediatimeline') {
     return trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline'
