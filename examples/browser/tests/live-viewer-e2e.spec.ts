@@ -168,10 +168,9 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
 
     // Assert: the element now plays a MediaSource fed with CMAF fragments
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_cmaf/)
-    await expect.poll(async () => videoProp(viewer, 'src')).toMatch(/^blob:/)
+    await expect.poll(async () => mediaProp(viewer.video, 'src')).toMatch(/^blob:/)
     await expectVideoDecoded(viewer)
-    await expect.poll(async () => videoProp(viewer, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
-    const liveSource = await videoProp(viewer, 'src')
+    await expect.poll(async () => mediaProp(viewer.video, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
 
     // Act: relay のキャッシュがたまるのを待って MSE 経由で巻き戻す
     await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
@@ -179,41 +178,44 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
-    // Assert: review opens its own MediaSource and plays from it
+    // Assert: review plays from its own MediaSource on the review element while the live one keeps running hidden
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.reviewCanvas).toBeHidden()
-    await expect(viewer.video).toBeVisible()
-    await expect.poll(async () => videoProp(viewer, 'src'), { timeout: 20_000 }).not.toBe(liveSource)
-    await expect.poll(async () => videoProp(viewer, 'currentTime'), { timeout: 30_000 }).toBeGreaterThan(3)
+    await expect(viewer.reviewVideo).toBeVisible({ timeout: 20_000 })
+    await expect(viewer.video).toBeHidden()
+    await expect.poll(async () => mediaProp(viewer.reviewVideo, 'currentTime'), { timeout: 30_000 }).toBeGreaterThan(3)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
+    const liveTimeWhileReviewing = await mediaProp(viewer.video, 'currentTime')
 
     // Act: 巻き戻し中だけ倍速を選べる
     await expect(viewer.speedSelect).toBeEnabled()
     await viewer.speedSelect.selectOption('2')
 
     // Assert
-    await expect.poll(async () => videoProp(viewer, 'playbackRate')).toBe(2)
+    await expect.poll(async () => mediaProp(viewer.reviewVideo, 'playbackRate')).toBe(2)
 
     // Act
     await viewer.liveButton.click()
 
-    // Assert
+    // Assert: the live element was playing all along, so it is shown as is
     await expect(viewer.rewindStatus).toContainText('Live')
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expect(viewer.speedSelect).toBeDisabled()
-    await expect.poll(async () => videoProp(viewer, 'playbackRate')).toBe(1)
-    await expect.poll(async () => videoProp(viewer, 'currentTime'), { timeout: 20_000 }).toBeGreaterThan(1)
+    await expect(viewer.reviewVideo).toBeHidden()
+    await expect(viewer.video).toBeVisible()
+    expect(await mediaProp(viewer.video, 'src')).toMatch(/^blob:/)
+    expect(await mediaProp(viewer.video, 'currentTime')).toBeGreaterThan(liveTimeWhileReviewing)
   } finally {
     await context.close()
   }
 })
 
-async function videoProp<K extends 'src' | 'currentTime' | 'playbackRate'>(
-  viewer: LiveViewerPageModel,
+async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate'>(
+  video: Locator,
   key: K
 ): Promise<HTMLVideoElement[K]> {
-  return viewer.video.evaluate((element, property) => (element as HTMLVideoElement)[property], key)
+  return video.evaluate((element, property) => (element as HTMLVideoElement)[property], key)
 }
 
 async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {

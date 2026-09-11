@@ -59,11 +59,11 @@ let audioTracks: MediaCatalogTrack[] = []
 let cmafTracks: MediaCatalogTrack[] = []
 let packaging: Packaging = 'loc'
 let mse: MseSink | undefined
+let reviewMse: MseSink | undefined
 let liveStream: MediaStream | undefined
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
-let reviewMseOpened = false
 const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let videoWriter: WritableStreamDefaultWriter<VideoFrame> | undefined
@@ -327,7 +327,7 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
       setStatusText('playback-status', `Playing ${trackName}`)
     }
   }
-  if (reviewing || !mse) {
+  if (!mse) {
     return
   }
   if (kind === 'video' && cmafAwaitingKeyframe) {
@@ -422,9 +422,6 @@ async function resubscribe(kind: MediaKind): Promise<void> {
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
       }
-    }
-    if (reviewing && kind === 'video') {
-      return
     }
     worker.postMessage(
       {
@@ -604,7 +601,7 @@ function seekToCapture(captureMicros: number): void {
 
   const generation = ++reviewGeneration
   reviewing = true
-  reviewMseOpened = false
+  closeReviewMse()
   reviewOriginMicros = target.captureMicros
   reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
   reviewPlayheadMicros = reviewAnchorMicros
@@ -754,22 +751,23 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
   return true
 }
 
-/// Fetched fragments are appended to a fresh MediaSource and the element plays
-/// them itself; the next window is only fetched once playback has caught up to
-/// within a few seconds of what is buffered.
+/// Fetched fragments are appended to a MediaSource on the review element while
+/// the live one keeps playing hidden, so going back to live only swaps the
+/// elements. The next window is fetched once playback has caught up to within
+/// a few seconds of what is buffered.
 async function playReviewMse(frames: ReviewFrame[], generation: number): Promise<boolean> {
-  const video = element<HTMLVideoElement>('video')
-  if (!reviewMseOpened) {
+  const video = element<HTMLVideoElement>('review-video')
+  if (!reviewMse) {
     const source = subscribedCmafSource('video')
     if (!source) {
       setStatusText('rewind-status', 'Rewind unavailable: the CMAF track has no init segment')
       return false
     }
-    closeMse()
     const origin = reviewOriginMicros ?? 0
     const startAtSeconds = ((reviewAnchorMicros ?? origin) - origin) / MICROS_PER_SECOND
-    mse = await MseSink.open(video, { video: source, startAtSeconds })
-    reviewMseOpened = true
+    reviewMse = await MseSink.open(video, { video: source, startAtSeconds })
+    element<HTMLVideoElement>('video').hidden = true
+    video.hidden = false
     applyPlaybackSpeed()
     video.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
@@ -777,20 +775,25 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
       }
     })
   }
-  if (generation !== reviewGeneration || !mse) {
+  if (generation !== reviewGeneration || !reviewMse) {
     return false
   }
   for (const frame of frames) {
-    mse.appendVideo(frame.data)
+    reviewMse.appendVideo(frame.data)
   }
   while (generation === reviewGeneration) {
-    const ahead = (mse.bufferedEnd() ?? 0) - video.currentTime
+    const ahead = (reviewMse.bufferedEnd() ?? 0) - video.currentTime
     if (ahead < REVIEW_BUFFER_AHEAD_SECONDS) {
       break
     }
     await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
   }
   return generation === reviewGeneration
+}
+
+function closeReviewMse(): void {
+  reviewMse?.close()
+  reviewMse = undefined
 }
 
 function pendingReviewConfig(): VideoDecoderConfig | undefined {
@@ -820,14 +823,11 @@ function backToLive(): void {
   reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
   renderSeekbar()
+  closeReviewMse()
   element<HTMLCanvasElement>('review').hidden = true
+  element<HTMLVideoElement>('review-video').hidden = true
   element<HTMLVideoElement>('video').hidden = false
   setStatusText('rewind-status', 'Live')
-  element<HTMLVideoElement>('video').playbackRate = 1
-  if (reviewMseOpened) {
-    reviewMseOpened = false
-    void openLiveMse()
-  }
 }
 
 /// Only review playback through MSE can run at another rate: live playback
@@ -839,8 +839,8 @@ function speedAdjustable(): boolean {
 }
 
 function reviewBufferDrained(): boolean {
-  const video = element<HTMLVideoElement>('video')
-  return (mse?.bufferedEnd() ?? 0) - video.currentTime < REVIEW_DRAINED_SECONDS
+  const video = element<HTMLVideoElement>('review-video')
+  return (reviewMse?.bufferedEnd() ?? 0) - video.currentTime < REVIEW_DRAINED_SECONDS
 }
 
 function playbackSpeed(): number {
@@ -850,7 +850,7 @@ function playbackSpeed(): number {
 function applyPlaybackSpeed(): void {
   element<HTMLSelectElement>('speed').disabled = !speedAdjustable()
   if (speedAdjustable()) {
-    element<HTMLVideoElement>('video').playbackRate = playbackSpeed()
+    element<HTMLVideoElement>('review-video').playbackRate = playbackSpeed()
   }
 }
 
