@@ -149,55 +149,55 @@ jobs:
 
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   media=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-message-e2e.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-message-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   message=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-ffmpeg-deps/*|scripts/setup-media-e2e.mjs|scripts/run-live-viewer-e2e.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|bindings/wasm/*|bridges/live-ingest/*|relay/*|moqt/*|shared/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-ffmpeg-deps/*|scripts/setup-media-e2e.mjs|scripts/run-live-viewer-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|bindings/wasm/*|bridges/live-ingest/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-call-e2e.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-call-e2e.mjs|scripts/vts-dev.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   call=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   cascading=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   cache_eviction=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   fetch=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   multipub=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/object-dedup-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/object-dedup-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/object-dedup-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/object-dedup-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   dedup=true
                   ;;
               esac
@@ -463,11 +463,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-    strategy:
-      fail-fast: false
-      matrix:
-        auth: ["false", "true"]
-    name: call_e2e (auth=${{ matrix.auth }})
     steps:
       - name: Checkout repository
         # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
@@ -540,7 +535,6 @@ jobs:
       - name: Run call E2E
         env:
           CI: "true"
-          CALL_E2E_AUTH: ${{ matrix.auth }}
         run: node scripts/run-call-e2e.mjs
 
       - name: Upload Playwright artifacts
@@ -548,7 +542,7 @@ jobs:
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: call-e2e-artifacts-auth-${{ matrix.auth }}
+          name: call-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report
