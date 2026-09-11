@@ -787,7 +787,7 @@ mod tests {
             Arc::new(InterRelayConnectionManager::new(
                 repository.clone(),
                 session_event_sender,
-                None,
+                "unused-relay-token".to_string(),
             )),
         );
         let serializer = UpstreamCreationSerializer::new();

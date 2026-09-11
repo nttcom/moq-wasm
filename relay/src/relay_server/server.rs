@@ -24,7 +24,7 @@ use crate::{
 pub(crate) struct RelayServerDeps {
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
-    pub(crate) relay_token: Option<String>,
+    pub(crate) relay_token: String,
 }
 
 pub struct RelayServer {
@@ -38,18 +38,6 @@ pub struct RelayServer {
 }
 
 impl RelayServer {
-    pub fn new_unauthenticated(key_path: &str, cert_path: &str) -> Self {
-        Self::new_with_deps(
-            key_path,
-            cert_path,
-            RelayServerDeps {
-                route_registry: Arc::new(NoopRelayRouteRegistry),
-                authenticator: SessionAuthenticator::Disabled,
-                relay_token: None,
-            },
-        )
-    }
-
     pub async fn new_with_config(
         key_path: &str,
         cert_path: &str,
@@ -74,7 +62,7 @@ impl RelayServer {
             RelayServerDeps {
                 route_registry,
                 authenticator,
-                relay_token: config.auth.relay_token(),
+                relay_token: config.auth.relay_token,
             },
         ))
     }

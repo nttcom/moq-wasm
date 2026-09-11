@@ -15,9 +15,8 @@ use crate::{
     },
 };
 
-pub(crate) enum SessionAuthenticator {
-    Disabled,
-    Enabled { verifier: Arc<dyn TokenVerifier> },
+pub(crate) struct SessionAuthenticator {
+    pub(crate) verifier: Arc<dyn TokenVerifier>,
 }
 
 #[derive(Debug)]
@@ -28,21 +27,12 @@ pub(crate) struct Rejected {
 
 impl SessionAuthenticator {
     pub(crate) fn from_config(auth: &AuthConfig) -> anyhow::Result<Self> {
-        match auth {
-            AuthConfig::Disabled => {
-                tracing::warn!(
-                    "authentication is DISABLED (AUTH_DISABLED=true); every session gets full access"
-                );
-                Ok(Self::Disabled)
-            }
-            AuthConfig::Vts {
-                verify_url,
-                claim_policy,
-                ..
-            } => Ok(Self::Enabled {
-                verifier: Arc::new(VtsTokenVerifier::new(verify_url.clone(), *claim_policy)?),
-            }),
-        }
+        Ok(Self {
+            verifier: Arc::new(VtsTokenVerifier::new(
+                auth.verify_url.clone(),
+                auth.claim_policy,
+            )?),
+        })
     }
 
     pub(crate) async fn authenticate(
@@ -50,9 +40,6 @@ impl SessionAuthenticator {
         client_setup: &ClientSetup,
         accepted_peer: &SessionPeer,
     ) -> Result<VerifiedToken, Rejected> {
-        let Self::Enabled { verifier } = self else {
-            return Ok(VerifiedToken::full_access());
-        };
         let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
         let token = match extract_token(client_setup) {
             Ok(token) => token,
@@ -68,19 +55,23 @@ impl SessionAuthenticator {
                 });
             }
         };
-        let verified = verifier.verify(&token).await.map_err(|error| match error {
-            VerifyError::Unauthorized(reason) => Rejected {
-                code: TerminationErrorCode::Unauthorized,
-                reason,
-            },
-            VerifyError::Unavailable(source) => {
-                tracing::error!(error = %source, "token verification unavailable");
-                Rejected {
-                    code: TerminationErrorCode::InternalError,
-                    reason: "token verification unavailable".to_string(),
+        let verified = self
+            .verifier
+            .verify(&token)
+            .await
+            .map_err(|error| match error {
+                VerifyError::Unauthorized(reason) => Rejected {
+                    code: TerminationErrorCode::Unauthorized,
+                    reason,
+                },
+                VerifyError::Unavailable(source) => {
+                    tracing::error!(error = %source, "token verification unavailable");
+                    Rejected {
+                        code: TerminationErrorCode::InternalError,
+                        reason: "token verification unavailable".to_string(),
+                    }
                 }
-            }
-        })?;
+            })?;
         if verified.is_relay != relay_endpoint {
             let reason = if verified.is_relay {
                 "relay token presented on the client endpoint"
@@ -111,8 +102,8 @@ mod tests {
         session_repository::SessionPeer,
     };
 
-    fn enabled(outcome: StubOutcome) -> SessionAuthenticator {
-        SessionAuthenticator::Enabled {
+    fn authenticator(outcome: StubOutcome) -> SessionAuthenticator {
+        SessionAuthenticator {
             verifier: Arc::new(StubVerifier(outcome)),
         }
     }
@@ -139,24 +130,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_mode_grants_full_access_without_a_token() {
-        // Arrange
-        let authenticator = SessionAuthenticator::Disabled;
-
-        // Act
-        let token = authenticator
-            .authenticate(&client_setup(vec![]), &SessionPeer::Client)
-            .await
-            .unwrap();
-
-        // Assert
-        assert_eq!(token, VerifiedToken::full_access());
-    }
-
-    #[tokio::test]
     async fn missing_token_on_client_endpoint_is_anonymous() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token()));
 
         // Act
         let token = authenticator
@@ -171,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn missing_token_on_inter_relay_endpoint_is_unauthorized() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token()));
 
         // Act
         let rejected = authenticator
@@ -189,7 +165,7 @@ mod tests {
     #[tokio::test]
     async fn rejected_token_is_unauthorized_with_the_vts_reason() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Unauthorized);
+        let authenticator = authenticator(StubOutcome::Unauthorized);
 
         // Act
         let rejected = authenticator
@@ -205,7 +181,7 @@ mod tests {
     #[tokio::test]
     async fn unavailable_verifier_is_an_internal_error() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Unavailable);
+        let authenticator = authenticator(StubOutcome::Unavailable);
 
         // Act
         let rejected = authenticator
@@ -220,7 +196,7 @@ mod tests {
     #[tokio::test]
     async fn relay_token_on_client_endpoint_is_unauthorized() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Verified(relay_token()));
+        let authenticator = authenticator(StubOutcome::Verified(relay_token()));
 
         // Act
         let rejected = authenticator
@@ -235,7 +211,7 @@ mod tests {
     #[tokio::test]
     async fn client_token_on_inter_relay_endpoint_is_unauthorized() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token()));
 
         // Act
         let rejected = authenticator
@@ -250,7 +226,7 @@ mod tests {
     #[tokio::test]
     async fn matching_token_and_endpoint_returns_the_claims() {
         // Arrange
-        let authenticator = enabled(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token()));
 
         // Act
         let token = authenticator

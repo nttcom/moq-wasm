@@ -17,12 +17,13 @@ optionally cascades across relays via a Redis-backed route registry.
 2. Generate self-signed certs under `relay/keys/` if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PORT` (default 4433), `RELAY_INNER_PORT` (default port+1),
-   `REDIS_URL` (optional), and the authentication mode (`AuthConfig`):
-   `AUTH_VTS_URL` + `AUTH_RELAY_TOKEN` enable token verification;
-   otherwise `AUTH_DISABLED=true` must be set explicitly or startup fails.
-   `AUTH_VTS_URL` wins when both are present. `AUTH_MAX_TOKEN_TTL_SECONDS`
-   (default 86400) and `AUTH_CLOCK_LEEWAY_SECONDS` (default 60) form the
-   `ClaimPolicy` the relay applies to token times.
+   `REDIS_URL` (optional), and the authentication settings (`AuthConfig`):
+   `AUTH_VTS_URL` and `AUTH_RELAY_TOKEN` are both required; startup fails
+   without them. There is no unauthenticated mode: a relay that should serve
+   only anonymous clients still needs a VTS to reject the tokens it cannot
+   verify. `AUTH_MAX_TOKEN_TTL_SECONDS` (default 86400) and
+   `AUTH_CLOCK_LEEWAY_SECONDS` (default 60) form the `ClaimPolicy` the relay
+   applies to token times.
 4. `RelayServer::new_with_config(...)` then:
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
@@ -46,11 +47,9 @@ transport connection to a per-connection task owned by `SessionIntake`:
 
 1. await the `moqt::Accepting` future → `Handshake` (CLIENT_SETUP received,
    SERVER_SETUP not yet sent);
-2. `SessionAuthenticator::authenticate(client_setup, accepted_peer)` — in
-   `Disabled` mode this yields `VerifiedToken::full_access()`; in `Enabled`
-   mode it extracts the JWT, calls the `TokenVerifier`, and checks that
-   `is_relay` matches the endpoint (client port ⇔ `false`, inner port ⇔
-   `true`). A client that presents no token on the client endpoint is
+2. `SessionAuthenticator::authenticate(client_setup, accepted_peer)` extracts
+   the JWT, calls the `TokenVerifier`, and checks that `is_relay` matches the
+   endpoint (client port ⇔ `false`, inner port ⇔ `true`). A client that presents no token on the client endpoint is
    accepted with `VerifiedToken::anonymous()` (scope `anon/**`); a missing
    token on the inter-relay endpoint is rejected. Other failures call
    `Handshake::reject` with `UNAUTHORIZED` (rejected token, endpoint mismatch)
@@ -63,8 +62,8 @@ transport connection to a per-connection task owned by `SessionIntake`:
 5. for a client token (`is_relay == false`) with an `exp`, the repository
    starts a `SessionExpiryTask` that closes the session with
    `EXPIRED_AUTH_TOKEN (0x18)` when the token expires. Clients are expected to
-   obtain a fresh token and reconnect. Relay sessions and the disabled-auth
-   `full_access()` token never expire.
+   obtain a fresh token and reconnect. Relay sessions never expire; the
+   relay's own outbound inter-relay sessions carry `VerifiedToken::full_access()`.
 
 ### `modules/core` — transport-erased `moqt` facade
 The relay never handles `moqt::Session<T>` generically beyond intake. `core`
@@ -201,9 +200,9 @@ per-request authorization gate under "Event pipeline".
   carries `{ appId, isRelay, claims }` with the raw JWT payload, which is
   handed to `build_verified_token`. 401 → `Unauthorized`, anything else or a
   transport error → `Unavailable`. 3 s timeout.
-- `session_authenticator.rs` — `SessionAuthenticator::{Disabled, Enabled}`
-  built from `AuthConfig`; combines the pieces above into the CLIENT_SETUP
-  decision described under "Session intake".
+- `session_authenticator.rs` — `SessionAuthenticator`, built from
+  `AuthConfig` around a `TokenVerifier`; combines the pieces above into the
+  CLIENT_SETUP decision described under "Session intake".
 - `request_gate.rs` — `authorize_request` / `reject_unauthorized`, the
   per-request gate described under "Event pipeline".
 - `session_expiry_task.rs` — `SessionExpiryTask` (owns its `JoinHandle`,
