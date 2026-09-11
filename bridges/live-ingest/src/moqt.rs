@@ -102,6 +102,16 @@ pub(crate) struct OutgoingObject {
     pub(crate) payload: Bytes,
 }
 
+impl OutgoingObject {
+    pub(crate) fn plain(group: GroupBoundary, payload: Bytes) -> Self {
+        Self {
+            group,
+            extension_headers: ExtensionHeaders::default(),
+            payload,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum GroupBoundary {
     /// Only inside an open group; the object is dropped when there is none,
@@ -641,24 +651,8 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         loc.framerate = Some(30.0);
         loc.width = Some(info.width);
         loc.height = Some(info.height);
+        let cmaf = cmaf_sibling(&loc, "video/mp4", info.init_segment.clone(), cmaf_alt_group);
         tracks.push(loc);
-
-        let mut cmaf = track(
-            &namespace,
-            &cmaf_track_name(name),
-            KnownPackaging::Cmaf,
-            video_role.clone(),
-        );
-        cmaf.label = Some(format!("{} (CMAF)", info.label));
-        cmaf.alt_group = cmaf_alt_group;
-        cmaf.codec = Some(info.codec.clone());
-        cmaf.mime_type = Some("video/mp4".to_string());
-        cmaf.framerate = Some(30.0);
-        cmaf.width = Some(info.width);
-        cmaf.height = Some(info.height);
-        cmaf.init_data = Some(info.init_segment.clone());
-        cmaf.max_grp_sap_starting_type = Some(1);
-        cmaf.max_obj_sap_starting_type = Some(1);
         tracks.push(cmaf);
     }
 
@@ -667,7 +661,7 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         &namespace,
         AUDIO_TRACK_NAME,
         KnownPackaging::Loc,
-        audio_role.clone(),
+        audio_role,
     );
     audio.label = Some("Audio".to_string());
     audio.codec = Some("mp4a.40.2".to_string());
@@ -677,26 +671,17 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         audio.channel_config = Some(channel_config_label(config.channel_count()));
         audio.init_data = Some(general_purpose::STANDARD.encode(config.to_bytes()));
     }
-    tracks.push(audio);
-    if let Some(config) = &metadata.audio_config {
-        let mut cmaf = track(
-            &namespace,
-            &cmaf_track_name(AUDIO_TRACK_NAME),
-            KnownPackaging::Cmaf,
-            audio_role,
-        );
-        cmaf.label = Some("Audio (CMAF)".to_string());
-        cmaf.codec = Some("mp4a.40.2".to_string());
-        cmaf.mime_type = Some("audio/mp4".to_string());
-        cmaf.sample_rate = Some(config.sample_rate);
-        cmaf.channel_config = Some(channel_config_label(config.channel_count()));
-        cmaf.init_data = Some(
+    let audio_cmaf = match &metadata.audio_config {
+        Some(config) => Some(cmaf_sibling(
+            &audio,
+            "audio/mp4",
             general_purpose::STANDARD.encode(Fmp4TrackMuxer::audio(config.clone()).init_segment()?),
-        );
-        cmaf.max_grp_sap_starting_type = Some(1);
-        cmaf.max_obj_sap_starting_type = Some(1);
-        tracks.push(cmaf);
-    }
+            None,
+        )),
+        None => None,
+    };
+    tracks.push(audio);
+    tracks.extend(audio_cmaf);
 
     let mut timeline = track(
         &namespace,
@@ -739,6 +724,22 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
     };
 
     serde_json::to_vec(&catalog).context("serialize msf catalog")
+}
+
+/// draft-ietf-moq-cmsf-01 §3.1 puts the init segment in `initData` and §3.5.2
+/// declares every group and object starts on a SAP type 1 sample.
+fn cmaf_sibling(loc: &Track, mime_type: &str, init_data: String, alt_group: Option<u64>) -> Track {
+    Track {
+        name: cmaf_track_name(&loc.name),
+        packaging: Packaging::Known(KnownPackaging::Cmaf),
+        label: loc.label.as_ref().map(|label| format!("{label} (CMAF)")),
+        alt_group,
+        mime_type: Some(mime_type.to_string()),
+        init_data: Some(init_data),
+        max_grp_sap_starting_type: Some(1),
+        max_obj_sap_starting_type: Some(1),
+        ..loc.clone()
+    }
 }
 
 fn track(
