@@ -9,9 +9,18 @@ ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 .PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-auth browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
-relay: export AUTH_DISABLED ?= true
+VTS_APPS_FILE ?= services/vts/apps.example.json
+DEV_RELAY_APP_ID := 11111111-2222-3333-4444-555555555555
+
+# Starts a VTS on 127.0.0.1:8081 for the lifetime of the relay process.
+relay: export AUTH_VTS_URL ?= http://127.0.0.1:8081/verify
 relay:
-	set -a; [ ! -f .env ] || . ./.env; set +a; RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
+	set -a; [ ! -f .env ] || . ./.env; set +a; \
+	[ -d services/vts/node_modules ] || npm --prefix services/vts ci; \
+	VTS_APPS_FILE="$(VTS_APPS_FILE)" node services/vts/src/main.mjs & VTS_PID=$$!; \
+	trap 'kill $$VTS_PID' EXIT; \
+	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(node services/vts/bin/mint.mjs --apps "$(VTS_APPS_FILE)" --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:
 	cd examples/browser && npm run dev
