@@ -25,6 +25,8 @@ const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const CMAF_TRACK_SUFFIX = '_cmaf'
 const REVIEW_BUFFER_AHEAD_SECONDS = 8
 const REVIEW_DRAINED_SECONDS = 0.5
+const MICROS_PER_SECOND = 1_000_000
+const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 
 type Packaging = 'loc' | 'cmaf'
 
@@ -74,6 +76,7 @@ let mediaTimelineTrackName: string | undefined
 let reviewing = false
 let reviewGeneration = 0
 let reviewAnchorMicros: number | undefined
+let reviewOriginMicros: number | undefined
 let reviewPlayheadMicros: number | undefined
 let seeking = false
 const seekbar = element<HTMLInputElement>('seekbar')
@@ -86,9 +89,18 @@ element<HTMLSelectElement>('audio-track').addEventListener('change', () => void 
 element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
 element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
-element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
-element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
+for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
+  button.addEventListener('click', () => skip(Number(button.dataset.skipSeconds)))
+}
+document.addEventListener('keydown', (event) => {
+  const seconds = SKIP_SECONDS_BY_KEY[event.key]
+  if (seconds === undefined || usesArrowKeys(event.target)) {
+    return
+  }
+  event.preventDefault()
+  skip(seconds)
+})
 seekbar.addEventListener('input', () => {
   seeking = true
   renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max))
@@ -287,7 +299,7 @@ async function openLiveMse(): Promise<void> {
     return
   }
   const audio = subscribedCmafSource('audio')
-  mse = await MseSink.open(element<HTMLVideoElement>('video'), video, audio)
+  mse = await MseSink.open(element<HTMLVideoElement>('video'), { video, audio })
   cmafAwaitingKeyframe = true
   element<HTMLVideoElement>('video').muted = audio === undefined
 }
@@ -558,8 +570,33 @@ function element<T extends HTMLElement>(id: string): T {
   return found as T
 }
 
-async function rewind(seconds: number): Promise<void> {
-  const target = timeline.resolveRewindTarget(seconds)
+/// Selects and text inputs use the arrow keys themselves. The seek bar's own
+/// stepping is replaced so that the vertical arrows move by five seconds.
+function usesArrowKeys(target: EventTarget | null): boolean {
+  return target instanceof HTMLSelectElement || (target instanceof HTMLInputElement && target !== seekbar)
+}
+
+function skip(seconds: number): void {
+  const latest = timeline.latest
+  if (!latest) {
+    return
+  }
+  seekToCapture((reviewPlayheadMicros ?? latest.captureMicros) + seconds * MICROS_PER_SECOND)
+}
+
+/// A position at or past the live edge goes live. Any other position is
+/// replayed from the closed keyframe group that holds it: the frames before it
+/// are decoded without pacing and only the ones from the position on are shown.
+function seekToCapture(captureMicros: number): void {
+  const latest = timeline.latest
+  if (!latest) {
+    return
+  }
+  if (captureMicros >= latest.captureMicros) {
+    backToLive()
+    return
+  }
+  const target = timeline.resolveSeekTarget(captureMicros)
   if (!target) {
     setStatusText('rewind-status', 'Rewind unavailable: nothing buffered yet')
     return
@@ -568,11 +605,12 @@ async function rewind(seconds: number): Promise<void> {
   const generation = ++reviewGeneration
   reviewing = true
   reviewMseOpened = false
-  reviewAnchorMicros = target.captureMicros
-  reviewPlayheadMicros = target.captureMicros
+  reviewOriginMicros = target.captureMicros
+  reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
+  reviewPlayheadMicros = reviewAnchorMicros
   renderSeekbar()
   setStatusText('playback-status', 'Reviewing')
-  await review(target.groupId, generation)
+  void review(target.groupId, generation)
 }
 
 /// Review playback is paced by capture timestamps, so it trails the live edge
@@ -677,17 +715,19 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
 
   element<HTMLVideoElement>('video').hidden = true
   canvas.hidden = false
-  const origin = frames[0].captureMicros ?? 0
+  const origin = frames[0].captureMicros ?? reviewOriginMicros ?? 0
+  const shownFrom = reviewAnchorMicros ?? origin
   const decoder = new VideoDecoder({
     output: (frame) => {
-      if (generation !== reviewGeneration) {
+      const captureMicros = origin + frame.timestamp
+      if (generation !== reviewGeneration || captureMicros < shownFrom) {
         frame.close()
         return
       }
       canvas.width = frame.displayWidth
       canvas.height = frame.displayHeight
       context.drawImage(frame, 0, 0)
-      advanceReviewPlayhead(origin + frame.timestamp)
+      advanceReviewPlayhead(captureMicros)
       frame.close()
     },
     error: (error) => appendLog('error', `review decoder: ${error.message}`)
@@ -705,7 +745,9 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
         data: frame.data
       })
     )
-    await pace(frame, frames)
+    if ((frame.captureMicros ?? origin) >= shownFrom) {
+      await pace(frame, frames)
+    }
   }
   await decoder.flush().catch(() => undefined)
   decoder.close()
@@ -724,13 +766,14 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
       return false
     }
     closeMse()
-    mse = await MseSink.open(video, source, undefined)
+    const origin = reviewOriginMicros ?? 0
+    const startAtSeconds = ((reviewAnchorMicros ?? origin) - origin) / MICROS_PER_SECOND
+    mse = await MseSink.open(video, { video: source, startAtSeconds })
     reviewMseOpened = true
     applyPlaybackSpeed()
-    const anchor = reviewAnchorMicros ?? 0
     video.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
-        advanceReviewPlayhead(anchor + video.currentTime * 1_000_000)
+        advanceReviewPlayhead(origin + video.currentTime * MICROS_PER_SECOND)
       }
     })
   }
@@ -774,6 +817,7 @@ function backToLive(): void {
   reviewing = false
   seeking = false
   reviewAnchorMicros = undefined
+  reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
   renderSeekbar()
   element<HTMLCanvasElement>('review').hidden = true
@@ -870,7 +914,7 @@ function percentOfAxis(seconds: number, latest: number): string {
 }
 
 function liveEdgeSeconds(): number {
-  return (timeline.latest?.captureMicros ?? 0) / 1_000_000
+  return (timeline.latest?.captureMicros ?? 0) / MICROS_PER_SECOND
 }
 
 function replayableStartSeconds(): number {
@@ -885,9 +929,7 @@ function seekTo(captureSeconds: number): void {
     backToLive()
     return
   }
-  if (timeline.latest) {
-    void rewind(liveEdgeSeconds() - captureSeconds)
-  }
+  seekToCapture(captureSeconds * MICROS_PER_SECOND)
 }
 
 function renderSeekPosition(anchor: number, playhead: number, latest: number): void {
