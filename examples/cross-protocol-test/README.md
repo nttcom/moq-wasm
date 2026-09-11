@@ -65,7 +65,7 @@ cargo run -p relay
 cargo run -p quic-publisher
 ```
 
-The log prints `using namespace namespace="live-XXXX"`.
+The log prints `using namespace namespace="anon/live-XXXX"`.
 The publisher waits for a subscriber, then starts ffmpeg and begins sending video.
 
 ### 3a. Browser Subscriber (Recommended)

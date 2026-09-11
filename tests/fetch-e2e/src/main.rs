@@ -52,7 +52,7 @@ fn unique_namespace(label: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("room/{}-{}-{}", label, std::process::id(), now_ms)
+    format!("anon/room/{}-{}-{}", label, std::process::id(), now_ms)
 }
 
 async fn new_session() -> anyhow::Result<Session<QUIC>> {

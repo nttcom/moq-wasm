@@ -50,7 +50,7 @@ ffmpeg-rtmp:
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
-		-f flv "rtmp://localhost:1935/live/test"
+		-f flv "rtmp://localhost:1935/anon/live/test/stream"
 
 ffmpeg-srt:
 	ffmpeg -re \
@@ -59,7 +59,7 @@ ffmpeg-srt:
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
-		-f mpegts "srt://localhost:9000?mode=caller&streamid=live/test"
+		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
 
 # ONVIF Bridges
 onvif:

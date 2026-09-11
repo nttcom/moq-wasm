@@ -18,7 +18,7 @@ use moqt::{
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
-const NAMESPACE: &str = "room/main";
+const NAMESPACE: &str = "anon/room/main";
 const PUBLISHER_PRIORITY: u8 = 128;
 const GROUP_ID: u64 = 0;
 const OBJECTS_PER_GROUP: u64 = 5;

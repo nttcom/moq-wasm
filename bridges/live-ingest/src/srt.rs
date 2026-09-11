@@ -9,7 +9,7 @@ use crate::{
     publisher::{IngestOptions, MediaPublisher},
 };
 
-const DEFAULT_NAMESPACE: &str = "srt/live";
+const DEFAULT_NAMESPACE: &str = "anon/srt/live";
 const ACCESS_CONTROL_PREFIX: &str = "#!::";
 
 pub async fn run_srt_listener(addr: String, options: IngestOptions) -> Result<()> {
@@ -118,8 +118,8 @@ mod tests {
         let without_resource = namespace_from_stream_id(Some("#!::m=publish"));
 
         // Assert
-        assert_eq!(missing, ["srt", "live"]);
-        assert_eq!(empty, ["srt", "live"]);
-        assert_eq!(without_resource, ["srt", "live"]);
+        assert_eq!(missing, ["anon", "srt", "live"]);
+        assert_eq!(empty, ["anon", "srt", "live"]);
+        assert_eq!(without_resource, ["anon", "srt", "live"]);
     }
 }
