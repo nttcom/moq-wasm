@@ -129,6 +129,59 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
   }
 })
 
+test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }) => {
+  // Arrange
+  const { context, viewer } = await arrangeLiveViewerE2ESession(browser)
+
+  try {
+    // Act
+    await viewer.watchButton.click()
+    await expect(viewer.playbackStatus).toContainText('Playing')
+    await viewer.qualityButton.click()
+    await viewer.packagingSelect.selectOption('cmaf')
+
+    // Assert: the element now plays a MediaSource fed with CMAF fragments
+    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_cmaf/)
+    await expect.poll(async () => videoSource(viewer)).toMatch(/^blob:/)
+    await expectVideoDecoded(viewer)
+    await expect.poll(async () => currentTime(viewer), { timeout: 15_000 }).toBeGreaterThan(1)
+    const liveSource = await videoSource(viewer)
+
+    // Act: relay のキャッシュがたまるのを待って MSE 経由で巻き戻す
+    await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
+    await viewer.page.keyboard.press('Escape')
+    await viewer.seekbar.focus()
+    await viewer.seekbar.press('Home')
+
+    // Assert: review opens its own MediaSource and plays from it
+    await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    await expect(viewer.playbackStatus).toContainText('Reviewing')
+    await expect(viewer.reviewCanvas).toBeHidden()
+    await expect(viewer.video).toBeVisible()
+    await expect.poll(async () => videoSource(viewer), { timeout: 20_000 }).not.toBe(liveSource)
+    await expect.poll(async () => currentTime(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
+    await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
+
+    // Act
+    await viewer.liveButton.click()
+
+    // Assert
+    await expect(viewer.rewindStatus).toContainText('Live')
+    await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
+    await expect.poll(async () => currentTime(viewer), { timeout: 20_000 }).toBeGreaterThan(1)
+  } finally {
+    await context.close()
+  }
+})
+
+async function videoSource(viewer: LiveViewerPageModel): Promise<string> {
+  return viewer.video.evaluate((element) => (element as HTMLVideoElement).src)
+}
+
+async function currentTime(viewer: LiveViewerPageModel): Promise<number> {
+  return viewer.video.evaluate((element) => (element as HTMLVideoElement).currentTime)
+}
+
 async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {
   await expect
     .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).readyState), {

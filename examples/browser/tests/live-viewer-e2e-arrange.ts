@@ -31,6 +31,7 @@ export interface LiveViewerPageModel {
   seekReviewProgress: Locator
   qualityButton: Locator
   qualityMenu: Locator
+  packagingSelect: Locator
   seekAvailableWindow: Locator
   video: Locator
   reviewCanvas: Locator
@@ -70,6 +71,7 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     seekReviewProgress: page.getByTestId('live-viewer-seek-review-progress'),
     qualityButton: page.getByTestId('live-viewer-quality-button'),
     qualityMenu: page.getByTestId('live-viewer-quality-menu'),
+    packagingSelect: page.getByTestId('live-viewer-packaging-select'),
     seekAvailableWindow: page.getByTestId('live-viewer-seek-available-window'),
     video: page.getByTestId('live-viewer-video'),
     reviewCanvas: page.getByTestId('live-viewer-review-canvas'),
