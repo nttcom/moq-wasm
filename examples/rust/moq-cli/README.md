@@ -17,7 +17,7 @@ moq-cli subscribe --relay <relay> --track <track> | ffplay -
 | フラグ | publish | subscribe | 説明 |
 |---|:-:|:-:|---|
 | `--relay` | ● | ● | 接続先 relay。例 `moqt://localhost:4433` |
-| `--track` | ● | ● | full track name。例 `tokyo/cam01/video` |
+| `--track` | ● | ● | full track name。例 `anon/tokyo/cam01/video` |
 | `--codec` | ● | | `--container loc` のとき必須。`avc3`。cmaf では不要 |
 | `--container` | ● | | `loc`（既定）か `cmaf` |
 | `--insecure` | ● | ● | 証明書検証を無効化。自己署名 relay 用 |
@@ -37,17 +37,17 @@ publish する側が、視聴側の再生方法に合わせて `--container` を
 
 ```sh
 # ローカル loopback
-cat sample.h264 | moq-cli publish --relay moqt://localhost:4433 --track live/video --codec avc3 --insecure
-moq-cli subscribe --relay moqt://localhost:4433 --track live/video --insecure | ffplay -
+cat sample.h264 | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
+moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecure | ffplay -
 
 # Mac カメラ
 ffmpeg -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt nv12 -i "0" \
   -c:v libx264 -pix_fmt yuv420p -preset ultrafast -tune zerolatency -g 30 -f h264 - \
-  | moq-cli publish --relay moqt://localhost:4433 --track live/video --codec avc3 --insecure
+  | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
 
 # mp4 から（ffmpeg で annex-b にして渡す）
 ffmpeg -i movie.mp4 -c:v copy -bsf:v h264_mp4toannexb -f h264 - \
-  | moq-cli publish --relay moqt://localhost:4433 --track live/video --codec avc3 --insecure
+  | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
 ```
 
 ## Raspberry Pi
@@ -60,7 +60,7 @@ scp target/aarch64-unknown-linux-musl/release/moq-cli pi@pi-cam.local:~/
 
 # ライブカメラ
 rpicam-vid -t 0 --codec h264 --inline --width 1280 --height 720 --framerate 30 -o - \
-  | ./moq-cli publish --relay moqt://<relay>:443 --track live/video --codec avc3
+  | ./moq-cli publish --relay moqt://<relay>:443 --track anon/live/video --codec avc3
 ```
 
 ## ビルド・テスト
