@@ -13,6 +13,7 @@ pub async fn connect_session(relay: &Url, insecure: bool) -> Result<Session<QUIC
     let config = ClientConfig {
         port: 0,
         verify_certificate: !insecure,
+        authorization_token: None,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     info!(%relay, "connecting to relay");

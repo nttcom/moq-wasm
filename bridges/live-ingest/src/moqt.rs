@@ -270,6 +270,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let endpoint = Endpoint::<T>::create_client(&ClientConfig {
             port: 0,
             verify_certificate: false,
+            authorization_token: None,
         })?;
         let connecting = endpoint
             .connect(url.as_str())

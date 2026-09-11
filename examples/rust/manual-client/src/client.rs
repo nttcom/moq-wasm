@@ -37,6 +37,7 @@ impl<T: TransportProtocol> Client<T> {
             Endpoint::<T>::create_client(&ClientConfig {
                 port: 0,
                 verify_certificate: false,
+                authorization_token: None,
             })?
         };
         tracing::info!(moqt_url, "connecting");

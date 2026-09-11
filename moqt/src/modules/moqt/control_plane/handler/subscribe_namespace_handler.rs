@@ -23,7 +23,7 @@ pub struct SubscribeNamespaceHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,
     pub track_namespace_prefix: String,
-    pub authorization_token: Option<String>,
+    pub track_namespace_prefix_tuple: Vec<String>,
     guard: ResponseGuard<T>,
 }
 
@@ -42,7 +42,7 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
             guard,
             request_id: subscribe_namespace.request_id,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
-            authorization_token: None,
+            track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
         }
     }
 
@@ -77,5 +77,39 @@ impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
             .send(ControlMessageType::SubscribeNamespaceError, err.encode())
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        SessionEvent,
+        modules::test_support::{connect_sessions, spawn_dual_server},
+    };
+
+    #[tokio::test]
+    async fn exposes_track_namespace_prefix_as_tuple_and_joined_string() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("subscribe-namespace-handler-namespace");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe_namespace("a/b/c".to_string())
+                .await
+        });
+
+        // Act
+        let SessionEvent::SubscribeNameSpace(handler) = server.receive_event().await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE_NAMESPACE from the client");
+        };
+
+        // Assert
+        assert_eq!(handler.track_namespace_prefix_tuple, vec!["a", "b", "c"]);
+        assert_eq!(handler.track_namespace_prefix, "a/b/c");
+        request.abort();
     }
 }

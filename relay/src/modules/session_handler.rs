@@ -82,12 +82,14 @@ impl SessionHandler {
                     let accepted_peer = accepted_peer.clone();
                     tokio::spawn(async move {
                         let session = async {
-                            connecting.await.inspect_err(|error| {
-                                tracing::warn!(%error, "failed to establish session");
-                            })
+                            let handshake = connecting.await?;
+                            handshake.accept().await
                         }
                         .instrument(session_span.clone())
-                        .await;
+                        .await
+                        .inspect_err(|error| {
+                            tracing::warn!(%error, "failed to establish session");
+                        });
                         let session = match session {
                             Ok(session) => session,
                             Err(_) => return,

@@ -431,10 +431,14 @@ impl MOQTClient {
         &self,
         versions: Vec<u64>,
         max_request_id: u64,
+        auth_token: Option<String>,
     ) -> Result<(), JsValue> {
         let supported_versions = versions.into_iter().map(|version| version as u32).collect();
-        let payload =
-            ClientSetup::new(supported_versions, default_setup_parameters(max_request_id)).encode();
+        let payload = ClientSetup::new(
+            supported_versions,
+            setup_parameters(max_request_id, auth_token.as_deref()),
+        )
+        .encode();
         self.state.borrow_mut().configure(max_request_id);
         self.send_control_message(ControlMessageType::ClientSetup, payload)
             .await
@@ -1867,11 +1871,11 @@ fn emit_subgroup_object(
 }
 
 #[cfg(web_sys_unstable_apis)]
-fn default_setup_parameters(max_request_id: u64) -> SetupParameter {
+fn setup_parameters(max_request_id: u64, auth_token: Option<&str>) -> SetupParameter {
     SetupParameter {
         path: None,
         max_request_id,
-        authorization_token: vec![],
+        authorization_token: auth_token.map(authorization_tokens).unwrap_or_default(),
         max_auth_token_cache_size: None,
         authority: None,
         moq_implementation: Some("moqt-client-wasm".to_string()),
@@ -1884,10 +1888,7 @@ fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
         return vec![];
     }
 
-    vec![AuthorizationToken::UseValue {
-        token_type: 0,
-        token_value: Bytes::copy_from_slice(auth_info.as_bytes()),
-    }]
+    vec![AuthorizationToken::use_value_utf8(auth_info)]
 }
 
 #[cfg(web_sys_unstable_apis)]

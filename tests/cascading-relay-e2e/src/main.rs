@@ -706,6 +706,7 @@ async fn connect(url: &str) -> anyhow::Result<Session<QUIC>> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
+        authorization_token: None,
     })?;
     tracing::info!(url, "connecting to relay");
     let connecting = endpoint.connect(url).await?;

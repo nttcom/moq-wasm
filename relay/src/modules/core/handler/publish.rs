@@ -22,7 +22,6 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn _group_order(&self) -> GroupOrder;
     fn _content_exists(&self) -> ContentExists;
     fn _forward(&self) -> bool;
-    fn _authorization_token(&self) -> Option<String>;
     fn _delivery_timeout(&self) -> Option<u64>;
     fn _max_cache_duration(&self) -> Option<u64>;
     fn subscription(
@@ -56,9 +55,6 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
     }
     fn _forward(&self) -> bool {
         self.forward
-    }
-    fn _authorization_token(&self) -> Option<String> {
-        self.authorization_token.clone()
     }
     fn _delivery_timeout(&self) -> Option<u64> {
         self.delivery_timeout

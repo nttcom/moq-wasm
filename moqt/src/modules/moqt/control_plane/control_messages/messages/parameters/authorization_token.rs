@@ -32,6 +32,13 @@ pub enum AuthorizationToken {
 }
 
 impl AuthorizationToken {
+    pub fn use_value_utf8(value: &str) -> Self {
+        Self::UseValue {
+            token_type: 0,
+            token_value: Bytes::copy_from_slice(value.as_bytes()),
+        }
+    }
+
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let token_alias = buf.try_get_varint().log_context("alias type").ok()?;
         if let Ok(token_alias) = AliasType::try_from(token_alias) {

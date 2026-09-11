@@ -65,6 +65,7 @@ async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session<QUIC>> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
+        authorization_token: None,
     })?;
     let connecting = endpoint.connect(relay_url).await?;
     connecting.await

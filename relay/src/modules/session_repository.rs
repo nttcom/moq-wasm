@@ -99,7 +99,6 @@ fn log_session_event(event: &MoqtSessionEvent) {
                 group_order = ?handler._group_order(),
                 content_exists = ?handler._content_exists(),
                 forward = handler._forward(),
-                has_authorization_token = handler._authorization_token().is_some(),
                 delivery_timeout = ?handler._delivery_timeout(),
                 max_cache_duration = ?handler._max_cache_duration(),
                 "Received session event"
@@ -116,7 +115,6 @@ fn log_session_event(event: &MoqtSessionEvent) {
                 group_order = ?handler._group_order(),
                 forward = handler._forward(),
                 filter_type = %filter_type_label(&filter_type),
-                has_authorization_token = handler._authorization_token().is_some(),
                 max_cache_duration = ?handler._max_cache_duration(),
                 delivery_timeout = ?handler._delivery_timeout(),
                 "Received session event"

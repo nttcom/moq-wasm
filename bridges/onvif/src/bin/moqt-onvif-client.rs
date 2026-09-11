@@ -1649,6 +1649,7 @@ async fn connect_session(
     let endpoint = Endpoint::<WEBTRANSPORT>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: !insecure_skip_tls_verify,
+        authorization_token: None,
     })?;
     let connecting = endpoint
         .connect(url)

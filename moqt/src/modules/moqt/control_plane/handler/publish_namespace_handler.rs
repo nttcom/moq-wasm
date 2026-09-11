@@ -23,7 +23,7 @@ pub struct PublishNamespaceHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,
     pub track_namespace: String,
-    pub authorization_token: Option<String>,
+    pub track_namespace_tuple: Vec<String>,
     guard: ResponseGuard<T>,
 }
 
@@ -42,7 +42,7 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
             guard,
             request_id: publish_namespace.request_id,
             track_namespace: publish_namespace.track_namespace.join("/"),
-            authorization_token: None,
+            track_namespace_tuple: publish_namespace.track_namespace,
         }
     }
 
@@ -75,5 +75,38 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
             .send_stream
             .send(ControlMessageType::PublishNamespaceError, err.encode())
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        SessionEvent,
+        modules::test_support::{connect_sessions, spawn_dual_server},
+    };
+
+    #[tokio::test]
+    async fn exposes_track_namespace_as_tuple_and_joined_string() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("publish-namespace-handler-namespace");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .publisher()
+                .publish_namespace("a/b/c".to_string())
+                .await
+        });
+
+        // Act
+        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+
+        // Assert
+        assert_eq!(handler.track_namespace_tuple, vec!["a", "b", "c"]);
+        assert_eq!(handler.track_namespace, "a/b/c");
+        request.abort();
     }
 }

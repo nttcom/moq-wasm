@@ -10,6 +10,7 @@ pub async fn subscribe_and_receive(namespace: &str, track_name: &str) -> Result<
     let config = ClientConfig {
         port: 0,
         verify_certificate: false,
+        authorization_token: None,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     info!("connecting to relay via QUIC");

@@ -11,6 +11,7 @@ pub async fn connect_and_wait_for_subscriber(
     let config = ClientConfig {
         port: 0,
         verify_certificate: false,
+        authorization_token: None,
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     info!("connecting to relay");

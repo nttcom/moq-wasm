@@ -23,12 +23,12 @@ pub struct SubscribeHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,
     pub track_namespace: String,
+    pub track_namespace_tuple: Vec<String>,
     pub track_name: String,
     pub subscriber_priority: u8,
     pub group_order: GroupOrder,
     pub forward: bool,
     pub filter_type: FilterType,
-    pub authorization_token: Option<String>,
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
     guard: ResponseGuard<T>,
@@ -49,12 +49,12 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             guard,
             request_id: subscribe_message.request_id,
             track_namespace: subscribe_message.track_namespace.join("/"),
+            track_namespace_tuple: subscribe_message.track_namespace,
             track_name: subscribe_message.track_name,
             subscriber_priority: subscribe_message.subscriber_priority,
             group_order: subscribe_message.group_order,
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
-            authorization_token: None,
             max_cache_duration: None,
             delivery_timeout: None,
         }
@@ -127,5 +127,43 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             track_alias,
             self,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::SubscribeOption;
+    use crate::{
+        SessionEvent,
+        modules::test_support::{connect_sessions, spawn_dual_server},
+    };
+
+    #[tokio::test]
+    async fn exposes_track_namespace_as_tuple_and_joined_string() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("subscribe-handler-namespace");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe(
+                    "a/b/c".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+
+        // Act
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Assert
+        assert_eq!(handler.track_namespace_tuple, vec!["a", "b", "c"]);
+        assert_eq!(handler.track_namespace, "a/b/c");
+        request.abort();
     }
 }

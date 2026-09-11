@@ -74,15 +74,27 @@ Client-side helpers shared by the three creators:
 
 ## Session establishment (`modules/moqt/domains`)
 
-Flow: `Endpoint` → `Connecting` (a boxed `Future`) → `Session`.
+Client flow: `Endpoint` → `Connecting` (a boxed `Future`) → `Session`.
+Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `Session`.
 
 - `Endpoint::create_client(&ClientConfig)` / `create_server(&ServerConfig)`
   build a `SessionCreator` around the transport's `ConnectionCreator`.
-- `connect(url)` / `accept()` return `Connecting<T>`, whose future performs the
-  transport handshake, opens/accepts the bidirectional control stream, and runs
-  the SETUP exchange in `SessionContextFactory` (CLIENT_SETUP/SERVER_SETUP,
-  version `0xff00000e` = draft-14).
-- On success a `Session<T>` is created.
+- `connect(url)` returns `Connecting<T>`, whose future performs the transport
+  handshake, opens the bidirectional control stream, and runs the whole SETUP
+  exchange in `SessionContextFactory` (sends CLIENT_SETUP, awaits SERVER_SETUP,
+  version `0xff00000e` = draft-14). `ClientConfig.authorization_token`, when
+  set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
+  `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session<T>` is
+  created.
+- `accept()` returns `Accepting<T>`, whose future performs the transport
+  handshake, accepts the control stream, and stops after CLIENT_SETUP is
+  received (`SessionContextFactory::receive_client_setup`). It resolves to a
+  `Handshake<T>` that exposes the received `ClientSetup` so the application can
+  decide before SERVER_SETUP is sent:
+  - `Handshake::accept()` sends SERVER_SETUP
+    (`SessionContextFactory::send_server_setup`) and creates the `Session<T>`.
+  - `Handshake::reject(code, reason)` closes the transport with the given
+    termination code without sending SERVER_SETUP.
 
 ### `Session` and its background tasks
 
@@ -151,6 +163,10 @@ One struct owns all cross-task state:
 - `handler/*` — received-message facades handed to the application inside
   `SessionEvent` (e.g. `SubscribeHandler::ok(...)`, `::error(...)`). They keep
   an `Arc<SessionContext>` so responding does not require the `Session`.
+  Namespace-carrying handlers expose the track namespace both as the wire
+  tuple (`track_namespace_tuple`) and as the `/`-joined string
+  (`track_namespace`); the tuple is authoritative because a tuple element may
+  itself contain `/`.
 - `enums.rs` — `SessionEvent<T>` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14

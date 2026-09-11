@@ -1,5 +1,5 @@
 use crate::{
-    Connecting, TransportProtocol,
+    Accepting, Connecting, TransportProtocol,
     modules::{
         moqt::domains::session_creator::SessionCreator,
         transport::transport_connection_creator::TransportConnectionCreator,
@@ -9,6 +9,7 @@ use crate::{
 pub struct ClientConfig {
     pub port: u16,
     pub verify_certificate: bool,
+    pub authorization_token: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -16,6 +17,7 @@ impl Default for ClientConfig {
         Self {
             port: 0,
             verify_certificate: true,
+            authorization_token: None,
         }
     }
 }
@@ -37,6 +39,7 @@ impl<T: TransportProtocol> Endpoint<T> {
         let client = T::ConnectionCreator::client(config.port, config.verify_certificate)?;
         let session_creator = SessionCreator {
             transport_creator: client,
+            authorization_token: config.authorization_token.clone(),
         };
         Ok(Self { session_creator })
     }
@@ -48,6 +51,7 @@ impl<T: TransportProtocol> Endpoint<T> {
         let client = T::ConnectionCreator::client_with_custom_cert(port_num, custom_cert_path)?;
         let session_creator = SessionCreator {
             transport_creator: client,
+            authorization_token: None,
         };
         Ok(Self { session_creator })
     }
@@ -61,6 +65,7 @@ impl<T: TransportProtocol> Endpoint<T> {
         )?;
         let session_creator = SessionCreator {
             transport_creator: server,
+            authorization_token: None,
         };
         Ok(Self { session_creator })
     }
@@ -73,7 +78,7 @@ impl<T: TransportProtocol> Endpoint<T> {
         self.session_creator.create_new_connection(url).await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Connecting<T>> {
+    pub async fn accept(&mut self) -> anyhow::Result<Accepting<T>> {
         self.session_creator.accept_new_connection().await
     }
 }
