@@ -22,6 +22,7 @@ import {
   resolveCommandName,
   waitForHttpOk,
 } from "./media-e2e-helpers.mjs";
+import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";
 const srtAddress = process.env.LIVE_VIEWER_E2E_SRT_ADDR ?? "127.0.0.1:9000";
@@ -64,9 +65,11 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
+    const vts = await startVts();
+    childProcesses.push(vts);
     const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
       cwd: repoRoot,
-      env: { ...process.env, AUTH_DISABLED: "true" },
+      env: { ...process.env, ...nativeRelayAuthEnv() },
     });
     const vite = spawnProcess(
       "vite",

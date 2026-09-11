@@ -3,9 +3,7 @@ import { CALL_INDEX_PATH } from '../playwright.helpers'
 
 export const RELAY_A_URL = process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
 export const RELAY_B_URL = process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
-// Set by scripts/run-call-e2e.mjs in CALL_E2E_AUTH mode; the pages fetch an anon token from it.
-// Set by scripts/run-call-e2e.mjs in CALL_E2E_AUTH mode: an app-scoped JWT the
-// pages present via ?jwt=. Absent outside auth mode (tokenless anonymous).
+// Set by scripts/run-call-e2e.mjs: an app-scoped JWT the pages present via ?jwt=.
 export const CALL_JWT = process.env.CALL_E2E_JWT || undefined
 
 export interface CallClientPageModel {
