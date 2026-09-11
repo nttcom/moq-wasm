@@ -5,7 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     h264::AvcDecoderConfigurationRecord,
     mp4::isobmff::{self, TrackInit, VIDEO_TIMESCALE},
-    sample::{MediaEvent, VideoSample},
+    sample::{MediaEvent, Timestamp, VideoSample},
 };
 
 const TRACK_ID: u32 = 1;
@@ -15,6 +15,7 @@ const TRACK_ID: u32 = 1;
 pub struct Fragment {
     pub data: Bytes,
     pub is_keyframe: bool,
+    pub presentation_time: Timestamp,
 }
 
 /// Muxes a single track so the init segment and the fragments travel apart:
@@ -98,6 +99,7 @@ impl Fmp4TrackMuxer {
                         timescale,
                     ),
                     is_keyframe: true,
+                    presentation_time: sample.pts,
                 }))
             }
             MediaEvent::VideoConfig(update) => {
@@ -150,6 +152,7 @@ impl Fmp4TrackMuxer {
                 nal_length_size,
             ),
             is_keyframe: sample.is_keyframe,
+            presentation_time: sample.pts,
         }
     }
 }
@@ -224,6 +227,7 @@ mod tests {
         // Assert
         assert!(first.is_none());
         assert!(second.is_keyframe);
+        assert_eq!(second.presentation_time, Timestamp::from_millis(40));
         assert_eq!(kinds(&second.data), ["moof", "mdat"]);
         assert_eq!(traf_track_id(&second.data), TRACK_ID);
         assert!(!flushed.is_keyframe);

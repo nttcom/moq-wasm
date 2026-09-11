@@ -1,7 +1,8 @@
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
-use mediapack::{MediaEvent, VideoSample, loc::Muxer as LocMuxer};
+use mediapack::{MediaEvent, VideoSample, loc::Muxer as LocMuxer, mp4::Fmp4TrackMuxer};
+use moqt::ExtensionHeaders;
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
@@ -11,7 +12,10 @@ use transcode::{Rendition, TranscodedEvent, Transcoder, ladder_for};
 use crate::{
     group_alignment::GroupAlignment,
     loc_object::extension_headers,
-    moqt::{GroupBoundary, MoqtManager, OutgoingObject, VIDEO_TRACK_NAME, VideoTrackInfo},
+    moqt::{
+        GroupBoundary, MoqtManager, OutgoingObject, VIDEO_TRACK_NAME, VideoTrackInfo,
+        cmaf_track_name,
+    },
 };
 
 const SAMPLE_QUEUE_CAPACITY: usize = 64;
@@ -63,6 +67,8 @@ impl RenditionFanout {
             loc,
             alignment,
             started: vec![false; renditions.len()],
+            cmaf: (0..renditions.len()).map(|_| None).collect(),
+            cmaf_started: vec![false; renditions.len()],
         };
         let publisher = tokio::spawn(publisher.run(transcoder, renditions));
         Ok(Some(Self {
@@ -87,6 +93,8 @@ struct RenditionPublisher {
     /// A rendition publishes nothing until a keyframe the source has an id for,
     /// so its first group starts aligned rather than on a lone delta frame.
     started: Vec<bool>,
+    cmaf: Vec<Option<Fmp4TrackMuxer>>,
+    cmaf_started: Vec<bool>,
 }
 
 impl RenditionPublisher {
@@ -112,6 +120,7 @@ impl RenditionPublisher {
         let index = output.rendition;
         match output.event {
             MediaEvent::VideoConfig(config) => {
+                self.cmaf[index] = Some(Fmp4TrackMuxer::video(config.clone()));
                 let info =
                     VideoTrackInfo::from_record(&config, format!("Video {}", rendition.name))?;
                 self.moqt
@@ -120,37 +129,73 @@ impl RenditionPublisher {
             }
             MediaEvent::Video(sample) => {
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
-                let group = match (
-                    sample.is_keyframe,
-                    self.alignment.aligned(sample.pts.micros()),
-                ) {
-                    (true, Some(group_id)) => {
-                        self.started[index] = true;
-                        GroupBoundary::At(group_id)
-                    }
-                    _ if self.started[index] => GroupBoundary::Within,
-                    _ => return Ok(()),
+                let fragment = match &mut self.cmaf[index] {
+                    Some(muxer) => muxer.push(&MediaEvent::Video(sample.clone()))?,
+                    None => None,
                 };
-                let muxer = self
-                    .loc
-                    .get()
-                    .context("rendition sample before the source seeded the LOC capture origin")?;
-                let Some(object) = muxer.push(&MediaEvent::Video(sample)) else {
+                if let Some(group) = aligned_boundary(
+                    &self.alignment,
+                    &mut self.started[index],
+                    sample.is_keyframe,
+                    sample.pts.micros(),
+                ) {
+                    let muxer = self.loc.get().context(
+                        "rendition sample before the source seeded the LOC capture origin",
+                    )?;
+                    if let Some(object) = muxer.push(&MediaEvent::Video(sample)) {
+                        self.moqt
+                            .send_object(
+                                &self.namespace,
+                                &track,
+                                OutgoingObject {
+                                    group,
+                                    extension_headers: extension_headers(&object),
+                                    payload: object.payload,
+                                },
+                            )
+                            .await?;
+                    }
+                }
+                let Some(fragment) = fragment else {
+                    return Ok(());
+                };
+                let Some(group) = aligned_boundary(
+                    &self.alignment,
+                    &mut self.cmaf_started[index],
+                    fragment.is_keyframe,
+                    fragment.presentation_time.micros(),
+                ) else {
                     return Ok(());
                 };
                 self.moqt
                     .send_object(
                         &self.namespace,
-                        &track,
+                        &cmaf_track_name(&track),
                         OutgoingObject {
                             group,
-                            extension_headers: extension_headers(&object),
-                            payload: object.payload,
+                            extension_headers: ExtensionHeaders::default(),
+                            payload: fragment.data,
                         },
                     )
                     .await
             }
             _ => Ok(()),
         }
+    }
+}
+
+fn aligned_boundary(
+    alignment: &GroupAlignment,
+    started: &mut bool,
+    is_keyframe: bool,
+    presentation_us: u64,
+) -> Option<GroupBoundary> {
+    match (is_keyframe, alignment.aligned(presentation_us)) {
+        (true, Some(group_id)) => {
+            *started = true;
+            Some(GroupBoundary::At(group_id))
+        }
+        _ if *started => Some(GroupBoundary::Within),
+        _ => None,
     }
 }

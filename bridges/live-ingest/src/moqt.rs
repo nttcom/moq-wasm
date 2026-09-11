@@ -11,7 +11,9 @@ use media_streaming_format::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
-use mediapack::{aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord};
+use mediapack::{
+    aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
+};
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Session, SessionEvent,
     TrackWriter, TransportProtocol, TransportSendError, WEBTRANSPORT,
@@ -22,6 +24,7 @@ pub(crate) const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
 pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
+const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
 /// FETCH_ERROR code NOT_SUPPORTED, draft-ietf-moq-transport-14 §13.1.5.
@@ -64,18 +67,27 @@ pub struct VideoTrackInfo {
     pub codec: String,
     pub width: u32,
     pub height: u32,
+    /// The CMAF init segment of the track, Base64 for the catalog `initData`
+    /// (draft-ietf-moq-cmsf-01 §3.1).
+    pub init_segment: String,
 }
 
 impl VideoTrackInfo {
     pub fn from_record(record: &AvcDecoderConfigurationRecord, label: String) -> Result<Self> {
         let sps = record.sequence_parameter_set()?;
+        let init_segment = Fmp4TrackMuxer::video(record.clone()).init_segment()?;
         Ok(Self {
             label,
             codec: record.codec_string(),
             width: sps.width,
             height: sps.height,
+            init_segment: general_purpose::STANDARD.encode(init_segment),
         })
     }
+}
+
+pub(crate) fn cmaf_track_name(track_name: &str) -> String {
+    format!("{track_name}{CMAF_TRACK_SUFFIX}")
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -90,6 +102,7 @@ pub(crate) struct OutgoingObject {
     pub(crate) payload: Bytes,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum GroupBoundary {
     /// Only inside an open group; the object is dropped when there is none,
     /// because a group must not start on it.
@@ -602,163 +615,117 @@ async fn write_object<T: TransportProtocol>(
 }
 
 fn is_supported_track(track_name: &str, metadata: Option<&CatalogMetadata>) -> bool {
+    let media_track = track_name
+        .strip_suffix(CMAF_TRACK_SUFFIX)
+        .unwrap_or(track_name);
     matches!(
         track_name,
-        AUDIO_TRACK_NAME | CATALOG_TRACK_NAME | CHAT_TRACK_NAME | TIMELINE_TRACK_NAME
-    ) || metadata.is_some_and(|metadata| metadata.video_tracks.contains_key(track_name))
+        CATALOG_TRACK_NAME | CHAT_TRACK_NAME | TIMELINE_TRACK_NAME
+    ) || media_track == AUDIO_TRACK_NAME
+        || metadata.is_some_and(|metadata| metadata.video_tracks.contains_key(media_track))
 }
 
 fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Vec<u8>> {
     let namespace = Some(namespace_path.to_string());
-    let depends = Some(vec![
+    let video_role = TrackRole::Known(KnownTrackRole::Video);
+    let alt_group = (metadata.video_tracks.len() > 1).then_some(1);
+    let cmaf_alt_group = alt_group.map(|group| group + 1);
+
+    let mut tracks = Vec::new();
+    for (name, info) in &metadata.video_tracks {
+        let mut loc = track(&namespace, name, KnownPackaging::Loc, video_role.clone());
+        loc.label = Some(info.label.clone());
+        loc.alt_group = alt_group;
+        loc.codec = Some(info.codec.clone());
+        loc.mime_type = Some("video/h264".to_string());
+        loc.framerate = Some(30.0);
+        loc.width = Some(info.width);
+        loc.height = Some(info.height);
+        tracks.push(loc);
+
+        let mut cmaf = track(
+            &namespace,
+            &cmaf_track_name(name),
+            KnownPackaging::Cmaf,
+            video_role.clone(),
+        );
+        cmaf.label = Some(format!("{} (CMAF)", info.label));
+        cmaf.alt_group = cmaf_alt_group;
+        cmaf.codec = Some(info.codec.clone());
+        cmaf.mime_type = Some("video/mp4".to_string());
+        cmaf.framerate = Some(30.0);
+        cmaf.width = Some(info.width);
+        cmaf.height = Some(info.height);
+        cmaf.init_data = Some(info.init_segment.clone());
+        cmaf.max_grp_sap_starting_type = Some(1);
+        cmaf.max_obj_sap_starting_type = Some(1);
+        tracks.push(cmaf);
+    }
+
+    let audio_role = TrackRole::Known(KnownTrackRole::Audio);
+    let mut audio = track(
+        &namespace,
+        AUDIO_TRACK_NAME,
+        KnownPackaging::Loc,
+        audio_role.clone(),
+    );
+    audio.label = Some("Audio".to_string());
+    audio.codec = Some("mp4a.40.2".to_string());
+    audio.mime_type = Some("audio/aac".to_string());
+    if let Some(config) = &metadata.audio_config {
+        audio.sample_rate = Some(config.sample_rate);
+        audio.channel_config = Some(channel_config_label(config.channel_count()));
+        audio.init_data = Some(general_purpose::STANDARD.encode(config.to_bytes()));
+    }
+    tracks.push(audio);
+    if let Some(config) = &metadata.audio_config {
+        let mut cmaf = track(
+            &namespace,
+            &cmaf_track_name(AUDIO_TRACK_NAME),
+            KnownPackaging::Cmaf,
+            audio_role,
+        );
+        cmaf.label = Some("Audio (CMAF)".to_string());
+        cmaf.codec = Some("mp4a.40.2".to_string());
+        cmaf.mime_type = Some("audio/mp4".to_string());
+        cmaf.sample_rate = Some(config.sample_rate);
+        cmaf.channel_config = Some(channel_config_label(config.channel_count()));
+        cmaf.init_data = Some(
+            general_purpose::STANDARD.encode(Fmp4TrackMuxer::audio(config.clone()).init_segment()?),
+        );
+        cmaf.max_grp_sap_starting_type = Some(1);
+        cmaf.max_obj_sap_starting_type = Some(1);
+        tracks.push(cmaf);
+    }
+
+    let mut timeline = track(
+        &namespace,
+        TIMELINE_TRACK_NAME,
+        KnownPackaging::MediaTimeline,
+        TrackRole::Known(KnownTrackRole::MediaTimeline),
+    );
+    timeline.label = Some("Media timeline".to_string());
+    timeline.depends = Some(vec![
+        VIDEO_TRACK_NAME.to_string(),
+        cmaf_track_name(VIDEO_TRACK_NAME),
+    ]);
+    timeline.mime_type = Some("application/json".to_string());
+    tracks.push(timeline);
+
+    let mut chat = track(
+        &namespace,
+        CHAT_TRACK_NAME,
+        KnownPackaging::EventTimeline,
+        TrackRole::Other(CHAT_TRACK_NAME.to_string()),
+    );
+    chat.event_type = Some(CHAT_EVENT_TYPE.to_string());
+    chat.label = Some("Chat".to_string());
+    chat.depends = Some(vec![
         VIDEO_TRACK_NAME.to_string(),
         AUDIO_TRACK_NAME.to_string(),
     ]);
-
-    let alt_group = (metadata.video_tracks.len() > 1).then_some(1);
-    let mut tracks: Vec<Track> = metadata
-        .video_tracks
-        .iter()
-        .map(|(name, info)| Track {
-            namespace: namespace.clone(),
-            name: name.clone(),
-            packaging: Packaging::Known(KnownPackaging::Loc),
-            event_type: None,
-            role: Some(TrackRole::Known(KnownTrackRole::Video)),
-            is_live: true,
-            target_latency: None,
-            label: Some(info.label.clone()),
-            render_group: None,
-            alt_group,
-            init_data: None,
-            depends: None,
-            temporal_id: None,
-            spatial_id: None,
-            codec: Some(info.codec.clone()),
-            mime_type: Some("video/h264".to_string()),
-            framerate: Some(30.0),
-            timescale: None,
-            bitrate: None,
-            width: Some(info.width),
-            height: Some(info.height),
-            sample_rate: None,
-            channel_config: None,
-            display_width: None,
-            display_height: None,
-            lang: None,
-            parent_name: None,
-            track_duration: None,
-            max_grp_sap_starting_type: None,
-            max_obj_sap_starting_type: None,
-        })
-        .collect();
-    tracks.extend([
-        Track {
-            namespace: namespace.clone(),
-            name: AUDIO_TRACK_NAME.to_string(),
-            packaging: Packaging::Known(KnownPackaging::Loc),
-            event_type: None,
-            role: Some(TrackRole::Known(KnownTrackRole::Audio)),
-            is_live: true,
-            target_latency: None,
-            label: Some("Audio".to_string()),
-            render_group: None,
-            alt_group: None,
-            init_data: metadata
-                .audio_config
-                .as_ref()
-                .map(|config| general_purpose::STANDARD.encode(config.to_bytes())),
-            depends: None,
-            temporal_id: None,
-            spatial_id: None,
-            codec: Some("mp4a.40.2".to_string()),
-            mime_type: Some("audio/aac".to_string()),
-            framerate: None,
-            timescale: None,
-            bitrate: None,
-            width: None,
-            height: None,
-            sample_rate: metadata
-                .audio_config
-                .as_ref()
-                .map(|config| config.sample_rate),
-            channel_config: metadata
-                .audio_config
-                .as_ref()
-                .map(|config| channel_config_label(config.channel_count())),
-            display_width: None,
-            display_height: None,
-            lang: None,
-            parent_name: None,
-            track_duration: None,
-            max_grp_sap_starting_type: None,
-            max_obj_sap_starting_type: None,
-        },
-        Track {
-            namespace: namespace.clone(),
-            name: TIMELINE_TRACK_NAME.to_string(),
-            packaging: Packaging::Known(KnownPackaging::MediaTimeline),
-            event_type: None,
-            role: Some(TrackRole::Known(KnownTrackRole::MediaTimeline)),
-            is_live: true,
-            target_latency: None,
-            label: Some("Media timeline".to_string()),
-            render_group: None,
-            alt_group: None,
-            init_data: None,
-            depends: Some(vec![VIDEO_TRACK_NAME.to_string()]),
-            temporal_id: None,
-            spatial_id: None,
-            codec: None,
-            mime_type: Some("application/json".to_string()),
-            framerate: None,
-            timescale: None,
-            bitrate: None,
-            width: None,
-            height: None,
-            sample_rate: None,
-            channel_config: None,
-            display_width: None,
-            display_height: None,
-            lang: None,
-            parent_name: None,
-            track_duration: None,
-            max_grp_sap_starting_type: None,
-            max_obj_sap_starting_type: None,
-        },
-        Track {
-            namespace,
-            name: CHAT_TRACK_NAME.to_string(),
-            packaging: Packaging::Known(KnownPackaging::EventTimeline),
-            event_type: Some(CHAT_EVENT_TYPE.to_string()),
-            role: Some(TrackRole::Other(CHAT_TRACK_NAME.to_string())),
-            is_live: true,
-            target_latency: None,
-            label: Some("Chat".to_string()),
-            render_group: None,
-            alt_group: None,
-            init_data: None,
-            depends,
-            temporal_id: None,
-            spatial_id: None,
-            codec: None,
-            mime_type: Some("application/json".to_string()),
-            framerate: None,
-            timescale: None,
-            bitrate: None,
-            width: None,
-            height: None,
-            sample_rate: None,
-            channel_config: None,
-            display_width: None,
-            display_height: None,
-            lang: None,
-            parent_name: None,
-            track_duration: None,
-            max_grp_sap_starting_type: None,
-            max_obj_sap_starting_type: None,
-        },
-    ]);
+    chat.mime_type = Some("application/json".to_string());
+    tracks.push(chat);
 
     let catalog = Catalog {
         version: Some(1),
@@ -772,6 +739,46 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
     };
 
     serde_json::to_vec(&catalog).context("serialize msf catalog")
+}
+
+fn track(
+    namespace: &Option<String>,
+    name: &str,
+    packaging: KnownPackaging,
+    role: TrackRole,
+) -> Track {
+    Track {
+        namespace: namespace.clone(),
+        name: name.to_string(),
+        packaging: Packaging::Known(packaging),
+        event_type: None,
+        role: Some(role),
+        is_live: true,
+        target_latency: None,
+        label: None,
+        render_group: None,
+        alt_group: None,
+        init_data: None,
+        depends: None,
+        temporal_id: None,
+        spatial_id: None,
+        codec: None,
+        mime_type: None,
+        framerate: None,
+        timescale: None,
+        bitrate: None,
+        width: None,
+        height: None,
+        sample_rate: None,
+        channel_config: None,
+        display_width: None,
+        display_height: None,
+        lang: None,
+        parent_name: None,
+        track_duration: None,
+        max_grp_sap_starting_type: None,
+        max_obj_sap_starting_type: None,
+    }
 }
 
 fn channel_config_label(channels: u8) -> String {
@@ -800,6 +807,90 @@ pub(crate) fn now_unix() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FIXTURE_SPS: [u8; 24] = [
+        0x67, 0x42, 0xd0, 0x0b, 0xda, 0x0a, 0x37, 0xe4, 0xc0, 0x44, 0x00, 0x00, 0x03, 0x00, 0x04,
+        0x00, 0x00, 0x03, 0x00, 0x78, 0x3c, 0x48, 0x9a, 0x80,
+    ];
+    const FIXTURE_PPS: [u8; 4] = [0x68, 0xce, 0x3c, 0x80];
+
+    fn metadata_with_video_and_audio() -> CatalogMetadata {
+        let record = AvcDecoderConfigurationRecord::from_parameter_sets(
+            vec![Bytes::from_static(&FIXTURE_SPS)],
+            vec![Bytes::from_static(&FIXTURE_PPS)],
+        )
+        .unwrap();
+        let mut video_tracks = BTreeMap::new();
+        video_tracks.insert(
+            VIDEO_TRACK_NAME.to_string(),
+            VideoTrackInfo::from_record(&record, "Video".to_string()).unwrap(),
+        );
+        CatalogMetadata {
+            video_tracks,
+            audio_config: Some(AudioSpecificConfig::new(2, 48_000, 1)),
+        }
+    }
+
+    fn track_named<'a>(catalog: &'a Catalog, name: &str) -> &'a Track {
+        catalog
+            .tracks
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|track| track.name == name)
+            .unwrap_or_else(|| panic!("missing track {name}"))
+    }
+
+    #[test]
+    fn accepts_cmaf_siblings_of_media_tracks() {
+        // Arrange
+        let metadata = metadata_with_video_and_audio();
+
+        // Act / Assert
+        assert!(is_supported_track("video_cmaf", Some(&metadata)));
+        assert!(is_supported_track("audio_cmaf", Some(&metadata)));
+        assert!(!is_supported_track("chat_cmaf", Some(&metadata)));
+        assert!(!is_supported_track("video_720p_cmaf", Some(&metadata)));
+    }
+
+    #[test]
+    fn catalog_pairs_each_media_track_with_a_cmaf_track_carrying_its_init_segment() {
+        // Arrange
+        let metadata = metadata_with_video_and_audio();
+
+        // Act
+        let payload = build_catalog_payload("live/test", &metadata).unwrap();
+        let catalog: Catalog = serde_json::from_slice(&payload).unwrap();
+
+        // Assert
+        let video = track_named(&catalog, "video");
+        assert_eq!(video.packaging, Packaging::Known(KnownPackaging::Loc));
+        assert_eq!(video.init_data, None);
+        let video_cmaf = track_named(&catalog, "video_cmaf");
+        assert_eq!(video_cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
+        assert_eq!(video_cmaf.mime_type.as_deref(), Some("video/mp4"));
+        assert_eq!(video_cmaf.codec, video.codec);
+        assert_eq!(video_cmaf.max_grp_sap_starting_type, Some(1));
+        assert!(
+            video_cmaf
+                .init_data
+                .as_ref()
+                .is_some_and(|data| !data.is_empty())
+        );
+        let audio_cmaf = track_named(&catalog, "audio_cmaf");
+        assert_eq!(audio_cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
+        assert_eq!(audio_cmaf.mime_type.as_deref(), Some("audio/mp4"));
+        assert!(
+            audio_cmaf
+                .init_data
+                .as_ref()
+                .is_some_and(|data| !data.is_empty())
+        );
+        assert_ne!(
+            audio_cmaf.init_data,
+            track_named(&catalog, "audio").init_data
+        );
+    }
 
     #[test]
     fn detects_stop_sending_through_context_layers() {
