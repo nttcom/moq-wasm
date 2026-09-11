@@ -288,12 +288,16 @@ async function openLiveMse(): Promise<void> {
   const audio = subscribedCmafSource('audio')
   mse = await MseSink.open(element<HTMLVideoElement>('video'), video, audio)
   cmafAwaitingKeyframe = true
+  element<HTMLVideoElement>('video').muted = audio === undefined
 }
 
+/// LOC audio plays through the separate `<audio>` element, so the video element
+/// is only unmuted while a MediaSource carries the audio track.
 function closeMse(): void {
   mse?.close()
   mse = undefined
   cmafAwaitingKeyframe = true
+  element<HTMLVideoElement>('video').muted = true
 }
 
 function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: SubgroupObject): void {
