@@ -41,8 +41,8 @@ use moqt::{
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
-const NAMESPACE_A: &str = "evict/a";
-const NAMESPACE_B: &str = "evict/b";
+const NAMESPACE_A: &str = "anon/evict/a";
+const NAMESPACE_B: &str = "anon/evict/b";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
 const OBJECTS_PER_GROUP: u64 = 5;

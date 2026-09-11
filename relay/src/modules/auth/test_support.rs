@@ -106,10 +106,10 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
         &cert_path,
         RelayServerDeps {
             route_registry: Arc::new(NoopRelayRouteRegistry),
-            authenticator: SessionAuthenticator::Enabled {
+            authenticator: SessionAuthenticator {
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },
-            relay_token: None,
+            relay_token: "unused-relay-token".to_string(),
         },
     );
     let handler = server.spawn_client_transport::<QUIC>(port);
@@ -120,13 +120,17 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
     }
 }
 
-pub(crate) async fn connect_client_with_token(port: u16, token: &str) -> Session<QUIC> {
-    let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
+pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<QUIC> {
+    Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
-        authorization_token: Some(token.to_string()),
+        authorization_token,
     })
-    .unwrap();
+    .unwrap()
+}
+
+pub(crate) async fn connect_client_with_token(port: u16, token: &str) -> Session<QUIC> {
+    let endpoint = client_endpoint(Some(token.to_string()));
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         endpoint
             .connect(&format!("moqt://127.0.0.1:{port}"))

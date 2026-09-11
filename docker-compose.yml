@@ -27,15 +27,11 @@ services:
       - build
     command: ["true"]
 
-  # Authentication services. Start with `docker compose --profile auth up -d`
-  # and point the relays at the VTS with AUTH_VTS_URL / AUTH_RELAY_TOKEN.
   vts:
     image: moqt-vts:local
     build:
       context: .
       dockerfile: services/vts/Dockerfile
-    profiles:
-      - auth
     environment:
       VTS_PORT: "8081"
       VTS_APPS_FILE: /etc/vts/apps.json
@@ -58,9 +54,9 @@ services:
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
-      AUTH_DISABLED: ${AUTH_DISABLED:-true}
-      AUTH_VTS_URL: ${AUTH_VTS_URL:-}
-      AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-}
+      AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
+      # Development relay token minted from apps.example.json (see services/vts/README.md).
+      AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
@@ -75,6 +71,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      vts:
+        condition: service_healthy
 
   relay-b:
     image: moqt-relay:local
@@ -87,9 +85,9 @@ services:
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
-      AUTH_DISABLED: ${AUTH_DISABLED:-true}
-      AUTH_VTS_URL: ${AUTH_VTS_URL:-}
-      AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-}
+      AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
+      # Development relay token minted from apps.example.json (see services/vts/README.md).
+      AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
@@ -103,4 +101,6 @@ services:
       - ./relay/keys:/workspace/relay/keys:ro
     depends_on:
       redis:
+        condition: service_healthy
+      vts:
         condition: service_healthy

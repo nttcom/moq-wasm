@@ -5,20 +5,16 @@ use anyhow::bail;
 use crate::modules::auth::token_claims::ClaimPolicy;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AuthConfig {
-    Disabled,
-    Vts {
-        verify_url: String,
-        relay_token: String,
-        claim_policy: ClaimPolicy,
-    },
+pub struct AuthConfig {
+    pub verify_url: String,
+    pub relay_token: String,
+    pub claim_policy: ClaimPolicy,
 }
 
 #[derive(Default)]
 struct AuthEnv {
     vts_url: Option<String>,
     relay_token: Option<String>,
-    disabled: Option<String>,
     max_token_ttl_seconds: Option<String>,
     clock_leeway_seconds: Option<String>,
 }
@@ -35,43 +31,29 @@ fn seconds(value: Option<String>, name: &str, default: Duration) -> anyhow::Resu
 
 impl AuthConfig {
     fn from_env_values(env: AuthEnv) -> anyhow::Result<Self> {
-        if let Some(verify_url) = env.vts_url {
-            let Some(relay_token) = env.relay_token else {
-                bail!("AUTH_RELAY_TOKEN is required when AUTH_VTS_URL is set");
-            };
-            let defaults = ClaimPolicy::default();
-            let claim_policy = ClaimPolicy {
-                max_token_ttl: seconds(
-                    env.max_token_ttl_seconds,
-                    "AUTH_MAX_TOKEN_TTL_SECONDS",
-                    defaults.max_token_ttl,
-                )?,
-                clock_leeway: seconds(
-                    env.clock_leeway_seconds,
-                    "AUTH_CLOCK_LEEWAY_SECONDS",
-                    defaults.clock_leeway,
-                )?,
-            };
-            return Ok(Self::Vts {
-                verify_url,
-                relay_token,
-                claim_policy,
-            });
-        }
-        if env.disabled.as_deref() == Some("true") {
-            return Ok(Self::Disabled);
-        }
-        bail!(
-            "authentication is not configured: set AUTH_VTS_URL and AUTH_RELAY_TOKEN, \
-             or AUTH_DISABLED=true to run without authentication"
-        )
-    }
-
-    pub(crate) fn relay_token(&self) -> Option<String> {
-        match self {
-            Self::Disabled => None,
-            Self::Vts { relay_token, .. } => Some(relay_token.clone()),
-        }
+        let (Some(verify_url), Some(relay_token)) = (env.vts_url, env.relay_token) else {
+            bail!(
+                "authentication is not configured: both AUTH_VTS_URL and AUTH_RELAY_TOKEN are required"
+            );
+        };
+        let defaults = ClaimPolicy::default();
+        let claim_policy = ClaimPolicy {
+            max_token_ttl: seconds(
+                env.max_token_ttl_seconds,
+                "AUTH_MAX_TOKEN_TTL_SECONDS",
+                defaults.max_token_ttl,
+            )?,
+            clock_leeway: seconds(
+                env.clock_leeway_seconds,
+                "AUTH_CLOCK_LEEWAY_SECONDS",
+                defaults.clock_leeway,
+            )?,
+        };
+        Ok(Self {
+            verify_url,
+            relay_token,
+            claim_policy,
+        })
     }
 }
 
@@ -108,7 +90,6 @@ impl RelayConfig {
         let auth = AuthConfig::from_env_values(AuthEnv {
             vts_url: non_empty_env("AUTH_VTS_URL"),
             relay_token: non_empty_env("AUTH_RELAY_TOKEN"),
-            disabled: non_empty_env("AUTH_DISABLED"),
             max_token_ttl_seconds: non_empty_env("AUTH_MAX_TOKEN_TTL_SECONDS"),
             clock_leeway_seconds: non_empty_env("AUTH_CLOCK_LEEWAY_SECONDS"),
         })?;
@@ -140,14 +121,14 @@ mod tests {
     }
 
     #[test]
-    fn vts_url_with_relay_token_enables_verification_with_default_policy() {
+    fn vts_url_with_relay_token_uses_the_default_policy() {
         // Act
         let auth = AuthConfig::from_env_values(vts_env()).unwrap();
 
         // Assert
         assert_eq!(
             auth,
-            AuthConfig::Vts {
+            AuthConfig {
                 verify_url: "http://vts/verify".to_string(),
                 relay_token: "relay-jwt".to_string(),
                 claim_policy: ClaimPolicy::default(),
@@ -165,13 +146,11 @@ mod tests {
         };
 
         // Act
-        let AuthConfig::Vts { claim_policy, .. } = AuthConfig::from_env_values(env).unwrap() else {
-            panic!("expected Vts");
-        };
+        let auth = AuthConfig::from_env_values(env).unwrap();
 
         // Assert
-        assert_eq!(claim_policy.max_token_ttl, Duration::from_secs(3600));
-        assert_eq!(claim_policy.clock_leeway, Duration::from_secs(5));
+        assert_eq!(auth.claim_policy.max_token_ttl, Duration::from_secs(3600));
+        assert_eq!(auth.claim_policy.clock_leeway, Duration::from_secs(5));
     }
 
     #[test]
@@ -199,34 +178,20 @@ mod tests {
     }
 
     #[test]
-    fn explicit_opt_out_disables_authentication() {
-        // Act
-        let auth = AuthConfig::from_env_values(AuthEnv {
-            disabled: Some("true".to_string()),
-            ..AuthEnv::default()
-        })
-        .unwrap();
+    fn relay_token_without_vts_url_is_an_error() {
+        // Arrange
+        let env = AuthEnv {
+            vts_url: None,
+            ..vts_env()
+        };
 
-        // Assert
-        assert_eq!(auth, AuthConfig::Disabled);
+        // Act / Assert
+        assert!(AuthConfig::from_env_values(env).is_err());
     }
 
     #[test]
     fn missing_configuration_refuses_to_start() {
         // Act / Assert
         assert!(AuthConfig::from_env_values(AuthEnv::default()).is_err());
-    }
-
-    #[test]
-    fn vts_url_takes_precedence_over_opt_out() {
-        // Act
-        let auth = AuthConfig::from_env_values(AuthEnv {
-            disabled: Some("true".to_string()),
-            ..vts_env()
-        })
-        .unwrap();
-
-        // Assert
-        assert!(matches!(auth, AuthConfig::Vts { .. }));
     }
 }

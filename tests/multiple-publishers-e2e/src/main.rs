@@ -24,7 +24,7 @@ use moqt::{
 use tokio::sync::oneshot;
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
-const NAMESPACE: &str = "room/main";
+const NAMESPACE: &str = "anon/room/main";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
 const ALICE_GROUPS: u64 = 8;

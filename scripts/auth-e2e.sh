@@ -25,7 +25,7 @@ cleanup() {
     done
     kill -9 "$LOGS_PID" 2>/dev/null || true
   fi
-  docker compose --profile auth down -v --remove-orphans
+  docker compose down -v --remove-orphans
 }
 trap cleanup EXIT
 
@@ -49,7 +49,7 @@ if docker image inspect moqt-relay:local >/dev/null 2>&1; then
 else
   docker compose build relay-common
 fi
-docker compose --profile auth build vts
+docker compose build vts
 
 if [[ ! -d services/vts/node_modules ]]; then
   npm --prefix services/vts ci
@@ -61,8 +61,8 @@ export AUTH_RELAY_TOKEN
 AUTH_RELAY_TOKEN="$(mint --app-id "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
 export AUTH_VTS_URL="http://vts:8081/verify"
 
-docker compose --profile auth up -d --wait redis vts relay-a relay-b
-docker compose --profile auth logs -f --no-color relay-a relay-b vts &
+docker compose up -d --wait redis vts relay-a relay-b
+docker compose logs -f --no-color relay-a relay-b vts &
 LOGS_PID=$!
 
 RELAY_A_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
@@ -83,7 +83,7 @@ if ! AUTH_E2E_APP_ID="$APP_ID" \
 fi
 expect_passed
 
-docker compose --profile auth stop vts
+docker compose stop vts
 if ! AUTH_E2E_APP_TOKEN="$APP_TOKEN" \
   cargo run -p auth-e2e -- \
     --relay-a-url "$RELAY_A_URL" \

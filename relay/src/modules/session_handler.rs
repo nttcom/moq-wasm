@@ -174,9 +174,37 @@ impl Drop for SessionHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use anyhow::Context;
 
     use super::SessionHandler;
+    use crate::modules::auth::{
+        test_support::{client_endpoint, spawn_relay_with_verifier},
+        verified_token::VerifiedToken,
+    };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn slow_client_setup_does_not_block_new_connections() {
+        // Arrange: client A finishes the QUIC handshake but never sends CLIENT_SETUP
+        let relay = spawn_relay_with_verifier(VerifiedToken::anonymous()).await;
+        let url = format!("moqt://127.0.0.1:{}", relay.port);
+        let stalled_endpoint = client_endpoint(None);
+        let _stalled_setup = stalled_endpoint.connect(&url).await.unwrap();
+
+        // Act
+        let endpoint = client_endpoint(None);
+        let session = tokio::time::timeout(Duration::from_secs(2), async {
+            endpoint.connect(&url).await?.await
+        })
+        .await;
+
+        // Assert
+        assert!(
+            session.is_ok_and(|result| result.is_ok()),
+            "a stalled CLIENT_SETUP blocked the accept loop"
+        );
+    }
 
     #[test]
     fn endpoint_closing_error_stops_accept_loop() {

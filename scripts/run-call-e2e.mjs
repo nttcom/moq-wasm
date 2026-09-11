@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 // Orchestration runner for call E2E tests.
-// Starts redis + relay-a (4433) + relay-b (4434) via docker compose,
-// launches vite preview, then runs the Playwright call-e2e spec.
+// Starts redis + vts + relay-a (4433) + relay-b (4434) via docker compose,
+// launches vite preview, then runs the Playwright call-e2e spec with an
+// app-scoped JWT minted from the development ledger.
 //
 // If relay-a and relay-b containers serving ports 4433/4434 are already running
 // (e.g. from a prior test run or a sibling compose project), the runner re-uses
 // them and skips docker compose up to avoid port-allocation conflicts.
 
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   assertPathExists,
   certPath,
@@ -24,13 +23,12 @@ import {
   waitForHttpOk,
 } from "./media-e2e-helpers.mjs";
 import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
+import { experimentAppId, mintToken } from "./vts-dev.mjs";
 
 const callIndexPath = "/moq-wasm/examples/call/index.html";
 const defaultRelayAUrl = "https://127.0.0.1:4433";
 const defaultRelayBUrl = "https://127.0.0.1:4434";
-const vtsAppsFile = "services/vts/apps.example.json";
-const relayAppId = "11111111-2222-3333-4444-555555555555";
-const callAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
+const composeServices = ["redis", "vts", "relay-a", "relay-b"];
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
@@ -62,11 +60,6 @@ async function main() {
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
-  const authMode = process.env.CALL_E2E_AUTH === "true";
-  const composeArgs = authMode ? ["compose", "--profile", "auth"] : ["compose"];
-  const composeServices = authMode
-    ? ["redis", "vts", "relay-a", "relay-b"]
-    : ["redis", "relay-a", "relay-b"];
 
   const cleanup = async () => {
     await Promise.allSettled(
@@ -75,7 +68,7 @@ async function main() {
     if (ownedDockerServices) {
       await runCommand(
         resolveCommandName("docker"),
-        [...composeArgs, "stop", ...composeServices],
+        ["compose", "stop", ...composeServices],
         { cwd: repoRoot },
       ).catch(() => {});
     }
@@ -85,12 +78,6 @@ async function main() {
 
   try {
     const relaysAlreadyRunning = areRelayPortsAlreadyBound();
-    if (relaysAlreadyRunning && authMode) {
-      throw new Error(
-        "[setup] Relay ports 4433/4434 are already occupied; CALL_E2E_AUTH needs relays started by this run (stop the existing containers first).",
-      );
-    }
-
     if (relaysAlreadyRunning) {
       console.error(
         "[setup] Relay ports 4433/4434 already occupied — reusing existing relay containers.",
@@ -111,27 +98,19 @@ async function main() {
         );
       }
 
-      let composeEnv = process.env;
-      if (authMode) {
-        console.error("[setup] Building vts docker image...");
-        await runCommand(
-          resolveCommandName("docker"),
-          [...composeArgs, "build", "vts"],
-          { cwd: repoRoot },
-        );
-        composeEnv = {
-          ...process.env,
-          AUTH_VTS_URL: "http://vts:8081/verify",
-          AUTH_RELAY_TOKEN: mintToken(relayAppId, "8760h"),
-        };
-      }
+      console.error("[setup] Building vts docker image...");
+      await runCommand(
+        resolveCommandName("docker"),
+        ["compose", "build", "vts"],
+        { cwd: repoRoot },
+      );
       console.error(
         `[setup] Starting ${composeServices.join(", ")} via docker compose...`,
       );
       await runCommand(
         resolveCommandName("docker"),
-        [...composeArgs, "up", "-d", "--wait", ...composeServices],
-        { cwd: repoRoot, env: composeEnv },
+        ["compose", "up", "-d", "--wait", ...composeServices],
+        { cwd: repoRoot },
       );
       ownedDockerServices = true;
     }
@@ -182,42 +161,13 @@ async function main() {
           MEDIA_E2E_BASE_URL: baseUrl,
           CALL_E2E_RELAY_A_URL: relayAUrl,
           CALL_E2E_RELAY_B_URL: relayBUrl,
-          ...(authMode ? { CALL_E2E_JWT: mintToken(callAppId, "12h") } : {}),
+          CALL_E2E_JWT: mintToken(experimentAppId, "12h"),
         },
       },
     );
   } finally {
     await cleanup();
   }
-}
-
-// Mints a token (root scope) for an appId with the mint CLI, using the same
-// apps.example.json the compose vts service mounts. Client tokens must stay
-// within the relay's 24h ttl cap; relay tokens are exempt.
-function mintToken(appId, ttl) {
-  if (!existsSync(resolve(repoRoot, "services/vts/node_modules"))) {
-    execFileSync(resolveCommandName("npm"), ["ci"], {
-      cwd: resolve(repoRoot, "services/vts"),
-      stdio: "inherit",
-    });
-  }
-  return execFileSync(
-    process.execPath,
-    [
-      "services/vts/bin/mint.mjs",
-      "--apps",
-      vtsAppsFile,
-      "--app-id",
-      appId,
-      "--publish",
-      "",
-      "--subscribe",
-      "",
-      "--ttl",
-      ttl,
-    ],
-    { cwd: repoRoot, encoding: "utf8" },
-  ).trim();
 }
 
 function getCallRelayUrl(envName, defaultUrl) {

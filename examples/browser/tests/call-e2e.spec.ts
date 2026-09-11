@@ -381,9 +381,7 @@ test('chat message sent by one client is displayed on the receiving client', asy
   }
 })
 
-test('auth mode: an invalid token is rejected by the relay with a surfaced reason', async ({ browser }) => {
-  test.skip(!CALL_JWT, 'only meaningful when the relays require a token (CALL_E2E_AUTH=true)')
-
+test('an invalid token is rejected by the relay with a surfaced reason', async ({ browser }) => {
   // Arrange: 不正な JWT を提示するクライアントを用意する。
   const client = await arrangeCallClient(browser, { jwt: 'not-a-jwt' })
 

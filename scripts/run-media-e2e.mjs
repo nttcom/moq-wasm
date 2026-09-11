@@ -22,6 +22,7 @@ import {
   resolveCommandName,
   waitForHttpOk,
 } from "./media-e2e-helpers.mjs";
+import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const childProcesses = [];
 
@@ -62,15 +63,12 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
-    const server = spawnProcess(
-      "server",
-      "cargo",
-      ["run", "-p", "relay"],
-      {
-        cwd: repoRoot,
-        env: { ...process.env, AUTH_DISABLED: "true" },
-      },
-    );
+    const vts = await startVts();
+    childProcesses.push(vts);
+    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
+      cwd: repoRoot,
+      env: { ...process.env, ...nativeRelayAuthEnv() },
+    });
     const vite = spawnProcess(
       "vite",
       resolveCommandName("npm"),

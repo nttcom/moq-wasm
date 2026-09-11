@@ -18,7 +18,7 @@ use redis::AsyncCommands;
 const DEFAULT_RELAY_A_URL: &str = "moqt://localhost:4433";
 const DEFAULT_RELAY_B_URL: &str = "moqt://localhost:4434";
 const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
-const DEFAULT_TRACK_NAMESPACE: &str = "App/Channel/UserA";
+const DEFAULT_TRACK_NAMESPACE: &str = "anon/App/Channel/UserA";
 const DEFAULT_TRACK_NAME: &str = "video";
 const TEST_PAYLOAD: &[u8] = b"cascading relay e2e payload";
 const CATALOG_TRACK_NAME: &str = "catalog";

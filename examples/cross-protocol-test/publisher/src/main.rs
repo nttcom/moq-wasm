@@ -112,7 +112,7 @@ async fn send_segments(
 
 fn generate_namespace() -> String {
     let now = chrono::Local::now();
-    format!("live-{}", now.format("%H%M"))
+    format!("anon/live-{}", now.format("%H%M"))
 }
 
 #[tokio::main]

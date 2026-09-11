@@ -202,7 +202,7 @@ mod tests {
             Arc::new(InterRelayConnectionManager::new(
                 repository,
                 session_event_sender,
-                None,
+                "unused-relay-token".to_string(),
             )),
         )
     }

@@ -19,7 +19,7 @@ fn relay_hostname() -> String {
 pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    relay_token: Option<String>,
+    relay_token: String,
     sessions: DashMap<String, SessionId>,
 }
 
@@ -27,7 +27,7 @@ impl InterRelayConnectionManager {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        relay_token: Option<String>,
+        relay_token: String,
     ) -> Self {
         Self {
             repo,
@@ -48,7 +48,7 @@ impl InterRelayConnectionManager {
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
             port: 0,
             verify_certificate: false,
-            authorization_token: self.relay_token.clone(),
+            authorization_token: Some(self.relay_token.clone()),
         })?;
         let connecting = endpoint
             .connect(&format!("moqt://{}:{}", relay.host, relay.port))

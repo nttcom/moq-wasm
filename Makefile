@@ -6,12 +6,21 @@ LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)"
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-auth browser-e2e-call-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
-relay: export AUTH_DISABLED ?= true
+VTS_APPS_FILE ?= services/vts/apps.example.json
+DEV_RELAY_APP_ID := 11111111-2222-3333-4444-555555555555
+
+# Starts a VTS on 127.0.0.1:8081 for the lifetime of the relay process.
+relay: export AUTH_VTS_URL ?= http://127.0.0.1:8081/verify
 relay:
-	set -a; [ ! -f .env ] || . ./.env; set +a; RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
+	set -a; [ ! -f .env ] || . ./.env; set +a; \
+	[ -d services/vts/node_modules ] || npm --prefix services/vts ci; \
+	VTS_APPS_FILE="$(VTS_APPS_FILE)" node services/vts/src/main.mjs & VTS_PID=$$!; \
+	trap 'kill $$VTS_PID' EXIT; \
+	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(node services/vts/bin/mint.mjs --apps "$(VTS_APPS_FILE)" --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:
 	cd examples/browser && npm run dev
@@ -41,7 +50,7 @@ ffmpeg-rtmp:
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
-		-f flv "rtmp://localhost:1935/live/test"
+		-f flv "rtmp://localhost:1935/anon/live/test/stream"
 
 ffmpeg-srt:
 	ffmpeg -re \
@@ -50,7 +59,7 @@ ffmpeg-srt:
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
-		-f mpegts "srt://localhost:9000?mode=caller&streamid=live/test"
+		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
 
 # ONVIF Bridges
 onvif:
@@ -108,11 +117,6 @@ browser-e2e-live-viewer:
 browser-e2e-call:
 	node scripts/setup-media-e2e.mjs
 	node scripts/run-call-e2e.mjs
-
-# Same as browser-e2e-call but the relays require tokens (vts + anon-issuer).
-browser-e2e-call-auth:
-	node scripts/setup-media-e2e.mjs
-	CALL_E2E_AUTH=true node scripts/run-call-e2e.mjs
 
 # Same as browser-e2e-call but with a visible browser to watch behavior.
 # Assumes setup already ran once (via browser-e2e-call or setup-media-e2e.mjs).

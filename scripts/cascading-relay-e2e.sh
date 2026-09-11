@@ -45,7 +45,7 @@ if ! cargo run -p cascading-relay-e2e -- \
   --relay-a-url "$RELAY_A_URL" \
   --relay-b-url "$RELAY_B_URL" \
   --redis-url redis://localhost:6379 \
-  --track-namespace App/Channel/UserA \
+  --track-namespace anon/App/Channel/UserA \
   --track-name video 2>&1 | tee "$RESULT_LOG"; then
   exit 1
 fi

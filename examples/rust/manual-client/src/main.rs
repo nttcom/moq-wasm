@@ -46,10 +46,12 @@ fn create_quic_client_thread(
         let client =
             Client::<moqt::QUIC>::new(cert_path, moqt_url, verify_certificate, "user1".to_string())
                 .await?;
-        let _ = client.publish_namespace("room1/user1".to_string()).await;
-        let _ = client.subscribe_namespace("room".to_string()).await;
+        let _ = client
+            .publish_namespace("anon/room1/user1".to_string())
+            .await;
+        let _ = client.subscribe_namespace("anon/room".to_string()).await;
         // client
-        //     .publish("room1/user1".to_string(), "video".to_string())
+        //     .publish("anon/room1/user1".to_string(), "video".to_string())
         //     .await;
         // await until the application is shut down.
         let _ = signal_receiver.recv().await.ok();
@@ -69,18 +71,20 @@ fn create_quic_client_thread2(
         let mut client =
             Client::<moqt::QUIC>::new(cert_path, moqt_url, verify_certificate, "user2".to_string())
                 .await?;
-        let _ = client.publish_namespace("room2/user2".to_string()).await;
-        let _ = client.subscribe_namespace("room1".to_string()).await;
+        let _ = client
+            .publish_namespace("anon/room2/user2".to_string())
+            .await;
+        let _ = client.subscribe_namespace("anon/room1".to_string()).await;
         client
             .active_subscribe(
                 "user2".to_string(),
-                "room1/user1".to_string(),
+                "anon/room1/user1".to_string(),
                 "video".to_string(),
             )
             .await;
 
         // client
-        //     .publish("room2/user2".to_string(), "video".to_string())
+        //     .publish("anon/room2/user2".to_string(), "video".to_string())
         //     .await;
         // await until the application is shut down.
         let _ = signal_receiver.recv().await.ok();
@@ -103,8 +107,10 @@ fn create_webtransport_client_thread(
             "user1".to_string(),
         )
         .await?;
-        let _ = client.publish_namespace("room1/user1".to_string()).await;
-        let _ = client.subscribe_namespace("room".to_string()).await;
+        let _ = client
+            .publish_namespace("anon/room1/user1".to_string())
+            .await;
+        let _ = client.subscribe_namespace("anon/room".to_string()).await;
         let _ = signal_receiver.recv().await.ok();
         Ok(())
     })
@@ -126,12 +132,14 @@ fn create_webtransport_client_thread2(
             "user2".to_string(),
         )
         .await?;
-        let _ = client.publish_namespace("room2/user2".to_string()).await;
-        let _ = client.subscribe_namespace("room1".to_string()).await;
+        let _ = client
+            .publish_namespace("anon/room2/user2".to_string())
+            .await;
+        let _ = client.subscribe_namespace("anon/room1".to_string()).await;
         client
             .active_subscribe(
                 "user2".to_string(),
-                "room1/user1".to_string(),
+                "anon/room1/user1".to_string(),
                 "video".to_string(),
             )
             .await;
