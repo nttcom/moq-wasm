@@ -24,6 +24,7 @@ const CLOSED_GROUP_POLL_MS = 200
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const CMAF_TRACK_SUFFIX = '_cmaf'
 const REVIEW_BUFFER_AHEAD_SECONDS = 8
+const REVIEW_DRAINED_SECONDS = 0.5
 
 type Packaging = 'loc' | 'cmaf'
 
@@ -633,13 +634,19 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
 
 /// The live edge group is still open and a FETCH that reaches into it escapes
 /// the relay cache, so a window can only end at the newest closed group. Once
-/// playback has consumed those, wait for the publisher to close another one.
+/// playback has consumed those, wait for the publisher to close another one;
+/// at more than real time that wait would recur on every group from then on,
+/// so review that has played out everything fetched goes live instead.
 async function awaitClosedWindowEnd(start: bigint, generation: number): Promise<bigint | undefined> {
   while (generation === reviewGeneration) {
     const newestClosed = timeline.newestClosed
     if (newestClosed && start <= newestClosed.groupId) {
       const bounded = start + REWIND_GROUP_COUNT
       return bounded < newestClosed.groupId ? bounded : newestClosed.groupId
+    }
+    if (newestClosed && playbackSpeed() > 1 && reviewBufferDrained()) {
+      backToLive()
+      return undefined
     }
     await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
   }
@@ -787,11 +794,19 @@ function speedAdjustable(): boolean {
   return packaging === 'cmaf' && reviewing
 }
 
+function reviewBufferDrained(): boolean {
+  const video = element<HTMLVideoElement>('video')
+  return (mse?.bufferedEnd() ?? 0) - video.currentTime < REVIEW_DRAINED_SECONDS
+}
+
+function playbackSpeed(): number {
+  return speedAdjustable() ? Number(element<HTMLSelectElement>('speed').value) : 1
+}
+
 function applyPlaybackSpeed(): void {
-  const speed = element<HTMLSelectElement>('speed')
-  speed.disabled = !speedAdjustable()
+  element<HTMLSelectElement>('speed').disabled = !speedAdjustable()
   if (speedAdjustable()) {
-    element<HTMLVideoElement>('video').playbackRate = Number(speed.value)
+    element<HTMLVideoElement>('video').playbackRate = playbackSpeed()
   }
 }
 
