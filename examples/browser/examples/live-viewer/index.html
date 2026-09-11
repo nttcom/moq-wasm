@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoQT Live Viewer</title>
     <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="./viewer.css" />
   </head>
   <body>
     <div class="page">
@@ -106,6 +107,29 @@
                 <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
                 <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
                 <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
+                <div class="seek-controls">
+                  <div class="playback-meta">
+                    <label for="seekbar">Playback position</label>
+                    <output id="seek-position" for="seekbar" data-testid="live-viewer-seek-position">LIVE</output>
+                  </div>
+                  <input
+                    id="seekbar"
+                    type="range"
+                    min="0"
+                    max="0"
+                    step="any"
+                    value="0"
+                    disabled
+                    aria-describedby="seek-hint"
+                    aria-valuetext="Live"
+                    data-testid="live-viewer-seekbar"
+                  />
+                  <div class="playback-meta">
+                    <span id="seek-start">-0.0s</span>
+                    <span>Live</span>
+                  </div>
+                  <p class="hint" id="seek-hint">受信済みの範囲をシークします。右端でライブへ戻ります。</p>
+                </div>
               </div>
             </div>
           </section>
