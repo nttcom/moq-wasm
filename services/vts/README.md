@@ -44,7 +44,6 @@ values. Never commit a real file: `services/*/apps.json` is ignored.
 ```json
 [
   { "appId": "ac8adbc8-...", "secret": "<random>", "isRelay": false },
-  { "appId": "anon", "secret": "<random>", "isRelay": false },
   { "appId": "11111111-...", "secret": "<random>", "isRelay": true }
 ]
 ```
@@ -73,15 +72,21 @@ npm test
 The Dockerfile expects the repository root as build context:
 `docker build -f services/vts/Dockerfile .`
 
-## Local stack with authentication
+## Local stack
+
+`docker compose up -d` starts the VTS with `apps.example.json` and points
+both relays at it. The relays authenticate to each other with a development
+relay token that is the compose default for `AUTH_RELAY_TOKEN`; it was minted
+from the relay row of `apps.example.json` and is valid for ten years:
 
 ```
-docker compose --profile auth up -d
-export AUTH_VTS_URL=http://vts:8081/verify
-export AUTH_RELAY_TOKEN=$(node services/vts/bin/mint.mjs --apps services/vts/apps.example.json \
-  --app-id 11111111-2222-3333-4444-555555555555 --publish "" --subscribe "" --ttl 8760h)
-docker compose up -d relay-a relay-b
+node bin/mint.mjs --apps ./apps.example.json --app-id 11111111-2222-3333-4444-555555555555 \
+  --publish "" --subscribe "" --ttl 3650d
 ```
+
+Re-run that command and replace the default in `docker-compose.yml` if the
+development relay secret changes. To run the stack against your own ledger,
+set `VTS_APPS_FILE` and `AUTH_RELAY_TOKEN` (minted from that ledger) in `.env`.
 
 `vts` is reachable only inside the compose network.
 
@@ -102,16 +107,14 @@ node bin/mint.mjs --apps apps.json --app-id <relay-app-id> --publish "" --subscr
 (GCP Secret Manager, AWS Secrets Manager, HashiCorp Vault, or the equivalent)
 and mounted into the container as a file. The VTS code only reads
 `VTS_APPS_FILE`, so local compose (bind mount of `apps.example.json`) and
-production (secret store mount) run the same code. On GCP with Secret
-Manager:
+production (a file fetched from the secret store at VM start) run the same
+code. On GCP with Secret Manager:
 
 ```
 gcloud secrets create vts-apps --replication-policy=automatic
 gcloud secrets versions add vts-apps --data-file=apps.json
-# Cloud Run: mount the secret as a file and point VTS_APPS_FILE at it
-gcloud run deploy vts --image <image> \
-  --set-secrets=/etc/vts/apps.json=vts-apps:latest \
-  --set-env-vars=VTS_APPS_FILE=/etc/vts/apps.json --ingress=internal
+# On the VTS host: fetch the latest version to /etc/vts/apps.json before
+# starting the container, and point VTS_APPS_FILE at it.
 ```
 
 ### Adding an app or rotating a secret
@@ -119,9 +122,9 @@ gcloud run deploy vts --image <image> \
 1. Edit `apps.json` (new row, or a new `secret` for an existing `appId`).
 2. Register it as a new secret version:
    `gcloud secrets versions add vts-apps --data-file=apps.json`.
-3. Restart the VTS (new Cloud Run revision, or a rollout restart); it reads the
-   file at startup. Run two instances if the few seconds of restart, during
-   which relays answer new connections with `INTERNAL_ERROR`, matter.
+3. Restart the VTS; it reads the file at startup. Run two instances if the
+   few seconds of restart, during which relays answer new connections with
+   `INTERNAL_ERROR`, matter.
 4. Tokens signed with a replaced secret fail with `invalid_signature` from the
    next connection; sessions already established stay up until their `exp`
    (at most 24 h for client tokens). Re-mint and redistribute relay tokens if
@@ -130,4 +133,4 @@ gcloud run deploy vts --image <image> \
 A database (for example Cloud SQL) is not needed at this scale: the file is
 changed a few times a month by the operators. Should tenant onboarding become
 self-service or frequent, only `src/apps.mjs` (the lookup) has to change; the
-`/verify` contract, the relay, and the issuer stay as they are.
+`/verify` contract and the relay stay as they are.
