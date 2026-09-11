@@ -183,6 +183,7 @@
 }
 
 .viewer-speed {
+  width: auto;
   height: 30px;
   padding: 0 10px;
   border: 0;
