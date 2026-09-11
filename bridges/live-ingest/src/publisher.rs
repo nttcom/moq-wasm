@@ -1,10 +1,20 @@
+use std::sync::{Arc, OnceLock};
+
 use anyhow::{Context, Result};
-use mediapack::{AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig};
+use bytes::Bytes;
+use mediapack::{
+    AudioSample, MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig,
+    loc::Muxer as LocMuxer,
+};
+use moqt::ExtensionHeaders;
 
 use crate::{
-    chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
+    loc_object::extension_headers,
     media_timeline::MediaTimeline,
-    moqt::{MoqtManager, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
+    moqt::{
+        MoqtManager, OutgoingObject, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo,
+        now_unix,
+    },
     renditions::RenditionFanout,
 };
 
@@ -23,10 +33,14 @@ pub struct MediaPublisher {
     transcode: bool,
     namespace_ready: bool,
     audio_group_duration_us: u64,
-    video_codec: Option<String>,
     audio_config: Option<AudioSpecificConfig>,
     renditions: Option<RenditionFanout>,
     timeline: MediaTimeline,
+    /// The LOC capture timestamp is wall-clock time of the sample, so the muxer
+    /// is seeded with the wall-clock time of presentation time zero once the
+    /// first sample arrives. Renditions share it so every track stamps the same
+    /// instant for the same presentation time.
+    loc: Arc<OnceLock<LocMuxer>>,
 }
 
 impl MediaPublisher {
@@ -37,10 +51,10 @@ impl MediaPublisher {
             transcode,
             namespace_ready: false,
             audio_group_duration_us: 0,
-            video_codec: None,
             audio_config: None,
             renditions: None,
             timeline: MediaTimeline::new(),
+            loc: Arc::new(OnceLock::new()),
         }
     }
 
@@ -49,10 +63,13 @@ impl MediaPublisher {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
                 let info = VideoTrackInfo::from_record(config, "Video".to_string())?;
-                self.video_codec = Some(info.codec.clone());
                 if self.transcode && self.renditions.is_none() {
-                    self.renditions =
-                        RenditionFanout::run(self.moqt.clone(), self.namespace.clone(), &info)?;
+                    self.renditions = RenditionFanout::run(
+                        self.moqt.clone(),
+                        self.namespace.clone(),
+                        &info,
+                        self.loc.clone(),
+                    )?;
                 }
                 self.moqt
                     .update_video_catalog(&self.namespace, VIDEO_TRACK_NAME, info)
@@ -60,11 +77,7 @@ impl MediaPublisher {
             }
             MediaEvent::AudioConfig(config) => {
                 self.moqt
-                    .update_audio_catalog(
-                        &self.namespace,
-                        config.sample_rate,
-                        config.channel_count(),
-                    )
+                    .update_audio_catalog(&self.namespace, config.clone())
                     .await?;
                 self.audio_config = Some(config.clone());
                 Ok(())
@@ -79,21 +92,31 @@ impl MediaPublisher {
         if let Some(renditions) = &self.renditions {
             renditions.push(sample);
         }
-        let encoded_at_ms = now_unix().as_millis() as u64;
-        let payload = video_payload(sample, self.video_codec.as_deref(), encoded_at_ms);
+        let Some(object) = self
+            .loc_muxer(sample.pts)
+            .push(&MediaEvent::Video(sample.clone()))
+        else {
+            return Ok(());
+        };
+        let captured_at = object.capture_timestamp();
         let group_id = self
             .moqt
             .send_object(
                 &self.namespace,
                 VIDEO_TRACK_NAME,
-                sample.is_keyframe,
-                payload,
+                OutgoingObject {
+                    rotate_group: sample.is_keyframe,
+                    extension_headers: extension_headers(&object),
+                    payload: object.payload,
+                },
             )
             .await?;
-        let Some(group_id) = group_id.filter(|_| sample.is_keyframe) else {
+        let (Some(group_id), Some(captured_at)) =
+            (group_id.filter(|_| sample.is_keyframe), captured_at)
+        else {
             return Ok(());
         };
-        self.publish_timeline(group_id, sample.pts.micros(), encoded_at_ms)
+        self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
             .await
     }
 
@@ -109,32 +132,48 @@ impl MediaPublisher {
             .send_object(
                 &self.namespace,
                 TIMELINE_TRACK_NAME,
-                true,
-                self.timeline.document()?,
+                OutgoingObject {
+                    rotate_group: true,
+                    extension_headers: ExtensionHeaders::default(),
+                    payload: Bytes::from(self.timeline.document()?),
+                },
             )
             .await?;
         Ok(())
     }
 
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
-        let config = self
+        let frame_duration_us = self
             .audio_config
-            .clone()
-            .context("audio sample received before its AudioSpecificConfig")?;
+            .as_ref()
+            .context("audio sample received before its AudioSpecificConfig")?
+            .frame_duration()
+            .micros();
         self.setup_namespace().await?;
-        let duration_us = config.frame_duration().micros();
-        let rotate_group = self.rotate_audio_group(duration_us);
-        let payload = pack_audio_chunk_payload(
-            &sample.data,
-            &config,
-            sample.pts.micros(),
-            duration_us,
-            now_unix().as_millis() as u64,
-        );
+        let rotate_group = self.rotate_audio_group(frame_duration_us);
+        let Some(object) = self
+            .loc_muxer(sample.pts)
+            .push(&MediaEvent::Audio(sample.clone()))
+        else {
+            return Ok(());
+        };
         self.moqt
-            .send_object(&self.namespace, AUDIO_TRACK, rotate_group, payload)
+            .send_object(
+                &self.namespace,
+                AUDIO_TRACK,
+                OutgoingObject {
+                    rotate_group,
+                    extension_headers: extension_headers(&object),
+                    payload: object.payload,
+                },
+            )
             .await?;
         Ok(())
+    }
+
+    fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {
+        self.loc
+            .get_or_init(|| LocMuxer::new(wall_clock().saturating_sub(presentation_time)))
     }
 
     async fn setup_namespace(&mut self) -> Result<()> {
@@ -158,12 +197,6 @@ impl MediaPublisher {
     }
 }
 
-pub fn video_payload(sample: &VideoSample, codec: Option<&str>, encoded_at_ms: u64) -> Vec<u8> {
-    pack_video_chunk_payload(
-        sample.is_keyframe,
-        sample.pts.micros(),
-        encoded_at_ms,
-        &sample.data,
-        codec.filter(|_| sample.is_keyframe),
-    )
+fn wall_clock() -> Timestamp {
+    Timestamp::from_micros(now_unix().as_micros() as u64)
 }
