@@ -142,10 +142,10 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
 
     // Assert: the element now plays a MediaSource fed with CMAF fragments
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_cmaf/)
-    await expect.poll(async () => videoSource(viewer)).toMatch(/^blob:/)
+    await expect.poll(async () => videoProp(viewer, 'src')).toMatch(/^blob:/)
     await expectVideoDecoded(viewer)
-    await expect.poll(async () => currentTime(viewer), { timeout: 15_000 }).toBeGreaterThan(1)
-    const liveSource = await videoSource(viewer)
+    await expect.poll(async () => videoProp(viewer, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
+    const liveSource = await videoProp(viewer, 'src')
 
     // Act: relay のキャッシュがたまるのを待って MSE 経由で巻き戻す
     await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
@@ -158,8 +158,8 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.reviewCanvas).toBeHidden()
     await expect(viewer.video).toBeVisible()
-    await expect.poll(async () => videoSource(viewer), { timeout: 20_000 }).not.toBe(liveSource)
-    await expect.poll(async () => currentTime(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
+    await expect.poll(async () => videoProp(viewer, 'src'), { timeout: 20_000 }).not.toBe(liveSource)
+    await expect.poll(async () => videoProp(viewer, 'currentTime'), { timeout: 30_000 }).toBeGreaterThan(3)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
 
     // Act: 巻き戻し中だけ倍速を選べる
@@ -167,7 +167,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.speedSelect.selectOption('2')
 
     // Assert
-    await expect.poll(async () => playbackRate(viewer)).toBe(2)
+    await expect.poll(async () => videoProp(viewer, 'playbackRate')).toBe(2)
 
     // Act
     await viewer.liveButton.click()
@@ -176,23 +176,18 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect(viewer.rewindStatus).toContainText('Live')
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expect(viewer.speedSelect).toBeDisabled()
-    await expect.poll(async () => playbackRate(viewer)).toBe(1)
-    await expect.poll(async () => currentTime(viewer), { timeout: 20_000 }).toBeGreaterThan(1)
+    await expect.poll(async () => videoProp(viewer, 'playbackRate')).toBe(1)
+    await expect.poll(async () => videoProp(viewer, 'currentTime'), { timeout: 20_000 }).toBeGreaterThan(1)
   } finally {
     await context.close()
   }
 })
 
-async function videoSource(viewer: LiveViewerPageModel): Promise<string> {
-  return viewer.video.evaluate((element) => (element as HTMLVideoElement).src)
-}
-
-async function currentTime(viewer: LiveViewerPageModel): Promise<number> {
-  return viewer.video.evaluate((element) => (element as HTMLVideoElement).currentTime)
-}
-
-async function playbackRate(viewer: LiveViewerPageModel): Promise<number> {
-  return viewer.video.evaluate((element) => (element as HTMLVideoElement).playbackRate)
+async function videoProp<K extends 'src' | 'currentTime' | 'playbackRate'>(
+  viewer: LiveViewerPageModel,
+  key: K
+): Promise<HTMLVideoElement[K]> {
+  return viewer.video.evaluate((element, property) => (element as HTMLVideoElement)[property], key)
 }
 
 async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {

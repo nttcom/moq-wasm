@@ -1,4 +1,5 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
+import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { type ChunkMetadata } from '../chunk'
@@ -455,16 +456,6 @@ function buildDecoderConfig(resolved: CachedAudioConfig): AudioDecoderConfig {
     sampleRate: resolved.sampleRate,
     numberOfChannels: resolved.channels
   }
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binaryString = atob(base64)
-  const len = binaryString.length
-  const bytes = new Uint8Array(len)
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i)
-  }
-  return bytes
 }
 
 function buildSignature(resolved: CachedAudioConfig): string {
