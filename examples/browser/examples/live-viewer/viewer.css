@@ -38,10 +38,6 @@
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
-#seek-position {
-  color: #fff;
-}
-
 .viewer-seek {
   position: relative;
   display: grid;
@@ -80,10 +76,6 @@
   background: var(--accent-2);
 }
 
-.seek-review-progress[hidden] {
-  display: none;
-}
-
 #seekbar {
   position: relative;
   width: 100%;
@@ -91,13 +83,11 @@
   margin: 0;
   padding: 0;
   appearance: none;
-  -webkit-appearance: none;
   background: transparent;
   cursor: pointer;
 }
 
-#seekbar::-webkit-slider-runnable-track,
-#seekbar::-moz-range-track {
+#seekbar::-webkit-slider-runnable-track {
   height: 4px;
   background: transparent;
 }
@@ -107,19 +97,10 @@
   height: 14px;
   margin-top: -5px;
   appearance: none;
-  -webkit-appearance: none;
   border: 0;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-}
-
-#seekbar::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border: 0;
-  border-radius: 50%;
-  background: #fff;
 }
 
 #seekbar:focus-visible {
@@ -201,25 +182,32 @@
 }
 
 .viewer-quality {
-  position: relative;
   margin-left: auto;
 }
 
+#qualityBtn {
+  anchor-name: --quality;
+}
+
+/* A popover sits in the top layer, so the menu escapes the stage's overflow clip
+   and is anchored back above the gear from there. */
 .viewer-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  display: grid;
+  position-anchor: --quality;
+  inset: auto;
+  right: anchor(right);
+  bottom: anchor(top);
+  margin: 0 0 8px;
   gap: 10px;
   min-width: 232px;
   padding: 12px;
+  border: 0;
   border-radius: 12px;
   background: rgba(6, 20, 20, 0.96);
   box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.8);
 }
 
-.viewer-menu[hidden] {
-  display: none;
+.viewer-menu:popover-open {
+  display: grid;
 }
 
 .viewer-menu label {

@@ -10,7 +10,6 @@ export type MseTrackSource = {
 type Buffered = {
   sourceBuffer: SourceBuffer
   queue: Uint8Array[]
-  appending: boolean
 }
 
 /// One MediaSource on a video element with a SourceBuffer per track. Appends
@@ -64,13 +63,6 @@ export class MseSink {
   }
 
   close(): void {
-    if (this.mediaSource.readyState === 'open') {
-      try {
-        this.mediaSource.endOfStream()
-      } catch {
-        // endOfStream throws while a SourceBuffer is still updating; the URL revoke below detaches it anyway
-      }
-    }
     this.element.removeAttribute('src')
     this.element.load()
     URL.revokeObjectURL(this.objectUrl)
@@ -79,9 +71,8 @@ export class MseSink {
   private attach(source: MseTrackSource): Buffered {
     const sourceBuffer = this.mediaSource.addSourceBuffer(source.mimeType)
     sourceBuffer.mode = 'sequence'
-    const buffered: Buffered = { sourceBuffer, queue: [], appending: false }
+    const buffered: Buffered = { sourceBuffer, queue: [] }
     sourceBuffer.addEventListener('updateend', () => {
-      buffered.appending = false
       this.startWhenBuffered()
       this.evictBehindPlayhead(buffered)
       this.flush(buffered)
@@ -98,14 +89,10 @@ export class MseSink {
   }
 
   private flush(buffered: Buffered): void {
-    if (buffered.appending || buffered.sourceBuffer.updating || buffered.queue.length === 0) {
+    if (buffered.sourceBuffer.updating || buffered.queue.length === 0) {
       return
     }
-    const data = buffered.queue.shift()!
-    buffered.appending = true
-    const owned = new Uint8Array(new ArrayBuffer(data.byteLength))
-    owned.set(data)
-    buffered.sourceBuffer.appendBuffer(owned)
+    buffered.sourceBuffer.appendBuffer(buffered.queue.shift()!.slice())
   }
 
   private startWhenBuffered(): void {
@@ -129,17 +116,7 @@ export class MseSink {
     }
     const behind = this.element.currentTime - ranges.start(0)
     if (behind > EVICT_WHEN_BEHIND_SECONDS) {
-      buffered.appending = true
       buffered.sourceBuffer.remove(0, this.element.currentTime - RETAINED_BEHIND_PLAYHEAD_SECONDS)
     }
   }
-}
-
-export function decodeBase64(base64: string): Uint8Array {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return bytes
 }
