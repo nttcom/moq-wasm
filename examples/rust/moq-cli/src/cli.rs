@@ -26,13 +26,22 @@ pub enum Container {
 }
 
 #[derive(Args, Debug)]
-pub struct PublishArgs {
-    #[arg(long)]
-    pub relay: Url,
-    #[arg(long)]
-    pub track: FullTrackName,
+pub struct RelayArgs {
+    #[arg(long = "relay")]
+    pub url: Url,
     #[arg(long)]
     pub insecure: bool,
+    /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
+    #[arg(long, env = "MOQT_AUTH_TOKEN")]
+    pub auth_token: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct PublishArgs {
+    #[command(flatten)]
+    pub relay: RelayArgs,
+    #[arg(long)]
+    pub track: FullTrackName,
     #[arg(long, default_value = "avc3")]
     pub codec: String,
     #[arg(long, value_enum, default_value_t = Container::Loc)]
@@ -41,10 +50,8 @@ pub struct PublishArgs {
 
 #[derive(Args, Debug)]
 pub struct SubscribeArgs {
-    #[arg(long)]
-    pub relay: Url,
+    #[command(flatten)]
+    pub relay: RelayArgs,
     #[arg(long)]
     pub track: FullTrackName,
-    #[arg(long)]
-    pub insecure: bool,
 }

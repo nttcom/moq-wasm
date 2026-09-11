@@ -74,7 +74,7 @@ function buildDefaultTrackNamespace(date = new Date()): string {
   const day = pad(date.getDate())
   const hours = pad(date.getHours())
   const minutes = pad(date.getMinutes())
-  return `nttcom/${year}${month}${day}/${hours}${minutes}`
+  return `anon/nttcom/${year}${month}${day}/${hours}${minutes}`
 }
 
 function pad(value: number): string {

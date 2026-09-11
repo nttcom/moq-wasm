@@ -3,7 +3,7 @@ use mediapack::{AudioSample, MediaEvent, VideoSample, aac::AudioSpecificConfig};
 
 use crate::{
     chunk_payload::{pack_audio_chunk_payload, pack_video_chunk_payload},
-    moqt::{MoqtManager, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
+    moqt::{MoqtManager, MoqtTarget, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
     renditions::RenditionFanout,
 };
 
@@ -12,7 +12,7 @@ const AUDIO_TRACK: &str = "audio";
 
 #[derive(Clone)]
 pub struct IngestOptions {
-    pub moqt_url: Option<String>,
+    pub moqt: Option<MoqtTarget>,
     pub transcode: bool,
 }
 

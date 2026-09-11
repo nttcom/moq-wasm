@@ -6,6 +6,7 @@ import {
   SubscribeOkMessage
 } from '../../../../pkg/moqt_client_wasm'
 import { LocalSession, LocalSessionState } from '../session/localSession'
+import { parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
 import { RemoteMember } from '../types/member'
@@ -77,17 +78,12 @@ function createPublishNamespaceHandler({ session, roomName, userName, setRoom }:
     if (session.status !== LocalSessionState.Ready) {
       return
     }
-    const trackNamespace = publishNamespace.trackNamespace
-    if (!trackNamespace || trackNamespace.length < 2) {
+    const announced = parseTrackNamespace(publishNamespace.trackNamespace)
+    if (!announced || announced.roomName !== roomName || announced.userName === userName) {
       return
     }
 
-    const [announcedRoom, announcedUser] = trackNamespace
-    if (announcedRoom !== roomName || announcedUser === userName) {
-      return
-    }
-
-    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announcedUser, trackNamespace))
+    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announced.userName, publishNamespace.trackNamespace))
   }
 }
 
@@ -96,24 +92,19 @@ function createPublishNamespaceDoneHandler({ session, roomName, userName, setRoo
     if (session.status !== LocalSessionState.Ready) {
       return
     }
-    const trackNamespace = message.trackNamespace
-    if (!trackNamespace || trackNamespace.length < 2) {
-      return
-    }
-
-    const [announcedRoom, announcedUser] = trackNamespace
-    if (announcedRoom !== roomName || announcedUser === userName) {
+    const announced = parseTrackNamespace(message.trackNamespace)
+    if (!announced || announced.roomName !== roomName || announced.userName === userName) {
       return
     }
 
     setRoom((currentRoom) => {
-      const member = currentRoom.remoteMembers.get(announcedUser)
+      const member = currentRoom.remoteMembers.get(announced.userName)
       if (!member) {
         return currentRoom
       }
       // Release local media contexts immediately for the departed member.
       unsubscribeMemberTracks(session, member)
-      return removeRemoteMember(currentRoom, announcedUser)
+      return removeRemoteMember(currentRoom, announced.userName)
     })
   }
 }

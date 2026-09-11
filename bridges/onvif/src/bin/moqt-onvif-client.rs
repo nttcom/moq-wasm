@@ -42,12 +42,16 @@ struct MoqtArgs {
     #[arg(long, default_value_t = false)]
     insecure_skip_tls_verify: bool,
 
+    /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
+    #[arg(long, env = "MOQT_AUTH_TOKEN")]
+    auth_token: Option<String>,
+
     /// Track namespace for publishing video (slash-separated)
-    #[arg(long, default_value = "onvif/client")]
+    #[arg(long, default_value = "anon/onvif/client")]
     publish_namespace: String,
 
     /// Track namespace for subscribing to commands (slash-separated)
-    #[arg(long, default_value = "onvif/viewer")]
+    #[arg(long, default_value = "anon/onvif/viewer")]
     subscribe_namespace: String,
 
     /// Track name prefix for video streams
@@ -119,7 +123,12 @@ async fn main() -> Result<()> {
     let expected_tracks = build_expected_tracks(&catalog_track, &profile_tracks);
 
     let wt_connect_started = Instant::now();
-    let session = connect_session(&args.moqt_url, args.insecure_skip_tls_verify)
+    let client_config = ClientConfig {
+        port: 0,
+        verify_certificate: !args.insecure_skip_tls_verify,
+        authorization_token: args.auth_token.clone(),
+    };
+    let session = connect_session(&args.moqt_url, &client_config)
         .await
         .context("connect moqt session")?;
     let publisher = session.publisher();
@@ -1644,13 +1653,9 @@ fn redact_rtsp_url(uri: &str) -> String {
 
 async fn connect_session(
     url: &str,
-    insecure_skip_tls_verify: bool,
+    client_config: &ClientConfig,
 ) -> Result<std::sync::Arc<Session<WEBTRANSPORT>>> {
-    let endpoint = Endpoint::<WEBTRANSPORT>::create_client(&ClientConfig {
-        port: 0,
-        verify_certificate: !insecure_skip_tls_verify,
-        authorization_token: None,
-    })?;
+    let endpoint = Endpoint::<WEBTRANSPORT>::create_client(client_config)?;
     let connecting = endpoint
         .connect(url)
         .await

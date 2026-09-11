@@ -21,14 +21,17 @@ import {
   SubgroupObjectHandler
 } from './subscriptionStateManager'
 
-type SetupResolver = ((value: void) => void) | null
 type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
 type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
 type FetchResponseHandler = ((response: FetchOkMessage | RequestErrorMessage) => void) | null
 type FetchObjectHandler = ((message: FetchObjectMessage) => void) | null
 type SubscribeResponseHandler = ((response: SubscribeOkMessage | RequestErrorMessage) => void) | null
 type NamespaceResponseHandler = ((response: NamespaceOkMessage | RequestErrorMessage) => void) | null
-type ConnectionClosedHandler = (() => void) | null
+export interface ConnectionCloseInfo {
+  closeCode?: number
+  reason?: string
+}
+type ConnectionClosedHandler = ((info: ConnectionCloseInfo) => void) | null
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
 type ObjectDatagramStatusHandler = ((message: ObjectDatagramStatusMessage) => void) | null
@@ -38,6 +41,7 @@ export interface ConnectOptions {
   sendSetup?: boolean
   versions?: BigUint64Array
   maxRequestId?: bigint
+  authToken?: string
 }
 
 export interface PublishNamespaceOptions {
@@ -112,7 +116,7 @@ type IncomingSubscribeHandler = (ctx: IncomingSubscribeContext) => Promise<void>
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
-  private serverSetupResolve: SetupResolver = null
+  private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
   private onPublishNamespaceHandler: IncomingPublishNamespaceHandler | null = null
   private onPublishNamespaceDoneHandler: IncomingPublishNamespaceDoneHandler | null = null
   private onPublishNamespaceResponseHandler: NamespaceResponseHandler = null
@@ -156,17 +160,15 @@ export class MoqtClientWrapper {
       this.setupCallbacks()
 
       if (options.sendSetup === false) {
-        this.serverSetupResolve = null
+        this.pendingServerSetup = null
         return
       }
 
-      const receiveServerSetup = new Promise<void>((resolve) => {
-        this.serverSetupResolve = resolve
-      })
+      const receiveServerSetup = this.waitForServerSetup()
 
       const versions = options.versions ?? new BigUint64Array([0xff00000en])
       const maxRequestId = options.maxRequestId ?? 100n
-      await this.client.sendClientSetup(versions, maxRequestId)
+      await this.client.sendClientSetup(versions, maxRequestId, options.authToken)
       await receiveServerSetup
     } catch (error) {
       this.cleanupClient()
@@ -181,13 +183,17 @@ export class MoqtClientWrapper {
     }
   }
 
-  async sendClientSetup(versions: BigUint64Array, maxRequestId: bigint): Promise<void> {
+  async sendClientSetup(versions: BigUint64Array, maxRequestId: bigint, authToken?: string): Promise<void> {
     const client = this.requireConnectedClient()
-    const receiveServerSetup = new Promise<void>((resolve) => {
-      this.serverSetupResolve = resolve
-    })
-    await client.sendClientSetup(versions, maxRequestId)
+    const receiveServerSetup = this.waitForServerSetup()
+    await client.sendClientSetup(versions, maxRequestId, authToken)
     await receiveServerSetup
+  }
+
+  private waitForServerSetup(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.pendingServerSetup = { resolve, reject }
+    })
   }
 
   async disconnect(): Promise<void> {
@@ -213,7 +219,7 @@ export class MoqtClientWrapper {
     return this.client
   }
 
-  setOnConnectionClosedHandler(handler: (() => void) | null): void {
+  setOnConnectionClosedHandler(handler: ((info: ConnectionCloseInfo) => void) | null): void {
     this.onConnectionClosedHandler = handler
   }
 
@@ -437,9 +443,9 @@ export class MoqtClientWrapper {
     if (!this.client) return
 
     this.client.onServerSetup((setup: ServerSetupMessage) => {
-      if (this.serverSetupResolve) {
-        this.serverSetupResolve()
-        this.serverSetupResolve = null
+      if (this.pendingServerSetup) {
+        this.pendingServerSetup.resolve()
+        this.pendingServerSetup = null
       }
       this.onServerSetupHandler?.(setup)
     })
@@ -567,7 +573,7 @@ export class MoqtClientWrapper {
       const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
       handler?.(message)
     })
-    this.client.onConnectionClosed(() => this.handleConnectionClosed())
+    this.client.onConnectionClosed((info: ConnectionCloseInfo | null) => this.handleConnectionClosed(info ?? {}))
   }
 
   private async sendSubgroupTextForAlias(trackAlias: bigint, text: string): Promise<void> {
@@ -603,14 +609,15 @@ export class MoqtClientWrapper {
     return requestId
   }
 
-  private handleConnectionClosed(): void {
+  private handleConnectionClosed(info: ConnectionCloseInfo): void {
+    this.pendingServerSetup?.reject(new Error(describeConnectionClose(info)))
     this.cleanupClient()
-    this.onConnectionClosedHandler?.()
+    this.onConnectionClosedHandler?.(info)
   }
 
   private cleanupClient(): void {
     this.client = null
-    this.serverSetupResolve = null
+    this.pendingServerSetup = null
     this.pendingPublishNamespace.clear()
     this.pendingSubscribeNamespace.clear()
     this.pendingSubscribe.clear()
@@ -651,4 +658,12 @@ const defaultIncomingPublishNamespaceHandler: IncomingPublishNamespaceHandler = 
 
 const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ code, respondError }) => {
   await respondError(BigInt(code || 500), 'subscribe rejected')
+}
+
+function describeConnectionClose(info: ConnectionCloseInfo): string {
+  if (info.closeCode === undefined) {
+    return 'connection closed before SERVER_SETUP was received'
+  }
+  const reason = info.reason ? `: ${info.reason}` : ''
+  return `relay closed the connection before SERVER_SETUP (code ${info.closeCode}${reason})`
 }

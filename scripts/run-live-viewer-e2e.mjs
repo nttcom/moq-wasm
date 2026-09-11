@@ -53,7 +53,7 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
-  const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? "live/e2e";
+  const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? "anon/live/e2e";
 
   const cleanup = async () => {
     await Promise.allSettled(

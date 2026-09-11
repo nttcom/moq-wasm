@@ -9,6 +9,7 @@ mod srt;
 use anyhow::Result;
 use clap::Parser;
 
+use crate::moqt::MoqtTarget;
 use crate::publisher::IngestOptions;
 
 #[derive(Parser, Debug)]
@@ -30,6 +31,10 @@ struct Args {
     #[arg(long)]
     moqt_url: Option<String>,
 
+    /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
+    #[arg(long, env = "MOQT_AUTH_TOKEN")]
+    auth_token: Option<String>,
+
     /// Re-encode video into the standard renditions below the source resolution
     #[arg(long)]
     transcode: bool,
@@ -41,7 +46,10 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let options = IngestOptions {
-        moqt_url: args.moqt_url,
+        moqt: args.moqt_url.map(|url| MoqtTarget {
+            url,
+            auth_token: args.auth_token,
+        }),
         transcode: args.transcode,
     };
     tokio::try_join!(

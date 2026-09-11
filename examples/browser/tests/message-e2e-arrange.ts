@@ -2,7 +2,7 @@ import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
 import { MESSAGE_INDEX_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MESSAGE_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-const namespace = process.env.MESSAGE_E2E_NAMESPACE ?? 'e2e/moqt-message'
+const namespace = process.env.MESSAGE_E2E_NAMESPACE ?? 'anon/e2e/moqt-message'
 
 export const messageE2EConfig = {
   moqtUrl,

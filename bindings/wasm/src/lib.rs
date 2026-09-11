@@ -1189,7 +1189,10 @@ impl MOQTClient {
         let transport_cell = self.transport.clone();
         if let Some(closed) = webtransport_closed_promise(transport) {
             wasm_bindgen_futures::spawn_local(async move {
-                let _ = JsFuture::from(closed).await;
+                // A clean WebTransport session close fulfils with { closeCode, reason };
+                // an abnormal close rejects with no code. Forward the fulfil value so the
+                // JS side can surface the relay's termination code and reason.
+                let close_info = JsFuture::from(closed).await.unwrap_or(JsValue::NULL);
                 if let Ok(mut transport) = transport_cell.try_borrow_mut() {
                     transport.take();
                 }
@@ -1198,7 +1201,7 @@ impl MOQTClient {
                     .ok()
                     .and_then(|callbacks| callbacks.connection_closed_callback.clone());
                 if let Some(callback) = callback {
-                    let _ = callback.call0(&JsValue::NULL);
+                    let _ = callback.call1(&JsValue::NULL, &close_info);
                 }
             });
         }

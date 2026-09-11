@@ -18,7 +18,7 @@ export class MonitorSession {
     camId: CameraId,
     onObject: (groupId: bigint, msg: SubgroupObjectMessage) => void
   ): Promise<boolean> {
-    const namespace = [location, camId]
+    const namespace = ['anon', location, camId]
     try {
       const { subscribeOk } = await this.client.subscribe(namespace, 'video', 'secret')
       log('subscribe OK', { camId, trackAlias: subscribeOk.trackAlias.toString() })
@@ -37,7 +37,7 @@ export class MonitorSession {
     endGroupId: bigint,
     onObject: (msg: FetchObjectMessage) => void
   ): Promise<bigint> {
-    const namespace = [location, camId]
+    const namespace = ['anon', location, camId]
     const startedAt = Date.now()
     log('fetch start', {
       camId,

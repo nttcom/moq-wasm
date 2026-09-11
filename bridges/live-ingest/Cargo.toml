@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 bytes = "1"
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive", "env"] }
 tokio = { version = "1.52.3", features = ["full"] }
 rml_rtmp = "0.8.0"
 srt-tokio = "0.4.4"

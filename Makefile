@@ -6,7 +6,7 @@ LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)"
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-auth browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
 relay: export AUTH_DISABLED ?= true
@@ -64,8 +64,8 @@ onvif:
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \
 		--moqt-url $(ONVIF_MOQT_URL) \
-		--publish-namespace onvif/client \
-		--subscribe-namespace onvif/viewer \
+		--publish-namespace anon/onvif/client \
+		--subscribe-namespace anon/onvif/viewer \
 		--video-track video \
 		--audio-track audio \
 		--catalog-track catalog \
@@ -108,6 +108,11 @@ browser-e2e-live-viewer:
 browser-e2e-call:
 	node scripts/setup-media-e2e.mjs
 	node scripts/run-call-e2e.mjs
+
+# Same as browser-e2e-call but the relays require tokens (vts + anon-issuer).
+browser-e2e-call-auth:
+	node scripts/setup-media-e2e.mjs
+	CALL_E2E_AUTH=true node scripts/run-call-e2e.mjs
 
 # Same as browser-e2e-call but with a visible browser to watch behavior.
 # Assumes setup already ran once (via browser-e2e-call or setup-media-e2e.mjs).
