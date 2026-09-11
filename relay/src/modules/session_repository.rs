@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use tracing::{Instrument, Span};
 
 use crate::modules::{
+    auth::{session_expiry_task::SessionExpiryTask, verified_token::VerifiedToken},
     core::{
         publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
         subscriber::Subscriber,
@@ -18,6 +19,16 @@ pub(crate) struct SessionRepository {
     sessions: DashMap<SessionId, Arc<dyn Session>>,
     session_spans: DashMap<SessionId, Span>,
     session_peers: DashMap<SessionId, SessionPeer>,
+    session_tokens: DashMap<SessionId, Arc<VerifiedToken>>,
+    session_expiry_tasks: DashMap<SessionId, SessionExpiryTask>,
+}
+
+pub(crate) struct NewSession {
+    pub(crate) session_id: SessionId,
+    pub(crate) session: Box<dyn Session>,
+    pub(crate) session_span: Span,
+    pub(crate) peer: SessionPeer,
+    pub(crate) verified_token: VerifiedToken,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,57 +230,42 @@ impl SessionRepository {
             sessions: DashMap::new(),
             session_spans: DashMap::new(),
             session_peers: DashMap::new(),
+            session_tokens: DashMap::new(),
+            session_expiry_tasks: DashMap::new(),
         }
     }
 
-    pub(crate) async fn add_client(
+    pub(crate) async fn add(
         &mut self,
-        session_id: SessionId,
-        session: Box<dyn Session>,
+        new_session: NewSession,
         relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
     ) {
-        self.add_with_peer(
+        let NewSession {
             session_id,
             session,
-            relay_session_event_sender,
             session_span,
-            SessionPeer::Client,
-        )
-        .await;
-    }
-
-    pub(crate) async fn add_relay(
-        &mut self,
-        session_id: SessionId,
-        session: Box<dyn Session>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
-        relay_id: Option<String>,
-    ) {
-        self.add_with_peer(
-            session_id,
-            session,
-            relay_session_event_sender,
-            session_span,
-            SessionPeer::Relay { relay_id },
-        )
-        .await;
-    }
-
-    async fn add_with_peer(
-        &mut self,
-        session_id: SessionId,
-        session: Box<dyn Session>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
-        peer: SessionPeer,
-    ) {
+            peer,
+            verified_token,
+        } = new_session;
         let arc_session: Arc<dyn Session> = Arc::from(session);
-        tracing::info!(session_id = %session_id, peer = ?peer, "session peer classified");
+        tracing::info!(
+            session_id = %session_id,
+            peer = ?peer,
+            app_id = %verified_token.app_id,
+            is_relay = verified_token.is_relay,
+            "session peer classified"
+        );
         self.sessions.insert(session_id, arc_session.clone());
         self.session_spans.insert(session_id, session_span.clone());
         self.session_peers.insert(session_id, peer);
+        if let (false, Some(expires_at)) = (verified_token.is_relay, verified_token.expires_at) {
+            self.session_expiry_tasks.insert(
+                session_id,
+                SessionExpiryTask::run(Arc::downgrade(&arc_session), expires_at),
+            );
+        }
+        self.session_tokens
+            .insert(session_id, Arc::new(verified_token));
         self.start_session_event_forwarding(
             session_id,
             Arc::downgrade(&arc_session),
@@ -282,6 +278,8 @@ impl SessionRepository {
         let session_removed = self.sessions.remove(&session_id).is_some();
         let session_span_removed = self.session_spans.remove(&session_id).is_some();
         let session_peer_removed = self.session_peers.remove(&session_id).is_some();
+        self.session_tokens.remove(&session_id);
+        self.session_expiry_tasks.remove(&session_id);
         self.session_event_forward_task_registry.remove(&session_id);
         tracing::info!(
             session_id = %session_id,
@@ -305,6 +303,12 @@ impl SessionRepository {
         self.session_peers
             .get(&session_id)
             .map(|peer| peer.value().clone())
+    }
+
+    pub(crate) fn verified_token(&self, session_id: SessionId) -> Option<Arc<VerifiedToken>> {
+        self.session_tokens
+            .get(&session_id)
+            .map(|token| token.value().clone())
     }
 
     pub(crate) fn is_client_session(&self, session_id: SessionId) -> bool {
@@ -380,7 +384,9 @@ impl SessionRepository {
 
     pub(crate) fn close_with_protocol_violation(&self, session_id: SessionId, reason: &str) {
         match self.sessions.get(&session_id) {
-            Some(session) => session.value().close_with_protocol_violation(reason),
+            Some(session) => session
+                .value()
+                .close(moqt::TerminationErrorCode::ProtocolViolation, reason),
             None => tracing::debug!(session_id, "session already gone; nothing to close"),
         }
     }
@@ -396,7 +402,79 @@ impl SessionRepository {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::core::mocks::session_repository_with_upstream_session;
+    use std::time::{Duration, SystemTime};
+
+    use moqt::TerminationErrorCode;
+
+    use crate::modules::{
+        auth::verified_token::VerifiedToken,
+        core::mocks::{
+            RecordedControlMessages, session_repository_with_upstream_session,
+            session_repository_with_upstream_session_token,
+        },
+    };
+
+    fn expired_token(is_relay: bool) -> VerifiedToken {
+        VerifiedToken {
+            app_id: "APP".to_string(),
+            publish: Some(vec![]),
+            subscribe: Some(vec![]),
+            is_relay,
+            expires_at: Some(SystemTime::now() - Duration::from_secs(1)),
+        }
+    }
+
+    async fn wait_for_close(recorded: &RecordedControlMessages) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while recorded.closes().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    #[tokio::test]
+    async fn expired_client_token_closes_the_session() {
+        // Arrange / Act
+        let (_repository, recorded) =
+            session_repository_with_upstream_session_token(7, expired_token(false)).await;
+
+        // Assert
+        assert!(wait_for_close(&recorded).await);
+        assert_eq!(
+            recorded.closes(),
+            vec![(
+                TerminationErrorCode::ExpiredAuthToken,
+                "authorization token expired".to_string()
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_relay_token_does_not_close_the_session() {
+        // Arrange / Act
+        let (_repository, recorded) =
+            session_repository_with_upstream_session_token(7, expired_token(true)).await;
+
+        // Assert
+        assert!(!wait_for_close(&recorded).await);
+    }
+
+    #[tokio::test]
+    async fn verified_token_is_kept_until_the_session_is_removed() {
+        // Arrange
+        let (repository, _recorded) = session_repository_with_upstream_session(7).await;
+
+        // Act
+        let stored = repository.lock().await.verified_token(7);
+        repository.lock().await.remove(7);
+        let after_remove = repository.lock().await.verified_token(7);
+
+        // Assert
+        assert_eq!(stored.as_deref(), Some(&VerifiedToken::full_access()));
+        assert!(after_remove.is_none());
+    }
 
     #[tokio::test]
     async fn close_with_protocol_violation_reaches_the_session() {
@@ -409,8 +487,11 @@ mod tests {
             .close_with_protocol_violation(7, "invalid object status 0x2");
         // Assert
         assert_eq!(
-            *recorded.protocol_violation_reasons.lock().unwrap(),
-            vec!["invalid object status 0x2".to_string()]
+            recorded.closes(),
+            vec![(
+                TerminationErrorCode::ProtocolViolation,
+                "invalid object status 0x2".to_string()
+            )]
         );
     }
 
@@ -424,12 +505,6 @@ mod tests {
             .await
             .close_with_protocol_violation(8, "late");
         // Assert
-        assert!(
-            recorded
-                .protocol_violation_reasons
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(recorded.closes().is_empty());
     }
 }

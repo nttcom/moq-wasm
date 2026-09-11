@@ -66,6 +66,7 @@ async function main() {
   try {
     const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
       cwd: repoRoot,
+      env: { ...process.env, AUTH_DISABLED: "true" },
     });
     const vite = spawnProcess(
       "vite",

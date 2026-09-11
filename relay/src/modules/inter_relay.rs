@@ -3,9 +3,10 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::modules::{
+    auth::verified_token::VerifiedToken,
     route_registry::RelayInfo,
     session_event::SessionEvent,
-    session_repository::SessionRepository,
+    session_repository::{NewSession, SessionPeer, SessionRepository},
     types::{SessionId, generate_session_id},
 };
 
@@ -18,6 +19,7 @@ fn relay_hostname() -> String {
 pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    relay_token: Option<String>,
     sessions: DashMap<String, SessionId>,
 }
 
@@ -25,10 +27,12 @@ impl InterRelayConnectionManager {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        relay_token: Option<String>,
     ) -> Self {
         Self {
             repo,
             session_event_sender,
+            relay_token,
             sessions: DashMap::new(),
         }
     }
@@ -44,7 +48,7 @@ impl InterRelayConnectionManager {
         let endpoint = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
             port: 0,
             verify_certificate: false,
-            authorization_token: None,
+            authorization_token: self.relay_token.clone(),
         })?;
         let connecting = endpoint
             .connect(&format!("moqt://{}:{}", relay.host, relay.port))
@@ -65,12 +69,17 @@ impl InterRelayConnectionManager {
         self.repo
             .lock()
             .await
-            .add_relay(
-                session_id,
-                Box::new(session),
+            .add(
+                NewSession {
+                    session_id,
+                    session: Box::new(session),
+                    session_span,
+                    peer: SessionPeer::Relay {
+                        relay_id: Some(relay.relay_id.clone()),
+                    },
+                    verified_token: VerifiedToken::full_access(),
+                },
                 self.session_event_sender.clone(),
-                session_span,
-                Some(relay.relay_id.clone()),
             )
             .await;
         self.sessions.insert(relay.relay_id.clone(), session_id);

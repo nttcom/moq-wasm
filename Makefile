@@ -9,6 +9,7 @@ ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 .PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
+relay: export AUTH_DISABLED ?= true
 relay:
 	set -a; [ ! -f .env ] || . ./.env; set +a; RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 

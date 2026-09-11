@@ -1,6 +1,7 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
+    enums::SubscribeNamespaceErrorCode,
     route_registry::{RegisterNamespaceSubscriberError, RelayRouteRegistry, RouteStatus},
     sequences::tables::table::{LocalPubSubDirectory, PeerKind},
     types::SessionId,
@@ -101,7 +102,10 @@ impl SubscribeNameSpace {
             Err(RegisterNamespaceSubscriberError::Conflict) => {
                 tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
                 match handler
-                    .error(0, "namespace already subscribed".to_string())
+                    .error(
+                        SubscribeNamespaceErrorCode::NamespacePrefixOverlap as u64,
+                        "namespace already subscribed".to_string(),
+                    )
                     .await
                 {
                     Ok(_) => tracing::info!("sent `SUBSCRIBE_NAMESPACE_ERROR` ok"),

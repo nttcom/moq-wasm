@@ -68,6 +68,7 @@ async function main() {
       ["run", "-p", "relay"],
       {
         cwd: repoRoot,
+        env: { ...process.env, AUTH_DISABLED: "true" },
       },
     );
     const vite = spawnProcess(

@@ -1,7 +1,8 @@
 mod config;
 mod logging;
-pub use config::RelayConfig;
+pub use config::{AuthConfig, RelayConfig};
 pub use logging::{LoggingGuards, init_logging};
+pub use modules::auth::token_claims::ClaimPolicy;
 pub mod modules;
 mod relay_server;
 
@@ -23,7 +24,7 @@ pub fn run_relay_server<T: moqt::TransportProtocol>(
         .name("RelayServer")
         .spawn(async move {
             tracing::info!("Relay server started");
-            let server = RelayServer::new(&key_path, &cert_path);
+            let server = RelayServer::new_unauthenticated(&key_path, &cert_path);
             let handler = server.spawn_client_transport::<T>(port);
 
             shutdown_signal.await.ok();

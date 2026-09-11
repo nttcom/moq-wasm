@@ -613,6 +613,7 @@ mod tests {
     #[derive(Debug)]
     struct StubPublishHandler {
         track_namespace: String,
+        track_namespace_tuple: Vec<String>,
         track_name: String,
         track_alias: u64,
     }
@@ -621,6 +622,10 @@ mod tests {
     impl PublishHandler for StubPublishHandler {
         fn track_namespace(&self) -> &str {
             &self.track_namespace
+        }
+
+        fn track_namespace_tuple(&self) -> &[String] {
+            &self.track_namespace_tuple
         }
 
         fn track_name(&self) -> &str {
@@ -705,6 +710,7 @@ mod tests {
                 1,
                 Arc::new(StubPublishHandler {
                     track_namespace: "room/member".to_string(),
+                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
                     track_name: "video".to_string(),
                     track_alias: 10,
                 }),
@@ -944,6 +950,7 @@ mod tests {
                 1,
                 Arc::new(StubPublishHandler {
                     track_namespace: "room/member".to_string(),
+                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
                     track_name: "video".to_string(),
                     track_alias: 10,
                 }),
@@ -954,6 +961,7 @@ mod tests {
                 2,
                 Arc::new(StubPublishHandler {
                     track_namespace: "room/member".to_string(),
+                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
                     track_name: "video".to_string(),
                     track_alias: 20,
                 }),

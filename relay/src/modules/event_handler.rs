@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::modules::{
+    auth::request_gate::{authorize_request, reject_unauthorized},
     control_message_forwarder::ControlMessageForwarder,
     core::session_event::MoqtSessionEvent,
     inter_relay::InterRelayConnectionManager,
@@ -207,6 +208,13 @@ impl EventHandler {
             cache_store,
             upstream_serializer,
         } = deps;
+        let verified_token = repo.lock().await.verified_token(session_id);
+        if verified_token.is_none() {
+            tracing::error!(
+                session_id,
+                "session has no verified token; every namespace request will be denied"
+            );
+        }
 
         while let Some(event) = rx.recv().await {
             // Determine terminality BEFORE the span check so that a terminal
@@ -281,6 +289,19 @@ impl EventHandler {
                     continue;
                 }
             };
+            if let Err(denied) = authorize_request(verified_token.as_deref(), &event) {
+                let reject_span = tracing::info_span!(
+                    parent: &session_span,
+                    "relay.session.unauthorized_request",
+                    session_id = %session_id,
+                    event = ?event,
+                    reason = denied.reason,
+                );
+                reject_unauthorized(event, denied)
+                    .instrument(reject_span)
+                    .await;
+                continue;
+            }
             let event_span = Self::session_event_span(session_id, &session_span, &event);
 
             match event {

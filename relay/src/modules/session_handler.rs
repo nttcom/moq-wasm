@@ -1,18 +1,91 @@
 use std::sync::Arc;
 
-use moqt::{Endpoint, TransportProtocol};
-use tracing::Instrument;
+use moqt::{Accepting, Endpoint, TransportProtocol};
+use tracing::{Instrument, Span};
 
 use crate::modules::{
+    auth::session_authenticator::SessionAuthenticator,
     session_event::SessionEvent,
-    session_repository::{SessionPeer, SessionRepository},
-    types::generate_session_id,
+    session_repository::{NewSession, SessionPeer, SessionRepository},
+    types::{SessionId, generate_session_id},
 };
 
 fn relay_hostname() -> String {
     std::env::var("RELAY_HOSTNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionIntake {
+    pub(crate) repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    pub(crate) relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) accepted_peer: SessionPeer,
+    pub(crate) authenticator: Arc<SessionAuthenticator>,
+}
+
+impl SessionIntake {
+    async fn establish<T: TransportProtocol>(
+        &self,
+        session_id: SessionId,
+        connecting: Accepting<T>,
+        session_span: Span,
+    ) {
+        let handshake = match connecting.await {
+            Ok(handshake) => handshake,
+            Err(error) => {
+                tracing::warn!(%error, "failed to establish session");
+                return;
+            }
+        };
+        let verified_token = match self
+            .authenticator
+            .authenticate(handshake.client_setup(), &self.accepted_peer)
+            .await
+        {
+            Ok(verified_token) => verified_token,
+            Err(rejected) => {
+                tracing::warn!(
+                    code = ?rejected.code,
+                    reason = %rejected.reason,
+                    "session rejected at CLIENT_SETUP"
+                );
+                handshake.reject(rejected.code, &rejected.reason).await;
+                return;
+            }
+        };
+        let session = match handshake.accept().await {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(%error, "failed to establish session");
+                return;
+            }
+        };
+        let session_add_span = tracing::info_span!(
+            parent: &session_span,
+            "relay.session_repository.add",
+            session_id = session_id
+        );
+        async {
+            tracing::info!("Session accepted");
+            self.repo
+                .lock()
+                .await
+                .add(
+                    NewSession {
+                        session_id,
+                        session: Box::new(session),
+                        session_span: session_span.clone(),
+                        peer: self.accepted_peer.clone(),
+                        verified_token,
+                    },
+                    self.relay_session_event_sender.clone(),
+                )
+                .await;
+        }
+        .instrument(session_add_span)
+        .await;
+    }
 }
 
 pub struct SessionHandler {
@@ -22,31 +95,27 @@ pub struct SessionHandler {
 impl SessionHandler {
     pub(crate) fn run<T: TransportProtocol>(
         config: moqt::ServerConfig,
-        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        accepted_peer: SessionPeer,
+        intake: SessionIntake,
     ) -> Self {
         let endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
-        let join_handle =
-            Self::create_joinhandle::<T>(endpoint, repo, relay_session_event_sender, accepted_peer);
+        let join_handle = Self::create_joinhandle::<T>(endpoint, intake);
         Self { join_handle }
     }
 
     fn create_joinhandle<T: TransportProtocol>(
         mut endpoint: Endpoint<T>,
-        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        accepted_peer: SessionPeer,
+        intake: SessionIntake,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .spawn(async move {
                 let relay_hostname = relay_hostname();
                 loop {
                     let session_id = generate_session_id();
-                    let session_peer = accepted_peer.kind();
-                    let session_peer_relay_id = accepted_peer.relay_id().unwrap_or("unknown");
+                    let session_peer = intake.accepted_peer.kind();
+                    let session_peer_relay_id =
+                        intake.accepted_peer.relay_id().unwrap_or("unknown");
                     let session_span = tracing::info_span!(
                         parent: None,
                         "relay.session",
@@ -77,56 +146,12 @@ impl SessionHandler {
                     };
 
                     // Spawn per connection so a slow ClientSetup cannot block the accept loop.
-                    let repo = repo.clone();
-                    let relay_session_event_sender = relay_session_event_sender.clone();
-                    let accepted_peer = accepted_peer.clone();
+                    let intake = intake.clone();
                     tokio::spawn(async move {
-                        let session = async {
-                            let handshake = connecting.await?;
-                            handshake.accept().await
-                        }
-                        .instrument(session_span.clone())
-                        .await
-                        .inspect_err(|error| {
-                            tracing::warn!(%error, "failed to establish session");
-                        });
-                        let session = match session {
-                            Ok(session) => session,
-                            Err(_) => return,
-                        };
-                        let session_add_span = tracing::info_span!(
-                            parent: &session_span,
-                            "relay.session_repository.add",
-                            session_id = session_id
-                        );
-
-                        async {
-                            tracing::info!("Session accepted");
-                            let mut repo = repo.lock().await;
-                            match accepted_peer {
-                                SessionPeer::Client => {
-                                    repo.add_client(
-                                        session_id,
-                                        Box::new(session),
-                                        relay_session_event_sender.clone(),
-                                        session_span.clone(),
-                                    )
-                                    .await;
-                                }
-                                SessionPeer::Relay { relay_id } => {
-                                    repo.add_relay(
-                                        session_id,
-                                        Box::new(session),
-                                        relay_session_event_sender.clone(),
-                                        session_span.clone(),
-                                        relay_id,
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
-                        .instrument(session_add_span)
-                        .await;
+                        intake
+                            .establish(session_id, connecting, session_span.clone())
+                            .instrument(session_span)
+                            .await;
                     });
                 }
             })

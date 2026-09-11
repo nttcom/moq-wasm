@@ -9,6 +9,7 @@ use crate::modules::{
 pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn subscribe_id(&self) -> u64;
     fn track_namespace(&self) -> &str;
+    fn track_namespace_tuple(&self) -> &[String];
     fn track_name(&self) -> &str;
     fn _subscriber_priority(&self) -> u8;
     fn _group_order(&self) -> GroupOrder;
@@ -35,6 +36,9 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
     }
     fn track_namespace(&self) -> &str {
         &self.track_namespace
+    }
+    fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
     }
     fn track_name(&self) -> &str {
         &self.track_name
