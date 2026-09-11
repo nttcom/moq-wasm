@@ -108,10 +108,17 @@ use these facades instead of the data-plane factories directly:
 
 - `TrackWriter<T>` wraps `StreamDataSenderFactory<T>`. `start_group()` closes
   the open group (sends an `EndOfGroup` status object, then FIN) and opens the
-  next one; `write()` appends a payload object with optional immutable
-  extension headers. Group ids run from the `first_group_id` given at
-  construction, object ids from 0 within each group; publisher priority is
-  fixed at 128 and the subgroup id is omitted (`SubgroupId::None`).
+  next one; `start_group_at(id)` opens a group with a chosen id instead, so
+  the tracks of a switching set can start their groups at the same ids, and
+  announces any ids it skipped on the group's first object with the Prior
+  Group ID Gap extension header (a writer that has not opened a group yet may
+  start anywhere). `write()` appends a payload object with optional immutable
+  extension headers and `write_with_extension_headers()` with arbitrary ones,
+  which is how LOC headers are attached. Group ids run from the
+  `first_group_id` given at construction unless chosen, `next_group_id()`
+  exposes where numbering continues, object ids run from 0 within each group;
+  publisher priority is fixed at 128 and the subgroup id is omitted
+  (`SubgroupId::None`).
 - `TrackReader<T>` wraps `StreamDataReceiverFactory<T>` and yields
   `TrackObject { group_id, subgroup_id, object_id, extension_headers, payload }`
   in arrival order. Subgroup streams are read **concurrently**: an accept task

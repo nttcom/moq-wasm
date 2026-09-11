@@ -85,9 +85,20 @@ struct CatalogMetadata {
 }
 
 pub(crate) struct OutgoingObject {
-    pub(crate) rotate_group: bool,
+    pub(crate) group: GroupBoundary,
     pub(crate) extension_headers: ExtensionHeaders,
     pub(crate) payload: Bytes,
+}
+
+pub(crate) enum GroupBoundary {
+    /// Only inside an open group; the object is dropped when there is none,
+    /// because a group must not start on it.
+    Within,
+    /// Inside the open group, or the first object of a new one when there is
+    /// none.
+    Join,
+    Next,
+    At(u64),
 }
 
 struct ConnectedPublisher<T: TransportProtocol> {
@@ -127,10 +138,10 @@ impl MoqtManager {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<Option<u64>> {
+    ) -> Result<()> {
         let url = match &self.url {
             Some(u) => u.clone(),
-            None => return Ok(None),
+            None => return Ok(()),
         };
 
         self.ensure_backend(&url)
@@ -213,7 +224,7 @@ impl PublisherBackend {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<Option<u64>> {
+    ) -> Result<()> {
         match self {
             Self::Quic(publisher) => publisher.send_object(namespace, track_name, object).await,
             Self::WebTransport(publisher) => {
@@ -336,13 +347,19 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         let request_id = handler.request_id();
                         let publication = handler.into_subscription(track_alias);
                         let should_send_catalog = track_name == CATALOG_TRACK_NAME;
-                        let writer = TrackWriter::new(
-                            session.publisher().create_stream(&publication),
-                            now_unix().as_micros() as u64,
-                        );
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();
                         let key = (namespace.clone(), track_name.clone());
+                        let first_group_id = guard
+                            .tracks
+                            .get(&key)
+                            .and_then(|slot| slot.as_ref())
+                            .map(TrackWriter::next_group_id)
+                            .unwrap_or_else(|| now_unix().as_micros() as u64);
+                        let writer = TrackWriter::new(
+                            session.publisher().create_stream(&publication),
+                            first_group_id,
+                        );
                         guard.tracks.insert(key.clone(), Some(writer));
                         guard.subscribed_tracks.insert(request_id, key);
                         drop(guard);
@@ -433,7 +450,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<Option<u64>> {
+    ) -> Result<()> {
         let key = (namespace.join("/"), track_name.to_string());
         let mut writer = {
             let mut guard = self.state.lock().await;
@@ -442,7 +459,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             }
             match guard.tracks.get_mut(&key).and_then(Option::take) {
                 Some(writer) => writer,
-                None => return Ok(None),
+                None => return Ok(()),
             }
         };
         let result = write_object(&mut writer, object).await;
@@ -451,7 +468,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
             self.state.lock().await.tracks.remove(&key);
-            return Ok(None);
+            return Ok(());
         }
         if let Some(slot) = self.state.lock().await.tracks.get_mut(&key) {
             *slot = Some(writer);
@@ -563,15 +580,25 @@ impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
 async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
     object: OutgoingObject,
-) -> Result<Option<u64>> {
-    if object.rotate_group || writer.groups() == 0 {
-        writer.start_group().await.context("start group")?;
+) -> Result<()> {
+    match object.group {
+        GroupBoundary::Within if writer.groups() == 0 => return Ok(()),
+        GroupBoundary::Within => {}
+        GroupBoundary::Join if writer.groups() > 0 => {}
+        GroupBoundary::Join | GroupBoundary::Next => {
+            writer.start_group().await.context("start group")?;
+        }
+        GroupBoundary::At(group_id) => {
+            writer
+                .start_group_at(group_id)
+                .await
+                .context("start group at the aligned id")?;
+        }
     }
     writer
         .write_with_extension_headers(object.payload, object.extension_headers)
         .await
-        .context("send subgroup object")?;
-    Ok(writer.current_group_id())
+        .context("send subgroup object")
 }
 
 fn is_supported_track(track_name: &str, metadata: Option<&CatalogMetadata>) -> bool {
