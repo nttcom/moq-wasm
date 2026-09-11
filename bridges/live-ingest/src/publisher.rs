@@ -6,7 +6,6 @@ use mediapack::{
     AudioSample, MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig,
     loc::Muxer as LocMuxer, mp4::Fmp4TrackMuxer,
 };
-use moqt::ExtensionHeaders;
 
 use crate::{
     group_alignment::GroupAlignment,
@@ -57,7 +56,7 @@ impl MediaPublisher {
             audio_group_duration_us: 0,
             audio_config: None,
             renditions: None,
-            timeline: MediaTimeline::new(),
+            timeline: MediaTimeline::default(),
             loc: Arc::new(OnceLock::new()),
             alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
             video_cmaf: None,
@@ -147,11 +146,7 @@ impl MediaPublisher {
             .send_object(
                 &self.namespace,
                 &cmaf_track_name(VIDEO_TRACK_NAME),
-                OutgoingObject {
-                    group,
-                    extension_headers: ExtensionHeaders::default(),
-                    payload: fragment.data,
-                },
+                OutgoingObject::plain(group, fragment.data),
             )
             .await
     }
@@ -168,11 +163,7 @@ impl MediaPublisher {
             .send_object(
                 &self.namespace,
                 TIMELINE_TRACK_NAME,
-                OutgoingObject {
-                    group: GroupBoundary::Next,
-                    extension_headers: ExtensionHeaders::default(),
-                    payload: Bytes::from(self.timeline.document()?),
-                },
+                OutgoingObject::plain(GroupBoundary::Next, Bytes::from(self.timeline.document()?)),
             )
             .await
     }
@@ -225,11 +216,7 @@ impl MediaPublisher {
             .send_object(
                 &self.namespace,
                 &cmaf_track_name(AUDIO_TRACK),
-                OutgoingObject {
-                    group,
-                    extension_headers: ExtensionHeaders::default(),
-                    payload: fragment.data,
-                },
+                OutgoingObject::plain(group, fragment.data),
             )
             .await
     }
