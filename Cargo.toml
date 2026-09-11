@@ -9,6 +9,7 @@ members = [
     'relay',
     'examples/rust/manual-client',
     'examples/rust/moq-cli',
+    'tests/auth-e2e',
     'tests/cache-eviction-e2e',
     'tests/cascading-relay-e2e',
     'tests/fetch-e2e',

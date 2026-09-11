@@ -27,6 +27,26 @@ services:
       - build
     command: ["true"]
 
+  # Authentication services. Start with `docker compose --profile auth up -d`
+  # and point the relays at the VTS with AUTH_VTS_URL / AUTH_RELAY_TOKEN.
+  vts:
+    image: moqt-vts:local
+    build:
+      context: .
+      dockerfile: services/vts/Dockerfile
+    profiles:
+      - auth
+    environment:
+      VTS_PORT: "8081"
+      VTS_APPS_FILE: /etc/vts/apps.json
+    volumes:
+      - ${VTS_APPS_FILE:-./services/vts/apps.example.json}:/etc/vts/apps.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
   relay-a:
     image: moqt-relay:local
     env_file:
@@ -39,6 +59,8 @@ services:
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
       AUTH_DISABLED: ${AUTH_DISABLED:-true}
+      AUTH_VTS_URL: ${AUTH_VTS_URL:-}
+      AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}
@@ -66,6 +88,8 @@ services:
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
       AUTH_DISABLED: ${AUTH_DISABLED:-true}
+      AUTH_VTS_URL: ${AUTH_VTS_URL:-}
+      AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
       RELAY_OTEL_FILTER: ${RELAY_OTEL_FILTER:-relay=info,moqt=info}

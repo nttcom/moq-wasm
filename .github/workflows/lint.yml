@@ -107,4 +107,21 @@ jobs:
         run: npm ci
         working-directory: examples/browser
       - name: Check code formatting
-        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
+        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "services/**/*.{mjs,json,md}" --ignore-path examples/browser/.prettierignore
+  services-test:
+    runs-on: ubuntu-latest
+    container:
+      image: node:22-alpine
+    strategy:
+      matrix:
+        service: [vts]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: npm ci
+        working-directory: services/${{ matrix.service }}
+      - name: Run tests
+        run: npm test
+        working-directory: services/${{ matrix.service }}
