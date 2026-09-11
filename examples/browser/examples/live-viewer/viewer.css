@@ -19,6 +19,44 @@
   display: none;
 }
 
+/* Skip buttons sit on the picture and show while the pointer is over the stage
+   or a control in it has focus. */
+.viewer-skip {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+.viewer-stage:hover .viewer-skip,
+.viewer-stage:focus-within .viewer-skip {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.viewer-skip-button {
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(4, 14, 14, 0.62);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.viewer-skip-button:hover {
+  background: rgba(4, 14, 14, 0.88);
+}
+
 .viewer-overlay {
   position: absolute;
   inset: auto 0 0 0;

@@ -95,10 +95,36 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
 
+    // Act: ↓ でライブから 5 秒戻り、→ で 1 秒進む
+    await viewer.liveButton.click()
+    await viewer.page.keyboard.press('ArrowDown')
+
+    // Assert: つまみは目標位置そのものに置かれ、描画は目標以降のフレームから始まる
+    await expect(viewer.playbackStatus).toContainText('Reviewing')
+    await expect(viewer.seekPosition).toHaveText(/-[5-7]\.\ds/)
+    const skippedTo = await thumbValue(viewer)
+    expect(skippedTo).toBeLessThan(Number(await viewer.seekbar.getAttribute('max')))
+    await expect
+      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 15_000 })
+      .toBeGreaterThan(0)
+
     // Act
-    await viewer.liveButton.click()
-    await viewer.rewind10Button.click()
-    await viewer.liveButton.click()
+    await viewer.page.keyboard.press('ArrowRight')
+
+    // Assert
+    await expect.poll(async () => thumbValue(viewer)).toBeGreaterThan(skippedTo)
+
+    // Act: 映像に重なるボタンはカーソルを合わせると押せる
+    const beforeBack = await thumbValue(viewer)
+    await viewer.seekbar.hover()
+    await viewer.skipBack5Button.click()
+
+    // Assert
+    await expect.poll(async () => thumbValue(viewer)).toBeLessThan(beforeBack)
+
+    // Act: ↑ を 2 回でライブ端を越える
+    await viewer.page.keyboard.press('ArrowUp')
+    await viewer.page.keyboard.press('ArrowUp')
 
     // Assert
     await expect(viewer.seekPosition).toHaveText('LIVE')
