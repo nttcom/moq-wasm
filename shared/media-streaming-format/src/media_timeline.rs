@@ -21,18 +21,6 @@ impl MediaTimelineRecord {
     pub fn presentation_time_ms(&self) -> u64 {
         self.0
     }
-
-    pub fn group_id(&self) -> u64 {
-        self.1.0
-    }
-
-    pub fn object_id(&self) -> u64 {
-        self.1.1
-    }
-
-    pub fn encoded_at_ms(&self) -> u64 {
-        self.2
-    }
 }
 
 #[cfg(test)]
@@ -60,10 +48,12 @@ mod tests {
         let records: Vec<MediaTimelineRecord> = serde_json::from_str(document).unwrap();
 
         // Assert
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[1].presentation_time_ms(), 2002);
-        assert_eq!(records[1].group_id(), 1);
-        assert_eq!(records[1].object_id(), 0);
-        assert_eq!(records[1].encoded_at_ms(), 1_759_924_160_383);
+        assert_eq!(
+            records,
+            vec![
+                MediaTimelineRecord::new(0, 0, 0, 1_759_924_158_381),
+                MediaTimelineRecord::new(2002, 1, 0, 1_759_924_160_383),
+            ]
+        );
     }
 }
