@@ -65,18 +65,18 @@ export class GroupTimeline {
     return (latest.captureMicros - oldest.captureMicros) / MICROS_PER_SECOND
   }
 
-  /// Resolves the newest group that starts at least `seconds` before the live
-  /// edge. The live edge group itself is excluded because the publisher is
-  /// still writing to it and a FETCH for an open group escapes the relay cache.
-  resolveRewindTarget(seconds: number): GroupMark | undefined {
+  /// Resolves the newest closed group that starts at or before `captureMicros`,
+  /// or the oldest closed one when the position lies before all of them. The
+  /// live edge group is excluded because the publisher is still writing to it
+  /// and a FETCH for an open group escapes the relay cache.
+  resolveSeekTarget(captureMicros: number): GroupMark | undefined {
     const latest = this.latest
     if (!latest) {
       return undefined
     }
 
-    const deadline = latest.captureMicros - seconds * MICROS_PER_SECOND
     const closed = this.marks.filter((mark) => mark.groupId !== latest.groupId)
-    return closed.filter((mark) => mark.captureMicros <= deadline).pop() ?? closed[0]
+    return closed.findLast((mark) => mark.captureMicros <= captureMicros) ?? closed[0]
   }
 
   secondsBehindLive(groupId: bigint): number {

@@ -78,6 +78,48 @@
                 <div class="viewer-stage">
                   <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
                   <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
+                  <div class="viewer-skip">
+                    <button
+                      type="button"
+                      class="viewer-skip-button"
+                      data-skip-seconds="-5"
+                      data-testid="live-viewer-skip-back-5-button"
+                      aria-label="Back 5 seconds"
+                      title="5 秒戻る (↓)"
+                    >
+                      &#x21BA;5
+                    </button>
+                    <button
+                      type="button"
+                      class="viewer-skip-button"
+                      data-skip-seconds="-1"
+                      data-testid="live-viewer-skip-back-1-button"
+                      aria-label="Back 1 second"
+                      title="1 秒戻る (←)"
+                    >
+                      &#x21BA;1
+                    </button>
+                    <button
+                      type="button"
+                      class="viewer-skip-button"
+                      data-skip-seconds="1"
+                      data-testid="live-viewer-skip-forward-1-button"
+                      aria-label="Forward 1 second"
+                      title="1 秒進む (→)"
+                    >
+                      1&#x21BB;
+                    </button>
+                    <button
+                      type="button"
+                      class="viewer-skip-button"
+                      data-skip-seconds="5"
+                      data-testid="live-viewer-skip-forward-5-button"
+                      aria-label="Forward 5 seconds"
+                      title="5 秒進む (↑)"
+                    >
+                      5&#x21BB;
+                    </button>
+                  </div>
                   <div class="viewer-overlay">
                     <div class="viewer-readout">
                       <span id="seek-start" data-testid="live-viewer-seek-start">--:--</span>
@@ -120,26 +162,6 @@
                         aria-label="Back to live"
                       >
                         <span class="viewer-live-dot" aria-hidden="true"></span>LIVE
-                      </button>
-                      <button
-                        type="button"
-                        id="rewind10Btn"
-                        class="viewer-button"
-                        data-testid="live-viewer-rewind-10-button"
-                        aria-label="Rewind 10 seconds"
-                        title="10 秒戻る"
-                      >
-                        &#x21BA;10
-                      </button>
-                      <button
-                        type="button"
-                        id="rewind30Btn"
-                        class="viewer-button"
-                        data-testid="live-viewer-rewind-30-button"
-                        aria-label="Rewind 30 seconds"
-                        title="30 秒戻る"
-                      >
-                        &#x21BA;30
                       </button>
                       <select
                         id="speed"
@@ -195,6 +217,7 @@
                 <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
                 <p class="hint" id="seek-hint">
                   配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
+                  映像にカーソルを合わせると ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が 5 秒）。
                   <code>--transcode</code> で live-ingest を起動すると歯車から下位画質が選べます。
                 </p>
               </div>

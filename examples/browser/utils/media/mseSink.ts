@@ -7,6 +7,14 @@ export type MseTrackSource = {
   initSegment: Uint8Array
 }
 
+export type MseSources = {
+  video: MseTrackSource
+  audio?: MseTrackSource
+  /// Offset from the first buffered video frame at which playback starts, so a
+  /// review that decodes from a keyframe can begin at a later frame.
+  startAtSeconds?: number
+}
+
 type Buffered = {
   sourceBuffer: SourceBuffer
   queue: Uint8Array[]
@@ -22,16 +30,15 @@ export class MseSink {
   private audio: Buffered | undefined
   private started = false
 
-  private constructor(private readonly element: HTMLVideoElement) {
+  private constructor(
+    private readonly element: HTMLVideoElement,
+    private readonly startAtSeconds: number
+  ) {
     this.objectUrl = URL.createObjectURL(this.mediaSource)
   }
 
-  static async open(
-    element: HTMLVideoElement,
-    video: MseTrackSource,
-    audio: MseTrackSource | undefined
-  ): Promise<MseSink> {
-    const sink = new MseSink(element)
+  static async open(element: HTMLVideoElement, { video, audio, startAtSeconds = 0 }: MseSources): Promise<MseSink> {
+    const sink = new MseSink(element, startAtSeconds)
     await new Promise<void>((resolve, reject) => {
       sink.mediaSource.addEventListener('sourceopen', () => resolve(), { once: true })
       sink.mediaSource.addEventListener('error', () => reject(new Error('MediaSource failed to open')), {
@@ -100,7 +107,7 @@ export class MseSink {
     if (this.started || end === undefined) {
       return
     }
-    const start = this.video!.sourceBuffer.buffered.start(0)
+    const start = this.video!.sourceBuffer.buffered.start(0) + this.startAtSeconds
     if (end - start < PLAYBACK_BUFFER_THRESHOLD_SECONDS) {
       return
     }
