@@ -17,6 +17,20 @@ make chrome                 # 自己署名証明書の relay に接続するた�
 Chrome で `examples/live-viewer/index.html` を開き、relay URL と namespace（RTMP は `app/stream`、
 SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackNamespace=...` でも指定できます。
 
+## moq-dev の moqsink から見る
+
+```shell
+make relay
+make gst-moqsink-bbb        # MOQ_GST_PLUGIN_DIR=<moq-dev clone>/target/release
+```
+
+namespace に `anon/live/bbb`（`MOQSINK_BROADCAST`）を入れて Watch します。moqsink は hang の
+legacy container（payload 先頭に QUIC varint の µs タイムスタンプ、続いて Annex B / raw AAC）と
+`packaging: legacy` の MSF catalog を publish するので、viewer はタイムスタンプを LOC ヘッダに
+持ち上げて WebCodecs 経路で再生し、シークバーもそのタイムスタンプで動きます。音声 track に
+`initData` が無いため AudioSpecificConfig は catalog の `samplerate` / `channelConfig` から組みます。
+配信開始からの経過は media timeline track が無いので出ません。
+
 ## 巻き戻し
 
 映像にカーソルを合わせると中央に `↺5` `↺1` `1↻` `5↻` が出ます。キーボードでは ← / → が 1 秒、

@@ -264,6 +264,44 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
   }
 })
 
+const moqsinkNamespace = process.env.LIVE_VIEWER_E2E_MOQSINK_NAMESPACE
+
+test('live viewer plays a moqsink broadcast in the hang legacy container', async ({ browser }) => {
+  test.skip(!moqsinkNamespace, 'set LIVE_VIEWER_E2E_MOQSINK_NAMESPACE to the broadcast of `make gst-moqsink-bbb`')
+  // Arrange
+  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, moqsinkNamespace!)
+
+  try {
+    // Act
+    await viewer.watchButton.click()
+
+    // Assert: legacy tracks decode through the WebCodecs path and their timestamps drive the seek bar
+    await expect(viewer.catalogStatus).toContainText('Catalog loaded: 1 video / 1 audio')
+    await expect(viewer.playbackStatus).toContainText('Playing 0.avc3')
+    await expectVideoDecoded(viewer.video)
+    await expect
+      .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
+      .toBe(1280)
+    await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(6)
+    await expect(viewer.logPanel).not.toContainText(/error/i)
+
+    // Act
+    await viewer.seekbar.focus()
+    await viewer.seekbar.press('Home')
+
+    // Assert
+    await expect(viewer.playbackStatus).toContainText('Reviewing')
+    await expect(viewer.reviewCanvas).toBeVisible({ timeout: 20_000 })
+    await expect
+      .poll(async () => viewer.reviewCanvas.evaluate((element) => (element as HTMLCanvasElement).width), {
+        timeout: 30_000
+      })
+      .toBe(1280)
+  } finally {
+    await context.close()
+  }
+})
+
 async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'paused' | 'volume'>(
   media: Locator,
   key: K

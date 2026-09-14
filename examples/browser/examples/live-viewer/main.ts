@@ -8,11 +8,14 @@ import {
   extractCatalogVideoTracks,
   type MediaCatalogTrack
 } from '../media/catalog'
+import { audioSpecificConfigBase64 } from '../../utils/media/aac'
 import { base64ToUint8Array } from '../../utils/media/base64'
+import { readLegacyFrame } from '../../utils/media/hangLegacy'
+import { type LocHeader, buildLocHeader } from '../../utils/media/loc'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
-import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
+import { GroupTimeline, type ReviewFrame, type WirePackaging, sortReviewFrames, toReviewFrame } from './rewind'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
@@ -40,6 +43,7 @@ type TrackSubscription = {
   requestId: bigint
   trackAlias: bigint
   name: string
+  packaging: WirePackaging
 }
 
 type ReviewWindow = {
@@ -68,6 +72,10 @@ let visiblePicture: HTMLElement = element('video')
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
 const unstampedCmafGroups = new Set<bigint>()
+/// Subgroup objects carry an id delta, so the absolute id is rebuilt per
+/// subgroup to know which object opens a group.
+const lastObjectIds = new Map<string, bigint>()
+const LAST_OBJECT_IDS_CAPACITY = 512
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let videoWriter: WritableStreamDefaultWriter<VideoFrame> | undefined
 let audioWriter: WritableStreamDefaultWriter<AudioData> | undefined
@@ -248,9 +256,43 @@ function cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
 }
 
 function renderPackagingOptions(): void {
-  for (const option of Array.from(element<HTMLSelectElement>('packaging').options)) {
+  const select = element<HTMLSelectElement>('packaging')
+  for (const option of Array.from(select.options)) {
     option.disabled = option.value === 'cmaf' && cmafTracks.length === 0
   }
+  if (cmafTracks.length === 0) {
+    packaging = 'loc'
+    select.value = packaging
+  }
+}
+
+function wirePackaging(track: MediaCatalogTrack): WirePackaging {
+  return track.packaging === 'cmaf' || track.packaging === 'legacy' ? track.packaging : 'loc'
+}
+
+function absoluteObjectId(kind: MediaKind, groupId: bigint, object: SubgroupObject): bigint {
+  const key = `${kind}:${groupId}:${object.subgroupId ?? 0n}`
+  const previous = lastObjectIds.get(key)
+  const objectId = previous === undefined ? object.objectIdDelta : previous + object.objectIdDelta + 1n
+  if (lastObjectIds.size >= LAST_OBJECT_IDS_CAPACITY) {
+    lastObjectIds.clear()
+  }
+  lastObjectIds.set(key, objectId)
+  return objectId
+}
+
+/// hang's legacy container keeps the timestamp inside the payload; it is lifted
+/// into a LOC header so the decoders and the timeline see one shape.
+function unwrapObject(
+  packaging: WirePackaging,
+  object: SubgroupObject
+): { payload: Uint8Array; locHeader?: LocHeader } {
+  const payload = new Uint8Array(object.objectPayload)
+  const frame = packaging === 'legacy' && object.objectStatus == null ? readLegacyFrame(payload) : undefined
+  if (!frame) {
+    return { payload, locHeader: object.locHeader }
+  }
+  return { payload: frame.payload, locHeader: buildLocHeader({ captureTimestampMicros: frame.timestampMicros }) }
 }
 
 async function switchPackaging(): Promise<void> {
@@ -368,9 +410,10 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
   if (object.objectStatus != null) {
     return
   }
+  const opensGroup = absoluteObjectId(kind, groupId, object) === 0n
   if (kind === 'video') {
     videoObjectCount += 1
-    if (object.objectId === 0n) {
+    if (opensGroup) {
       observeCmafGroup(groupId)
       renderSeekbar()
     }
@@ -382,7 +425,7 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
     return
   }
   if (kind === 'video' && cmafAwaitingKeyframe) {
-    if (object.objectId !== 0n) {
+    if (!opensGroup) {
       return
     }
     cmafAwaitingKeyframe = false
@@ -444,19 +487,21 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     unstampedCmafGroups.clear()
     backToLive()
   }
+  lastObjectIds.clear()
   await unsubscribeTrack(kind)
   if (!track || !wire) {
     return
   }
 
-  if (packaging === 'loc') {
+  const wireFormat = wirePackaging(wire)
+  if (wireFormat !== 'cmaf') {
     postCatalogToDecoder(kind, track)
   }
   const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), wire.name, AUTH_INFO, {
     forward: true
   })
-  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name })
-  if (packaging === 'cmaf') {
+  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name, packaging: wireFormat })
+  if (wireFormat === 'cmaf') {
     moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) =>
       handleCmafObject(kind, wire.name, groupId, object)
     )
@@ -465,10 +510,10 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   }
   const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {
-    const payload = new Uint8Array(object.objectPayload)
+    const { payload, locHeader } = unwrapObject(wireFormat, object)
     if (kind === 'video') {
       videoObjectCount += 1
-      timeline.record(groupId, object.locHeader)
+      timeline.record(groupId, locHeader)
       renderSeekbar()
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
@@ -483,7 +528,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
           objectPayloadLength: payload.byteLength,
           objectPayload: payload,
           objectStatus: object.objectStatus,
-          locHeader: object.locHeader
+          locHeader
         }
       },
       [payload.buffer]
@@ -516,13 +561,23 @@ function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
     })
     return
   }
+  const channels = channelCount(track.channelConfig)
   audioDecoderWorker.postMessage({
     type: 'catalog',
     codec: track.codec,
     sampleRate: track.samplerate,
-    channels: channelCount(track.channelConfig),
-    descriptionBase64: track.initData
+    channels,
+    descriptionBase64: track.initData ?? synthesizedAudioConfig(track, channels)
   })
+}
+
+/// WebCodecs decodes raw AAC only with an AudioSpecificConfig; a catalog that
+/// omits `initData` still names the sample rate and channels it is made of.
+function synthesizedAudioConfig(track: MediaCatalogTrack, channels: number | undefined): string | undefined {
+  if (!track.codec?.startsWith('mp4a.40') || !track.samplerate || !channels) {
+    return undefined
+  }
+  return audioSpecificConfigBase64(track.samplerate, channels)
 }
 
 function channelCount(channelConfig?: string): number | undefined {
@@ -692,7 +747,7 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
           return
         }
         lastArrival = performance.now()
-        const frame = toReviewFrame(message)
+        const frame = toReviewFrame(message, subscription.packaging)
         if (frame) {
           frames.push(frame)
         }

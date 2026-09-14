@@ -6,7 +6,7 @@ LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)"
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb gst-moqsink-bbb test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -78,6 +78,28 @@ ffmpeg-srt-bbb: $(BBB_FILE)
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
 		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
+
+# Big Buck Bunny (c) 2008 Blender Foundation | www.bigbuckbunny.org, CC BY 3.0.
+# moq-dev's GStreamer moqsink (https://github.com/moq-dev/moq, rs/moq-gst) publishes the
+# film in hang's legacy container with an MSF catalog. Build it with
+# `cargo build -p moq-gst --release` in a clone and point MOQ_GST_PLUGIN_DIR at target/release.
+BBB_720P_URL := https://vid.moq.dev/bbb.mp4
+BBB_720P_FILE := assets/bbb/bbb-720p-aac.mp4
+MOQ_GST_PLUGIN_DIR ?= ../moq-dev/target/release
+MOQSINK_BROADCAST ?= anon/live/bbb
+
+$(BBB_720P_FILE):
+	mkdir -p $(dir $@)
+	curl -fL -o $@ $(BBB_720P_URL)
+
+gst-moqsink-bbb: $(BBB_720P_FILE)
+	@test -e $(MOQ_GST_PLUGIN_DIR)/libgstmoq.dylib -o -e $(MOQ_GST_PLUGIN_DIR)/libgstmoq.so || { \
+		echo "libgstmoq not found in $(MOQ_GST_PLUGIN_DIR): build moq-gst or set MOQ_GST_PLUGIN_DIR"; exit 1; }
+	GST_PLUGIN_PATH=$(MOQ_GST_PLUGIN_DIR) gst-launch-1.0 -e \
+		multifilesrc location=$(BBB_720P_FILE) loop=true ! parsebin name=parse \
+		parse. ! queue ! identity sync=true ! mux.sink_0 \
+		parse. ! queue ! identity sync=true ! mux.sink_1 \
+		moqsink name=mux url=https://localhost:4433 broadcast=$(MOQSINK_BROADCAST) tls-disable-verify=true
 
 # ONVIF Bridges
 onvif:

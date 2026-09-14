@@ -1,3 +1,4 @@
+import { readLegacyFrame } from '../../utils/media/hangLegacy'
 import { type LocHeader, readLocHeader } from '../../utils/media/loc'
 
 const MICROS_PER_SECOND = 1_000_000
@@ -89,6 +90,8 @@ export class GroupTimeline {
   }
 }
 
+export type WirePackaging = 'loc' | 'legacy' | 'cmaf'
+
 export type ReviewFrame = {
   groupId: bigint
   objectId: bigint
@@ -96,23 +99,25 @@ export type ReviewFrame = {
   captureMicros?: number
 }
 
-export function toReviewFrame(message: {
-  groupId: bigint
-  objectId: bigint
-  objectPayload: Uint8Array
-  locHeader?: LocHeader
-}): ReviewFrame | undefined {
+export function toReviewFrame(
+  message: {
+    groupId: bigint
+    objectId: bigint
+    objectPayload: Uint8Array
+    locHeader?: LocHeader
+  },
+  packaging: WirePackaging
+): ReviewFrame | undefined {
   const data = new Uint8Array(message.objectPayload)
   if (data.byteLength === 0) {
     return undefined
   }
-
-  return {
-    groupId: message.groupId,
-    objectId: message.objectId,
-    data,
-    captureMicros: readLocHeader(message.locHeader).captureTimestampMicros
+  const { groupId, objectId } = message
+  if (packaging === 'legacy') {
+    const frame = readLegacyFrame(data)
+    return frame && { groupId, objectId, data: frame.payload, captureMicros: frame.timestampMicros }
   }
+  return { groupId, objectId, data, captureMicros: readLocHeader(message.locHeader).captureTimestampMicros }
 }
 
 export function sortReviewFrames(frames: ReviewFrame[]): ReviewFrame[] {
