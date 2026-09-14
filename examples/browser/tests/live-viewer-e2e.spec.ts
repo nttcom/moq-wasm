@@ -122,9 +122,10 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect.poll(async () => thumbValue(viewer)).toBeLessThan(beforeBack)
 
-    // Act: ↑ を 2 回でライブ端を越える
-    await viewer.page.keyboard.press('ArrowUp')
-    await viewer.page.keyboard.press('ArrowUp')
+    // Act: ↑ でライブ端まで進む（再生位置が止まっている間もライブ端は進むので、LIVE になるまで押す）
+    for (let presses = 0; presses < 6 && (await viewer.seekPosition.innerText()) !== 'LIVE'; presses += 1) {
+      await viewer.page.keyboard.press('ArrowUp')
+    }
 
     // Assert
     await expect(viewer.seekPosition).toHaveText('LIVE')
