@@ -51,6 +51,20 @@ of an access-control stream ID (`#!::r=anon/live/test,m=publish`) or a plain
 path (`anon/live/test`). Connections without a stream ID publish under
 `anon/srt/live`. Relays only let tokenless publishers into `anon/**`.
 
+## Publish Big Buck Bunny over SRT
+
+```shell
+make ffmpeg-srt-bbb
+```
+
+The first run downloads `bbb_sunflower_1080p_30fps_normal.mp4` (263 MiB) from
+download.blender.org into `assets/bbb/`, which is git-ignored; the film is then
+looped into the same `anon/live/test` namespace as `make ffmpeg-srt`, re-encoded
+to a 2-second GOP so the viewer's seek granularity matches the test pattern.
+
+Big Buck Bunny is (c) 2008 Blender Foundation | www.bigbuckbunny.org, licensed
+under [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).
+
 ## Direct CLI Options
 
 Use `cargo run` directly when you need options that are not exposed by the Makefile helpers.
