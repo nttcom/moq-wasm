@@ -1,3 +1,8 @@
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
+
 use anyhow::{Context, Result, anyhow, ensure};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
@@ -7,11 +12,22 @@ use tokio::sync::mpsc;
 use crate::ladder::Rendition;
 
 /// Renditions key only where the source does: the encoder's own keyframe
-/// interval is pushed out of reach and a force-key-unit event is sent at each
-/// source keyframe, so every rendition group starts on the same presentation
-/// time as the source group (draft-ietf-moq-cmsf-01 §3.2).
+/// interval is pushed out of reach and a key unit is requested for the frame
+/// that carries a source keyframe's presentation time, so every rendition group
+/// starts on the same presentation time as the source group
+/// (draft-ietf-moq-cmsf-01 §3.2). The request is made from a probe on the
+/// encoder's sink pad as that frame arrives, and asks for the next frame rather
+/// than for a running time: GstVideoEncoder 1.24 matches requested running
+/// times against timestamps it has already shifted by the encoder's `min_pts`,
+/// which x264enc sets to 1000 hours, so a request for the source time is never
+/// honoured there.
 const MAX_KEYFRAME_INTERVAL_FRAMES: u32 = i32::MAX as u32;
 const INPUT_QUEUE_BYTES: u32 = 4 * 1024 * 1024;
+/// A source keyframe whose frame never reaches an encoder (dropped in decode)
+/// is forgotten once the encoder has moved this far past it.
+const KEYFRAME_TIME_WINDOW_US: u64 = 10_000_000;
+
+type KeyframeTimes = Arc<Mutex<BTreeSet<u64>>>;
 
 pub struct TranscodedEvent {
     pub rendition: usize,
@@ -34,13 +50,18 @@ pub struct Transcoder {
 #[derive(Clone)]
 pub struct TranscodeInput {
     source: AppSrc,
-    sinks: Vec<AppSink>,
+    keyframe_times: Vec<KeyframeTimes>,
 }
 
 impl TranscodeInput {
     pub fn push(&self, sample: &VideoSample) -> Result<()> {
         if sample.is_keyframe {
-            self.force_key_units(sample.pts);
+            for keyframe_times in &self.keyframe_times {
+                keyframe_times
+                    .lock()
+                    .expect("keyframe times lock")
+                    .insert(sample.pts.micros());
+            }
         }
         let mut buffer = gst::Buffer::from_slice(sample.data.clone());
         {
@@ -65,20 +86,6 @@ impl TranscodeInput {
             .map(|_| ())
             .map_err(|error| anyhow!("signal end of stream: {error:?}"))
     }
-
-    fn force_key_units(&self, presentation_time: Timestamp) {
-        let request = gst::Structure::builder("GstForceKeyUnit")
-            .field(
-                "running-time",
-                gst::ClockTime::from_useconds(presentation_time.micros()),
-            )
-            .field("all-headers", true)
-            .field("count", 0u32)
-            .build();
-        for sink in &self.sinks {
-            sink.send_event(gst::event::CustomUpstream::builder(request.clone()).build());
-        }
-    }
 }
 
 impl Transcoder {
@@ -95,7 +102,7 @@ impl Transcoder {
             .downcast::<AppSrc>()
             .map_err(|_| anyhow!("source is not an appsrc"))?;
         let (message_sender, message_receiver) = mpsc::unbounded_channel();
-        let mut sinks = Vec::with_capacity(renditions.len());
+        let mut keyframe_times = Vec::with_capacity(renditions.len());
         for index in 0..renditions.len() {
             let sink = pipeline
                 .by_name(&format!("sink{index}"))
@@ -103,7 +110,12 @@ impl Transcoder {
                 .downcast::<AppSink>()
                 .map_err(|_| anyhow!("sink{index} is not an appsink"))?;
             install_sink_callbacks(&sink, index, message_sender.clone());
-            sinks.push(sink);
+            let encoder = pipeline
+                .by_name(&format!("enc{index}"))
+                .context("missing encoder")?;
+            let times = KeyframeTimes::default();
+            install_key_unit_probe(&encoder, times.clone())?;
+            keyframe_times.push(times);
         }
         forward_bus_errors(&pipeline, message_sender)?;
         pipeline
@@ -111,7 +123,10 @@ impl Transcoder {
             .context("start transcode pipeline")?;
         Ok(Self {
             pipeline,
-            input: TranscodeInput { source, sinks },
+            input: TranscodeInput {
+                source,
+                keyframe_times,
+            },
             message_receiver,
             open_renditions: renditions.len(),
         })
@@ -156,7 +171,7 @@ fn pipeline_description(renditions: &[Rendition]) -> String {
     for (index, rendition) in renditions.iter().enumerate() {
         description.push_str(&format!(
             "split. ! queue ! videoscale ! video/x-raw,width={},height={} ! \
-             x264enc tune=zerolatency speed-preset=veryfast bitrate={} key-int-max={MAX_KEYFRAME_INTERVAL_FRAMES} ! \
+             x264enc name=enc{index} tune=zerolatency speed-preset=veryfast bitrate={} key-int-max={MAX_KEYFRAME_INTERVAL_FRAMES} ! \
              video/x-h264,profile=baseline ! h264parse config-interval=-1 ! \
              video/x-h264,stream-format=byte-stream,alignment=au ! \
              appsink name=sink{index} sync=false ",
@@ -164,6 +179,42 @@ fn pipeline_description(renditions: &[Rendition]) -> String {
         ));
     }
     description
+}
+
+fn install_key_unit_probe(encoder: &gst::Element, keyframe_times: KeyframeTimes) -> Result<()> {
+    let sink_pad = encoder
+        .static_pad("sink")
+        .context("encoder has no sink pad")?;
+    let src_pad = encoder
+        .static_pad("src")
+        .context("encoder has no src pad")?;
+    sink_pad
+        .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+            let Some(gst::PadProbeData::Buffer(buffer)) = &info.data else {
+                return gst::PadProbeReturn::Ok;
+            };
+            let Some(pts) = buffer.pts() else {
+                return gst::PadProbeReturn::Ok;
+            };
+            let pts = pts.useconds();
+            let mut times = keyframe_times.lock().expect("keyframe times lock");
+            *times = times.split_off(&pts.saturating_sub(KEYFRAME_TIME_WINDOW_US));
+            if times.remove(&pts) {
+                src_pad.send_event(force_key_unit_request());
+            }
+            gst::PadProbeReturn::Ok
+        })
+        .context("install key unit probe")?;
+    Ok(())
+}
+
+fn force_key_unit_request() -> gst::Event {
+    let request = gst::Structure::builder("GstForceKeyUnit")
+        .field("running-time", gst::ClockTime::NONE)
+        .field("all-headers", true)
+        .field("count", 0u32)
+        .build();
+    gst::event::CustomUpstream::builder(request).build()
 }
 
 fn install_sink_callbacks(
