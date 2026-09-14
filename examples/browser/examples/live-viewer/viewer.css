@@ -57,6 +57,26 @@
   background: rgba(4, 14, 14, 0.88);
 }
 
+.viewer-play {
+  width: 64px;
+  height: 64px;
+  font-size: 1.15rem;
+}
+
+.viewer-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  font-size: 0.85rem;
+}
+
+.viewer-volume input {
+  width: 90px;
+  margin: 0;
+  accent-color: #fff;
+}
+
 .viewer-overlay {
   position: absolute;
   inset: auto 0 0 0;

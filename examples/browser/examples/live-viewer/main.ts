@@ -25,6 +25,7 @@ const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const CMAF_TRACK_SUFFIX = '_cmaf'
 const REVIEW_BUFFER_AHEAD_SECONDS = 8
 const REVIEW_DRAINED_SECONDS = 0.5
+const PAUSE_POLL_MS = 100
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
@@ -81,6 +82,8 @@ let reviewAnchorMicros: number | undefined
 let reviewOriginMicros: number | undefined
 let reviewPlayheadMicros: number | undefined
 let seeking = false
+let paused = false
+let volume = 1
 const seekbar = element<HTMLInputElement>('seekbar')
 
 initializeMediaExamplePage('namespace')
@@ -92,6 +95,8 @@ element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', app
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
 element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
+element<HTMLButtonElement>('playPauseBtn').addEventListener('click', () => setPaused(!paused))
+element<HTMLInputElement>('volume').addEventListener('input', applyVolume)
 for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
   button.addEventListener('click', () => skip(Number(button.dataset.skipSeconds)))
 }
@@ -311,6 +316,7 @@ async function openLiveMse(): Promise<void> {
   const next = await MseSink.open(freeMseElement(), { video, audio: subscribedCmafSource('audio') })
   mse = next
   cmafAwaitingKeyframe = true
+  applyVolume()
   replacePicture(next.element, () => mse === next && !reviewing, previous)
 }
 
@@ -646,6 +652,7 @@ function seekToCapture(captureMicros: number): void {
   const generation = ++reviewGeneration
   reviewing = true
   reviewMseOpened = false
+  setPaused(false)
   reviewOriginMicros = target.captureMicros
   reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
   reviewPlayheadMicros = reviewAnchorMicros
@@ -788,6 +795,9 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
     if ((frame.captureMicros ?? origin) >= shownFrom) {
       await pace(frame, frames)
     }
+    while (paused && generation === reviewGeneration) {
+      await new Promise((resolve) => setTimeout(resolve, PAUSE_POLL_MS))
+    }
   }
   await decoder.flush().catch(() => undefined)
   decoder.close()
@@ -865,6 +875,7 @@ function backToLive(): void {
   reviewGeneration += 1
   reviewing = false
   seeking = false
+  setPaused(false)
   reviewAnchorMicros = undefined
   reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
@@ -872,6 +883,44 @@ function backToLive(): void {
   showPicture(livePicture())
   closeReviewMse()
   setStatusText('rewind-status', 'Live')
+}
+
+/// Pausing holds whatever is on screen; every other transition (seek, skip,
+/// live, packaging or quality change) resumes. Resuming live CMAF jumps to the
+/// end of what is buffered so the picture is live again; the LOC MediaStream
+/// has no backlog to skip.
+function setPaused(next: boolean): void {
+  paused = next
+  const button = element<HTMLButtonElement>('playPauseBtn')
+  button.textContent = paused ? '\u25B6' : '\u275A\u275A'
+  button.setAttribute('aria-label', paused ? 'Play' : 'Pause')
+  button.setAttribute('aria-pressed', String(paused))
+  for (const media of playingMedia()) {
+    if (paused) {
+      media.pause()
+    } else {
+      void media.play().catch(() => undefined)
+    }
+  }
+  const liveEnd = mse?.bufferedEnd()
+  if (!paused && !reviewing && mse && liveEnd !== undefined) {
+    mse.element.currentTime = liveEnd
+  }
+}
+
+function playingMedia(): HTMLMediaElement[] {
+  if (reviewing) {
+    return reviewMse ? [reviewMse.element] : []
+  }
+  return mse ? [mse.element] : [element<HTMLVideoElement>('video'), element<HTMLAudioElement>('audio')]
+}
+
+function applyVolume(): void {
+  volume = element<HTMLInputElement>('volume').valueAsNumber
+  element<HTMLAudioElement>('audio').volume = volume
+  if (mse) {
+    mse.element.volume = volume
+  }
 }
 
 /// Only review playback through MSE can run at another rate: live playback
