@@ -21,6 +21,9 @@ examples/browser/examples/*/dist/*
 
 bridges/live-ingest/recordings/
 
+# Sample media downloaded by `make ffmpeg-srt-bbb`
+/assets/
+
 log/*
 
 /.env

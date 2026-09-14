@@ -6,7 +6,7 @@ LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)"
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -56,6 +56,24 @@ ffmpeg-srt:
 	ffmpeg -re \
 		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
 		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
+		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
+		-g 60 -sc_threshold 0 \
+		-c:a aac -ar 48000 -ac 2 \
+		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
+
+# Big Buck Bunny (c) 2008 Blender Foundation | www.bigbuckbunny.org, CC BY 3.0.
+BBB_URL := https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_30fps_normal.mp4.zip
+BBB_FILE := assets/bbb/bbb_sunflower_1080p_30fps_normal.mp4
+
+$(BBB_FILE):
+	mkdir -p $(dir $@)
+	curl -fL -o $@.zip $(BBB_URL)
+	unzip -o -j $@.zip -d $(dir $@)
+	rm -f $@.zip
+
+ffmpeg-srt-bbb: $(BBB_FILE)
+	ffmpeg -re -stream_loop -1 -i $(BBB_FILE) \
+		-map 0:v:0 -map 0:a:0 \
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
