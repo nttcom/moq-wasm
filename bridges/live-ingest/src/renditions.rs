@@ -120,6 +120,14 @@ impl RenditionPublisher {
             }
             MediaEvent::Video(sample) => {
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
+                if sample.is_keyframe && self.alignment.aligned(sample.pts.micros()).is_none() {
+                    tracing::warn!(
+                        %track,
+                        pts_us = sample.pts.micros(),
+                        nearest_source_keyframe_us = ?self.alignment.nearest_keyframe_us(sample.pts.micros()),
+                        "rendition keyframe has no aligned source keyframe; its frames are dropped until one aligns"
+                    );
+                }
                 let group = match (
                     sample.is_keyframe,
                     self.alignment.aligned(sample.pts.micros()),

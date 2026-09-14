@@ -50,6 +50,24 @@ impl GroupAlignment {
             .get(&presentation_us)
             .copied()
     }
+
+    pub(crate) fn nearest_keyframe_us(&self, presentation_us: u64) -> Option<u64> {
+        let inner = self.inner.lock().expect("group alignment lock");
+        let before = inner
+            .by_presentation_time
+            .range(..=presentation_us)
+            .next_back()
+            .map(|(pts, _)| *pts);
+        let after = inner
+            .by_presentation_time
+            .range(presentation_us..)
+            .next()
+            .map(|(pts, _)| *pts);
+        [before, after]
+            .into_iter()
+            .flatten()
+            .min_by_key(|pts| pts.abs_diff(presentation_us))
+    }
 }
 
 #[cfg(test)]
