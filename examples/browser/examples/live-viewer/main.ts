@@ -98,8 +98,15 @@ seekbar.addEventListener('change', () => {
 })
 /// The axis spans the whole broadcast but only the replayable window can be
 /// fetched, so Home lands on that window instead of on a position the relay no
-/// longer holds.
+/// longer holds. End goes live here rather than through the browser, whose End
+/// only fires `change` when it actually moves the thumb.
 seekbar.addEventListener('keydown', (event) => {
+  if (event.key === 'End') {
+    event.preventDefault()
+    seeking = false
+    backToLive()
+    return
+  }
   if (event.key !== 'Home') {
     return
   }
