@@ -48,8 +48,8 @@ export interface LiveViewerE2ESession {
   viewer: LiveViewerPageModel
 }
 
-function buildPagePath(path: string): string {
-  const params = new URLSearchParams({ moqtUrl, trackNamespace: namespace })
+function buildPagePath(path: string, trackNamespace: string): string {
+  const params = new URLSearchParams({ moqtUrl, trackNamespace })
   return `${path}?${params.toString()}`
 }
 
@@ -89,9 +89,12 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
   }
 }
 
-export async function arrangeLiveViewerE2ESession(browser: Browser): Promise<LiveViewerE2ESession> {
+export async function arrangeLiveViewerE2ESession(
+  browser: Browser,
+  trackNamespace: string = namespace
+): Promise<LiveViewerE2ESession> {
   const context = await browser.newContext({ ignoreHTTPSErrors: true })
   const page = await context.newPage()
-  await page.goto(buildPagePath(LIVE_VIEWER_PATH), { waitUntil: 'domcontentloaded' })
+  await page.goto(buildPagePath(LIVE_VIEWER_PATH, trackNamespace), { waitUntil: 'domcontentloaded' })
   return { context, viewer: createLiveViewerPageModel(page) }
 }
