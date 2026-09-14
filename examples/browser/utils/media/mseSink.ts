@@ -31,7 +31,7 @@ export class MseSink {
   private started = false
 
   private constructor(
-    private readonly element: HTMLVideoElement,
+    readonly element: HTMLVideoElement,
     private readonly startAtSeconds: number
   ) {
     this.objectUrl = URL.createObjectURL(this.mediaSource)
@@ -45,6 +45,7 @@ export class MseSink {
         once: true
       })
       element.srcObject = null
+      element.muted = audio === undefined
       element.src = sink.objectUrl
     })
     sink.video = sink.attach(video)
@@ -70,6 +71,7 @@ export class MseSink {
   }
 
   close(): void {
+    this.element.muted = true
     this.element.removeAttribute('src')
     this.element.load()
     URL.revokeObjectURL(this.objectUrl)

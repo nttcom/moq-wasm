@@ -27,6 +27,7 @@ const REVIEW_BUFFER_AHEAD_SECONDS = 8
 const REVIEW_DRAINED_SECONDS = 0.5
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
+const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 
 type Packaging = 'loc' | 'cmaf'
 
@@ -60,7 +61,8 @@ let cmafTracks: MediaCatalogTrack[] = []
 let packaging: Packaging = 'loc'
 let mse: MseSink | undefined
 let reviewMse: MseSink | undefined
-let liveStream: MediaStream | undefined
+let reviewMseOpened = false
+let visiblePicture: HTMLElement = element('video')
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
@@ -84,8 +86,8 @@ const seekbar = element<HTMLInputElement>('seekbar')
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
-element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video'))
-element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio'))
+element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video').then(openLiveMse))
+element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio').then(openLiveMse))
 element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
 element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
@@ -157,6 +159,7 @@ async function stopStream(): Promise<void> {
   mediaTimelineTrackName = undefined
   backToLive()
   closeMse()
+  showPicture(element<HTMLVideoElement>('video'))
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
@@ -250,16 +253,16 @@ async function switchPackaging(): Promise<void> {
   if (selected === packaging) {
     return
   }
-  closeMse()
   packaging = selected
-  if (packaging === 'loc') {
-    const video = element<HTMLVideoElement>('video')
-    video.removeAttribute('src')
-    video.srcObject = liveStream ?? null
-  }
   await resubscribe('video')
   await resubscribe('audio')
-  await openLiveMse()
+  if (packaging === 'cmaf') {
+    await openLiveMse()
+  } else {
+    const previous = mse
+    mse = undefined
+    replacePicture(element<HTMLVideoElement>('video'), () => packaging === 'loc' && !reviewing, previous)
+  }
   appendLog('info', `packaging switched to ${packaging}`)
 }
 
@@ -300,24 +303,59 @@ async function openLiveMse(): Promise<void> {
   if (packaging !== 'cmaf') {
     return
   }
-  closeMse()
   const video = subscribedCmafSource('video')
   if (!video) {
     return
   }
-  const audio = subscribedCmafSource('audio')
-  mse = await MseSink.open(element<HTMLVideoElement>('video'), { video, audio })
+  const previous = mse
+  const next = await MseSink.open(freeMseElement(), { video, audio: subscribedCmafSource('audio') })
+  mse = next
   cmafAwaitingKeyframe = true
-  element<HTMLVideoElement>('video').muted = audio === undefined
+  replacePicture(next.element, () => mse === next && !reviewing, previous)
 }
 
-/// LOC audio plays through the separate `<audio>` element, so the video element
-/// is only unmuted while a MediaSource carries the audio track.
 function closeMse(): void {
   mse?.close()
   mse = undefined
   cmafAwaitingKeyframe = true
-  element<HTMLVideoElement>('video').muted = true
+}
+
+/// One picture is on screen at a time. A picture that has yet to present a
+/// frame stays hidden and whatever is on screen stays until it does, so a
+/// change of packaging, quality or position never shows an empty element.
+function showPicture(next: HTMLElement): void {
+  if (next === visiblePicture) {
+    return
+  }
+  visiblePicture.hidden = true
+  next.hidden = false
+  visiblePicture = next
+}
+
+/// The sink being replaced is closed as soon as it is off screen; while it is
+/// on screen it plays on until the replacement has presented a frame.
+function replacePicture(next: HTMLVideoElement, stillWanted: () => boolean, previous: MseSink | undefined): void {
+  if (previous && previous.element !== visiblePicture) {
+    previous.close()
+  }
+  next.requestVideoFrameCallback(() => {
+    previous?.close()
+    if (stillWanted()) {
+      showPicture(next)
+    }
+  })
+}
+
+function livePicture(): HTMLElement {
+  return mse?.element ?? element<HTMLVideoElement>('video')
+}
+
+function freeMseElement(): HTMLVideoElement {
+  const free = MSE_ELEMENT_IDS.map((id) => element<HTMLVideoElement>(id)).find((video) => !video.getAttribute('src'))
+  if (!free) {
+    throw new Error('every MediaSource element is in use')
+  }
+  return free
 }
 
 function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: SubgroupObject): void {
@@ -507,8 +545,7 @@ function startRendering(): void {
   const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
   videoWriter = videoGenerator.writable.getWriter()
   audioWriter = audioGenerator.writable.getWriter()
-  liveStream = new MediaStream([videoGenerator])
-  element<HTMLVideoElement>('video').srcObject = liveStream
+  element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
   element<HTMLAudioElement>('audio').srcObject = new MediaStream([audioGenerator])
 
   videoDecoderWorker.onmessage = async (event) => {
@@ -608,7 +645,7 @@ function seekToCapture(captureMicros: number): void {
 
   const generation = ++reviewGeneration
   reviewing = true
-  closeReviewMse()
+  reviewMseOpened = false
   reviewOriginMicros = target.captureMicros
   reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
   reviewPlayheadMicros = reviewAnchorMicros
@@ -717,8 +754,6 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
     return false
   }
 
-  element<HTMLVideoElement>('video').hidden = true
-  canvas.hidden = false
   const origin = frames[0].captureMicros ?? reviewOriginMicros ?? 0
   const shownFrom = reviewAnchorMicros ?? origin
   const decoder = new VideoDecoder({
@@ -731,6 +766,7 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
       canvas.width = frame.displayWidth
       canvas.height = frame.displayHeight
       context.drawImage(frame, 0, 0)
+      showPicture(canvas)
       advanceReviewPlayhead(captureMicros)
       frame.close()
     },
@@ -758,13 +794,12 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
   return true
 }
 
-/// Fetched fragments are appended to a MediaSource on the review element while
-/// the live one keeps playing hidden, so going back to live only swaps the
-/// elements. The next window is fetched once playback has caught up to within
-/// a few seconds of what is buffered.
+/// Fetched fragments are appended to a MediaSource on its own element while the
+/// live one keeps playing hidden, so going back to live only swaps elements.
+/// The next window is fetched once playback has caught up to within a few
+/// seconds of what is buffered.
 async function playReviewMse(frames: ReviewFrame[], generation: number): Promise<boolean> {
-  const video = element<HTMLVideoElement>('review-video')
-  if (!reviewMse) {
+  if (!reviewMseOpened) {
     const source = subscribedCmafSource('video')
     if (!source) {
       setStatusText('rewind-status', 'Rewind unavailable: the CMAF track has no init segment')
@@ -772,24 +807,27 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
     }
     const origin = reviewOriginMicros ?? 0
     const startAtSeconds = ((reviewAnchorMicros ?? origin) - origin) / MICROS_PER_SECOND
-    reviewMse = await MseSink.open(video, { video: source, startAtSeconds })
-    element<HTMLVideoElement>('video').hidden = true
-    video.hidden = false
+    const previous = reviewMse
+    const next = await MseSink.open(freeMseElement(), { video: source, startAtSeconds })
+    reviewMse = next
+    reviewMseOpened = true
     applyPlaybackSpeed()
-    video.addEventListener('timeupdate', () => {
+    replacePicture(next.element, () => generation === reviewGeneration, previous)
+    next.element.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
-        advanceReviewPlayhead(origin + video.currentTime * MICROS_PER_SECOND)
+        advanceReviewPlayhead(origin + next.element.currentTime * MICROS_PER_SECOND)
       }
     })
   }
-  if (generation !== reviewGeneration || !reviewMse) {
+  const sink = reviewMse
+  if (generation !== reviewGeneration || !sink) {
     return false
   }
   for (const frame of frames) {
-    reviewMse.appendVideo(frame.data)
+    sink.appendVideo(frame.data)
   }
   while (generation === reviewGeneration) {
-    const ahead = (reviewMse.bufferedEnd() ?? 0) - video.currentTime
+    const ahead = (sink.bufferedEnd() ?? 0) - sink.element.currentTime
     if (ahead < REVIEW_BUFFER_AHEAD_SECONDS) {
       break
     }
@@ -801,6 +839,7 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
 function closeReviewMse(): void {
   reviewMse?.close()
   reviewMse = undefined
+  reviewMseOpened = false
 }
 
 function pendingReviewConfig(): VideoDecoderConfig | undefined {
@@ -830,10 +869,8 @@ function backToLive(): void {
   reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
   renderSeekbar()
+  showPicture(livePicture())
   closeReviewMse()
-  element<HTMLCanvasElement>('review').hidden = true
-  element<HTMLVideoElement>('review-video').hidden = true
-  element<HTMLVideoElement>('video').hidden = false
   setStatusText('rewind-status', 'Live')
 }
 
@@ -846,8 +883,9 @@ function speedAdjustable(): boolean {
 }
 
 function reviewBufferDrained(): boolean {
-  const video = element<HTMLVideoElement>('review-video')
-  return (reviewMse?.bufferedEnd() ?? 0) - video.currentTime < REVIEW_DRAINED_SECONDS
+  return (
+    reviewMse !== undefined && (reviewMse.bufferedEnd() ?? 0) - reviewMse.element.currentTime < REVIEW_DRAINED_SECONDS
+  )
 }
 
 function playbackSpeed(): number {
@@ -856,8 +894,8 @@ function playbackSpeed(): number {
 
 function applyPlaybackSpeed(): void {
   element<HTMLSelectElement>('speed').disabled = !speedAdjustable()
-  if (speedAdjustable()) {
-    element<HTMLVideoElement>('review-video').playbackRate = playbackSpeed()
+  if (speedAdjustable() && reviewMse) {
+    reviewMse.element.playbackRate = playbackSpeed()
   }
 }
 
