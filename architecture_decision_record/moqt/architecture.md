@@ -192,10 +192,21 @@ paths:
 
 Messages the crate can decode but not yet act on (GOAWAY, MAX_REQUEST_ID,
 REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
-PUBLISH_NAMESPACE_CANCEL, TRACK_STATUS) still take path 1, so the application
-sees them instead of the session dying. TRACK_STATUS carries a `ResponseGuard`,
-so an application that ignores the event answers TRACK_STATUS_ERROR
-NOT_SUPPORTED automatically.
+PUBLISH_NAMESPACE_CANCEL) still take path 1, so the application sees them
+instead of the session dying.
+
+TRACK_STATUS is a request whose format is that of SUBSCRIBE (§9.20).
+`Subscriber::track_status(namespace, name, authorization_tokens)` sends it and
+returns the TRACK_STATUS_OK it awaits on path 2 (TRACK_STATUS_ERROR becomes a
+`RequestError`); a late TRACK_STATUS_OK
+is discarded because the request creates no state. The receiving side gets
+`SessionEvent::TrackStatus(TrackStatusHandler)` with the request's
+AUTHORIZATION TOKEN parameters exposed. `TrackStatusHandler::ok()` does not
+report the track's status: it always sends Track Alias 0 (§9.21) with Content
+Exists false, which is enough for the relay's use of TRACK_STATUS as the
+carrier for an authorization token refresh. The handler carries a
+`ResponseGuard`, so an application that ignores the event answers
+TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 ## Data plane (`modules/moqt/data_plane`)
 

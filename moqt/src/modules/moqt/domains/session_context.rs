@@ -342,10 +342,11 @@ impl<T: TransportProtocol> SessionContext<T> {
                 }
                 _ => self.close_on_mismatched_late_response(request_id, &response),
             },
-            // Late error responses, and late FETCH_OK / PUBLISH_OK for
-            // requests registered with `Discard`. FETCH_OK / PUBLISH_OK for
-            // a request of another kind is not detected here: `Discard` does
-            // not record which request kind it was registered for.
+            // Late error responses, and late FETCH_OK / PUBLISH_OK /
+            // TRACK_STATUS_OK for requests registered with `Discard`. A
+            // success response of those kinds for a request of another kind is
+            // not detected here: `Discard` does not record which request kind
+            // it was registered for.
             _ => Self::discard_late_response(request_id, &response),
         };
         if let Err(error) = send_result {

@@ -4,16 +4,17 @@ use anyhow::bail;
 use tracing::Instrument;
 
 use crate::{
-    DatagramReceiver, FetchOption, Location, SubscribeOption, SubscriberInitiatedSubscription,
-    Subscription,
+    DatagramReceiver, FetchOption, FilterType, GroupOrder, Location, SubscribeOption,
+    SubscriberInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
                     fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel,
-                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
-                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
+                    parameters::authorization_token::AuthorizationToken, subscribe::Subscribe,
+                    subscribe_namespace::SubscribeNamespace, unsubscribe::Unsubscribe,
+                    unsubscribe_namespace::UnsubscribeNamespace,
                 },
             },
             enums::ResponseMessage,
@@ -29,7 +30,7 @@ use crate::{
         protocol::TransportProtocol,
         runtime::dispatch::incoming_object::IncomingObject,
     },
-    wire::RequestError,
+    wire::{RequestError, TrackStatusOk},
 };
 
 pub enum DataReceiver<T: TransportProtocol> {
@@ -165,6 +166,61 @@ impl<T: TransportProtocol> Subscriber<T> {
             }
             ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe error");
+                Err(RequestError {
+                    request_id,
+                    error_code,
+                    reason_phrase,
+                }
+                .into())
+            }
+            _ => bail!("Protocol violation"),
+        }
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.track_status",
+        skip_all,
+        fields(track_namespace = %track_namespace, track_name = %track_name)
+    )]
+    pub async fn track_status(
+        &self,
+        track_namespace: String,
+        track_name: String,
+        authorization_tokens: Vec<AuthorizationToken>,
+    ) -> anyhow::Result<TrackStatusOk> {
+        let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
+        let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
+        let request_id = self.session.get_request_id();
+        let _registered_sender =
+            self.session
+                .register_response_sender(request_id, sender, LateResponseAction::Discard);
+        let track_status = Subscribe {
+            request_id,
+            track_namespace: vec_namespace,
+            track_name,
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: false,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens,
+            delivery_timeout: None,
+        };
+        self.session
+            .send_stream
+            .send(ControlMessageType::TrackStatus, track_status.encode())
+            .await?;
+        let response = self.session.await_response(receiver).await?;
+        match response {
+            ResponseMessage::TrackStatusOk(message) => {
+                if request_id != message.request_id {
+                    bail!("Protocol violation")
+                }
+                tracing::info!("Track status ok");
+                Ok(message)
+            }
+            ResponseMessage::TrackStatusError(request_id, error_code, reason_phrase) => {
+                tracing::info!("Track status error");
                 Err(RequestError {
                     request_id,
                     error_code,
