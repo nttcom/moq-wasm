@@ -19,11 +19,14 @@ SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackName
 
 ## 巻き戻し
 
-`-10s` / `-30s` は relay のキャッシュに残っている group を FETCH で取り出し、review canvas に
-capture timestamp のとおりのペースで再生します。`Back to live` でライブ表示へ戻ります。
+映像にカーソルを合わせると中央に `↺5` `↺1` `1↻` `5↻` が出ます。キーボードでは ← / → が 1 秒、
+↓ / ↑ が 5 秒です。どれも relay のキャッシュに残っている group を FETCH で取り出し、review canvas に
+capture timestamp のとおりのペースで再生します。`LIVE` でライブ表示へ戻ります。
 
-- 何秒戻るかは、ライブ再生中に観測した capture timestamp から求めます。bridge は group id を
+- 位置は、ライブ再生中に観測した capture timestamp から求めます。bridge は group id を
   壁時計で採番し、group はエンコーダの keyframe ごとに切り替わるため、group id の差は秒数になりません。
+- 目標位置を含む閉じた keyframe group から FETCH し、目標より前のフレームはペースをかけずにデコード
+  だけして、目標以降のフレームから描画します。MSE では同じ分だけ `currentTime` を進めて再生を始めます。
 - 取得範囲は publisher が書き込みを終えた group までに制限します。開いている group に伸ばすと
   relay のキャッシュを外れて上流へ転送され、FETCH を提供しない bridge が `NOT_SUPPORTED` を返します。
 - relay のキャッシュ保持は既定 30 秒（`RELAY_CACHE_TTL_SECS`）です。それより前へは戻れません。
@@ -73,10 +76,11 @@ is on by default).
 
 ## Player controls
 
-The seek bar, the rewind buttons and the quality menu sit on the video itself
-rather than in their own cards. The gear opens the video and audio track
-selection along with the jitter buffer switch, and closes on a second click, on
-Escape, or on a click outside it.
+The seek bar, the skip buttons and the quality menu sit on the video itself
+rather than in their own cards. The skip buttons appear while the pointer is over
+the picture. The gear opens the video and audio track selection along with the
+jitter buffer switch, and closes on a second click, on Escape, or on a click
+outside it.
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the
@@ -96,9 +100,10 @@ and a fill from it carries the movement, because the decoder emits frames in
 bursts and a thumb that followed each one read as jitter. The fill and the
 readouts step a second at a time for the same reason.
 
-The position label shows seconds behind live and follows review playback. Seeking
-starts at the preceding closed keyframe group and uses the same bounded FETCH
-replay as the rewind buttons.
+The position label shows seconds behind live and follows review playback. A seek
+decodes from the preceding closed keyframe group, shows frames from the chosen
+position on, and continues with the same bounded FETCH replay as the skip
+buttons.
 
 Review playback does not stop at the end of the fetched window: the next
 bounded FETCH is issued while the current window plays, so playback keeps
