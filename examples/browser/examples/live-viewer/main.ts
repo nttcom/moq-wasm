@@ -642,6 +642,7 @@ function seekToCapture(captureMicros: number): void {
   reviewOriginMicros = target.captureMicros
   reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
   reviewPlayheadMicros = reviewAnchorMicros
+  applyVolume()
   renderSeekbar()
   setStatusText('playback-status', 'Reviewing')
   void review(target.groupId, generation)
@@ -865,6 +866,7 @@ function backToLive(): void {
   reviewAnchorMicros = undefined
   reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
+  applyVolume()
   renderSeekbar()
   showPicture(livePicture())
   closeReviewMse()
@@ -904,9 +906,12 @@ function playingMedia(): HTMLMediaElement[] {
   return mse ? [mse.element] : [element<HTMLVideoElement>('video')]
 }
 
+/// Review shows the past while the live sound would run on underneath it, so
+/// the live audio is silenced rather than stopped: it stays in step and is
+/// heard again the moment playback returns to live.
 function applyVolume(): void {
   volume = element<HTMLInputElement>('volume').valueAsNumber
-  livePlayout.setVolume(volume)
+  livePlayout.setVolume(reviewing ? 0 : volume)
   if (mse) {
     mse.element.volume = volume
   }

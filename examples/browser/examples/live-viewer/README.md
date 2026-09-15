@@ -67,7 +67,7 @@ packaging or quality change — takes its own video element from a small pool, a
 a new picture is shown only once it has presented a frame while the previous one
 stays on screen until then; the live picture keeps decoding hidden behind a
 review, so `LIVE` swaps back at once. Review plays video only in either mode;
-live audio keeps playing underneath it.
+the live audio is silenced while reviewing and heard again on `LIVE`.
 
 ## Audio / video synchronisation
 
