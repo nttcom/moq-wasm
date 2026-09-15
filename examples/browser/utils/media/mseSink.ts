@@ -70,6 +70,11 @@ export class MseSink {
     return buffered && buffered.length > 0 ? buffered.end(buffered.length - 1) : undefined
   }
 
+  secondsFromBufferStart(): number {
+    const buffered = this.video?.sourceBuffer.buffered
+    return buffered && buffered.length > 0 ? this.element.currentTime - buffered.start(0) : 0
+  }
+
   close(): void {
     this.element.muted = true
     this.element.removeAttribute('src')
@@ -79,7 +84,6 @@ export class MseSink {
 
   private attach(source: MseTrackSource): Buffered {
     const sourceBuffer = this.mediaSource.addSourceBuffer(source.mimeType)
-    sourceBuffer.mode = 'sequence'
     const buffered: Buffered = { sourceBuffer, queue: [] }
     sourceBuffer.addEventListener('updateend', () => {
       this.startWhenBuffered()

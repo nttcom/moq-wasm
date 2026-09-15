@@ -825,7 +825,7 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
     replacePicture(next.element, () => generation === reviewGeneration, previous)
     next.element.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
-        advanceReviewPlayhead(origin + next.element.currentTime * MICROS_PER_SECOND)
+        advanceReviewPlayhead(origin + next.secondsFromBufferStart() * MICROS_PER_SECOND)
       }
     })
   }
