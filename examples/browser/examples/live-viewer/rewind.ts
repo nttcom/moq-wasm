@@ -13,11 +13,16 @@ export type GroupMark = {
 /// timestamps observed while playing live instead of from group arithmetic.
 export class GroupTimeline {
   private readonly marks: GroupMark[] = []
+  /// A SUBSCRIBE lands in the middle of the group the publisher is writing, and
+  /// the relay starts caching a track only once it has a subscriber, so this
+  /// group holds no keyframe for a FETCH replay to start from.
+  private joinGroupId: bigint | undefined
 
   constructor(private readonly capacity: number) {}
 
   record(groupId: bigint, locHeader?: LocHeader): void {
-    if (this.marks.some((mark) => mark.groupId === groupId)) {
+    this.joinGroupId ??= groupId
+    if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
       return
     }
 
@@ -35,6 +40,7 @@ export class GroupTimeline {
 
   reset(): void {
     this.marks.length = 0
+    this.joinGroupId = undefined
   }
 
   get latest(): GroupMark | undefined {
