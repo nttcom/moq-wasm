@@ -65,8 +65,11 @@ The speed control next to the rewind buttons offers 0.5x, 1x, 1.25x, 1.5x and
 2x. It is enabled only while reviewing in CMAF mode, where the fetched fragments
 play through a MediaSource and the element's `playbackRate` applies; live
 playback has to keep pace with the publisher and the WebCodecs path paces
-frames itself. Returning to live resets the rate to 1x. Audio, once review
-carries it, is time-stretched by the browser (`preservesPitch` is on by default).
+frames itself. Returning to live resets the rate to 1x, and review that runs
+faster than real time returns to live by itself once it has caught up with the
+live edge, instead of stalling on every group the publisher has yet to close.
+Audio, once review carries it, is time-stretched by the browser (`preservesPitch`
+is on by default).
 
 ## Player controls
 
