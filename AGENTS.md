@@ -21,6 +21,7 @@ Application and integration components (draft reference is normally not required
 | Component | Description |
 | --- | --- |
 | `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser |
+| `bindings/python` | Python (asyncio) bindings to use `moqt` from Python, built with PyO3 and maturin |
 | `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/vts` | Verify Token Service (Node.js): verifies client JWTs for the relay over HTTP |

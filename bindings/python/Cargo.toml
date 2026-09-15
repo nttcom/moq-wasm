@@ -1,0 +1,25 @@
+[package]
+name = "moqt-python"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "moqt"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[build-dependencies]
+pyo3-build-config = "0.29"
+
+[dependencies]
+anyhow = { version = "1.0.102", features = ["backtrace"] }
+bytes = "1"
+moqt = { path = "../../moqt" }
+pyo3 = { version = "0.29", features = ["abi3-py310", "anyhow"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
+tokio = { version = "1.52.3", features = ["full"] }
