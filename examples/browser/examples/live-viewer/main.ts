@@ -11,6 +11,7 @@ import {
 import { base64ToUint8Array } from '../../utils/media/base64'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
+import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 
@@ -55,6 +56,8 @@ const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoD
 const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
   type: 'module'
 })
+const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
+const livePlayout = new LivePlayout(videoGenerator.writable.getWriter(), updateVideoStats)
 
 let videoTracks: MediaCatalogTrack[] = []
 let audioTracks: MediaCatalogTrack[] = []
@@ -69,8 +72,6 @@ let visiblePicture: HTMLElement = element('video')
 let cmafAwaitingKeyframe = true
 const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
-let videoWriter: WritableStreamDefaultWriter<VideoFrame> | undefined
-let audioWriter: WritableStreamDefaultWriter<AudioData> | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
@@ -91,7 +92,6 @@ element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watc
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
 element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video').then(openLiveMse))
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio').then(openLiveMse))
-element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
 element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
@@ -164,6 +164,7 @@ async function stopStream(): Promise<void> {
   mediaTimelineTrackName = undefined
   backToLive()
   closeMse()
+  livePlayout.reset()
   showPicture(element<HTMLVideoElement>('video'))
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
@@ -536,61 +537,46 @@ function channelCount(channelConfig?: string): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed
 }
 
+/// The decoders hand every sample over as soon as it is decoded; the live
+/// playout paces them on one clock so that audio and video stay together.
 function applyDecoderConfig(): void {
-  const config = {
-    telemetryEnabled: true,
-    bypassJitterBuffer: element<HTMLInputElement>('bypass-jitter-buffer').checked
-  }
+  const config = { telemetryEnabled: true, bypassJitterBuffer: true }
   videoDecoderWorker.postMessage({ type: 'config', config })
   audioDecoderWorker.postMessage({ type: 'config', config })
 }
 
 function startRendering(): void {
   applyDecoderConfig()
-  const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-  const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
-  videoWriter = videoGenerator.writable.getWriter()
-  audioWriter = audioGenerator.writable.getWriter()
   element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
-  element<HTMLAudioElement>('audio').srcObject = new MediaStream([audioGenerator])
 
-  videoDecoderWorker.onmessage = async (event) => {
+  videoDecoderWorker.onmessage = (event) => {
     if (event.data.type === 'bitrate') {
       receivedKbps = event.data.kbps ?? receivedKbps
       return
     }
-    if (event.data.type !== 'frame') {
-      return
+    if (event.data.type === 'frame') {
+      livePlayout.presentVideo(event.data.frame as VideoFrame)
     }
-    const frame = event.data.frame as VideoFrame
-    updateVideoStats(frame)
-    if (!videoWriter || videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
-      frame.close()
-      return
-    }
-    await videoWriter.ready
-    await videoWriter.write(frame)
-    frame.close()
   }
 
-  audioDecoderWorker.onmessage = async (event) => {
-    if (event.data.type !== 'audioData') {
-      return
+  audioDecoderWorker.onmessage = (event) => {
+    if (event.data.type === 'audioData') {
+      livePlayout.playAudio(event.data.audioData as AudioData, event.data.captureTimestampMicros as number | undefined)
     }
-    const audioData = event.data.audioData as AudioData
-    if (!audioWriter) {
-      audioData.close()
-      return
-    }
-    await audioWriter.ready
-    await audioWriter.write(audioData)
-    audioData.close()
   }
 }
 
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())}`
+}
+
+function formatSyncOffset(offsetMs: number | undefined): string {
+  if (offsetMs === undefined) {
+    return '--'
+  }
+  const rounded = Math.round(offsetMs)
+  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
 }
 
 function trackNamespace(): string[] {
@@ -902,6 +888,9 @@ function setPaused(next: boolean): void {
       void media.play().catch(() => undefined)
     }
   }
+  if (!reviewing && !mse) {
+    livePlayout.setPaused(paused)
+  }
   const liveEnd = mse?.bufferedEnd()
   if (!paused && !reviewing && mse && liveEnd !== undefined) {
     mse.element.currentTime = liveEnd
@@ -912,12 +901,12 @@ function playingMedia(): HTMLMediaElement[] {
   if (reviewing) {
     return reviewMse ? [reviewMse.element] : []
   }
-  return mse ? [mse.element] : [element<HTMLVideoElement>('video'), element<HTMLAudioElement>('audio')]
+  return mse ? [mse.element] : [element<HTMLVideoElement>('video')]
 }
 
 function applyVolume(): void {
   volume = element<HTMLInputElement>('volume').valueAsNumber
-  element<HTMLAudioElement>('audio').volume = volume
+  livePlayout.setVolume(volume)
   if (mse) {
     mse.element.volume = volume
   }

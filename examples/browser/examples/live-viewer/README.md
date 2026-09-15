@@ -69,6 +69,25 @@ stays on screen until then; the live picture keeps decoding hidden behind a
 review, so `LIVE` swaps back at once. Review plays video only in either mode;
 live audio keeps playing underneath it.
 
+## Audio / video synchronisation
+
+In LOC mode the two decoder workers hand every sample over as soon as it is
+decoded, and one playout clock decides when each is presented. The clock maps
+the LOC capture timestamps, which the bridge stamps on the same wall clock for
+every track, onto the local clock: the first sample is anchored 200 ms after it
+arrives and that delay is the jitter budget. Video frames are held until they
+are due and then written to the MediaStream the video element shows; audio is
+scheduled on an `AudioContext`, which starts each chunk at a sample-accurate
+time with the output latency taken off. A sample that misses its time is
+presented at once and pushes the anchor back by the miss, so the samples behind
+it stay contiguous; a sample due more than 200 ms past the budget re-anchors so
+the extra latency is shed. The stats line shows the offset between the picture
+on screen and the sound as `A/V +N ms`.
+
+In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
+which the bridge writes on one timeline for both tracks, so the SourceBuffers
+append in the default segments mode rather than back to back.
+
 ## Playback speed
 
 The speed control next to the rewind buttons offers 0.5x, 1x, 1.25x, 1.5x and
@@ -85,15 +104,15 @@ is on by default).
 
 The seek bar, the skip buttons and the quality menu sit on the video itself
 rather than in their own cards. The skip buttons appear while the pointer is over
-the picture. The gear opens the video and audio track selection along with the
-jitter buffer switch, and closes on a second click, on Escape, or on a click
+the picture. The gear opens the video and audio track selection and the
+packaging choice, and closes on a second click, on Escape, or on a click
 outside it.
 
 The centre button pauses and resumes whatever is on screen. Every other
 transition — seek, skip, `LIVE`, a packaging or quality change — resumes, and
 resuming live CMAF jumps to the end of what is buffered so the picture is live
 again. The volume slider next to the speed control drives the live audio output
-(`<audio>` for LOC, the MediaSource element for CMAF).
+(the `AudioContext` gain for LOC, the MediaSource element for CMAF).
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the

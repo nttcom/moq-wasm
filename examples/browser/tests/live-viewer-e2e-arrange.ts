@@ -23,7 +23,7 @@ export interface LiveViewerPageModel {
   skipForward1Button: Locator
   playPauseButton: Locator
   volumeSlider: Locator
-  audio: Locator
+  videoStats: Locator
   liveButton: Locator
   rewindStatus: Locator
   rewindBuffer: Locator
@@ -68,7 +68,7 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     skipForward1Button: page.getByTestId('live-viewer-skip-forward-1-button'),
     playPauseButton: page.getByTestId('live-viewer-play-pause-button'),
     volumeSlider: page.getByTestId('live-viewer-volume'),
-    audio: page.getByTestId('live-viewer-audio'),
+    videoStats: page.getByTestId('live-viewer-video-stats'),
     liveButton: page.getByTestId('live-viewer-live-button'),
     rewindStatus: page.getByTestId('live-viewer-rewind-status'),
     rewindBuffer: page.getByTestId('live-viewer-rewind-buffer'),
