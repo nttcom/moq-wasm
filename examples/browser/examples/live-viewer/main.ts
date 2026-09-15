@@ -18,6 +18,7 @@ const TIMELINE_CAPACITY = 64
 const REWIND_GROUP_COUNT = 4n
 const FETCH_IDLE_MS = 400
 const FETCH_DEADLINE_MS = 8_000
+const CLOSED_GROUP_POLL_MS = 200
 
 type MediaKind = 'video' | 'audio'
 
@@ -25,6 +26,12 @@ type TrackSubscription = {
   requestId: bigint
   trackAlias: bigint
   name: string
+}
+
+type ReviewWindow = {
+  start: bigint
+  nextGroup: bigint
+  frames: ReviewFrame[]
 }
 
 const moqtClient = new MoqtClientWrapper()
@@ -390,30 +397,45 @@ function element<T extends HTMLElement>(id: string): T {
 }
 
 async function rewind(seconds: number): Promise<void> {
-  const subscription = subscriptions.get('video')
   const target = timeline.resolveRewindTarget(seconds)
-  const newestClosed = timeline.newestClosed
-  if (!subscription || !target || !newestClosed) {
+  if (!target) {
     setStatusText('rewind-status', 'Rewind unavailable: nothing buffered yet')
     return
   }
-
-  const endGroup =
-    target.groupId + REWIND_GROUP_COUNT < newestClosed.groupId
-      ? target.groupId + REWIND_GROUP_COUNT
-      : newestClosed.groupId
 
   const generation = ++reviewGeneration
   reviewing = true
   reviewCaptureMicros = target.captureMicros
   renderSeekbar()
-  const behind = timeline.secondsBehindLive(target.groupId)
-  setStatusText('rewind-status', `Rewound ${behind.toFixed(1)}s`)
   setStatusText('playback-status', 'Reviewing')
+  await review(target.groupId, generation)
+}
+
+/// Review playback is paced by capture timestamps, so it trails the live edge
+/// until the viewer asks to go back. The FETCH for the next window is issued
+/// while the current one plays, so a window boundary does not stall on the
+/// request.
+async function review(startGroup: bigint, generation: number): Promise<void> {
+  let pending = await fetchReviewWindow(startGroup, generation)
+  while (pending && generation === reviewGeneration) {
+    const upcoming = fetchReviewWindow(pending.nextGroup, generation)
+    setStatusText('rewind-status', `Rewound ${timeline.secondsBehindLive(pending.start).toFixed(1)}s`)
+    const played = await playReview(sortReviewFrames(pending.frames), generation)
+    pending = played ? await upcoming : undefined
+  }
+}
+
+async function fetchReviewWindow(start: bigint, generation: number): Promise<ReviewWindow | undefined> {
+  const end = await awaitClosedWindowEnd(start, generation)
+  const subscription = subscriptions.get('video')
+  if (end === undefined || !subscription) {
+    return undefined
+  }
+
   const frames: ReviewFrame[] = []
   let lastArrival = performance.now()
   try {
-    await moqtClient.fetch(trackNamespace(), subscription.name, target.groupId, 0n, endGroup, 0n, {
+    await moqtClient.fetch(trackNamespace(), subscription.name, start, 0n, end, 0n, {
       onObject: (message) => {
         if (generation !== reviewGeneration) {
           return
@@ -426,21 +448,38 @@ async function rewind(seconds: number): Promise<void> {
       }
     })
   } catch (error) {
-    if (generation !== reviewGeneration) {
-      return
+    if (generation === reviewGeneration) {
+      setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
+      appendLog('error', `fetch: ${getErrorMessage(error)}`)
     }
-    setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
-    appendLog('error', `fetch: ${getErrorMessage(error)}`)
-    return
+    return undefined
   }
 
   await waitForFetchIdle(() => lastArrival, generation)
-
   if (generation !== reviewGeneration) {
-    return
+    return undefined
   }
-  appendLog('info', `fetched ${frames.length} objects from group ${target.groupId}`)
-  await playReview(sortReviewFrames(frames), generation)
+  if (frames.length === 0) {
+    setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
+    return undefined
+  }
+  appendLog('info', `fetched ${frames.length} objects from group ${start}`)
+  return { start, nextGroup: end + 1n, frames }
+}
+
+/// The live edge group is still open and a FETCH that reaches into it escapes
+/// the relay cache, so a window can only end at the newest closed group. Once
+/// playback has consumed those, wait for the publisher to close another one.
+async function awaitClosedWindowEnd(start: bigint, generation: number): Promise<bigint | undefined> {
+  while (generation === reviewGeneration) {
+    const newestClosed = timeline.newestClosed
+    if (newestClosed && start <= newestClosed.groupId) {
+      const bounded = start + REWIND_GROUP_COUNT
+      return bounded < newestClosed.groupId ? bounded : newestClosed.groupId
+    }
+    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
+  }
+  return undefined
 }
 
 /// FETCH_OK only acknowledges the request. The objects follow on their own
@@ -456,13 +495,13 @@ async function waitForFetchIdle(lastArrival: () => number, generation: number): 
   }
 }
 
-async function playReview(frames: ReviewFrame[], generation: number): Promise<void> {
+async function playReview(frames: ReviewFrame[], generation: number): Promise<boolean> {
   const canvas = element<HTMLCanvasElement>('review')
   const context = canvas.getContext('2d')
   const config = pendingReviewConfig()
-  if (frames.length === 0 || !context || !config) {
-    setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
-    return
+  if (!context || !config) {
+    setStatusText('rewind-status', 'Rewind unavailable: the video track has no codec')
+    return false
   }
 
   element<HTMLVideoElement>('video').hidden = true
@@ -500,9 +539,7 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<vo
   }
   await decoder.flush().catch(() => undefined)
   decoder.close()
-  if (generation === reviewGeneration) {
-    setStatusText('rewind-status', 'Rewind finished')
-  }
+  return true
 }
 
 function pendingReviewConfig(): VideoDecoderConfig | undefined {

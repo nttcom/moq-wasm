@@ -53,6 +53,12 @@ oldest observed group and End returns to live. The position label shows seconds
 behind live and follows review playback. Seeking starts at the preceding closed
 keyframe group and uses the same bounded FETCH replay as the rewind buttons.
 
+Review playback does not stop at the end of the fetched window: the next
+bounded FETCH is issued while the current window plays, so playback keeps
+running behind the live edge until Live is pressed. Because the window is paced
+by capture timestamps it never catches up on its own, and when it reaches the
+newest closed group it waits for the publisher to close another one.
+
 The slider is disabled until a closed group is available. Stop and video quality
 changes clear the timeline and cancel pending review playback. The observed
 range is not a guarantee of relay cache retention: an evicted group can no longer

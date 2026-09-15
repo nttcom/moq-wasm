@@ -43,6 +43,12 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     const [atPosition, broadcast] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
     expect(atPosition).toBeLessThan(broadcast)
 
+    // Assert: 1 ウィンドウ分 (4 group = 8 秒) を超えて再生が続く
+    await expect
+      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 30_000 })
+      .toBeGreaterThan(atPosition + 9)
+    await expect(viewer.logPanel).toContainText(/fetched \d+ objects/)
+
     // Act
     await viewer.seekbar.press('End')
 
@@ -118,4 +124,8 @@ async function parseSeconds(locator: Locator): Promise<number> {
 
 function parseClock(text: string): number {
   return text.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+}
+
+function elapsedAtPosition(seekElapsed: string): number {
+  return parseClock(seekElapsed.split(' / ')[0])
 }
