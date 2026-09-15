@@ -6,6 +6,7 @@ pub(crate) mod session_expiry_task;
 pub(crate) mod test_support;
 pub(crate) mod token_claims;
 pub(crate) mod token_parameter;
+pub(crate) mod token_refresh;
 pub(crate) mod token_verifier;
 pub(crate) mod verified_token;
 pub(crate) mod vts_token_verifier;

@@ -258,14 +258,7 @@ impl SessionRepository {
         self.sessions.insert(session_id, arc_session.clone());
         self.session_spans.insert(session_id, session_span.clone());
         self.session_peers.insert(session_id, peer);
-        if let (false, Some(expires_at)) = (verified_token.is_relay, verified_token.expires_at) {
-            self.session_expiry_tasks.insert(
-                session_id,
-                SessionExpiryTask::run(Arc::downgrade(&arc_session), expires_at),
-            );
-        }
-        self.session_tokens
-            .insert(session_id, Arc::new(verified_token));
+        self.store_verified_token(session_id, &arc_session, verified_token);
         self.start_session_event_forwarding(
             session_id,
             Arc::downgrade(&arc_session),
@@ -309,6 +302,34 @@ impl SessionRepository {
         self.session_tokens
             .get(&session_id)
             .map(|token| token.value().clone())
+    }
+
+    pub(crate) fn replace_verified_token(
+        &mut self,
+        session_id: SessionId,
+        verified_token: VerifiedToken,
+    ) -> Option<Arc<VerifiedToken>> {
+        let session = self.sessions.get(&session_id)?.value().clone();
+        Some(self.store_verified_token(session_id, &session, verified_token))
+    }
+
+    fn store_verified_token(
+        &self,
+        session_id: SessionId,
+        session: &Arc<dyn Session>,
+        verified_token: VerifiedToken,
+    ) -> Arc<VerifiedToken> {
+        self.session_expiry_tasks.remove(&session_id);
+        if let (false, Some(expires_at)) = (verified_token.is_relay, verified_token.expires_at) {
+            self.session_expiry_tasks.insert(
+                session_id,
+                SessionExpiryTask::run(Arc::downgrade(session), expires_at),
+            );
+        }
+        let verified_token = Arc::new(verified_token);
+        self.session_tokens
+            .insert(session_id, verified_token.clone());
+        verified_token
     }
 
     pub(crate) fn is_client_session(&self, session_id: SessionId) -> bool {
@@ -459,6 +480,72 @@ mod tests {
 
         // Assert
         assert!(!wait_for_close(&recorded).await);
+    }
+
+    fn token_expiring_in_an_hour() -> VerifiedToken {
+        VerifiedToken {
+            expires_at: Some(SystemTime::now() + Duration::from_secs(3600)),
+            ..expired_token(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn replace_verified_token_restarts_the_expiry_task_at_the_new_exp() {
+        // Arrange
+        let (repository, recorded) =
+            session_repository_with_upstream_session_token(7, token_expiring_in_an_hour()).await;
+
+        // Act
+        repository
+            .lock()
+            .await
+            .replace_verified_token(7, expired_token(false));
+
+        // Assert
+        assert!(wait_for_close(&recorded).await);
+        assert_eq!(
+            recorded.closes()[0].0,
+            TerminationErrorCode::ExpiredAuthToken
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_verified_token_is_visible_to_later_lookups() {
+        // Arrange
+        let (repository, _recorded) =
+            session_repository_with_upstream_session_token(7, token_expiring_in_an_hour()).await;
+        let replacement = VerifiedToken {
+            app_id: "REPLACED".to_string(),
+            ..token_expiring_in_an_hour()
+        };
+
+        // Act
+        let returned = repository
+            .lock()
+            .await
+            .replace_verified_token(7, replacement.clone());
+
+        // Assert
+        assert_eq!(returned.as_deref(), Some(&replacement));
+        assert_eq!(
+            repository.lock().await.verified_token(7).as_deref(),
+            Some(&replacement)
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_verified_token_for_an_unknown_session_is_none() {
+        // Arrange
+        let (repository, _recorded) = session_repository_with_upstream_session(7).await;
+
+        // Act
+        let returned = repository
+            .lock()
+            .await
+            .replace_verified_token(8, expired_token(false));
+
+        // Assert
+        assert!(returned.is_none());
     }
 
     #[tokio::test]
