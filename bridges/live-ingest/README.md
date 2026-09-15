@@ -37,6 +37,17 @@ travels as MoQT extension header 2. The audio track's AudioSpecificConfig is
 published Base64-encoded as the catalog `initData`; the video track carries its
 parameter sets in band and has none.
 
+## CMAF Tracks
+
+Every media track has a CMAF sibling named with a `_cmaf` suffix (`video_cmaf`,
+`video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
+(draft-ietf-moq-cmsf-01). Its init segment travels Base64-encoded in the catalog
+`initData` (§3.1) and every object is one `moof` + `mdat` fragment holding one
+sample (§3.3). Groups start on keyframes and take the same ids as the LOC track
+for the same presentation time, so the LOC and CMAF versions of a rendition are
+interchangeable; each format forms its own switching set (`altGroup` 1 for LOC,
+2 for CMAF).
+
 ## Group Alignment
 
 The source video track and its transcoded renditions form a CMSF switching set
