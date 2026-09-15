@@ -82,6 +82,7 @@ impl RelayServer {
                 route_registry,
                 relay_token,
             },
+            authenticator.verifier.clone(),
         );
 
         Self {

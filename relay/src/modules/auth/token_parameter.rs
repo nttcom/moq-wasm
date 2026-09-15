@@ -1,8 +1,8 @@
-use moqt::wire::{AuthorizationToken, ClientSetup};
+use moqt::wire::AuthorizationToken;
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum SetupTokenError {
-    #[error("CLIENT_SETUP carries no AUTHORIZATION TOKEN")]
+pub(crate) enum TokenParameterError {
+    #[error("no AUTHORIZATION TOKEN parameter")]
     Missing,
     #[error("AUTHORIZATION TOKEN alias type is not USE_VALUE")]
     UnsupportedAliasType,
@@ -12,23 +12,23 @@ pub(crate) enum SetupTokenError {
     NotUtf8,
 }
 
-pub(crate) fn extract_token(client_setup: &ClientSetup) -> Result<String, SetupTokenError> {
-    let token = client_setup
-        .setup_parameters
-        .authorization_token
+pub(crate) fn extract_token(
+    authorization_tokens: &[AuthorizationToken],
+) -> Result<String, TokenParameterError> {
+    let token = authorization_tokens
         .first()
-        .ok_or(SetupTokenError::Missing)?;
+        .ok_or(TokenParameterError::Missing)?;
     match token {
         AuthorizationToken::UseValue {
             token_type: 0,
             token_value,
-        } => String::from_utf8(token_value.to_vec()).map_err(|_| SetupTokenError::NotUtf8),
+        } => String::from_utf8(token_value.to_vec()).map_err(|_| TokenParameterError::NotUtf8),
         AuthorizationToken::UseValue { token_type, .. } => {
-            Err(SetupTokenError::UnsupportedTokenType(*token_type))
+            Err(TokenParameterError::UnsupportedTokenType(*token_type))
         }
         AuthorizationToken::Delete
         | AuthorizationToken::Register { .. }
-        | AuthorizationToken::UseAlias { .. } => Err(SetupTokenError::UnsupportedAliasType),
+        | AuthorizationToken::UseAlias { .. } => Err(TokenParameterError::UnsupportedAliasType),
     }
 }
 
@@ -37,67 +37,66 @@ mod tests {
     use bytes::Bytes;
     use moqt::wire::AuthorizationToken;
 
-    use super::{SetupTokenError, extract_token};
-    use crate::modules::auth::test_support::client_setup;
+    use super::{TokenParameterError, extract_token};
 
     #[test]
     fn use_value_token_of_type_zero_is_returned_as_string() {
         // Arrange
-        let setup = client_setup(vec![AuthorizationToken::use_value_utf8("jwt")]);
+        let tokens = [AuthorizationToken::use_value_utf8("jwt")];
 
         // Act / Assert
-        assert_eq!(extract_token(&setup).unwrap(), "jwt");
+        assert_eq!(extract_token(&tokens).unwrap(), "jwt");
     }
 
     #[test]
     fn missing_token_is_reported() {
         // Arrange
-        let setup = client_setup(vec![]);
+        let tokens: [AuthorizationToken; 0] = [];
 
         // Act / Assert
-        assert_eq!(extract_token(&setup), Err(SetupTokenError::Missing));
+        assert_eq!(extract_token(&tokens), Err(TokenParameterError::Missing));
     }
 
     #[test]
     fn register_alias_type_is_rejected() {
         // Arrange
-        let setup = client_setup(vec![AuthorizationToken::Register {
+        let tokens = [AuthorizationToken::Register {
             token_alias: 1,
             token_type: 0,
             token_value: Bytes::from_static(b"jwt"),
-        }]);
+        }];
 
         // Act / Assert
         assert_eq!(
-            extract_token(&setup),
-            Err(SetupTokenError::UnsupportedAliasType)
+            extract_token(&tokens),
+            Err(TokenParameterError::UnsupportedAliasType)
         );
     }
 
     #[test]
     fn non_zero_token_type_is_rejected() {
         // Arrange
-        let setup = client_setup(vec![AuthorizationToken::UseValue {
+        let tokens = [AuthorizationToken::UseValue {
             token_type: 1,
             token_value: Bytes::from_static(b"jwt"),
-        }]);
+        }];
 
         // Act / Assert
         assert_eq!(
-            extract_token(&setup),
-            Err(SetupTokenError::UnsupportedTokenType(1))
+            extract_token(&tokens),
+            Err(TokenParameterError::UnsupportedTokenType(1))
         );
     }
 
     #[test]
     fn non_utf8_value_is_rejected() {
         // Arrange
-        let setup = client_setup(vec![AuthorizationToken::UseValue {
+        let tokens = [AuthorizationToken::UseValue {
             token_type: 0,
             token_value: Bytes::from_static(&[0xff, 0xfe]),
-        }]);
+        }];
 
         // Act / Assert
-        assert_eq!(extract_token(&setup), Err(SetupTokenError::NotUtf8));
+        assert_eq!(extract_token(&tokens), Err(TokenParameterError::NotUtf8));
     }
 }

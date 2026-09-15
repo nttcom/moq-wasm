@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
+    auth::token_verifier::TokenVerifier,
     event_handler::EventHandler,
     inter_relay::InterRelayConnectionManager,
     relay::{
@@ -33,6 +34,7 @@ impl RelayRuntime {
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         store: &Arc<RelayStore>,
         cascading: CascadingDeps,
+        token_verifier: Arc<dyn TokenVerifier>,
     ) -> (UnboundedSender<SessionEvent>, Self) {
         let CascadingDeps {
             route_registry,
@@ -69,6 +71,7 @@ impl RelayRuntime {
             inter_relay_connection_manager,
             upstream_publisher_resolver,
             store.cache_store.clone(),
+            token_verifier,
         );
         let evict_job = spawn_cache_eviction_job(store.cache_store.clone());
         (
