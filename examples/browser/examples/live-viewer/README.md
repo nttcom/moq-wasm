@@ -59,11 +59,13 @@ Switching packaging re-subscribes both tracks at the current quality.
 
 In CMAF mode the seek bar and rewind targets are built from the MSF media
 timeline, because CMAF objects carry no LOC capture timestamp, and review
-playback appends the fetched fragments to a MediaSource on a second video
-element instead of drawing them on the canvas. In both modes the live picture
-keeps decoding hidden behind the review, so `LIVE` swaps back to a current frame
-instead of a blank element that waits for the next keyframe. Review plays video
-only in either mode; live audio keeps playing underneath it.
+playback appends the fetched fragments to a MediaSource instead of drawing them
+on the canvas. Every MediaSource — live, review, or the replacement opened by a
+packaging or quality change — takes its own video element from a small pool, and
+a new picture is shown only once it has presented a frame while the previous one
+stays on screen until then; the live picture keeps decoding hidden behind a
+review, so `LIVE` swaps back at once. Review plays video only in either mode;
+live audio keeps playing underneath it.
 
 ## Playback speed
 

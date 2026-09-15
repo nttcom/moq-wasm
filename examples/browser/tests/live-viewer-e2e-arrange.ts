@@ -36,7 +36,7 @@ export interface LiveViewerPageModel {
   seekAvailableWindow: Locator
   video: Locator
   reviewCanvas: Locator
-  reviewVideo: Locator
+  visibleVideo: Locator
   logPanel: Locator
 }
 
@@ -78,7 +78,7 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     seekAvailableWindow: page.getByTestId('live-viewer-seek-available-window'),
     video: page.getByTestId('live-viewer-video'),
     reviewCanvas: page.getByTestId('live-viewer-review-canvas'),
-    reviewVideo: page.getByTestId('live-viewer-review-video'),
+    visibleVideo: page.locator('.viewer-stage video:visible'),
     logPanel: page.getByTestId('live-viewer-log-panel')
   }
 }

@@ -18,7 +18,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
     await expect(viewer.playbackStatus).toContainText('Playing')
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
-    await expectVideoDecoded(viewer)
+    await expectVideoDecoded(viewer.video)
 
     // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
     await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
@@ -172,11 +172,25 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.qualityButton.click()
     await viewer.packagingSelect.selectOption('cmaf')
 
-    // Assert: the element now plays a MediaSource fed with CMAF fragments
+    // Assert: the LOC picture stays until the MediaSource has presented a frame, then a blob-backed element is the one on screen
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_cmaf/)
-    await expect.poll(async () => mediaProp(viewer.video, 'src')).toMatch(/^blob:/)
-    await expectVideoDecoded(viewer)
-    await expect.poll(async () => mediaProp(viewer.video, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
+    await expect(viewer.video).toBeVisible()
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).toMatch(/^blob:/)
+    await expectVideoDecoded(viewer.visibleVideo)
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
+
+    // Act: a quality change re-opens the MediaSource with the rendition's init segment
+    await viewer.videoTrackSelect.selectOption({ index: 1 })
+
+    // Assert
+    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p_cmaf/)
+    await expect
+      .poll(async () => viewer.visibleVideo.evaluate((element) => (element as HTMLVideoElement).videoWidth), {
+        timeout: 20_000
+      })
+      .toBeLessThan(1280)
+    const liveSource = await mediaProp(viewer.visibleVideo, 'src')
+    const liveVideo = viewer.page.locator(`.viewer-stage video[src="${liveSource}"]`)
 
     // Act: relay のキャッシュがたまるのを待って MSE 経由で巻き戻す
     await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
@@ -184,22 +198,31 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
-    // Assert: review plays from its own MediaSource on the review element while the live one keeps running hidden
+    // Assert: review plays from its own MediaSource while the live one keeps running hidden
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.reviewCanvas).toBeHidden()
-    await expect(viewer.reviewVideo).toBeVisible({ timeout: 20_000 })
-    await expect(viewer.video).toBeHidden()
-    await expect.poll(async () => mediaProp(viewer.reviewVideo, 'currentTime'), { timeout: 30_000 }).toBeGreaterThan(3)
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).not.toBe(liveSource)
+    await expect(liveVideo).toBeHidden()
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'currentTime'), { timeout: 30_000 }).toBeGreaterThan(3)
     await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
-    const liveTimeWhileReviewing = await mediaProp(viewer.video, 'currentTime')
+
+    // Act: seeking again keeps the current picture until the new MediaSource has presented
+    const reviewSource = await mediaProp(viewer.visibleVideo, 'src')
+    await viewer.page.keyboard.press('ArrowLeft')
+
+    // Assert
+    await expect(viewer.visibleVideo).toHaveCount(1)
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).not.toBe(reviewSource)
+    await expect(viewer.visibleVideo).toHaveCount(1)
+    const liveTimeWhileReviewing = await mediaProp(liveVideo, 'currentTime')
 
     // Act: 巻き戻し中だけ倍速を選べる
     await expect(viewer.speedSelect).toBeEnabled()
     await viewer.speedSelect.selectOption('2')
 
     // Assert
-    await expect.poll(async () => mediaProp(viewer.reviewVideo, 'playbackRate')).toBe(2)
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'playbackRate')).toBe(2)
 
     // Act
     await viewer.liveButton.click()
@@ -208,10 +231,9 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect(viewer.rewindStatus).toContainText('Live')
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expect(viewer.speedSelect).toBeDisabled()
-    await expect(viewer.reviewVideo).toBeHidden()
-    await expect(viewer.video).toBeVisible()
-    expect(await mediaProp(viewer.video, 'src')).toMatch(/^blob:/)
-    expect(await mediaProp(viewer.video, 'currentTime')).toBeGreaterThan(liveTimeWhileReviewing)
+    await expect(liveVideo).toBeVisible()
+    await expect(viewer.visibleVideo).toHaveCount(1)
+    expect(await mediaProp(liveVideo, 'currentTime')).toBeGreaterThan(liveTimeWhileReviewing)
   } finally {
     await context.close()
   }
@@ -224,14 +246,14 @@ async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate'>(
   return video.evaluate((element, property) => (element as HTMLVideoElement)[property], key)
 }
 
-async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {
+async function expectVideoDecoded(video: Locator): Promise<void> {
   await expect
-    .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).readyState), {
+    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).readyState), {
       timeout: 30_000
     })
     .toBeGreaterThanOrEqual(2)
   await expect
-    .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
+    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
     .toBeGreaterThan(0)
 }
 
