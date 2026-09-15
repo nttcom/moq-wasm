@@ -8,6 +8,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
   try {
     // Assert
     await expect(viewer.seekbar).toBeDisabled()
+    await expect(viewer.seekElapsed).toHaveText('--:-- / --:--')
 
     // Act
     await viewer.watchButton.click()
@@ -22,6 +23,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
+    await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
@@ -36,6 +38,10 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
       .toBe(await viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
 
     await expect(viewer.seekPosition).toHaveText(/-\d+\.\ds/)
+
+    // Assert: MSF media timeline が配信開始からの経過を返し、シーク位置がライブより手前になる
+    const [atPosition, broadcast] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
+    expect(atPosition).toBeLessThan(broadcast)
 
     // Act
     await viewer.seekbar.press('End')
@@ -89,6 +95,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.rewindBuffer).toHaveText('0.0s')
     await expect(viewer.seekbar).toBeDisabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
+    await expect(viewer.seekElapsed).toHaveText('--:-- / --:--')
   } finally {
     await context.close()
   }
@@ -107,4 +114,8 @@ async function expectVideoDecoded(viewer: LiveViewerPageModel): Promise<void> {
 
 async function parseSeconds(locator: Locator): Promise<number> {
   return Number.parseFloat((await locator.innerText()).replace('s', ''))
+}
+
+function parseClock(text: string): number {
+  return text.split(':').reduce((total, part) => total * 60 + Number(part), 0)
 }

@@ -78,11 +78,12 @@ type MsfCatalog = {
   tracks?: MsfTrack[]
 }
 
-export type CatalogTrackRole = 'video' | 'audio'
+export type CatalogTrackRole = 'video' | 'audio' | 'mediatimeline'
 
 export type MediaCatalogTrack = {
   name: string
   label: string
+  packaging?: string
   role?: string
   codec?: string
   bitrate?: number
@@ -153,12 +154,13 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       return acc
     }
     const trackRole = asString(track.role)
-    if (!matchesRole(role, trackRole, name)) {
+    if (!matchesRole(role, trackRole, asString(track.packaging), name)) {
       return acc
     }
     acc.push({
       name,
       label: asString(track.label) ?? name,
+      packaging: asString(track.packaging),
       role: trackRole,
       codec: asString(track.codec),
       bitrate: asNumber(track.bitrate),
@@ -180,6 +182,10 @@ export function extractCatalogAudioTracks(catalog: unknown): MediaCatalogTrack[]
   return extractCatalogTracks(catalog, 'audio')
 }
 
+export function extractCatalogMediaTimelineTracks(catalog: unknown): MediaCatalogTrack[] {
+  return extractCatalogTracks(catalog, 'mediatimeline')
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -195,10 +201,19 @@ function asNumber(value: unknown): number | undefined {
 function matchesRole(
   expectedRole: CatalogTrackRole | undefined,
   trackRole: string | undefined,
+  trackPackaging: string | undefined,
   trackName: string
 ): boolean {
   if (!expectedRole) {
     return true
+  }
+  /// draft-ietf-moq-msf-00 §7.2 requires the packaging; the role of §5.1.14 is
+  /// optional, so either one identifies a media timeline track.
+  if (expectedRole === 'mediatimeline') {
+    return trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline'
+  }
+  if (trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline') {
+    return false
   }
   if (expectedRole === 'video') {
     return !trackRole || trackRole === 'video'

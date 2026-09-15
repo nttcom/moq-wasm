@@ -26,6 +26,7 @@ export interface LiveViewerPageModel {
   rewindBuffer: Locator
   seekbar: Locator
   seekPosition: Locator
+  seekElapsed: Locator
   video: Locator
   reviewCanvas: Locator
   logPanel: Locator
@@ -59,6 +60,7 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     rewindBuffer: page.getByTestId('live-viewer-rewind-buffer'),
     seekbar: page.getByTestId('live-viewer-seekbar'),
     seekPosition: page.getByTestId('live-viewer-seek-position'),
+    seekElapsed: page.getByTestId('live-viewer-seek-elapsed'),
     video: page.getByTestId('live-viewer-video'),
     reviewCanvas: page.getByTestId('live-viewer-review-canvas'),
     logPanel: page.getByTestId('live-viewer-log-panel')
