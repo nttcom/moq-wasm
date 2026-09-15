@@ -37,8 +37,8 @@ export class LivePlayout {
   private newestAudioCaptureMicros: number | undefined
   private paused = false
 
-  constructor(videoWriter: WritableStreamDefaultWriter<VideoFrame>, onVideoPresented: (frame: VideoFrame) => void) {
-    this.video = new VideoPlayout(videoWriter, onVideoPresented)
+  constructor(showVideo: (frame: VideoFrame) => void) {
+    this.video = new VideoPlayout(showVideo)
   }
 
   presentVideo(frame: VideoFrame): void {
@@ -88,11 +88,13 @@ export class LivePlayout {
     if (paused) {
       this.video.flush()
       this.dropHeld()
+      this.audio.flush()
+      void this.audio.suspend()
     } else {
       this.clock.reset()
       this.newestAudioCaptureMicros = undefined
+      void this.audio.resume()
     }
-    void this.audio.setSuspended(paused)
   }
 
   reset(): void {

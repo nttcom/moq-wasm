@@ -36,7 +36,8 @@ type Scheduled = {
 /// for is reported as drift, which lets the clock follow the audio device: a
 /// chunk that is late is not trimmed, it starts now and moves the clock.
 /// Chunks that arrive before the context renders wait for it, because a
-/// context reports `running` before its clock has started.
+/// context reports `running` before its clock has started, and chunks that
+/// arrive while others are waiting queue behind them so the order holds.
 export class AudioPlayout {
   private output: Output | undefined
   private volume = 1
@@ -66,7 +67,7 @@ export class AudioPlayout {
       audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel, format: 'f32-planar' })
     }
     const chunk = { buffer, captureMicros, playoutTimeAt }
-    if (isRendering(output.context)) {
+    if (isRendering(output.context) && this.waiting.length === 0) {
       this.schedule(output, chunk)
     } else {
       this.waiting.push(chunk)
@@ -107,16 +108,14 @@ export class AudioPlayout {
     }
   }
 
-  async setSuspended(suspended: boolean): Promise<void> {
-    if (!this.output) {
-      return
-    }
-    if (suspended) {
-      this.flush()
-      await this.output.context.suspend()
-    } else {
-      await this.output.context.resume()
-    }
+  /// Suspending freezes the context clock, so what is scheduled resumes in
+  /// place; the caller flushes first when it should not.
+  async suspend(): Promise<void> {
+    await this.output?.context.suspend()
+  }
+
+  async resume(): Promise<void> {
+    await this.output?.context.resume()
   }
 
   positionMicrosAt(nowMs: number): number | undefined {

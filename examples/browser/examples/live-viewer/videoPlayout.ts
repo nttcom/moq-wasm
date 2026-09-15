@@ -11,23 +11,26 @@ type Presented = {
   atMs: number
 }
 
-/// Holds decoded frames until the clock says they are due and then writes them
-/// to the MediaStream the video element shows. When several frames fall due
-/// together only the newest is shown.
+/// Holds decoded frames until the clock says they are due and then hands them
+/// to the sink that shows them, which also closes them. When several frames
+/// fall due together only the newest is shown. While paused nothing is shown
+/// and the frames keep waiting; `shift` moves their due times by the pause.
 export class VideoPlayout {
   private pending: PendingFrame[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
   private last: Presented | undefined
+  private paused = false
 
-  constructor(
-    private readonly writer: WritableStreamDefaultWriter<VideoFrame>,
-    private readonly onPresented: (frame: VideoFrame) => void
-  ) {}
+  constructor(private readonly show: (frame: VideoFrame) => void) {}
 
   present(frame: VideoFrame, atMs: number): void {
     const index = this.pending.findIndex((pending) => pending.atMs > atMs)
     this.pending.splice(index === -1 ? this.pending.length : index, 0, { frame, atMs })
     this.schedule()
+  }
+
+  get queued(): number {
+    return this.pending.length
   }
 
   flush(): void {
@@ -37,6 +40,21 @@ export class VideoPlayout {
     this.pending = []
     this.clearTimer()
     this.last = undefined
+  }
+
+  setPaused(paused: boolean): void {
+    this.paused = paused
+    this.schedule()
+  }
+
+  shift(deltaMs: number): void {
+    for (const pending of this.pending) {
+      pending.atMs += deltaMs
+    }
+    if (this.last) {
+      this.last = { ...this.last, atMs: this.last.atMs + deltaMs }
+    }
+    this.schedule()
   }
 
   positionMicrosAt(nowMs: number): number | undefined {
@@ -49,7 +67,7 @@ export class VideoPlayout {
   private schedule(): void {
     this.clearTimer()
     const head = this.pending[0]
-    if (!head) {
+    if (!head || this.paused) {
       return
     }
     this.timer = setTimeout(
@@ -78,20 +96,8 @@ export class VideoPlayout {
     }
     if (shown) {
       this.last = shown.frame.timestamp ? { captureMicros: shown.frame.timestamp, atMs: nowMs } : undefined
-      this.write(shown.frame)
+      this.show(shown.frame)
     }
     this.schedule()
-  }
-
-  private write(frame: VideoFrame): void {
-    this.onPresented(frame)
-    if (this.writer.desiredSize === null || this.writer.desiredSize <= 0) {
-      frame.close()
-      return
-    }
-    void this.writer
-      .write(frame)
-      .catch(() => undefined)
-      .finally(() => frame.close())
   }
 }

@@ -60,7 +60,8 @@ const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioD
   type: 'module'
 })
 const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-const livePlayout = new LivePlayout(videoGenerator.writable.getWriter(), updateVideoStats)
+const videoWriter = videoGenerator.writable.getWriter()
+const livePlayout = new LivePlayout(showLiveFrame)
 
 let videoTracks: MediaCatalogTrack[] = []
 let audioTracks: MediaCatalogTrack[] = []
@@ -575,6 +576,18 @@ function applyDecoderConfig(): void {
   const config = { telemetryEnabled: true, bypassJitterBuffer: true }
   videoDecoderWorker.postMessage({ type: 'config', config })
   audioDecoderWorker.postMessage({ type: 'config', config })
+}
+
+function showLiveFrame(frame: VideoFrame): void {
+  updateVideoStats(frame)
+  if (videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
+    frame.close()
+    return
+  }
+  void videoWriter
+    .write(frame)
+    .catch(() => undefined)
+    .finally(() => frame.close())
 }
 
 function startRendering(): void {
