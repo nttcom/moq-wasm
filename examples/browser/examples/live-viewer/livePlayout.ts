@@ -3,12 +3,14 @@ import { PlayoutClock } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
 
 const PLAYOUT_DELAY_MS = 200
-const MAX_EARLY_MS = 200
+const WARMUP_MS = 400
+const MAX_EARLY_MS = 400
 const MICROS_PER_MILLI = 1_000
 
-type Held =
-  | { kind: 'video'; frame: VideoFrame; captureMicros: number }
-  | { kind: 'audio'; audioData: AudioData; captureMicros: number }
+type Held = { captureMicros: number; arrivedAtMs: number } & (
+  | { kind: 'video'; frame: VideoFrame }
+  | { kind: 'audio'; audioData: AudioData }
+)
 
 /// Live LOC playback. Both decoders hand over samples as soon as they are
 /// decoded and one clock decides when each is presented, which is what keeps
@@ -20,14 +22,19 @@ type Held =
 ///
 /// Playback opens with a warm-up: a subscription starts with a burst of what
 /// the relay had cached of the current groups, so the samples of the first
-/// `PLAYOUT_DELAY_MS` are held and the clock is anchored on the newest of them.
-/// Whatever is older than the budget is dropped rather than played late.
-/// Pausing drops what arrives, and resuming warms up again at the live edge.
+/// `WARMUP_MS` are held and the clock is anchored on the newest of them.
+/// Sources such as MPEG-TS over SRT deliver audio in bursts of a few hundred
+/// milliseconds; the longest wait between two audio arrivals during the
+/// warm-up is added to the budget so the head of every later burst is still
+/// on time. Whatever is older than the budget is dropped rather than played
+/// late. Pausing drops what arrives, and resuming warms up again at the live
+/// edge.
 export class LivePlayout {
   private readonly clock = new PlayoutClock(PLAYOUT_DELAY_MS, MAX_EARLY_MS)
   private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
   private readonly video: VideoPlayout
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
+  private newestAudioCaptureMicros: number | undefined
   private paused = false
 
   constructor(videoWriter: WritableStreamDefaultWriter<VideoFrame>, onVideoPresented: (frame: VideoFrame) => void) {
@@ -45,7 +52,7 @@ export class LivePlayout {
       return
     }
     if (!this.clock.anchored) {
-      this.hold({ kind: 'video', frame, captureMicros })
+      this.hold({ kind: 'video', frame, captureMicros, arrivedAtMs: performance.now() })
       return
     }
     this.video.present(frame, this.playoutTime(captureMicros, performance.now(), !this.audioActive()))
@@ -63,7 +70,7 @@ export class LivePlayout {
       return
     }
     if (!this.clock.anchored) {
-      this.hold({ kind: 'audio', audioData, captureMicros })
+      this.hold({ kind: 'audio', audioData, captureMicros, arrivedAtMs: performance.now() })
       return
     }
     this.scheduleAudio(audioData, captureMicros)
@@ -83,6 +90,7 @@ export class LivePlayout {
       this.dropHeld()
     } else {
       this.clock.reset()
+      this.newestAudioCaptureMicros = undefined
     }
     void this.audio.setSuspended(paused)
   }
@@ -92,6 +100,13 @@ export class LivePlayout {
     this.audio.flush()
     this.dropHeld()
     this.clock.reset()
+    this.newestAudioCaptureMicros = undefined
+  }
+
+  /// How many times the sound has not continued where the previous chunk
+  /// ended since playback started.
+  audioBreaks(): number {
+    return this.audio.breaks
   }
 
   /// How far the picture on screen is ahead of the sound, from the capture
@@ -106,7 +121,16 @@ export class LivePlayout {
     return (video - audio) / MICROS_PER_MILLI
   }
 
+  /// The relay sends the groups of a fresh subscription on separate streams,
+  /// so a chunk of an older group can land after a newer one has been
+  /// scheduled. The write head has moved past it, and as master it would
+  /// drag the clock back, so it is dropped.
   private scheduleAudio(audioData: AudioData, captureMicros: number): void {
+    if (this.newestAudioCaptureMicros !== undefined && captureMicros <= this.newestAudioCaptureMicros) {
+      audioData.close()
+      return
+    }
+    this.newestAudioCaptureMicros = captureMicros
     this.audio.play(audioData, captureMicros, (nowMs) => this.playoutTime(captureMicros, nowMs, true))
     audioData.close()
   }
@@ -125,18 +149,22 @@ export class LivePlayout {
   }
 
   private hold(sample: Held): void {
-    this.warmup ??= { timer: setTimeout(() => this.endWarmup(), PLAYOUT_DELAY_MS), held: [] }
+    this.warmup ??= { timer: setTimeout(() => this.endWarmup(), WARMUP_MS), held: [] }
     this.warmup.held.push(sample)
   }
 
   private endWarmup(): void {
-    const held = this.warmup?.held ?? []
+    if (!this.warmup) {
+      return
+    }
+    const { held } = this.warmup
     this.warmup = undefined
     if (held.length === 0) {
       return
     }
     const nowMs = performance.now()
-    this.clock.anchor(Math.max(...held.map((sample) => sample.captureMicros)), nowMs)
+    const newest = Math.max(...held.map((sample) => sample.captureMicros))
+    this.clock.anchor(newest, nowMs, PLAYOUT_DELAY_MS + longestArrivalGapMs(held))
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
       if (due < nowMs) {
@@ -159,6 +187,16 @@ export class LivePlayout {
     }
     this.warmup = undefined
   }
+}
+
+function longestArrivalGapMs(held: Held[]): number {
+  const audio = held.filter((sample) => sample.kind === 'audio')
+  const arrivals = (audio.length > 1 ? audio : held).map((sample) => sample.arrivedAtMs).sort((a, b) => a - b)
+  let longest = 0
+  for (let i = 1; i < arrivals.length; i += 1) {
+    longest = Math.max(longest, arrivals[i] - arrivals[i - 1])
+  }
+  return longest
 }
 
 function close(sample: Held): void {

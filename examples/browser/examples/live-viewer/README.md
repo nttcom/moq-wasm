@@ -85,9 +85,11 @@ decoded, and one playout clock decides when each is presented. The clock maps
 the LOC capture timestamps, which the bridge stamps on the same wall clock for
 every track, onto the local clock with a 200 ms delay that is the jitter
 budget. A subscription opens with a burst of what the relay had cached of the
-current groups, so the samples of the first 200 ms are held and the clock is
+current groups, so the samples of the first 400 ms are held and the clock is
 anchored on the newest of them; older ones are dropped rather than played
-late. The audio is the clock's master: it alone moves the clock, so the sound
+late. Sources such as MPEG-TS over SRT deliver audio in bursts, so the longest
+wait between two audio arrivals seen during that warm-up is added to the
+budget. The audio is the clock's master: it alone moves the clock, so the sound
 never skips for the picture, and the picture takes over only while no audio is
 playing. Video frames are held until they
 are due and then written to the MediaStream the video element shows; audio is
@@ -99,9 +101,10 @@ overlap each time. The distance between the write head and the target is fed
 back to the clock, which makes the audio device the master the picture
 follows; a late chunk is not trimmed but starts at once and moves the clock
 the same way, so the chunks behind it stay contiguous. An audio chunk due more
-than 200 ms past the budget re-anchors the clock so the extra latency is shed.
+than 400 ms past the budget re-anchors the clock so the extra latency is shed.
 The stats line shows the offset between the picture on screen and the sound as
-`A/V +N ms`.
+`A/V +N ms` and, as `audio breaks N`, how often the sound did not continue
+where the previous chunk ended.
 
 In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers

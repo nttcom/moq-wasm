@@ -1,11 +1,13 @@
 const MILLIS_PER_SECOND = 1_000
 const MICROS_PER_MILLI = 1_000
 const POSITION_STALE_MS = 1_000
-/// Within this distance a chunk continues the previous one sample for sample.
-/// Capture timestamps are millisecond-precise and `currentTime` advances a
-/// render quantum at a time, so each target wobbles by a few milliseconds; a
-/// chunk placed on its own target would leave a gap or an overlap each time.
-const CONTIGUOUS_TOLERANCE_MS = 20
+/// Within this distance a chunk continues the previous one sample for sample
+/// and the difference is reported as drift for the clock to absorb. Capture
+/// timestamps are millisecond-precise, `currentTime` advances a render
+/// quantum at a time and `outputLatency` can be revised after start-up, so a
+/// chunk placed on its own target would leave a gap or an overlap each time;
+/// only a hole this wide in the source is played as a hole.
+const CONTIGUOUS_TOLERANCE_MS = 100
 const RENDERING_POLL_MS = 10
 const VOLUME_RAMP_SECONDS = 0.02
 
@@ -43,6 +45,7 @@ export class AudioPlayout {
   private writeHead: number | undefined
   private renderingPoll: ReturnType<typeof setTimeout> | undefined
   private last: Scheduled | undefined
+  breaks = 0
 
   constructor(private readonly onDrift: (driftMs: number) => void) {}
 
@@ -132,6 +135,9 @@ export class AudioPlayout {
       this.writeHead >= context.currentTime &&
       Math.abs(this.writeHead - target) * MILLIS_PER_SECOND < CONTIGUOUS_TOLERANCE_MS
     const startAt = continues ? this.writeHead! : Math.max(target, context.currentTime)
+    if (!continues && this.writeHead !== undefined) {
+      this.breaks += 1
+    }
     this.onDrift((startAt - target) * MILLIS_PER_SECOND)
     const source = new AudioBufferSourceNode(context, { buffer: chunk.buffer })
     source.connect(gain)
