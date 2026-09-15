@@ -69,6 +69,15 @@ stays on screen until then; the live picture keeps decoding hidden behind a
 review, so `LIVE` swaps back at once. Review plays video only in either mode;
 the live audio is silenced while reviewing and heard again on `LIVE`.
 
+## Catalog
+
+The catalog is subscribed to for updates and fetched for its current object:
+a SUBSCRIBE delivers objects published after the largest one, and the bridge
+publishes the catalog once per upstream subscription, so a viewer joining a
+subscription the relay already holds would otherwise never see it. The FETCH
+names the group SUBSCRIBE_OK reports when the relay still knows it and the
+whole track otherwise, which the relay completes from the bridge.
+
 ## Audio / video synchronisation
 
 In LOC mode the two decoder workers hand every sample over as soon as it is

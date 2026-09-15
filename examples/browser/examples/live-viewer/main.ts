@@ -30,12 +30,15 @@ const PAUSE_POLL_MS = 100
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
+const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
 
 type Packaging = 'loc' | 'cmaf'
 
 type MediaKind = 'video' | 'audio'
 
 type SubgroupObject = Parameters<Parameters<MoqtClientWrapper['setOnSubgroupObjectHandler']>[1]>[1]
+
+type SubscribeOk = Awaited<ReturnType<MoqtClientWrapper['subscribe']>>['subscribeOk']
 
 type TrackSubscription = {
   requestId: bigint
@@ -182,11 +185,19 @@ async function stopStream(): Promise<void> {
   setStatusText('playback-status', 'Playback idle')
 }
 
+/// A SUBSCRIBE delivers objects published after the largest one and the bridge
+/// publishes the catalog once per upstream subscription, so a viewer joining a
+/// subscription the relay already holds would never see it. The current
+/// catalog is fetched instead: the group SUBSCRIBE_OK names when the relay
+/// still knows it, otherwise the whole track, which the relay completes from
+/// the bridge.
 async function subscribeCatalog(): Promise<void> {
-  await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, (text) => void applyCatalog(text))
+  const onText = (text: string) => void applyCatalog(text)
+  const subscribeOk = await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, onText)
+  await fetchLatestText(MEDIA_CATALOG_TRACK_NAME, subscribeOk, onText)
 }
 
-async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<void> {
+async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<SubscribeOk> {
   const namespace = trackNamespace()
   const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
@@ -196,6 +207,27 @@ async function subscribeTextTrack(name: string, onText: (text: string) => void):
     }
   })
   appendLog('info', `subscribed ${namespace.join('/')}/${name}`)
+  return subscribeOk
+}
+
+async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (text: string) => void): Promise<void> {
+  const largestGroup = subscribeOk.largestGroupId
+  const startGroup = largestGroup ?? 0n
+  const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
+  const endObject = largestGroup === undefined ? 0n : (subscribeOk.largestObjectId ?? 0n) + 1n
+  try {
+    await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
+      onObject: (message) => {
+        const payload = new Uint8Array(message.objectPayload)
+        if (payload.byteLength > 0) {
+          onText(new TextDecoder().decode(payload))
+        }
+      }
+    })
+    appendLog('info', `fetched ${name}`)
+  } catch (error) {
+    appendLog('info', `fetch ${name}: ${getErrorMessage(error)}`)
+  }
 }
 
 async function applyCatalog(payload: string): Promise<void> {

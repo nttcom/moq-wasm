@@ -271,6 +271,31 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
   }
 })
 
+test('a second viewer joining a subscription the relay already holds gets the catalog by FETCH', async ({
+  browser
+}) => {
+  // Arrange
+  const first = await arrangeLiveViewerE2ESession(browser)
+  const second = await arrangeLiveViewerE2ESession(browser)
+
+  try {
+    await first.viewer.watchButton.click()
+    await expect(first.viewer.playbackStatus).toContainText('Playing')
+
+    // Act
+    await second.viewer.watchButton.click()
+
+    // Assert
+    await expect(second.viewer.logPanel).toContainText('fetched catalog')
+    await expect(second.viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
+    await expect(second.viewer.playbackStatus).toContainText('Playing')
+    await expectVideoDecoded(second.viewer.video)
+  } finally {
+    await second.context.close()
+    await first.context.close()
+  }
+})
+
 async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'paused' | 'volume'>(
   media: Locator,
   key: K
