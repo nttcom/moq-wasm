@@ -47,11 +47,17 @@ npm --prefix examples/browser run e2e:live-viewer
 
 ## Seek bar
 
-The slider below the video shows the time range observed on the selected video
-track. Drag it or use the arrow keys to choose a position; Home selects the
-oldest observed group and End returns to live. The position label shows seconds
-behind live and follows review playback. Seeking starts at the preceding closed
-keyframe group and uses the same bounded FETCH replay as the rewind buttons.
+The slider below the video spans the whole broadcast: its left end is the start,
+placed by the MSF media timeline, and its right end is the live edge. The thin bar
+underneath marks the part of that range the relay still caches and can therefore
+replay, which is the only part a seek resolves. Dragging outside it reports the
+FETCH failure and holds the position; Home jumps to the oldest replayable position
+rather than to the start of the broadcast, and End returns to live.
+
+The position label shows seconds behind live and follows review playback, and the
+label under the slider reads the elapsed time at the axis start. Seeking starts at
+the preceding closed keyframe group and uses the same bounded FETCH replay as the
+rewind buttons.
 
 Review playback does not stop at the end of the fetched window: the next
 bounded FETCH is issued while the current window plays, so playback keeps

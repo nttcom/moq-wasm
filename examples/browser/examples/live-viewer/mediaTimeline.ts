@@ -62,6 +62,16 @@ export class MediaTimeline {
     this.records = []
   }
 
+  /// Presentation times are measured from the start of the broadcast, so any
+  /// record places that start on the capture timestamp axis the seek bar uses.
+  broadcastStartMicros(): number | undefined {
+    const record = this.records[this.records.length - 1]
+    if (!record) {
+      return undefined
+    }
+    return (record.encodedAtMs - record.presentationTimeMs) * MICROS_PER_MILLI
+  }
+
   /// The bridge stamps a group's LOC capture timestamp and its timeline record
   /// with the same encode wallclock, so a capture time resolves to a
   /// presentation time by offsetting from the newest record at or before it.
