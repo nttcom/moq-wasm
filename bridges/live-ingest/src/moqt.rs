@@ -640,6 +640,8 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
         })
         .collect();
     tracks.extend([
@@ -672,6 +674,8 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
         },
         Track {
             namespace: namespace.clone(),
@@ -702,6 +706,8 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
         },
         Track {
             namespace,
@@ -732,6 +738,8 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
         },
     ]);
 
