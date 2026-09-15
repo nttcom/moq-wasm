@@ -83,6 +83,7 @@ element<HTMLSelectElement>('video-track').addEventListener('change', () => void 
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio'))
 element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
+element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
 element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
 element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
@@ -745,6 +746,7 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
     closeMse()
     mse = await MseSink.open(video, source, undefined)
     reviewMseOpened = true
+    applyPlaybackSpeed()
     const anchor = reviewAnchorMicros ?? 0
     video.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
@@ -797,9 +799,26 @@ function backToLive(): void {
   element<HTMLCanvasElement>('review').hidden = true
   element<HTMLVideoElement>('video').hidden = false
   setStatusText('rewind-status', 'Live')
+  element<HTMLVideoElement>('video').playbackRate = 1
   if (reviewMseOpened) {
     reviewMseOpened = false
     void openLiveMse()
+  }
+}
+
+/// Only review playback through MSE can run at another rate: live playback
+/// has to keep pace with the publisher, and the WebCodecs path paces frames
+/// itself. Loading a new source resets the element's rate, so the chosen speed
+/// is applied again whenever the review MediaSource is opened.
+function speedAdjustable(): boolean {
+  return packaging === 'cmaf' && reviewing
+}
+
+function applyPlaybackSpeed(): void {
+  const speed = element<HTMLSelectElement>('speed')
+  speed.disabled = !speedAdjustable()
+  if (speedAdjustable()) {
+    element<HTMLVideoElement>('video').playbackRate = Number(speed.value)
   }
 }
 
@@ -816,6 +835,7 @@ function toggleQualityMenu(open?: boolean): void {
 function renderSeekbar(): void {
   setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
   element<HTMLButtonElement>('liveBtn').classList.toggle('reviewing', reviewing)
+  element<HTMLSelectElement>('speed').disabled = !speedAdjustable()
   if (seeking) {
     return
   }

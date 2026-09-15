@@ -59,6 +59,15 @@ timeline, because CMAF objects carry no LOC capture timestamp, and review
 playback appends the fetched fragments to a fresh MediaSource instead of
 drawing them on the canvas. Review plays video only in either mode.
 
+## Playback speed
+
+The speed control next to the rewind buttons offers 0.5x, 1x, 1.25x, 1.5x and
+2x. It is enabled only while reviewing in CMAF mode, where the fetched fragments
+play through a MediaSource and the element's `playbackRate` applies; live
+playback has to keep pace with the publisher and the WebCodecs path paces
+frames itself. Returning to live resets the rate to 1x. Audio, once review
+carries it, is time-stretched by the browser (`preservesPitch` is on by default).
+
 ## Player controls
 
 The seek bar, the rewind buttons and the quality menu sit on the video itself
