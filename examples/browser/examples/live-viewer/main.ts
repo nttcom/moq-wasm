@@ -3,10 +3,12 @@ import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import {
   MEDIA_CATALOG_TRACK_NAME,
   extractCatalogAudioTracks,
+  extractCatalogCmafTracks,
   extractCatalogMediaTimelineTracks,
   extractCatalogVideoTracks,
   type MediaCatalogTrack
 } from '../media/catalog'
+import { MseSink, type MseTrackSource, decodeBase64 } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
@@ -19,8 +21,14 @@ const FETCH_IDLE_MS = 400
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
+const CMAF_TRACK_SUFFIX = '_cmaf'
+const REVIEW_BUFFER_AHEAD_SECONDS = 8
+
+type Packaging = 'loc' | 'cmaf'
 
 type MediaKind = 'video' | 'audio'
+
+type SubgroupObject = Parameters<Parameters<MoqtClientWrapper['setOnSubgroupObjectHandler']>[1]>[1]
 
 type TrackSubscription = {
   requestId: bigint
@@ -44,6 +52,15 @@ const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioD
 
 let videoTracks: MediaCatalogTrack[] = []
 let audioTracks: MediaCatalogTrack[] = []
+let cmafTracks: MediaCatalogTrack[] = []
+let packaging: Packaging = 'loc'
+let mse: MseSink | undefined
+let liveStream: MediaStream | undefined
+/// MSE decodes from the first random access point, so after a MediaSource is
+/// (re)opened live fragments are dropped until one starts a group.
+let cmafAwaitingKeyframe = true
+let reviewMseOpened = false
+const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let videoWriter: WritableStreamDefaultWriter<VideoFrame> | undefined
 let audioWriter: WritableStreamDefaultWriter<AudioData> | undefined
@@ -65,6 +82,7 @@ element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopS
 element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video'))
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio'))
 element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
+element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
 element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
 element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
@@ -134,11 +152,13 @@ async function stopStream(): Promise<void> {
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
   backToLive()
+  closeMse()
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
   videoTracks = []
   audioTracks = []
+  cmafTracks = []
   renderTrackOptions()
   videoObjectCount = 0
   if (moqtClient.getConnectionStatus()) {
@@ -169,12 +189,15 @@ async function applyCatalog(payload: string): Promise<void> {
     const catalog = parse_msf_catalog_json(payload)
     videoTracks = extractCatalogVideoTracks(catalog).filter(isLocTrack)
     audioTracks = extractCatalogAudioTracks(catalog).filter(isLocTrack)
+    cmafTracks = extractCatalogCmafTracks(catalog)
     setStatusText('catalog-status', `Catalog loaded: ${videoTracks.length} video / ${audioTracks.length} audio`)
     const changed = renderTrackOptions()
+    renderPackagingOptions()
     await subscribeMediaTimeline(catalog)
     if (changed) {
       await resubscribe('video')
       await resubscribe('audio')
+      await openLiveMse()
     }
   } catch (error) {
     setStatusText('catalog-status', `Catalog error: ${getErrorMessage(error)}`)
@@ -203,6 +226,7 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
       appendLog('error', `media timeline: ${getErrorMessage(error)}`)
       return
     }
+    stampObservedCmafGroups()
     renderSeekbar()
   })
   appendLog('info', `subscribed ${trackNamespace().join('/')}/${track.name}`)
@@ -212,6 +236,125 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
 /// decoders below only take the LOC ones.
 function isLocTrack(track: MediaCatalogTrack): boolean {
   return track.packaging !== 'cmaf'
+}
+
+function cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
+  return cmafTracks.find((candidate) => candidate.name === `${track.name}${CMAF_TRACK_SUFFIX}`)
+}
+
+function renderPackagingOptions(): void {
+  const select = element<HTMLSelectElement>('packaging')
+  const cmafOption = select.querySelector<HTMLOptionElement>('option[value="cmaf"]')
+  if (cmafOption) {
+    cmafOption.disabled = cmafTracks.length === 0
+  }
+}
+
+async function switchPackaging(): Promise<void> {
+  const selected = element<HTMLSelectElement>('packaging').value as Packaging
+  if (selected === packaging) {
+    return
+  }
+  backToLive()
+  closeMse()
+  await unsubscribeTrack('video')
+  await unsubscribeTrack('audio')
+  packaging = selected
+  timeline.reset()
+  unstampedCmafGroups.clear()
+  if (packaging === 'loc') {
+    const video = element<HTMLVideoElement>('video')
+    video.removeAttribute('src')
+    video.srcObject = liveStream ?? null
+  }
+  await resubscribe('video')
+  await resubscribe('audio')
+  await openLiveMse()
+  appendLog('info', `packaging switched to ${packaging}`)
+}
+
+/// CMAF objects carry no LOC header, so a group observed on the CMAF track is
+/// stamped with the encode wallclock the media timeline records for it. Only
+/// observed groups enter the timeline: the relay caches a track from its first
+/// subscriber on, so earlier groups the media timeline lists cannot be fetched.
+function observeCmafGroup(groupId: bigint): void {
+  unstampedCmafGroups.add(groupId)
+  stampObservedCmafGroups()
+}
+
+function stampObservedCmafGroups(): void {
+  for (const groupId of unstampedCmafGroups) {
+    const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
+    if (encodedAtMs !== undefined) {
+      timeline.recordCapture(groupId, encodedAtMs * 1_000)
+      unstampedCmafGroups.delete(groupId)
+    }
+  }
+}
+
+function cmafSource(track: MediaCatalogTrack): MseTrackSource | undefined {
+  if (!track.initData || !track.codec) {
+    return undefined
+  }
+  const container = track.role === 'audio' ? 'audio/mp4' : 'video/mp4'
+  return { mimeType: `${container}; codecs="${track.codec}"`, initSegment: decodeBase64(track.initData) }
+}
+
+function subscribedCmafSource(kind: MediaKind): MseTrackSource | undefined {
+  const name = subscriptions.get(kind)?.name
+  const track = cmafTracks.find((candidate) => candidate.name === name)
+  return track && cmafSource(track)
+}
+
+async function openLiveMse(): Promise<void> {
+  if (packaging !== 'cmaf') {
+    return
+  }
+  closeMse()
+  const video = subscribedCmafSource('video')
+  if (!video) {
+    return
+  }
+  const audio = subscribedCmafSource('audio')
+  mse = await MseSink.open(element<HTMLVideoElement>('video'), video, audio)
+  cmafAwaitingKeyframe = true
+}
+
+function closeMse(): void {
+  mse?.close()
+  mse = undefined
+  cmafAwaitingKeyframe = true
+}
+
+function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: SubgroupObject): void {
+  if (object.objectStatus != null) {
+    return
+  }
+  if (kind === 'video') {
+    videoObjectCount += 1
+    if (object.objectId === 0n) {
+      observeCmafGroup(groupId)
+      renderSeekbar()
+    }
+    if (!reviewing) {
+      setStatusText('playback-status', `Playing ${trackName}`)
+    }
+  }
+  if (reviewing || !mse) {
+    return
+  }
+  if (kind === 'video' && cmafAwaitingKeyframe) {
+    if (object.objectId !== 0n) {
+      return
+    }
+    cmafAwaitingKeyframe = false
+  }
+  const payload = new Uint8Array(object.objectPayload)
+  if (kind === 'video') {
+    mse.appendVideo(payload)
+  } else {
+    mse.appendAudio(payload)
+  }
 }
 
 function renderTrackOptions(): boolean {
@@ -252,25 +395,36 @@ function describeVideoTrack(track: MediaCatalogTrack): string {
 async function resubscribe(kind: MediaKind): Promise<void> {
   const select = element<HTMLSelectElement>(kind === 'video' ? 'video-track' : 'audio-track')
   const trackName = select.value
-  if (subscriptions.get(kind)?.name === trackName) {
+  const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === trackName)
+  const wire = track && (packaging === 'cmaf' ? cmafSibling(track) : track)
+  if (wire && subscriptions.get(kind)?.name === wire.name) {
     return
   }
 
   if (kind === 'video') {
     timeline.reset()
+    unstampedCmafGroups.clear()
     backToLive()
   }
   await unsubscribeTrack(kind)
-  const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === trackName)
-  if (!track) {
+  if (!track || !wire) {
     return
   }
 
-  postCatalogToDecoder(kind, track)
-  const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), trackName, AUTH_INFO, {
+  if (packaging === 'loc') {
+    postCatalogToDecoder(kind, track)
+  }
+  const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), wire.name, AUTH_INFO, {
     forward: true
   })
-  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: trackName })
+  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name })
+  if (packaging === 'cmaf') {
+    moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) =>
+      handleCmafObject(kind, wire.name, groupId, object)
+    )
+    appendLog('info', `subscribed ${trackNamespace().join('/')}/${wire.name}`)
+    return
+  }
   const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {
     const payload = new Uint8Array(object.objectPayload)
@@ -362,7 +516,8 @@ function startRendering(): void {
   const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
   videoWriter = videoGenerator.writable.getWriter()
   audioWriter = audioGenerator.writable.getWriter()
-  element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
+  liveStream = new MediaStream([videoGenerator])
+  element<HTMLVideoElement>('video').srcObject = liveStream
   element<HTMLAudioElement>('audio').srcObject = new MediaStream([audioGenerator])
 
   videoDecoderWorker.onmessage = async (event) => {
@@ -437,6 +592,7 @@ async function rewind(seconds: number): Promise<void> {
 
   const generation = ++reviewGeneration
   reviewing = true
+  reviewMseOpened = false
   reviewAnchorMicros = target.captureMicros
   reviewPlayheadMicros = target.captureMicros
   renderSeekbar()
@@ -453,7 +609,8 @@ async function review(startGroup: bigint, generation: number): Promise<void> {
   while (pending && generation === reviewGeneration) {
     const upcoming = fetchReviewWindow(pending.nextGroup, generation)
     setStatusText('rewind-status', `Rewound ${timeline.secondsBehindLive(pending.start).toFixed(1)}s`)
-    const played = await playReview(sortReviewFrames(pending.frames), generation)
+    const frames = sortReviewFrames(pending.frames)
+    const played = packaging === 'cmaf' ? await playReviewMse(frames, generation) : await playReview(frames, generation)
     pending = played ? await upcoming : undefined
   }
 }
@@ -574,6 +731,43 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
   return true
 }
 
+/// Fetched fragments are appended to a fresh MediaSource and the element plays
+/// them itself; the next window is only fetched once playback has caught up to
+/// within a few seconds of what is buffered.
+async function playReviewMse(frames: ReviewFrame[], generation: number): Promise<boolean> {
+  const video = element<HTMLVideoElement>('video')
+  if (!reviewMseOpened) {
+    const source = subscribedCmafSource('video')
+    if (!source) {
+      setStatusText('rewind-status', 'Rewind unavailable: the CMAF track has no init segment')
+      return false
+    }
+    closeMse()
+    mse = await MseSink.open(video, source, undefined)
+    reviewMseOpened = true
+    const anchor = reviewAnchorMicros ?? 0
+    video.addEventListener('timeupdate', () => {
+      if (generation === reviewGeneration) {
+        advanceReviewPlayhead(anchor + video.currentTime * 1_000_000)
+      }
+    })
+  }
+  if (generation !== reviewGeneration || !mse) {
+    return false
+  }
+  for (const frame of frames) {
+    mse.appendVideo(frame.data)
+  }
+  while (generation === reviewGeneration) {
+    const ahead = (mse.bufferedEnd() ?? 0) - video.currentTime
+    if (ahead < REVIEW_BUFFER_AHEAD_SECONDS) {
+      break
+    }
+    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
+  }
+  return generation === reviewGeneration
+}
+
 function pendingReviewConfig(): VideoDecoderConfig | undefined {
   const track = videoTracks.find((candidate) => candidate.name === subscriptions.get('video')?.name)
   if (!track?.codec) {
@@ -603,6 +797,10 @@ function backToLive(): void {
   element<HTMLCanvasElement>('review').hidden = true
   element<HTMLVideoElement>('video').hidden = false
   setStatusText('rewind-status', 'Live')
+  if (reviewMseOpened) {
+    reviewMseOpened = false
+    void openLiveMse()
+  }
 }
 
 /// The axis runs from the start of the broadcast, which the media timeline

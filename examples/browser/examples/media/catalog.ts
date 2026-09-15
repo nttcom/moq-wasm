@@ -186,6 +186,10 @@ export function extractCatalogMediaTimelineTracks(catalog: unknown): MediaCatalo
   return extractCatalogTracks(catalog, 'mediatimeline')
 }
 
+export function extractCatalogCmafTracks(catalog: unknown): MediaCatalogTrack[] {
+  return extractCatalogTracks(catalog).filter((track) => track.packaging === 'cmaf')
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }

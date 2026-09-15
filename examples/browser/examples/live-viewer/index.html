@@ -163,6 +163,13 @@
                             >Audio track
                             <select id="audio-track" data-testid="live-viewer-audio-track-select"></select>
                           </label>
+                          <label for="packaging"
+                            >Packaging
+                            <select id="packaging" data-testid="live-viewer-packaging-select">
+                              <option value="loc">LOC (WebCodecs)</option>
+                              <option value="cmaf">CMAF (MSE)</option>
+                            </select>
+                          </label>
                           <label class="field-row">
                             <input type="checkbox" id="bypass-jitter-buffer" checked />
                             Bypass jitter buffer
