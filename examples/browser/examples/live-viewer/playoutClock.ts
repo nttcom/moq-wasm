@@ -40,6 +40,14 @@ export class PlayoutClock {
     return { atMs, reanchored: false }
   }
 
+  /// Moves every playout time by `deltaMs`; the audio playout reports how far
+  /// the device clock has run from this one.
+  shift(deltaMs: number): void {
+    if (this.anchor) {
+      this.anchor = { captureMicros: this.anchor.captureMicros, atMs: this.anchor.atMs + deltaMs }
+    }
+  }
+
   reset(): void {
     this.anchor = undefined
   }

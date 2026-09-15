@@ -8,12 +8,14 @@ const MICROS_PER_MILLI = 1_000
 
 /// Live LOC playback. Both decoders hand over samples as soon as they are
 /// decoded and one clock decides when each is presented, which is what keeps
-/// the picture and the sound together. A sample without a capture timestamp
-/// is presented at once. Pausing drops what arrives, and the clock is
-/// re-anchored on resume so playback comes back at the live edge.
+/// the picture and the sound together. The audio device is the master: the
+/// clock follows the drift the audio playout reports, so the picture stays
+/// with the sound as the two clocks part. A sample without a capture
+/// timestamp is presented at once. Pausing drops what arrives, and the clock
+/// is re-anchored on resume so playback comes back at the live edge.
 export class LivePlayout {
   private readonly clock = new PlayoutClock(PLAYOUT_DELAY_MS, MAX_EARLY_MS)
-  private readonly audio = new AudioPlayout()
+  private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
   private readonly video: VideoPlayout
   private paused = false
 
@@ -36,7 +38,7 @@ export class LivePlayout {
       return
     }
     const nowMs = performance.now()
-    this.audio.play(audioData, captureMicros, this.playoutTime(captureMicros, nowMs) ?? nowMs, nowMs)
+    this.audio.play(audioData, captureMicros, this.playoutTime(captureMicros, nowMs) ?? nowMs)
     audioData.close()
   }
 
