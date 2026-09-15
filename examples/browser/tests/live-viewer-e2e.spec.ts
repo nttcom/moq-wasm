@@ -41,8 +41,9 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
-    // Assert
+    // Assert: the rewound audio plays with the rewound picture
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    await expect(viewer.rewindStatus).toContainText(/A\/V [+-]\d+ ms/, { timeout: 20_000 })
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.liveButton).toHaveClass(/reviewing/)
     await expect(viewer.reviewCanvas).toBeVisible()

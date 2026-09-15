@@ -21,8 +21,9 @@ SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackName
 ## 巻き戻し
 
 映像にカーソルを合わせると中央に `↺5` `↺1` `1↻` `5↻` が出ます。キーボードでは ← / → が 1 秒、
-↓ / ↑ が 5 秒です。どれも relay のキャッシュに残っている group を FETCH で取り出し、review canvas に
-capture timestamp のとおりのペースで再生します。`LIVE` でライブ表示へ戻ります。
+↓ / ↑ が 5 秒です。どれも relay のキャッシュに残っている group を FETCH で取り出し、映像は review canvas
+に、音声は review 用の AudioContext に、capture timestamp のとおりのペースで揃えて再生します。`LIVE` で
+ライブ表示へ戻ります。
 
 - 位置は、ライブ再生中に観測した capture timestamp から求めます。bridge は group id を
   壁時計で採番し、group はエンコーダの keyframe ごとに切り替わるため、group id の差は秒数になりません。
@@ -66,8 +67,25 @@ on the canvas. Every MediaSource — live, review, or the replacement opened by 
 packaging or quality change — takes its own video element from a small pool, and
 a new picture is shown only once it has presented a frame while the previous one
 stays on screen until then; the live picture keeps decoding hidden behind a
-review, so `LIVE` swaps back at once. Review plays video only in either mode;
-the live audio is silenced while reviewing and heard again on `LIVE`.
+review, so `LIVE` swaps back at once. The live audio is silenced while
+reviewing and heard again on `LIVE`.
+
+## Review audio
+
+Audio groups rotate on their own schedule and carry their own ids, so the
+groups to replay are found on a timeline of the audio groups observed while
+playing live: the closed ones whose span overlaps the video windows fetched so
+far. They are fetched apart from the video and topped up while the review
+plays, because the newest group a window needs may close only while it plays.
+In LOC mode the chunks are decoded up front and scheduled on the review's own
+clock, which maps capture timestamps onto local time from the position the
+review starts at and follows the drift the audio device shows, so the picture
+keeps step with the sound; frames are decoded a little ahead of their
+presentation rather than a whole window at once. In CMAF mode the fragments
+are appended to the review MediaSource, which aligns them by `tfdt`. CMAF
+audio groups carry no capture timestamp, so they are stamped with their
+arrival, and the window is widened by a group to be sure to cover the video.
+The rewind status shows the review's own `A/V` offset.
 
 ## Catalog
 
@@ -131,9 +149,11 @@ packaging choice, and closes on a second click, on Escape, or on a click
 outside it.
 
 The centre button pauses and resumes whatever is on screen. Every other
-transition — seek, skip, `LIVE`, a packaging or quality change — resumes, and
-resuming live CMAF jumps to the end of what is buffered so the picture is live
-again. The volume slider next to the speed control drives the live audio output
+transition — seek, skip, `LIVE`, a packaging or quality change — resumes.
+Pausing a review freezes the picture and the sound where they are and resuming
+carries on from there; pausing live playback stops both, and resuming returns
+to the live edge (live CMAF jumps to the end of what is buffered, live LOC
+warms up again). The volume slider next to the speed control drives the live audio output
 (the `AudioContext` gain for LOC, the MediaSource element for CMAF).
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot

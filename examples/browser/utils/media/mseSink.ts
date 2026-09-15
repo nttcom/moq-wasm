@@ -20,6 +20,15 @@ type Buffered = {
   queue: Uint8Array[]
 }
 
+function covers(ranges: TimeRanges, seconds: number): boolean {
+  for (let index = 0; index < ranges.length; index += 1) {
+    if (ranges.start(index) <= seconds && seconds <= ranges.end(index)) {
+      return true
+    }
+  }
+  return false
+}
+
 /// One MediaSource on a video element with a SourceBuffer per track. Appends
 /// are queued because a SourceBuffer rejects appendBuffer while it is updating,
 /// and playback starts once a second of video is buffered.
@@ -108,12 +117,26 @@ export class MseSink {
     buffered.sourceBuffer.appendBuffer(buffered.queue.shift()!.slice())
   }
 
+  /// With an audio track, playback starts where both tracks have data: the
+  /// element would otherwise sit on the first frame until the audio arrives,
+  /// and the audio may begin a little after the video when the first keyframe
+  /// lands while the MediaSource is being opened.
   private startWhenBuffered(): void {
     const end = this.bufferedEnd()
     if (this.started || end === undefined) {
       return
     }
-    const start = this.video!.sourceBuffer.buffered.start(0) + this.startAtSeconds
+    let start = this.video!.sourceBuffer.buffered.start(0) + this.startAtSeconds
+    const audioRanges = this.audio?.sourceBuffer.buffered
+    if (audioRanges) {
+      if (audioRanges.length === 0) {
+        return
+      }
+      start = Math.max(start, audioRanges.start(0))
+      if (!covers(audioRanges, start)) {
+        return
+      }
+    }
     if (end - start < PLAYBACK_BUFFER_THRESHOLD_SECONDS) {
       return
     }
