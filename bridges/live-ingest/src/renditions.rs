@@ -1,5 +1,7 @@
-use anyhow::Result;
-use mediapack::{MediaEvent, VideoSample};
+use std::sync::{Arc, OnceLock};
+
+use anyhow::{Context, Result};
+use mediapack::{MediaEvent, VideoSample, loc::Muxer as LocMuxer};
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
@@ -7,8 +9,8 @@ use tokio::{
 use transcode::{Rendition, TranscodedEvent, Transcoder, ladder_for};
 
 use crate::{
-    moqt::{MoqtManager, VIDEO_TRACK_NAME, VideoTrackInfo, now_unix},
-    publisher::video_payload,
+    loc_object::extension_headers,
+    moqt::{MoqtManager, OutgoingObject, VIDEO_TRACK_NAME, VideoTrackInfo},
 };
 
 const SAMPLE_QUEUE_CAPACITY: usize = 64;
@@ -24,6 +26,7 @@ impl RenditionFanout {
         moqt: MoqtManager,
         namespace: Vec<String>,
         source: &VideoTrackInfo,
+        loc: Arc<OnceLock<LocMuxer>>,
     ) -> Result<Option<Self>> {
         let namespace_path = namespace.join("/");
         let renditions = ladder_for(source.width, source.height);
@@ -52,7 +55,12 @@ impl RenditionFanout {
                 tracing::warn!(?err, "failed to finish the transcoder");
             }
         });
-        let publisher = tokio::spawn(publish_renditions(transcoder, renditions, moqt, namespace));
+        let publisher = RenditionPublisher {
+            moqt,
+            namespace,
+            loc,
+        };
+        let publisher = tokio::spawn(publisher.run(transcoder, renditions));
         Ok(Some(Self {
             sample_sender,
             _feeder: feeder,
@@ -67,51 +75,64 @@ impl RenditionFanout {
     }
 }
 
-async fn publish_renditions(
-    mut transcoder: Transcoder,
-    renditions: Vec<Rendition>,
+struct RenditionPublisher {
     moqt: MoqtManager,
     namespace: Vec<String>,
-) {
-    let namespace_path = namespace.join("/");
-    let mut codecs: Vec<Option<String>> = vec![None; renditions.len()];
-    while let Some(output) = transcoder.next().await {
-        let output = match output {
-            Ok(output) => output,
-            Err(err) => {
-                tracing::error!(namespace = %namespace_path, ?err, "transcoder failed");
-                break;
-            }
-        };
-        let rendition = &renditions[output.rendition];
-        let codec = &mut codecs[output.rendition];
-        if let Err(err) = publish_output(&moqt, &namespace, rendition, codec, output).await {
-            tracing::warn!(namespace = %namespace_path, rendition = %rendition.name, ?err, "failed to publish rendition");
-        }
-    }
+    loc: Arc<OnceLock<LocMuxer>>,
 }
 
-async fn publish_output(
-    moqt: &MoqtManager,
-    namespace: &[String],
-    rendition: &Rendition,
-    codec: &mut Option<String>,
-    output: TranscodedEvent,
-) -> Result<()> {
-    let track = format!("{VIDEO_TRACK_NAME}_{}", rendition.name);
-    match output.event {
-        MediaEvent::VideoConfig(config) => {
-            let info = VideoTrackInfo::from_record(&config, format!("Video {}", rendition.name))?;
-            *codec = Some(info.codec.clone());
-            moqt.update_video_catalog(namespace, &track, info).await
+impl RenditionPublisher {
+    async fn run(self, mut transcoder: Transcoder, renditions: Vec<Rendition>) {
+        let namespace_path = self.namespace.join("/");
+        while let Some(output) = transcoder.next().await {
+            let output = match output {
+                Ok(output) => output,
+                Err(err) => {
+                    tracing::error!(namespace = %namespace_path, ?err, "transcoder failed");
+                    break;
+                }
+            };
+            let rendition = &renditions[output.rendition];
+            if let Err(err) = self.publish(rendition, output).await {
+                tracing::warn!(namespace = %namespace_path, rendition = %rendition.name, ?err, "failed to publish rendition");
+            }
         }
-        MediaEvent::Video(sample) => {
-            tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
-            let payload = video_payload(&sample, codec.as_deref(), now_unix().as_millis() as u64);
-            moqt.send_object(namespace, &track, sample.is_keyframe, payload)
-                .await?;
-            Ok(())
+    }
+
+    async fn publish(&self, rendition: &Rendition, output: TranscodedEvent) -> Result<()> {
+        let track = format!("{VIDEO_TRACK_NAME}_{}", rendition.name);
+        match output.event {
+            MediaEvent::VideoConfig(config) => {
+                let info =
+                    VideoTrackInfo::from_record(&config, format!("Video {}", rendition.name))?;
+                self.moqt
+                    .update_video_catalog(&self.namespace, &track, info)
+                    .await
+            }
+            MediaEvent::Video(sample) => {
+                tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
+                let rotate_group = sample.is_keyframe;
+                let muxer = self
+                    .loc
+                    .get()
+                    .context("rendition sample before the source seeded the LOC capture origin")?;
+                let Some(object) = muxer.push(&MediaEvent::Video(sample)) else {
+                    return Ok(());
+                };
+                self.moqt
+                    .send_object(
+                        &self.namespace,
+                        &track,
+                        OutgoingObject {
+                            rotate_group,
+                            extension_headers: extension_headers(&object),
+                            payload: object.payload,
+                        },
+                    )
+                    .await?;
+                Ok(())
+            }
+            _ => Ok(()),
         }
-        _ => Ok(()),
     }
 }

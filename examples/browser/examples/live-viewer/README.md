@@ -30,9 +30,9 @@ capture timestamp のとおりのペースで再生します。`Back to live` �
 
 ## ペイロード形式
 
-live-ingest は各 object を `[meta_len (u32 BE)][meta JSON][coded data]` で送り、ブラウザ publisher は
-coded data のみを送って metadata を MoQT の LOC 拡張ヘッダに載せます。`utils/media/ingestChunk.ts` が
-両方を受け付け、前者は JSON を外して capture timestamp を LOC ヘッダ相当に変換します。
+live-ingest もブラウザ publisher も object を LOC（draft-ietf-moq-loc-01）で送ります。payload は
+コーデックのビットストリームそのもので、capture timestamp などの metadata は MoQT の LOC 拡張
+ヘッダに載ります。音声の AudioSpecificConfig は catalog の `initData` から取ります。
 
 ## E2E
 

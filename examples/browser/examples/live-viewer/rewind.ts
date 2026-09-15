@@ -1,5 +1,4 @@
 import { type LocHeader, readLocHeader } from '../../utils/media/loc'
-import { parseIngestChunk } from '../../utils/media/ingestChunk'
 
 const MICROS_PER_SECOND = 1_000_000
 
@@ -100,16 +99,16 @@ export function toReviewFrame(message: {
   objectPayload: Uint8Array
   locHeader?: LocHeader
 }): ReviewFrame | undefined {
-  const chunk = parseIngestChunk(new Uint8Array(message.objectPayload), message.locHeader)
-  if (chunk.data.byteLength === 0) {
+  const data = new Uint8Array(message.objectPayload)
+  if (data.byteLength === 0) {
     return undefined
   }
 
   return {
     groupId: message.groupId,
     objectId: message.objectId,
-    data: chunk.data,
-    captureMicros: readLocHeader(chunk.locHeader).captureTimestampMicros
+    data,
+    captureMicros: readLocHeader(message.locHeader).captureTimestampMicros
   }
 }
 

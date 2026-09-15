@@ -1,6 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
-import { parseIngestChunk } from '../../utils/media/ingestChunk'
 import {
   MEDIA_CATALOG_TRACK_NAME,
   extractCatalogAudioTracks,
@@ -156,11 +155,11 @@ async function subscribeCatalog(): Promise<void> {
     forward: true
   })
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    const { data } = parseIngestChunk(new Uint8Array(object.objectPayload))
-    if (data.byteLength === 0) {
+    const payload = new Uint8Array(object.objectPayload)
+    if (payload.byteLength === 0) {
       return
     }
-    void applyCatalog(new TextDecoder().decode(data))
+    void applyCatalog(new TextDecoder().decode(payload))
   })
   appendLog('info', `subscribed ${namespace.join('/')}/${MEDIA_CATALOG_TRACK_NAME}`)
 }
@@ -194,12 +193,12 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
     forward: true
   })
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    const { data } = parseIngestChunk(new Uint8Array(object.objectPayload))
-    if (data.byteLength === 0) {
+    const payload = new Uint8Array(object.objectPayload)
+    if (payload.byteLength === 0) {
       return
     }
     try {
-      mediaTimeline.replace(new TextDecoder().decode(data))
+      mediaTimeline.replace(new TextDecoder().decode(payload))
     } catch (error) {
       appendLog('error', `media timeline: ${getErrorMessage(error)}`)
       return
@@ -268,10 +267,10 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: trackName })
   const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {
-    const chunk = parseIngestChunk(new Uint8Array(object.objectPayload), object.locHeader)
+    const payload = new Uint8Array(object.objectPayload)
     if (kind === 'video') {
       videoObjectCount += 1
-      timeline.record(groupId, chunk.locHeader)
+      timeline.record(groupId, object.locHeader)
       renderSeekbar()
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
@@ -286,13 +285,13 @@ async function resubscribe(kind: MediaKind): Promise<void> {
         subgroupStreamObject: {
           subgroupId: object.subgroupId,
           objectIdDelta: object.objectIdDelta,
-          objectPayloadLength: chunk.data.byteLength,
-          objectPayload: chunk.data,
+          objectPayloadLength: payload.byteLength,
+          objectPayload: payload,
           objectStatus: object.objectStatus,
-          locHeader: chunk.locHeader
+          locHeader: object.locHeader
         }
       },
-      [chunk.data.buffer]
+      [payload.buffer]
     )
   })
   appendLog('info', `subscribed ${trackNamespace().join('/')}/${trackName}`)
