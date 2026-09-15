@@ -104,6 +104,17 @@
                     </button>
                     <button
                       type="button"
+                      id="playPauseBtn"
+                      class="viewer-skip-button viewer-play"
+                      data-testid="live-viewer-play-pause-button"
+                      aria-label="Pause"
+                      aria-pressed="false"
+                      title="停止 / 再開"
+                    >
+                      &#x275A;&#x275A;
+                    </button>
+                    <button
+                      type="button"
                       class="viewer-skip-button"
                       data-skip-seconds="1"
                       data-testid="live-viewer-skip-forward-1-button"
@@ -180,6 +191,19 @@
                         <option value="1.5">1.5x</option>
                         <option value="2">2x</option>
                       </select>
+                      <label class="viewer-volume" title="音量">
+                        <span aria-hidden="true">&#x1F50A;</span>
+                        <input
+                          id="volume"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value="1"
+                          aria-label="Volume"
+                          data-testid="live-viewer-volume"
+                        />
+                      </label>
                       <div class="viewer-quality">
                         <button
                           type="button"

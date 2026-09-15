@@ -95,8 +95,26 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
 
-    // Act: ↓ でライブから 5 秒戻り、→ で 1 秒進む
+    // Act: 中央のボタンで停止し、もう一度押して再開する
     await viewer.liveButton.click()
+    await viewer.seekbar.hover()
+    await viewer.playPauseButton.click()
+
+    // Assert
+    await expect(viewer.playPauseButton).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(async () => mediaProp(viewer.video, 'paused')).toBe(true)
+    await expect.poll(async () => mediaProp(viewer.audio, 'paused')).toBe(true)
+
+    // Act
+    await viewer.playPauseButton.click()
+    await viewer.volumeSlider.fill('0.3')
+
+    // Assert
+    await expect.poll(async () => mediaProp(viewer.video, 'paused')).toBe(false)
+    await expect.poll(async () => mediaProp(viewer.audio, 'volume')).toBeCloseTo(0.3, 5)
+
+    // Act: ↓ でライブから 5 秒戻り、→ で 1 秒進む（音量スライダーにフォーカスがあると矢印はスライダーのもの）
+    await viewer.seekbar.focus()
     await viewer.page.keyboard.press('ArrowDown')
 
     // Assert: つまみは目標位置そのものに置かれ、描画は目標以降のフレームから始まる
@@ -217,6 +235,13 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect(viewer.visibleVideo).toHaveCount(1)
     const liveTimeWhileReviewing = await mediaProp(liveVideo, 'currentTime')
 
+    // Act: 停止すると review 要素が止まり、再開で動き出す
+    await viewer.seekbar.hover()
+    await viewer.playPauseButton.click()
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'paused')).toBe(true)
+    await viewer.playPauseButton.click()
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'paused')).toBe(false)
+
     // Act: 巻き戻し中だけ倍速を選べる
     await expect(viewer.speedSelect).toBeEnabled()
     await viewer.speedSelect.selectOption('2')
@@ -239,11 +264,11 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
   }
 })
 
-async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate'>(
-  video: Locator,
+async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'paused' | 'volume'>(
+  media: Locator,
   key: K
-): Promise<HTMLVideoElement[K]> {
-  return video.evaluate((element, property) => (element as HTMLVideoElement)[property], key)
+): Promise<HTMLMediaElement[K]> {
+  return media.evaluate((element, property) => (element as HTMLMediaElement)[property], key)
 }
 
 async function expectVideoDecoded(video: Locator): Promise<void> {

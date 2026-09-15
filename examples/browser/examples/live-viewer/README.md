@@ -87,6 +87,12 @@ the picture. The gear opens the video and audio track selection along with the
 jitter buffer switch, and closes on a second click, on Escape, or on a click
 outside it.
 
+The centre button pauses and resumes whatever is on screen. Every other
+transition — seek, skip, `LIVE`, a packaging or quality change — resumes, and
+resuming live CMAF jumps to the end of what is buffered so the picture is live
+again. The volume slider next to the speed control drives the live audio output
+(`<audio>` for LOC, the MediaSource element for CMAF).
+
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the
 button doubles as the indicator for which of the two the viewer is watching.
