@@ -1,3 +1,8 @@
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
+
 use anyhow::{Context, Result, anyhow, ensure};
 use gstreamer::{self as gst, prelude::*};
 use gstreamer_app::{AppSink, AppSinkCallbacks, AppSrc};
@@ -6,8 +11,23 @@ use tokio::sync::mpsc;
 
 use crate::ladder::Rendition;
 
-const KEYFRAME_INTERVAL_FRAMES: u32 = 60;
+/// Renditions key only where the source does: the encoder's own keyframe
+/// interval is pushed out of reach and a key unit is requested for the frame
+/// that carries a source keyframe's presentation time, so every rendition group
+/// starts on the same presentation time as the source group
+/// (draft-ietf-moq-cmsf-01 §3.2). The request is made from a probe on the
+/// encoder's sink pad as that frame arrives, and asks for the next frame rather
+/// than for a running time: GstVideoEncoder 1.24 matches requested running
+/// times against timestamps it has already shifted by the encoder's `min_pts`,
+/// which x264enc sets to 1000 hours, so a request for the source time is never
+/// honoured there.
+const MAX_KEYFRAME_INTERVAL_FRAMES: u32 = i32::MAX as u32;
 const INPUT_QUEUE_BYTES: u32 = 4 * 1024 * 1024;
+/// A source keyframe whose frame never reaches an encoder (dropped in decode)
+/// is forgotten once the encoder has moved this far past it.
+const KEYFRAME_TIME_WINDOW_US: u64 = 10_000_000;
+
+type KeyframeTimes = Arc<Mutex<BTreeSet<u64>>>;
 
 pub struct TranscodedEvent {
     pub rendition: usize,
@@ -30,10 +50,19 @@ pub struct Transcoder {
 #[derive(Clone)]
 pub struct TranscodeInput {
     source: AppSrc,
+    keyframe_times: Vec<KeyframeTimes>,
 }
 
 impl TranscodeInput {
     pub fn push(&self, sample: &VideoSample) -> Result<()> {
+        if sample.is_keyframe {
+            for keyframe_times in &self.keyframe_times {
+                keyframe_times
+                    .lock()
+                    .expect("keyframe times lock")
+                    .insert(sample.pts.micros());
+            }
+        }
         let mut buffer = gst::Buffer::from_slice(sample.data.clone());
         {
             let buffer = buffer
@@ -73,6 +102,7 @@ impl Transcoder {
             .downcast::<AppSrc>()
             .map_err(|_| anyhow!("source is not an appsrc"))?;
         let (message_sender, message_receiver) = mpsc::unbounded_channel();
+        let mut keyframe_times = Vec::with_capacity(renditions.len());
         for index in 0..renditions.len() {
             let sink = pipeline
                 .by_name(&format!("sink{index}"))
@@ -80,6 +110,12 @@ impl Transcoder {
                 .downcast::<AppSink>()
                 .map_err(|_| anyhow!("sink{index} is not an appsink"))?;
             install_sink_callbacks(&sink, index, message_sender.clone());
+            let encoder = pipeline
+                .by_name(&format!("enc{index}"))
+                .context("missing encoder")?;
+            let times = KeyframeTimes::default();
+            install_key_unit_probe(&encoder, times.clone())?;
+            keyframe_times.push(times);
         }
         forward_bus_errors(&pipeline, message_sender)?;
         pipeline
@@ -87,7 +123,10 @@ impl Transcoder {
             .context("start transcode pipeline")?;
         Ok(Self {
             pipeline,
-            input: TranscodeInput { source },
+            input: TranscodeInput {
+                source,
+                keyframe_times,
+            },
             message_receiver,
             open_renditions: renditions.len(),
         })
@@ -132,7 +171,7 @@ fn pipeline_description(renditions: &[Rendition]) -> String {
     for (index, rendition) in renditions.iter().enumerate() {
         description.push_str(&format!(
             "split. ! queue ! videoscale ! video/x-raw,width={},height={} ! \
-             x264enc tune=zerolatency speed-preset=veryfast bitrate={} key-int-max={KEYFRAME_INTERVAL_FRAMES} ! \
+             x264enc name=enc{index} tune=zerolatency speed-preset=veryfast bitrate={} key-int-max={MAX_KEYFRAME_INTERVAL_FRAMES} ! \
              video/x-h264,profile=baseline ! h264parse config-interval=-1 ! \
              video/x-h264,stream-format=byte-stream,alignment=au ! \
              appsink name=sink{index} sync=false ",
@@ -140,6 +179,42 @@ fn pipeline_description(renditions: &[Rendition]) -> String {
         ));
     }
     description
+}
+
+fn install_key_unit_probe(encoder: &gst::Element, keyframe_times: KeyframeTimes) -> Result<()> {
+    let sink_pad = encoder
+        .static_pad("sink")
+        .context("encoder has no sink pad")?;
+    let src_pad = encoder
+        .static_pad("src")
+        .context("encoder has no src pad")?;
+    sink_pad
+        .add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+            let Some(gst::PadProbeData::Buffer(buffer)) = &info.data else {
+                return gst::PadProbeReturn::Ok;
+            };
+            let Some(pts) = buffer.pts() else {
+                return gst::PadProbeReturn::Ok;
+            };
+            let pts = pts.useconds();
+            let mut times = keyframe_times.lock().expect("keyframe times lock");
+            *times = times.split_off(&pts.saturating_sub(KEYFRAME_TIME_WINDOW_US));
+            if times.remove(&pts) {
+                src_pad.send_event(force_key_unit_request());
+            }
+            gst::PadProbeReturn::Ok
+        })
+        .context("install key unit probe")?;
+    Ok(())
+}
+
+fn force_key_unit_request() -> gst::Event {
+    let request = gst::Structure::builder("GstForceKeyUnit")
+        .field("running-time", gst::ClockTime::NONE)
+        .field("all-headers", true)
+        .field("count", 0u32)
+        .build();
+    gst::event::CustomUpstream::builder(request).build()
 }
 
 fn install_sink_callbacks(
@@ -297,6 +372,59 @@ mod tests {
         assert_eq!(video[0].pts, samples[0].pts);
         assert_eq!(video[0].dts, samples[0].pts);
         assert!(outputs.iter().all(|output| output.rendition == 0));
+    }
+
+    #[tokio::test]
+    async fn keyframes_land_where_the_source_has_them() {
+        // Arrange: the fixture played twice gives a source with keyframes past the first frame
+        let samples = fixture_video_samples();
+        let shift = samples
+            .last()
+            .unwrap()
+            .pts
+            .saturating_add(Timestamp::from_millis(40));
+        let repeated: Vec<VideoSample> = samples
+            .iter()
+            .cloned()
+            .chain(samples.iter().map(|sample| VideoSample {
+                data: sample.data.clone(),
+                is_keyframe: sample.is_keyframe,
+                pts: sample.pts.saturating_add(shift),
+                dts: sample.dts.saturating_add(shift),
+            }))
+            .collect();
+        let source_keyframes: Vec<Timestamp> = repeated
+            .iter()
+            .filter(|sample| sample.is_keyframe)
+            .map(|sample| sample.pts)
+            .collect();
+        assert!(source_keyframes.len() >= 2);
+        let rendition = Rendition {
+            name: "54p".into(),
+            width: 96,
+            height: 54,
+            bitrate_kbps: 100,
+        };
+        let mut transcoder = Transcoder::new(&[rendition]).unwrap();
+
+        // Act
+        for sample in &repeated {
+            transcoder.push(sample).unwrap();
+        }
+        transcoder.finish().unwrap();
+        let outputs = tokio::time::timeout(Duration::from_secs(30), drain(&mut transcoder))
+            .await
+            .expect("transcoder finished");
+
+        // Assert
+        let output_keyframes: Vec<Timestamp> = outputs
+            .iter()
+            .filter_map(|output| match &output.event {
+                MediaEvent::Video(sample) if sample.is_keyframe => Some(sample.pts),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(output_keyframes, source_keyframes);
     }
 
     #[test]

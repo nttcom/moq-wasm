@@ -115,6 +115,11 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.logPanel).toContainText('unsubscribed video')
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p/)
     await expect(viewer.seekPosition).toHaveText('LIVE')
+    await expect
+      .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth), {
+        timeout: 20_000
+      })
+      .toBeLessThan(1280)
 
     // Act
     await viewer.stopButton.click()

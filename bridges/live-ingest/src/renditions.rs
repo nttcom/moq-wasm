@@ -9,8 +9,9 @@ use tokio::{
 use transcode::{Rendition, TranscodedEvent, Transcoder, ladder_for};
 
 use crate::{
+    group_alignment::GroupAlignment,
     loc_object::extension_headers,
-    moqt::{MoqtManager, OutgoingObject, VIDEO_TRACK_NAME, VideoTrackInfo},
+    moqt::{GroupBoundary, MoqtManager, OutgoingObject, VIDEO_TRACK_NAME, VideoTrackInfo},
 };
 
 const SAMPLE_QUEUE_CAPACITY: usize = 64;
@@ -27,6 +28,7 @@ impl RenditionFanout {
         namespace: Vec<String>,
         source: &VideoTrackInfo,
         loc: Arc<OnceLock<LocMuxer>>,
+        alignment: Arc<GroupAlignment>,
     ) -> Result<Option<Self>> {
         let namespace_path = namespace.join("/");
         let renditions = ladder_for(source.width, source.height);
@@ -59,6 +61,8 @@ impl RenditionFanout {
             moqt,
             namespace,
             loc,
+            alignment,
+            started: vec![false; renditions.len()],
         };
         let publisher = tokio::spawn(publisher.run(transcoder, renditions));
         Ok(Some(Self {
@@ -79,10 +83,14 @@ struct RenditionPublisher {
     moqt: MoqtManager,
     namespace: Vec<String>,
     loc: Arc<OnceLock<LocMuxer>>,
+    alignment: Arc<GroupAlignment>,
+    /// A rendition publishes nothing until a keyframe the source has an id for,
+    /// so its first group starts aligned rather than on a lone delta frame.
+    started: Vec<bool>,
 }
 
 impl RenditionPublisher {
-    async fn run(self, mut transcoder: Transcoder, renditions: Vec<Rendition>) {
+    async fn run(mut self, mut transcoder: Transcoder, renditions: Vec<Rendition>) {
         let namespace_path = self.namespace.join("/");
         while let Some(output) = transcoder.next().await {
             let output = match output {
@@ -99,8 +107,9 @@ impl RenditionPublisher {
         }
     }
 
-    async fn publish(&self, rendition: &Rendition, output: TranscodedEvent) -> Result<()> {
+    async fn publish(&mut self, rendition: &Rendition, output: TranscodedEvent) -> Result<()> {
         let track = format!("{VIDEO_TRACK_NAME}_{}", rendition.name);
+        let index = output.rendition;
         match output.event {
             MediaEvent::VideoConfig(config) => {
                 let info =
@@ -111,7 +120,25 @@ impl RenditionPublisher {
             }
             MediaEvent::Video(sample) => {
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
-                let rotate_group = sample.is_keyframe;
+                if sample.is_keyframe && self.alignment.aligned(sample.pts.micros()).is_none() {
+                    tracing::warn!(
+                        %track,
+                        pts_us = sample.pts.micros(),
+                        nearest_source_keyframe_us = ?self.alignment.nearest_keyframe_us(sample.pts.micros()),
+                        "rendition keyframe has no aligned source keyframe; its frames are dropped until one aligns"
+                    );
+                }
+                let group = match (
+                    sample.is_keyframe,
+                    self.alignment.aligned(sample.pts.micros()),
+                ) {
+                    (true, Some(group_id)) => {
+                        self.started[index] = true;
+                        GroupBoundary::At(group_id)
+                    }
+                    _ if self.started[index] => GroupBoundary::Within,
+                    _ => return Ok(()),
+                };
                 let muxer = self
                     .loc
                     .get()
@@ -124,13 +151,12 @@ impl RenditionPublisher {
                         &self.namespace,
                         &track,
                         OutgoingObject {
-                            rotate_group,
+                            group,
                             extension_headers: extension_headers(&object),
                             payload: object.payload,
                         },
                     )
-                    .await?;
-                Ok(())
+                    .await
             }
             _ => Ok(()),
         }
