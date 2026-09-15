@@ -8,7 +8,8 @@ import {
   extractCatalogVideoTracks,
   type MediaCatalogTrack
 } from '../media/catalog'
-import { MseSink, type MseTrackSource, decodeBase64 } from '../../utils/media/mseSink'
+import { base64ToUint8Array } from '../../utils/media/base64'
+import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
@@ -87,18 +88,6 @@ element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpee
 element<HTMLButtonElement>('rewind10Btn').addEventListener('click', () => void rewind(10))
 element<HTMLButtonElement>('rewind30Btn').addEventListener('click', () => void rewind(30))
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
-element<HTMLButtonElement>('qualityBtn').addEventListener('click', () => toggleQualityMenu())
-document.addEventListener('click', (event) => {
-  const quality = element<HTMLDivElement>('quality-menu').parentElement
-  if (quality && !quality.contains(event.target as Node)) {
-    toggleQualityMenu(false)
-  }
-})
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    toggleQualityMenu(false)
-  }
-})
 seekbar.addEventListener('input', () => {
   seeking = true
   renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max))
@@ -109,7 +98,8 @@ seekbar.addEventListener('change', () => {
 })
 /// The axis spans the whole broadcast but only the replayable window can be
 /// fetched, so Home lands on that window instead of on a position the relay no
-/// longer holds.
+/// longer holds. End goes live here rather than through the browser, whose End
+/// only fires `change` when it actually moves the thumb.
 seekbar.addEventListener('keydown', (event) => {
   if (event.key === 'End') {
     event.preventDefault()
@@ -171,18 +161,19 @@ async function stopStream(): Promise<void> {
 }
 
 async function subscribeCatalog(): Promise<void> {
+  await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, (text) => void applyCatalog(text))
+}
+
+async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<void> {
   const namespace = trackNamespace()
-  const { subscribeOk } = await moqtClient.subscribe(namespace, MEDIA_CATALOG_TRACK_NAME, AUTH_INFO, {
-    forward: true
-  })
+  const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
     const payload = new Uint8Array(object.objectPayload)
-    if (payload.byteLength === 0) {
-      return
+    if (payload.byteLength > 0) {
+      onText(new TextDecoder().decode(payload))
     }
-    void applyCatalog(new TextDecoder().decode(payload))
   })
-  appendLog('info', `subscribed ${namespace.join('/')}/${MEDIA_CATALOG_TRACK_NAME}`)
+  appendLog('info', `subscribed ${namespace.join('/')}/${name}`)
 }
 
 async function applyCatalog(payload: string): Promise<void> {
@@ -213,16 +204,9 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
   }
 
   mediaTimelineTrackName = track.name
-  const { subscribeOk } = await moqtClient.subscribe(trackNamespace(), track.name, AUTH_INFO, {
-    forward: true
-  })
-  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    const payload = new Uint8Array(object.objectPayload)
-    if (payload.byteLength === 0) {
-      return
-    }
+  await subscribeTextTrack(track.name, (text) => {
     try {
-      mediaTimeline.replace(new TextDecoder().decode(payload))
+      mediaTimeline.replace(text)
     } catch (error) {
       appendLog('error', `media timeline: ${getErrorMessage(error)}`)
       return
@@ -230,7 +214,6 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
     stampObservedCmafGroups()
     renderSeekbar()
   })
-  appendLog('info', `subscribed ${trackNamespace().join('/')}/${track.name}`)
 }
 
 /// The bridge lists a CMAF sibling next to every LOC track; the WebCodecs
@@ -244,10 +227,8 @@ function cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
 }
 
 function renderPackagingOptions(): void {
-  const select = element<HTMLSelectElement>('packaging')
-  const cmafOption = select.querySelector<HTMLOptionElement>('option[value="cmaf"]')
-  if (cmafOption) {
-    cmafOption.disabled = cmafTracks.length === 0
+  for (const option of Array.from(element<HTMLSelectElement>('packaging').options)) {
+    option.disabled = option.value === 'cmaf' && cmafTracks.length === 0
   }
 }
 
@@ -256,13 +237,8 @@ async function switchPackaging(): Promise<void> {
   if (selected === packaging) {
     return
   }
-  backToLive()
   closeMse()
-  await unsubscribeTrack('video')
-  await unsubscribeTrack('audio')
   packaging = selected
-  timeline.reset()
-  unstampedCmafGroups.clear()
   if (packaging === 'loc') {
     const video = element<HTMLVideoElement>('video')
     video.removeAttribute('src')
@@ -298,7 +274,7 @@ function cmafSource(track: MediaCatalogTrack): MseTrackSource | undefined {
     return undefined
   }
   const container = track.role === 'audio' ? 'audio/mp4' : 'video/mp4'
-  return { mimeType: `${container}; codecs="${track.codec}"`, initSegment: decodeBase64(track.initData) }
+  return { mimeType: `${container}; codecs="${track.codec}"`, initSegment: base64ToUint8Array(track.initData) }
 }
 
 function subscribedCmafSource(kind: MediaKind): MseTrackSource | undefined {
@@ -825,17 +801,10 @@ function applyPlaybackSpeed(): void {
 /// The axis runs from the start of the broadcast, which the media timeline
 /// places, so the bar keeps its meaning as cache retention grows. Until the
 /// first timeline object arrives it falls back to the replayable window.
-function toggleQualityMenu(open?: boolean): void {
-  const menu = element<HTMLDivElement>('quality-menu')
-  const expanded = open ?? menu.hidden
-  menu.hidden = !expanded
-  element<HTMLButtonElement>('qualityBtn').setAttribute('aria-expanded', String(expanded))
-}
-
 function renderSeekbar(): void {
   setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
   element<HTMLButtonElement>('liveBtn').classList.toggle('reviewing', reviewing)
-  element<HTMLSelectElement>('speed').disabled = !speedAdjustable()
+  applyPlaybackSpeed()
   if (seeking) {
     return
   }
@@ -847,7 +816,7 @@ function renderSeekbar(): void {
   seekbar.disabled = !timeline.newestClosed || timeline.span <= 0
   const anchor = reviewAnchorMicros === undefined ? latest : reviewAnchorMicros / 1_000_000
   const playhead = reviewPlayheadMicros === undefined ? latest : reviewPlayheadMicros / 1_000_000
-  seekbar.value = String(Math.min(latest, Math.max(Number(seekbar.min), anchor)))
+  seekbar.valueAsNumber = anchor
   renderReplayableWindow(replayableStart, latest)
   renderReviewProgress(anchor, playhead, latest)
   renderSeekPosition(anchor, playhead, latest)
@@ -866,25 +835,26 @@ function advanceReviewPlayhead(captureMicros: number): void {
 
 function renderReviewProgress(anchor: number, playhead: number, latest: number): void {
   const played = element<HTMLDivElement>('seek-review-progress')
-  const min = Number(seekbar.min)
-  const axis = latest - min
-  played.hidden = !reviewing || axis <= 0
+  played.hidden = !reviewing || latest <= Number(seekbar.min)
   if (played.hidden) {
     return
   }
-  played.style.left = `${(((anchor - min) / axis) * 100).toFixed(3)}%`
-  played.style.width = `${((Math.max(0, playhead - anchor) / axis) * 100).toFixed(3)}%`
+  played.style.left = percentOfAxis(anchor - Number(seekbar.min), latest)
+  played.style.width = percentOfAxis(Math.max(0, playhead - anchor), latest)
 }
 
 function renderReplayableWindow(replayableStart: number, latest: number): void {
   const min = Number(seekbar.min)
-  const axis = latest - min
   const window = element<HTMLDivElement>('seek-available-window')
-  const offset = axis > 0 ? (replayableStart - min) / axis : 0
-  window.style.left = `${(offset * 100).toFixed(3)}%`
-  window.style.width = `${((1 - offset) * 100).toFixed(3)}%`
+  window.style.left = percentOfAxis(replayableStart - min, latest)
+  window.style.width = percentOfAxis(latest - replayableStart, latest)
   const elapsed = mediaTimeline.elapsedMsAt(min * 1_000_000)
   setStatusText('seek-start', elapsed === undefined ? '--:--' : formatElapsed(elapsed))
+}
+
+function percentOfAxis(seconds: number, latest: number): string {
+  const axis = latest - Number(seekbar.min)
+  return axis > 0 ? `${((seconds / axis) * 100).toFixed(3)}%` : '0%'
 }
 
 function liveEdgeSeconds(): number {

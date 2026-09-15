@@ -11,19 +11,13 @@ use media_streaming_format::MediaTimelineRecord;
 const RETENTION_US: u64 = 30_000_000;
 const MICROS_PER_MILLI: u64 = 1_000;
 
+#[derive(Default)]
 pub(crate) struct MediaTimeline {
     records: Vec<MediaTimelineRecord>,
     expected_group_id: Option<u64>,
 }
 
 impl MediaTimeline {
-    pub(crate) fn new() -> Self {
-        Self {
-            records: Vec::new(),
-            expected_group_id: None,
-        }
-    }
-
     pub(crate) fn record(&mut self, group_id: u64, presentation_us: u64, encoded_at_ms: u64) {
         if self
             .expected_group_id
@@ -65,7 +59,7 @@ mod tests {
     #[test]
     fn records_one_entry_per_group_at_object_zero() {
         // Arrange
-        let mut timeline = MediaTimeline::new();
+        let mut timeline = MediaTimeline::default();
 
         // Act
         timeline.record(700, 0, 1_759_924_158_381);
@@ -81,7 +75,7 @@ mod tests {
     #[test]
     fn drops_records_the_relay_no_longer_caches() {
         // Arrange
-        let mut timeline = MediaTimeline::new();
+        let mut timeline = MediaTimeline::default();
         timeline.record(1, 0, 10);
         timeline.record(2, 2_000_000, 12);
 
@@ -98,7 +92,7 @@ mod tests {
     #[test]
     fn clears_the_timeline_when_group_numbering_restarts() {
         // Arrange
-        let mut timeline = MediaTimeline::new();
+        let mut timeline = MediaTimeline::default();
         timeline.record(1, 0, 10);
         timeline.record(2, 2_000_000, 12);
 
