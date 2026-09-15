@@ -122,6 +122,8 @@ export class MoqtClientWrapper {
   private onPublishNamespaceResponseHandler: NamespaceResponseHandler = null
   private onSubscribeNamespaceResponseHandler: NamespaceResponseHandler = null
   private onSubscribeResponseHandler: SubscribeResponseHandler = null
+  private onTrackStatusResponseHandler: SubscribeResponseHandler = null
+  private pendingTrackStatus = new Map<bigint, PendingSubscribeResolver>()
   private onConnectionClosedHandler: ConnectionClosedHandler = null
   private incomingSubscribeHandler: IncomingSubscribeHandler | null = null
   private incomingUnsubscribeHandler: IncomingUnsubscribeHandler = null
@@ -245,6 +247,10 @@ export class MoqtClientWrapper {
 
   setOnSubscribeResponseHandler(handler: SubscribeResponseHandler): void {
     this.onSubscribeResponseHandler = handler
+  }
+
+  setOnTrackStatusResponseHandler(handler: SubscribeResponseHandler): void {
+    this.onTrackStatusResponseHandler = handler
   }
 
   setOnIncomingSubscribeHandler(handler: IncomingSubscribeHandler | null): void {
@@ -395,6 +401,31 @@ export class MoqtClientWrapper {
       this.pendingFetch.delete(requestId)
       throw error
     }
+  }
+
+  async trackStatus(trackNamespace: string[], trackName: string, authInfo: string): Promise<SubscribeOkMessage> {
+    const client = this.requireConnectedClient()
+    const requestId = this.issueRequestId()
+    const response = new Promise<SubscribeOkMessage>((resolve, reject) => {
+      this.pendingTrackStatus.set(requestId, { resolve, reject })
+    })
+    try {
+      await client.sendTrackStatus(requestId, trackNamespace, trackName, authInfo)
+      return await response
+    } catch (error) {
+      this.pendingTrackStatus.delete(requestId)
+      throw error
+    }
+  }
+
+  /**
+   * Renews the session's authorization token before it expires. The relay
+   * accepts the new JWT as the AUTHORIZATION TOKEN of a TRACK_STATUS request;
+   * it reads neither the namespace nor the track name, which are a fixed
+   * convention shared with the relay.
+   */
+  async refreshAuthToken(appId: string, token: string): Promise<void> {
+    await this.trackStatus([appId], 'update_auth_token', token)
   }
 
   private awaitFetchResponse(requestId: bigint): Promise<FetchOkMessage> {
@@ -560,6 +591,19 @@ export class MoqtClientWrapper {
         return
       }
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
+    })
+    this.client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
+      this.onTrackStatusResponseHandler?.(response)
+      const pending = this.pendingTrackStatus.get(response.requestId)
+      if (!pending) {
+        return
+      }
+      this.pendingTrackStatus.delete(response.requestId)
+      if (isRequestError(response)) {
+        pending.reject(new Error(`TRACK_STATUS_ERROR ${response.errorCode}: ${response.reasonPhrase}`))
+      } else {
+        pending.resolve(response)
+      }
     })
     this.client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
       const pending = this.pendingFetch.get(response.requestId)
