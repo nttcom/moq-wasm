@@ -29,6 +29,18 @@ Add lower renditions with `LIVE_INGEST_TRANSCODE=1 make live-ingest`. Each rendi
 below the source resolution (720p / 480p / 360p) is published as `video_<height>p`
 next to `video`, and the catalog lists them in one `altGroup` with `width` / `height`.
 
+## Transport stream loss
+
+The SRT listener reads with a 4 MiB UDP receive buffer: a keyframe arrives as
+a burst of several hundred kilobytes within a few milliseconds, and the 64 KiB
+that srt-tokio uses by default overflowed whenever the reader was not scheduled
+at once, with the lost datagrams rarely recovered before their delivery time.
+The MPEG-TS demuxer checks continuity counters; when packets are still lost,
+the frame they cut is dropped along with the frames predicted from it until
+the next keyframe, instead of being published corrupt for every viewer's
+decoder to fail on. Each loss is logged as a warning, and the SRT statistics
+are logged when a stream ends.
+
 ## Track Format
 
 Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the

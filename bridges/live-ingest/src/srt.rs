@@ -1,17 +1,23 @@
 use anyhow::{Context, Result};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use media_publisher::MoqtManager;
 use mediapack::mpegts;
-use srt_tokio::{ConnectionRequest, SrtListener};
+use srt_tokio::{ConnectionRequest, SrtListener, options::ByteCount};
 use tokio::task;
 
 use crate::publisher::{IngestOptions, IngestPublisher};
 
 const DEFAULT_NAMESPACE: &str = "anon/srt/live";
+/// A keyframe arrives as a burst of several hundred kilobytes in a few
+/// milliseconds; srt-tokio's default 64 KiB socket buffer overflows whenever
+/// the reader is not scheduled at once, and the lost datagrams are rarely
+/// recovered before their delivery time.
+const UDP_RECEIVE_BUFFER: ByteCount = ByteCount(4 * 1024 * 1024);
 const ACCESS_CONTROL_PREFIX: &str = "#!::";
 
 pub async fn run_srt_listener(addr: String, options: IngestOptions) -> Result<()> {
     let (_listener, mut incoming) = SrtListener::builder()
+        .set(|options| options.connect.udp_recv_buffer_size = UDP_RECEIVE_BUFFER)
         .bind(addr.as_str())
         .await
         .with_context(|| format!("bind SRT listener on {addr}"))?;
@@ -28,16 +34,32 @@ async fn handle_request(request: ConnectionRequest, options: IngestOptions) {
     let remote = request.remote();
     tracing::info!(%remote, ?stream_id, namespace = %namespace.join("/"), "SRT publisher connected");
     match publish(request, &options, namespace).await {
-        Ok(packets) => tracing::info!(%remote, packets, "SRT stream ended"),
+        Ok(summary) => tracing::info!(
+            %remote,
+            packets = summary.packets,
+            discontinuities = summary.discontinuities,
+            rx_loss = summary.rx_loss,
+            rx_dropped = summary.rx_dropped,
+            rx_retransmit = summary.rx_retransmit,
+            "SRT stream ended"
+        ),
         Err(err) => tracing::warn!(%remote, ?err, "SRT publisher failed"),
     }
+}
+
+struct StreamSummary {
+    packets: u64,
+    discontinuities: u64,
+    rx_loss: u64,
+    rx_dropped: u64,
+    rx_retransmit: u64,
 }
 
 async fn publish(
     request: ConnectionRequest,
     options: &IngestOptions,
     namespace: Vec<String>,
-) -> Result<u64> {
+) -> Result<StreamSummary> {
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
     let mut publisher = IngestPublisher::new(
@@ -46,17 +68,34 @@ async fn publish(
         options.transcode,
     );
     let mut packets = 0_u64;
+    let mut discontinuities = 0_u64;
     while let Some(packet) = socket.next().await {
         let (_, data) = packet?;
         packets += 1;
         for event in demuxer.push(&data)? {
             publisher.push(&event).await?;
         }
+        if demuxer.discontinuities() > discontinuities {
+            discontinuities = demuxer.discontinuities();
+            tracing::warn!(
+                discontinuities,
+                "transport stream lost packets; frames are dropped until the next keyframe"
+            );
+        }
     }
     for event in demuxer.finish()? {
         publisher.push(&event).await?;
     }
-    Ok(packets)
+    let statistics = socket.statistics().next().now_or_never().flatten();
+    Ok(StreamSummary {
+        packets,
+        discontinuities,
+        rx_loss: statistics.as_ref().map_or(0, |stats| stats.rx_loss_data),
+        rx_dropped: statistics.as_ref().map_or(0, |stats| stats.rx_dropped_data),
+        rx_retransmit: statistics
+            .as_ref()
+            .map_or(0, |stats| stats.rx_retransmit_data),
+    })
 }
 
 fn namespace_from_stream_id(stream_id: Option<&str>) -> Vec<String> {
