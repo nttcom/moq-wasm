@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use url::Url;
@@ -32,8 +34,12 @@ pub struct RelayArgs {
     #[arg(long)]
     pub insecure: bool,
     /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
-    #[arg(long, env = "MOQT_AUTH_TOKEN")]
+    #[arg(long, env = "MOQT_AUTH_TOKEN", conflicts_with = "auth_token_file")]
     pub auth_token: Option<String>,
+    /// File holding the authorization token; re-read while connected so a
+    /// rewritten token is sent to the relay before the current one expires
+    #[arg(long, env = "MOQT_AUTH_TOKEN_FILE")]
+    pub auth_token_file: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]

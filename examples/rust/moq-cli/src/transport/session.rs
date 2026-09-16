@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result, anyhow};
 use moqt::{
     ClientConfig, DataReceiver, Endpoint, FilterType, GroupOrder, QUIC, Session, SessionEvent,
@@ -5,21 +7,43 @@ use moqt::{
 };
 use tracing::info;
 
+use super::{auth_token_file::read_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
 use crate::cli::RelayArgs;
 
 const SUBSCRIBER_PRIORITY: u8 = 128;
 
-pub async fn connect_session(relay: &RelayArgs) -> Result<Session<QUIC>> {
+pub struct RelayConnection {
+    pub session: Arc<Session<QUIC>>,
+    _auth_token_refresh: Option<AuthTokenRefreshTask>,
+}
+
+pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConnection> {
+    let auth_token = match &relay.auth_token_file {
+        Some(path) => Some(read_auth_token(path).await?),
+        None => relay.auth_token.clone(),
+    };
     let config = ClientConfig {
         port: 0,
         verify_certificate: !relay.insecure,
-        authorization_token: relay.auth_token.clone(),
+        authorization_token: auth_token.clone(),
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;
     info!(relay = %relay.url, "connecting to relay");
     let connecting = endpoint.connect(relay.url.as_str()).await?;
-    let session = connecting.await?;
-    Ok(session)
+    let session = Arc::new(connecting.await?);
+    let auth_token_refresh = match (&relay.auth_token_file, auth_token) {
+        (Some(path), Some(token)) => Some(AuthTokenRefreshTask::run(
+            session.clone(),
+            path.clone(),
+            app_id.to_string(),
+            token,
+        )),
+        _ => None,
+    };
+    Ok(RelayConnection {
+        session,
+        _auth_token_refresh: auth_token_refresh,
+    })
 }
 
 /// Resolves once the relay ends the session, with the reason as the error.

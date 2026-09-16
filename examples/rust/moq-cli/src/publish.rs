@@ -8,7 +8,7 @@ use crate::catalog;
 use crate::cli::{Container, PublishArgs};
 use crate::loc;
 use crate::media::{Frame, h264::AnnexBFramer};
-use crate::transport::{connect_session, session_closed};
+use crate::transport::{connect_relay, session_closed};
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 const DRAIN_BEFORE_CLOSE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -27,9 +27,9 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     }
 
     let track = &args.track;
-    let session = connect_session(&args.relay).await?;
+    let connection = connect_relay(&args.relay, track.app_id()).await?;
 
-    let publisher = session.publisher();
+    let publisher = connection.session.publisher();
     let subscription = publisher
         .publish(
             track.namespace.clone(),
@@ -65,7 +65,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     let mut framer = AnnexBFramer::new(args.codec.clone());
 
     let mut reader = tokio::io::stdin();
-    let mut closed = std::pin::pin!(session_closed(&session));
+    let mut closed = std::pin::pin!(session_closed(&connection.session));
     let mut read_buf = vec![0u8; READ_BUFFER_BYTES];
     let mut frame_index: u64 = 0;
     // Wall-clock time of the frame timeline's zero point, set on the first frame.

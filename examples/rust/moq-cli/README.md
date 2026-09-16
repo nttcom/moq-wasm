@@ -21,8 +21,21 @@ moq-cli subscribe --relay <relay> --track <track> | ffplay -
 | `--codec` | ● | | `--container loc` のとき必須。`avc3`。cmaf では不要 |
 | `--container` | ● | | `loc`（既定）か `cmaf` |
 | `--insecure` | ● | ● | 証明書検証を無効化。自己署名 relay 用 |
+| `--auth-token` | ● | ● | relay に渡す認可トークン（JWT）。環境変数 `MOQT_AUTH_TOKEN` でも可 |
+| `--auth-token-file` | ● | ● | 認可トークンを書いたファイル。環境変数 `MOQT_AUTH_TOKEN_FILE` でも可。`--auth-token` とは排他 |
 
 subscribe は codec と container を catalog から読むので指定しない。timestamp は wall-clock で自動付与。入力・出力は stdin/stdout 固定。
+
+## 認可トークン
+
+relay が認証を要求する場合、`--auth-token` か `--auth-token-file` で JWT を渡す。省略すると anonymous として接続し、`anon/` 配下だけ使える。
+
+`--auth-token-file` を使うと、接続後もファイルを 10 秒ごとに読み直し、内容が変わっていれば新しいトークンを relay に送って session の期限を延ばす。トークンの期限（既定で最大 24 時間）より前に、払い出し側がファイルを新しいトークンで書き換えておけば、配信を止めずに運用できる。moq-cli はトークンの中身（`exp` など）を解釈しない。
+
+```sh
+node services/vts/bin/mint.mjs --apps services/vts/apps.json --app-id <appId> --publish site1 --ttl 12h > /etc/moq/token
+moq-cli publish --relay moqt://relay:4433 --track <appId>/site1/video --codec avc3 --auth-token-file /etc/moq/token
+```
 
 ## コンテナ
 

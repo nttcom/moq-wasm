@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use moqt::TrackReader;
 use tokio::io::AsyncWriteExt;
@@ -7,11 +5,12 @@ use tracing::info;
 
 use crate::catalog;
 use crate::cli::SubscribeArgs;
-use crate::transport::{connect_session, session_closed, subscribe_track};
+use crate::transport::{connect_relay, session_closed, subscribe_track};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let track = &args.track;
-    let session = Arc::new(connect_session(&args.relay).await?);
+    let connection = connect_relay(&args.relay, track.app_id()).await?;
+    let session = connection.session.clone();
 
     tokio::spawn({
         let session = session.clone();
