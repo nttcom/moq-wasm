@@ -1,5 +1,6 @@
 const MICROS_PER_MILLI = 1_000
 const POSITION_STALE_MS = 1_000
+const LATE_MS = 33
 
 type PendingFrame = {
   frame: VideoFrame
@@ -20,6 +21,10 @@ export class VideoPlayout {
   private timer: ReturnType<typeof setTimeout> | undefined
   private last: Presented | undefined
   private paused = false
+  /// Frames that fell due together with a newer one and were never shown.
+  dropped = 0
+  /// Frames shown more than a frame period after they were due.
+  late = 0
 
   constructor(private readonly show: (frame: VideoFrame) => void) {}
 
@@ -94,7 +99,11 @@ export class VideoPlayout {
     for (const { frame } of due) {
       frame.close()
     }
+    this.dropped += due.length
     if (shown) {
+      if (nowMs - shown.atMs > LATE_MS) {
+        this.late += 1
+      }
       this.last = shown.frame.timestamp ? { captureMicros: shown.frame.timestamp, atMs: nowMs } : undefined
       this.show(shown.frame)
     }

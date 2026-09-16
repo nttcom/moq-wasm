@@ -111,6 +111,10 @@ export class LivePlayout {
     return this.audio.breaks
   }
 
+  videoDrops(): string {
+    return `${this.video.dropped} dropped / ${this.video.late} late`
+  }
+
   /// How far the picture on screen is ahead of the sound, from the capture
   /// timestamps each was presented at.
   syncOffsetMs(): number | undefined {

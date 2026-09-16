@@ -116,8 +116,10 @@ follows; a late chunk is not trimmed but starts at once and moves the clock
 the same way, so the chunks behind it stay contiguous. An audio chunk due more
 than 400 ms past the budget re-anchors the clock so the extra latency is shed.
 The stats line shows the offset between the picture on screen and the sound as
-`A/V +N ms` and, as `audio breaks N`, how often the sound did not continue
-where the previous chunk ended.
+`A/V +N ms`, as `audio breaks N` how often the sound did not continue where
+the previous chunk ended, and as `video N dropped / M late` how many frames
+fell due together with a newer one and were never shown, and how many were
+shown more than a frame period after they were due.
 
 In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers
