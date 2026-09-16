@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use moqt::{SessionEvent, TrackReader};
+use moqt::TrackReader;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 use crate::catalog;
 use crate::cli::SubscribeArgs;
-use crate::transport::{connect_session, subscribe_track};
+use crate::transport::{connect_session, session_closed, subscribe_track};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let track = &args.track;
@@ -16,19 +16,8 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
     tokio::spawn({
         let session = session.clone();
         async move {
-            loop {
-                match session.receive_event().await {
-                    Ok(SessionEvent::ProtocolViolation()) => {
-                        tracing::error!("protocol violation");
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::error!("event loop error: {e}");
-                        break;
-                    }
-                }
-            }
+            let reason = session_closed(&session).await;
+            tracing::error!(%reason, "session ended");
         }
     });
 

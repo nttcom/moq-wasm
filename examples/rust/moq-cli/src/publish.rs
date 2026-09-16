@@ -8,7 +8,7 @@ use crate::catalog;
 use crate::cli::{Container, PublishArgs};
 use crate::loc;
 use crate::media::{Frame, h264::AnnexBFramer};
-use crate::transport::connect_session;
+use crate::transport::{connect_session, session_closed};
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 const DRAIN_BEFORE_CLOSE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -65,6 +65,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     let mut framer = AnnexBFramer::new(args.codec.clone());
 
     let mut reader = tokio::io::stdin();
+    let mut closed = std::pin::pin!(session_closed(&session));
     let mut read_buf = vec![0u8; READ_BUFFER_BYTES];
     let mut frame_index: u64 = 0;
     // Wall-clock time of the frame timeline's zero point, set on the first frame.
@@ -74,6 +75,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     loop {
         let read = tokio::select! {
             result = reader.read(&mut read_buf) => result?,
+            reason = &mut closed => return Err(reason),
             _ = tokio::signal::ctrl_c() => {
                 info!("received ctrl-c, shutting down");
                 break;

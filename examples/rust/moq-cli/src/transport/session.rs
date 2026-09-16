@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use moqt::{
-    ClientConfig, DataReceiver, Endpoint, FilterType, GroupOrder, QUIC, Session,
+    ClientConfig, DataReceiver, Endpoint, FilterType, GroupOrder, QUIC, Session, SessionEvent,
     StreamDataReceiverFactory, SubscribeOption,
 };
 use tracing::info;
@@ -20,6 +20,18 @@ pub async fn connect_session(relay: &RelayArgs) -> Result<Session<QUIC>> {
     let connecting = endpoint.connect(relay.url.as_str()).await?;
     let session = connecting.await?;
     Ok(session)
+}
+
+/// Resolves once the relay ends the session, with the reason as the error.
+pub async fn session_closed(session: &Session<QUIC>) -> anyhow::Error {
+    loop {
+        match session.receive_event().await {
+            Ok(SessionEvent::Disconnected()) => return anyhow!("session closed by the relay"),
+            Ok(SessionEvent::ProtocolViolation()) => return anyhow!("protocol violation"),
+            Ok(_) => {}
+            Err(error) => return error.context("session event loop failed"),
+        }
+    }
 }
 
 pub async fn subscribe_track(
