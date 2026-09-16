@@ -995,6 +995,7 @@ function backToLive(): void {
   reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
   reviewPlayout.stop()
+  element<HTMLSelectElement>('speed').value = '1'
   applyVolume()
   renderSeekbar()
   showPicture(livePicture())
@@ -1114,7 +1115,12 @@ function advanceReviewPlayhead(captureMicros: number): void {
   renderSeekbar()
 }
 
+/// Starting the next window's fetch can already have taken playback live, so
+/// a status for the window is only shown while still reviewing.
 function renderReviewStatus(): void {
+  if (!reviewing) {
+    return
+  }
   const offset = reviewPlayout.syncOffsetMs()
   const sync = offset === undefined ? '' : ` · A/V ${formatSyncOffset(offset)}`
   setStatusText('rewind-status', `Rewound ${reviewBehindSeconds.toFixed(1)}s${sync}`)
