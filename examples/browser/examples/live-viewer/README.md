@@ -72,20 +72,15 @@ reviewing and heard again on `LIVE`.
 
 ## Review audio
 
-Audio groups rotate on their own schedule and carry their own ids, so the
-groups to replay are found on a timeline of the audio groups observed while
-playing live: the closed ones whose span overlaps the video windows fetched so
-far. They are fetched apart from the video and topped up while the review
-plays, because the newest group a window needs may close only while it plays.
-In LOC mode the chunks are decoded up front and scheduled on the review's own
-clock, which maps capture timestamps onto local time from the position the
-review starts at and follows the drift the audio device shows, so the picture
-keeps step with the sound; frames are decoded a little ahead of their
-presentation rather than a whole window at once. In CMAF mode the fragments
-are appended to the review MediaSource, which aligns them by `tfdt`. CMAF
-audio groups carry no capture timestamp, so they are stamped with their
-arrival, and the window is widened by a group to be sure to cover the video.
-The rewind status shows the review's own `A/V` offset.
+The bridge starts the audio groups at the video keyframes with the same ids,
+so the audio of a window is the same group range on the audio track and is
+fetched alongside the video. In LOC mode the chunks are decoded up front and
+scheduled on the review's own clock, which maps capture timestamps onto local
+time from the position the review starts at and follows the drift the audio
+device shows, so the picture keeps step with the sound; frames are decoded a
+little ahead of their presentation rather than a whole window at once. In CMAF
+mode the fragments are appended to the review MediaSource, which aligns them
+by `tfdt`. The rewind status shows the review's own `A/V` offset.
 
 ## Catalog
 

@@ -11,7 +11,6 @@ import {
 import { base64ToUint8Array } from '../../utils/media/base64'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
-import { monotonicUnixMicros } from '../../utils/media/clock'
 import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
@@ -30,10 +29,6 @@ const REVIEW_BUFFER_AHEAD_SECONDS = 8
 const REVIEW_DRAINED_SECONDS = 0.5
 const REVIEW_VIDEO_AHEAD_FRAMES = 30
 const REVIEW_HANDOVER_MICROS = 500_000
-/// CMAF audio groups are stamped with their arrival, which trails the encode
-/// wallclock the video groups carry, so the audio window is widened to be
-/// sure to hold the groups that overlap the video window.
-const CMAF_AUDIO_MARGIN_MICROS = 2_500_000
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
@@ -57,11 +52,7 @@ type ReviewWindow = {
   start: bigint
   nextGroup: bigint
   frames: ReviewFrame[]
-}
-
-type CaptureRange = {
-  startMicros: number
-  endMicros: number
+  audio: ReviewFrame[]
 }
 
 const moqtClient = new MoqtClientWrapper()
@@ -92,11 +83,6 @@ const subscriptions = new Map<MediaKind, TrackSubscription>()
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
-const audioTimeline = new GroupTimeline(TIMELINE_CAPACITY)
-const cmafAudioTimeline = new GroupTimeline(TIMELINE_CAPACITY)
-let reviewAudioFetchedUpTo: bigint | undefined
-let reviewAudioPending: ReviewFrame[] = []
-let reviewWindowRange: CaptureRange | undefined
 let reviewBehindSeconds = 0
 const mediaTimeline = new MediaTimeline()
 let mediaTimelineTrackName: string | undefined
@@ -183,8 +169,6 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   timeline.reset()
-  audioTimeline.reset()
-  cmafAudioTimeline.reset()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
   backToLive()
@@ -339,7 +323,7 @@ function stampObservedCmafGroups(): void {
   for (const groupId of unstampedCmafGroups) {
     const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
     if (encodedAtMs !== undefined) {
-      timeline.recordCapture(groupId, 0n, encodedAtMs * 1_000)
+      timeline.recordCapture(groupId, encodedAtMs * 1_000)
       unstampedCmafGroups.delete(groupId)
     }
   }
@@ -432,8 +416,6 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
     if (!reviewing) {
       setStatusText('playback-status', `Playing ${trackName}`)
     }
-  } else {
-    cmafAudioTimeline.recordCapture(groupId, object.objectId, monotonicUnixMicros())
   }
   if (!mse) {
     return
@@ -500,9 +482,6 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     timeline.reset()
     unstampedCmafGroups.clear()
     backToLive()
-  } else {
-    audioTimeline.reset()
-    cmafAudioTimeline.reset()
   }
   await unsubscribeTrack(kind)
   if (!track || !wire) {
@@ -528,13 +507,11 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     const payload = new Uint8Array(object.objectPayload)
     if (kind === 'video') {
       videoObjectCount += 1
-      timeline.record(groupId, object.objectId, object.locHeader)
+      timeline.record(groupId, object.locHeader)
       renderSeekbar()
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
       }
-    } else {
-      audioTimeline.record(groupId, object.objectId, object.locHeader)
     }
     worker.postMessage(
       {
@@ -728,9 +705,6 @@ function seekToCapture(captureMicros: number): void {
   reviewOriginMicros = target.captureMicros
   reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
   reviewPlayheadMicros = reviewAnchorMicros
-  reviewAudioFetchedUpTo = undefined
-  reviewAudioPending = []
-  reviewWindowRange = undefined
   reviewPlayout.start(reviewAnchorMicros)
   applyVolume()
   renderSeekbar()
@@ -743,51 +717,34 @@ function seekToCapture(captureMicros: number): void {
 /// while the current one plays, so a window boundary does not stall on the
 /// request.
 async function review(startGroup: bigint, generation: number): Promise<void> {
-  void replayReviewAudio(generation)
   let pending = await fetchReviewWindow(startGroup, generation)
   while (pending && generation === reviewGeneration) {
     const upcoming = fetchReviewWindow(pending.nextGroup, generation)
     reviewBehindSeconds = timeline.secondsBehindLive(pending.start)
     renderReviewStatus()
     const frames = sortReviewFrames(pending.frames)
-    const played = packaging === 'cmaf' ? await playReviewMse(frames, generation) : await playReview(frames, generation)
+    const played =
+      packaging === 'cmaf'
+        ? await playReviewMse(frames, pending.audio, generation)
+        : await playReview(frames, pending.audio, generation)
     pending = played ? await upcoming : undefined
   }
 }
 
-/// Audio groups rotate on their own schedule, so the ones a video window needs
-/// are the closed groups whose span overlaps it, and the newest of them may
-/// close only while the window plays. The audio is therefore fetched apart
-/// from the video: whenever a closed group overlapping the windows fetched so
-/// far has not been fetched yet, it is fetched and handed to the review.
-async function replayReviewAudio(generation: number): Promise<void> {
-  while (generation === reviewGeneration) {
-    const range = reviewWindowRange
-    if (range) {
-      const chunks = await fetchReviewAudio(range, generation)
-      if (generation !== reviewGeneration) {
-        return
-      }
-      if (packaging === 'cmaf') {
-        appendReviewAudio(chunks)
-      } else {
-        const config = reviewAudioConfig()
-        if (config) {
-          reviewPlayout.decodeAudio(chunks, config)
-        }
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
-  }
-}
-
+/// The bridge starts the audio groups at the video keyframes with the same
+/// ids, so the audio of a window is the same group range on the audio track
+/// and is fetched alongside the video.
 async function fetchReviewWindow(start: bigint, generation: number): Promise<ReviewWindow | undefined> {
   const end = await awaitClosedWindowEnd(start, generation)
   const subscription = subscriptions.get('video')
   if (end === undefined || !subscription) {
     return undefined
   }
-  const frames = await fetchFrames(subscription.name, start, end, generation)
+  const audioName = subscriptions.get('audio')?.name
+  const [frames, audio] = await Promise.all([
+    fetchFrames(subscription.name, start, end, generation),
+    audioName ? fetchFrames(audioName, start, end, generation) : Promise.resolve([])
+  ])
   if (!frames) {
     return undefined
   }
@@ -796,46 +753,19 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
     return undefined
   }
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
-  extendReviewWindowRange(start, end + 1n)
-  return { start, nextGroup: end + 1n, frames }
-}
-
-/// The first audio can be fetched before the review MediaSource exists, so it
-/// waits for the MediaSource rather than being dropped: MSE will not start
-/// without audio at the start position.
-function appendReviewAudio(chunks: ReviewFrame[]): void {
-  if (!reviewMseOpened || !reviewMse) {
-    reviewAudioPending.push(...chunks)
-    return
-  }
-  for (const chunk of chunks) {
-    reviewMse.appendAudio(chunk.data)
-  }
-}
-
-function extendReviewWindowRange(startGroup: bigint, nextGroup: bigint): void {
-  const startMicros = timeline.captureMicrosOf(startGroup)
-  const endMicros = timeline.captureMicrosOf(nextGroup) ?? timeline.latest?.captureMicros
-  if (startMicros === undefined || endMicros === undefined) {
-    return
-  }
-  reviewWindowRange = {
-    startMicros: Math.min(reviewWindowRange?.startMicros ?? startMicros, startMicros),
-    endMicros: Math.max(reviewWindowRange?.endMicros ?? endMicros, endMicros)
-  }
+  return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audio ?? []) }
 }
 
 async function fetchFrames(
   trackName: string,
   start: bigint,
   end: bigint,
-  generation: number,
-  startObject = 0n
+  generation: number
 ): Promise<ReviewFrame[] | undefined> {
   const frames: ReviewFrame[] = []
   let lastArrival = performance.now()
   try {
-    await moqtClient.fetch(trackNamespace(), trackName, start, startObject, end, 0n, {
+    await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
       onObject: (message) => {
         if (generation !== reviewGeneration) {
           return
@@ -857,31 +787,6 @@ async function fetchFrames(
 
   await waitForFetchIdle(() => lastArrival, generation)
   return generation === reviewGeneration ? frames : undefined
-}
-
-/// The audio groups to replay are the closed ones whose span overlaps the
-/// range, found on the timeline observed while playing live. They are fetched
-/// one group at a time, each from the first object the relay holds of it, in
-/// the order they are needed; groups fetched before are not fetched again.
-async function fetchReviewAudio(range: CaptureRange, generation: number): Promise<ReviewFrame[]> {
-  const name = subscriptions.get('audio')?.name
-  if (!name) {
-    return []
-  }
-  const margin = packaging === 'cmaf' ? CMAF_AUDIO_MARGIN_MICROS : 0
-  const group = (packaging === 'cmaf' ? cmafAudioTimeline : audioTimeline)
-    .closedGroupsOverlapping(range.startMicros - margin, range.endMicros + margin)
-    .find((mark) => reviewAudioFetchedUpTo === undefined || mark.groupId > reviewAudioFetchedUpTo)
-  if (!group) {
-    return []
-  }
-  const chunks = await fetchFrames(name, group.groupId, group.groupId, generation, group.firstObjectId)
-  reviewAudioFetchedUpTo = group.groupId
-  if (!chunks) {
-    return []
-  }
-  appendLog('info', `fetched ${chunks.length} audio objects from group ${group.groupId}`)
-  return sortReviewFrames(chunks)
 }
 
 /// The live edge group is still open and a FETCH that reaches into it escapes
@@ -918,15 +823,19 @@ async function waitForFetchIdle(lastArrival: () => number, generation: number): 
   }
 }
 
-/// Frames are decoded a little ahead of their presentation, not the whole
-/// window at once: decoded frames hold GPU memory until they are shown. The
-/// function returns shortly before the last frame is due so the next window
-/// is decoded in time to follow on.
-async function playReview(frames: ReviewFrame[], generation: number): Promise<boolean> {
+/// The window's audio is decoded up front. Frames are decoded a little ahead
+/// of their presentation, not the whole window at once: decoded frames hold
+/// GPU memory until they are shown. The function returns shortly before the
+/// last frame is due so the next window is decoded in time to follow on.
+async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
   const config = pendingReviewConfig()
   if (!config) {
     setStatusText('rewind-status', 'Rewind unavailable: the video track has no codec')
     return false
+  }
+  const audioConfig = reviewAudioConfig()
+  if (audioConfig) {
+    reviewPlayout.decodeAudio(audio, audioConfig)
   }
   const decoder = new VideoDecoder({
     output: (frame) => {
@@ -974,7 +883,7 @@ async function playReview(frames: ReviewFrame[], generation: number): Promise<bo
 /// live one keeps playing hidden, so going back to live only swaps elements.
 /// The next window is fetched once playback has caught up to within a few
 /// seconds of what is buffered.
-async function playReviewMse(frames: ReviewFrame[], generation: number): Promise<boolean> {
+async function playReviewMse(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
   if (!reviewMseOpened) {
     const source = subscribedCmafSource('video')
     if (!source) {
@@ -991,7 +900,6 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
     })
     reviewMse = next
     reviewMseOpened = true
-    appendReviewAudio(reviewAudioPending.splice(0))
     applyVolume()
     applyPlaybackSpeed()
     replacePicture(next.element, () => generation === reviewGeneration, previous)
@@ -1008,6 +916,9 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
   for (const frame of frames) {
     sink.appendVideo(frame.data)
   }
+  for (const chunk of audio) {
+    sink.appendAudio(chunk.data)
+  }
   while (generation === reviewGeneration) {
     const ahead = (sink.bufferedEnd() ?? 0) - sink.element.currentTime
     if (ahead < REVIEW_BUFFER_AHEAD_SECONDS) {
@@ -1022,7 +933,6 @@ function closeReviewMse(): void {
   reviewMse?.close()
   reviewMse = undefined
   reviewMseOpened = false
-  reviewAudioPending = []
 }
 
 function pendingReviewConfig(): VideoDecoderConfig | undefined {

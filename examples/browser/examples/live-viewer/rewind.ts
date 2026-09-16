@@ -5,9 +5,6 @@ const MICROS_PER_SECOND = 1_000_000
 export type GroupMark = {
   groupId: bigint
   captureMicros: number
-  /// The first object the relay holds of the group: 0 for a group observed
-  /// from its start, the object the subscription joined on otherwise.
-  firstObjectId: bigint
 }
 
 /// Group ids are seeded from a wall clock by the live-ingest bridge and groups
@@ -17,28 +14,26 @@ export class GroupTimeline {
   private readonly marks: GroupMark[] = []
   /// A SUBSCRIBE lands in the middle of the group the publisher is writing, and
   /// the relay starts caching a track only once it has a subscriber, so this
-  /// group holds no keyframe for a video replay to start from. It is kept
-  /// apart from the marks: audio has no keyframes and can replay it from the
-  /// first object the relay holds.
-  private joinGroup: GroupMark | undefined
+  /// group holds no keyframe for a FETCH replay to start from.
+  private joinGroupId: bigint | undefined
 
   constructor(private readonly capacity: number) {}
 
-  record(groupId: bigint, objectId: bigint, locHeader?: LocHeader): void {
+  record(groupId: bigint, locHeader?: LocHeader): void {
     const captureMicros = readLocHeader(locHeader).captureTimestampMicros
     if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
       return
     }
-    this.recordCapture(groupId, objectId, captureMicros)
+    this.recordCapture(groupId, captureMicros)
   }
 
-  recordCapture(groupId: bigint, objectId: bigint, captureMicros: number): void {
-    this.joinGroup ??= { groupId, captureMicros, firstObjectId: objectId }
-    if (groupId === this.joinGroup.groupId || this.marks.some((mark) => mark.groupId === groupId)) {
+  recordCapture(groupId: bigint, captureMicros: number): void {
+    this.joinGroupId ??= groupId
+    if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
       return
     }
 
-    this.marks.push({ groupId, captureMicros, firstObjectId: 0n })
+    this.marks.push({ groupId, captureMicros })
     this.marks.sort((left, right) => left.captureMicros - right.captureMicros)
     while (this.marks.length > this.capacity) {
       this.marks.shift()
@@ -47,7 +42,7 @@ export class GroupTimeline {
 
   reset(): void {
     this.marks.length = 0
-    this.joinGroup = undefined
+    this.joinGroupId = undefined
   }
 
   get latest(): GroupMark | undefined {
@@ -82,21 +77,6 @@ export class GroupTimeline {
 
     const closed = this.marks.filter((mark) => mark.groupId !== latest.groupId)
     return closed.findLast((mark) => mark.captureMicros <= captureMicros) ?? closed[0]
-  }
-
-  /// The closed groups whose span, up to the start of the group after them,
-  /// overlaps [startMicros, endMicros]. The newest group is open and has no
-  /// end yet, so it is never among them.
-  closedGroupsOverlapping(startMicros: number, endMicros: number): GroupMark[] {
-    const groups = this.joinGroup ? [this.joinGroup, ...this.marks] : this.marks
-    return groups.filter((mark, index) => {
-      const next = groups[index + 1]
-      return next !== undefined && mark.captureMicros <= endMicros && next.captureMicros > startMicros
-    })
-  }
-
-  captureMicrosOf(groupId: bigint): number | undefined {
-    return this.marks.find((mark) => mark.groupId === groupId)?.captureMicros
   }
 
   secondsBehindLive(groupId: bigint): number {
