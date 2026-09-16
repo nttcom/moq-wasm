@@ -23,6 +23,7 @@ const REWIND_GROUP_COUNT = 4n
 const FETCH_IDLE_MS = 400
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
+const AUDIO_GROUP_CLOSE_WAIT_MS = 2_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const CMAF_TRACK_SUFFIX = '_cmaf'
 const REVIEW_BUFFER_AHEAD_SECONDS = 8
@@ -84,6 +85,7 @@ let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 let reviewBehindSeconds = 0
+let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
 let mediaTimelineTrackName: string | undefined
 let reviewing = false
@@ -171,6 +173,7 @@ async function stopStream(): Promise<void> {
   timeline.reset()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
+  newestAudioGroupId = undefined
   backToLive()
   closeMse()
   livePlayout.reset()
@@ -416,6 +419,8 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
     if (!reviewing) {
       setStatusText('playback-status', `Playing ${trackName}`)
     }
+  } else {
+    newestAudioGroupId = groupId
   }
   if (!mse) {
     return
@@ -482,6 +487,8 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     timeline.reset()
     unstampedCmafGroups.clear()
     backToLive()
+  } else {
+    newestAudioGroupId = undefined
   }
   await unsubscribeTrack(kind)
   if (!track || !wire) {
@@ -512,6 +519,8 @@ async function resubscribe(kind: MediaKind): Promise<void> {
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
       }
+    } else {
+      newestAudioGroupId = groupId
     }
     worker.postMessage(
       {
@@ -743,7 +752,7 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
   const audioName = subscriptions.get('audio')?.name
   const [frames, audio] = await Promise.all([
     fetchFrames(subscription.name, start, end, generation),
-    audioName ? fetchFrames(audioName, start, end, generation) : Promise.resolve([])
+    audioName ? fetchReviewAudio(audioName, start, end, generation) : Promise.resolve([])
   ])
   if (!frames) {
     return undefined
@@ -754,6 +763,27 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
   }
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
   return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audio ?? []) }
+}
+
+/// The audio of a group ends a little after its video: the source interleaves
+/// audio behind video, so audio captured just before a keyframe arrives after
+/// that keyframe has opened the next group. The audio group is fetched once
+/// the audio track has moved on to a later group, or after a bounded wait.
+async function fetchReviewAudio(
+  trackName: string,
+  start: bigint,
+  end: bigint,
+  generation: number
+): Promise<ReviewFrame[] | undefined> {
+  const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
+  while (
+    generation === reviewGeneration &&
+    (newestAudioGroupId === undefined || newestAudioGroupId <= end) &&
+    performance.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
+  }
+  return fetchFrames(trackName, start, end, generation)
 }
 
 async function fetchFrames(

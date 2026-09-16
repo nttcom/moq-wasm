@@ -96,7 +96,10 @@ reviewing and heard again on `LIVE`.
 
 The bridge starts the audio groups at the video keyframes with the same ids,
 so the audio of a window is the same group range on the audio track and is
-fetched alongside the video. In LOC mode the chunks are decoded up front and
+fetched alongside the video. The audio of a group ends a little after its
+video, because the source interleaves audio behind video, so an audio group is
+fetched once the audio track has moved on to a later group; fetched earlier,
+its tail would be missing and MSE would stall on the hole. In LOC mode the chunks are decoded up front and
 scheduled on the review's own clock, which maps capture timestamps onto local
 time from the position the review starts at and follows the drift the audio
 device shows, so the picture keeps step with the sound; frames are decoded a
