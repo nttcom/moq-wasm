@@ -37,7 +37,7 @@ export class MseSink {
   private readonly objectUrl: string
   private video: Buffered | undefined
   private audio: Buffered | undefined
-  private started = false
+  private startedAtSeconds: number | undefined
 
   private constructor(
     readonly element: HTMLVideoElement,
@@ -79,9 +79,10 @@ export class MseSink {
     return buffered && buffered.length > 0 ? buffered.end(buffered.length - 1) : undefined
   }
 
-  secondsFromBufferStart(): number {
-    const buffered = this.video?.sourceBuffer.buffered
-    return buffered && buffered.length > 0 ? this.element.currentTime - buffered.start(0) : 0
+  /// Measured from where the first buffered video began, which eviction may
+  /// later remove from the buffered ranges.
+  secondsFromStart(): number {
+    return this.startedAtSeconds === undefined ? 0 : this.element.currentTime - this.startedAtSeconds
   }
 
   close(): void {
@@ -123,10 +124,11 @@ export class MseSink {
   /// lands while the MediaSource is being opened.
   private startWhenBuffered(): void {
     const end = this.bufferedEnd()
-    if (this.started || end === undefined) {
+    if (this.startedAtSeconds !== undefined || end === undefined) {
       return
     }
-    let start = this.video!.sourceBuffer.buffered.start(0) + this.startAtSeconds
+    const bufferStart = this.video!.sourceBuffer.buffered.start(0)
+    let start = bufferStart + this.startAtSeconds
     const audioRanges = this.audio?.sourceBuffer.buffered
     if (audioRanges) {
       if (audioRanges.length === 0) {
@@ -140,7 +142,7 @@ export class MseSink {
     if (end - start < PLAYBACK_BUFFER_THRESHOLD_SECONDS) {
       return
     }
-    this.started = true
+    this.startedAtSeconds = bufferStart
     this.element.currentTime = start
     void this.element.play().catch(() => undefined)
   }

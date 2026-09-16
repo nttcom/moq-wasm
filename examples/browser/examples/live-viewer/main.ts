@@ -935,7 +935,7 @@ async function playReviewMse(frames: ReviewFrame[], audio: ReviewFrame[], genera
     replacePicture(next.element, () => generation === reviewGeneration, previous)
     next.element.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
-        advanceReviewPlayhead(origin + next.secondsFromBufferStart() * MICROS_PER_SECOND)
+        advanceReviewPlayhead(origin + next.secondsFromStart() * MICROS_PER_SECOND)
       }
     })
   }
