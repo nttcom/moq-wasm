@@ -9,6 +9,7 @@ export RELAY_LOG_FILTER="${RELAY_LOG_FILTER:-relay=info,moqt=info}"
 
 APPS_FILE="services/vts/apps.example.json"
 APP_ID="ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e"
+OTHER_APP_ID="9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b"
 RELAY_APP_ID="11111111-2222-3333-4444-555555555555"
 LOGS_PID=""
 RESULT_LOG="$(mktemp)"
@@ -57,6 +58,7 @@ fi
 cargo build -p auth-e2e
 
 APP_TOKEN="$(mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl 1h)"
+OTHER_APP_TOKEN="$(mint --app-id "$OTHER_APP_ID" --publish "" --subscribe "" --ttl 1h)"
 export AUTH_RELAY_TOKEN
 AUTH_RELAY_TOKEN="$(mint --app-id "$RELAY_APP_ID" --publish "" --subscribe "" --ttl 8760h)"
 export AUTH_VTS_URL="http://vts:8081/verify"
@@ -76,6 +78,7 @@ if ! AUTH_E2E_APP_ID="$APP_ID" \
   AUTH_E2E_APP_TOKEN="$APP_TOKEN" \
   AUTH_E2E_SHORT_TOKEN="$SHORT_TOKEN" \
   AUTH_E2E_RELAY_TOKEN="$AUTH_RELAY_TOKEN" \
+  AUTH_E2E_OTHER_APP_TOKEN="$OTHER_APP_TOKEN" \
   cargo run -p auth-e2e -- \
     --relay-a-url "$RELAY_A_URL" \
     --relay-b-url "$RELAY_B_URL" 2>&1 | tee "$RESULT_LOG"; then

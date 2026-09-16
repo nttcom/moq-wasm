@@ -5,8 +5,12 @@
 //!
 //! - `AUTH_E2E_APP_ID`      appId of the client app (`publish`/`subscribe` = `site1`)
 //! - `AUTH_E2E_APP_TOKEN`   long-lived token for that app
-//! - `AUTH_E2E_SHORT_TOKEN` same claims, expires within a minute
+//! - `AUTH_E2E_SHORT_TOKEN` same claims, expires within a minute (used both
+//!   to observe the expiry and, refreshed with `AUTH_E2E_APP_TOKEN`, to
+//!   observe that a refreshed session outlives it)
 //! - `AUTH_E2E_RELAY_TOKEN` a relay token (must be rejected on the client port)
+//! - `AUTH_E2E_OTHER_APP_TOKEN` a token of another client app (must not refresh
+//!   a session of `AUTH_E2E_APP_ID`)
 //!
 //! `--scenario vts-down` runs only the check that connecting fails while the
 //! VTS is unreachable.
@@ -18,7 +22,8 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder, PublishOption,
     QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject, SubscribeOption,
-    Subscription, wire::RequestError,
+    Subscription,
+    wire::{AuthorizationToken, RequestError},
 };
 
 const DEFAULT_RELAY_A_URL: &str = "moqt://127.0.0.1:4433";
@@ -27,6 +32,10 @@ const TEST_PAYLOAD: &[u8] = b"auth e2e payload";
 const UNAUTHORIZED: u64 = 0x1;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const EXPIRY_TIMEOUT: Duration = Duration::from_secs(90);
+/// scripts/auth-e2e.sh mints the short token with `--ttl 30s`; probing after
+/// this delay only succeeds if the refresh moved the session's expiry.
+const REFRESH_PROBE_DELAY: Duration = Duration::from_secs(40);
+const REFRESH_TRACK_NAME: &str = "update_auth_token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scenario {
@@ -40,11 +49,13 @@ struct Config {
     scenario: Scenario,
 }
 
+#[derive(Clone)]
 struct Tokens {
     app_id: String,
     app: String,
     short: String,
     relay: String,
+    other_app: String,
 }
 
 impl Config {
@@ -86,6 +97,7 @@ impl Tokens {
             app: required("AUTH_E2E_APP_TOKEN")?,
             short: required("AUTH_E2E_SHORT_TOKEN")?,
             relay: required("AUTH_E2E_RELAY_TOKEN")?,
+            other_app: required("AUTH_E2E_OTHER_APP_TOKEN")?,
         })
     }
 }
@@ -123,6 +135,11 @@ async fn run_all(config: &Config, tokens: Tokens) -> anyhow::Result<()> {
         config.relay_a_url.clone(),
         tokens.short.clone(),
     ));
+    let refresh = tokio::spawn(expect_refreshed_session_outlives_short_token(
+        config.relay_a_url.clone(),
+        tokens.clone(),
+        run_id.clone(),
+    ));
 
     expect_handshake_rejected(&config.relay_a_url, Some("not-a-jwt"), "garbage token").await?;
     expect_handshake_rejected(
@@ -137,6 +154,7 @@ async fn run_all(config: &Config, tokens: Tokens) -> anyhow::Result<()> {
     tokenless_anon_reaches_only_anon(&config.relay_a_url, &tokens, &run_id).await?;
 
     expiry.await??;
+    refresh.await??;
     Ok(())
 }
 
@@ -289,6 +307,59 @@ async fn expect_session_closed_on_expiry(url: String, short_token: String) -> an
     tracing::info!(
         elapsed_secs = started.elapsed().as_secs(),
         "session closed after token expiry"
+    );
+    Ok(())
+}
+
+async fn expect_refreshed_session_outlives_short_token(
+    url: String,
+    tokens: Tokens,
+    run_id: String,
+) -> anyhow::Result<()> {
+    let session = connect(&url, Some(&tokens.short)).await?;
+    let connected_at = tokio::time::Instant::now();
+    let subscriber = session.subscriber();
+
+    let error = subscriber
+        .track_status(
+            tokens.app_id.clone(),
+            REFRESH_TRACK_NAME.to_string(),
+            vec![AuthorizationToken::use_value_utf8(&tokens.relay)],
+        )
+        .await
+        .err()
+        .context("TRACK_STATUS with a relay token unexpectedly refreshed the session")?;
+    expect_unauthorized(error, "TRACK_STATUS with a relay token")?;
+
+    let error = subscriber
+        .track_status(
+            tokens.app_id.clone(),
+            REFRESH_TRACK_NAME.to_string(),
+            vec![AuthorizationToken::use_value_utf8(&tokens.other_app)],
+        )
+        .await
+        .err()
+        .context("TRACK_STATUS with another app's token unexpectedly refreshed the session")?;
+    expect_unauthorized(error, "TRACK_STATUS with another app's token")?;
+
+    subscriber
+        .track_status(
+            tokens.app_id.clone(),
+            REFRESH_TRACK_NAME.to_string(),
+            vec![AuthorizationToken::use_value_utf8(&tokens.app)],
+        )
+        .await
+        .context("TRACK_STATUS with the long-lived app token was not answered with OK")?;
+
+    tokio::time::sleep_until(connected_at + REFRESH_PROBE_DELAY).await;
+    session
+        .publisher()
+        .publish_namespace(format!("{}/site1/{run_id}-refreshed", tokens.app_id))
+        .await
+        .context("refreshed session did not survive the short token's expiry")?;
+    tracing::info!(
+        elapsed_secs = connected_at.elapsed().as_secs(),
+        "refreshed session outlived the short token"
     );
     Ok(())
 }
