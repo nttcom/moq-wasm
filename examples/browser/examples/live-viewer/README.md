@@ -51,6 +51,28 @@ LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
 ```
 
+## Delivery check
+
+`e2e:live-viewer-delivery` watches a stream for `DELIVERY_SECONDS` (default 30) and records every object the viewer hands to its decoder workers, then
+reads the bridge's delivery log and reports, per track, how many samples were
+published within the span the viewer watched, how many of them it received,
+which are missing, and how many samples entered the bridge but were not
+published (dropped before the first keyframe or after a transport-stream
+loss). Run the bridge with the delivery log on and point the test at it:
+
+```shell
+RUST_LOG=info,moqt_bridge_live_ingest::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
+DELIVERY_BRIDGE_LOG=/tmp/live-ingest.log \
+DELIVERY_SECONDS=60 \
+MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \
+MEDIA_E2E_MOQT_URL=https://127.0.0.1:4433 \
+LIVE_VIEWER_E2E_NAMESPACE=anon/live/test \
+npm --prefix examples/browser run e2e:live-viewer-delivery
+```
+
+Samples are matched by their LOC capture timestamp, so the check covers the
+LOC tracks; it fails when any published sample is missing.
+
 ## Packaging
 
 The gear menu selects how the media tracks are received. `LOC` subscribes to

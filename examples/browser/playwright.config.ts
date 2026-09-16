@@ -16,7 +16,7 @@ const forceQuicOrigins = [
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: /(media-e2e|meeting-e2e|message-e2e|live-viewer-e2e)\.spec\.ts/,
+  testMatch: /(media-e2e|meeting-e2e|message-e2e|live-viewer-e2e|live-viewer-delivery-e2e)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,
