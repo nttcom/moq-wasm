@@ -320,7 +320,7 @@ per-request authorization gate under "Event pipeline".
   waiting and waiting past the frontier only while some subgroup of the group
   is open.
 - Eviction job (`eviction_job.rs`): every `RELAY_CACHE_EVICT_INTERVAL_SECS`
-  (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (30 s) and release
+  (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (30 min) and release
   knowledge exactly for the removed locations; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.

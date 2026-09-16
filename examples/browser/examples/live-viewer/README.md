@@ -31,7 +31,7 @@ SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackName
   だけして、目標以降のフレームから描画します。MSE では同じ分だけ `currentTime` を進めて再生を始めます。
 - 取得範囲は publisher が書き込みを終えた group までに制限します。開いている group に伸ばすと
   relay のキャッシュを外れて上流へ転送され、publisher 側キャッシュ（30 秒）から返されます。
-- relay のキャッシュ保持は既定 30 秒（`RELAY_CACHE_TTL_SECS`）、publisher 側も 30 秒です。
+- relay のキャッシュ保持は既定 30 分（`RELAY_CACHE_TTL_SECS`）、publisher 側は 30 秒です。
   それより前へは戻れません。
 
 ## ペイロード形式

@@ -4,7 +4,7 @@ use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::relay::cache::{duration::duration_from_env, store::TrackCacheStore};
 
-const DEFAULT_TTL_SECS: u64 = 30;
+const DEFAULT_TTL_SECS: u64 = 1_800;
 const DEFAULT_INTERVAL_SECS: u64 = 5;
 
 pub(crate) fn spawn_cache_eviction_job(cache_store: Arc<TrackCacheStore>) -> JoinHandle<()> {
