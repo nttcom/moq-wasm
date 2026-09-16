@@ -55,6 +55,7 @@ if [[ ! -d services/vts/node_modules ]]; then
   npm --prefix services/vts ci
 fi
 cargo build -p auth-e2e
+cargo build -p moq-cli
 
 APP_TOKEN="$(mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl 1h)"
 export AUTH_RELAY_TOKEN
@@ -82,6 +83,61 @@ if ! AUTH_E2E_APP_ID="$APP_ID" \
   exit 1
 fi
 expect_passed
+
+# moq-cli: a publisher whose token file is rewritten before the 30 s token
+# expires stays connected; one whose file is left alone is closed by the relay.
+MOQ_CLI_DIR="$(mktemp -d)"
+REFRESHED_TOKEN_FILE="$MOQ_CLI_DIR/refreshed-token"
+EXPIRING_TOKEN_FILE="$MOQ_CLI_DIR/expiring-token"
+mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl 30s > "$REFRESHED_TOKEN_FILE"
+cp "$REFRESHED_TOKEN_FILE" "$EXPIRING_TOKEN_FILE"
+# stdin for moq-cli is a FIFO whose only write end this script holds on fd 3:
+# it delivers no data and no EOF, so moq-cli stays idle until fd 3 is closed.
+# The subshells running moq-cli are started with fd 3 closed so they do not
+# hold a write end themselves.
+IDLE_STDIN="$MOQ_CLI_DIR/idle-stdin"
+mkfifo "$IDLE_STDIN"
+exec 3<>"$IDLE_STDIN"
+# Records moq-cli's exit code in "$MOQ_CLI_DIR/<track>.exit" once it ends;
+# the file's absence means it is still connected.
+moq_cli_publish() {
+  local status=0
+  ./target/debug/moq-cli publish --relay "$RELAY_A_URL" --insecure --codec avc3 \
+    --track "$APP_ID/site1/$1" --auth-token-file "$2" < "$IDLE_STDIN" > "$MOQ_CLI_DIR/$1.log" 2>&1 || status=$?
+  echo "$status" > "$MOQ_CLI_DIR/$1.exit"
+}
+moq_cli_publish refreshed "$REFRESHED_TOKEN_FILE" 3<&- &
+REFRESHED_PID=$!
+moq_cli_publish expiring "$EXPIRING_TOKEN_FILE" 3<&- &
+sleep 10
+echo "$APP_TOKEN" > "$REFRESHED_TOKEN_FILE"
+sleep 35
+if [[ -f "$MOQ_CLI_DIR/refreshed.exit" ]]; then
+  echo "moq-cli with a refreshed token file exited before the short token expired" >&2
+  cat "$MOQ_CLI_DIR/refreshed.log" >&2
+  exit 1
+fi
+if ! grep -q "authorization token refreshed" "$MOQ_CLI_DIR/refreshed.log"; then
+  echo "moq-cli did not report a token refresh" >&2
+  cat "$MOQ_CLI_DIR/refreshed.log" >&2
+  exit 1
+fi
+if [[ ! -f "$MOQ_CLI_DIR/expiring.exit" ]] || ! grep -q "session closed by the relay" "$MOQ_CLI_DIR/expiring.log"; then
+  echo "moq-cli with an untouched token file did not exit on the relay closing the session" >&2
+  cat "$MOQ_CLI_DIR/expiring.log" >&2
+  exit 1
+fi
+echo "moq-cli token refresh scenario passed"
+exec 3<&-
+for _ in {1..10}; do
+  if [[ -f "$MOQ_CLI_DIR/refreshed.exit" ]]; then
+    break
+  fi
+  sleep 1
+done
+pkill -P "$REFRESHED_PID" 2>/dev/null || true
+wait "$REFRESHED_PID" 2>/dev/null || true
+rm -rf "$MOQ_CLI_DIR"
 
 docker compose stop vts
 if ! AUTH_E2E_APP_TOKEN="$APP_TOKEN" \

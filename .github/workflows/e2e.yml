@@ -203,7 +203,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/auth-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|services/*|tests/auth-e2e/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/auth-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|services/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   auth=true
                   ;;
               esac
