@@ -9,7 +9,7 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 
-.PHONY: relay browser chrome chrome\:linux live-ingest gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -41,6 +41,9 @@ live-ingest:
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
 		--moqt-url $(LIVE_INGEST_MOQT_URL) $(if $(LIVE_INGEST_TRANSCODE),--transcode,)
+
+live-ingest-transcode: LIVE_INGEST_TRANSCODE := 1
+live-ingest-transcode: live-ingest
 
 # GStreamer plugin (bindings/gstreamer): `moqtsink` publishes H.264/AAC into MoQT.
 gst-plugin:

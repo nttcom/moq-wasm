@@ -8,7 +8,7 @@ track を切り替えられるので、`--transcode` で生成した下位画質
 
 ```shell
 make relay
-make live-ingest            # LIVE_INGEST_TRANSCODE=1 で下位画質も配信する
+make live-ingest            # make live-ingest-transcode で下位画質も配信する
                             # SRT を GStreamer 経由で流すなら make gst-srt-publish
 make ffmpeg-rtmp            # または make ffmpeg-srt / make ffmpeg-srt-bbb
 make browser
