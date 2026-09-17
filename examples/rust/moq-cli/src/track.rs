@@ -8,6 +8,14 @@ pub struct FullTrackName {
     pub name: String,
 }
 
+impl FullTrackName {
+    /// The relay authorizes a track by the first namespace element, which
+    /// must equal the token's appId.
+    pub fn app_id(&self) -> &str {
+        self.namespace.split('/').next().unwrap_or_default()
+    }
+}
+
 impl FromStr for FullTrackName {
     type Err = Error;
 
@@ -34,6 +42,13 @@ mod tests {
 
         assert_eq!(parsed.namespace, "tokyo/cam01");
         assert_eq!(parsed.name, "video");
+    }
+
+    #[test]
+    fn app_id_is_the_first_namespace_element() {
+        let parsed: FullTrackName = "APP/tokyo/cam01/video".parse().unwrap();
+
+        assert_eq!(parsed.app_id(), "APP");
     }
 
     #[test]
