@@ -1,8 +1,4 @@
-mod group_alignment;
 mod ingest;
-mod loc_object;
-mod media_timeline;
-mod moqt;
 mod publisher;
 mod renditions;
 mod rtmp;
@@ -10,8 +6,8 @@ mod srt;
 
 use anyhow::Result;
 use clap::Parser;
+use media_publisher::MoqtTarget;
 
-use crate::moqt::MoqtTarget;
 use crate::publisher::IngestOptions;
 
 #[derive(Parser, Debug)]

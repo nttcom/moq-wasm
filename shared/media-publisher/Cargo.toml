@@ -1,0 +1,16 @@
+[package]
+name = "media-publisher"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+bytes = "1"
+media-streaming-format = { path = "../media-streaming-format" }
+mediapack = { path = "../mediapack" }
+moqt = { path = "../../moqt" }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+tracing = "0.1"
+url = "2.5.8"

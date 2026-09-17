@@ -3011,6 +3011,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "media-publisher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "media-streaming-format",
+ "mediapack",
+ "moqt",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "media-streaming-format"
 version = "0.1.0"
 dependencies = [
@@ -3147,22 +3163,17 @@ name = "moqt-bridge-live-ingest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64",
  "bytes",
  "clap",
  "futures",
- "media-streaming-format",
+ "media-publisher",
  "mediapack",
- "moqt",
  "rml_rtmp",
- "serde",
- "serde_json",
  "srt-tokio",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "transcode",
- "url",
 ]
 
 [[package]]

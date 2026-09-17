@@ -1,21 +1,14 @@
-use std::sync::{Arc, OnceLock};
-
 use anyhow::{Context, Result};
-use mediapack::{MediaEvent, VideoSample, loc::Muxer as LocMuxer, mp4::Fmp4TrackMuxer};
+use media_publisher::{
+    GroupAlignment, GroupBoundary, MediaPublisher, MoqtManager, OutgoingObject, SharedTiming,
+    VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name, extension_headers,
+};
+use mediapack::{MediaEvent, VideoSample, mp4::Fmp4TrackMuxer};
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
 };
 use transcode::{Rendition, TranscodedEvent, Transcoder, ladder_for};
-
-use crate::{
-    group_alignment::GroupAlignment,
-    loc_object::extension_headers,
-    moqt::{
-        GroupBoundary, MoqtManager, OutgoingObject, VIDEO_TRACK_NAME, VideoTrackInfo,
-        cmaf_track_name,
-    },
-};
 
 const SAMPLE_QUEUE_CAPACITY: usize = 64;
 
@@ -26,13 +19,8 @@ pub struct RenditionFanout {
 }
 
 impl RenditionFanout {
-    pub fn run(
-        moqt: MoqtManager,
-        namespace: Vec<String>,
-        source: &VideoTrackInfo,
-        loc: Arc<OnceLock<LocMuxer>>,
-        alignment: Arc<GroupAlignment>,
-    ) -> Result<Option<Self>> {
+    pub fn run(media: &MediaPublisher, source: &VideoTrackInfo) -> Result<Option<Self>> {
+        let namespace = media.namespace().to_vec();
         let namespace_path = namespace.join("/");
         let renditions = ladder_for(source.width, source.height);
         if renditions.is_empty() {
@@ -61,10 +49,9 @@ impl RenditionFanout {
             }
         });
         let publisher = RenditionPublisher {
-            moqt,
+            moqt: media.moqt().clone(),
             namespace,
-            loc,
-            alignment,
+            timing: media.shared_timing(),
             cmaf: (0..renditions.len()).map(|_| None).collect(),
         };
         let publisher = tokio::spawn(publisher.run(transcoder, renditions));
@@ -85,8 +72,7 @@ impl RenditionFanout {
 struct RenditionPublisher {
     moqt: MoqtManager,
     namespace: Vec<String>,
-    loc: Arc<OnceLock<LocMuxer>>,
-    alignment: Arc<GroupAlignment>,
+    timing: SharedTiming,
     cmaf: Vec<Option<Fmp4TrackMuxer>>,
 }
 
@@ -122,11 +108,13 @@ impl RenditionPublisher {
             }
             MediaEvent::Video(sample) => {
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
-                if sample.is_keyframe && self.alignment.aligned(sample.pts.micros()).is_none() {
+                if sample.is_keyframe
+                    && self.timing.alignment.aligned(sample.pts.micros()).is_none()
+                {
                     tracing::warn!(
                         %track,
                         pts_us = sample.pts.micros(),
-                        nearest_source_keyframe_us = ?self.alignment.nearest_keyframe_us(sample.pts.micros()),
+                        nearest_source_keyframe_us = ?self.timing.alignment.nearest_keyframe_us(sample.pts.micros()),
                         "rendition keyframe has no aligned source keyframe; its frames are dropped until one aligns"
                     );
                 }
@@ -134,12 +122,15 @@ impl RenditionPublisher {
                     Some(muxer) => muxer.push(&MediaEvent::Video(sample.clone()))?,
                     None => None,
                 };
-                let group =
-                    aligned_boundary(&self.alignment, sample.is_keyframe, sample.pts.micros());
-                let muxer = self
-                    .loc
-                    .get()
-                    .context("rendition sample before the source seeded the LOC capture origin")?;
+                let group = aligned_boundary(
+                    &self.timing.alignment,
+                    sample.is_keyframe,
+                    sample.pts.micros(),
+                );
+                let muxer =
+                    self.timing.loc.get().context(
+                        "rendition sample before the source seeded the LOC capture origin",
+                    )?;
                 if let Some(object) = muxer.push(&MediaEvent::Video(sample)) {
                     self.moqt
                         .send_object(
@@ -157,7 +148,7 @@ impl RenditionPublisher {
                     return Ok(());
                 };
                 let group = aligned_boundary(
-                    &self.alignment,
+                    &self.timing.alignment,
                     fragment.is_keyframe,
                     fragment.presentation_time.micros(),
                 );

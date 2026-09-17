@@ -3,7 +3,7 @@ use moqt::{ExtensionHeaders, KeyValuePair, VariantType};
 
 /// draft-ietf-moq-loc-01 §2.3: each LOC header extension is its own MoQT
 /// extension header keyed by the LOC id; even ids carry varints, odd ids bytes.
-pub(crate) fn extension_headers(object: &LocObject) -> ExtensionHeaders {
+pub fn extension_headers(object: &LocObject) -> ExtensionHeaders {
     ExtensionHeaders::new(object.extensions.iter().map(key_value_pair).collect())
 }
 

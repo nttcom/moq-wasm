@@ -1,13 +1,11 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
+use media_publisher::MoqtManager;
 use mediapack::mpegts;
 use srt_tokio::{ConnectionRequest, SrtListener};
 use tokio::task;
 
-use crate::{
-    moqt::MoqtManager,
-    publisher::{IngestOptions, MediaPublisher},
-};
+use crate::publisher::{IngestOptions, IngestPublisher};
 
 const DEFAULT_NAMESPACE: &str = "anon/srt/live";
 const ACCESS_CONTROL_PREFIX: &str = "#!::";
@@ -42,7 +40,7 @@ async fn publish(
 ) -> Result<u64> {
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
-    let mut publisher = MediaPublisher::new(
+    let mut publisher = IngestPublisher::new(
         MoqtManager::new(options.moqt.clone()),
         namespace,
         options.transcode,

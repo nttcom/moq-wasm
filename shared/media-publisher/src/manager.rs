@@ -20,7 +20,7 @@ use moqt::{
 };
 use tokio::sync::Mutex;
 
-pub(crate) const VIDEO_TRACK_NAME: &str = "video";
+pub const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
 pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
@@ -92,7 +92,7 @@ impl VideoTrackInfo {
     }
 }
 
-pub(crate) fn cmaf_track_name(track_name: &str) -> String {
+pub fn cmaf_track_name(track_name: &str) -> String {
     format!("{track_name}{CMAF_TRACK_SUFFIX}")
 }
 
@@ -102,14 +102,14 @@ struct CatalogMetadata {
     audio_config: Option<AudioSpecificConfig>,
 }
 
-pub(crate) struct OutgoingObject {
-    pub(crate) group: GroupBoundary,
-    pub(crate) extension_headers: ExtensionHeaders,
-    pub(crate) payload: Bytes,
+pub struct OutgoingObject {
+    pub group: GroupBoundary,
+    pub extension_headers: ExtensionHeaders,
+    pub payload: Bytes,
 }
 
 impl OutgoingObject {
-    pub(crate) fn plain(group: GroupBoundary, payload: Bytes) -> Self {
+    pub fn plain(group: GroupBoundary, payload: Bytes) -> Self {
         Self {
             group,
             extension_headers: ExtensionHeaders::default(),
@@ -119,7 +119,7 @@ impl OutgoingObject {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum GroupBoundary {
+pub enum GroupBoundary {
     /// Only inside an open group; the object is dropped when there is none,
     /// because a group must not start on it.
     Within,

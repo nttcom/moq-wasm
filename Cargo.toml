@@ -5,6 +5,7 @@ members = [
     'shared/mediapack',
     'shared/transcode',
     'shared/media-streaming-format',
+    'shared/media-publisher',
     'moqt',
     'relay',
     'examples/rust/manual-client',

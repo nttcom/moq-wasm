@@ -8,10 +8,11 @@ use mediapack::{
 };
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
+use media_publisher::MoqtManager;
+
 use crate::{
     ingest::flv::FlvRecorder,
-    moqt::MoqtManager,
-    publisher::{IngestOptions, MediaPublisher},
+    publisher::{IngestOptions, IngestPublisher},
 };
 
 #[derive(Default)]
@@ -31,7 +32,7 @@ pub struct RtmpState {
 
 pub struct RtmpStream {
     demuxer: flv::Demuxer,
-    publisher: MediaPublisher,
+    publisher: IngestPublisher,
 }
 
 impl RtmpState {
@@ -67,7 +68,7 @@ impl RtmpState {
             .entry(namespace_path.clone())
             .or_insert_with(|| RtmpStream {
                 demuxer: flv::Demuxer::new(),
-                publisher: MediaPublisher::new(
+                publisher: IngestPublisher::new(
                     self.moqt.clone(),
                     namespace_path.split('/').map(str::to_owned).collect(),
                     self.transcode,
