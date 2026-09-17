@@ -2198,6 +2198,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gst-plugin-moqt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "gstreamer",
+ "media-publisher",
+ "mediapack",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "gstreamer"
 version = "0.25.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

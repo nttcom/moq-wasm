@@ -21,6 +21,8 @@ Application and integration components (draft reference is normally not required
 | Component | Description |
 | --- | --- |
 | `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser |
+| `bindings/gstreamer` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
+| `shared/media-publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `live-ingest` and `bindings/gstreamer` |
 | `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/vts` | Verify Token Service (Node.js): verifies client JWTs for the relay over HTTP |

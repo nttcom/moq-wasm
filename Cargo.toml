@@ -19,6 +19,7 @@ members = [
     'examples/cross-protocol-test/publisher',
     'examples/cross-protocol-test/quic-subscriber',
     'bindings/wasm',
+    'bindings/gstreamer',
     'bridges/live-ingest',
     'bridges/onvif',
 ]
