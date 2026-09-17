@@ -22,8 +22,8 @@ use moqt::wire::{
     ObjectDatagram, ObjectStatus, Publish, PublishDone, PublishNamespace, PublishNamespaceCancel,
     PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked, ServerSetup, SetupParameter,
     SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
-    SubscribeOk, SubscribeUpdate, TrackStatus, UnsubscribeNamespace, encode_control_message,
-    take_control_message,
+    SubscribeOk, SubscribeUpdate, TrackStatus, TrackStatusError, TrackStatusOk,
+    UnsubscribeNamespace, encode_control_message, take_control_message,
 };
 #[cfg(web_sys_unstable_apis)]
 use std::{
@@ -414,6 +414,11 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = onFetchObject)]
     pub fn set_fetch_object_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().fetch_object_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onTrackStatusResponse)]
+    pub fn set_track_status_response_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().track_status_response_callback = Some(callback);
     }
 
     #[wasm_bindgen(js_name = onConnectionClosed)]
@@ -1655,6 +1660,22 @@ async fn handle_control_message(
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
         }
+        ControlMessageType::TrackStatusOk => {
+            let message = TrackStatusOk::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode TRACK_STATUS_OK"))?;
+            if let Some(callback) = callbacks.borrow().track_status_response_callback.clone() {
+                let wrapper = SubscribeOkMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
+        ControlMessageType::TrackStatusError => {
+            let message = TrackStatusError::decode(&mut cursor)
+                .ok_or_else(|| js_error("failed to decode TRACK_STATUS_ERROR"))?;
+            if let Some(callback) = callbacks.borrow().track_status_response_callback.clone() {
+                let wrapper = RequestErrorMessage::from(&message);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+            }
+        }
         _ => {
             console_log!("Unhandled control message: {:?}", message_type);
         }
@@ -2047,6 +2068,7 @@ struct MOQTCallbacks {
     subgroup_object_callback: Option<js_sys::Function>,
     fetch_response_callback: Option<js_sys::Function>,
     fetch_object_callback: Option<js_sys::Function>,
+    track_status_response_callback: Option<js_sys::Function>,
     connection_closed_callback: Option<js_sys::Function>,
 }
 

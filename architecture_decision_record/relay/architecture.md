@@ -61,9 +61,35 @@ transport connection to a per-connection task owned by `SessionIntake`:
    `VerifiedToken`, which later requests are authorized against;
 5. for a client token (`is_relay == false`) with an `exp`, the repository
    starts a `SessionExpiryTask` that closes the session with
-   `EXPIRED_AUTH_TOKEN (0x18)` when the token expires. Clients are expected to
-   obtain a fresh token and reconnect. Relay sessions never expire; the
-   relay's own outbound inter-relay sessions carry `VerifiedToken::full_access()`.
+   `EXPIRED_AUTH_TOKEN (0x18)` when the token expires. A client that wants to
+   outlive its token refreshes it in-session (see "Token refresh" below);
+   otherwise it obtains a fresh token and reconnects. Relay sessions never
+   expire; the relay's own outbound inter-relay sessions carry
+   `VerifiedToken::full_access()`.
+
+### Token refresh
+draft-14 has no message for renewing an authorization token, and a publisher
+sends no request after PUBLISH that could carry one. The relay therefore
+repurposes TRACK_STATUS, the only request that has no side effects, as the
+carrier: a client sends TRACK_STATUS (namespace `[app_id]`, track name
+`update_auth_token` by convention; the relay reads neither) with the new JWT as
+its AUTHORIZATION TOKEN parameter. The session worker runs
+`auth::token_refresh::refresh_token`: extract the token, verify it with the
+`TokenVerifier`, require a client (non-relay) session and a non-relay token
+whose `app_id` matches the current one. On success
+`SessionRepository::replace_verified_token` swaps the session's
+`VerifiedToken` and restarts its `SessionExpiryTask` at the new `exp`, the
+worker adopts the new token for later requests, and TRACK_STATUS_OK is sent
+with Track Alias 0 and Content Exists false — it reports no track status. On
+failure TRACK_STATUS_ERROR carries `NOT_SUPPORTED (0x3)` for a TRACK_STATUS
+without a token (a real status query, which the relay does not implement) or
+on an inter-relay session, `MALFORMED_AUTH_TOKEN (0x10)` for an unsupported
+alias type / token type / non-UTF-8 value, `UNAUTHORIZED (0x1)` for a rejected
+token, a relay token or an `app_id` mismatch, and `INTERNAL_ERROR (0x0)` when
+the VTS is unreachable; the session keeps its current token. The refresh has
+no retroactive effect: publishes and subscriptions already established stay
+up, only later requests and the expiry follow the new token. AUTHORIZATION
+TOKEN parameters on any other message are still ignored.
 
 ### `modules/core` — transport-erased `moqt` facade
 The relay never handles `moqt::Session<T>` generically beyond intake. `core`
@@ -92,7 +118,8 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   stopping after `Disconnected` / `ProtocolViolation`.
 - Before dispatching, each session worker runs
   `auth::request_gate::authorize_request` against the session's
-  `VerifiedToken` (looked up once when the worker starts). PUBLISH and
+  `VerifiedToken` (looked up once when the worker starts and replaced when a
+  TRACK_STATUS token refresh succeeds). PUBLISH and
   PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE
   and standalone FETCH need `subscribe`; joining FETCH and every other
   message pass through (they reference an already authorized request). A
@@ -104,10 +131,12 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   `event_handler.rs` pin this). Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
   session are strictly ordered.
+- TRACK_STATUS is handled by the worker itself as a token refresh (see
+  "Token refresh" under "Session intake"); it has no `sequences` entry.
 - Events for control messages without relay-side logic yet (GOAWAY,
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
-  SUBSCRIBE_UPDATE, FETCH_CANCEL, TRACK_STATUS) are logged in the event span
-  and dropped by the worker; they have no `sequences` entry.
+  SUBSCRIBE_UPDATE, FETCH_CANCEL) are logged in the event span and dropped by
+  the worker; they have no `sequences` entry.
 - Two relay-internal events exist, both reported by the ingest path (not by
   a peer) and routed to the upstream publisher session's worker:
   - `MalformedTrackDetected(session_id, track_key)`, raised by the insert that
@@ -183,9 +212,10 @@ per-request authorization gate under "Event pipeline".
   namespace whose element contains `/`, requires the first element to equal
   the token's `app_id` unless `is_relay`, then requires the granted path to be
   an element-wise prefix of the remaining tuple.
-- `client_setup_token.rs` — `extract_token(&ClientSetup)`: the first
+- `token_parameter.rs` — `extract_token(&[AuthorizationToken])`: the first
   AUTHORIZATION TOKEN parameter must be `USE_VALUE` with Token Type `0` and a
-  UTF-8 value (the JWT). Other alias types are not supported by design.
+  UTF-8 value (the JWT). Other alias types are not supported by design. Used
+  for CLIENT_SETUP and for the TRACK_STATUS token refresh.
 - `token_verifier.rs` — `TokenVerifier` trait with
   `VerifyError::{Unauthorized, Unavailable}`; the split lets callers map a
   rejected token and an unreachable VTS to different termination codes.
@@ -205,6 +235,10 @@ per-request authorization gate under "Event pipeline".
   CLIENT_SETUP decision described under "Session intake".
 - `request_gate.rs` — `authorize_request` / `reject_unauthorized`, the
   per-request gate described under "Event pipeline".
+- `token_refresh.rs` — `refresh_token(verifier, current_token, tokens)`: the
+  decision behind the TRACK_STATUS token refresh described under "Session
+  intake"; returns the new `VerifiedToken` or the TRACK_STATUS_ERROR code and
+  reason.
 - `session_expiry_task.rs` — `SessionExpiryTask` (owns its `JoinHandle`,
   aborted on drop) that sleeps until `expires_at` and closes the session via a
   `Weak<dyn Session>` so a departed session is a no-op.
