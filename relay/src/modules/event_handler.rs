@@ -3,9 +3,14 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    auth::request_gate::{authorize_request, reject_unauthorized},
+    auth::{
+        request_gate::{authorize_request, reject_unauthorized},
+        token_refresh::refresh_token,
+        token_verifier::TokenVerifier,
+    },
     control_message_forwarder::ControlMessageForwarder,
     core::session_event::MoqtSessionEvent,
+    enums::SubscribeErrorCode,
     inter_relay::InterRelayConnectionManager,
     relay::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
@@ -55,6 +60,7 @@ struct WorkerDeps {
     upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
     cache_store: Arc<TrackCacheStore>,
     upstream_serializer: UpstreamCreationSerializer,
+    token_verifier: Arc<dyn TokenVerifier>,
 }
 
 impl EventHandler {
@@ -69,6 +75,7 @@ impl EventHandler {
         inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
         upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
         cache_store: Arc<TrackCacheStore>,
+        token_verifier: Arc<dyn TokenVerifier>,
     ) -> Self {
         let relay_session_event_handler = Self::create_relay_session_event_handler(
             repo,
@@ -80,6 +87,7 @@ impl EventHandler {
             inter_relay_connection_manager,
             upstream_publisher_resolver,
             cache_store,
+            token_verifier,
         );
         Self {
             relay_session_event_handler,
@@ -97,6 +105,7 @@ impl EventHandler {
         inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
         upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
         cache_store: Arc<TrackCacheStore>,
+        token_verifier: Arc<dyn TokenVerifier>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::task::Builder::new()
             .name("Relay Session Event Handler")
@@ -161,6 +170,7 @@ impl EventHandler {
                                     upstream_publisher_resolver: upstream_publisher_resolver.clone(),
                                     cache_store: cache_store.clone(),
                                     upstream_serializer: upstream_serializer.clone(),
+                                    token_verifier: token_verifier.clone(),
                                 };
                                 workers.spawn(Self::session_worker(session_id, rx, deps));
                                 tx
@@ -207,8 +217,9 @@ impl EventHandler {
             upstream_publisher_resolver,
             cache_store,
             upstream_serializer,
+            token_verifier,
         } = deps;
-        let verified_token = repo.lock().await.verified_token(session_id);
+        let mut verified_token = repo.lock().await.verified_token(session_id);
         if verified_token.is_none() {
             tracing::error!(
                 session_id,
@@ -434,14 +445,58 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
+                MoqtSessionEvent::TrackStatus(handler) => {
+                    async {
+                        let refreshed = refresh_token(
+                            token_verifier.as_ref(),
+                            verified_token.as_deref(),
+                            handler.authorization_tokens(),
+                        )
+                        .await;
+                        let response = match refreshed {
+                            Ok(token) => {
+                                match repo.lock().await.replace_verified_token(session_id, token) {
+                                    Some(token) => {
+                                        tracing::info!(
+                                            expires_at = ?token.expires_at,
+                                            "authorization token refreshed"
+                                        );
+                                        verified_token = Some(token);
+                                        handler.ok().await
+                                    }
+                                    None => {
+                                        handler
+                                            .error(
+                                                SubscribeErrorCode::InternalError as u64,
+                                                "session not found".to_string(),
+                                            )
+                                            .await
+                                    }
+                                }
+                            }
+                            Err(rejected) => {
+                                tracing::warn!(
+                                    code = ?rejected.code,
+                                    reason = %rejected.reason,
+                                    "authorization token refresh rejected"
+                                );
+                                handler.error(rejected.code as u64, rejected.reason).await
+                            }
+                        };
+                        if let Err(error) = response {
+                            tracing::warn!(?error, "failed to answer TRACK_STATUS");
+                        }
+                    }
+                    .instrument(event_span)
+                    .await;
+                }
                 MoqtSessionEvent::GoAway(..)
                 | MoqtSessionEvent::MaxRequestId(..)
                 | MoqtSessionEvent::RequestsBlocked(..)
                 | MoqtSessionEvent::PublishNamespaceCancel(..)
                 | MoqtSessionEvent::PublishDone(..)
                 | MoqtSessionEvent::SubscribeUpdate(..)
-                | MoqtSessionEvent::FetchCancel(..)
-                | MoqtSessionEvent::TrackStatus(..) => {
+                | MoqtSessionEvent::FetchCancel(..) => {
                     event_span.in_scope(|| {
                         tracing::warn!("Relay handling for this event is not implemented");
                     });

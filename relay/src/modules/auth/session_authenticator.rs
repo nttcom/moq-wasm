@@ -6,7 +6,7 @@ use crate::{
     AuthConfig,
     modules::{
         auth::{
-            client_setup_token::{SetupTokenError, extract_token},
+            token_parameter::{TokenParameterError, extract_token},
             token_verifier::{TokenVerifier, VerifyError},
             verified_token::VerifiedToken,
             vts_token_verifier::VtsTokenVerifier,
@@ -41,11 +41,11 @@ impl SessionAuthenticator {
         accepted_peer: &SessionPeer,
     ) -> Result<VerifiedToken, Rejected> {
         let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
-        let token = match extract_token(client_setup) {
+        let token = match extract_token(&client_setup.setup_parameters.authorization_token) {
             Ok(token) => token,
             // A client that presents no token is accepted with the anonymous
             // scope (anon/**); the inter-relay endpoint still requires a token.
-            Err(SetupTokenError::Missing) if !relay_endpoint => {
+            Err(TokenParameterError::Missing) if !relay_endpoint => {
                 return Ok(VerifiedToken::anonymous());
             }
             Err(error) => {
