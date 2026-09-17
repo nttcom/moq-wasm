@@ -230,6 +230,16 @@ function handleSubscribeNamespaceResponse(response: RequestErrorMessage | { requ
   console.info({ subscribeNamespaceResponse: response })
 }
 
+function handleTrackStatusResponse(response: SubscribeOkMessage | RequestErrorMessage): void {
+  if (isRequestError(response)) {
+    console.info(
+      `TrackStatusError requestId=${response.requestId} code=${response.errorCode} reason=${response.reasonPhrase}`
+    )
+    return
+  }
+  console.info(`TrackStatusOk requestId=${response.requestId}`)
+}
+
 function handleObjectDatagram(message: ObjectDatagramMessage, receivedTextElement: HTMLElement): void {
   console.info({ objectDatagram: message })
   if (message.objectPayload.length > 0) {
@@ -253,6 +263,7 @@ function registerClientCallbacks(receivedTextElement: HTMLElement): void {
   })
   moqtClient.setOnPublishNamespaceResponseHandler(handlePublishNamespaceResponse)
   moqtClient.setOnSubscribeNamespaceResponseHandler(handleSubscribeNamespaceResponse)
+  moqtClient.setOnTrackStatusResponseHandler(handleTrackStatusResponse)
   moqtClient.setOnSubscribeResponseHandler((response) => {
     console.info({ subscribeResponse: response })
     if (isRequestError(response)) {
