@@ -313,31 +313,20 @@ impl ControlMessageReceiveTask {
                     track_status_handler,
                 ))
             }
-            // Sending TRACK_STATUS is not implemented, so any response to one is
-            // unsolicited. Route these through `ResponseMessage` once it is.
             ReceivedMessage::TrackStatusOk(track_status_ok) => {
-                tracing::error!(
-                    request_id = track_status_ok.request_id,
-                    "Protocol violation: TRACK_STATUS_OK for a request that was never sent"
-                );
-                session.close_with_error(
-                    TerminationErrorCode::ProtocolViolation,
-                    "TRACK_STATUS_OK for a request that was never sent",
-                );
-                DepacketizeResult::SessionClosed
+                tracing::debug!("Event: Track status ok");
+                let request_id = track_status_ok.request_id;
+                let response = ResponseMessage::TrackStatusOk(track_status_ok);
+                DepacketizeResult::ResponseMessage(request_id, response)
             }
             ReceivedMessage::TrackStatusError(track_status_error) => {
-                tracing::error!(
-                    request_id = track_status_error.request_id,
-                    error_code = track_status_error.error_code,
-                    reason_phrase = %track_status_error.reason_phrase,
-                    "Protocol violation: TRACK_STATUS_ERROR for a request that was never sent"
+                tracing::debug!("Event: Track status error");
+                let response = ResponseMessage::TrackStatusError(
+                    track_status_error.request_id,
+                    track_status_error.error_code,
+                    track_status_error.reason_phrase,
                 );
-                session.close_with_error(
-                    TerminationErrorCode::ProtocolViolation,
-                    "TRACK_STATUS_ERROR for a request that was never sent",
-                );
-                DepacketizeResult::SessionClosed
+                DepacketizeResult::ResponseMessage(track_status_error.request_id, response)
             }
             ReceivedMessage::ClientSetup(_) | ReceivedMessage::ServerSetup(_) => {
                 tracing::error!(

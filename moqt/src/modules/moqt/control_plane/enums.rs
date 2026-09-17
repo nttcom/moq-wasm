@@ -60,4 +60,6 @@ pub(crate) enum ResponseMessage {
     SubscribeError(RequestId, ErrorCode, ErrorPhrase),
     FetchOk(FetchOk),
     FetchError(RequestId, ErrorCode, ErrorPhrase),
+    TrackStatusOk(SubscribeOk),
+    TrackStatusError(RequestId, ErrorCode, ErrorPhrase),
 }
