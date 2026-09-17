@@ -48,6 +48,16 @@ for the same presentation time, so the LOC and CMAF versions of a rendition are
 interchangeable; each format forms its own switching set (`altGroup` 1 for LOC,
 2 for CMAF).
 
+## FETCH
+
+Every object is numbered and kept for 30 seconds from the moment the bridge
+produces it, whether or not anything is subscribed, and a standalone FETCH for
+a cached range is answered from that cache (draft-ietf-moq-transport-14
+§9.16). The relay forwards a FETCH upstream when its own cache cannot cover the
+range, so a viewer can rewind into the part of the stream that predates the
+relay's first subscriber. A subscriber that joins while a group is open starts
+receiving at the next group so the live and cached object ids agree.
+
 ## Group Alignment
 
 The source video track and its transcoded renditions form a CMSF switching set

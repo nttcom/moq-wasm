@@ -2,6 +2,8 @@ mod group_alignment;
 mod loc_object;
 mod manager;
 mod media_timeline;
+mod object_cache;
+mod object_numbering;
 mod publisher;
 
 pub use group_alignment::GroupAlignment;
