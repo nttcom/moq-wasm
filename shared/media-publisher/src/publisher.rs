@@ -3,13 +3,14 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::{
-    AudioSample, MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig,
-    loc::Muxer as LocMuxer, mp4::Fmp4TrackMuxer,
+    AudioSample, MediaEvent, Timestamp, VideoSample,
+    aac::AudioSpecificConfig,
+    loc::{Muxer as LocMuxer, to_extension_headers},
+    mp4::Fmp4TrackMuxer,
 };
 
 use crate::{
     group_alignment::GroupAlignment,
-    loc_object::extension_headers,
     manager::{
         GroupBoundary, MoqtManager, OutgoingObject, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
         VideoTrackInfo, cmaf_track_name, now_unix,
@@ -112,7 +113,7 @@ impl MediaPublisher {
                 VIDEO_TRACK_NAME,
                 OutgoingObject {
                     group: keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At),
-                    extension_headers: extension_headers(&object),
+                    extension_headers: to_extension_headers(&object.extensions),
                     payload: object.payload,
                 },
             )
@@ -192,7 +193,7 @@ impl MediaPublisher {
                 AUDIO_TRACK,
                 OutgoingObject {
                     group,
-                    extension_headers: extension_headers(&object),
+                    extension_headers: to_extension_headers(&object.extensions),
                     payload: object.payload,
                 },
             )

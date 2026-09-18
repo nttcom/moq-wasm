@@ -3920,17 +3920,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "packages"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "moqt",
- "serde",
- "serde-wasm-bindgen",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

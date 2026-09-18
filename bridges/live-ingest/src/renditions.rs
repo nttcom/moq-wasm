@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use media_publisher::{
     GroupAlignment, GroupBoundary, MediaPublisher, MoqtManager, OutgoingObject, SharedTiming,
-    VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name, extension_headers,
+    VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
 };
-use mediapack::{MediaEvent, VideoSample, mp4::Fmp4TrackMuxer};
+use mediapack::{MediaEvent, VideoSample, loc::to_extension_headers, mp4::Fmp4TrackMuxer};
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
@@ -138,7 +138,7 @@ impl RenditionPublisher {
                             &track,
                             OutgoingObject {
                                 group,
-                                extension_headers: extension_headers(&object),
+                                extension_headers: to_extension_headers(&object.extensions),
                                 payload: object.payload,
                             },
                         )
