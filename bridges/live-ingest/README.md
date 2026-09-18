@@ -71,6 +71,13 @@ range, so a viewer can rewind into the part of the stream that predates the
 relay's first subscriber. A subscriber that joins while a group is open starts
 receiving at the next group so the live and cached object ids agree.
 
+The catalog is the exception to the 30 seconds: its newest object is kept for
+as long as the publisher runs. A viewer that joins a subscription the relay
+already holds never receives the catalog live, because a SUBSCRIBE starts
+after the largest object and the catalog is published once per upstream
+subscription, so it fetches the current catalog instead, and the relay
+completes that FETCH from here when its own cache has dropped it.
+
 ## Group Alignment
 
 The source video track and its transcoded renditions form a CMSF switching set
