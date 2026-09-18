@@ -2,6 +2,8 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import type { MOQTClient } from '../../pkg/moqt_client_wasm'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
+import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
+import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../utils/media/decoderCatalog'
 
 const moqtClient = new MoqtClientWrapper()
 let audioDecoderWorker: Worker | null = null
@@ -638,21 +640,7 @@ function setupAudioDecoderWorker(): void {
 function setupVideoCallbacks(trackAlias: bigint): void {
   setupVideoDecoderWorker()
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
-    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
-    videoDecoderWorker.postMessage(
-      {
-        groupId,
-        subgroupStreamObject: {
-          subgroupId: subgroupStreamObject.subgroupId,
-          objectIdDelta: subgroupStreamObject.objectIdDelta,
-          objectPayloadLength: subgroupStreamObject.objectPayloadLength,
-          objectPayload: payload,
-          objectStatus: subgroupStreamObject.objectStatus,
-          locHeader: subgroupStreamObject.locHeader
-        }
-      },
-      [payload.buffer]
-    )
+    postSubgroupObjectToWorker(videoDecoderWorker, groupId, subgroupStreamObject)
   })
 }
 
@@ -663,21 +651,7 @@ function setupAudioCallbacks(trackAlias: bigint): void {
     throw new Error('audio decoder worker is not initialized')
   }
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
-    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
-    worker.postMessage(
-      {
-        groupId,
-        subgroupStreamObject: {
-          subgroupId: subgroupStreamObject.subgroupId,
-          objectIdDelta: subgroupStreamObject.objectIdDelta,
-          objectPayloadLength: subgroupStreamObject.objectPayloadLength,
-          objectPayload: payload,
-          objectStatus: subgroupStreamObject.objectStatus,
-          locHeader: subgroupStreamObject.locHeader
-        }
-      },
-      [payload.buffer]
-    )
+    postSubgroupObjectToWorker(worker, groupId, subgroupStreamObject)
   })
 }
 
@@ -862,37 +836,15 @@ function applySelectedAudioTrack(track: string): void {
 function notifyDecoderFromCatalog(trackName: string | null): void {
   if (!trackName) return
   const track = catalogTracks.find((entry) => entry.name === trackName && entry.role === 'video')
-  if (!track?.codec && typeof track?.framerate !== 'number') return
-  videoDecoderWorker.postMessage({
-    type: 'catalog',
-    codec: track.codec,
-    framerate: track.framerate,
-    descriptionBase64: track.initData
-  })
+  if (!track) return
+  postVideoCatalogToWorker(videoDecoderWorker, track)
 }
 
 function notifyAudioDecoderFromCatalog(): void {
   if (!audioDecoderWorker || !selectedAudioTrack) return
   const track = catalogTracks.find((entry) => entry.name === selectedAudioTrack && entry.role === 'audio')
   if (!track) return
-  const channels = channelCountFromConfig(track.channelConfig)
-  if (!track.codec && typeof track.samplerate !== 'number' && channels === undefined && !track.initData) return
-  audioDecoderWorker.postMessage({
-    type: 'catalog',
-    codec: track.codec,
-    sampleRate: track.samplerate,
-    channels,
-    descriptionBase64: track.initData
-  })
-}
-
-function channelCountFromConfig(channelConfig?: string): number | undefined {
-  const normalized = channelConfig?.trim().toLowerCase()
-  if (!normalized) return undefined
-  if (normalized === 'mono') return 1
-  if (normalized === 'stereo') return 2
-  const match = /^(\d+)ch$/.exec(normalized)
-  return match ? Number(match[1]) : undefined
+  postAudioCatalogToWorker(audioDecoderWorker, track)
 }
 
 function appendMeta(container: HTMLElement, label: string, value?: string): void {

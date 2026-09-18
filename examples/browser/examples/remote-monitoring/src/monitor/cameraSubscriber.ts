@@ -1,6 +1,7 @@
 import type { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
 import { type DeserializedChunk } from '../../../../utils/media/chunk'
+import { postSubgroupObjectToWorker } from '../../../../utils/media/decoderWorker'
 import { readLocHeader, bytesToBase64, type LocHeader } from '../../../../utils/media/loc'
 import { base64ToUint8Array } from '../../../../utils/media/base64'
 
@@ -115,21 +116,7 @@ export class CameraSubscriber {
     }
     this.lastSentGroupId = groupId
 
-    const payload = new Uint8Array(msg.objectPayload)
-    this.worker.postMessage(
-      {
-        groupId,
-        subgroupStreamObject: {
-          subgroupId: msg.subgroupId,
-          objectIdDelta: msg.objectIdDelta,
-          objectPayloadLength: msg.objectPayloadLength,
-          objectPayload: payload,
-          objectStatus: msg.objectStatus,
-          locHeader: msg.locHeader
-        }
-      },
-      [payload.buffer]
-    )
+    postSubgroupObjectToWorker(this.worker, groupId, msg)
   }
 
   private drawFrame(frame: VideoFrame): void {
@@ -164,21 +151,14 @@ export class CameraSubscriber {
         const obj = this.gopBuffer[i]
         // MoQT: 先頭オブジェクトの objectId = objectIdDelta、以降は前の objectId + objectIdDelta
         replayedObjectId = i === 0 ? obj.objectIdDelta : replayedObjectId + obj.objectIdDelta
-        const payload = new Uint8Array(obj.payload)
-        this.worker.postMessage(
-          {
-            groupId: this.gopBufferGroupId,
-            subgroupStreamObject: {
-              subgroupId: obj.subgroupId,
-              objectIdDelta: obj.objectIdDelta,
-              objectPayloadLength: obj.objectPayloadLength,
-              objectPayload: payload,
-              objectStatus: obj.objectStatus,
-              locHeader: obj.locHeader
-            }
-          },
-          [payload.buffer]
-        )
+        postSubgroupObjectToWorker(this.worker, this.gopBufferGroupId, {
+          subgroupId: obj.subgroupId,
+          objectIdDelta: obj.objectIdDelta,
+          objectPayloadLength: obj.objectPayloadLength,
+          objectPayload: obj.payload,
+          objectStatus: obj.objectStatus,
+          locHeader: obj.locHeader as LocHeader | undefined
+        })
       }
       this.lastSentGroupId = this.gopBufferGroupId
       this.lastSentObjectId = replayedObjectId

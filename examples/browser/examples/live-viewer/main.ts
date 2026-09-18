@@ -9,6 +9,12 @@ import {
   type MediaCatalogTrack
 } from '../media/catalog'
 import { base64ToUint8Array } from '../../utils/media/base64'
+import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
+import {
+  parseAudioChannelCount,
+  postAudioCatalogToWorker,
+  postVideoCatalogToWorker
+} from '../../utils/media/decoderCatalog'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { LivePlayout } from './livePlayout'
@@ -511,7 +517,6 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   }
   const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {
-    const payload = new Uint8Array(object.objectPayload)
     if (kind === 'video') {
       videoObjectCount += 1
       timeline.record(groupId, object.locHeader)
@@ -522,20 +527,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     } else {
       newestAudioGroupId = groupId
     }
-    worker.postMessage(
-      {
-        groupId,
-        subgroupStreamObject: {
-          subgroupId: object.subgroupId,
-          objectIdDelta: object.objectIdDelta,
-          objectPayloadLength: payload.byteLength,
-          objectPayload: payload,
-          objectStatus: object.objectStatus,
-          locHeader: object.locHeader
-        }
-      },
-      [payload.buffer]
-    )
+    postSubgroupObjectToWorker(worker, groupId, object)
   })
   appendLog('info', `subscribed ${trackNamespace().join('/')}/${trackName}`)
 }
@@ -556,32 +548,14 @@ async function unsubscribeTrack(kind: MediaKind): Promise<void> {
 
 function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
   if (kind === 'video') {
-    videoDecoderWorker.postMessage({
-      type: 'catalog',
+    postVideoCatalogToWorker(videoDecoderWorker, {
       codec: track.codec,
-      descriptionBase64: track.initData,
+      initData: track.initData,
       avcFormat: track.initData ? undefined : ANNEX_B_FORMAT
     })
     return
   }
-  audioDecoderWorker.postMessage({
-    type: 'catalog',
-    codec: track.codec,
-    sampleRate: track.samplerate,
-    channels: channelCount(track.channelConfig),
-    descriptionBase64: track.initData
-  })
-}
-
-function channelCount(channelConfig?: string): number | undefined {
-  if (channelConfig === 'mono') {
-    return 1
-  }
-  if (channelConfig === 'stereo') {
-    return 2
-  }
-  const parsed = Number.parseInt(channelConfig ?? '', 10)
-  return Number.isNaN(parsed) ? undefined : parsed
+  postAudioCatalogToWorker(audioDecoderWorker, track)
 }
 
 /// The decoders hand every sample over as soon as it is decoded; the live
@@ -981,7 +955,7 @@ function reviewAudioConfig(): AudioDecoderConfig | undefined {
   return {
     codec: track.codec,
     sampleRate: track.samplerate,
-    numberOfChannels: channelCount(track.channelConfig) ?? 2,
+    numberOfChannels: parseAudioChannelCount(track.channelConfig) ?? 2,
     description: track.initData ? base64ToUint8Array(track.initData) : undefined
   }
 }

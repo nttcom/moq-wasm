@@ -1,12 +1,13 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
 import { GroupOrderGate } from '../groupOrderGate'
-import { isTerminalStatus } from '../objectStatus'
 import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros } from '../clock'
 import { readLocHeader } from '../loc'
+import { buildAudioChunkFromLoc, getCaptureTimestampMicros } from '../locChunk'
+import { trackSubgroupObjectId } from '../subgroupObjectId'
 
 let telemetryEnabled = true
 let bypassJitterBuffer = false
@@ -184,18 +185,20 @@ function materializeDirectObject(
   object: SubgroupObjectWithLoc,
   onReceiveLatency?: (latencyMs: number) => void
 ): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
-  const subgroupId = normalizeSubgroupId(object.subgroupId)
-  const objectId = assignDirectObjectId(groupId, subgroupId, object.objectIdDelta)
-  if (isTerminalStatus(object.objectStatus)) {
-    directLastObjectIds.delete(makeSubgroupKey(groupId, subgroupId))
-  }
+  const objectId = trackSubgroupObjectId(
+    directLastObjectIds,
+    groupId,
+    object.subgroupId,
+    object.objectIdDelta,
+    object.objectStatus
+  )
   if (!object.objectPayloadLength) {
     return null
   }
   const locMetadata = readLocHeader(object.locHeader)
   const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
 
-  const parsed = buildChunkFromLoc(object)
+  const parsed = buildAudioChunkFromLoc(object)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
@@ -211,40 +214,6 @@ function materializeDirectObject(
       localPTS: performance.timeOrigin + performance.now()
     }
   }
-}
-
-function assignDirectObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
-  const key = makeSubgroupKey(groupId, subgroupId)
-  const previousObjectId = directLastObjectIds.get(key)
-  const objectId = previousObjectId === undefined ? objectIdDelta : previousObjectId + objectIdDelta + 1n
-  directLastObjectIds.set(key, objectId)
-  return objectId
-}
-
-function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
-  return subgroupId ?? 0n
-}
-
-function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
-  return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {
-  const loc = readLocHeader(object.locHeader)
-  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
-  const metadata: ChunkMetadata = {
-    type: 'key',
-    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
-    duration: null
-  }
-  return { metadata, data: object.objectPayload }
-}
-
-function getCaptureTimestampMicros(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined
-  }
-  return value
 }
 
 async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureTimestampMicros?: number) {

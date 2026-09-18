@@ -1,7 +1,7 @@
-import { type ChunkMetadata } from './chunk'
 import { readLocHeader } from './loc'
+import { buildAudioChunkFromLoc, getCaptureTimestampMicros } from './locChunk'
+import { trackSubgroupObjectId } from './subgroupObjectId'
 import { latencyMsFromCaptureMicros } from './clock'
-import { isTerminalStatus } from './objectStatus'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
@@ -34,18 +34,20 @@ export class AudioJitterBuffer {
   }
 
   push(groupId: bigint, object: SubgroupObjectWithLoc, onReceiveLatency?: (latencyMs: number) => void): bigint | null {
-    const subgroupId = normalizeSubgroupId(object.subgroupId)
-    const objectId = this.assignObjectId(groupId, subgroupId, object.objectIdDelta)
-    if (isTerminalStatus(object.objectStatus)) {
-      this.lastObjectIds.delete(makeSubgroupKey(groupId, subgroupId))
-    }
+    const objectId = trackSubgroupObjectId(
+      this.lastObjectIds,
+      groupId,
+      object.subgroupId,
+      object.objectIdDelta,
+      object.objectStatus
+    )
     if (!object.objectPayloadLength) {
       return null
     }
     const locMetadata = readLocHeader(object.locHeader)
     const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
 
-    const parsed = buildChunkFromLoc(object)
+    const parsed = buildAudioChunkFromLoc(object)
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
@@ -106,14 +108,6 @@ export class AudioJitterBuffer {
     return head
   }
 
-  private assignObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
-    const key = makeSubgroupKey(groupId, subgroupId)
-    const previousObjectId = this.lastObjectIds.get(key)
-    const objectId = previousObjectId === undefined ? objectIdDelta : previousObjectId + objectIdDelta + 1n
-    this.lastObjectIds.set(key, objectId)
-    return objectId
-  }
-
   private findInsertPos(groupId: bigint, objectId: bigint): number {
     for (let i = this.buffer.length - 1; i >= 0; i--) {
       const entry = this.buffer[i]
@@ -134,30 +128,4 @@ export class AudioJitterBuffer {
   getMaxBufferSize(): number {
     return this.maxBufferSize
   }
-}
-
-function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
-  return subgroupId ?? 0n
-}
-
-function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
-  return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {
-  const loc = readLocHeader(object.locHeader)
-  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
-  const metadata: ChunkMetadata = {
-    type: 'key',
-    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
-    duration: null
-  }
-  return { metadata, data: object.objectPayload }
-}
-
-function getCaptureTimestampMicros(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined
-  }
-  return value
 }

@@ -3,6 +3,8 @@ import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
+import { postSubgroupObjectToWorker } from '../../../utils/media/decoderWorker'
+import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../../utils/media/decoderCatalog'
 import {
   extractCatalogAudioTracks,
   extractCatalogVideoTracks,
@@ -144,37 +146,16 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
   }
   if (kind === 'video') {
     const track = catalogVideoTracks.find((entry) => entry.name === trackName)
-    videoDecoderWorker.postMessage({
-      type: 'catalog',
+    postVideoCatalogToWorker(videoDecoderWorker, {
       codec: track?.codec ?? getResolvedMediaVideoCodec(),
-      descriptionBase64: track?.initData
+      initData: track?.initData
     })
     return
   }
   const track = catalogAudioTracks.find((entry) => entry.name === trackName)
   if (track) {
-    audioDecoderWorker.postMessage({
-      type: 'catalog',
-      codec: track.codec,
-      sampleRate: track.samplerate,
-      channels: channelCountFromConfig(track.channelConfig),
-      descriptionBase64: track.initData
-    })
+    postAudioCatalogToWorker(audioDecoderWorker, track)
   }
-}
-
-function channelCountFromConfig(channelConfig?: string): number | undefined {
-  if (!channelConfig) {
-    return undefined
-  }
-  if (channelConfig === 'mono') {
-    return 1
-  }
-  if (channelConfig === 'stereo') {
-    return 2
-  }
-  const match = /^(\d+)ch$/.exec(channelConfig)
-  return match ? Number(match[1]) : undefined
 }
 
 function formatCatalogTrackLabel(track: MediaCatalogTrack, kind: 'video' | 'audio'): string {
@@ -460,7 +441,6 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
       setReceiveStatus(
         `Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`
       )
-      const payload = new Uint8Array(subgroupStreamObject.objectPayload)
       const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
       if (locSummary.present && locSummary.extensionCount > 0) {
         console.debug('[MediaSubscriber] LoC object (audio)', {
@@ -474,24 +454,11 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
         groupId,
         objectId: subgroupStreamObject.objectId,
         payloadLength: subgroupStreamObject.objectPayloadLength,
-        payloadByteLength: payload.byteLength,
+        payloadByteLength: new Uint8Array(subgroupStreamObject.objectPayload).byteLength,
         status: subgroupStreamObject.objectStatus,
         loc: locSummary
       })
-      audioDecoderWorker.postMessage(
-        {
-          groupId,
-          subgroupStreamObject: {
-            subgroupId: subgroupStreamObject.subgroupId,
-            objectIdDelta: subgroupStreamObject.objectIdDelta,
-            objectPayloadLength: subgroupStreamObject.objectPayloadLength,
-            objectPayload: payload,
-            objectStatus: subgroupStreamObject.objectStatus,
-            locHeader: subgroupStreamObject.locHeader
-          }
-        },
-        [payload.buffer]
-      )
+      postSubgroupObjectToWorker(audioDecoderWorker, groupId, subgroupStreamObject)
     })
     return
   }
@@ -503,7 +470,6 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
     if (selectedVideoTrackName && selectedAudioTrackName) {
       setTrackSubscribeStatus(`Subscribed video=${selectedVideoTrackName}, audio=${selectedAudioTrackName}`)
     }
-    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
     const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
     if (locSummary.present && locSummary.extensionCount > 0) {
       console.debug('[MediaSubscriber] LoC object (video)', {
@@ -517,25 +483,12 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
       groupId,
       objectId: subgroupStreamObject.objectId,
       payloadLength: subgroupStreamObject.objectPayloadLength,
-      payloadByteLength: payload.byteLength,
+      payloadByteLength: new Uint8Array(subgroupStreamObject.objectPayload).byteLength,
       status: subgroupStreamObject.objectStatus,
       loc: locSummary
     })
 
-    videoDecoderWorker.postMessage(
-      {
-        groupId,
-        subgroupStreamObject: {
-          subgroupId: subgroupStreamObject.subgroupId,
-          objectIdDelta: subgroupStreamObject.objectIdDelta,
-          objectPayloadLength: subgroupStreamObject.objectPayloadLength,
-          objectPayload: payload,
-          objectStatus: subgroupStreamObject.objectStatus,
-          locHeader: subgroupStreamObject.locHeader
-        }
-      },
-      [payload.buffer]
-    )
+    postSubgroupObjectToWorker(videoDecoderWorker, groupId, subgroupStreamObject)
   })
 }
 
