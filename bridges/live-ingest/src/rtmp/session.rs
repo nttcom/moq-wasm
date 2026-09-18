@@ -81,11 +81,11 @@ impl RtmpState {
                 return;
             }
         };
-        for event in &events {
-            if let MediaEvent::VideoConfig(config) = event {
+        for event in events {
+            if let MediaEvent::VideoConfig(config) = &event {
                 tracing::info!(peer = %label, namespace = %namespace_path, codec = %config.codec_string(), "detected video codec");
             }
-            if let Err(err) = stream.publisher.push(event).await {
+            if let Err(err) = stream.publisher.push(event) {
                 tracing::warn!(peer = %label, namespace = %namespace_path, ?err, "failed to publish RTMP media");
             }
         }

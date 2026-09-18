@@ -21,8 +21,8 @@ struct Settings {
 }
 
 struct Started {
-    runtime: Runtime,
     publisher: MediaPublisher,
+    _runtime: Runtime,
     video: VideoInput,
 }
 
@@ -264,9 +264,13 @@ impl MoqtSink {
             .block_on(manager.setup_namespace(&namespace))
             .context("connect to the relay and publish the namespace")?;
         tracing::info!(namespace = %namespace.join("/"), "moqtsink connected");
+        let publisher = {
+            let _runtime_context = runtime.enter();
+            MediaPublisher::run(manager, namespace)
+        };
         *self.started.lock().expect("started lock") = Some(Started {
-            runtime,
-            publisher: MediaPublisher::new(manager, namespace),
+            publisher,
+            _runtime: runtime,
             video: VideoInput::default(),
         });
         Ok(())
@@ -305,10 +309,10 @@ impl MoqtSink {
                 pts,
             })],
         };
-        for event in &events {
+        for event in events {
             started
-                .runtime
-                .block_on(started.publisher.push(event))
+                .publisher
+                .push(event)
                 .map_err(|err| self.stream_error(err))?;
         }
         Ok(gst::FlowSuccess::Ok)
@@ -357,7 +361,7 @@ impl MoqtSink {
         let started = started
             .as_mut()
             .context("audio caps received before the sink started")?;
-        started.runtime.block_on(started.publisher.push(&event))
+        started.publisher.push(event)
     }
 
     fn stream_error(&self, err: anyhow::Error) -> gst::FlowError {
