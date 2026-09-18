@@ -3174,6 +3174,7 @@ dependencies = [
  "futures",
  "media-publisher",
  "mediapack",
+ "moqt",
  "rml_rtmp",
  "srt-tokio",
  "tokio",

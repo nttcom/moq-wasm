@@ -2,12 +2,13 @@ use anyhow::Result;
 use media_publisher::{MediaPublisher, MoqtManager, MoqtTarget, VideoTrackInfo};
 use mediapack::MediaEvent;
 
-use crate::renditions::RenditionFanout;
+use crate::{renditions::RenditionFanout, stats_panel::ConnectionRegistry};
 
 #[derive(Clone)]
 pub struct IngestOptions {
     pub moqt: Option<MoqtTarget>,
     pub transcode: bool,
+    pub stats: Option<ConnectionRegistry>,
 }
 
 pub struct IngestPublisher {

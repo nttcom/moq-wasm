@@ -10,6 +10,8 @@ use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult}
 
 use media_publisher::MoqtManager;
 
+use crate::stats_panel::Registration;
+
 use crate::{
     ingest::flv::FlvRecorder,
     publisher::{IngestOptions, IngestPublisher},
@@ -26,6 +28,7 @@ pub struct RtmpState {
     pub counters: RtmpCounters,
     pub recorder: Option<FlvRecorder>,
     pub moqt: MoqtManager,
+    _registration: Option<Registration>,
     transcode: bool,
     pub streams: HashMap<String, RtmpStream>,
 }
@@ -37,11 +40,17 @@ pub struct RtmpStream {
 
 impl RtmpState {
     pub fn new(options: &IngestOptions, label: String) -> Self {
+        let moqt = MoqtManager::new(options.moqt.clone());
+        let registration = options
+            .stats
+            .as_ref()
+            .map(|registry| registry.register(format!("rtmp {label}"), &moqt));
         Self {
             label,
             counters: RtmpCounters::default(),
             recorder: None,
-            moqt: MoqtManager::new(options.moqt.clone()),
+            moqt,
+            _registration: registration,
             transcode: options.transcode,
             streams: HashMap::new(),
         }
