@@ -88,15 +88,31 @@
                   >
                 </h3>
               </summary>
-              <pre><code>make ffmpeg-srt-bbb-remote</code></pre>
-              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
-              <pre><code>srt://relay-1.moqt.research.skyway.io:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
-              <p class="hint">
-                OBS で RTMP 配信する場合は、サーバーに
-                <code>rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test</code>、 ストリームキーに
-                <code>stream</code> を設定します。
-              </p>
-              <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+              <ol class="setup-steps">
+                <li>
+                  <h4>配信元を選ぶ（ffmpeg または OBS）</h4>
+                  <p class="hint">次のどちらか一方を選んで配信を開始します。</p>
+                  <div class="setup-choice">
+                    <h5>A. ffmpeg を使う</h5>
+                    <pre><code>make ffmpeg-srt-bbb-remote</code></pre>
+                  </div>
+                  <div class="setup-choice">
+                    <h5>B. OBS を使う</h5>
+                    <p class="hint">SRT のサーバー URL に以下を設定して配信を開始します。</p>
+                    <pre><code>srt://relay-1.moqt.research.skyway.io:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+                    <p class="hint">
+                      RTMP を使う場合は、サーバーに
+                      <code>rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test</code>、ストリームキーに
+                      <code>stream</code> を設定します。
+                    </p>
+                  </div>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+                  <p class="hint">namespace に <code>anon/live/test</code> を指定し、Watch を押します。</p>
+                </li>
+              </ol>
             </details>
             <details class="setup-panel setup-toggle">
               <summary>
@@ -116,16 +132,31 @@
                   >
                 </h3>
               </summary>
-              <pre><code>make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
-
-make ffmpeg-srt-bbb-local</code></pre>
-              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
-              <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
-              <p class="hint">
-                ffmpeg のテストパターンを配信する場合は、<code>make ffmpeg-srt-bbb-local</code> の代わりに
-                <code>make ffmpeg-srt</code> を実行します。
-              </p>
-              <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+              <ol class="setup-steps">
+                <li>
+                  <h4>ローカル Ingestion を起動する</h4>
+                  <pre><code>make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443</code></pre>
+                </li>
+                <li>
+                  <h4>配信元を選ぶ（ffmpeg または OBS）</h4>
+                  <p class="hint">次のどちらか一方を選んで配信を開始します。</p>
+                  <div class="setup-choice">
+                    <h5>A. ffmpeg を使う</h5>
+                    <pre><code>make ffmpeg-srt-bbb-local</code></pre>
+                    <p class="hint">テストパターンを使う場合は、代わりに <code>make ffmpeg-srt</code> を実行します。</p>
+                  </div>
+                  <div class="setup-choice">
+                    <h5>B. OBS を使う</h5>
+                    <p class="hint">SRT のサーバー URL に以下を設定して配信を開始します。</p>
+                    <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+                  </div>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+                  <p class="hint">namespace に <code>anon/live/test</code> を指定し、Watch を押します。</p>
+                </li>
+              </ol>
             </details>
             <details class="setup-panel setup-toggle">
               <summary>
@@ -145,22 +176,39 @@ make ffmpeg-srt-bbb-local</code></pre>
                   >
                 </h3>
               </summary>
-              <pre><code>make relay
-
-make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
-
-make ffmpeg-srt-bbb-local
-
-make browser
+              <ol class="setup-steps">
+                <li>
+                  <h4>ローカル Relay を起動する</h4>
+                  <pre><code>make relay</code></pre>
+                </li>
+                <li>
+                  <h4>ローカル Ingestion を起動する</h4>
+                  <pre><code>make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433</code></pre>
+                </li>
+                <li>
+                  <h4>配信元を選ぶ（ffmpeg または OBS）</h4>
+                  <p class="hint">次のどちらか一方を選んで配信を開始します。</p>
+                  <div class="setup-choice">
+                    <h5>A. ffmpeg を使う</h5>
+                    <pre><code>make ffmpeg-srt-bbb-local</code></pre>
+                    <p class="hint">テストパターンを使う場合は、代わりに <code>make ffmpeg-srt</code> を実行します。</p>
+                  </div>
+                  <div class="setup-choice">
+                    <h5>B. OBS を使う</h5>
+                    <p class="hint">SRT のサーバー URL に以下を設定して配信を開始します。</p>
+                    <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+                  </div>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">別々のターミナルで以下を実行し、Live Viewer を開きます。</p>
+                  <pre><code>make browser
 
 make chrome</code></pre>
-              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
-              <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
-              <p class="hint">
-                ffmpeg のテストパターンを配信する場合は、<code>make ffmpeg-srt-bbb-local</code> の代わりに
-                <code>make ffmpeg-srt</code> を実行します。
-              </p>
-              <p class="hint">視聴先の Relay URL： <code>https://127.0.0.1:4433</code></p>
+                  <p class="hint">視聴先の Relay URL： <code>https://127.0.0.1:4433</code></p>
+                  <p class="hint">namespace に <code>anon/live/test</code> を指定し、Watch を押します。</p>
+                </li>
+              </ol>
             </details>
           </div>
         </details>

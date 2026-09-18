@@ -12,68 +12,119 @@ OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下�
 <details>
 <summary>OBS / ffmpeg → クラウド SRT / RTMP Ingestion (live-ingest) → クラウド Relay</summary>
 
-```shell
-make ffmpeg-srt-bbb-remote
-```
+1. **配信元を選ぶ（ffmpeg または OBS）**
 
-OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
+   次のどちらか一方を選んで配信を開始します。
 
-```text
-srt://relay-1.moqt.research.skyway.io:9000?mode=caller&streamid=anon/live/test
-```
+   **A. ffmpeg を使う**
 
-OBS で RTMP 配信する場合は、サーバーに `rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test`、
-ストリームキーに `stream` を設定します。
+   ```shell
+   make ffmpeg-srt-bbb-remote
+   ```
 
-視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
+   **B. OBS を使う**
+
+   SRT のサーバー URL に以下を設定して配信を開始します。
+
+   ```text
+   srt://relay-1.moqt.research.skyway.io:9000?mode=caller&streamid=anon/live/test
+   ```
+
+   RTMP を使う場合は、サーバーに `rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test`、ストリームキーに `stream` を設定します。
+
+2. **Live Viewer で視聴する**
+
+   視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`
+
+   namespace に `anon/live/test` を指定し、Watch を押します。
 
 </details>
 
 <details>
 <summary>OBS / ffmpeg → ローカル Ingestion (GStreamer) → クラウド Relay</summary>
 
-```shell
-make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
+1. **ローカル Ingestion を起動する**
 
-make ffmpeg-srt-bbb-local
-```
+   ```shell
+   make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
+   ```
 
-OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
+2. **配信元を選ぶ（ffmpeg または OBS）**
 
-```text
-srt://localhost:9000?mode=caller&streamid=anon/live/test
-```
+   次のどちらか一方を選んで配信を開始します。
 
-ffmpeg のテストパターンを配信する場合は、`make ffmpeg-srt-bbb-local` の代わりに `make ffmpeg-srt` を実行します。
+   **A. ffmpeg を使う**
 
-視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
+   ```shell
+   make ffmpeg-srt-bbb-local
+   ```
+
+   テストパターンを使う場合は、代わりに `make ffmpeg-srt` を実行します。
+
+   **B. OBS を使う**
+
+   SRT のサーバー URL に以下を設定して配信を開始します。
+
+   ```text
+   srt://localhost:9000?mode=caller&streamid=anon/live/test
+   ```
+
+3. **Live Viewer で視聴する**
+
+   視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`
+
+   namespace に `anon/live/test` を指定し、Watch を押します。
 
 </details>
 
 <details>
 <summary>OBS / ffmpeg → ローカル Ingestion (GStreamer) → ローカル Relay</summary>
 
-```shell
-make relay
+1. **ローカル Relay を起動する**
 
-make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
+   ```shell
+   make relay
+   ```
 
-make ffmpeg-srt-bbb-local
+2. **ローカル Ingestion を起動する**
 
-make browser
+   ```shell
+   make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
+   ```
 
-make chrome
-```
+3. **配信元を選ぶ（ffmpeg または OBS）**
 
-OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
+   次のどちらか一方を選んで配信を開始します。
 
-```text
-srt://localhost:9000?mode=caller&streamid=anon/live/test
-```
+   **A. ffmpeg を使う**
 
-ffmpeg のテストパターンを配信する場合は、`make ffmpeg-srt-bbb-local` の代わりに `make ffmpeg-srt` を実行します。
+   ```shell
+   make ffmpeg-srt-bbb-local
+   ```
 
-視聴先の Relay URL： `https://127.0.0.1:4433`.
+   テストパターンを使う場合は、代わりに `make ffmpeg-srt` を実行します。
+
+   **B. OBS を使う**
+
+   SRT のサーバー URL に以下を設定して配信を開始します。
+
+   ```text
+   srt://localhost:9000?mode=caller&streamid=anon/live/test
+   ```
+
+4. **Live Viewer で視聴する**
+
+   別々のターミナルで以下を実行し、Live Viewer を開きます。
+
+   ```shell
+   make browser
+
+   make chrome
+   ```
+
+   視聴先の Relay URL： `https://127.0.0.1:4433`
+
+   namespace に `anon/live/test` を指定し、Watch を押します。
 
 </details>
 
