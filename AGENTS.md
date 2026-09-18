@@ -14,7 +14,7 @@ Library components (draft-governed):
 | `moqt` | Core MoQT protocol implementation | `spec/draft-ietf-moq-transport-14.txt` |
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
 | `shared/media-streaming-format` | Object format for content transported over MoQT | `spec/draft-ietf-moq-msf-01.txt`, `spec/draft-ietf-moq-cmsf-01.txt` |
-| `shared/packages` | Low-overhead container used internally by `media-streaming-format` | `spec/draft-ietf-moq-msf-01.txt` |
+| `shared/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC) and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
 
 Application and integration components (draft reference is normally not required):
 
@@ -23,6 +23,7 @@ Application and integration components (draft reference is normally not required
 | `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser |
 | `bindings/gstreamer` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `shared/media-publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `live-ingest` and `bindings/gstreamer` |
+| `shared/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/vts` | Verify Token Service (Node.js): verifies client JWTs for the relay over HTTP |
@@ -81,7 +82,7 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
 - Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
-  - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `packages`)
+  - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `mediapack`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.

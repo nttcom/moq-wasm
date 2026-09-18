@@ -3,6 +3,15 @@ name = "mediapack"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+moqt = ["dep:moqt"]
+serde = ["dep:serde", "bytes/serde"]
+
 [dependencies]
 anyhow = "1"
 bytes = "1"
+moqt = { path = "../../moqt", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"

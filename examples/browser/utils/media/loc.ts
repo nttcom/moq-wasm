@@ -1,15 +1,13 @@
-export type LocHeader = {
-  extensions: LocHeaderExtension[]
-}
+export type LocValue = { varint: number } | { bytes: Uint8Array }
 
-export type LocHeaderExtension =
-  | { type: 'captureTimestamp'; value: { microsSinceUnixEpoch: number } }
-  | { type: 'videoConfig'; value: { data: Uint8Array } }
-  | { type: 'videoFrameMarking'; value: { flags: number } }
-  | { type: 'audioLevel'; value: { level: number } }
-  | { type: 'unknown'; value: { id: number; value: LocHeaderValue } }
+export type LocExtension = { id: number; value: LocValue }
 
-export type LocHeaderValue = { even: number } | { odd: Uint8Array }
+export type LocHeader = LocExtension[]
+
+export const CAPTURE_TIMESTAMP_ID = 2
+export const VIDEO_FRAME_MARKING_ID = 4
+export const AUDIO_LEVEL_ID = 6
+export const VIDEO_CONFIG_ID = 13
 
 export type LocMetadata = {
   captureTimestampMicros?: number
@@ -19,52 +17,40 @@ export type LocMetadata = {
 }
 
 export function buildLocHeader(meta: LocMetadata): LocHeader {
-  const extensions: LocHeaderExtension[] = []
+  const extensions: LocHeader = []
   if (typeof meta.captureTimestampMicros === 'number') {
-    extensions.push({
-      type: 'captureTimestamp',
-      value: { microsSinceUnixEpoch: meta.captureTimestampMicros }
-    })
+    extensions.push({ id: CAPTURE_TIMESTAMP_ID, value: { varint: meta.captureTimestampMicros } })
   }
   if (meta.videoConfig) {
-    extensions.push({
-      type: 'videoConfig',
-      value: { data: meta.videoConfig }
-    })
+    extensions.push({ id: VIDEO_CONFIG_ID, value: { bytes: meta.videoConfig } })
   }
   if (typeof meta.videoFrameMarking === 'number') {
-    extensions.push({
-      type: 'videoFrameMarking',
-      value: { flags: meta.videoFrameMarking }
-    })
+    extensions.push({ id: VIDEO_FRAME_MARKING_ID, value: { varint: meta.videoFrameMarking } })
   }
   if (typeof meta.audioLevel === 'number') {
-    extensions.push({
-      type: 'audioLevel',
-      value: { level: meta.audioLevel }
-    })
+    extensions.push({ id: AUDIO_LEVEL_ID, value: { varint: meta.audioLevel } })
   }
-  return { extensions }
+  return extensions
 }
 
 export function readLocHeader(header?: LocHeader): LocMetadata {
-  if (!header) {
-    return {}
-  }
   const meta: LocMetadata = {}
-  for (const ext of header.extensions) {
-    switch (ext.type) {
-      case 'captureTimestamp':
-        meta.captureTimestampMicros = ext.value.microsSinceUnixEpoch
+  for (const ext of header ?? []) {
+    if ('bytes' in ext.value) {
+      if (ext.id === VIDEO_CONFIG_ID) {
+        meta.videoConfig = ext.value.bytes
+      }
+      continue
+    }
+    switch (ext.id) {
+      case CAPTURE_TIMESTAMP_ID:
+        meta.captureTimestampMicros = ext.value.varint
         break
-      case 'videoConfig':
-        meta.videoConfig = ext.value.data
+      case VIDEO_FRAME_MARKING_ID:
+        meta.videoFrameMarking = ext.value.varint
         break
-      case 'videoFrameMarking':
-        meta.videoFrameMarking = ext.value.flags
-        break
-      case 'audioLevel':
-        meta.audioLevel = ext.value.level
+      case AUDIO_LEVEL_ID:
+        meta.audioLevel = ext.value.varint
         break
       default:
         break

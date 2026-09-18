@@ -12,7 +12,7 @@ rml_rtmp = "0.8.0"
 srt-tokio = "0.4.4"
 futures = "0.3.32"
 media-publisher = { path = "../../shared/media-publisher" }
-mediapack = { path = "../../shared/mediapack" }
+mediapack = { path = "../../shared/mediapack", features = ["moqt"] }
 transcode = { path = "../../shared/transcode" }
 tracing = "0.1"
 tracing-subscriber = "0.3"

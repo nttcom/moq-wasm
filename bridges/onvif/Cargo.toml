@@ -14,7 +14,7 @@ ffmpeg-next = "8.1.0"
 log = "0.4.32"
 moqt = { path = "../../moqt" }
 media-streaming-format = { path = "../../shared/media-streaming-format" }
-packages = { path = "../../shared/packages" }
+mediapack = { path = "../../shared/mediapack", features = ["moqt"] }
 rand = "0.10.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
 roxmltree = "0.21.1"
