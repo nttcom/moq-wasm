@@ -5,6 +5,7 @@ use bytes::BytesMut;
 use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
 use crate::modules::transport::quic::quic_send_stream::QUICSendStream;
 use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::transport_stats::TransportStats;
 
 #[derive(Debug)]
 pub struct QUICConnection {
@@ -77,5 +78,9 @@ impl TransportConnection for QUICConnection {
                 bail!("Failed to receive datagram: {:?}", e)
             }
         }
+    }
+
+    fn stats(&self) -> TransportStats {
+        self.connection.stats().into()
     }
 }

@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use crate::modules::transport::{
     transport_receive_stream::TransportReceiveStream, transport_send_stream::TransportSendStream,
+    transport_stats::TransportStats,
 };
 use async_trait::async_trait;
 
@@ -17,4 +18,5 @@ pub(crate) trait TransportConnection: Send + Sync + Debug {
     async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream>;
     fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()>;
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut>;
+    fn stats(&self) -> TransportStats;
 }

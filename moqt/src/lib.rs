@@ -141,3 +141,5 @@ pub use modules::moqt::protocol::TransportProtocol;
 pub use modules::moqt::protocol::WEBTRANSPORT;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::transport::transport_send_stream::TransportSendError;
+#[cfg(not(target_arch = "wasm32"))]
+pub use modules::transport::transport_stats::TransportStats;

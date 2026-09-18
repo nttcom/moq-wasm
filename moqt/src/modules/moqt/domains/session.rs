@@ -15,6 +15,8 @@ use crate::modules::moqt::runtime::tasks::{
     datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
     uni_stream_receive_task::UniStreamReceiveTask,
 };
+use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::transport_stats::TransportStats;
 
 pub struct Session<T: TransportProtocol> {
     inner: Arc<SessionContext<T>>,
@@ -97,6 +99,10 @@ impl<T: TransportProtocol> Session<T> {
             None => bail!("Sender dropped."),
         }
     }
+
+    pub fn transport_stats(&self) -> TransportStats {
+        self.inner.transport_connection.stats()
+    }
 }
 
 impl<T: TransportProtocol> Drop for Session<T> {
@@ -108,5 +114,27 @@ impl<T: TransportProtocol> Drop for Session<T> {
         self.datagram_receive_task.abort();
         self.uni_stream_receive_task.abort();
         self.disconnect_watch_task.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::modules::test_support::{connect_sessions, spawn_dual_server};
+
+    #[tokio::test]
+    async fn transport_stats_reports_the_established_quic_path() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("transport-stats");
+        let (client, _server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+
+        // Act
+        let stats = client.transport_stats();
+
+        // Assert
+        assert!(stats.cwnd > 0);
+        assert!(!stats.rtt.is_zero());
+        assert_eq!(stats.lost_packets, 0);
     }
 }
