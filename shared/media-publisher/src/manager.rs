@@ -187,9 +187,6 @@ pub enum GroupBoundary {
     /// Only inside an open group; the object is dropped when there is none,
     /// because a group must not start on it.
     Within,
-    /// Inside the open group, or the first object of a new one when there is
-    /// none.
-    Join,
     Next,
     At(u64),
 }

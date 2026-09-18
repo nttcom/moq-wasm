@@ -37,10 +37,6 @@ impl ObjectNumbering {
     pub(crate) fn place(&mut self, boundary: GroupBoundary) -> Result<Option<Placement>> {
         match boundary {
             GroupBoundary::Within => Ok(self.next_in_open_group()),
-            GroupBoundary::Join => Ok(Some(
-                self.next_in_open_group()
-                    .unwrap_or_else(|| self.start_group(self.next_group_id)),
-            )),
             GroupBoundary::Next => Ok(Some(self.start_group(self.next_group_id))),
             GroupBoundary::At(group_id) => {
                 ensure!(
@@ -112,20 +108,6 @@ mod tests {
         assert_eq!(first, placed(10, 0, true));
         assert_eq!(second, placed(10, 1, false));
         assert_eq!(next_group, placed(11, 0, true));
-    }
-
-    #[test]
-    fn join_opens_the_first_group_and_then_stays_inside_it() {
-        // Arrange
-        let mut numbering = ObjectNumbering::new(5);
-
-        // Act
-        let opened = numbering.place(GroupBoundary::Join).unwrap();
-        let joined = numbering.place(GroupBoundary::Join).unwrap();
-
-        // Assert
-        assert_eq!(opened, placed(5, 0, true));
-        assert_eq!(joined, placed(5, 1, false));
     }
 
     #[test]

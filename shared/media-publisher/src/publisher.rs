@@ -18,7 +18,6 @@ use crate::{
     media_timeline::MediaTimeline,
 };
 
-const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
 const AUDIO_TRACK: &str = "audio";
 
 /// The clocks every track of one switching set stamps from, so renditions of
@@ -34,7 +33,9 @@ pub struct MediaPublisher {
     moqt: MoqtManager,
     namespace: Vec<String>,
     namespace_ready: bool,
-    audio_group_duration_us: u64,
+    /// The video keyframe group the audio is being written into, so that the
+    /// audio tracks start a group exactly when the video tracks do.
+    audio_group_id: Option<u64>,
     audio_config: Option<AudioSpecificConfig>,
     timeline: MediaTimeline,
     timing: SharedTiming,
@@ -48,7 +49,7 @@ impl MediaPublisher {
             moqt,
             namespace,
             namespace_ready: false,
-            audio_group_duration_us: 0,
+            audio_group_id: None,
             audio_config: None,
             timeline: MediaTimeline::default(),
             timing: SharedTiming {
@@ -168,18 +169,15 @@ impl MediaPublisher {
             .await
     }
 
+    /// Audio before the first video keyframe has no group to belong to and is
+    /// dropped, as the video before its first keyframe is.
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
-        let frame_duration_us = self
-            .audio_config
+        self.audio_config
             .as_ref()
-            .context("audio sample received before its AudioSpecificConfig")?
-            .frame_duration()
-            .micros();
+            .context("audio sample received before its AudioSpecificConfig")?;
         self.setup_namespace().await?;
-        let group = if self.rotate_audio_group(frame_duration_us) {
-            GroupBoundary::Next
-        } else {
-            GroupBoundary::Join
+        let Some(group) = self.audio_group(sample.pts.micros()) else {
+            return Ok(());
         };
         let Some(object) = self
             .loc_muxer(sample.pts)
@@ -235,16 +233,13 @@ impl MediaPublisher {
         Ok(())
     }
 
-    fn rotate_audio_group(&mut self, duration_us: u64) -> bool {
-        let rotate = self.audio_group_duration_us != 0
-            && self.audio_group_duration_us.saturating_add(duration_us)
-                > AUDIO_GROUP_ROTATION_INTERVAL_US;
-        self.audio_group_duration_us = if rotate {
-            duration_us
-        } else {
-            self.audio_group_duration_us.saturating_add(duration_us)
-        };
-        rotate
+    fn audio_group(&mut self, presentation_us: u64) -> Option<GroupBoundary> {
+        let group_id = self.timing.alignment.group_covering(presentation_us)?;
+        if self.audio_group_id == Some(group_id) {
+            return Some(GroupBoundary::Within);
+        }
+        self.audio_group_id = Some(group_id);
+        Some(GroupBoundary::At(group_id))
     }
 }
 

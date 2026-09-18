@@ -82,6 +82,13 @@ group and announces the skipped ids with the Prior Group ID Gap header when it
 catches up. Re-subscribing to a track continues its group numbering rather than
 restarting it.
 
+The audio tracks follow the same boundaries: an audio sample belongs to the
+group of the latest video keyframe at or before it, so audio groups start at
+the same keyframes with the same ids as the video groups. Audio before the
+first keyframe is dropped as the video before it is. A viewer therefore replays
+the audio of a video group range by fetching the same range on the audio
+track, and a subscriber joining late starts both tracks at the same keyframe.
+
 ## Publish Test RTMP
 
 Publish a generated test video and sine audio stream with the namespace
