@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoQT Examples Hub</title>
+    <title>MoQT Playground</title>
     <style>
       :root {
         --bg-top: #0b1020;
@@ -33,12 +33,15 @@
       }
 
       .page {
+        display: flex;
+        flex-direction: column;
+        gap: 2.75rem;
         width: min(1120px, calc(100% - 2rem));
-        margin: 2.5rem auto 3rem;
+        margin: 2.5rem auto 3.5rem;
       }
 
       .hero {
-        padding: 2rem 2rem 2.3rem;
+        padding: 2rem;
         border: 1px solid var(--surface-border);
         border-radius: 1.4rem;
         background: linear-gradient(145deg, rgba(26, 41, 77, 0.82), rgba(13, 22, 44, 0.8));
@@ -47,47 +50,121 @@
         animation: fade-up 420ms ease-out both;
       }
 
-      .kicker {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.35rem 0.75rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #dff2ff;
-        background: rgba(124, 199, 255, 0.16);
-        border: 1px solid rgba(124, 199, 255, 0.38);
-      }
-
       h1 {
-        margin: 1rem 0 0.65rem;
+        margin: 0;
         font-size: clamp(1.8rem, 4.4vw, 2.8rem);
         line-height: 1.1;
         letter-spacing: 0.01em;
       }
 
-      .hero p {
+      .section {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .section-heading {
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid var(--surface-border);
+      }
+
+      .section-heading h2 {
         margin: 0;
-        max-width: 70ch;
-        color: var(--text-sub);
-        line-height: 1.7;
+        padding-left: 0.6rem;
+        border-left: 0.35rem solid var(--accent);
+        font-size: 1.3rem;
+        letter-spacing: 0.01em;
       }
 
       .grid {
-        margin-top: 1.3rem;
         display: grid;
         gap: 1rem;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .grid.usecases {
+        grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+      }
+
+      .flow {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .card-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+
+      .card .flow {
+        margin: auto 0;
+      }
+
+      .node {
+        position: relative;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.5rem 0.6rem 0.4rem;
+        border-radius: 0.6rem;
+        border: 1px solid var(--surface-border);
+        background: rgba(11, 16, 32, 0.6);
+        font-size: 0.72rem;
+        font-weight: 600;
+        line-height: 1.2;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .node svg {
+        width: 1.5rem;
+        height: 1.5rem;
+        stroke: var(--text-sub);
+      }
+
+      .node small {
+        font-size: 0.62rem;
+        font-weight: 500;
+        color: var(--text-sub);
+      }
+
+      .node.relay {
+        border-color: rgba(124, 199, 255, 0.55);
+        color: var(--accent);
+      }
+
+      .node.relay svg {
+        stroke: var(--accent);
+      }
+
+      .node .count {
+        position: absolute;
+        top: -0.5rem;
+        right: -0.5rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 999px;
+        background: var(--accent-strong);
+        color: #fff;
+        font-size: 0.62rem;
+        font-weight: 700;
+      }
+
+      .link {
+        color: var(--accent);
+        font-size: 1rem;
       }
 
       .card {
         display: flex;
         flex-direction: column;
         gap: 0.72rem;
-        padding: 1rem 1rem 1.08rem;
+        padding: 1.1rem 1.1rem 1.15rem;
         border-radius: 1rem;
         text-decoration: none;
         color: var(--text-main);
@@ -111,31 +188,6 @@
         animation-delay: 150ms;
       }
 
-      .section {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-
-      .section-heading {
-        display: flex;
-        align-items: baseline;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .section-heading h2 {
-        margin: 0;
-        font-size: 1.35rem;
-        letter-spacing: 0.01em;
-      }
-
-      .section-heading p {
-        margin: 0;
-        color: var(--text-sub);
-        font-size: 0.92rem;
-      }
-
       .card:hover {
         transform: translateY(-4px);
         border-color: rgba(124, 199, 255, 0.58);
@@ -153,19 +205,6 @@
         line-height: 1.3;
       }
 
-      .tag {
-        width: fit-content;
-        font-size: 0.72rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: #d9eeff;
-        background: rgba(79, 159, 255, 0.19);
-        border: 1px solid rgba(79, 159, 255, 0.45);
-        border-radius: 999px;
-        padding: 0.28rem 0.62rem;
-      }
-
       .card p {
         margin: 0;
         color: var(--text-sub);
@@ -174,16 +213,23 @@
       }
 
       .card .arrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
         margin-top: auto;
-        color: var(--accent-strong);
+        padding-top: 0.25rem;
+        color: var(--accent);
         font-size: 0.83rem;
         font-weight: 700;
       }
 
-      .note {
-        margin-top: 1rem;
-        color: #9db2dd;
-        font-size: 0.82rem;
+      .card .arrow::after {
+        content: '→';
+        transition: transform 180ms ease;
+      }
+
+      .card:hover .arrow::after {
+        transform: translateX(3px);
       }
 
       @keyframes fade-up {
@@ -197,10 +243,20 @@
         }
       }
 
+      @media (prefers-reduced-motion: reduce) {
+        .hero,
+        .card,
+        .card .arrow::after {
+          animation: none;
+          transition: none;
+        }
+      }
+
       @media (max-width: 640px) {
         .page {
           width: min(1120px, calc(100% - 1rem));
           margin-top: 1rem;
+          gap: 2rem;
         }
         .hero {
           padding: 1.25rem 1rem 1.3rem;
@@ -213,44 +269,143 @@
     </style>
   </head>
   <body>
+    <svg style="display: none" xmlns="http://www.w3.org/2000/svg">
+      <!-- Icons: Lucide (ISC), https://lucide.dev -->
+      <symbol
+        id="icon-monitor"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol
+        id="icon-server"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol
+        id="icon-cctv"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M16.75 12h3.632a1 1 0 0 1 .894 1.447l-2.034 4.069a1 1 0 0 1-1.708.134l-2.124-2.97" />
+        <path
+          d="M17.106 9.053a1 1 0 0 1 .447 1.341l-3.106 6.211a1 1 0 0 1-1.342.447L3.61 12.3a2.92 2.92 0 0 1-1.3-3.91L3.69 5.6a2.92 2.92 0 0 1 3.92-1.3z"
+        />
+        <path d="M2 19h3.76a2 2 0 0 0 1.8-1.1L9 15" />
+        <path d="M2 21v-4" />
+        <path d="M7 9h.01" />
+      </symbol>
+      <symbol
+        id="icon-router"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="14" rx="2" />
+        <path d="M6.01 18H6" />
+        <path d="M10.01 18H10" />
+        <path d="M15 10v4" />
+        <path d="M17.84 7.17a4 4 0 0 0-5.66 0" />
+        <path d="M20.66 4.34a8 8 0 0 0-11.31 0" />
+      </symbol>
+      <symbol
+        id="icon-webcam"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="10" r="8" />
+        <circle cx="12" cy="10" r="3" />
+        <path d="M7 22h10" />
+        <path d="M12 22v-4" />
+      </symbol>
+      <symbol
+        id="icon-square-terminal"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="m7 11 2-2-2-2" />
+        <path d="M11 13h4" />
+        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      </symbol>
+      <symbol
+        id="icon-clapperboard"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z" />
+        <path d="m6.2 5.3 3.1 3.9" />
+        <path d="m12.4 3.4 3.1 4" />
+        <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+      </symbol>
+      <symbol
+        id="icon-workflow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+    </svg>
     <main class="page">
       <section class="hero">
-        <span class="kicker">MoQT Playground</span>
-        <h1>Examples Hub</h1>
-        <p>
-          MoQ / WebTransport / WebCodecs を使ったサンプル群への入口です。<br />
-          プロトコルやコーデックを単体で確かめる Low Level demo と、用途ごとに組み上げた Usecases に分かれています。
-        </p>
+        <h1>MoQT Playground</h1>
       </section>
 
       <section class="section" aria-labelledby="low-level-heading">
         <div class="section-heading">
-          <h2 id="low-level-heading">Low Level demo</h2>
-          <p>プロトコル・パッケージング・コーデックを個別に検証する</p>
+          <h2 id="low-level-heading">低レベルAPIデモ</h2>
         </div>
         <div class="grid">
           <a class="card" href="examples/message/index.html">
-            <span class="tag">Protocol</span>
             <h3>Message</h3>
-            <p>Setup / Announce / Subscribe など、MoQT 制御メッセージを手動で試す低レイヤ検証ページ。</p>
+            <p>MoQT 制御メッセージを手動で送受信する</p>
             <span class="arrow">Open Example</span>
           </a>
           <a class="card" href="examples/media/index.html">
-            <span class="tag">Transport</span>
             <h3>Media</h3>
-            <p>Publisher / Subscriber を分けて、Media over MoQ の送受信と挙動を個別に確認。</p>
+            <p>Publisher / Subscriber を分けてメディアを送受信する</p>
             <span class="arrow">Open Example</span>
           </a>
           <a class="card" href="examples/media-cmaf/index.html">
-            <span class="tag">CMAF</span>
             <h3>Media CMAF</h3>
-            <p>moof+mdat のフル CMAF パッケージで Publish / Subscribe を試す配信検証ページ。</p>
+            <p>CMAF パッケージで Publish / Subscribe する</p>
             <span class="arrow">Open Example</span>
           </a>
           <a class="card" href="examples/webcodecs/index.html">
-            <span class="tag">Codec Lab</span>
             <h3>WebCodecs Loopback</h3>
-            <p>1タブで Encoder/Decoder の設定相性を比較し、MoQ を介さず純粋なコーデック特性を確認。</p>
+            <p>MoQ を介さず Encoder / Decoder の挙動を確認する</p>
             <span class="arrow">Open Example</span>
           </a>
         </div>
@@ -258,38 +413,103 @@
 
       <section class="section" aria-labelledby="usecases-heading">
         <div class="section-heading">
-          <h2 id="usecases-heading">Usecases</h2>
-          <p>用途ごとに組み上げたアプリケーション</p>
+          <h2 id="usecases-heading">ユースケースデモ</h2>
         </div>
-        <div class="grid">
-          <a class="card" href="examples/call/index.html">
-            <span class="tag">Call</span>
-            <h3>Call</h3>
-            <p>Catalog / Subscribe 運用や jitter/pacing のチューニングを含む、実運用寄りの通話 UI。</p>
+        <div class="grid usecases">
+          <a class="card" href="examples/meeting/index.html">
+            <div class="card-head">
+              <h3>Meeting</h3>
+              <p>多人数の映像・音声会議</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="#icon-monitor" /></svg>Browser</span
+              >
+              <span class="link">↔</span>
+              <span class="node relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link">↔</span>
+              <span class="node"
+                ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+              >
+            </p>
             <span class="arrow">Open Example</span>
           </a>
           <a class="card" href="examples/onvif/index.html">
-            <span class="tag">ONVIF</span>
-            <h3>Onvif</h3>
-            <p>ONVIF 制御と映像視聴を統合。カメラ制御系と RTSP 由来映像の遅延観測に向いています。</p>
+            <div class="card-head">
+              <h3>Onvif</h3>
+              <p>PTZ カメラの遠隔制御・遠隔監視</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="#icon-cctv" /></svg>PTZ Camera</span
+              >
+              <span class="link">↔</span>
+              <span class="node"
+                ><svg><use href="#icon-router" /></svg>MoQ Gateway</span
+              >
+              <span class="link">↔</span>
+              <span class="node relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link">↔</span>
+              <span class="node"
+                ><svg><use href="#icon-monitor" /></svg>Browser</span
+              >
+            </p>
             <span class="arrow">Open Example</span>
           </a>
           <a class="card" href="examples/remote-monitoring/index.html">
-            <span class="tag">Monitoring</span>
-            <h3>Remote Monitoring</h3>
-            <p>複数カメラを監視ルームで一覧表示。publisher / monitor モードを切り替えて多拠点の遠隔監視を検証。</p>
+            <div class="card-head">
+              <h3>Remote Monitoring</h3>
+              <p>USB カメラの遠隔監視</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="#icon-webcam" /></svg>USB Camera</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="#icon-square-terminal" /></svg>MoQ Publisher<small>Rust CLI</small></span
+              >
+              <span class="link">→</span>
+              <span class="node relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+              >
+            </p>
             <span class="arrow">Open Example</span>
           </a>
           <a class="card" href="examples/live-viewer/index.html">
-            <span class="tag">Live</span>
-            <h3>Live Viewer</h3>
-            <p>RTMP / SRT から live-ingest bridge が流した配信を視聴し、画質（rendition）を切り替える。</p>
+            <div class="card-head">
+              <h3>Live Viewer</h3>
+              <p>ライブ配信ビューワー</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="#icon-clapperboard" /></svg>OBS / ffmpeg</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="#icon-workflow" /></svg>gstreamer moqtsink<small>RTMP / SRT → MoQ</small></span
+              >
+              <span class="link">→</span>
+              <span class="node relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+              >
+            </p>
             <span class="arrow">Open Example</span>
           </a>
         </div>
       </section>
-
-      <p class="note">Tip: 低遅延検証では、まず WebCodecs → Media → Call の順で切り分けると原因特定が速くなります。</p>
     </main>
     <script type="module" src="./utils/preserveQueryLinks.js"></script>
   </body>

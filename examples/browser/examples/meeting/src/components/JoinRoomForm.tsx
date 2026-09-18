@@ -37,8 +37,8 @@ export function JoinRoomForm({ onJoin }: JoinRoomFormProps) {
     <div className="flex items-center justify-center min-h-screen bg-gray-50 p-8">
       <div className="w-full max-w-4xl space-y-12">
         <div className="text-center space-y-4">
-          <h1 className="text-6xl font-bold">Join Call Room</h1>
-          <p className="text-2xl text-muted-foreground">Enter your details to join the call</p>
+          <h1 className="text-6xl font-bold">Join Meeting Room</h1>
+          <p className="text-2xl text-muted-foreground">Enter your details to join the meeting</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-10">
           <div className="space-y-4">

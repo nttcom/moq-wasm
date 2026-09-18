@@ -1,6 +1,6 @@
 const DEBUG_VIDEO_PIPELINE_PARAM = 'debugVideoPipeline'
 
-export function isCallVideoPipelineDebugEnabled(): boolean {
+export function isMeetingVideoPipelineDebugEnabled(): boolean {
   if (typeof window === 'undefined') {
     return false
   }

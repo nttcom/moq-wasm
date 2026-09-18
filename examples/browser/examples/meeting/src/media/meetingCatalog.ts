@@ -3,9 +3,9 @@ import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
   type AudioStreamUpdateMode,
-  type CallCatalogTrack,
+  type MeetingCatalogTrack,
   type CatalogTrackRole,
-  type EditableCallCatalogTrack
+  type EditableMeetingCatalogTrack
 } from '../types/catalog'
 
 type E2ECameraSettings = {
@@ -97,7 +97,7 @@ const CAMERA_RESOLUTIONS = E2E_CAMERA_SETTINGS
   : DEFAULT_CAMERA_RESOLUTIONS
 const CAMERA_FRAMERATE = E2E_CAMERA_SETTINGS?.framerate ?? 30
 
-const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = CAMERA_PROFILES.flatMap((profile) =>
+const CAMERA_CATALOG_TRACKS: MeetingCatalogTrack[] = CAMERA_PROFILES.flatMap((profile) =>
   CAMERA_RESOLUTIONS.filter((resolution) => resolution.width * resolution.height <= profile.maxEncodePixels).map(
     (resolution) => ({
       name: `camera_${profile.id}_${resolution.id}`,
@@ -115,9 +115,9 @@ const CAMERA_CATALOG_TRACKS: CallCatalogTrack[] = CAMERA_PROFILES.flatMap((profi
   )
 )
 
-const DEFAULT_CALL_CATALOG_TRACKS: CallCatalogTrack[] = []
+const DEFAULT_MEETING_CATALOG_TRACKS: MeetingCatalogTrack[] = []
 
-const SCREENSHARE_CATALOG_TRACKS: CallCatalogTrack[] = [
+const SCREENSHARE_CATALOG_TRACKS: MeetingCatalogTrack[] = [
   {
     name: 'screenshare_1080p',
     label: 'Screen 1080p',
@@ -156,7 +156,7 @@ const SCREENSHARE_CATALOG_TRACKS: CallCatalogTrack[] = [
   }
 ]
 
-const AUDIO_CATALOG_TRACKS: CallCatalogTrack[] = [
+const AUDIO_CATALOG_TRACKS: MeetingCatalogTrack[] = [
   {
     name: 'audio_128kbps',
     label: 'Audio 128kbps',
@@ -220,23 +220,23 @@ type MsfCatalog = {
   tracks?: MsfTrack[]
 }
 
-export function getDefaultCallCatalogTracks(): CallCatalogTrack[] {
-  return DEFAULT_CALL_CATALOG_TRACKS.map((track) => ({ ...track }))
+export function getDefaultMeetingCatalogTracks(): MeetingCatalogTrack[] {
+  return DEFAULT_MEETING_CATALOG_TRACKS.map((track) => ({ ...track }))
 }
 
-export function getCameraCatalogTracks(): CallCatalogTrack[] {
+export function getCameraCatalogTracks(): MeetingCatalogTrack[] {
   return CAMERA_CATALOG_TRACKS.map((track) => ({ ...track }))
 }
 
-export function getScreenShareCatalogTracks(): CallCatalogTrack[] {
+export function getScreenShareCatalogTracks(): MeetingCatalogTrack[] {
   return SCREENSHARE_CATALOG_TRACKS.map((track) => ({ ...track }))
 }
 
-export function getAudioCatalogTracks(): CallCatalogTrack[] {
+export function getAudioCatalogTracks(): MeetingCatalogTrack[] {
   return AUDIO_CATALOG_TRACKS.map((track) => ({ ...track }))
 }
 
-export function buildCallCatalogJson(trackNamespace: string[], tracks: CallCatalogTrack[]): string {
+export function buildMeetingCatalogJson(trackNamespace: string[], tracks: MeetingCatalogTrack[]): string {
   const namespace = trackNamespace.length > 0 ? trackNamespace.join('/') : undefined
   const catalogTracks: MsfTrack[] = tracks.map((track) => ({
     namespace,
@@ -278,16 +278,16 @@ export function buildCallCatalogJson(trackNamespace: string[], tracks: CallCatal
   return JSON.stringify(catalog)
 }
 
-export function parseCallCatalogTracks(payload: string): CallCatalogTrack[] {
+export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
   const parsed = parse_msf_catalog_json(payload)
-  return extractCallCatalogTracks(parsed)
+  return extractMeetingCatalogTracks(parsed)
 }
 
-export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
+export function extractMeetingCatalogTracks(catalog: unknown): MeetingCatalogTrack[] {
   const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
     ? ((catalog as { tracks: unknown[] }).tracks ?? [])
     : []
-  return tracks.reduce<CallCatalogTrack[]>((acc, rawTrack) => {
+  return tracks.reduce<MeetingCatalogTrack[]>((acc, rawTrack) => {
     if (!isObject(rawTrack)) {
       return acc
     }
@@ -318,27 +318,27 @@ export function extractCallCatalogTracks(catalog: unknown): CallCatalogTrack[] {
   }, [])
 }
 
-export function toEditableCatalogTracks(tracks: CallCatalogTrack[]): EditableCallCatalogTrack[] {
+export function toEditableCatalogTracks(tracks: MeetingCatalogTrack[]): EditableMeetingCatalogTrack[] {
   return tracks.map((track) => ({
     ...track,
     id: createCatalogTrackId()
   }))
 }
 
-export function toCatalogTracks(tracks: EditableCallCatalogTrack[]): CallCatalogTrack[] {
-  return tracks.map((track) => sanitizeTrack(track)).filter((track): track is CallCatalogTrack => track !== null)
+export function toCatalogTracks(tracks: EditableMeetingCatalogTrack[]): MeetingCatalogTrack[] {
+  return tracks.map((track) => sanitizeTrack(track)).filter((track): track is MeetingCatalogTrack => track !== null)
 }
 
 export function appendCatalogTracks(
-  existingTracks: EditableCallCatalogTrack[],
-  tracksToAppend: CallCatalogTrack[]
-): EditableCallCatalogTrack[] {
+  existingTracks: EditableMeetingCatalogTrack[],
+  tracksToAppend: MeetingCatalogTrack[]
+): EditableMeetingCatalogTrack[] {
   const existingNames = new Set(
     existingTracks
       .map((track) => track.name.trim())
       .filter((name): name is string => typeof name === 'string' && name.length > 0)
   )
-  const appended: EditableCallCatalogTrack[] = [...existingTracks]
+  const appended: EditableMeetingCatalogTrack[] = [...existingTracks]
   let changed = false
 
   for (const track of tracksToAppend) {
@@ -360,9 +360,9 @@ export function appendCatalogTracks(
 }
 
 export function removeCatalogTracksByNames(
-  tracks: EditableCallCatalogTrack[],
+  tracks: EditableMeetingCatalogTrack[],
   trackNames: string[]
-): EditableCallCatalogTrack[] {
+): EditableMeetingCatalogTrack[] {
   const names = new Set(
     trackNames.map((name) => name.trim()).filter((name): name is string => typeof name === 'string' && name.length > 0)
   )
@@ -396,7 +396,7 @@ export function createCatalogTrackId(): string {
   return `catalog-track-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 }
 
-function sanitizeTrack(track: EditableCallCatalogTrack): CallCatalogTrack | null {
+function sanitizeTrack(track: EditableMeetingCatalogTrack): MeetingCatalogTrack | null {
   const name = track.name.trim()
   if (!name) {
     return null

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import './App.css'
 import { JoinRoomForm } from './components/JoinRoomForm'
-import { CallRoom } from './components/CallRoom'
+import { MeetingRoom } from './components/MeetingRoom'
 import { useLocalSession } from './hooks/useLocalSession'
 
 function App() {
@@ -40,7 +40,7 @@ function App() {
           {isInitializing && <p className="text-blue-500 text-center mt-2">Connecting to MoQT relay...</p>}
         </>
       ) : (
-        <CallRoom session={session} onLeave={handleLeave} />
+        <MeetingRoom session={session} onLeave={handleLeave} />
       )}
     </>
   )

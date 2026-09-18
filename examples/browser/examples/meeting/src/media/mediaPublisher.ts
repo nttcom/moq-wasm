@@ -7,14 +7,14 @@ import type { LocHeader } from '../../../../utils/media/loc'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
-import { buildCallCatalogJson, getDefaultCallCatalogTracks } from './callCatalog'
+import { buildMeetingCatalogJson, getDefaultMeetingCatalogTracks } from './meetingCatalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
-  type CallCatalogTrack
+  type MeetingCatalogTrack
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
+import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 type VideoSource = 'camera' | 'screenshare'
@@ -92,17 +92,17 @@ type AudioTrackEncoderContext = {
   activeAliases: Set<string>
 }
 
-export type SubscribedCatalogTrack = CallCatalogTrack & {
+export type SubscribedCatalogTrack = MeetingCatalogTrack & {
   subscriberCount: number
 }
 
 const CATALOG_TRACK_NAME = 'catalog'
 const CHAT_TRACK_NAME = 'chat'
-const VIDEO_PUBLISHER_LOG_PREFIX = '[call][publisher][video]'
+const VIDEO_PUBLISHER_LOG_PREFIX = '[meeting][publisher][video]'
 
 export class MediaPublisher {
   private handlers: MediaPublisherHandlers = {}
-  private catalogTracks: CallCatalogTrack[] = getDefaultCallCatalogTracks()
+  private catalogTracks: MeetingCatalogTrack[] = getDefaultMeetingCatalogTracks()
 
   private readonly videoTrackContexts = new Map<string, VideoTrackEncoderContext>()
   private readonly audioTrackContexts = new Map<string, AudioTrackEncoderContext>()
@@ -145,7 +145,7 @@ export class MediaPublisher {
     this.handlers = handlers
   }
 
-  getCatalogTracks(): CallCatalogTrack[] {
+  getCatalogTracks(): MeetingCatalogTrack[] {
     return this.catalogTracks.map((track) => ({ ...track }))
   }
 
@@ -165,7 +165,7 @@ export class MediaPublisher {
     return tracks
   }
 
-  async setCatalogTracks(tracks: CallCatalogTrack[]): Promise<void> {
+  async setCatalogTracks(tracks: MeetingCatalogTrack[]): Promise<void> {
     this.catalogTracks = this.normalizeCatalogTracks(tracks)
     this.syncVideoTrackContexts('camera')
     this.syncVideoTrackContexts('screenshare')
@@ -173,7 +173,7 @@ export class MediaPublisher {
     await this.broadcastCatalog()
   }
 
-  resolveTrackRole(trackName: string): CallCatalogTrack['role'] | null {
+  resolveTrackRole(trackName: string): MeetingCatalogTrack['role'] | null {
     const track = this.catalogTracks.find((entry) => entry.name === trackName)
     return track?.role ?? null
   }
@@ -1035,7 +1035,7 @@ export class MediaPublisher {
       timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
     }
     if (
-      isCallVideoPipelineDebugEnabled() &&
+      isMeetingVideoPipelineDebugEnabled() &&
       (logKeyframeSend || this.shouldLogSampledVideoObject(context, trackAlias, groupId, objectId))
     ) {
       this.logVideoPublisherEvent({
@@ -1078,7 +1078,7 @@ export class MediaPublisher {
     objectId?: string
     payloadBytes?: number
   }): void {
-    if (!isCallVideoPipelineDebugEnabled()) {
+    if (!isMeetingVideoPipelineDebugEnabled()) {
       return
     }
     console.info(VIDEO_PUBLISHER_LOG_PREFIX, JSON.stringify(fields))
@@ -1182,7 +1182,7 @@ export class MediaPublisher {
     })
   }
 
-  private getVideoTracksBySource(source: VideoSource): CallCatalogTrack[] {
+  private getVideoTracksBySource(source: VideoSource): MeetingCatalogTrack[] {
     const wantsScreenShare = source === 'screenshare'
     return this.catalogTracks
       .filter((track) => track.role === 'video')
@@ -1194,7 +1194,10 @@ export class MediaPublisher {
     return stream?.getVideoTracks()[0] ?? null
   }
 
-  private buildVideoEncodingFromTrack(track: CallCatalogTrack, fallback: VideoEncodingSettings): VideoEncodingSettings {
+  private buildVideoEncodingFromTrack(
+    track: MeetingCatalogTrack,
+    fallback: VideoEncodingSettings
+  ): VideoEncodingSettings {
     return {
       codec: this.normalizeNonEmptyString(track.codec) ?? fallback.codec,
       width: this.normalizePositiveNumber(track.width) ?? fallback.width,
@@ -1206,7 +1209,10 @@ export class MediaPublisher {
     }
   }
 
-  private buildAudioEncodingFromTrack(track: CallCatalogTrack, fallback: AudioEncodingSettings): AudioEncodingSettings {
+  private buildAudioEncodingFromTrack(
+    track: MeetingCatalogTrack,
+    fallback: AudioEncodingSettings
+  ): AudioEncodingSettings {
     return {
       codec: this.normalizeNonEmptyString(track.codec) ?? fallback.codec,
       bitrate: this.normalizePositiveNumber(track.bitrate) ?? fallback.bitrate,
@@ -1311,7 +1317,7 @@ export class MediaPublisher {
     return this.normalizePositiveNumber(value) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
   }
 
-  private resolveAudioStreamUpdateSettingsForTrack(track: CallCatalogTrack): {
+  private resolveAudioStreamUpdateSettingsForTrack(track: MeetingCatalogTrack): {
     mode: 'single' | 'interval'
     intervalSeconds: number
   } {
@@ -1403,8 +1409,8 @@ export class MediaPublisher {
     }
   }
 
-  private normalizeCatalogTracks(tracks: CallCatalogTrack[]): CallCatalogTrack[] {
-    const normalized: CallCatalogTrack[] = []
+  private normalizeCatalogTracks(tracks: MeetingCatalogTrack[]): MeetingCatalogTrack[] {
+    const normalized: MeetingCatalogTrack[] = []
     for (const track of tracks) {
       const name = track.name.trim()
       if (!name) {
@@ -1436,7 +1442,7 @@ export class MediaPublisher {
     const aliases = Array.from(client.getTrackSubscribers(this.trackNamespace, CATALOG_TRACK_NAME), (value) =>
       BigInt(value)
     )
-    console.info('[call][catalog] broadcast', {
+    console.info('[meeting][catalog] broadcast', {
       subscribers: aliases.length,
       tracks: this.catalogTracks.map((t) => t.role)
     })
@@ -1452,12 +1458,12 @@ export class MediaPublisher {
     const groupId = this.nextCatalogGroupId
     this.nextCatalogGroupId += 1n
 
-    console.info('[call][catalog] send object', {
+    console.info('[meeting][catalog] send object', {
       alias: trackAlias.toString(),
       groupId: groupId.toString(),
       tracks: this.catalogTracks.map((t) => t.role)
     })
-    const payload = new TextEncoder().encode(buildCallCatalogJson(this.trackNamespace, this.catalogTracks))
+    const payload = new TextEncoder().encode(buildMeetingCatalogJson(this.trackNamespace, this.catalogTracks))
     await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
     await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   }

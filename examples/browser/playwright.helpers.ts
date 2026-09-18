@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 
 export const MEDIA_PUBLISHER_PATH = '/moq-wasm/examples/media/publisher/index.html'
 export const MEDIA_SUBSCRIBER_PATH = '/moq-wasm/examples/media/subscriber/index.html'
-export const CALL_INDEX_PATH = '/moq-wasm/examples/call/index.html'
+export const MEETING_INDEX_PATH = '/moq-wasm/examples/meeting/index.html'
 export const MESSAGE_INDEX_PATH = '/moq-wasm/examples/message/index.html'
 export const LIVE_VIEWER_PATH = '/moq-wasm/examples/live-viewer/index.html'
 
@@ -29,7 +29,8 @@ export function ensureFakeVideoCaptureFile(): string {
   const fps = 15
   const durationSeconds = 60
   const frameCount = fps * durationSeconds
-  const fileName = 'moqt-call-e2e-fake-video-' + width + 'x' + height + '-' + fps + 'fps-' + durationSeconds + 's.y4m'
+  const fileName =
+    'moqt-meeting-e2e-fake-video-' + width + 'x' + height + '-' + fps + 'fps-' + durationSeconds + 's.y4m'
   const filePath = join(tmpdir(), fileName)
   if (existsSync(filePath)) {
     return filePath

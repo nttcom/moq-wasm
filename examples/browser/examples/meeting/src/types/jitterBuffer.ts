@@ -10,7 +10,7 @@ export type VideoPacingConfig = {
   targetLatencyMs: number
 }
 
-export type VideoPacingPreset = 'disabled' | 'onvif' | 'call'
+export type VideoPacingPreset = 'disabled' | 'onvif' | 'meeting'
 export type VideoPacingPipeline = 'buffer-pacing-decode'
 export type VideoDecoderHardwareAcceleration = 'prefer-hardware' | 'prefer-software'
 
@@ -36,7 +36,7 @@ export function createVideoPacingPresetConfig(preset: VideoPacingPreset): VideoP
   }
   return {
     ...createVideoPacingPresetConfig('onvif'),
-    preset: 'call',
+    preset: 'meeting',
     pipeline: 'buffer-pacing-decode',
     targetLatencyMs: 250,
     maxWaitMs: 1000,
@@ -49,7 +49,7 @@ export type VideoJitterConfig = {
   decoderHardwareAcceleration: VideoDecoderHardwareAcceleration
 }
 
-export const DEFAULT_VIDEO_PACING_CONFIG: VideoPacingConfig = createVideoPacingPresetConfig('call')
+export const DEFAULT_VIDEO_PACING_CONFIG: VideoPacingConfig = createVideoPacingPresetConfig('meeting')
 
 export const DEFAULT_VIDEO_JITTER_CONFIG: VideoJitterConfig = {
   pacing: { ...DEFAULT_VIDEO_PACING_CONFIG },
@@ -65,13 +65,15 @@ function clampNumber(value: unknown, fallback: number, min: number, max = Number
 
 function normalizeVideoPacingConfig(config?: Partial<VideoPacingConfig>): VideoPacingConfig {
   const requestedPreset =
-    config?.preset === 'disabled' || config?.preset === 'onvif' || config?.preset === 'call' ? config.preset : undefined
+    config?.preset === 'disabled' || config?.preset === 'onvif' || config?.preset === 'meeting'
+      ? config.preset
+      : undefined
   const fallbackPreset =
     DEFAULT_VIDEO_PACING_CONFIG.preset === 'disabled' ||
     DEFAULT_VIDEO_PACING_CONFIG.preset === 'onvif' ||
-    DEFAULT_VIDEO_PACING_CONFIG.preset === 'call'
+    DEFAULT_VIDEO_PACING_CONFIG.preset === 'meeting'
       ? DEFAULT_VIDEO_PACING_CONFIG.preset
-      : 'call'
+      : 'meeting'
   const preset = requestedPreset ?? fallbackPreset
   const merged: Partial<VideoPacingConfig> = {
     ...createVideoPacingPresetConfig(preset),

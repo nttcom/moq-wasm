@@ -7,8 +7,8 @@ const certificateSpki = computeCertificateSpkiBase64()
 const fakeVideoPath = ensureFakeVideoCaptureFile()
 const baseURL = process.env.MEDIA_E2E_BASE_URL ?? 'http://127.0.0.1:4173'
 const forceQuicOrigins = [
-  process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433',
-  process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434',
+  process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433',
+  process.env.MEETING_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434',
   process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 ]
   .map(toHttp3Authority)
@@ -16,7 +16,7 @@ const forceQuicOrigins = [
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: /(media-e2e|call-e2e|message-e2e|live-viewer-e2e)\.spec\.ts/,
+  testMatch: /(media-e2e|meeting-e2e|message-e2e|live-viewer-e2e)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,

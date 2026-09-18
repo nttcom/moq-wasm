@@ -7,13 +7,13 @@ import { ChatSidebar } from './ChatSidebar'
 import { MemberGrid } from './MemberGrid'
 import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
-import { useCallMedia } from '../hooks/useCallMedia'
-import type { CallCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
+import { useMeetingMedia } from '../hooks/useMeetingMedia'
+import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import type { RemoteMediaStreams } from '../types/media'
 import type { SidebarStatsSample } from '../types/stats'
 import { updateSubscriptionState } from '../utils/state/roomState'
 
-interface CallRoomProps {
+interface MeetingRoomProps {
   session: LocalSession
   onLeave: () => void
 }
@@ -64,14 +64,14 @@ type StatsSnapshot = {
 const SIDEBAR_STATS_SAMPLE_INTERVAL_MS = 1000
 const SIDEBAR_STATS_HISTORY_LIMIT = 120
 
-export function CallRoom({ session, onLeave }: CallRoomProps) {
+export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const roomName = session.roomName
   const userName = session.localMember.name
   const [chatMessage, setChatMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [statsHistory, setStatsHistory] = useState<Map<string, SidebarStatsSample[]>>(new Map())
-  const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, CallCatalogTrack[]>>(new Map())
+  const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
   const [remoteCatalogSelections, setRemoteCatalogSelections] = useState<Map<string, CatalogSelections>>(new Map())
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
   const [catalogSubscribedMemberIds, setCatalogSubscribedMemberIds] = useState<Set<string>>(new Set())
@@ -121,7 +121,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     addCatalogTrack,
     updateCatalogTrack,
     removeCatalogTrack
-  } = useCallMedia(session)
+  } = useMeetingMedia(session)
 
   const statsSnapshotRef = useRef<StatsSnapshot>({
     localMemberId: session.localMember.id,
@@ -318,7 +318,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     )
   }
 
-  const applyRemoteCatalogTracks = (memberId: string, tracks: CallCatalogTrack[]) => {
+  const applyRemoteCatalogTracks = (memberId: string, tracks: MeetingCatalogTrack[]) => {
     setRemoteCatalogTracks((prev) => {
       const next = new Map(prev)
       next.set(memberId, tracks)
@@ -424,7 +424,7 @@ export function CallRoom({ session, onLeave }: CallRoomProps) {
     if ((role === 'video' || role === 'screenshare') && selectedTrack) {
       const validation = await validateVideoDecoderCatalogTrackConfig(selectedTrack)
       if (!validation.ok) {
-        console.error(`[call][subscribe] blocked unsupported decoder config for ${memberId}/${trackName}`, {
+        console.error(`[meeting][subscribe] blocked unsupported decoder config for ${memberId}/${trackName}`, {
           role,
           reason: validation.message,
           track: selectedTrack
@@ -710,7 +710,7 @@ function appendStatsSample(
   return next.slice(next.length - SIDEBAR_STATS_HISTORY_LIMIT)
 }
 
-function getTracksForRole(tracks: CallCatalogTrack[], role: CatalogSubscribeRole): CallCatalogTrack[] {
+function getTracksForRole(tracks: MeetingCatalogTrack[], role: CatalogSubscribeRole): MeetingCatalogTrack[] {
   if (role === 'audio') {
     return tracks.filter((track) => track.role === 'audio')
   }
@@ -755,7 +755,7 @@ function updateMemberSubscriptionStateByRole(
   }
 }
 
-function pickDefaultTrackName(tracks: CallCatalogTrack[], role: CatalogSubscribeRole): string | undefined {
+function pickDefaultTrackName(tracks: MeetingCatalogTrack[], role: CatalogSubscribeRole): string | undefined {
   const roleTracks = getTracksForRole(tracks, role)
   if (!roleTracks.length) {
     return undefined
@@ -771,7 +771,7 @@ function pickDefaultTrackName(tracks: CallCatalogTrack[], role: CatalogSubscribe
 
 function ensureSelectedTrackName(
   selectedTrackName: string | undefined,
-  tracks: CallCatalogTrack[],
+  tracks: MeetingCatalogTrack[],
   role: CatalogSubscribeRole
 ): string | undefined {
   if (selectedTrackName && getTracksForRole(tracks, role).some((track) => track.name === selectedTrackName)) {
@@ -846,7 +846,7 @@ function getSubscriptionStateByRole(member: RemoteMember, role: CatalogSubscribe
 }
 
 async function validateVideoDecoderCatalogTrackConfig(
-  track: Pick<CallCatalogTrack, 'codec' | 'width' | 'height'>
+  track: Pick<MeetingCatalogTrack, 'codec' | 'width' | 'height'>
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (typeof VideoDecoder === 'undefined') {
     return { ok: false, message: 'VideoDecoder is not available in this browser.' }
@@ -873,19 +873,19 @@ async function validateVideoDecoderCatalogTrackConfig(
       return { ok: false, message: `VideoDecoder config unsupported: ${track.codec}` }
     }
   } catch (error) {
-    console.error('[call][subscribe] VideoDecoder.isConfigSupported failed', error, config)
+    console.error('[meeting][subscribe] VideoDecoder.isConfigSupported failed', error, config)
     return { ok: false, message: 'Failed to check VideoDecoder config support.' }
   }
   let decoder: VideoDecoder | undefined
   try {
     decoder = new VideoDecoder({
       output: (frame) => frame.close(),
-      error: (error) => console.error('[call][subscribe] VideoDecoder error during configure check', error, config)
+      error: (error) => console.error('[meeting][subscribe] VideoDecoder error during configure check', error, config)
     })
     decoder.configure(config)
     return { ok: true }
   } catch (error) {
-    console.error('[call][subscribe] VideoDecoder.configure failed', error, config)
+    console.error('[meeting][subscribe] VideoDecoder.configure failed', error, config)
     return { ok: false, message: `VideoDecoder.configure failed: ${track.codec}` }
   } finally {
     try {

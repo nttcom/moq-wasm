@@ -6,10 +6,10 @@ import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import type { SubscribeMessage } from '../../../../pkg/moqt_client_wasm'
-import type { CallCatalogTrack, CatalogSubscribeRole, CatalogTrackRole, TrackMediaConfig } from '../types/catalog'
+import type { MeetingCatalogTrack, CatalogSubscribeRole, CatalogTrackRole, TrackMediaConfig } from '../types/catalog'
 import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
+import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
 export interface MediaHandlers {
   onLocalVideoStream?: (stream: MediaStream | null, source: 'camera' | 'screenshare') => void
@@ -105,7 +105,7 @@ export interface MediaHandlers {
   onScreenShareEncodingApplied?: (settings: VideoEncodingSettings) => void
 }
 
-export class CallMediaController {
+export class MeetingMediaController {
   private handlers: MediaHandlers = {}
   private readonly publisher: MediaPublisher
   private readonly subscriber: MediaSubscriber
@@ -159,11 +159,11 @@ export class CallMediaController {
       const trackName = subscribe.trackName ?? ''
       const isLocalTrack = this.isLocalTrack(subscribe)
       const isCatalogTrack = this.publisher.isCatalogTrack(trackName)
-      const debugVideoPipeline = isCallVideoPipelineDebugEnabled()
+      const debugVideoPipeline = isMeetingVideoPipelineDebugEnabled()
       if (debugVideoPipeline) {
         this.logIncomingSubscribe(subscribe, isSuccess, code, isLocalTrack, isCatalogTrack)
       } else {
-        console.info('[call][moqt] received SUBSCRIBE', {
+        console.info('[meeting][moqt] received SUBSCRIBE', {
           subscribe,
           isSuccess,
           code
@@ -208,7 +208,7 @@ export class CallMediaController {
     })
 
     client.setOnIncomingUnsubscribeHandler((subscribeId) => {
-      console.info('[call][moqt] received UNSUBSCRIBE', { subscribeId: subscribeId.toString() })
+      console.info('[meeting][moqt] received UNSUBSCRIBE', { subscribeId: subscribeId.toString() })
       this.publisher.handleIncomingUnsubscribe(subscribeId)
     })
   }
@@ -275,7 +275,7 @@ export class CallMediaController {
     this.handlers = {}
   }
 
-  getCatalogTracks(): CallCatalogTrack[] {
+  getCatalogTracks(): MeetingCatalogTrack[] {
     return this.publisher.getCatalogTracks()
   }
 
@@ -283,7 +283,7 @@ export class CallMediaController {
     return this.publisher.getSubscribedCatalogTracks()
   }
 
-  async setCatalogTracks(tracks: CallCatalogTrack[]): Promise<void> {
+  async setCatalogTracks(tracks: MeetingCatalogTrack[]): Promise<void> {
     await this.publisher.setCatalogTracks(tracks)
   }
 
@@ -328,7 +328,7 @@ export class CallMediaController {
     role?: CatalogTrackRole | null
   ): void {
     console.info(
-      '[call][moqt] received SUBSCRIBE',
+      '[meeting][moqt] received SUBSCRIBE',
       JSON.stringify({
         trackNamespace: [...subscribe.trackNamespace],
         trackName: subscribe.trackName,

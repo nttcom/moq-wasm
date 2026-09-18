@@ -1,10 +1,10 @@
-# MoQT Video Call Application
+# MoQT Meeting Application
 
-Video call application using MoQT (Media over QUIC Transport).
+Video meeting application using MoQT (Media over QUIC Transport).
 
 ## Overview
 
-This application provides real-time video calling using the MoQT protocol defined by draft-ietf-moq-transport-14.
+This application provides real-time video meetings using the MoQT protocol defined by draft-ietf-moq-transport-14.
 
 ### Main Features
 
@@ -119,7 +119,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173/examples/call/ in a browser.
+Open http://localhost:5173/examples/meeting/ in a browser.
 
 ### Build
 
@@ -138,7 +138,7 @@ src/
 │   │   ├── input.tsx
 │   │   └── label.tsx
 │   ├── JoinRoomForm.tsx      # room join form
-│   ├── CallRoom.tsx          # main call room screen
+│   ├── MeetingRoom.tsx       # main meeting room screen
 │   ├── ParticipantCard.tsx   # participant card
 │   └── PublishMediaPanel.tsx # media publishing panel
 ├── hooks/

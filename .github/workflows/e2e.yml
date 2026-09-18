@@ -9,7 +9,7 @@ on:
       - "README.md"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
-      - "scripts/run-call-e2e.mjs"
+      - "scripts/run-meeting-e2e.mjs"
       - "scripts/run-message-e2e.mjs"
       - "scripts/run-live-viewer-e2e.mjs"
       - "scripts/browser-e2e-process.mjs"
@@ -49,7 +49,7 @@ on:
       - "README.md"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
-      - "scripts/run-call-e2e.mjs"
+      - "scripts/run-meeting-e2e.mjs"
       - "scripts/run-message-e2e.mjs"
       - "scripts/run-live-viewer-e2e.mjs"
       - "scripts/browser-e2e-process.mjs"
@@ -93,7 +93,7 @@ jobs:
       media: ${{ steps.filter.outputs.media }}
       message: ${{ steps.filter.outputs.message }}
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
-      call: ${{ steps.filter.outputs.call }}
+      meeting: ${{ steps.filter.outputs.meeting }}
       cascading: ${{ steps.filter.outputs.cascading }}
       cache_eviction: ${{ steps.filter.outputs.cache_eviction }}
       fetch: ${{ steps.filter.outputs.fetch }}
@@ -120,7 +120,7 @@ jobs:
             media=true
             message=true
             live_viewer=true
-            call=true
+            meeting=true
             cascading=true
             cache_eviction=true
             fetch=true
@@ -139,7 +139,7 @@ jobs:
             media=false
             message=false
             live_viewer=false
-            call=false
+            meeting=false
             cascading=false
             cache_eviction=false
             fetch=false
@@ -167,8 +167,8 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-call-e2e.mjs|scripts/vts-dev.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  call=true
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-meeting-e2e.mjs|scripts/vts-dev.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  meeting=true
                   ;;
               esac
 
@@ -210,7 +210,7 @@ jobs:
             done < changed-files.txt
           fi
 
-          if [[ "$call" == "true" || "$cascading" == "true" || "$cache_eviction" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" || "$auth" == "true" ]]; then
+          if [[ "$meeting" == "true" || "$cascading" == "true" || "$cache_eviction" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" || "$auth" == "true" ]]; then
             relay=true
           else
             relay=false
@@ -230,7 +230,7 @@ jobs:
             echo "media=$media"
             echo "message=$message"
             echo "live_viewer=$live_viewer"
-            echo "call=$call"
+            echo "meeting=$meeting"
             echo "cascading=$cascading"
             echo "cache_eviction=$cache_eviction"
             echo "fetch=$fetch"
@@ -455,9 +455,9 @@ jobs:
             examples/browser/playwright-report
           if-no-files-found: ignore
 
-  call_e2e:
+  meeting_e2e:
     needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.call == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    if: ${{ always() && needs.changes.outputs.meeting == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -532,17 +532,17 @@ jobs:
         if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: docker logout ghcr.io
 
-      - name: Run call E2E
+      - name: Run meeting E2E
         env:
           CI: "true"
-        run: node scripts/run-call-e2e.mjs
+        run: node scripts/run-meeting-e2e.mjs
 
       - name: Upload Playwright artifacts
         if: failure()
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: call-e2e-artifacts
+          name: meeting-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report

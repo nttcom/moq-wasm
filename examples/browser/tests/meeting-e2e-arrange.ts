@@ -1,12 +1,12 @@
 import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
-import { CALL_INDEX_PATH } from '../playwright.helpers'
+import { MEETING_INDEX_PATH } from '../playwright.helpers'
 
-export const RELAY_A_URL = process.env.CALL_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
-export const RELAY_B_URL = process.env.CALL_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
-// Set by scripts/run-call-e2e.mjs: an app-scoped JWT the pages present via ?jwt=.
-export const CALL_JWT = process.env.CALL_E2E_JWT || undefined
+export const RELAY_A_URL = process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
+export const RELAY_B_URL = process.env.MEETING_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
+// Set by scripts/run-meeting-e2e.mjs: an app-scoped JWT the pages present via ?jwt=.
+export const MEETING_JWT = process.env.MEETING_E2E_JWT || undefined
 
-export interface CallClientPageModel {
+export interface MeetingClientPageModel {
   page: Page
   roomNameInput: Locator
   userNameInput: Locator
@@ -22,14 +22,14 @@ export interface CallClientPageModel {
   joinError: Locator
 }
 
-export interface ArrangeCallClientOptions {
-  // Overrides the default JWT (CALL_JWT). Pass an invalid token to exercise rejection.
+export interface ArrangeMeetingClientOptions {
+  // Overrides the default JWT (MEETING_JWT). Pass an invalid token to exercise rejection.
   jwt?: string
 }
 
-export interface CallE2EClient {
+export interface MeetingE2EClient {
   context: BrowserContext
-  page: CallClientPageModel
+  page: MeetingClientPageModel
 }
 
 // Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
@@ -39,12 +39,12 @@ const E2E_VIDEO_WIDTH = 160
 const E2E_VIDEO_HEIGHT = 90
 const E2E_VIDEO_FRAMERATE = 15
 const E2E_VIDEO_BITRATE = 100_000
-let callClientCounter = 0
+let meetingClientCounter = 0
 
 const FORWARDED_CONSOLE_TEXT_PATTERN =
-  /\[call\]\[publisher\]\[video\]|\[call\]\[subscriber\]\[video\]|\[call\]\[media-element\]\[video\]|\[call\]\[catalog\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
+  /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[subscriber\]\[video\]|\[meeting\]\[media-element\]\[video\]|\[meeting\]\[catalog\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
-async function openCallPage(page: Page, jwt: string | undefined): Promise<void> {
+async function openMeetingPage(page: Page, jwt: string | undefined): Promise<void> {
   const params = new URLSearchParams({
     keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
@@ -58,7 +58,7 @@ async function openCallPage(page: Page, jwt: string | undefined): Promise<void> 
   if (jwt) {
     params.set('jwt', jwt)
   }
-  await page.goto(`${CALL_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`${MEETING_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })
 }
 
 function forwardFilteredPageConsole(page: Page, label: string): void {
@@ -67,11 +67,11 @@ function forwardFilteredPageConsole(page: Page, label: string): void {
     if (!FORWARDED_CONSOLE_TEXT_PATTERN.test(text)) {
       return
     }
-    console.log(`[call-e2e][${label}][${message.type()}] ${text}`)
+    console.log(`[meeting-e2e][${label}][${message.type()}] ${text}`)
   })
 }
 
-function createCallClientPageModel(page: Page): CallClientPageModel {
+function createMeetingClientPageModel(page: Page): MeetingClientPageModel {
   return {
     page,
     roomNameInput: page.getByTestId('join-room-name-input'),
@@ -89,27 +89,27 @@ function createCallClientPageModel(page: Page): CallClientPageModel {
   }
 }
 
-export async function arrangeCallClient(
+export async function arrangeMeetingClient(
   browser: Browser,
-  { jwt = CALL_JWT }: ArrangeCallClientOptions = {}
-): Promise<CallE2EClient> {
+  { jwt = MEETING_JWT }: ArrangeMeetingClientOptions = {}
+): Promise<MeetingE2EClient> {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']
   })
   const rawPage = await context.newPage()
-  const label = `call-client-${++callClientCounter}`
+  const label = `meeting-client-${++meetingClientCounter}`
   forwardFilteredPageConsole(rawPage, label)
-  await openCallPage(rawPage, jwt)
+  await openMeetingPage(rawPage, jwt)
   return {
     context,
-    page: createCallClientPageModel(rawPage)
+    page: createMeetingClientPageModel(rawPage)
   }
 }
 
 // Join room and pick a relay. Relay 'a' = 4433, 'b' = 4434.
 export async function joinRoom(
-  model: CallClientPageModel,
+  model: MeetingClientPageModel,
   roomName: string,
   userName: string,
   relay: 'a' | 'b'
@@ -126,7 +126,7 @@ export async function joinRoom(
 }
 
 // Enable camera and mic so the client publishes video+audio.
-export async function enableMedia(model: CallClientPageModel): Promise<void> {
+export async function enableMedia(model: MeetingClientPageModel): Promise<void> {
   await expect(model.toggleCameraButton).toBeEnabled({ timeout: 30_000 })
   await model.toggleCameraButton.click()
   await expect(model.toggleCameraButton).toHaveAccessibleName('Turn camera off', { timeout: 15_000 })
@@ -176,7 +176,7 @@ export function getTrackStatus(
 }
 
 // Send a chat message from this client.
-export async function sendChatMessage(model: CallClientPageModel, text: string): Promise<void> {
+export async function sendChatMessage(model: MeetingClientPageModel, text: string): Promise<void> {
   await model.chatInput.fill(text)
   await model.chatSendButton.click()
 }
