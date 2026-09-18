@@ -8,6 +8,7 @@ use crate::{
             subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
         },
         stream::stream_sender::StreamSender,
+        stream_priority::StreamPriority,
     },
 };
 
@@ -62,6 +63,15 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
             has_extensions,
             end_of_group,
         )
+    }
+
+    /// Applies the §7.2 scheduling inputs to the transport stream. Only
+    /// available before the header is sent: the transport reorders queued
+    /// data by a changed priority only after that stream's next frame.
+    pub async fn set_priority(&self, priority: StreamPriority) -> anyhow::Result<()> {
+        self.stream_sender
+            .set_priority(priority.transport_priority())
+            .await
     }
 
     /// Sends the header on the stream and transitions to the `HeaderSent` state.

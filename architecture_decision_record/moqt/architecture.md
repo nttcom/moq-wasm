@@ -226,6 +226,17 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     returns a `StreamDataSender`.
   - `StreamDataSender` uses a **typestate** (`Uninitialized` → `send_header()`
     → `HeaderSent`) so "header before objects" is enforced at compile time.
+  - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
+    maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
+    send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:
+    higher first). `stream_priority.rs` packs the four §7.2 rules most
+    significant first — subscriber priority, publisher priority, group rank,
+    subgroup id — into a negative `i32`, so the control stream (transport
+    default 0) always outranks data streams. The group rank is the caller's
+    `group_sequence` (how many groups the subscription opened before this one)
+    modulo 2^12, reversed for Descending group order; the subgroup id
+    saturates at 7. These values never reach the wire: MoQT headers carry the
+    original priority numbers.
   - `StreamDataReceiverFactory` / `StreamDataReceiver`, `DatagramSender` /
     `DatagramReceiver`, `FetchDataSender` / `FetchDataReceiver` mirror this on
     the other side.
@@ -256,6 +267,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `ControlMessageTimeout` (draft-14 §12.2).
 - **Header-first subgroup streams**: enforced by the sender typestate; on the
   receive side a uni stream whose first frame is not a header is rejected.
+- **Priority before data**: a stream's transport priority is settable only
+  before its header, because the transport applies a changed priority to a
+  stream with queued data only after that stream's next frame.
 - **Session teardown**: dropping `Session` aborts all four background tasks;
   the control task's `Weak` reference guarantees it never keeps the context
   alive.
