@@ -94,6 +94,7 @@ pub use modules::moqt::data_plane::stream::stream_data_sender::Uninitialized;
 pub use modules::moqt::data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::data_plane::stream::stream_receiver::StreamReceiveError;
+pub use modules::moqt::data_plane::stream_priority::StreamPriority;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::accepting::Accepting;
 #[cfg(not(target_arch = "wasm32"))]

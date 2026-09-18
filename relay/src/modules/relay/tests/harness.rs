@@ -48,6 +48,7 @@ pub(crate) struct RelayHarness {
 
 pub(crate) struct EgressRunnerHandle {
     sent: mpsc::UnboundedReceiver<Sent>,
+    priorities: mpsc::UnboundedReceiver<moqt::StreamPriority>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
     join_handle: tokio::task::JoinHandle<()>,
 }
@@ -66,6 +67,13 @@ impl EgressRunnerHandle {
             sent.is_err(),
             "egress must not open or close a downstream stream: {sent:?}"
         );
+    }
+
+    pub(crate) async fn expect_stream_priority(&mut self) -> moqt::StreamPriority {
+        tokio::time::timeout(RECV_TIMEOUT, self.priorities.recv())
+            .await
+            .expect("egress should open a downstream stream")
+            .expect("egress dropped its publisher before opening a stream")
     }
 
     pub(crate) fn assert_no_publish_done(&mut self) {
@@ -168,6 +176,7 @@ impl RelayHarness {
             .expect("egress runner should start");
         EgressRunnerHandle {
             sent: observers.sent,
+            priorities: observers.priorities,
             publish_done: observers.publish_done,
             join_handle,
         }

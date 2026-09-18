@@ -21,6 +21,10 @@ impl<T: TransportProtocol> StreamSender<T> {
         Ok(self.send_stream.lock().await.send(bytes).await?)
     }
 
+    pub async fn set_priority(&self, priority: i32) -> anyhow::Result<()> {
+        Ok(self.send_stream.lock().await.set_priority(priority)?)
+    }
+
     pub async fn close(&self) -> anyhow::Result<()> {
         Ok(self.send_stream.lock().await.close().await?)
     }

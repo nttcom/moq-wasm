@@ -35,4 +35,11 @@ impl TransportSendStream for DualSendStream {
             DualSendStream::WebTransport(s) => s.reset(error_code).await,
         }
     }
+
+    fn set_priority(&mut self, priority: i32) -> Result<(), TransportSendError> {
+        match self {
+            DualSendStream::Quic(s) => s.set_priority(priority),
+            DualSendStream::WebTransport(s) => s.set_priority(priority),
+        }
+    }
 }

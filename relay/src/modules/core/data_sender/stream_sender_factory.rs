@@ -2,7 +2,8 @@ use crate::modules::core::{data_sender::DataSender, data_sender::stream_sender::
 
 #[async_trait::async_trait]
 pub(crate) trait StreamSenderFactory: Send + 'static {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn DataSender>>;
+    async fn next(&mut self, priority: moqt::StreamPriority)
+    -> anyhow::Result<Box<dyn DataSender>>;
 }
 
 pub(crate) struct ConcreteStreamSenderFactory<T: moqt::TransportProtocol> {
@@ -24,8 +25,12 @@ impl<T: moqt::TransportProtocol> ConcreteStreamSenderFactory<T> {
 
 #[async_trait::async_trait]
 impl<T: moqt::TransportProtocol> StreamSenderFactory for ConcreteStreamSenderFactory<T> {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn DataSender>> {
+    async fn next(
+        &mut self,
+        priority: moqt::StreamPriority,
+    ) -> anyhow::Result<Box<dyn DataSender>> {
         let sender = self.inner.next().await?;
+        sender.set_priority(priority).await?;
         Ok(Box::new(StreamSender::new(
             sender,
             self.subscriber_track_alias,
