@@ -496,6 +496,100 @@
         color: rgba(180, 190, 210, 0.9);
       }
 
+      .setup-toggle {
+        margin-bottom: 24px;
+      }
+
+      .setup-toggle summary {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px 12px;
+        cursor: pointer;
+        list-style: none;
+      }
+
+      .setup-toggle summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .setup-toggle summary::before {
+        content: '\25B8';
+        color: var(--accent-2);
+        font-size: 18px;
+        transition: transform 0.15s;
+      }
+
+      .setup-toggle[open] summary::before {
+        transform: rotate(90deg);
+      }
+
+      .setup-toggle[open] summary {
+        margin-bottom: 16px;
+      }
+
+      .setup-split {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      /* Subgrid rows keep the heading, the note and the commands level across the
+         two relays even when one note wraps to a second line. */
+      .setup-panel {
+        display: grid;
+        grid-row: span 3;
+        grid-template-rows: subgrid;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        background: rgba(8, 12, 18, 0.6);
+      }
+
+      .setup-panel-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .setup-relay-url {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(46, 196, 182, 0.14);
+        color: var(--accent-2);
+        font-family: 'SFMono-Regular', Menlo, monospace;
+        font-size: 12px;
+      }
+
+      .setup-panel pre {
+        margin: 0;
+        padding: 12px 14px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.3);
+        font-family: 'SFMono-Regular', Menlo, monospace;
+        font-size: 12.5px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .setup-panel .muted code {
+        padding: 1px 6px;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.1);
+        font-size: 0.9em;
+      }
+
+      @media (max-width: 960px) {
+        .setup-split {
+          grid-template-columns: 1fr;
+        }
+      }
+
       @media (max-width: 720px) {
         .page {
           padding: 24px 16px 48px;
@@ -525,6 +619,43 @@
           decoded stream while controls push PTZ moves through the same namespace.
         </p>
       </header>
+
+      <details class="card setup-toggle">
+        <summary>
+          <div class="command-title">映像送信の開始方法</div>
+          <span class="muted">視聴する前に、別ターミナルで ONVIF カメラの映像を配信します。</span>
+        </summary>
+        <div class="setup-split">
+          <div class="setup-panel">
+            <div class="setup-panel-head">
+              <div class="command-title">クラウドRelay利用</div>
+              <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
+            </div>
+            <div class="muted"><code>make relay</code> は不要です。トークンなしで配信できます。</div>
+            <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
+
+# ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定しておく
+ONVIF_MOQT_URL=$RELAY make onvif
+make browser</code></pre>
+          </div>
+          <div class="setup-panel">
+            <div class="setup-panel-head">
+              <div class="command-title">ローカルRelay利用</div>
+              <code class="setup-relay-url">https://127.0.0.1:4433</code>
+            </div>
+            <div class="muted">
+              <code>make relay</code> で relay を起動します。自己署名証明書なので Chrome は
+              <code>make chrome</code> で開きます。
+            </div>
+            <pre><code>make relay
+
+# ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定しておく
+make onvif
+make browser
+make chrome</code></pre>
+          </div>
+        </div>
+      </details>
 
       <section class="grid">
         <div class="card">

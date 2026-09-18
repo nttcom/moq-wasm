@@ -1,3 +1,107 @@
+.setup-toggle {
+  margin-bottom: 18px;
+}
+
+.setup-toggle summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.setup-toggle summary::-webkit-details-marker {
+  display: none;
+}
+
+.setup-toggle summary::before {
+  content: '\25B8';
+  color: var(--accent);
+  font-size: 1.1rem;
+  transition: transform 0.15s;
+}
+
+.setup-toggle[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.setup-toggle summary h2 {
+  margin: 0;
+}
+
+.setup-toggle[open] summary {
+  margin-bottom: 14px;
+}
+
+.setup-split {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Subgrid rows keep the heading, the note and the commands level across the
+   two relays even when one note wraps to a second line. */
+.setup-panel {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.setup-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.setup-panel-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.setup-relay-url {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.setup-panel pre {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(16, 42, 42, 0.04);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.setup-panel .hint code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(15, 118, 110, 0.08);
+}
+
+@media (max-width: 960px) {
+  .setup-split {
+    grid-template-columns: 1fr;
+  }
+}
+
 .viewer-stage {
   position: relative;
   border: 1px solid var(--border);

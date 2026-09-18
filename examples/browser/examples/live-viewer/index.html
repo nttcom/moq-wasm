@@ -17,6 +17,56 @@
         </div>
       </header>
       <div id="app">
+        <details class="card setup-toggle full">
+          <summary>
+            <h2>配信の開始方法</h2>
+            <span class="hint">視聴する前に、別ターミナルで配信を開始します。</span>
+          </summary>
+          <div class="setup-split">
+            <div class="setup-panel">
+              <div class="setup-panel-head">
+                <h3>クラウドRelay利用</h3>
+                <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
+              </div>
+              <p class="hint"><code>make relay</code> は不要です。トークンなしで配信できます。</p>
+              <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
+
+# gateway をどれか選ぶ
+# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest
+# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest-transcode   # 下位画質も配信
+# GST_MOQT_URL=$RELAY make gst-srt-publish                 # SRT のみ
+
+# 配信元をどれか選ぶ
+# make ffmpeg-rtmp
+# make ffmpeg-srt
+# make ffmpeg-srt-bbb
+make browser</code></pre>
+            </div>
+            <div class="setup-panel">
+              <div class="setup-panel-head">
+                <h3>ローカルRelay利用</h3>
+                <code class="setup-relay-url">https://127.0.0.1:4433</code>
+              </div>
+              <p class="hint">
+                <code>make relay</code> で relay を起動します。自己署名証明書なので Chrome は
+                <code>make chrome</code> で開きます。
+              </p>
+              <pre><code>make relay
+
+# gateway をどれか選ぶ
+# make live-ingest
+# make live-ingest-transcode   # 下位画質も配信
+# make gst-srt-publish         # SRT のみ
+
+# 配信元をどれか選ぶ
+# make ffmpeg-rtmp
+# make ffmpeg-srt
+# make ffmpeg-srt-bbb
+make browser
+make chrome</code></pre>
+            </div>
+          </div>
+        </details>
         <div class="control-grid subscriber-grid">
           <section class="card stack">
             <h2>Stream</h2>
