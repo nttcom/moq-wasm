@@ -5,12 +5,7 @@ import type { LocHeader } from '../../../utils/media/loc'
 const chunkDataBitrateLogger = createBitrateLogger('chunkData bitrate')
 const videoGroupStates = new Map<bigint, { groupId: bigint; lastObjectNumber: bigint }>()
 
-export async function sendVideoEndOfGroup(
-  trackAlias: bigint,
-  groupId: bigint,
-  objectNumber: bigint,
-  client: MOQTClient
-) {
+async function sendVideoEndOfGroup(trackAlias: bigint, groupId: bigint, objectNumber: bigint, client: MOQTClient) {
   await client.sendSubgroupObject(trackAlias, groupId, 0n, objectNumber, 3, new Uint8Array(0), undefined)
   console.log(
     `[MediaPublisher] Sent EndOfGroup trackAlias=${trackAlias} groupId=${groupId} subgroupId=0 objectNumber=${objectNumber}`

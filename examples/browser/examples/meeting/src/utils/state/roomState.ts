@@ -71,11 +71,7 @@ function createFreshSubscribedTracks(): RemoteMember['subscribedTracks'] {
   }
 }
 
-export function buildRemoteMember({
-  existingMember,
-  announcedUser,
-  trackNamespace
-}: BuildRemoteMemberOptions): RemoteMember {
+function buildRemoteMember({ existingMember, announcedUser, trackNamespace }: BuildRemoteMemberOptions): RemoteMember {
   if (existingMember) {
     return {
       ...existingMember,
