@@ -73,7 +73,8 @@
   padding: 0.5rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 0.6rem;
-  background: rgba(16, 42, 42, 0.04);
+  background: #f1f3f3;
+  color: #173b36;
   font-size: 0.72rem;
   line-height: 1.2;
   text-align: center;
@@ -90,9 +91,20 @@
   font-weight: 500;
 }
 
-.setup-node-relay {
-  border-color: var(--accent);
-  color: var(--accent-strong);
+.setup-node-cloud {
+  background: #dff3e5;
+}
+
+.setup-node-local {
+  background: #f1f3f3;
+}
+
+.setup-panel > p {
+  margin: 18px 0 8px;
+}
+
+.setup-panel > pre + p {
+  margin-top: 24px;
 }
 
 .setup-arrow {
@@ -462,4 +474,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.setup-panel .hint {
+  overflow-wrap: anywhere;
 }
