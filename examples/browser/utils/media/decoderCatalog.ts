@@ -12,7 +12,7 @@ export type VideoCatalogTrackLike = {
   avcFormat?: 'annexb' | 'avc'
 }
 
-export type AudioDecoderCatalogMessage = {
+type AudioDecoderCatalogMessage = {
   type: 'catalog'
   codec?: string
   sampleRate?: number
@@ -20,7 +20,7 @@ export type AudioDecoderCatalogMessage = {
   descriptionBase64?: string
 }
 
-export type VideoDecoderCatalogMessage = {
+type VideoDecoderCatalogMessage = {
   type: 'catalog'
   codec?: string
   framerate?: number
@@ -47,7 +47,7 @@ export function parseAudioChannelCount(channelConfig?: string): number | undefin
   return undefined
 }
 
-export function buildAudioDecoderCatalogMessage(track: AudioCatalogTrackLike): AudioDecoderCatalogMessage | null {
+function buildAudioDecoderCatalogMessage(track: AudioCatalogTrackLike): AudioDecoderCatalogMessage | null {
   const channels = parseAudioChannelCount(track.channelConfig)
   if (!track.codec && typeof track.samplerate !== 'number' && channels === undefined && !track.initData) {
     return null
@@ -61,7 +61,7 @@ export function buildAudioDecoderCatalogMessage(track: AudioCatalogTrackLike): A
   }
 }
 
-export function buildVideoDecoderCatalogMessage(track: VideoCatalogTrackLike): VideoDecoderCatalogMessage | null {
+function buildVideoDecoderCatalogMessage(track: VideoCatalogTrackLike): VideoDecoderCatalogMessage | null {
   if (!track.codec && typeof track.framerate !== 'number' && !track.initData && !track.avcFormat) {
     return null
   }
@@ -74,20 +74,18 @@ export function buildVideoDecoderCatalogMessage(track: VideoCatalogTrackLike): V
   }
 }
 
-export function postAudioCatalogToWorker(worker: Worker, track: AudioCatalogTrackLike): boolean {
+export function postAudioCatalogToWorker(worker: Worker, track: AudioCatalogTrackLike): void {
   const message = buildAudioDecoderCatalogMessage(track)
   if (!message) {
-    return false
+    return
   }
   worker.postMessage(message)
-  return true
 }
 
-export function postVideoCatalogToWorker(worker: Worker, track: VideoCatalogTrackLike): boolean {
+export function postVideoCatalogToWorker(worker: Worker, track: VideoCatalogTrackLike): void {
   const message = buildVideoDecoderCatalogMessage(track)
   if (!message) {
-    return false
+    return
   }
   worker.postMessage(message)
-  return true
 }

@@ -1,11 +1,6 @@
-import type { SubgroupWorkerMessage } from './jitterBufferTypes'
+import type { SubgroupObjectWithLoc } from './jitterBufferTypes'
 
-export type DecoderWorkerObjectSource = Pick<
-  SubgroupWorkerMessage['subgroupStreamObject'],
-  'subgroupId' | 'objectIdDelta' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus' | 'locHeader'
->
-
-export function postSubgroupObjectToWorker(worker: Worker, groupId: bigint, message: DecoderWorkerObjectSource): void {
+export function postSubgroupObjectToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectWithLoc): void {
   const payload = new Uint8Array(message.objectPayload)
   worker.postMessage(
     {

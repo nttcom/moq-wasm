@@ -4,11 +4,11 @@ export function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
   return subgroupId ?? 0n
 }
 
-export function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
+function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
 }
 
-export function assignSubgroupObjectId(
+function assignSubgroupObjectId(
   lastObjectIds: Map<string, bigint>,
   groupId: bigint,
   subgroupId: bigint,
