@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET } from '../../utils/relayPresets'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import {
   MEDIA_CATALOG_TRACK_NAME,
@@ -103,6 +104,14 @@ let pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
 const seekbar = element<HTMLInputElement>('seekbar')
 const stage = element<HTMLDivElement>('stage')
 
+for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.dataset.url = preset.value
+  button.textContent = `Cloud ${preset.label}`
+  button.title = preset.helper
+  element('urlPresets').appendChild(button)
+}
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())

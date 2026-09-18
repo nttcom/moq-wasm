@@ -294,3 +294,7 @@ A capture timestamp resolves to a presentation time by offsetting from the
 newest record at or before it, so the reading survives a video quality change
 even though renditions number their groups independently. The label shows
 `--:-- / --:--` until the first timeline object arrives.
+
+The Relay URL defaults to Cloud relay-1. Presets include the cloud load balancer,
+relay-1 through relay-3, and local relay-a / relay-b, using the same URLs as Meeting.
+An explicit `?moqtUrl=...` overrides the default.
