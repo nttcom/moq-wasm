@@ -1,5 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
+import { postSubgroupObjectToWorker } from '../../../../utils/media/decoderWorker'
+import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../../../utils/media/decoderCatalog'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
 import {
   DEFAULT_AUDIO_JITTER_CONFIG,
@@ -106,8 +107,6 @@ interface AudioSubscriptionContext {
   pendingPlaybackQueueMs: number
   lastPlaybackQueueReportAtMs: number
 }
-
-type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?: any }
 
 export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
@@ -311,13 +310,8 @@ export class MediaSubscriber {
     const context: VideoSubscriptionContext = { userId, source, worker, writer, stream, frameLogCount: 0 }
     this.videoContexts.set(trackAlias, context)
     this.handlers.onRemoteVideoStream?.(userId, stream, source)
-    if (config?.codec || config?.framerate !== undefined || config?.initData !== undefined) {
-      worker.postMessage({
-        type: 'catalog',
-        codec: config?.codec,
-        framerate: config?.framerate,
-        descriptionBase64: config?.initData
-      })
+    if (config) {
+      postVideoCatalogToWorker(worker, config)
     }
     const jitterConfig = this.videoJitterConfigByUserId.get(userId) ?? DEFAULT_VIDEO_JITTER_CONFIG
     if (!this.videoJitterConfigByUserId.has(userId)) {
@@ -329,7 +323,7 @@ export class MediaSubscriber {
     })
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.forwardToWorker(worker, groupId, message)
+      postSubgroupObjectToWorker(worker, groupId, message)
     )
   }
 
@@ -439,15 +433,8 @@ export class MediaSubscriber {
     this.audioContexts.set(trackAlias, context)
     this.handlers.onRemoteAudioStream?.(userId, context.stream)
     this.maybeReportAudioPlaybackQueue(context, true)
-    const channels = parseChannelCount(config?.channelConfig)
-    if (config?.codec || config?.samplerate !== undefined || channels !== undefined || config?.initData !== undefined) {
-      worker.postMessage({
-        type: 'catalog',
-        codec: config?.codec,
-        sampleRate: config?.samplerate,
-        channels,
-        descriptionBase64: config?.initData
-      })
+    if (config) {
+      postAudioCatalogToWorker(worker, config)
     }
     const jitterConfig = this.audioJitterConfigByUserId.get(userId)
     if (jitterConfig) {
@@ -455,7 +442,7 @@ export class MediaSubscriber {
     }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.forwardToWorker(worker, groupId, message)
+      postSubgroupObjectToWorker(worker, groupId, message)
     )
   }
 
@@ -503,25 +490,6 @@ export class MediaSubscriber {
     this.handlers = {}
   }
 
-  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectMessageWithLoc) {
-    const payload = new Uint8Array(message.objectPayload)
-    const payloadLength = message.objectPayloadLength
-    worker.postMessage(
-      {
-        groupId,
-        subgroupStreamObject: {
-          subgroupId: message.subgroupId,
-          objectIdDelta: message.objectIdDelta,
-          objectPayloadLength: payloadLength,
-          objectPayload: payload,
-          objectStatus: message.objectStatus,
-          locHeader: message.locHeader
-        }
-      },
-      [payload.buffer]
-    )
-  }
-
   setVideoJitterBufferConfig(userId: string, config: VideoJitterConfig): void {
     const sanitized = this.sanitizeConfig(config)
     this.videoJitterConfigByUserId.set(userId, sanitized)
@@ -560,25 +528,6 @@ export class MediaSubscriber {
     context.lastPlaybackQueueReportAtMs = now
     this.handlers.onRemoteAudioPlaybackQueue?.(context.userId, context.pendingPlaybackQueueMs)
   }
-}
-
-function parseChannelCount(channelConfig?: string): number | undefined {
-  const normalized = channelConfig?.trim().toLowerCase()
-  if (!normalized) {
-    return undefined
-  }
-  if (normalized === 'mono') {
-    return 1
-  }
-  if (normalized === 'stereo') {
-    return 2
-  }
-  const match = normalized.match(/^(\d+)ch$/)
-  if (match) {
-    const count = Number(match[1])
-    return Number.isInteger(count) && count > 0 ? count : undefined
-  }
-  return undefined
 }
 
 function estimateAudioDataDurationMs(audioData: AudioData): number {

@@ -1,7 +1,8 @@
-import { type ChunkMetadata } from './chunk'
-import { bytesToBase64, readLocHeader } from './loc'
+import { readLocHeader } from './loc'
+import { buildVideoChunkFromLoc } from './locChunk'
+import { trackSubgroupObjectId } from './subgroupObjectId'
 import { latencyMsFromCaptureMicros } from './clock'
-import { OBJECT_STATUS_END_OF_GROUP, isTerminalStatus } from './objectStatus'
+import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_JITTER_BUFFER_SIZE = 9000
@@ -22,18 +23,15 @@ export class VideoJitterBuffer {
   constructor(private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE) {}
 
   push(groupId: bigint, object: SubgroupObjectWithLoc, onReceiveLatency?: (latencyMs: number) => void): bigint | null {
-    const subgroupId = normalizeSubgroupId(object.subgroupId)
-    const objectId = this.assignObjectId(groupId, subgroupId, object.objectIdDelta)
-    if (isTerminalStatus(object.objectStatus)) {
-      this.lastObjectIds.delete(makeSubgroupKey(groupId, subgroupId))
-    }
+    const subgroupId = object.subgroupId ?? 0n
+    const objectId = trackSubgroupObjectId(this.lastObjectIds, groupId, object)
     if (!object.objectPayloadLength) {
       return null
     }
 
-    const locMetadata = readLocHeader(object.locHeader)
-    const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
-    const parsed = buildChunkFromLoc(object, objectId)
+    const loc = readLocHeader(object.locHeader)
+    const captureTimestampMicros = loc.captureTimestampMicros
+    const parsed = buildVideoChunkFromLoc(loc, object.objectPayload, objectId)
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
@@ -76,14 +74,6 @@ export class VideoJitterBuffer {
     return this.buffer.shift() ?? null
   }
 
-  private assignObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
-    const key = makeSubgroupKey(groupId, subgroupId)
-    const previousObjectId = this.lastObjectIds.get(key)
-    const objectId = previousObjectId === undefined ? objectIdDelta : previousObjectId + objectIdDelta + 1n
-    this.lastObjectIds.set(key, objectId)
-    return objectId
-  }
-
   private findInsertPos(groupId: bigint, objectId: bigint, subgroupId: bigint): number {
     for (let i = this.buffer.length - 1; i >= 0; i -= 1) {
       const entry = this.buffer[i]
@@ -107,34 +97,4 @@ export class VideoJitterBuffer {
   getMaxBufferSize(): number {
     return this.maxBufferSize
   }
-}
-
-function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
-  return subgroupId ?? 0n
-}
-
-function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
-  return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-function buildChunkFromLoc(
-  object: SubgroupObjectWithLoc,
-  objectId: bigint
-): { metadata: ChunkMetadata; data: Uint8Array } {
-  const loc = readLocHeader(object.locHeader)
-  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
-  const metadata: ChunkMetadata = {
-    type: objectId === 0n ? 'key' : 'delta',
-    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
-    duration: null,
-    descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined
-  }
-  return { metadata, data: object.objectPayload }
-}
-
-function getCaptureTimestampMicros(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined
-  }
-  return value
 }

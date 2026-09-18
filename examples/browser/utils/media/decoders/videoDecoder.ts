@@ -4,8 +4,9 @@ import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc, SubgroupWorkerM
 import { createBitrateLogger } from '../bitrate'
 import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
-import { bytesToBase64, readLocHeader } from '../loc'
-import { isTerminalStatus } from '../objectStatus'
+import { readLocHeader } from '../loc'
+import { buildVideoChunkFromLoc } from '../locChunk'
+import { trackSubgroupObjectId } from '../subgroupObjectId'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   postTelemetry({ type: 'bitrate', kbps })
@@ -853,18 +854,14 @@ function materializeDirectObject(
   object: SubgroupObjectWithLoc,
   onReceiveLatency?: (latencyMs: number) => void
 ): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
-  const subgroupId = normalizeSubgroupId(object.subgroupId)
-  const objectId = assignDirectObjectId(groupId, subgroupId, object.objectIdDelta)
-  if (isTerminalStatus(object.objectStatus)) {
-    directLastObjectIds.delete(makeSubgroupKey(groupId, subgroupId))
-  }
+  const objectId = trackSubgroupObjectId(directLastObjectIds, groupId, object)
   if (!object.objectPayloadLength) {
     return null
   }
 
-  const locMetadata = readLocHeader(object.locHeader)
-  const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
-  const parsed = buildChunkFromLoc(object, objectId)
+  const loc = readLocHeader(object.locHeader)
+  const captureTimestampMicros = loc.captureTimestampMicros
+  const parsed = buildVideoChunkFromLoc(loc, object.objectPayload, objectId)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
@@ -880,44 +877,6 @@ function materializeDirectObject(
       localPTS: performance.timeOrigin + performance.now()
     }
   }
-}
-
-function assignDirectObjectId(groupId: bigint, subgroupId: bigint, objectIdDelta: bigint): bigint {
-  const key = makeSubgroupKey(groupId, subgroupId)
-  const previousObjectId = directLastObjectIds.get(key)
-  const objectId = previousObjectId === undefined ? objectIdDelta : previousObjectId + objectIdDelta + 1n
-  directLastObjectIds.set(key, objectId)
-  return objectId
-}
-
-function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
-  return subgroupId ?? 0n
-}
-
-function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
-  return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-function buildChunkFromLoc(
-  object: SubgroupObjectWithLoc,
-  objectId: bigint
-): { metadata: ChunkMetadata; data: Uint8Array } {
-  const loc = readLocHeader(object.locHeader)
-  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
-  const metadata: ChunkMetadata = {
-    type: objectId === 0n ? 'key' : 'delta',
-    timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
-    duration: null,
-    descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined
-  }
-  return { metadata, data: object.objectPayload }
-}
-
-function getCaptureTimestampMicros(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined
-  }
-  return value
 }
 
 async function decode(
