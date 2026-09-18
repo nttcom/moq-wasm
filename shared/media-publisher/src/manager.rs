@@ -15,20 +15,34 @@ use mediapack::{
     aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
 };
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, QUIC, Session, SessionEvent,
-    TrackWriter, TransportProtocol, TransportSendError, WEBTRANSPORT,
+    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
+    FetchObjectField, GroupOrder, QUIC, Session, SessionEvent, TrackWriter, TransportProtocol,
+    TransportSendError, WEBTRANSPORT, wire::FetchParams,
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinHandle};
 
-pub(crate) const VIDEO_TRACK_NAME: &str = "video";
+use crate::{
+    object_cache::{CachedObject, FetchRange, ObjectCache},
+    object_numbering::{ObjectNumbering, Placement},
+};
+
+pub const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
 const CATALOG_TRACK_NAME: &str = "catalog";
 pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
 const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
-/// FETCH_ERROR code NOT_SUPPORTED, draft-ietf-moq-transport-14 §13.1.5.
+/// FETCH_ERROR codes, draft-ietf-moq-transport-14 §9.18.
 const FETCH_NOT_SUPPORTED: u64 = 0x3;
+const FETCH_TRACK_DOES_NOT_EXIST: u64 = 0x4;
+const FETCH_INVALID_RANGE: u64 = 0x5;
+const FETCH_NO_OBJECTS: u64 = 0x6;
+/// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
+/// forwards for an evicted or never-cached range can still be answered here.
+const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(30);
+const FETCH_PUBLISHER_PRIORITY: u8 = 128;
+const FETCH_SUBGROUP_ID: u64 = 0;
 
 #[derive(Debug, Clone)]
 pub struct MoqtTarget {
@@ -47,10 +61,13 @@ struct ManagerState {
     backend: Option<Arc<PublisherBackend>>,
 }
 
+type TrackKey = (String, String);
+
 struct BackendState<T: TransportProtocol> {
     announced_namespaces: HashSet<String>,
-    tracks: HashMap<(String, String), Option<TrackWriter<T>>>,
-    subscribed_tracks: HashMap<u64, (String, String)>,
+    tracks: HashMap<TrackKey, TrackState<T>>,
+    subscribed_tracks: HashMap<u64, TrackKey>,
+    fetches: HashMap<u64, JoinHandle<()>>,
     catalogs: HashMap<String, CatalogMetadata>,
     disconnected: bool,
 }
@@ -61,9 +78,56 @@ impl<T: TransportProtocol> Default for BackendState<T> {
             announced_namespaces: HashSet::new(),
             tracks: HashMap::new(),
             subscribed_tracks: HashMap::new(),
+            fetches: HashMap::new(),
             catalogs: HashMap::new(),
             disconnected: false,
         }
+    }
+}
+
+impl<T: TransportProtocol> BackendState<T> {
+    fn track_mut(&mut self, key: &TrackKey) -> &mut TrackState<T> {
+        self.tracks
+            .entry(key.clone())
+            .or_insert_with(|| TrackState::new(now_unix().as_micros() as u64))
+    }
+
+    fn catalog_writer_ready(&self, namespace_path: &str) -> bool {
+        self.tracks
+            .get(&(namespace_path.to_string(), CATALOG_TRACK_NAME.to_string()))
+            .is_some_and(|track| track.writer.is_some())
+    }
+}
+
+/// Objects are numbered and cached from the first one the producer hands over,
+/// so the FETCH cache also covers the time before the first subscriber; the
+/// writer exists only while a subscription does and is taken out of its slot
+/// for the duration of a write.
+struct TrackState<T: TransportProtocol> {
+    numbering: ObjectNumbering,
+    cache: ObjectCache,
+    subscribed: bool,
+    writer: Option<TrackWriter<T>>,
+}
+
+impl<T: TransportProtocol> TrackState<T> {
+    fn new(first_group_id: u64) -> Self {
+        Self {
+            numbering: ObjectNumbering::new(first_group_id),
+            cache: ObjectCache::new(FETCH_CACHE_RETENTION),
+            subscribed: false,
+            writer: None,
+        }
+    }
+
+    fn subscribe(&mut self, writer: TrackWriter<T>) {
+        self.subscribed = true;
+        self.writer = Some(writer);
+    }
+
+    fn unsubscribe(&mut self) {
+        self.subscribed = false;
+        self.writer = None;
     }
 }
 
@@ -92,7 +156,7 @@ impl VideoTrackInfo {
     }
 }
 
-pub(crate) fn cmaf_track_name(track_name: &str) -> String {
+pub fn cmaf_track_name(track_name: &str) -> String {
     format!("{track_name}{CMAF_TRACK_SUFFIX}")
 }
 
@@ -102,14 +166,14 @@ struct CatalogMetadata {
     audio_config: Option<AudioSpecificConfig>,
 }
 
-pub(crate) struct OutgoingObject {
-    pub(crate) group: GroupBoundary,
-    pub(crate) extension_headers: ExtensionHeaders,
-    pub(crate) payload: Bytes,
+pub struct OutgoingObject {
+    pub group: GroupBoundary,
+    pub extension_headers: ExtensionHeaders,
+    pub payload: Bytes,
 }
 
 impl OutgoingObject {
-    pub(crate) fn plain(group: GroupBoundary, payload: Bytes) -> Self {
+    pub fn plain(group: GroupBoundary, payload: Bytes) -> Self {
         Self {
             group,
             extension_headers: ExtensionHeaders::default(),
@@ -119,7 +183,7 @@ impl OutgoingObject {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum GroupBoundary {
+pub enum GroupBoundary {
     /// Only inside an open group; the object is dropped when there is none,
     /// because a group must not start on it.
     Within,
@@ -377,17 +441,12 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         let mut guard = state.lock().await;
                         guard.catalogs.entry(namespace.clone()).or_default();
                         let key = (namespace.clone(), track_name.clone());
-                        let first_group_id = guard
-                            .tracks
-                            .get(&key)
-                            .and_then(|slot| slot.as_ref())
-                            .map(TrackWriter::next_group_id)
-                            .unwrap_or_else(|| now_unix().as_micros() as u64);
+                        let track = guard.track_mut(&key);
                         let writer = TrackWriter::new(
                             session.publisher().create_stream(&publication),
-                            first_group_id,
+                            track.numbering.next_group_id(),
                         );
-                        guard.tracks.insert(key.clone(), Some(writer));
+                        track.subscribe(writer);
                         guard.subscribed_tracks.insert(request_id, key);
                         drop(guard);
                         tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
@@ -402,7 +461,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         let mut guard = state.lock().await;
                         match guard.subscribed_tracks.remove(&request_id) {
                             Some(key) => {
-                                guard.tracks.remove(&key);
+                                if let Some(track) = guard.tracks.get_mut(&key) {
+                                    track.unsubscribe();
+                                }
                                 tracing::info!(request_id, namespace = %key.0, track_name = %key.1, "UNSUBSCRIBE received; track released");
                             }
                             None => {
@@ -423,14 +484,19 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     }
                     SessionEvent::Fetch(handler) => {
                         let request_id = handler.request_id;
-                        if let Err(err) = handler
-                            .error(
-                                FETCH_NOT_SUPPORTED,
-                                "live ingest does not serve FETCH".to_string(),
-                            )
-                            .await
-                        {
-                            tracing::warn!(request_id, ?err, "failed to reject FETCH");
+                        let mut guard = state.lock().await;
+                        let task = tokio::spawn(Self::serve_fetch(
+                            session.clone(),
+                            state.clone(),
+                            handler,
+                        ));
+                        guard.fetches.insert(request_id, task);
+                    }
+                    SessionEvent::FetchCancel(handler) => {
+                        let request_id = handler.request_id();
+                        if let Some(task) = state.lock().await.fetches.remove(&request_id) {
+                            task.abort();
+                            tracing::info!(request_id, "FETCH_CANCEL received; response aborted");
                         }
                     }
                     event @ (SessionEvent::GoAway(_)
@@ -439,7 +505,6 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     | SessionEvent::PublishNamespaceCancel(_)
                     | SessionEvent::PublishDone(_)
                     | SessionEvent::SubscribeUpdate(_)
-                    | SessionEvent::FetchCancel(_)
                     | SessionEvent::TrackStatus(_)) => {
                         tracing::debug!(?event, "unhandled control message");
                     }
@@ -479,28 +544,130 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         object: OutgoingObject,
     ) -> Result<()> {
         let key = (namespace.join("/"), track_name.to_string());
-        let mut writer = {
+        let (placement, writer) = {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            match guard.tracks.get_mut(&key).and_then(Option::take) {
-                Some(writer) => writer,
-                None => return Ok(()),
-            }
+            let track = guard.track_mut(&key);
+            let Some(placement) = track.numbering.place(object.group)? else {
+                return Ok(());
+            };
+            track.cache.insert(CachedObject {
+                location: placement.location,
+                extension_headers: object.extension_headers.clone(),
+                payload: object.payload.clone(),
+            });
+            (placement, track.writer.take())
         };
-        let result = write_object(&mut writer, object).await;
+        let Some(mut writer) = writer else {
+            return Ok(());
+        };
+        let result = write_object(&mut writer, placement, object).await;
+        let mut guard = self.state.lock().await;
+        let Some(track) = guard.tracks.get_mut(&key) else {
+            return result;
+        };
         if let Err(error) = &result
             && is_stopped_by_peer(error)
         {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
-            self.state.lock().await.tracks.remove(&key);
+            track.unsubscribe();
             return Ok(());
         }
-        if let Some(slot) = self.state.lock().await.tracks.get_mut(&key) {
-            *slot = Some(writer);
+        if track.subscribed {
+            track.writer = Some(writer);
         }
         result
+    }
+
+    async fn serve_fetch(
+        session: Arc<Session<T>>,
+        state: Arc<Mutex<BackendState<T>>>,
+        handler: FetchHandler<T>,
+    ) {
+        let request_id = handler.request_id;
+        if let Err(err) = Self::respond_to_fetch(&session, &state, &handler).await {
+            tracing::warn!(request_id, ?err, "failed to serve FETCH");
+        }
+        state.lock().await.fetches.remove(&request_id);
+    }
+
+    async fn respond_to_fetch(
+        session: &Session<T>,
+        state: &Mutex<BackendState<T>>,
+        handler: &FetchHandler<T>,
+    ) -> Result<()> {
+        let FetchParams::Standalone {
+            track_namespace,
+            track_name,
+            start_location,
+            end_location,
+        } = &handler.fetch.fetch_params
+        else {
+            return Ok(handler
+                .error(
+                    FETCH_NOT_SUPPORTED,
+                    "only standalone FETCH is served".to_string(),
+                )
+                .await?);
+        };
+        let key = (track_namespace.join("/"), track_name.clone());
+        let range = state
+            .lock()
+            .await
+            .tracks
+            .get(&key)
+            .map(|track| track.cache.resolve(*start_location, *end_location));
+        let (objects, end_location) = match range {
+            None => {
+                return Ok(handler
+                    .error(
+                        FETCH_TRACK_DOES_NOT_EXIST,
+                        "track not published".to_string(),
+                    )
+                    .await?);
+            }
+            Some(FetchRange::InvalidRange) => {
+                return Ok(handler
+                    .error(FETCH_INVALID_RANGE, "invalid range".to_string())
+                    .await?);
+            }
+            Some(FetchRange::NoObjects) => {
+                return Ok(handler
+                    .error(FETCH_NO_OBJECTS, "no cached objects in range".to_string())
+                    .await?);
+            }
+            Some(FetchRange::Serve {
+                objects,
+                end_location,
+            }) => (objects, end_location),
+        };
+        tracing::info!(
+            request_id = handler.request_id,
+            namespace = %key.0,
+            track_name = %key.1,
+            objects = objects.len(),
+            "FETCH served from the publisher cache"
+        );
+        handler.ok(false, end_location).await?;
+        let sender = session
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await?;
+        for object in in_group_order(objects, handler.group_order) {
+            sender
+                .send(FetchObjectField::new(
+                    object.location.group_id,
+                    FETCH_SUBGROUP_ID,
+                    object.location.object_id,
+                    FETCH_PUBLISHER_PRIORITY,
+                    object.extension_headers,
+                    FetchObject::Payload(object.payload),
+                ))
+                .await?;
+        }
+        sender.close().await
     }
 
     async fn update_video_catalog(
@@ -521,13 +688,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             if changed {
                 metadata.video_tracks.insert(track_name.to_string(), info);
             }
-            changed
-                && matches!(
-                    guard
-                        .tracks
-                        .get(&(namespace_path.clone(), CATALOG_TRACK_NAME.to_string())),
-                    Some(Some(_))
-                )
+            changed && guard.catalog_writer_ready(&namespace_path)
         };
 
         if should_send {
@@ -554,13 +715,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             if changed {
                 metadata.audio_config = Some(config);
             }
-            changed
-                && matches!(
-                    guard
-                        .tracks
-                        .get(&(namespace_path.clone(), CATALOG_TRACK_NAME.to_string())),
-                    Some(Some(_))
-                )
+            changed && guard.catalog_writer_ready(&namespace_path)
         };
 
         if should_send {
@@ -586,7 +741,11 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             .unwrap_or_default();
         let payload = build_catalog_payload(namespace_path, &metadata)?;
         tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
-        let Some(Some(writer)) = guard.tracks.get_mut(&key) else {
+        let Some(writer) = guard
+            .tracks
+            .get_mut(&key)
+            .and_then(|track| track.writer.as_mut())
+        else {
             return Ok(());
         };
         writer
@@ -604,28 +763,37 @@ impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
     }
 }
 
+/// A writer created while a group is open waits for the next group start, so
+/// the object ids it sends equal the ids the cache assigned.
 async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
+    placement: Placement,
     object: OutgoingObject,
 ) -> Result<()> {
-    match object.group {
-        GroupBoundary::Within if writer.groups() == 0 => return Ok(()),
-        GroupBoundary::Within => {}
-        GroupBoundary::Join if writer.groups() > 0 => {}
-        GroupBoundary::Join | GroupBoundary::Next => {
-            writer.start_group().await.context("start group")?;
-        }
-        GroupBoundary::At(group_id) => {
-            writer
-                .start_group_at(group_id)
-                .await
-                .context("start group at the aligned id")?;
-        }
+    if placement.starts_group {
+        writer
+            .start_group_at(placement.location.group_id)
+            .await
+            .context("start group")?;
+    } else if writer.current_group_id() != Some(placement.location.group_id) {
+        return Ok(());
     }
     writer
         .write_with_extension_headers(object.payload, object.extension_headers)
         .await
         .context("send subgroup object")
+}
+
+fn in_group_order(mut objects: Vec<CachedObject>, order: GroupOrder) -> Vec<CachedObject> {
+    if order == GroupOrder::Descending {
+        objects.sort_by(|a, b| {
+            b.location
+                .group_id
+                .cmp(&a.location.group_id)
+                .then(a.location.object_id.cmp(&b.location.object_id))
+        });
+    }
+    objects
 }
 
 fn is_supported_track(track_name: &str, metadata: Option<&CatalogMetadata>) -> bool {

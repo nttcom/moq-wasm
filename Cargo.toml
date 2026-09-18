@@ -5,6 +5,7 @@ members = [
     'shared/mediapack',
     'shared/transcode',
     'shared/media-streaming-format',
+    'shared/media-publisher',
     'moqt',
     'relay',
     'examples/rust/manual-client',
@@ -18,6 +19,7 @@ members = [
     'examples/cross-protocol-test/publisher',
     'examples/cross-protocol-test/quic-subscriber',
     'bindings/wasm',
+    'bindings/gstreamer',
     'bridges/live-ingest',
     'bridges/onvif',
 ]

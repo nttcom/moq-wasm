@@ -9,7 +9,7 @@ const REMEMBERED_KEYFRAMES: usize = 64;
 /// track assigns an id to each of its keyframes here, and renditions, whose
 /// keyframes the transcoder forces onto the same presentation times, look the
 /// id up instead of numbering on their own.
-pub(crate) struct GroupAlignment {
+pub struct GroupAlignment {
     inner: Mutex<Inner>,
 }
 
@@ -42,7 +42,7 @@ impl GroupAlignment {
         group_id
     }
 
-    pub(crate) fn aligned(&self, presentation_us: u64) -> Option<u64> {
+    pub fn aligned(&self, presentation_us: u64) -> Option<u64> {
         self.inner
             .lock()
             .expect("group alignment lock")
@@ -51,7 +51,7 @@ impl GroupAlignment {
             .copied()
     }
 
-    pub(crate) fn nearest_keyframe_us(&self, presentation_us: u64) -> Option<u64> {
+    pub fn nearest_keyframe_us(&self, presentation_us: u64) -> Option<u64> {
         let inner = self.inner.lock().expect("group alignment lock");
         let before = inner
             .by_presentation_time

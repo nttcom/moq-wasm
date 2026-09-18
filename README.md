@@ -35,6 +35,7 @@ make relay
 make browser
 make chrome
 make live-ingest
+make gst-srt-publish   # SRT -> MoQT through the GStreamer moqtsink plugin
 
 # For Linux users
 make chrome:linux

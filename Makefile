@@ -5,8 +5,11 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
+GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
+GST_SRT_ADDR ?= 0.0.0.0:9000
+GST_NAMESPACE ?= anon/live/test
 
-.PHONY: relay browser chrome chrome\:linux live-ingest onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -38,6 +41,19 @@ live-ingest:
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
 		--moqt-url $(LIVE_INGEST_MOQT_URL) $(if $(LIVE_INGEST_TRANSCODE),--transcode,)
+
+# GStreamer plugin (bindings/gstreamer): `moqtsink` publishes H.264/AAC into MoQT.
+gst-plugin:
+	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p gst-plugin-moqt
+
+# Listens for SRT (MPEG-TS) on GST_SRT_ADDR and publishes it under GST_NAMESPACE.
+gst-srt-publish: gst-plugin
+	@echo "Using MoQT relay URL: $(GST_MOQT_URL)"
+	GST_PLUGIN_PATH=target/debug gst-launch-1.0 -e \
+		srtsrc uri="srt://$(GST_SRT_ADDR)?mode=listener" ! tsdemux name=demux \
+		demux. ! queue ! h264parse config-interval=-1 ! moqt. \
+		demux. ! queue ! aacparse ! moqt. \
+		moqtsink name=moqt relay-url=$(GST_MOQT_URL) namespace=$(GST_NAMESPACE)
 
 ## Media helpers
 relay-certs:

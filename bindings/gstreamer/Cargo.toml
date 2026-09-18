@@ -1,0 +1,21 @@
+[package]
+name = "gst-plugin-moqt"
+version = "0.1.0"
+edition = "2024"
+description = "GStreamer sink that publishes H.264 video and AAC audio into a MoQT relay"
+repository = "https://github.com/nttcom/moq-wasm"
+license = "MIT"
+
+[lib]
+name = "gstmoqt"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+gstreamer = "0.25"
+media-publisher = { path = "../../shared/media-publisher" }
+mediapack = { path = "../../shared/mediapack" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
