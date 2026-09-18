@@ -23,7 +23,6 @@ struct Entry {
 pub(crate) struct ObjectCache {
     retention: Duration,
     entries: VecDeque<Entry>,
-    largest: Option<Location>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -41,7 +40,6 @@ impl ObjectCache {
         Self {
             retention,
             entries: VecDeque::new(),
-            largest: None,
         }
     }
 
@@ -50,7 +48,6 @@ impl ObjectCache {
     }
 
     pub(crate) fn insert_at(&mut self, object: CachedObject, now: Instant) {
-        self.largest = Some(object.location);
         self.entries.push_back(Entry {
             object,
             cached_at: now,
@@ -72,7 +69,7 @@ impl ObjectCache {
         if explicit_end_before_or_equal_start(start, end) {
             return FetchRange::InvalidRange;
         }
-        let Some(largest) = self.largest else {
+        let Some(largest) = self.entries.back().map(|entry| entry.object.location) else {
             return FetchRange::NoObjects;
         };
         if start > largest {

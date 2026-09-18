@@ -36,12 +36,7 @@ pub struct MediaPublisher {
     audio_group_duration_us: u64,
     audio_config: Option<AudioSpecificConfig>,
     timeline: MediaTimeline,
-    /// The LOC capture timestamp is wall-clock time of the sample, so the muxer
-    /// is seeded with the wall-clock time of presentation time zero once the
-    /// first sample arrives. Renditions share it so every track stamps the same
-    /// instant for the same presentation time.
-    loc: Arc<OnceLock<LocMuxer>>,
-    alignment: Arc<GroupAlignment>,
+    timing: SharedTiming,
     video_cmaf: Option<Fmp4TrackMuxer>,
     audio_cmaf: Option<Fmp4TrackMuxer>,
 }
@@ -55,8 +50,10 @@ impl MediaPublisher {
             audio_group_duration_us: 0,
             audio_config: None,
             timeline: MediaTimeline::default(),
-            loc: Arc::new(OnceLock::new()),
-            alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
+            timing: SharedTiming {
+                loc: Arc::new(OnceLock::new()),
+                alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
+            },
             video_cmaf: None,
             audio_cmaf: None,
         }
@@ -71,10 +68,7 @@ impl MediaPublisher {
     }
 
     pub fn shared_timing(&self) -> SharedTiming {
-        SharedTiming {
-            loc: self.loc.clone(),
-            alignment: self.alignment.clone(),
-        }
+        self.timing.clone()
     }
 
     pub async fn push(&mut self, event: &MediaEvent) -> Result<()> {
@@ -111,7 +105,7 @@ impl MediaPublisher {
         let captured_at = object.capture_timestamp();
         let keyframe_group = sample
             .is_keyframe
-            .then(|| self.alignment.keyframe(sample.pts.micros()));
+            .then(|| self.timing.alignment.keyframe(sample.pts.micros()));
         self.moqt
             .send_object(
                 &self.namespace,
@@ -139,7 +133,11 @@ impl MediaPublisher {
             return Ok(());
         };
         let group = if fragment.is_keyframe {
-            GroupBoundary::At(self.alignment.keyframe(fragment.presentation_time.micros()))
+            GroupBoundary::At(
+                self.timing
+                    .alignment
+                    .keyframe(fragment.presentation_time.micros()),
+            )
         } else {
             GroupBoundary::Within
         };
@@ -223,7 +221,8 @@ impl MediaPublisher {
     }
 
     fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {
-        self.loc
+        self.timing
+            .loc
             .get_or_init(|| LocMuxer::new(wall_clock().saturating_sub(presentation_time)))
     }
 

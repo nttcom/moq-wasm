@@ -1,13 +1,14 @@
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow};
+use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::{glib, prelude::*, subclass::prelude::*};
 use media_publisher::{MediaPublisher, MoqtManager, MoqtTarget};
-use mediapack::Timestamp;
+use mediapack::{AudioSample, MediaEvent, Timestamp};
 use tokio::runtime::Runtime;
 
-use crate::media_input::{VideoInput, audio_config, audio_sample};
+use crate::media_input::{VideoInput, audio_config};
 
 const VIDEO_PAD: &str = "video";
 const AUDIO_PAD: &str = "audio";
@@ -299,7 +300,10 @@ impl MoqtSink {
                 .video
                 .push(map.as_slice(), pts, dts)
                 .map_err(|err| self.stream_error(err))?,
-            _ => vec![audio_sample(map.as_slice(), pts)],
+            _ => vec![MediaEvent::Audio(AudioSample {
+                data: Bytes::copy_from_slice(map.as_slice()),
+                pts,
+            })],
         };
         for event in &events {
             started

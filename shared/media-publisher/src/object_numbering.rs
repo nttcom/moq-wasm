@@ -8,7 +8,6 @@ use crate::manager::GroupBoundary;
 /// first group may start at any chosen id; later chosen ids must move forward.
 pub(crate) struct ObjectNumbering {
     next_group_id: u64,
-    started: bool,
     open_group: Option<OpenGroup>,
 }
 
@@ -27,7 +26,6 @@ impl ObjectNumbering {
     pub(crate) fn new(first_group_id: u64) -> Self {
         Self {
             next_group_id: first_group_id,
-            started: false,
             open_group: None,
         }
     }
@@ -46,7 +44,7 @@ impl ObjectNumbering {
             GroupBoundary::Next => Ok(Some(self.start_group(self.next_group_id))),
             GroupBoundary::At(group_id) => {
                 ensure!(
-                    !self.started || group_id >= self.next_group_id,
+                    self.open_group.is_none() || group_id >= self.next_group_id,
                     "group {group_id} precedes the next group {}",
                     self.next_group_id
                 );
@@ -69,7 +67,6 @@ impl ObjectNumbering {
     }
 
     fn start_group(&mut self, group_id: u64) -> Placement {
-        self.started = true;
         self.open_group = Some(OpenGroup {
             group_id,
             next_object_id: 1,

@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use mediapack::{
-    AudioSample, MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig,
-    h264::ParameterSetTracker,
+    MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig, h264::ParameterSetTracker,
 };
 
 /// H.264 arrives as Annex-B access units. Parameter sets have to travel in band
@@ -48,13 +46,6 @@ pub(crate) fn audio_config(codec_data: &[u8]) -> Result<MediaEvent> {
     let config = AudioSpecificConfig::parse(codec_data)
         .context("parse AudioSpecificConfig from the audio caps codec_data")?;
     Ok(MediaEvent::AudioConfig(config))
-}
-
-pub(crate) fn audio_sample(data: &[u8], pts: Timestamp) -> MediaEvent {
-    MediaEvent::Audio(AudioSample {
-        data: Bytes::copy_from_slice(data),
-        pts,
-    })
 }
 
 #[cfg(test)]

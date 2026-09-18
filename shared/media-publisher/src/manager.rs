@@ -484,13 +484,12 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                     }
                     SessionEvent::Fetch(handler) => {
                         let request_id = handler.request_id;
+                        let mut guard = state.lock().await;
                         let task = tokio::spawn(Self::serve_fetch(
                             session.clone(),
                             state.clone(),
                             handler,
                         ));
-                        let mut guard = state.lock().await;
-                        guard.fetches.retain(|_, task| !task.is_finished());
                         guard.fetches.insert(request_id, task);
                     }
                     SessionEvent::FetchCancel(handler) => {
