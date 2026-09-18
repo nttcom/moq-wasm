@@ -86,7 +86,7 @@ cargo test -p moq-cli
 ## 設計メモ
 
 - **catalog 取得**: 後から join した subscriber に届けるため publisher が各キーフレーム（group 境界）で catalog を再送している。正しい形は「一度だけ publish、subscriber は joining fetch（`Subscriber::fetch_relative_joining`）で取得」。
-- **LOC payload**: payload=生 annex-b。Object Header Extension に Capture Timestamp を 0xB（ImmutableExtensions）で `"loc:"+JSON(packages::loc::LocHeader)` として入れている 。spec §2.3.1.1 は本来 Capture Timestamp を ID=2 の bare varint で送る。moqt crate の `ExtensionHeaders` が3種（`0x3c`/`0x3e`/`0xb`）ハードコードで任意 ID を送れないため 0xB 相乗り。
+- **LOC payload**: payload=生 annex-b。Object Header Extension に Capture Timestamp を ID=2 の varint として入れる（spec §2.3.1.1、`mediapack::loc`）。
 - spec: `spec/draft-ietf-moq-loc-01.txt`(LOC) / `draft-ietf-moq-msf-01.txt`(MSF) / `draft-ietf-moq-transport-14.txt`(MoQT)
 
 ## 実装状況
@@ -98,5 +98,5 @@ cargo test -p moq-cli
 - [ ] catalog を joining fetch で取得し、publisher は catalog を一度だけ publish
 - [ ] VP8 / VP9（LOC 経路の codec splitter）
 - [ ] `--container cmaf`（CMAF パススルー・MSE 再生）
-- [x] payload JSON 廃止 → 生 annex-b ＋ Capture Timestamp を 0xB 拡張ヘッダに（browser 互換の `"loc:"+JSON` 相乗り）
-- [ ] spec-true LOC 化（Capture Timestamp を Object Header Extension ID=2 varint で送る。moqt の任意 ID 拡張対応が前提）
+- [x] payload JSON 廃止 → 生 annex-b
+- [x] spec-true LOC 化（Capture Timestamp を Object Header Extension ID=2 varint で送る）

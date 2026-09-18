@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use mediapack::loc::{CAPTURE_TIMESTAMP_ID, LocExtension, to_extension_headers};
 use moqt::{PublishOption, QUIC, TrackWriter};
 use tokio::io::AsyncReadExt;
 use tracing::info;
 
 use crate::catalog;
 use crate::cli::{Container, PublishArgs};
-use crate::loc;
 use crate::media::{Frame, h264::AnnexBFramer};
 use crate::transport::{connect_relay, session_closed};
 
@@ -97,8 +97,16 @@ pub async fn run(args: PublishArgs) -> Result<()> {
             }
             let origin =
                 *capture_origin.get_or_insert_with(|| unix_micros_now() - frame.timestamp.0);
-            let capture = loc::capture_timestamp_ext((origin + frame.timestamp.0).max(0) as u64);
-            media.write(frame.payload, vec![capture]).await?;
+            let capture_timestamp = LocExtension::varint(
+                CAPTURE_TIMESTAMP_ID,
+                (origin + frame.timestamp.0).max(0) as u64,
+            );
+            media
+                .write_with_extension_headers(
+                    frame.payload,
+                    to_extension_headers(&[capture_timestamp]),
+                )
+                .await?;
             frame_index += 1;
         }
 

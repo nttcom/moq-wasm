@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 moqt = { path = "../../../moqt" }
 media-streaming-format = { path = "../../../shared/media-streaming-format" }
-packages = { path = "../../../shared/packages" }
+mediapack = { path = "../../../shared/mediapack", features = ["moqt"] }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1.44"
