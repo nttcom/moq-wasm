@@ -20,25 +20,6 @@ export function removeRemoteMember(room: Room, userId: string): Room {
   return { ...room, remoteMembers: updatedMembers }
 }
 
-export function resetSubscriptionsOnError(room: Room, userId: string): Room {
-  const member = room.remoteMembers.get(userId)
-  if (!member) {
-    return room
-  }
-  const updatedMember: RemoteMember = {
-    ...member,
-    subscribedTracks: {
-      chat: { ...member.subscribedTracks.chat, isSubscribing: false },
-      audio: { ...member.subscribedTracks.audio, isSubscribing: false },
-      video: { ...member.subscribedTracks.video, isSubscribing: false },
-      screenshare: { ...member.subscribedTracks.screenshare, isSubscribing: false }
-    }
-  }
-  const updatedMembers = new Map(room.remoteMembers)
-  updatedMembers.set(userId, updatedMember)
-  return { ...room, remoteMembers: updatedMembers }
-}
-
 export function updateSubscriptionState(
   room: Room,
   subscribeId: bigint,
@@ -73,18 +54,6 @@ export function updateSubscriptionState(
   }
 
   return updated ? { ...room, remoteMembers: updatedMembers } : room
-}
-
-export function alreadySubscribing(existingMember?: RemoteMember): boolean {
-  if (!existingMember) {
-    return false
-  }
-  return (
-    existingMember.subscribedTracks.chat.isSubscribing ||
-    existingMember.subscribedTracks.video.isSubscribing ||
-    existingMember.subscribedTracks.screenshare.isSubscribing ||
-    existingMember.subscribedTracks.audio.isSubscribing
-  )
 }
 
 interface BuildRemoteMemberOptions {
