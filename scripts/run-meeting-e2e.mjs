@@ -8,13 +8,13 @@
 // (e.g. from a prior test run or a sibling compose project), the runner re-uses
 // them and skips docker compose up to avoid port-allocation conflicts.
 
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
-  pipeOutput,
   registerSignalHandlers,
   runCommand,
   spawnProcess,
   terminateProcess,
+  waitForOutput,
 } from "./browser-e2e-process.mjs";
 import {
   assertPathExists,
@@ -39,7 +39,6 @@ const composeServices = ["redis", "vts", "relay-a", "relay-b"];
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
-// Track whether we started docker services ourselves (so we can stop them).
 let ownedDockerServices = false;
 
 async function main() {
@@ -90,8 +89,6 @@ async function main() {
         "[setup] Relay ports 4433/4434 already occupied — reusing existing relay containers.",
       );
     } else {
-      // Reuse a prebuilt relay image when one is already present (e.g. pulled from
-      // the registry in CI, or built by a previous local run); otherwise build it.
       if (relayImageExists()) {
         console.error(
           "[setup] Reusing existing moqt-relay:local image (skipping build).",
@@ -127,9 +124,8 @@ async function main() {
     // we follow the compose logs until both emit "Relay server started".
     const relayReadyPromise = relaysAlreadyRunning
       ? Promise.resolve()
-      : waitForRelayReadyFollow(repoRoot, 180_000);
+      : waitForRelaysStarted();
 
-    // Start vite preview server.
     const vite = spawnProcess(
       "vite",
       resolveCommandName("npm"),
@@ -186,17 +182,11 @@ async function main() {
 }
 
 function getMeetingRelayUrl(envName, defaultUrl) {
-  const configuredUrl = process.env[envName];
-  const url = configuredUrl ?? resolveLocalRelayUrl(defaultUrl).toString();
-  return stripTrailingSlash(url);
+  const url =
+    process.env[envName] ?? resolveLocalRelayUrl(defaultUrl).toString();
+  return url.replace(/\/$/, "");
 }
 
-function stripTrailingSlash(url) {
-  return url.endsWith("/") ? url.slice(0, -1) : url;
-}
-
-// Return true if the relay image used by docker compose is already available
-// locally (pulled from the registry in CI, or built by an earlier run).
 function relayImageExists() {
   try {
     execFileSync("docker", ["image", "inspect", "moqt-relay:local"], {
@@ -208,14 +198,12 @@ function relayImageExists() {
   }
 }
 
-// Return true if docker containers already have UDP 4433 and 4434 bound.
 // Uses docker ps port output; not a UDP-level probe.
 function areRelayPortsAlreadyBound() {
   try {
     const out = execFileSync("docker", ["ps", "--format", "{{.Ports}}"], {
       encoding: "utf8",
     });
-    // Docker reports "0.0.0.0:4433->443/udp" style entries.
     const has4433 = out.includes(":4433->443/udp");
     const has4434 = out.includes(":4434->443/udp");
     return has4433 && has4434;
@@ -224,74 +212,21 @@ function areRelayPortsAlreadyBound() {
   }
 }
 
-// For newly-started containers: follow logs until two "Relay server started"
-// lines appear, then stop tailing.
-function waitForRelayReadyFollow(cwd, timeoutMs) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(
-      resolveCommandName("docker"),
-      ["compose", "logs", "--follow", "--no-color", "relay-a", "relay-b"],
-      {
-        cwd,
-        env: process.env,
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-
-    pipeOutput(child.stdout, process.stderr, "relay-logs");
-    pipeOutput(child.stderr, process.stderr, "relay-logs");
-
-    let buffer = "";
-    let found = 0;
-
-    const timer = setTimeout(() => {
-      cleanupChild();
-      rejectPromise(
-        new Error(
-          `Timed out waiting for ${2} relay(s) to become ready (found ${found}).`,
-        ),
-      );
-    }, timeoutMs);
-
-    const onData = (chunk) => {
-      buffer += chunk.toString();
-      const matches = buffer.match(/Relay server started/g);
-      found = matches ? matches.length : 0;
-      if (found >= 2) {
-        cleanupChild();
-        resolvePromise();
-      }
-    };
-
-    const onExit = (code) => {
-      clearTimeout(timer);
-      rejectPromise(
-        new Error(
-          `docker compose logs process exited before relays became ready (code ${code ?? "unknown"}).`,
-        ),
-      );
-    };
-
-    const cleanupChild = () => {
-      clearTimeout(timer);
-      child.off("exit", onExit);
-      // Stop tailing without killing the relay containers themselves.
-      try {
-        if (process.platform !== "win32" && typeof child.pid === "number") {
-          process.kill(-child.pid, "SIGTERM");
-        } else {
-          child.kill("SIGTERM");
-        }
-      } catch (_error) {
-        // ignore — child may have already exited
-      }
-    };
-
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    child.on("exit", onExit);
-  });
+async function waitForRelaysStarted() {
+  const logs = spawnProcess(
+    "relay-logs",
+    resolveCommandName("docker"),
+    ["compose", "logs", "--follow", "--no-color", "relay-a", "relay-b"],
+    { cwd: repoRoot },
+  );
+  childProcesses.push(logs);
+  await waitForOutput(
+    logs,
+    /Relay server started[\s\S]*Relay server started/,
+    "relays",
+    180_000,
+  );
+  await terminateProcess(logs);
 }
 
 main().catch((error) => {

@@ -32,7 +32,7 @@ export function spawnProcess(label, command, args, options) {
   return child;
 }
 
-export function pipeOutput(stream, destination, label) {
+function pipeOutput(stream, destination, label) {
   if (!stream) {
     return;
   }
