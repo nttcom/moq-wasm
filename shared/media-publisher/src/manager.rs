@@ -230,14 +230,17 @@ impl MoqtManager {
             .await
     }
 
+    /// Returns whether a subscriber received the object: the object is
+    /// numbered and cached either way, but none may be subscribed, or the
+    /// writer may still wait for the next group start.
     pub async fn send_object(
         &self,
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(target) = &self.target else {
-            return Ok(());
+            return Ok(false);
         };
 
         self.ensure_backend(target)
@@ -323,7 +326,7 @@ impl PublisherBackend {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match self {
             Self::Quic(publisher) => publisher.send_object(namespace, track_name, object).await,
             Self::WebTransport(publisher) => {
@@ -547,7 +550,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
         let (placement, writer) = {
             let mut guard = self.state.lock().await;
@@ -556,7 +559,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             }
             let track = guard.track_mut(&key);
             let Some(placement) = track.numbering.place(object.group)? else {
-                return Ok(());
+                return Ok(false);
             };
             track.cache.insert(CachedObject {
                 location: placement.location,
@@ -566,7 +569,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             (placement, track.writer.take())
         };
         let Some(mut writer) = writer else {
-            return Ok(());
+            return Ok(false);
         };
         let result = write_object(&mut writer, placement, object).await;
         let mut guard = self.state.lock().await;
@@ -578,7 +581,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
             track.unsubscribe();
-            return Ok(());
+            return Ok(false);
         }
         if track.subscribed {
             track.writer = Some(writer);
@@ -786,19 +789,20 @@ async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
     placement: Placement,
     object: OutgoingObject,
-) -> Result<()> {
+) -> Result<bool> {
     if placement.starts_group {
         writer
             .start_group_at(placement.location.group_id)
             .await
             .context("start group")?;
     } else if writer.current_group_id() != Some(placement.location.group_id) {
-        return Ok(());
+        return Ok(false);
     }
     writer
         .write_with_extension_headers(object.payload, object.extension_headers)
         .await
-        .context("send subgroup object")
+        .context("send subgroup object")?;
+    Ok(true)
 }
 
 fn in_group_order(mut objects: Vec<CachedObject>, order: GroupOrder) -> Vec<CachedObject> {

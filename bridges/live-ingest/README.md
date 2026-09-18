@@ -42,6 +42,15 @@ the next keyframe, instead of being published corrupt for every viewer's
 decoder to fail on. Each loss is logged as a warning, and the SRT statistics
 are logged when a stream ends.
 
+## Delivery log
+
+`RUST_LOG=info,media_publisher::delivery=debug` writes one line per sample as
+it enters the publisher (`stage="ingest"`, with its presentation time) and as
+a subscriber receives it (`stage="publish"`, with the namespace, group id and
+the LOC capture timestamp a viewer sees). The Live Viewer's delivery check
+(`npm --prefix examples/browser run e2e:live-viewer-delivery`) reads that log
+and reports every published sample the viewer did not receive.
+
 ## Track Format
 
 Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the

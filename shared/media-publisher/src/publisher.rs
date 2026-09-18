@@ -19,6 +19,11 @@ use crate::{
 };
 
 const AUDIO_TRACK: &str = "audio";
+/// One DEBUG line per sample as it enters (`ingest`) and as a subscriber
+/// receives it (`publish`, with the group id and LOC capture timestamp the
+/// subscriber sees), so that what a viewer received can be checked against
+/// what was sent: `RUST_LOG=media_publisher::delivery=debug`.
+const DELIVERY_LOG_TARGET: &str = "media_publisher::delivery";
 
 /// The clocks every track of one switching set stamps from, so renditions of
 /// the source video carry the same capture timestamp and group id for the same
@@ -98,6 +103,15 @@ impl MediaPublisher {
 
     async fn publish_video(&mut self, sample: &VideoSample) -> Result<()> {
         self.setup_namespace().await?;
+        tracing::debug!(
+            target: DELIVERY_LOG_TARGET,
+            stage = "ingest",
+            namespace = %self.namespace.join("/"),
+            track = VIDEO_TRACK_NAME,
+            pts_us = sample.pts.micros(),
+            bytes = sample.data.len(),
+            keyframe = sample.is_keyframe
+        );
         let Some(object) = self
             .loc_muxer(sample.pts)
             .push(&MediaEvent::Video(sample.clone()))
@@ -105,10 +119,12 @@ impl MediaPublisher {
             return Ok(());
         };
         let captured_at = object.capture_timestamp();
+        let bytes = object.payload.len();
         let keyframe_group = sample
             .is_keyframe
             .then(|| self.timing.alignment.keyframe(sample.pts.micros()));
-        self.moqt
+        let written = self
+            .moqt
             .send_object(
                 &self.namespace,
                 VIDEO_TRACK_NAME,
@@ -119,6 +135,23 @@ impl MediaPublisher {
                 },
             )
             .await?;
+        if written {
+            tracing::debug!(
+                target: DELIVERY_LOG_TARGET,
+                stage = "publish",
+                namespace = %self.namespace.join("/"),
+                track = VIDEO_TRACK_NAME,
+                group_id = self
+                    .timing
+                    .alignment
+                    .group_covering(sample.pts.micros())
+                    .unwrap_or_default(),
+                capture_us = captured_at.map_or(0, |at| at.micros()),
+                pts_us = sample.pts.micros(),
+                bytes,
+                keyframe = sample.is_keyframe
+            );
+        }
         self.publish_cmaf_video(sample).await?;
         let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
             return Ok(());
@@ -149,7 +182,8 @@ impl MediaPublisher {
                 &cmaf_track_name(VIDEO_TRACK_NAME),
                 OutgoingObject::plain(group, fragment.data),
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn publish_timeline(
@@ -166,7 +200,8 @@ impl MediaPublisher {
                 TIMELINE_TRACK_NAME,
                 OutgoingObject::plain(GroupBoundary::Next, Bytes::from(self.timeline.document()?)),
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     /// Audio before the first video keyframe has no group to belong to and is
@@ -176,6 +211,14 @@ impl MediaPublisher {
             .as_ref()
             .context("audio sample received before its AudioSpecificConfig")?;
         self.setup_namespace().await?;
+        tracing::debug!(
+            target: DELIVERY_LOG_TARGET,
+            stage = "ingest",
+            namespace = %self.namespace.join("/"),
+            track = AUDIO_TRACK,
+            pts_us = sample.pts.micros(),
+            bytes = sample.data.len()
+        );
         let Some(group) = self.audio_group(sample.pts.micros()) else {
             return Ok(());
         };
@@ -185,7 +228,10 @@ impl MediaPublisher {
         else {
             return Ok(());
         };
-        self.moqt
+        let capture_us = object.capture_timestamp().map_or(0, |at| at.micros());
+        let bytes = object.payload.len();
+        let written = self
+            .moqt
             .send_object(
                 &self.namespace,
                 AUDIO_TRACK,
@@ -196,6 +242,18 @@ impl MediaPublisher {
                 },
             )
             .await?;
+        if written {
+            tracing::debug!(
+                target: DELIVERY_LOG_TARGET,
+                stage = "publish",
+                namespace = %self.namespace.join("/"),
+                track = AUDIO_TRACK,
+                group_id = self.audio_group_id.unwrap_or_default(),
+                capture_us,
+                pts_us = sample.pts.micros(),
+                bytes
+            );
+        }
         self.publish_cmaf_audio(sample, group).await
     }
 
@@ -216,7 +274,8 @@ impl MediaPublisher {
                 &cmaf_track_name(AUDIO_TRACK),
                 OutgoingObject::plain(group, fragment.data),
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     fn loc_muxer(&self, presentation_time: Timestamp) -> &LocMuxer {

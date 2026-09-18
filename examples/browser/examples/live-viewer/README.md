@@ -61,7 +61,7 @@ published (dropped before the first keyframe or after a transport-stream
 loss). Run the bridge with the delivery log on and point the test at it:
 
 ```shell
-RUST_LOG=info,moqt_bridge_live_ingest::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
+RUST_LOG=info,media_publisher::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
 DELIVERY_BRIDGE_LOG=/tmp/live-ingest.log \
 DELIVERY_SECONDS=60 \
 MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \
