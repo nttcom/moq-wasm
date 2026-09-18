@@ -1,4 +1,5 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
+import { isTerminalStatus } from '../objectStatus'
 import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
@@ -224,13 +225,6 @@ function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
 
 function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-const OBJECT_STATUS_END_OF_GROUP = 3
-const OBJECT_STATUS_END_OF_TRACK = 4
-
-function isTerminalStatus(status: number | undefined): boolean {
-  return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
 }
 
 function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {

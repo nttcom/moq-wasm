@@ -1,11 +1,10 @@
 import { type ChunkMetadata } from './chunk'
 import { readLocHeader } from './loc'
 import { latencyMsFromCaptureMicros } from './clock'
+import { isTerminalStatus } from './objectStatus'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
 const DEFAULT_JITTER_BUFFER_SIZE = 1800
-const OBJECT_STATUS_END_OF_GROUP = 3
-const OBJECT_STATUS_END_OF_TRACK = 4
 
 export type AudioJitterBufferMode = 'ordered' | 'latest'
 
@@ -143,10 +142,6 @@ function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
 
 function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-function isTerminalStatus(status: number | undefined): boolean {
-  return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
 }
 
 function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {

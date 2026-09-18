@@ -5,6 +5,7 @@ import { createBitrateLogger } from '../bitrate'
 import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
 import { bytesToBase64, readLocHeader } from '../loc'
+import { isTerminalStatus } from '../objectStatus'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   postTelemetry({ type: 'bitrate', kbps })
@@ -895,10 +896,6 @@ function normalizeSubgroupId(subgroupId: bigint | undefined): bigint {
 
 function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
-}
-
-function isTerminalStatus(status: number | undefined): boolean {
-  return status === 3 || status === 4
 }
 
 function buildChunkFromLoc(
