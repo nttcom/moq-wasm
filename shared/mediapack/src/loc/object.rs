@@ -1,4 +1,6 @@
 use bytes::Bytes;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::sample::Timestamp;
 
@@ -10,12 +12,18 @@ pub const VIDEO_CONFIG_ID: u64 = 13;
 /// draft-ietf-moq-loc-01 §2.3: an even id carries a varint value and an odd id
 /// carries a length-prefixed byte string.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(Serialize, Deserialize),
+    serde(rename_all = "camelCase")
+)]
 pub enum LocValue {
     Varint(u64),
     Bytes(Bytes),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct LocExtension {
     pub id: u64,
     pub value: LocValue,
@@ -141,5 +149,28 @@ mod tests {
         // Act / Assert
         assert_eq!(object.capture_timestamp(), None);
         assert_eq!(object.video_config(), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serializes_extensions_as_id_and_tagged_value() {
+        // Arrange
+        let extensions = vec![
+            LocExtension::varint(CAPTURE_TIMESTAMP_ID, 7),
+            LocExtension::bytes(VIDEO_CONFIG_ID, Bytes::from_static(&[1, 2])),
+        ];
+
+        // Act
+        let json = serde_json::to_string(&extensions).unwrap();
+
+        // Assert
+        assert_eq!(
+            json,
+            r#"[{"id":2,"value":{"varint":7}},{"id":13,"value":{"bytes":[1,2]}}]"#
+        );
+        assert_eq!(
+            serde_json::from_str::<Vec<LocExtension>>(&json).unwrap(),
+            extensions
+        );
     }
 }
