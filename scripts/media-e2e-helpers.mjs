@@ -38,6 +38,22 @@ export function assertPathExists(path, label, helpText) {
   }
 }
 
+export function assertE2EPrerequisites() {
+  const helpText = "Run node scripts/setup-media-e2e.mjs first.";
+  assertPathExists(certPath, "TLS certificate", helpText);
+  assertPathExists(keyPath, "TLS private key", helpText);
+  assertPathExists(
+    `${jsDir}/node_modules`,
+    "examples/browser/node_modules",
+    helpText,
+  );
+  assertPathExists(
+    `${jsDir}/pkg/moqt_client_wasm.js`,
+    "bindings/wasm build output",
+    helpText,
+  );
+}
+
 export function getDefaultWebPort() {
   const rawValue = process.env.MEDIA_E2E_WEB_PORT ?? "4173";
   const value = Number(rawValue);

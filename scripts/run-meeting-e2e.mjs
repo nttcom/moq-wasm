@@ -13,14 +13,13 @@ import {
   registerSignalHandlers,
   runCommand,
   spawnProcess,
+  spawnViteServer,
   terminateProcess,
   waitForOutput,
 } from "./browser-e2e-process.mjs";
 import {
-  assertPathExists,
-  certPath,
+  assertE2EPrerequisites,
   ensureLinuxEnvironment,
-  keyPath,
   getDefaultBaseUrl,
   getDefaultWebPort,
   getErrorMessage,
@@ -43,26 +42,7 @@ let ownedDockerServices = false;
 
 async function main() {
   ensureLinuxEnvironment();
-  assertPathExists(
-    certPath,
-    "TLS certificate",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
-  assertPathExists(
-    keyPath,
-    "TLS private key",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
-  assertPathExists(
-    `${jsDir}/node_modules`,
-    "examples/browser/node_modules",
-    "Run npm install in examples/browser first.",
-  );
-  assertPathExists(
-    `${jsDir}/pkg/moqt_client_wasm.js`,
-    "bindings/wasm build output",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
+  assertE2EPrerequisites();
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
@@ -126,21 +106,7 @@ async function main() {
       ? Promise.resolve()
       : waitForRelaysStarted();
 
-    const vite = spawnProcess(
-      "vite",
-      resolveCommandName("npm"),
-      [
-        "exec",
-        "vite",
-        "--",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(webPort),
-        "--strictPort",
-      ],
-      { cwd: jsDir },
-    );
+    const vite = spawnViteServer(webPort);
     childProcesses.push(vite);
 
     await Promise.all([

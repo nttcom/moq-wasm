@@ -4,19 +4,18 @@ import {
   registerSignalHandlers,
   runCommand,
   spawnProcess,
+  spawnViteServer,
   terminateProcess,
   waitForOutput,
 } from "./browser-e2e-process.mjs";
 import {
-  assertPathExists,
-  certPath,
+  assertE2EPrerequisites,
   ensureLinuxEnvironment,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   getDefaultWebPort,
   getErrorMessage,
   jsDir,
-  keyPath,
   liveViewerPath,
   repoRoot,
   resolveCommandName,
@@ -30,26 +29,7 @@ const childProcesses = [];
 
 async function main() {
   ensureLinuxEnvironment();
-  assertPathExists(
-    certPath,
-    "TLS certificate",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
-  assertPathExists(
-    keyPath,
-    "TLS private key",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
-  assertPathExists(
-    `${jsDir}/node_modules`,
-    "examples/browser/node_modules",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
-  assertPathExists(
-    `${jsDir}/pkg/moqt_client_wasm.js`,
-    "bindings/wasm build output",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
+  assertE2EPrerequisites();
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
@@ -71,21 +51,7 @@ async function main() {
       cwd: repoRoot,
       env: { ...process.env, ...nativeRelayAuthEnv() },
     });
-    const vite = spawnProcess(
-      "vite",
-      resolveCommandName("npm"),
-      [
-        "exec",
-        "vite",
-        "--",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(webPort),
-        "--strictPort",
-      ],
-      { cwd: jsDir },
-    );
+    const vite = spawnViteServer(webPort);
 
     childProcesses.push(server, vite);
 
