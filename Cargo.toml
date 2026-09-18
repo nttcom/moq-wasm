@@ -8,7 +8,6 @@ members = [
     'shared/media-publisher',
     'moqt',
     'relay',
-    'examples/rust/manual-client',
     'examples/rust/moq-cli',
     'tests/auth-e2e',
     'tests/cache-eviction-e2e',
