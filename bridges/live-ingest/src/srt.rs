@@ -73,7 +73,7 @@ async fn publish(
         let (_, data) = packet?;
         packets += 1;
         for event in demuxer.push(&data)? {
-            publisher.push(&event).await?;
+            publisher.push(event)?;
         }
         if demuxer.discontinuities() > discontinuities {
             discontinuities = demuxer.discontinuities();
@@ -84,7 +84,7 @@ async fn publish(
         }
     }
     for event in demuxer.finish()? {
-        publisher.push(&event).await?;
+        publisher.push(event)?;
     }
     let statistics = socket.statistics().next().now_or_never().flatten();
     Ok(StreamSummary {

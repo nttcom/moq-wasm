@@ -53,6 +53,13 @@ PAUSED, so a wrong relay URL fails the pipeline start instead of the first
 buffer. Objects are numbered and cached from the first buffer on; a subscriber
 that arrives while a group is open starts receiving at the next group.
 
+Buffers go through a bounded queue (about three seconds of media) that a
+background task publishes, so the streaming thread never waits for the relay
+and the SRT or RTMP sender upstream keeps being drained. When the relay does
+not keep up, the sink drops media until the next keyframe fits and logs a
+WARN with the dropped counts; the pipeline fails only when the relay
+connection is lost.
+
 ## SRT to MoQT
 
 ```shell

@@ -19,14 +19,14 @@ pub struct IngestPublisher {
 impl IngestPublisher {
     pub fn new(moqt: MoqtManager, namespace: Vec<String>, transcode: bool) -> Self {
         Self {
-            media: MediaPublisher::new(moqt, namespace),
+            media: MediaPublisher::run(moqt, namespace),
             transcode,
             renditions: None,
         }
     }
 
-    pub async fn push(&mut self, event: &MediaEvent) -> Result<()> {
-        match event {
+    pub fn push(&mut self, event: MediaEvent) -> Result<()> {
+        match &event {
             MediaEvent::VideoConfig(config) if self.transcode && self.renditions.is_none() => {
                 let source = VideoTrackInfo::from_record(config, "Video".to_string())?;
                 self.renditions = RenditionFanout::run(&self.media, &source)?;
@@ -38,6 +38,6 @@ impl IngestPublisher {
             }
             _ => {}
         }
-        self.media.push(event).await
+        self.media.push(event)
     }
 }
