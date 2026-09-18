@@ -8,7 +8,9 @@ const REMEMBERED_KEYFRAMES: usize = 64;
 /// groups at the same presentation times with the same group ids. The source
 /// track assigns an id to each of its keyframes here, and renditions, whose
 /// keyframes the transcoder forces onto the same presentation times, look the
-/// id up instead of numbering on their own.
+/// id up instead of numbering on their own. The audio tracks follow the same
+/// boundaries: an audio sample belongs to the group of the latest keyframe at
+/// or before it, so a viewer replays the audio of a video window by its ids.
 pub struct GroupAlignment {
     inner: Mutex<Inner>,
 }
@@ -49,6 +51,16 @@ impl GroupAlignment {
             .by_presentation_time
             .get(&presentation_us)
             .copied()
+    }
+
+    pub(crate) fn group_covering(&self, presentation_us: u64) -> Option<u64> {
+        self.inner
+            .lock()
+            .expect("group alignment lock")
+            .by_presentation_time
+            .range(..=presentation_us)
+            .next_back()
+            .map(|(_, group_id)| *group_id)
     }
 
     pub fn nearest_keyframe_us(&self, presentation_us: u64) -> Option<u64> {
@@ -97,6 +109,20 @@ mod tests {
         // Act / Assert
         assert_eq!(alignment.aligned(2_000_000), Some(700));
         assert_eq!(alignment.aligned(2_000_001), None);
+    }
+
+    #[test]
+    fn group_covering_is_the_latest_keyframe_at_or_before_the_time() {
+        // Arrange
+        let alignment = GroupAlignment::new(700);
+        alignment.keyframe(2_000_000);
+        alignment.keyframe(4_000_000);
+
+        // Act / Assert
+        assert_eq!(alignment.group_covering(1_999_999), None);
+        assert_eq!(alignment.group_covering(2_000_000), Some(700));
+        assert_eq!(alignment.group_covering(3_999_999), Some(700));
+        assert_eq!(alignment.group_covering(4_000_000), Some(701));
     }
 
     #[test]

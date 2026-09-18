@@ -1,4 +1,6 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
+import { GroupOrderGate } from '../groupOrderGate'
+import { isTerminalStatus } from '../objectStatus'
 import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
@@ -34,8 +36,11 @@ const DEFAULT_AUDIO_DECODER_CONFIG = {
 }
 
 let audioDecoder: AudioDecoder | undefined
-let remoteTimestampBase: number | null = null
-let lastRebasedTimestamp: number | null = null
+/// The decoder stamps its outputs from the sample count it has produced, not
+/// from the chunk timestamps, so a hole in the source would shift every later
+/// output; each output is labelled with the capture timestamp of the chunk it
+/// was decoded from instead.
+const pendingCaptureTimestamps: (number | undefined)[] = []
 let decoderSignature: string | null = null
 let cachedAudioConfig: CachedAudioConfig | null = null
 let catalogAudioCodec: string | undefined
@@ -44,14 +49,15 @@ let catalogAudioChannels: number | undefined
 let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
 const directLastObjectIds = new Map<string, bigint>()
+const groupOrder = new GroupOrderGate((groupId, object) => enqueueDirectDecode(groupId, object))
+
+function postAudioData(audioData: AudioData, captureTimestampMicros: number | undefined): void {
+  self.postMessage({ type: 'audioData', audioData, captureTimestampMicros }, [audioData])
+}
 
 async function createAudioDecoder(config: AudioDecoderConfig, signature: string) {
-  function sendAudioDataMessage(audioData: AudioData): void {
-    self.postMessage({ type: 'audioData', audioData }, [audioData])
-  }
-
   const init: AudioDecoderInit = {
-    output: sendAudioDataMessage,
+    output: (audioData) => postAudioData(audioData, pendingCaptureTimestamps.shift()),
     error: (e: any) => {
       console.warn('[audioDecoder] decoder error', e)
     }
@@ -59,6 +65,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
   const decoder = new AudioDecoder(init)
   decoder.configure(config)
   decoderSignature = signature
+  pendingCaptureTimestamps.length = 0
   return decoder
 }
 
@@ -144,7 +151,7 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
   if (bypassJitterBuffer) {
-    enqueueDirectDecode(message.groupId, subgroupStreamObject)
+    groupOrder.push(message.groupId, subgroupStreamObject)
     return
   }
 
@@ -222,13 +229,6 @@ function makeSubgroupKey(groupId: bigint, subgroupId: bigint): string {
   return `${groupId.toString()}:${subgroupId.toString()}`
 }
 
-const OBJECT_STATUS_END_OF_GROUP = 3
-const OBJECT_STATUS_END_OF_TRACK = 4
-
-function isTerminalStatus(status: number | undefined): boolean {
-  return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
-}
-
 function buildChunkFromLoc(object: SubgroupObjectWithLoc): { metadata: ChunkMetadata; data: Uint8Array } {
   const loc = readLocHeader(object.locHeader)
   const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
@@ -259,11 +259,7 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
   const desiredSignature = buildSignature(resolvedConfig)
   if (isPcmAlawCodec(resolvedConfig.codec)) {
     try {
-      if (decoderSignature !== desiredSignature) {
-        remoteTimestampBase = null
-        lastRebasedTimestamp = null
-      }
-      decodePcmAlawChunk(decoded.metadata, decoded.data, resolvedConfig)
+      decodePcmAlawChunk(decoded.metadata, decoded.data, resolvedConfig, captureTimestampMicros)
       cachedAudioConfig = resolvedConfig
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
@@ -283,8 +279,6 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
         audioDecoder.close()
       }
       audioDecoder = await createAudioDecoder(desiredConfig, desiredSignature)
-      remoteTimestampBase = null
-      lastRebasedTimestamp = null
       cachedAudioConfig = resolvedConfig
     } catch (e) {
       console.error('[audioDecoder] configure failed', e)
@@ -292,19 +286,23 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
     }
   }
 
-  const rebasedTimestamp = rebaseTimestamp(decoded.metadata.timestamp)
-
   const encodedAudioChunk = new EncodedAudioChunk({
     type: decoded.metadata.type as EncodedAudioChunkType,
-    timestamp: rebasedTimestamp,
+    timestamp: decoded.metadata.timestamp,
     duration: decoded.metadata.duration ?? undefined,
     data: decoded.data
   })
 
-  await audioDecoder.decode(encodedAudioChunk)
+  audioDecoder.decode(encodedAudioChunk)
+  pendingCaptureTimestamps.push(captureTimestampMicros)
 }
 
-function decodePcmAlawChunk(metadata: ChunkMetadata, payload: Uint8Array, resolved: CachedAudioConfig): void {
+function decodePcmAlawChunk(
+  metadata: ChunkMetadata,
+  payload: Uint8Array,
+  resolved: CachedAudioConfig,
+  captureTimestampMicros: number | undefined
+): void {
   const channels = Math.max(1, resolved.channels)
   const sampleRate = Math.max(1, resolved.sampleRate)
   const totalSamples = payload.byteLength
@@ -318,16 +316,15 @@ function decodePcmAlawChunk(metadata: ChunkMetadata, payload: Uint8Array, resolv
     pcm[i] = decodeAlawSample(payload[i] ?? 0)
   }
 
-  const timestamp = rebaseTimestamp(metadata.timestamp)
   const audioData = new AudioData({
     format: 's16',
     sampleRate,
     numberOfFrames,
     numberOfChannels: channels,
-    timestamp,
+    timestamp: metadata.timestamp,
     data: new Uint8Array(pcm.buffer)
   })
-  self.postMessage({ type: 'audioData', audioData }, [audioData])
+  postAudioData(audioData, captureTimestampMicros)
 }
 
 function isPcmAlawCodec(codec: string): boolean {
@@ -383,21 +380,6 @@ function postJitterBufferActivity(event: 'push' | 'pop') {
     bufferedFrames: jitterBuffer.getBufferedFrameCount(),
     capacityFrames: jitterBuffer.getMaxBufferSize()
   })
-}
-
-function rebaseTimestamp(remoteTimestamp: number): number {
-  if (remoteTimestampBase === null) {
-    remoteTimestampBase = remoteTimestamp
-  }
-  let rebased = remoteTimestamp - remoteTimestampBase
-  if (!Number.isFinite(rebased) || rebased < 0) {
-    rebased = 0
-  }
-  if (lastRebasedTimestamp !== null && rebased <= lastRebasedTimestamp) {
-    rebased = lastRebasedTimestamp + 1
-  }
-  lastRebasedTimestamp = rebased
-  return rebased
 }
 
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {

@@ -8,7 +8,7 @@ track を切り替えられるので、`--transcode` で生成した下位画質
 
 ```shell
 make relay
-make live-ingest            # LIVE_INGEST_TRANSCODE=1 で下位画質も配信する
+make live-ingest            # make live-ingest-transcode で下位画質も配信する
                             # SRT を GStreamer 経由で流すなら make gst-srt-publish
 make ffmpeg-rtmp            # または make ffmpeg-srt / make ffmpeg-srt-bbb
 make browser
@@ -21,8 +21,9 @@ SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackName
 ## 巻き戻し
 
 映像にカーソルを合わせると中央に `↺5` `↺1` `1↻` `5↻` が出ます。キーボードでは ← / → が 1 秒、
-↓ / ↑ が 5 秒です。どれも relay のキャッシュに残っている group を FETCH で取り出し、review canvas に
-capture timestamp のとおりのペースで再生します。`LIVE` でライブ表示へ戻ります。
+↓ / ↑ が 5 秒です。どれも relay のキャッシュに残っている group を FETCH で取り出し、映像は review canvas
+に、音声は review 用の AudioContext に、capture timestamp のとおりのペースで揃えて再生します。`LIVE` で
+ライブ表示へ戻ります。
 
 - 位置は、ライブ再生中に観測した capture timestamp から求めます。bridge は group id を
   壁時計で採番し、group はエンコーダの keyframe ごとに切り替わるため、group id の差は秒数になりません。
@@ -30,7 +31,7 @@ capture timestamp のとおりのペースで再生します。`LIVE` でライ�
   だけして、目標以降のフレームから描画します。MSE では同じ分だけ `currentTime` を進めて再生を始めます。
 - 取得範囲は publisher が書き込みを終えた group までに制限します。開いている group に伸ばすと
   relay のキャッシュを外れて上流へ転送され、publisher 側キャッシュ（30 秒）から返されます。
-- relay のキャッシュ保持は既定 30 秒（`RELAY_CACHE_TTL_SECS`）、publisher 側も 30 秒です。
+- relay のキャッシュ保持は既定 30 分（`RELAY_CACHE_TTL_SECS`）、publisher 側は 30 秒です。
   それより前へは戻れません。
 
 ## ペイロード形式
@@ -50,6 +51,28 @@ LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
 ```
 
+## Delivery check
+
+`e2e:live-viewer-delivery` watches a stream for `DELIVERY_SECONDS` (default 30) and records every object the viewer hands to its decoder workers, then
+reads the bridge's delivery log and reports, per track, how many samples were
+published within the span the viewer watched, how many of them it received,
+which are missing, and how many samples entered the bridge but were not
+published (dropped before the first keyframe or after a transport-stream
+loss). Run the bridge with the delivery log on and point the test at it:
+
+```shell
+RUST_LOG=info,media_publisher::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
+DELIVERY_BRIDGE_LOG=/tmp/live-ingest.log \
+DELIVERY_SECONDS=60 \
+MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \
+MEDIA_E2E_MOQT_URL=https://127.0.0.1:4433 \
+LIVE_VIEWER_E2E_NAMESPACE=anon/live/test \
+npm --prefix examples/browser run e2e:live-viewer-delivery
+```
+
+Samples are matched by their LOC capture timestamp, so the check covers the
+LOC tracks; it fails when any published sample is missing.
+
 ## Packaging
 
 The gear menu selects how the media tracks are received. `LOC` subscribes to
@@ -66,8 +89,77 @@ on the canvas. Every MediaSource — live, review, or the replacement opened by 
 packaging or quality change — takes its own video element from a small pool, and
 a new picture is shown only once it has presented a frame while the previous one
 stays on screen until then; the live picture keeps decoding hidden behind a
-review, so `LIVE` swaps back at once. Review plays video only in either mode;
-live audio keeps playing underneath it.
+review, so `LIVE` swaps back at once. The live audio is silenced while
+reviewing and heard again on `LIVE`.
+
+## Review audio
+
+The bridge starts the audio groups at the video keyframes with the same ids,
+so the audio of a window is the same group range on the audio track and is
+fetched alongside the video. The audio of a group ends a little after its
+video, because the source interleaves audio behind video, so an audio group is
+fetched once the audio track has moved on to a later group; fetched earlier,
+its tail would be missing and MSE would stall on the hole. In LOC mode the chunks are decoded up front and
+scheduled on the review's own clock, which maps capture timestamps onto local
+time from the position the review starts at and follows the drift the audio
+device shows, so the picture keeps step with the sound; frames are decoded a
+little ahead of their presentation rather than a whole window at once. In CMAF
+mode the fragments are appended to the review MediaSource, which aligns them
+by `tfdt`. The rewind status shows the review's own `A/V` offset.
+
+## Catalog
+
+The catalog is subscribed to for updates and fetched for its current object:
+a SUBSCRIBE delivers objects published after the largest one, and the bridge
+publishes the catalog once per upstream subscription, so a viewer joining a
+subscription the relay already holds would otherwise never see it. The FETCH
+names the group SUBSCRIBE_OK reports when the relay still knows it and the
+whole track otherwise, which the relay completes from the bridge.
+
+## Audio / video synchronisation
+
+In LOC mode the two decoder workers hand every sample over as soon as it is
+decoded, and one playout clock decides when each is presented. The clock maps
+the LOC capture timestamps, which the bridge stamps on the same wall clock for
+every track, onto the local clock with a 200 ms delay that is the jitter
+budget. A subscription opens with a burst of what the relay had cached of the
+current groups, so the samples of the first 400 ms are held and the clock is
+anchored on the newest of them; older ones are dropped rather than played
+late. Sources such as MPEG-TS over SRT deliver audio in bursts, so the longest
+wait between two audio arrivals seen during that warm-up is added to the
+budget. The audio is the clock's master: it alone moves the clock, so the sound
+never skips for the picture, and the picture takes over only while no audio is
+playing. Video frames are held until they
+are due and then written to the MediaStream the video element shows; audio is
+scheduled on an `AudioContext` running at the stream's sample rate. Chunks are
+appended whole at a write head so the waveform stays continuous: capture
+timestamps are millisecond-precise and the context clock is read a render
+quantum at a time, so a chunk placed on its own target would leave a gap or an
+overlap each time. The distance between the write head and the target is fed
+back to the clock, which makes the audio device the master the picture
+follows; a late chunk is not trimmed but starts at once and moves the clock
+the same way, so the chunks behind it stay contiguous. An audio chunk due more
+than 400 ms past the budget re-anchors the clock so the extra latency is shed.
+The stats line shows the offset between the picture on screen and the sound as
+`A/V +N ms`, as `audio breaks N` how often the sound did not continue where
+the previous chunk ended, and as `video N dropped / M late` how many frames
+fell due together with a newer one and were never shown, and how many were
+shown more than a frame period after they were due.
+
+The audio decoder stamps its outputs from the sample count it has produced,
+not from the timestamps of the chunks, so a hole in the source, such as a lost
+frame or a file that loops, would shift every later output and leave the sound
+ahead of the picture for as long as the decoder lives. Each output is
+therefore labelled with the capture timestamp of the chunk it was decoded
+from, in the live and the review decoder alike. The relay delivers each group
+on its own stream, and when the tail of one audio group and the head of the
+next are in flight together the streams interleave and the head lands first;
+the audio worker holds the objects of a later group until the group before
+them has ended, for at most 100 ms, so the decoder sees them in order.
+
+In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
+which the bridge writes on one timeline for both tracks, so the SourceBuffers
+append in the default segments mode rather than back to back.
 
 ## Playback speed
 
@@ -85,15 +177,17 @@ is on by default).
 
 The seek bar, the skip buttons and the quality menu sit on the video itself
 rather than in their own cards. The skip buttons appear while the pointer is over
-the picture. The gear opens the video and audio track selection along with the
-jitter buffer switch, and closes on a second click, on Escape, or on a click
+the picture. The gear opens the video and audio track selection and the
+packaging choice, and closes on a second click, on Escape, or on a click
 outside it.
 
 The centre button pauses and resumes whatever is on screen. Every other
-transition — seek, skip, `LIVE`, a packaging or quality change — resumes, and
-resuming live CMAF jumps to the end of what is buffered so the picture is live
-again. The volume slider next to the speed control drives the live audio output
-(`<audio>` for LOC, the MediaSource element for CMAF).
+transition — seek, skip, `LIVE`, a packaging or quality change — resumes.
+Pausing a review freezes the picture and the sound where they are and resuming
+carries on from there; pausing live playback stops both, and resuming returns
+to the live edge (live CMAF jumps to the end of what is buffered, live LOC
+warms up again). The volume slider next to the speed control drives the live audio output
+(the `AudioContext` gain for LOC, the MediaSource element for CMAF).
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the

@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::{Engine, engine::general_purpose};
 use bytes::Bytes;
 use media_streaming_format::{
@@ -86,10 +86,18 @@ impl<T: TransportProtocol> Default for BackendState<T> {
 }
 
 impl<T: TransportProtocol> BackendState<T> {
+    /// The catalog is kept for as long as the publisher runs, because a
+    /// viewer that joins a subscription the relay already holds can only
+    /// obtain it by FETCH, however long ago it was published.
     fn track_mut(&mut self, key: &TrackKey) -> &mut TrackState<T> {
-        self.tracks
-            .entry(key.clone())
-            .or_insert_with(|| TrackState::new(now_unix().as_micros() as u64))
+        self.tracks.entry(key.clone()).or_insert_with(|| {
+            let cache = if key.1 == CATALOG_TRACK_NAME {
+                ObjectCache::newest_only()
+            } else {
+                ObjectCache::new(FETCH_CACHE_RETENTION)
+            };
+            TrackState::new(now_unix().as_micros() as u64, cache)
+        })
     }
 
     fn catalog_writer_ready(&self, namespace_path: &str) -> bool {
@@ -111,10 +119,10 @@ struct TrackState<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> TrackState<T> {
-    fn new(first_group_id: u64) -> Self {
+    fn new(first_group_id: u64, cache: ObjectCache) -> Self {
         Self {
             numbering: ObjectNumbering::new(first_group_id),
-            cache: ObjectCache::new(FETCH_CACHE_RETENTION),
+            cache,
             subscribed: false,
             writer: None,
         }
@@ -187,9 +195,6 @@ pub enum GroupBoundary {
     /// Only inside an open group; the object is dropped when there is none,
     /// because a group must not start on it.
     Within,
-    /// Inside the open group, or the first object of a new one when there is
-    /// none.
-    Join,
     Next,
     At(u64),
 }
@@ -225,14 +230,17 @@ impl MoqtManager {
             .await
     }
 
+    /// Returns whether a subscriber received the object: the object is
+    /// numbered and cached either way, but none may be subscribed, or the
+    /// writer may still wait for the next group start.
     pub async fn send_object(
         &self,
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(target) = &self.target else {
-            return Ok(());
+            return Ok(false);
         };
 
         self.ensure_backend(target)
@@ -318,7 +326,7 @@ impl PublisherBackend {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match self {
             Self::Quic(publisher) => publisher.send_object(namespace, track_name, object).await,
             Self::WebTransport(publisher) => {
@@ -542,7 +550,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         namespace: &[String],
         track_name: &str,
         object: OutgoingObject,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
         let (placement, writer) = {
             let mut guard = self.state.lock().await;
@@ -551,7 +559,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             }
             let track = guard.track_mut(&key);
             let Some(placement) = track.numbering.place(object.group)? else {
-                return Ok(());
+                return Ok(false);
             };
             track.cache.insert(CachedObject {
                 location: placement.location,
@@ -561,7 +569,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             (placement, track.writer.take())
         };
         let Some(mut writer) = writer else {
-            return Ok(());
+            return Ok(false);
         };
         let result = write_object(&mut writer, placement, object).await;
         let mut guard = self.state.lock().await;
@@ -573,7 +581,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
             track.unsubscribe();
-            return Ok(());
+            return Ok(false);
         }
         if track.subscribed {
             track.writer = Some(writer);
@@ -739,20 +747,32 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             .get(namespace_path)
             .cloned()
             .unwrap_or_default();
-        let payload = build_catalog_payload(namespace_path, &metadata)?;
+        let payload = Bytes::from(build_catalog_payload(namespace_path, &metadata)?);
         tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
-        let Some(writer) = guard
-            .tracks
-            .get_mut(&key)
-            .and_then(|track| track.writer.as_mut())
-        else {
+        let track = guard.track_mut(&key);
+        let placement = track
+            .numbering
+            .place(GroupBoundary::Next)?
+            .context("a new group always places its first object")?;
+        track.cache.insert(CachedObject {
+            location: placement.location,
+            extension_headers: ExtensionHeaders::default(),
+            payload: payload.clone(),
+        });
+        let Some(writer) = track.writer.as_mut() else {
             return Ok(());
         };
+        ensure!(
+            writer.next_group_id() == placement.location.group_id,
+            "catalog writer is at group {} but the cache placed the catalog at {}",
+            writer.next_group_id(),
+            placement.location.group_id
+        );
         writer
-            .write_group(Bytes::from(payload))
+            .write_group(payload)
             .await
             .context("send catalog group")?;
-        tracing::info!(namespace = %namespace_path, groups = writer.groups(), "catalog sent");
+        tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
         Ok(())
     }
 }
@@ -769,19 +789,20 @@ async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
     placement: Placement,
     object: OutgoingObject,
-) -> Result<()> {
+) -> Result<bool> {
     if placement.starts_group {
         writer
             .start_group_at(placement.location.group_id)
             .await
             .context("start group")?;
     } else if writer.current_group_id() != Some(placement.location.group_id) {
-        return Ok(());
+        return Ok(false);
     }
     writer
         .write_with_extension_headers(object.payload, object.extension_headers)
         .await
-        .context("send subgroup object")
+        .context("send subgroup object")?;
+    Ok(true)
 }
 
 fn in_group_order(mut objects: Vec<CachedObject>, order: GroupOrder) -> Vec<CachedObject> {

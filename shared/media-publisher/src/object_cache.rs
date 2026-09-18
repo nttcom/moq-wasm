@@ -19,10 +19,16 @@ struct Entry {
 }
 
 /// Objects the publisher can still replay for a FETCH (draft-ietf-moq-transport-14
-/// §9.16), kept for `retention` after they were produced.
+/// §9.16): media for a while after it was produced, the catalog until the next
+/// one replaces it.
 pub(crate) struct ObjectCache {
-    retention: Duration,
+    retention: Retention,
     entries: VecDeque<Entry>,
+}
+
+enum Retention {
+    For(Duration),
+    NewestOnly,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -38,7 +44,14 @@ pub(crate) enum FetchRange {
 impl ObjectCache {
     pub(crate) fn new(retention: Duration) -> Self {
         Self {
-            retention,
+            retention: Retention::For(retention),
+            entries: VecDeque::new(),
+        }
+    }
+
+    pub(crate) fn newest_only() -> Self {
+        Self {
+            retention: Retention::NewestOnly,
             entries: VecDeque::new(),
         }
     }
@@ -52,12 +65,21 @@ impl ObjectCache {
             object,
             cached_at: now,
         });
-        while self
-            .entries
-            .front()
-            .is_some_and(|entry| now.duration_since(entry.cached_at) > self.retention)
-        {
-            self.entries.pop_front();
+        match self.retention {
+            Retention::For(retention) => {
+                while self
+                    .entries
+                    .front()
+                    .is_some_and(|entry| now.duration_since(entry.cached_at) > retention)
+                {
+                    self.entries.pop_front();
+                }
+            }
+            Retention::NewestOnly => {
+                while self.entries.len() > 1 {
+                    self.entries.pop_front();
+                }
+            }
         }
     }
 
@@ -232,6 +254,23 @@ mod tests {
         assert_eq!(
             cache.resolve(location(9, 1), location(10, 0)),
             FetchRange::InvalidRange
+        );
+    }
+
+    #[test]
+    fn keeps_only_the_newest_object_when_told_to_and_never_expires_it() {
+        // Arrange
+        let mut cache = ObjectCache::newest_only();
+        let start = Instant::now();
+        cache.insert_at(object(1, 0), start);
+
+        // Act
+        cache.insert_at(object(2, 0), start + Duration::from_secs(3_600));
+
+        // Assert
+        assert_eq!(
+            locations(cache.resolve(location(0, 0), location(u64::MAX, 0))),
+            (vec![(2, 0)], location(2, 1))
         );
     }
 

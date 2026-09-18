@@ -20,6 +20,15 @@ type Buffered = {
   queue: Uint8Array[]
 }
 
+function covers(ranges: TimeRanges, seconds: number): boolean {
+  for (let index = 0; index < ranges.length; index += 1) {
+    if (ranges.start(index) <= seconds && seconds <= ranges.end(index)) {
+      return true
+    }
+  }
+  return false
+}
+
 /// One MediaSource on a video element with a SourceBuffer per track. Appends
 /// are queued because a SourceBuffer rejects appendBuffer while it is updating,
 /// and playback starts once a second of video is buffered.
@@ -28,7 +37,7 @@ export class MseSink {
   private readonly objectUrl: string
   private video: Buffered | undefined
   private audio: Buffered | undefined
-  private started = false
+  private startedAtSeconds: number | undefined
 
   private constructor(
     readonly element: HTMLVideoElement,
@@ -70,6 +79,12 @@ export class MseSink {
     return buffered && buffered.length > 0 ? buffered.end(buffered.length - 1) : undefined
   }
 
+  /// Measured from where the first buffered video began, which eviction may
+  /// later remove from the buffered ranges.
+  secondsFromStart(): number {
+    return this.startedAtSeconds === undefined ? 0 : this.element.currentTime - this.startedAtSeconds
+  }
+
   close(): void {
     this.element.muted = true
     this.element.removeAttribute('src')
@@ -79,7 +94,6 @@ export class MseSink {
 
   private attach(source: MseTrackSource): Buffered {
     const sourceBuffer = this.mediaSource.addSourceBuffer(source.mimeType)
-    sourceBuffer.mode = 'sequence'
     const buffered: Buffered = { sourceBuffer, queue: [] }
     sourceBuffer.addEventListener('updateend', () => {
       this.startWhenBuffered()
@@ -104,16 +118,31 @@ export class MseSink {
     buffered.sourceBuffer.appendBuffer(buffered.queue.shift()!.slice())
   }
 
+  /// With an audio track, playback starts where both tracks have data: the
+  /// element would otherwise sit on the first frame until the audio arrives,
+  /// and the audio may begin a little after the video when the first keyframe
+  /// lands while the MediaSource is being opened.
   private startWhenBuffered(): void {
     const end = this.bufferedEnd()
-    if (this.started || end === undefined) {
+    if (this.startedAtSeconds !== undefined || end === undefined) {
       return
     }
-    const start = this.video!.sourceBuffer.buffered.start(0) + this.startAtSeconds
+    const bufferStart = this.video!.sourceBuffer.buffered.start(0)
+    let start = bufferStart + this.startAtSeconds
+    const audioRanges = this.audio?.sourceBuffer.buffered
+    if (audioRanges) {
+      if (audioRanges.length === 0) {
+        return
+      }
+      start = Math.max(start, audioRanges.start(0))
+      if (!covers(audioRanges, start)) {
+        return
+      }
+    }
     if (end - start < PLAYBACK_BUFFER_THRESHOLD_SECONDS) {
       return
     }
-    this.started = true
+    this.startedAtSeconds = bufferStart
     this.element.currentTime = start
     void this.element.play().catch(() => undefined)
   }

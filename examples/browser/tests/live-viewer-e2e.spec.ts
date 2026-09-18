@@ -20,6 +20,9 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expectVideoDecoded(viewer.video)
 
+    // Assert: 映像と音声は同じ clock で提示され、ずれは 1 フレーム未満
+    await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
+
     // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
     await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
@@ -38,8 +41,9 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
-    // Assert
+    // Assert: the rewound audio plays with the rewound picture
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    await expect(viewer.rewindStatus).toContainText(/A\/V [+-]\d+ ms/, { timeout: 20_000 })
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.liveButton).toHaveClass(/reviewing/)
     await expect(viewer.reviewCanvas).toBeVisible()
@@ -103,15 +107,13 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert
     await expect(viewer.playPauseButton).toHaveAttribute('aria-pressed', 'true')
     await expect.poll(async () => mediaProp(viewer.video, 'paused')).toBe(true)
-    await expect.poll(async () => mediaProp(viewer.audio, 'paused')).toBe(true)
 
     // Act
     await viewer.playPauseButton.click()
-    await viewer.volumeSlider.fill('0.3')
 
-    // Assert
+    // Assert: 再開後もライブ端で映像と音声が揃う
     await expect.poll(async () => mediaProp(viewer.video, 'paused')).toBe(false)
-    await expect.poll(async () => mediaProp(viewer.audio, 'volume')).toBeCloseTo(0.3, 5)
+    await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
     // Act: ↓ でライブから 5 秒戻り、→ で 1 秒進む（音量スライダーにフォーカスがあると矢印はスライダーのもの）
     await viewer.seekbar.focus()
@@ -197,6 +199,12 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expectVideoDecoded(viewer.visibleVideo)
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
 
+    // Act
+    await viewer.volumeSlider.fill('0.3')
+
+    // Assert
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'volume')).toBeCloseTo(0.3, 5)
+
     // Act: a quality change re-opens the MediaSource with the rendition's init segment
     await viewer.videoTrackSelect.selectOption({ index: 1 })
 
@@ -264,6 +272,31 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
   }
 })
 
+test('a second viewer joining a subscription the relay already holds gets the catalog by FETCH', async ({
+  browser
+}) => {
+  // Arrange
+  const first = await arrangeLiveViewerE2ESession(browser)
+  const second = await arrangeLiveViewerE2ESession(browser)
+
+  try {
+    await first.viewer.watchButton.click()
+    await expect(first.viewer.playbackStatus).toContainText('Playing')
+
+    // Act
+    await second.viewer.watchButton.click()
+
+    // Assert
+    await expect(second.viewer.logPanel).toContainText('fetched catalog')
+    await expect(second.viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
+    await expect(second.viewer.playbackStatus).toContainText('Playing')
+    await expectVideoDecoded(second.viewer.video)
+  } finally {
+    await second.context.close()
+    await first.context.close()
+  }
+})
+
 async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'paused' | 'volume'>(
   media: Locator,
   key: K
@@ -280,6 +313,13 @@ async function expectVideoDecoded(video: Locator): Promise<void> {
   await expect
     .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
     .toBeGreaterThan(0)
+}
+
+/// The stats line reads `A/V +12 ms` once both media have been presented and
+/// `A/V --` until then.
+async function syncOffsetMs(viewer: LiveViewerPageModel): Promise<number> {
+  const match = (await viewer.videoStats.innerText()).match(/A\/V ([+-]\d+) ms/)
+  return match ? Math.abs(Number(match[1])) : Number.POSITIVE_INFINITY
 }
 
 async function parseSeconds(locator: Locator): Promise<number> {

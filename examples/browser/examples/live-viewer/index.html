@@ -232,16 +232,11 @@
                               <option value="cmaf">CMAF (MSE)</option>
                             </select>
                           </label>
-                          <label class="field-row">
-                            <input type="checkbox" id="bypass-jitter-buffer" checked />
-                            Bypass jitter buffer
-                          </label>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
-                <audio id="audio" autoplay data-testid="live-viewer-audio"></audio>
                 <p class="hint" id="seek-hint">
                   配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
                   映像にカーソルを合わせると ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が 5 秒）。

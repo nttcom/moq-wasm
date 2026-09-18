@@ -105,12 +105,45 @@ pub(crate) fn ts_packet(
     packet
 }
 
-pub(crate) fn ts_packets(pid: u16, payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for (index, chunk) in payload.chunks(PACKET_SIZE - 4).enumerate() {
-        out.extend(ts_packet(pid, index == 0, (index % 16) as u8, chunk));
+/// Packetises payloads into a transport stream whose continuity counters run
+/// on per PID, as a muxer's do.
+#[derive(Default)]
+pub(crate) struct TsStreamBuilder {
+    bytes: Vec<u8>,
+    counters: std::collections::HashMap<u16, u8>,
+}
+
+impl TsStreamBuilder {
+    pub(crate) fn push(&mut self, pid: u16, payload: &[u8]) -> &mut Self {
+        for (index, chunk) in payload.chunks(PACKET_SIZE - 4).enumerate() {
+            let counter = self.counters.entry(pid).or_default();
+            self.bytes
+                .extend(ts_packet(pid, index == 0, *counter, chunk));
+            *counter = (*counter + 1) & 0x0F;
+        }
+        self
     }
-    out
+
+    pub(crate) fn packet_count(&self) -> usize {
+        self.bytes.len() / PACKET_SIZE
+    }
+
+    pub(crate) fn without_packet(&self, index: usize) -> Vec<u8> {
+        let mut bytes = self.bytes.clone();
+        bytes.drain(index * PACKET_SIZE..(index + 1) * PACKET_SIZE);
+        bytes
+    }
+
+    pub(crate) fn with_packet_repeated(&self, index: usize) -> Vec<u8> {
+        let mut bytes = self.bytes.clone();
+        let packet = bytes[index * PACKET_SIZE..(index + 1) * PACKET_SIZE].to_vec();
+        bytes.splice((index + 1) * PACKET_SIZE..(index + 1) * PACKET_SIZE, packet);
+        bytes
+    }
+
+    pub(crate) fn build(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
 }
 
 fn psi_section(table_id: u8, body: &[u8]) -> Vec<u8> {

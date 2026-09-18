@@ -13,6 +13,8 @@ pub struct TsPacket<'a> {
     pub pid: u16,
     pub payload_unit_start: bool,
     pub transport_error: bool,
+    pub continuity_counter: u8,
+    pub discontinuity: bool,
     pub payload: &'a [u8],
 }
 
@@ -25,12 +27,15 @@ pub fn parse_packet(packet: &[u8]) -> Result<TsPacket<'_>> {
     ensure!(packet[0] == SYNC_BYTE, "TS packet missing sync byte");
     let adaptation_field_control = (packet[3] >> 4) & 0b11;
     let mut payload_start = 4;
+    let mut discontinuity = false;
     if adaptation_field_control & 0b10 != 0 {
-        payload_start += 1 + packet[4] as usize;
+        let adaptation_length = packet[4] as usize;
+        payload_start += 1 + adaptation_length;
         ensure!(
             payload_start <= PACKET_SIZE,
             "TS adaptation field overflows packet"
         );
+        discontinuity = adaptation_length > 0 && packet[5] & 0x80 != 0;
     }
     let payload = if adaptation_field_control & 0b01 != 0 {
         &packet[payload_start..]
@@ -41,6 +46,8 @@ pub fn parse_packet(packet: &[u8]) -> Result<TsPacket<'_>> {
         pid: u16::from_be_bytes([packet[1] & 0x1F, packet[2]]),
         payload_unit_start: packet[1] & 0x40 != 0,
         transport_error: packet[1] & 0x80 != 0,
+        continuity_counter: packet[3] & 0x0F,
+        discontinuity,
         payload,
     })
 }
@@ -202,7 +209,23 @@ mod tests {
         // Assert
         assert_eq!(parsed.pid, 0x100);
         assert!(parsed.payload_unit_start);
+        assert_eq!(parsed.continuity_counter, 5);
+        assert!(!parsed.discontinuity);
         assert_eq!(parsed.payload, [1, 2, 3]);
+    }
+
+    #[test]
+    fn reads_the_discontinuity_indicator_from_the_adaptation_field() {
+        // Arrange
+        let mut packet = ts_packet(0x100, false, 7, &[1]);
+        packet[5] |= 0x80;
+
+        // Act
+        let parsed = parse_packet(&packet).unwrap();
+
+        // Assert
+        assert!(parsed.discontinuity);
+        assert_eq!(parsed.payload, [1]);
     }
 
     #[test]

@@ -25,9 +25,31 @@ Override the relay URL when needed:
 LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest
 ```
 
-Add lower renditions with `LIVE_INGEST_TRANSCODE=1 make live-ingest`. Each rendition
+Add lower renditions with `make live-ingest-transcode` (or
+`LIVE_INGEST_TRANSCODE=1 make live-ingest`). Each rendition
 below the source resolution (720p / 480p / 360p) is published as `video_<height>p`
 next to `video`, and the catalog lists them in one `altGroup` with `width` / `height`.
+
+## Transport stream loss
+
+The SRT listener reads with a 4 MiB UDP receive buffer: a keyframe arrives as
+a burst of several hundred kilobytes within a few milliseconds, and the 64 KiB
+that srt-tokio uses by default overflowed whenever the reader was not scheduled
+at once, with the lost datagrams rarely recovered before their delivery time.
+The MPEG-TS demuxer checks continuity counters; when packets are still lost,
+the frame they cut is dropped along with the frames predicted from it until
+the next keyframe, instead of being published corrupt for every viewer's
+decoder to fail on. Each loss is logged as a warning, and the SRT statistics
+are logged when a stream ends.
+
+## Delivery log
+
+`RUST_LOG=info,media_publisher::delivery=debug` writes one line per sample as
+it enters the publisher (`stage="ingest"`, with its presentation time) and as
+a subscriber receives it (`stage="publish"`, with the namespace, group id and
+the LOC capture timestamp a viewer sees). The Live Viewer's delivery check
+(`npm --prefix examples/browser run e2e:live-viewer-delivery`) reads that log
+and reports every published sample the viewer did not receive.
 
 ## Track Format
 
@@ -58,6 +80,13 @@ range, so a viewer can rewind into the part of the stream that predates the
 relay's first subscriber. A subscriber that joins while a group is open starts
 receiving at the next group so the live and cached object ids agree.
 
+The catalog is the exception to the 30 seconds: its newest object is kept for
+as long as the publisher runs. A viewer that joins a subscription the relay
+already holds never receives the catalog live, because a SUBSCRIBE starts
+after the largest object and the catalog is published once per upstream
+subscription, so it fetches the current catalog instead, and the relay
+completes that FETCH from here when its own cache has dropped it.
+
 ## Group Alignment
 
 The source video track and its transcoded renditions form a CMSF switching set
@@ -68,6 +97,13 @@ track. A rendition that misses a source keyframe keeps writing into its current
 group and announces the skipped ids with the Prior Group ID Gap header when it
 catches up. Re-subscribing to a track continues its group numbering rather than
 restarting it.
+
+The audio tracks follow the same boundaries: an audio sample belongs to the
+group of the latest video keyframe at or before it, so audio groups start at
+the same keyframes with the same ids as the video groups. Audio before the
+first keyframe is dropped as the video before it is. A viewer therefore replays
+the audio of a video group range by fetching the same range on the audio
+track, and a subscriber joining late starts both tracks at the same keyframe.
 
 ## Publish Test RTMP
 

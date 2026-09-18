@@ -158,7 +158,8 @@ impl RenditionPublisher {
                         &cmaf_track_name(&track),
                         OutgoingObject::plain(group, fragment.data),
                     )
-                    .await
+                    .await?;
+                Ok(())
             }
             _ => Ok(()),
         }

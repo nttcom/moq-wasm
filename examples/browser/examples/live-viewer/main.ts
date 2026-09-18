@@ -11,7 +11,9 @@ import {
 import { base64ToUint8Array } from '../../utils/media/base64'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
+import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
+import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 
 const AUTH_INFO = 'secret'
@@ -21,20 +23,25 @@ const REWIND_GROUP_COUNT = 4n
 const FETCH_IDLE_MS = 400
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
+const AUDIO_GROUP_CLOSE_WAIT_MS = 2_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const CMAF_TRACK_SUFFIX = '_cmaf'
 const REVIEW_BUFFER_AHEAD_SECONDS = 8
 const REVIEW_DRAINED_SECONDS = 0.5
-const PAUSE_POLL_MS = 100
+const REVIEW_VIDEO_AHEAD_FRAMES = 30
+const REVIEW_HANDOVER_MICROS = 500_000
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
+const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
 
 type Packaging = 'loc' | 'cmaf'
 
 type MediaKind = 'video' | 'audio'
 
 type SubgroupObject = Parameters<Parameters<MoqtClientWrapper['setOnSubgroupObjectHandler']>[1]>[1]
+
+type SubscribeOk = Awaited<ReturnType<MoqtClientWrapper['subscribe']>>['subscribeOk']
 
 type TrackSubscription = {
   requestId: bigint
@@ -46,6 +53,7 @@ type ReviewWindow = {
   start: bigint
   nextGroup: bigint
   frames: ReviewFrame[]
+  audio: ReviewFrame[]
 }
 
 const moqtClient = new MoqtClientWrapper()
@@ -55,6 +63,10 @@ const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoD
 const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
   type: 'module'
 })
+const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
+const videoWriter = videoGenerator.writable.getWriter()
+const livePlayout = new LivePlayout(showLiveFrame)
+const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 
 let videoTracks: MediaCatalogTrack[] = []
 let audioTracks: MediaCatalogTrack[] = []
@@ -69,11 +81,11 @@ let visiblePicture: HTMLElement = element('video')
 let cmafAwaitingKeyframe = true
 const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
-let videoWriter: WritableStreamDefaultWriter<VideoFrame> | undefined
-let audioWriter: WritableStreamDefaultWriter<AudioData> | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+let reviewBehindSeconds = 0
+let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
 let mediaTimelineTrackName: string | undefined
 let reviewing = false
@@ -91,7 +103,6 @@ element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watc
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
 element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video').then(openLiveMse))
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio').then(openLiveMse))
-element<HTMLInputElement>('bypass-jitter-buffer').addEventListener('change', applyDecoderConfig)
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
 element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
@@ -162,8 +173,10 @@ async function stopStream(): Promise<void> {
   timeline.reset()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
+  newestAudioGroupId = undefined
   backToLive()
   closeMse()
+  livePlayout.reset()
   showPicture(element<HTMLVideoElement>('video'))
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
@@ -181,11 +194,19 @@ async function stopStream(): Promise<void> {
   setStatusText('playback-status', 'Playback idle')
 }
 
+/// A SUBSCRIBE delivers objects published after the largest one and the bridge
+/// publishes the catalog once per upstream subscription, so a viewer joining a
+/// subscription the relay already holds would never see it. The current
+/// catalog is fetched instead: the group SUBSCRIBE_OK names when the relay
+/// still knows it, otherwise the whole track, which the relay completes from
+/// the bridge.
 async function subscribeCatalog(): Promise<void> {
-  await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, (text) => void applyCatalog(text))
+  const onText = (text: string) => void applyCatalog(text)
+  const subscribeOk = await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, onText)
+  await fetchLatestText(MEDIA_CATALOG_TRACK_NAME, subscribeOk, onText)
 }
 
-async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<void> {
+async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<SubscribeOk> {
   const namespace = trackNamespace()
   const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
   moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
@@ -195,6 +216,27 @@ async function subscribeTextTrack(name: string, onText: (text: string) => void):
     }
   })
   appendLog('info', `subscribed ${namespace.join('/')}/${name}`)
+  return subscribeOk
+}
+
+async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (text: string) => void): Promise<void> {
+  const largestGroup = subscribeOk.largestGroupId
+  const startGroup = largestGroup ?? 0n
+  const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
+  const endObject = largestGroup === undefined ? 0n : (subscribeOk.largestObjectId ?? 0n) + 1n
+  try {
+    await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
+      onObject: (message) => {
+        const payload = new Uint8Array(message.objectPayload)
+        if (payload.byteLength > 0) {
+          onText(new TextDecoder().decode(payload))
+        }
+      }
+    })
+    appendLog('info', `fetched ${name}`)
+  } catch (error) {
+    appendLog('info', `fetch ${name}: ${getErrorMessage(error)}`)
+  }
 }
 
 async function applyCatalog(payload: string): Promise<void> {
@@ -377,6 +419,8 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
     if (!reviewing) {
       setStatusText('playback-status', `Playing ${trackName}`)
     }
+  } else {
+    newestAudioGroupId = groupId
   }
   if (!mse) {
     return
@@ -443,6 +487,8 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     timeline.reset()
     unstampedCmafGroups.clear()
     backToLive()
+  } else {
+    newestAudioGroupId = undefined
   }
   await unsubscribeTrack(kind)
   if (!track || !wire) {
@@ -473,6 +519,8 @@ async function resubscribe(kind: MediaKind): Promise<void> {
       if (!reviewing) {
         setStatusText('playback-status', `Playing ${trackName}`)
       }
+    } else {
+      newestAudioGroupId = groupId
     }
     worker.postMessage(
       {
@@ -536,61 +584,71 @@ function channelCount(channelConfig?: string): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed
 }
 
+/// The decoders hand every sample over as soon as it is decoded; the live
+/// playout paces them on one clock so that audio and video stay together.
 function applyDecoderConfig(): void {
-  const config = {
-    telemetryEnabled: true,
-    bypassJitterBuffer: element<HTMLInputElement>('bypass-jitter-buffer').checked
-  }
+  const config = { telemetryEnabled: true, bypassJitterBuffer: true }
   videoDecoderWorker.postMessage({ type: 'config', config })
   audioDecoderWorker.postMessage({ type: 'config', config })
 }
 
+function showLiveFrame(frame: VideoFrame): void {
+  updateVideoStats(frame)
+  if (videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
+    frame.close()
+    return
+  }
+  void videoWriter
+    .write(frame)
+    .catch(() => undefined)
+    .finally(() => frame.close())
+}
+
+function showReviewFrame(frame: VideoFrame): void {
+  const canvas = element<HTMLCanvasElement>('review')
+  const context = canvas.getContext('2d')
+  if (context) {
+    canvas.width = frame.displayWidth
+    canvas.height = frame.displayHeight
+    context.drawImage(frame, 0, 0)
+    showPicture(canvas)
+    advanceReviewPlayhead(frame.timestamp)
+  }
+  frame.close()
+}
+
 function startRendering(): void {
   applyDecoderConfig()
-  const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-  const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
-  videoWriter = videoGenerator.writable.getWriter()
-  audioWriter = audioGenerator.writable.getWriter()
   element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
-  element<HTMLAudioElement>('audio').srcObject = new MediaStream([audioGenerator])
 
-  videoDecoderWorker.onmessage = async (event) => {
+  videoDecoderWorker.onmessage = (event) => {
     if (event.data.type === 'bitrate') {
       receivedKbps = event.data.kbps ?? receivedKbps
       return
     }
-    if (event.data.type !== 'frame') {
-      return
+    if (event.data.type === 'frame') {
+      livePlayout.presentVideo(event.data.frame as VideoFrame)
     }
-    const frame = event.data.frame as VideoFrame
-    updateVideoStats(frame)
-    if (!videoWriter || videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
-      frame.close()
-      return
-    }
-    await videoWriter.ready
-    await videoWriter.write(frame)
-    frame.close()
   }
 
-  audioDecoderWorker.onmessage = async (event) => {
-    if (event.data.type !== 'audioData') {
-      return
+  audioDecoderWorker.onmessage = (event) => {
+    if (event.data.type === 'audioData') {
+      livePlayout.playAudio(event.data.audioData as AudioData, event.data.captureTimestampMicros as number | undefined)
     }
-    const audioData = event.data.audioData as AudioData
-    if (!audioWriter) {
-      audioData.close()
-      return
-    }
-    await audioWriter.ready
-    await audioWriter.write(audioData)
-    audioData.close()
   }
 }
 
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()}`
+}
+
+function formatSyncOffset(offsetMs: number | undefined): string {
+  if (offsetMs === undefined) {
+    return '--'
+  }
+  const rounded = Math.round(offsetMs)
+  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
 }
 
 function trackNamespace(): string[] {
@@ -656,6 +714,8 @@ function seekToCapture(captureMicros: number): void {
   reviewOriginMicros = target.captureMicros
   reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
   reviewPlayheadMicros = reviewAnchorMicros
+  reviewPlayout.start(reviewAnchorMicros)
+  applyVolume()
   renderSeekbar()
   setStatusText('playback-status', 'Reviewing')
   void review(target.groupId, generation)
@@ -669,24 +729,73 @@ async function review(startGroup: bigint, generation: number): Promise<void> {
   let pending = await fetchReviewWindow(startGroup, generation)
   while (pending && generation === reviewGeneration) {
     const upcoming = fetchReviewWindow(pending.nextGroup, generation)
-    setStatusText('rewind-status', `Rewound ${timeline.secondsBehindLive(pending.start).toFixed(1)}s`)
+    reviewBehindSeconds = timeline.secondsBehindLive(pending.start)
+    renderReviewStatus()
     const frames = sortReviewFrames(pending.frames)
-    const played = packaging === 'cmaf' ? await playReviewMse(frames, generation) : await playReview(frames, generation)
+    const played =
+      packaging === 'cmaf'
+        ? await playReviewMse(frames, pending.audio, generation)
+        : await playReview(frames, pending.audio, generation)
     pending = played ? await upcoming : undefined
   }
 }
 
+/// The bridge starts the audio groups at the video keyframes with the same
+/// ids, so the audio of a window is the same group range on the audio track
+/// and is fetched alongside the video.
 async function fetchReviewWindow(start: bigint, generation: number): Promise<ReviewWindow | undefined> {
   const end = await awaitClosedWindowEnd(start, generation)
   const subscription = subscriptions.get('video')
   if (end === undefined || !subscription) {
     return undefined
   }
+  const audioName = subscriptions.get('audio')?.name
+  const [frames, audio] = await Promise.all([
+    fetchFrames(subscription.name, start, end, generation),
+    audioName ? fetchReviewAudio(audioName, start, end, generation) : Promise.resolve([])
+  ])
+  if (!frames) {
+    return undefined
+  }
+  if (frames.length === 0) {
+    setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
+    return undefined
+  }
+  appendLog('info', `fetched ${frames.length} objects from group ${start}`)
+  return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audio ?? []) }
+}
 
+/// The audio of a group ends a little after its video: the source interleaves
+/// audio behind video, so audio captured just before a keyframe arrives after
+/// that keyframe has opened the next group. The audio group is fetched once
+/// the audio track has moved on to a later group, or after a bounded wait.
+async function fetchReviewAudio(
+  trackName: string,
+  start: bigint,
+  end: bigint,
+  generation: number
+): Promise<ReviewFrame[] | undefined> {
+  const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
+  while (
+    generation === reviewGeneration &&
+    (newestAudioGroupId === undefined || newestAudioGroupId <= end) &&
+    performance.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
+  }
+  return fetchFrames(trackName, start, end, generation)
+}
+
+async function fetchFrames(
+  trackName: string,
+  start: bigint,
+  end: bigint,
+  generation: number
+): Promise<ReviewFrame[] | undefined> {
   const frames: ReviewFrame[] = []
   let lastArrival = performance.now()
   try {
-    await moqtClient.fetch(trackNamespace(), subscription.name, start, 0n, end, 0n, {
+    await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
       onObject: (message) => {
         if (generation !== reviewGeneration) {
           return
@@ -701,21 +810,13 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
   } catch (error) {
     if (generation === reviewGeneration) {
       setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
-      appendLog('error', `fetch: ${getErrorMessage(error)}`)
+      appendLog('error', `fetch ${trackName}: ${getErrorMessage(error)}`)
     }
     return undefined
   }
 
   await waitForFetchIdle(() => lastArrival, generation)
-  if (generation !== reviewGeneration) {
-    return undefined
-  }
-  if (frames.length === 0) {
-    setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
-    return undefined
-  }
-  appendLog('info', `fetched ${frames.length} objects from group ${start}`)
-  return { start, nextGroup: end + 1n, frames }
+  return generation === reviewGeneration ? frames : undefined
 }
 
 /// The live edge group is still open and a FETCH that reaches into it escapes
@@ -752,63 +853,67 @@ async function waitForFetchIdle(lastArrival: () => number, generation: number): 
   }
 }
 
-async function playReview(frames: ReviewFrame[], generation: number): Promise<boolean> {
-  const canvas = element<HTMLCanvasElement>('review')
-  const context = canvas.getContext('2d')
+/// The window's audio is decoded up front. Frames are decoded a little ahead
+/// of their presentation, not the whole window at once: decoded frames hold
+/// GPU memory until they are shown. The function returns shortly before the
+/// last frame is due so the next window is decoded in time to follow on.
+async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
   const config = pendingReviewConfig()
-  if (!context || !config) {
+  if (!config) {
     setStatusText('rewind-status', 'Rewind unavailable: the video track has no codec')
     return false
   }
-
-  const origin = frames[0].captureMicros ?? reviewOriginMicros ?? 0
-  const shownFrom = reviewAnchorMicros ?? origin
+  const audioConfig = reviewAudioConfig()
+  if (audioConfig) {
+    reviewPlayout.decodeAudio(audio, audioConfig)
+  }
   const decoder = new VideoDecoder({
     output: (frame) => {
-      const captureMicros = origin + frame.timestamp
-      if (generation !== reviewGeneration || captureMicros < shownFrom) {
+      if (generation !== reviewGeneration) {
         frame.close()
         return
       }
-      canvas.width = frame.displayWidth
-      canvas.height = frame.displayHeight
-      context.drawImage(frame, 0, 0)
-      showPicture(canvas)
-      advanceReviewPlayhead(captureMicros)
-      frame.close()
+      reviewPlayout.presentVideo(frame)
     },
     error: (error) => appendLog('error', `review decoder: ${error.message}`)
   })
   decoder.configure(config)
 
+  const origin = frames[0].captureMicros ?? reviewOriginMicros ?? 0
   for (const frame of frames) {
-    if (generation !== reviewGeneration) {
+    while (
+      generation === reviewGeneration &&
+      reviewPlayout.queuedVideo + decoder.decodeQueueSize > REVIEW_VIDEO_AHEAD_FRAMES
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    if (generation !== reviewGeneration || decoder.state === 'closed') {
       break
     }
     decoder.decode(
       new EncodedVideoChunk({
         type: frame.objectId === 0n ? 'key' : 'delta',
-        timestamp: (frame.captureMicros ?? origin) - origin,
+        timestamp: frame.captureMicros ?? origin,
         data: frame.data
       })
     )
-    if ((frame.captureMicros ?? origin) >= shownFrom) {
-      await pace(frame, frames)
-    }
-    while (paused && generation === reviewGeneration) {
-      await new Promise((resolve) => setTimeout(resolve, PAUSE_POLL_MS))
-    }
   }
-  await decoder.flush().catch(() => undefined)
-  decoder.close()
-  return true
+  if (decoder.state !== 'closed') {
+    await decoder.flush().catch(() => undefined)
+    decoder.close()
+  }
+  const last = frames[frames.length - 1]?.captureMicros
+  if (last !== undefined) {
+    await reviewPlayout.waitUntilDue(last - REVIEW_HANDOVER_MICROS, () => generation === reviewGeneration)
+  }
+  return generation === reviewGeneration
 }
 
 /// Fetched fragments are appended to a MediaSource on its own element while the
 /// live one keeps playing hidden, so going back to live only swaps elements.
 /// The next window is fetched once playback has caught up to within a few
 /// seconds of what is buffered.
-async function playReviewMse(frames: ReviewFrame[], generation: number): Promise<boolean> {
+async function playReviewMse(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
   if (!reviewMseOpened) {
     const source = subscribedCmafSource('video')
     if (!source) {
@@ -818,14 +923,19 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
     const origin = reviewOriginMicros ?? 0
     const startAtSeconds = ((reviewAnchorMicros ?? origin) - origin) / MICROS_PER_SECOND
     const previous = reviewMse
-    const next = await MseSink.open(freeMseElement(), { video: source, startAtSeconds })
+    const next = await MseSink.open(freeMseElement(), {
+      video: source,
+      audio: subscribedCmafSource('audio'),
+      startAtSeconds
+    })
     reviewMse = next
     reviewMseOpened = true
+    applyVolume()
     applyPlaybackSpeed()
     replacePicture(next.element, () => generation === reviewGeneration, previous)
     next.element.addEventListener('timeupdate', () => {
       if (generation === reviewGeneration) {
-        advanceReviewPlayhead(origin + next.element.currentTime * MICROS_PER_SECOND)
+        advanceReviewPlayhead(origin + next.secondsFromStart() * MICROS_PER_SECOND)
       }
     })
   }
@@ -835,6 +945,9 @@ async function playReviewMse(frames: ReviewFrame[], generation: number): Promise
   }
   for (const frame of frames) {
     sink.appendVideo(frame.data)
+  }
+  for (const chunk of audio) {
+    sink.appendAudio(chunk.data)
   }
   while (generation === reviewGeneration) {
     const ahead = (sink.bufferedEnd() ?? 0) - sink.element.currentTime
@@ -860,14 +973,16 @@ function pendingReviewConfig(): VideoDecoderConfig | undefined {
   return { codec: track.codec, optimizeForLatency: true }
 }
 
-async function pace(frame: ReviewFrame, frames: ReviewFrame[]): Promise<void> {
-  const next = frames[frames.indexOf(frame) + 1]
-  const delayMs =
-    next?.captureMicros !== undefined && frame.captureMicros !== undefined
-      ? (next.captureMicros - frame.captureMicros) / 1_000
-      : 0
-  if (delayMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 1_000)))
+function reviewAudioConfig(): AudioDecoderConfig | undefined {
+  const track = audioTracks.find((candidate) => candidate.name === subscriptions.get('audio')?.name)
+  if (!track?.codec || !track.samplerate) {
+    return undefined
+  }
+  return {
+    codec: track.codec,
+    sampleRate: track.samplerate,
+    numberOfChannels: channelCount(track.channelConfig) ?? 2,
+    description: track.initData ? base64ToUint8Array(track.initData) : undefined
   }
 }
 
@@ -879,6 +994,9 @@ function backToLive(): void {
   reviewAnchorMicros = undefined
   reviewOriginMicros = undefined
   reviewPlayheadMicros = undefined
+  reviewPlayout.stop()
+  element<HTMLSelectElement>('speed').value = '1'
+  applyVolume()
   renderSeekbar()
   showPicture(livePicture())
   closeReviewMse()
@@ -902,6 +1020,12 @@ function setPaused(next: boolean): void {
       void media.play().catch(() => undefined)
     }
   }
+  if (!reviewing && !mse) {
+    livePlayout.setPaused(paused)
+  }
+  if (reviewing && packaging === 'loc') {
+    reviewPlayout.setPaused(paused)
+  }
   const liveEnd = mse?.bufferedEnd()
   if (!paused && !reviewing && mse && liveEnd !== undefined) {
     mse.element.currentTime = liveEnd
@@ -912,14 +1036,21 @@ function playingMedia(): HTMLMediaElement[] {
   if (reviewing) {
     return reviewMse ? [reviewMse.element] : []
   }
-  return mse ? [mse.element] : [element<HTMLVideoElement>('video'), element<HTMLAudioElement>('audio')]
+  return mse ? [mse.element] : [element<HTMLVideoElement>('video')]
 }
 
+/// Review carries its own sound, so the live audio is silenced rather than
+/// stopped while reviewing: it stays in step and is heard again the moment
+/// playback returns to live.
 function applyVolume(): void {
   volume = element<HTMLInputElement>('volume').valueAsNumber
-  element<HTMLAudioElement>('audio').volume = volume
+  livePlayout.setVolume(reviewing ? 0 : volume)
+  reviewPlayout.setVolume(volume)
   if (mse) {
-    mse.element.volume = volume
+    mse.element.volume = reviewing ? 0 : volume
+  }
+  if (reviewMse) {
+    reviewMse.element.volume = volume
   }
 }
 
@@ -980,7 +1111,19 @@ function advanceReviewPlayhead(captureMicros: number): void {
     return
   }
   reviewPlayheadMicros = captureMicros
+  renderReviewStatus()
   renderSeekbar()
+}
+
+/// Starting the next window's fetch can already have taken playback live, so
+/// a status for the window is only shown while still reviewing.
+function renderReviewStatus(): void {
+  if (!reviewing) {
+    return
+  }
+  const offset = reviewPlayout.syncOffsetMs()
+  const sync = offset === undefined ? '' : ` · A/V ${formatSyncOffset(offset)}`
+  setStatusText('rewind-status', `Rewound ${reviewBehindSeconds.toFixed(1)}s${sync}`)
 }
 
 function renderReviewProgress(anchor: number, playhead: number, latest: number): void {
