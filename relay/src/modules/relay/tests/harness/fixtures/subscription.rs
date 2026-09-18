@@ -9,6 +9,7 @@ pub(crate) fn make_subscription(filter_type: moqt::FilterType) -> DownstreamSubs
             track_alias: 0,
             expires: 0,
             group_order: moqt::GroupOrder::Ascending,
+            subscriber_priority: 128,
             content_exists: moqt::ContentExists::False,
             filter_type,
             delivery_timeout: None,

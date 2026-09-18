@@ -697,6 +697,7 @@ mod tests {
                     track_alias: 0,
                     expires: 0,
                     group_order: moqt::GroupOrder::Ascending,
+                    subscriber_priority: 128,
                     content_exists: self.content_exists,
                     filter_type: moqt::FilterType::LargestObject,
                     delivery_timeout: None,
