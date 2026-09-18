@@ -479,3 +479,37 @@
 .setup-panel .hint {
   overflow-wrap: anywhere;
 }
+
+.setup-steps {
+  padding-left: 1.5rem;
+}
+
+.setup-steps > li {
+  padding-left: 0.4rem;
+  margin-bottom: 28px;
+}
+
+.setup-steps > li::marker {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.setup-steps h4 {
+  margin: 0 0 12px;
+}
+
+.setup-choice {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.setup-choice h5 {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+}
+
+.setup-steps .hint {
+  margin: 10px 0;
+}
