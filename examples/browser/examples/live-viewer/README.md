@@ -151,7 +151,11 @@ not from the timestamps of the chunks, so a hole in the source, such as a lost
 frame or a file that loops, would shift every later output and leave the sound
 ahead of the picture for as long as the decoder lives. Each output is
 therefore labelled with the capture timestamp of the chunk it was decoded
-from, in the live and the review decoder alike.
+from, in the live and the review decoder alike. The relay delivers each group
+on its own stream, and when the tail of one audio group and the head of the
+next are in flight together the streams interleave and the head lands first;
+the audio worker holds the objects of a later group until the group before
+them has ended, for at most 100 ms, so the decoder sees them in order.
 
 In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers

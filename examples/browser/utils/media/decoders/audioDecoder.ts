@@ -1,4 +1,5 @@
 import { AudioJitterBuffer } from '../audioJitterBuffer'
+import { GroupOrderGate } from '../groupOrderGate'
 import { isTerminalStatus } from '../objectStatus'
 import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
@@ -48,6 +49,7 @@ let catalogAudioChannels: number | undefined
 let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
 const directLastObjectIds = new Map<string, bigint>()
+const groupOrder = new GroupOrderGate((groupId, object) => enqueueDirectDecode(groupId, object))
 
 function postAudioData(audioData: AudioData, captureTimestampMicros: number | undefined): void {
   self.postMessage({ type: 'audioData', audioData, captureTimestampMicros }, [audioData])
@@ -149,7 +151,7 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
 
   if (bypassJitterBuffer) {
-    enqueueDirectDecode(message.groupId, subgroupStreamObject)
+    groupOrder.push(message.groupId, subgroupStreamObject)
     return
   }
 
