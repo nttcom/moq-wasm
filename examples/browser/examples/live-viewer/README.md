@@ -4,6 +4,51 @@
 track を切り替えられるので、`--transcode` で生成した下位画質（`video_480p` / `video_360p`）の確認にも
 使えます。
 
+## 配信の開始方法
+
+Viewer で再生する前に、別ターミナルで配信を開始します。
+
+### クラウドの Relay を使う場合
+
+Relay URL は `https://relay-1.moqt.research.skyway.io:443` です。`make relay` は不要で、トークンなしで
+配信できます。
+
+```shell
+RELAY=https://relay-1.moqt.research.skyway.io:443
+
+# gateway をどれか選ぶ
+# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest
+# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest-transcode   # 下位画質も配信
+# GST_MOQT_URL=$RELAY make gst-srt-publish                 # SRT のみ
+
+# 配信元をどれか選ぶ
+# make ffmpeg-rtmp
+# make ffmpeg-srt
+# make ffmpeg-srt-bbb
+make browser
+```
+
+### ローカルの Relay を使う場合
+
+Relay URL は `https://127.0.0.1:4433` です。`make relay` で relay を起動し、自己署名証明書なので
+Chrome は `make chrome` で開きます。
+
+```shell
+make relay
+
+# gateway をどれか選ぶ
+# make live-ingest
+# make live-ingest-transcode   # 下位画質も配信
+# make gst-srt-publish         # SRT のみ
+
+# 配信元をどれか選ぶ
+# make ffmpeg-rtmp
+# make ffmpeg-srt
+# make ffmpeg-srt-bbb
+make browser
+make chrome
+```
+
 ## 使い方
 
 ```shell
