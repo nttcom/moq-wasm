@@ -34,9 +34,11 @@ const DEFAULT_AUDIO_DECODER_CONFIG = {
 }
 
 let audioDecoder: AudioDecoder | undefined
-let remoteTimestampBase: number | null = null
-let chunksCarryCaptureTimestamps = false
-let lastRebasedTimestamp: number | null = null
+/// The decoder stamps its outputs from the sample count it has produced, not
+/// from the chunk timestamps, so a hole in the source would shift every later
+/// output; each output is labelled with the capture timestamp of the chunk it
+/// was decoded from instead.
+const pendingCaptureTimestamps: (number | undefined)[] = []
 let decoderSignature: string | null = null
 let cachedAudioConfig: CachedAudioConfig | null = null
 let catalogAudioCodec: string | undefined
@@ -50,20 +52,9 @@ function postAudioData(audioData: AudioData, captureTimestampMicros: number | un
   self.postMessage({ type: 'audioData', audioData, captureTimestampMicros }, [audioData])
 }
 
-/// Chunk timestamps are rebased before decoding, so an output's timestamp is
-/// undone with the same base to recover its capture timestamp. The base is
-/// used rather than a lookup because a decoder may derive output timestamps
-/// from the sample count instead of returning the input ones unchanged.
-function captureTimestampOf(audioData: AudioData): number | undefined {
-  if (!chunksCarryCaptureTimestamps || remoteTimestampBase === null) {
-    return undefined
-  }
-  return audioData.timestamp + remoteTimestampBase
-}
-
 async function createAudioDecoder(config: AudioDecoderConfig, signature: string) {
   const init: AudioDecoderInit = {
-    output: (audioData) => postAudioData(audioData, captureTimestampOf(audioData)),
+    output: (audioData) => postAudioData(audioData, pendingCaptureTimestamps.shift()),
     error: (e: any) => {
       console.warn('[audioDecoder] decoder error', e)
     }
@@ -71,6 +62,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
   const decoder = new AudioDecoder(init)
   decoder.configure(config)
   decoderSignature = signature
+  pendingCaptureTimestamps.length = 0
   return decoder
 }
 
@@ -271,10 +263,6 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
   const desiredSignature = buildSignature(resolvedConfig)
   if (isPcmAlawCodec(resolvedConfig.codec)) {
     try {
-      if (decoderSignature !== desiredSignature) {
-        remoteTimestampBase = null
-        lastRebasedTimestamp = null
-      }
       decodePcmAlawChunk(decoded.metadata, decoded.data, resolvedConfig, captureTimestampMicros)
       cachedAudioConfig = resolvedConfig
       if (audioDecoder && audioDecoder.state !== 'closed') {
@@ -295,8 +283,6 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
         audioDecoder.close()
       }
       audioDecoder = await createAudioDecoder(desiredConfig, desiredSignature)
-      remoteTimestampBase = null
-      lastRebasedTimestamp = null
       cachedAudioConfig = resolvedConfig
     } catch (e) {
       console.error('[audioDecoder] configure failed', e)
@@ -304,17 +290,15 @@ async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureT
     }
   }
 
-  chunksCarryCaptureTimestamps = captureTimestampMicros !== undefined
-  const rebasedTimestamp = rebaseTimestamp(decoded.metadata.timestamp)
-
   const encodedAudioChunk = new EncodedAudioChunk({
     type: decoded.metadata.type as EncodedAudioChunkType,
-    timestamp: rebasedTimestamp,
+    timestamp: decoded.metadata.timestamp,
     duration: decoded.metadata.duration ?? undefined,
     data: decoded.data
   })
 
-  await audioDecoder.decode(encodedAudioChunk)
+  audioDecoder.decode(encodedAudioChunk)
+  pendingCaptureTimestamps.push(captureTimestampMicros)
 }
 
 function decodePcmAlawChunk(
@@ -336,13 +320,12 @@ function decodePcmAlawChunk(
     pcm[i] = decodeAlawSample(payload[i] ?? 0)
   }
 
-  const timestamp = rebaseTimestamp(metadata.timestamp)
   const audioData = new AudioData({
     format: 's16',
     sampleRate,
     numberOfFrames,
     numberOfChannels: channels,
-    timestamp,
+    timestamp: metadata.timestamp,
     data: new Uint8Array(pcm.buffer)
   })
   postAudioData(audioData, captureTimestampMicros)
@@ -401,21 +384,6 @@ function postJitterBufferActivity(event: 'push' | 'pop') {
     bufferedFrames: jitterBuffer.getBufferedFrameCount(),
     capacityFrames: jitterBuffer.getMaxBufferSize()
   })
-}
-
-function rebaseTimestamp(remoteTimestamp: number): number {
-  if (remoteTimestampBase === null) {
-    remoteTimestampBase = remoteTimestamp
-  }
-  let rebased = remoteTimestamp - remoteTimestampBase
-  if (!Number.isFinite(rebased) || rebased < 0) {
-    rebased = 0
-  }
-  if (lastRebasedTimestamp !== null && rebased <= lastRebasedTimestamp) {
-    rebased = lastRebasedTimestamp + 1
-  }
-  lastRebasedTimestamp = rebased
-  return rebased
 }
 
 function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {

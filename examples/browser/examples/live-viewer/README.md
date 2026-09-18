@@ -146,6 +146,13 @@ the previous chunk ended, and as `video N dropped / M late` how many frames
 fell due together with a newer one and were never shown, and how many were
 shown more than a frame period after they were due.
 
+The audio decoder stamps its outputs from the sample count it has produced,
+not from the timestamps of the chunks, so a hole in the source, such as a lost
+frame or a file that loops, would shift every later output and leave the sound
+ahead of the picture for as long as the decoder lives. Each output is
+therefore labelled with the capture timestamp of the chunk it was decoded
+from, in the live and the review decoder alike.
+
 In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers
 append in the default segments mode rather than back to back.

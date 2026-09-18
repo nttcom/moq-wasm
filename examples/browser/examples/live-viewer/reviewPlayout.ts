@@ -17,6 +17,10 @@ export class ReviewPlayout {
   private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
   private readonly video: VideoPlayout
   private audioDecoder: AudioDecoder | undefined
+  /// The decoder stamps its outputs from the sample count it has produced, so
+  /// each output is labelled with the capture timestamp of the chunk it was
+  /// decoded from.
+  private readonly pendingCaptureMicros: number[] = []
   private shownFromMicros = 0
   private pausedAtMs: number | undefined
 
@@ -40,6 +44,7 @@ export class ReviewPlayout {
     void this.audio.resume()
     this.audioDecoder?.close()
     this.audioDecoder = undefined
+    this.pendingCaptureMicros.length = 0
     this.clock.reset()
     this.pausedAtMs = undefined
   }
@@ -71,6 +76,7 @@ export class ReviewPlayout {
         continue
       }
       this.audioDecoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: chunk.captureMicros, data: chunk.data }))
+      this.pendingCaptureMicros.push(chunk.captureMicros)
     }
   }
 
@@ -126,11 +132,11 @@ export class ReviewPlayout {
   private createAudioDecoder(config: AudioDecoderConfig): AudioDecoder {
     const decoder = new AudioDecoder({
       output: (audioData) => {
-        if (audioData.timestamp + (audioData.duration ?? 0) <= this.shownFromMicros) {
+        const captureMicros = this.pendingCaptureMicros.shift()
+        if (captureMicros === undefined || captureMicros + (audioData.duration ?? 0) <= this.shownFromMicros) {
           audioData.close()
           return
         }
-        const captureMicros = audioData.timestamp
         this.audio.play(audioData, captureMicros, () => this.dueAt(captureMicros))
         audioData.close()
       },
