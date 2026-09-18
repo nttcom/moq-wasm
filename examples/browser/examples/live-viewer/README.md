@@ -12,10 +12,6 @@ OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下�
 <details>
 <summary>OBS / ffmpeg → クラウド SRT / RTMP Ingestion (live-ingest) → クラウド Relay</summary>
 
-視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
-
-クラウドの live-ingest を SRT ポート 9000 または RTMP ポート 1935 で起動しておきます。ローカルの Ingestion や Relay の起動は不要です。
-
 ```shell
 make ffmpeg-srt-bbb-remote
 ```
@@ -29,17 +25,16 @@ srt://relay-1.moqt.research.skyway.io:9000?mode=caller&streamid=anon/live/test
 OBS で RTMP 配信する場合は、サーバーに `rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test`、
 ストリームキーに `stream` を設定します。
 
+視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
+
 </details>
 
 <details>
 <summary>OBS / ffmpeg → ローカル Ingestion (GStreamer) → クラウド Relay</summary>
 
-視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
-
-既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。ローカルの受信側を起動してから配信を開始します。ローカルの Relay の起動は不要です。
-
 ```shell
 make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
+
 make ffmpeg-srt-bbb-local
 ```
 
@@ -51,20 +46,22 @@ srt://localhost:9000?mode=caller&streamid=anon/live/test
 
 ffmpeg のテストパターンを配信する場合は、`make ffmpeg-srt-bbb-local` の代わりに `make ffmpeg-srt` を実行します。
 
+視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
+
 </details>
 
 <details>
 <summary>OBS / ffmpeg → ローカル Ingestion (GStreamer) → ローカル Relay</summary>
 
-視聴先の Relay URL： `https://127.0.0.1:4433`.
-
-既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。Relay、受信側、配信元の順に起動します。ローカルの自己署名証明書で接続するため、Chrome は `make chrome` で開きます。
-
 ```shell
 make relay
+
 make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
+
 make ffmpeg-srt-bbb-local
+
 make browser
+
 make chrome
 ```
 
@@ -75,6 +72,8 @@ srt://localhost:9000?mode=caller&streamid=anon/live/test
 ```
 
 ffmpeg のテストパターンを配信する場合は、`make ffmpeg-srt-bbb-local` の代わりに `make ffmpeg-srt` を実行します。
+
+視聴先の Relay URL： `https://127.0.0.1:4433`.
 
 </details>
 
