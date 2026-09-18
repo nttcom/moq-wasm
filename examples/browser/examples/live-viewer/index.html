@@ -8,6 +8,47 @@
     <link rel="stylesheet" href="./viewer.css" />
   </head>
   <body>
+    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Icons: Lucide (ISC), https://lucide.dev -->
+      <symbol
+        id="icon-clapperboard"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z" />
+        <path d="m6.2 5.3 3.1 3.9" />
+        <path d="m12.4 3.4 3.1 4" />
+        <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+      </symbol>
+      <symbol
+        id="icon-workflow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+      <symbol
+        id="icon-server"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+    </svg>
     <div class="page">
       <header class="hero">
         <div>
@@ -22,49 +63,113 @@
             <h2>配信の開始方法</h2>
             <span class="hint">視聴する前に、別ターミナルで配信を開始します。</span>
           </summary>
-          <div class="setup-split">
-            <div class="setup-panel">
-              <div class="setup-panel-head">
-                <h3>クラウドRelay利用</h3>
-                <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
-              </div>
-              <p class="hint"><code>make relay</code> は不要です。トークンなしで配信できます。</p>
-              <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
-
-# gateway をどれか選ぶ
-# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest
-# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest-transcode   # 下位画質も配信
-# GST_MOQT_URL=$RELAY make gst-srt-publish                 # SRT のみ
-
-# 配信元をどれか選ぶ
-# make ffmpeg-rtmp
-# make ffmpeg-srt
-# make ffmpeg-srt-bbb
-make browser</code></pre>
-            </div>
-            <div class="setup-panel">
-              <div class="setup-panel-head">
-                <h3>ローカルRelay利用</h3>
-                <code class="setup-relay-url">https://127.0.0.1:4433</code>
-              </div>
+          <p class="hint">
+            各コマンドは別々のターミナルで実行します。映像は H.264、音声は AAC を使用してください。 配信経路に合った
+            Relay URL と namespace <code>anon/live/test</code> を選び、Watch を押します。
+          </p>
+          <div class="setup-routes">
+            <details class="setup-panel setup-toggle">
+              <summary>
+                <h3 class="setup-flow">
+                  <span class="setup-node"
+                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small
+                      >SRT / RTMP</small
+                    ></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node"
+                    ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Cloud Ingestion<small
+                      >live-ingest</small
+                    ></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node setup-node-relay"
+                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                  >
+                </h3>
+              </summary>
               <p class="hint">
-                <code>make relay</code> で relay を起動します。自己署名証明書なので Chrome は
+                クラウドの live-ingest を SRT ポート 9000 または RTMP ポート 1935 で起動しておきます。 ローカルの
+                Ingestion や Relay の起動は不要です。
+              </p>
+              <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+              <pre><code>make ffmpeg-srt-bbb-remote</code></pre>
+              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
+              <pre><code>srt://relay-1.moqt.research.skyway.io:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+              <p class="hint">
+                OBS で RTMP 配信する場合は、サーバーに
+                <code>rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test</code>、 ストリームキーに
+                <code>stream</code> を設定します。
+              </p>
+            </details>
+            <details class="setup-panel setup-toggle">
+              <summary>
+                <h3 class="setup-flow">
+                  <span class="setup-node"
+                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node"
+                    ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Local Ingestion<small
+                      >GStreamer</small
+                    ></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node setup-node-relay"
+                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                  >
+                </h3>
+              </summary>
+              <p class="hint">
+                既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。
+                ローカルの受信側を起動してから配信を開始します。ローカルの Relay の起動は不要です。
+              </p>
+              <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+              <pre><code>make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
+make ffmpeg-srt-bbb-local</code></pre>
+              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
+              <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+              <p class="hint">
+                ffmpeg のテストパターンを配信する場合は、<code>make ffmpeg-srt-bbb-local</code> の代わりに
+                <code>make ffmpeg-srt</code> を実行します。
+              </p>
+            </details>
+            <details class="setup-panel setup-toggle">
+              <summary>
+                <h3 class="setup-flow">
+                  <span class="setup-node"
+                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node"
+                    ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Local Ingestion<small
+                      >GStreamer</small
+                    ></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node setup-node-relay"
+                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                  >
+                </h3>
+              </summary>
+              <p class="hint">
+                既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。
+                Relay、受信側、配信元の順に起動します。ローカルの自己署名証明書で接続するため、 Chrome は
                 <code>make chrome</code> で開きます。
               </p>
+              <p class="hint">視聴先の Relay URL： <code>https://127.0.0.1:4433</code></p>
               <pre><code>make relay
-
-# gateway をどれか選ぶ
-# make live-ingest
-# make live-ingest-transcode   # 下位画質も配信
-# make gst-srt-publish         # SRT のみ
-
-# 配信元をどれか選ぶ
-# make ffmpeg-rtmp
-# make ffmpeg-srt
-# make ffmpeg-srt-bbb
+make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
+make ffmpeg-srt-bbb-local
 make browser
 make chrome</code></pre>
-            </div>
+              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
+              <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+              <p class="hint">
+                ffmpeg のテストパターンを配信する場合は、<code>make ffmpeg-srt-bbb-local</code> の代わりに
+                <code>make ffmpeg-srt</code> を実行します。
+              </p>
+            </details>
           </div>
         </details>
         <div class="control-grid subscriber-grid">

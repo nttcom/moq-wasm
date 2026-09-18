@@ -6,62 +6,82 @@ track を切り替えられるので、`--transcode` で生成した下位画質
 
 ## 配信の開始方法
 
-Viewer で再生する前に、別ターミナルで配信を開始します。
+次の3経路から選び、各コマンドを別々のターミナルで実行します。
+OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下の ffmpeg コマンドは Big Buck Bunny を繰り返し配信します。
 
-### クラウドの Relay を使う場合
+<details>
+<summary>OBS / ffmpeg → クラウド SRT / RTMP Ingestion (live-ingest) → クラウド Relay</summary>
 
-Relay URL は `https://relay-1.moqt.research.skyway.io:443` です。`make relay` は不要で、トークンなしで
-配信できます。
+視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
+
+クラウドの live-ingest を SRT ポート 9000 または RTMP ポート 1935 で起動しておきます。ローカルの Ingestion や Relay の起動は不要です。
 
 ```shell
-RELAY=https://relay-1.moqt.research.skyway.io:443
-
-# gateway をどれか選ぶ
-# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest
-# LIVE_INGEST_MOQT_URL=$RELAY make live-ingest-transcode   # 下位画質も配信
-# GST_MOQT_URL=$RELAY make gst-srt-publish                 # SRT のみ
-
-# 配信元をどれか選ぶ
-# make ffmpeg-rtmp
-# make ffmpeg-srt
-# make ffmpeg-srt-bbb
-make browser
+make ffmpeg-srt-bbb-remote
 ```
 
-### ローカルの Relay を使う場合
+OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
 
-Relay URL は `https://127.0.0.1:4433` です。`make relay` で relay を起動し、自己署名証明書なので
-Chrome は `make chrome` で開きます。
+```text
+srt://relay-1.moqt.research.skyway.io:9000?mode=caller&streamid=anon/live/test
+```
+
+OBS で RTMP 配信する場合は、サーバーに `rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test`、
+ストリームキーに `stream` を設定します。
+
+</details>
+
+<details>
+<summary>OBS / ffmpeg → ローカル Ingestion (GStreamer) → クラウド Relay</summary>
+
+視聴先の Relay URL： `https://relay-1.moqt.research.skyway.io:443`.
+
+既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。ローカルの受信側を起動してから配信を開始します。ローカルの Relay の起動は不要です。
+
+```shell
+make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
+make ffmpeg-srt-bbb-local
+```
+
+OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
+
+```text
+srt://localhost:9000?mode=caller&streamid=anon/live/test
+```
+
+ffmpeg のテストパターンを配信する場合は、`make ffmpeg-srt-bbb-local` の代わりに `make ffmpeg-srt` を実行します。
+
+</details>
+
+<details>
+<summary>OBS / ffmpeg → ローカル Ingestion (GStreamer) → ローカル Relay</summary>
+
+視聴先の Relay URL： `https://127.0.0.1:4433`.
+
+既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。Relay、受信側、配信元の順に起動します。ローカルの自己署名証明書で接続するため、Chrome は `make chrome` で開きます。
 
 ```shell
 make relay
-
-# gateway をどれか選ぶ
-# make live-ingest
-# make live-ingest-transcode   # 下位画質も配信
-# make gst-srt-publish         # SRT のみ
-
-# 配信元をどれか選ぶ
-# make ffmpeg-rtmp
-# make ffmpeg-srt
-# make ffmpeg-srt-bbb
+make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
+make ffmpeg-srt-bbb-local
 make browser
 make chrome
 ```
 
-## 使い方
+OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
 
-```shell
-make relay
-make live-ingest            # make live-ingest-transcode で下位画質も配信する
-                            # SRT を GStreamer 経由で流すなら make gst-srt-publish
-make ffmpeg-rtmp            # または make ffmpeg-srt / make ffmpeg-srt-bbb
-make browser
-make chrome                 # 自己署名証明書の relay に接続するため
+```text
+srt://localhost:9000?mode=caller&streamid=anon/live/test
 ```
 
-Chrome で `examples/live-viewer/index.html` を開き、relay URL と namespace（RTMP は `app/stream`、
-SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackNamespace=...` でも指定できます。
+ffmpeg のテストパターンを配信する場合は、`make ffmpeg-srt-bbb-local` の代わりに `make ffmpeg-srt` を実行します。
+
+</details>
+
+`examples/live-viewer/index.html` を開き、配信経路に合った Relay URL と
+namespace `anon/live/test` を選んで Watch を押します。GStreamer 用コマンドは
+`GST_NAMESPACE`（既定値：`anon/live/test`）で配信し、live-ingest は SRT の stream ID
+または RTMP の app パスを使用します。`?moqtUrl=...&trackNamespace=...` でも指定できます。
 
 ## 巻き戻し
 

@@ -129,9 +129,23 @@ path (`anon/live/test`). Connections without a stream ID publish under
 
 ## Publish Big Buck Bunny over SRT
 
+For a local SRT receiver at `localhost:9000`, start `make live-ingest` (or
+`make gst-srt-publish`) and run this in another terminal:
+
 ```shell
-make ffmpeg-srt-bbb
+make ffmpeg-srt-bbb-local
 ```
+
+To send directly to the remote SRT receiver at
+`relay-1.moqt.research.skyway.io:9000`:
+
+```shell
+make ffmpeg-srt-bbb-remote
+```
+
+The remote command requires the remote SRT receiver to be running; no local
+bridge or relay is needed. In Live Viewer, select
+`https://relay-1.moqt.research.skyway.io:443` and namespace `anon/live/test`.
 
 The first run downloads `bbb_sunflower_1080p_30fps_normal.mp4` (263 MiB) from
 download.blender.org into `assets/bbb/`, which is git-ignored; the film is then

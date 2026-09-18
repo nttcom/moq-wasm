@@ -21,7 +21,7 @@ examples/browser/examples/*/dist/*
 
 bridges/live-ingest/recordings/
 
-# Sample media downloaded by `make ffmpeg-srt-bbb`
+# Sample media downloaded by the Big Buck Bunny SRT targets
 /assets/
 
 log/*

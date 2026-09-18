@@ -43,6 +43,21 @@ make chrome:linux
 
 `make browser` builds the browser WASM bindings before starting Vite.
 
+## Big Buck Bunny over SRT
+
+Run `make ffmpeg-srt-bbb-local` to send to `localhost:9000` after starting a
+local SRT receiver with `make live-ingest` or `make gst-srt-publish`.
+Run each long-running command in a separate terminal.
+
+Run `make ffmpeg-srt-bbb-remote` to send directly to the remote SRT receiver at
+`relay-1.moqt.research.skyway.io:9000`; no local bridge or relay is needed.
+Watch with Live Viewer using `https://relay-1.moqt.research.skyway.io:443` and
+namespace `anon/live/test`.
+
+Both commands download the sample on first use and loop it continuously.
+See the [live ingest guide](bridges/live-ingest/README.md#publish-big-buck-bunny-over-srt)
+for details.
+
 ## Test
 
 Run Rust tests:
