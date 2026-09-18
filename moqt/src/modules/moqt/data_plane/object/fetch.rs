@@ -2,7 +2,6 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
-use crate::modules::extensions::result_ext::ResultExt;
 use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
 use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 use crate::modules::moqt::data_plane::object::object_status::ObjectStatus;
@@ -25,19 +24,13 @@ impl FetchHeader {
     }
 
     pub fn decode(cursor: &mut std::io::Cursor<&[u8]>) -> Result<Self, DecodeError> {
-        let message_type = cursor
-            .try_get_varint()
-            .log_context("Fetch Header Message Type")
-            .map_err(|_| DecodeError::NeedMoreData)?;
+        let message_type = cursor.try_get_varint()?;
         if message_type != Self::TYPE {
             return Err(DecodeError::Fatal(format!(
                 "Invalid message type for FetchHeader: {message_type:#x}"
             )));
         }
-        let request_id = cursor
-            .try_get_varint()
-            .log_context("Fetch Header Request ID")
-            .map_err(|_| DecodeError::NeedMoreData)?;
+        let request_id = cursor.try_get_varint()?;
         Ok(Self { request_id })
     }
 
@@ -99,33 +92,15 @@ impl FetchObjectField {
 
     pub fn decode(buf: &mut BytesMut) -> Result<Self, DecodeError> {
         let mut cursor = std::io::Cursor::<&[u8]>::new(buf);
-        let group_id = cursor
-            .try_get_varint()
-            .log_context("Fetch Object Group ID")
-            .map_err(|_| DecodeError::NeedMoreData)?;
-        let subgroup_id = cursor
-            .try_get_varint()
-            .log_context("Fetch Object Subgroup ID")
-            .map_err(|_| DecodeError::NeedMoreData)?;
-        let object_id = cursor
-            .try_get_varint()
-            .log_context("Fetch Object Object ID")
-            .map_err(|_| DecodeError::NeedMoreData)?;
-        let publisher_priority = cursor
-            .try_get_u8()
-            .log_context("Fetch Object Publisher Priority")
-            .map_err(|_| DecodeError::NeedMoreData)?;
+        let group_id = cursor.try_get_varint()?;
+        let subgroup_id = cursor.try_get_varint()?;
+        let object_id = cursor.try_get_varint()?;
+        let publisher_priority = cursor.try_get_u8()?;
         let extension_headers =
             ExtensionHeaders::decode(&mut cursor).ok_or(DecodeError::NeedMoreData)?;
-        let payload_length = cursor
-            .try_get_varint()
-            .log_context("Fetch Object Payload Length")
-            .map_err(|_| DecodeError::NeedMoreData)?;
+        let payload_length = cursor.try_get_varint()?;
         let fetch_object = if payload_length == 0 {
-            let status_value = cursor
-                .try_get_varint()
-                .log_context("Fetch Object Status")
-                .map_err(|_| DecodeError::NeedMoreData)?;
+            let status_value = cursor.try_get_varint()?;
             let status = ObjectStatus::try_from(status_value as u8).map_err(|_| {
                 DecodeError::Fatal(format!("Invalid Object Status: {status_value:#x}"))
             })?;
@@ -262,6 +237,19 @@ mod tests {
 
     mod failure {
         use super::super::*;
+
+        #[test]
+        fn depacketize_split_payload_length_varint_needs_more_data() {
+            // Arrange
+            let bytes = [1u8, 2, 3, 128, 0, 0x40];
+            let mut buf = BytesMut::from(&bytes[..]);
+
+            // Act
+            let result = FetchObjectField::decode(&mut buf);
+
+            // Assert
+            assert_eq!(result, Err(DecodeError::NeedMoreData));
+        }
 
         #[test]
         fn depacketize_invalid_type() {
