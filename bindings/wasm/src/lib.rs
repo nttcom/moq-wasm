@@ -1369,6 +1369,7 @@ async fn uni_directional_stream_read_thread(
     let mut fetch_request_id: Option<u64> = None;
     // subgroup stream state
     let mut subgroup_header: Option<SubgroupHeader> = None;
+    let mut last_object_id: Option<u64> = None;
     // None = undecided, Some(true) = fetch, Some(false) = subgroup
     let mut is_fetch_stream: Option<bool> = None;
 
@@ -1434,13 +1435,9 @@ async fn uni_directional_stream_read_thread(
                 let parsed_header = subgroup_header.clone().expect("subgroup header");
                 match SubgroupObjectField::decode(parsed_header.message_type, &mut buf) {
                     Ok(field) => {
-                        let object_id_delta = field.object_id_delta;
-                        emit_subgroup_object(
-                            callbacks.clone(),
-                            &parsed_header,
-                            field,
-                            object_id_delta,
-                        )?;
+                        let object_id = field.resolve_object_id(last_object_id);
+                        last_object_id = Some(object_id);
+                        emit_subgroup_object(callbacks.clone(), &parsed_header, field, object_id)?;
                         continue;
                     }
                     Err(moqt::wire::DecodeError::NeedMoreData) => break,
@@ -1844,7 +1841,7 @@ fn emit_subgroup_object(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     header: &SubgroupHeader,
     field: SubgroupObjectField,
-    object_id_delta: u64,
+    object_id: u64,
 ) -> Result<(), JsValue> {
     if let Some(callback) = callbacks.borrow().subgroup_object_callback.clone() {
         let loc_header = from_extension_headers(&field.extension_headers);
@@ -1852,25 +1849,7 @@ fn emit_subgroup_object(
             SubgroupId::Value(value) => Some(value),
             _ => None,
         };
-        let wrapper = match field.subgroup_object {
-            SubgroupObject::Payload { data, .. } => SubgroupObjectMessage::new(
-                subgroup_id,
-                object_id_delta,
-                None,
-                data.to_vec(),
-                loc_header,
-            ),
-            SubgroupObject::Status { code, .. } => {
-                let status = ObjectStatus::try_from(code as u8).ok();
-                SubgroupObjectMessage::new(
-                    subgroup_id,
-                    object_id_delta,
-                    status,
-                    Vec::new(),
-                    loc_header,
-                )
-            }
-        };
+        let wrapper = SubgroupObjectMessage::new(subgroup_id, object_id, field, loc_header);
         let _ = callback.call3(
             &JsValue::NULL,
             &JsValue::from(js_sys::BigInt::from(header.track_alias)),

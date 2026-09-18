@@ -4,7 +4,7 @@ use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::wire::{
     ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk, ObjectStatus,
     Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup,
-    Subscribe, SubscribeNamespace, SubscribeOk,
+    SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
 };
 pub use subgroup_state::SubgroupState;
 use wasm_bindgen::prelude::*;
@@ -721,6 +721,7 @@ impl ObjectDatagramStatusMessage {
 pub struct SubgroupObjectMessage {
     subgroup_id: Option<u64>,
     object_id_delta: u64,
+    object_id: u64,
     object_status: Option<u8>,
     object_payload_length: u32,
     object_payload: Vec<u8>,
@@ -741,7 +742,7 @@ impl SubgroupObjectMessage {
 
     #[wasm_bindgen(getter, js_name = objectId)]
     pub fn object_id(&self) -> u64 {
-        self.object_id_delta
+        self.object_id
     }
 
     #[wasm_bindgen(getter, js_name = objectStatus)]
@@ -769,14 +770,20 @@ impl SubgroupObjectMessage {
 impl SubgroupObjectMessage {
     pub(crate) fn new(
         subgroup_id: Option<u64>,
-        object_id_delta: u64,
-        object_status: Option<ObjectStatus>,
-        object_payload: Vec<u8>,
+        object_id: u64,
+        field: SubgroupObjectField,
         loc_header: Vec<LocExtension>,
     ) -> Self {
+        let (object_status, object_payload) = match field.subgroup_object {
+            SubgroupObject::Payload { data, .. } => (None, data.to_vec()),
+            SubgroupObject::Status { code, .. } => {
+                (ObjectStatus::try_from(code as u8).ok(), Vec::new())
+            }
+        };
         Self {
             subgroup_id,
-            object_id_delta,
+            object_id_delta: field.object_id_delta,
+            object_id,
             object_status: object_status.map(|value| value as u8),
             object_payload_length: object_payload.len() as u32,
             object_payload,
@@ -878,5 +885,61 @@ impl FetchObjectMessage {
             object_payload: payload,
             loc_header: from_extension_headers(&field.extension_headers),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use moqt::wire::{ExtensionHeaders, SubgroupHeader, SubgroupId};
+
+    fn subgroup_object_field(
+        object_id_delta: u64,
+        subgroup_object: SubgroupObject,
+    ) -> SubgroupObjectField {
+        let header = SubgroupHeader::new(1, 2, SubgroupId::Value(0), 0, false, false);
+        SubgroupObjectField {
+            message_type: header.message_type,
+            object_id_delta,
+            extension_headers: ExtensionHeaders::default(),
+            subgroup_object,
+        }
+    }
+
+    #[test]
+    fn reports_the_absolute_object_id_next_to_the_delta() {
+        // Arrange
+        let field =
+            subgroup_object_field(2, SubgroupObject::new_payload(Bytes::from_static(b"ab")));
+
+        // Act
+        let message = SubgroupObjectMessage::new(Some(0), 7, field, Vec::new());
+
+        // Assert
+        assert_eq!(message.object_id(), 7);
+        assert_eq!(message.object_id_delta(), 2);
+        assert_eq!(message.object_status(), None);
+        assert_eq!(message.object_payload(), b"ab".to_vec());
+        assert_eq!(message.object_payload_length(), 2);
+    }
+
+    #[test]
+    fn carries_a_status_object_without_payload() {
+        // Arrange
+        let field = subgroup_object_field(
+            0,
+            SubgroupObject::new_status(ObjectStatus::EndOfGroup as u64),
+        );
+
+        // Act
+        let message = SubgroupObjectMessage::new(None, 30, field, Vec::new());
+
+        // Assert
+        assert_eq!(
+            message.object_status(),
+            Some(ObjectStatus::EndOfGroup as u8)
+        );
+        assert_eq!(message.object_payload_length(), 0);
     }
 }
