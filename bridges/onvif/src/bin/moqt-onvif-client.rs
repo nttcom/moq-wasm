@@ -5,6 +5,7 @@ use clap::Parser;
 use media_streaming_format::{
     Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole,
 };
+use mediapack::loc::{to_extension_headers, LocExtension, CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID};
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
     ObjectDatagramPayload, Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender,
@@ -15,7 +16,6 @@ use moqt_bridge_onvif::{
     rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
     soap_client,
 };
-use packages::loc::{CaptureTimestamp, LocHeader, LocHeaderExtension, VideoConfig};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;
@@ -24,7 +24,6 @@ use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
-const LOC_HEADER_SENTINEL: &[u8] = b"loc:";
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
 const DEFAULT_AUDIO_PACKET_DURATION_US: u64 = 20_000;
 
@@ -777,9 +776,7 @@ async fn send_video_packet(
         return Ok(());
     }
 
-    let loc_header = build_video_loc_header(&packet);
-    let extension_headers =
-        loc_header_to_extension_headers(&loc_header).context("build loc header extensions")?;
+    let extension_headers = to_extension_headers(&video_loc_extensions(&packet));
     let payload = Bytes::from(packet.data);
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
@@ -832,9 +829,10 @@ async fn send_audio_packet(
         None
     };
 
-    let loc_header = build_audio_loc_header(&packet);
-    let extension_headers = loc_header_to_extension_headers(&loc_header)
-        .context("build audio loc header extensions")?;
+    let extension_headers = to_extension_headers(&[LocExtension::varint(
+        CAPTURE_TIMESTAMP_ID,
+        packet.ingest_wallclock_micros,
+    )]);
     let payload = Bytes::from(packet.data);
     let Some(stream) = state.stream.as_mut() else {
         return Ok(());
@@ -1085,16 +1083,16 @@ impl CommandPayload {
     }
 }
 
-fn build_video_loc_header(packet: &EncodedPacket) -> LocHeader {
-    let mut extensions = Vec::with_capacity(2);
-    extensions.push(LocHeaderExtension::CaptureTimestamp(CaptureTimestamp {
-        micros_since_unix_epoch: packet.ingest_wallclock_micros,
-    }));
+fn video_loc_extensions(packet: &EncodedPacket) -> Vec<LocExtension> {
+    let mut extensions = vec![LocExtension::varint(
+        CAPTURE_TIMESTAMP_ID,
+        packet.ingest_wallclock_micros,
+    )];
     if packet.is_keyframe {
         if let Some(description) = packet.description_base64.as_deref() {
             match general_purpose::STANDARD.decode(description) {
                 Ok(bytes) => {
-                    extensions.push(LocHeaderExtension::VideoConfig(VideoConfig { data: bytes }));
+                    extensions.push(LocExtension::bytes(VIDEO_CONFIG_ID, Bytes::from(bytes)));
                 }
                 Err(err) => {
                     log::warn!("failed to decode avcC base64: {err}");
@@ -1102,15 +1100,7 @@ fn build_video_loc_header(packet: &EncodedPacket) -> LocHeader {
             }
         }
     }
-    LocHeader { extensions }
-}
-
-fn build_audio_loc_header(packet: &EncodedAudioPacket) -> LocHeader {
-    LocHeader {
-        extensions: vec![LocHeaderExtension::CaptureTimestamp(CaptureTimestamp {
-            micros_since_unix_epoch: packet.ingest_wallclock_micros,
-        })],
-    }
+    extensions
 }
 
 #[derive(Default)]
@@ -1708,17 +1698,6 @@ fn spawn_command_receiver(
         }
     });
     Ok(())
-}
-
-fn loc_header_to_extension_headers(header: &LocHeader) -> Result<ExtensionHeaders> {
-    let mut immutable_extensions = Vec::with_capacity(1);
-    let mut encoded = Vec::from(LOC_HEADER_SENTINEL);
-    encoded.extend_from_slice(&serde_json::to_vec(header)?);
-    immutable_extensions.push(Bytes::from(encoded));
-
-    Ok(ExtensionHeaders::from_immutable_extensions(
-        immutable_extensions,
-    ))
 }
 
 fn empty_extension_headers() -> ExtensionHeaders {
