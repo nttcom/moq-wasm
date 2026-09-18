@@ -5,7 +5,7 @@ import { createBitrateLogger } from '../bitrate'
 import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
 import { readLocHeader } from '../loc'
-import { buildVideoChunkFromLoc, getCaptureTimestampMicros } from '../locChunk'
+import { buildVideoChunkFromLoc } from '../locChunk'
 import { trackSubgroupObjectId } from '../subgroupObjectId'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
@@ -854,20 +854,14 @@ function materializeDirectObject(
   object: SubgroupObjectWithLoc,
   onReceiveLatency?: (latencyMs: number) => void
 ): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
-  const objectId = trackSubgroupObjectId(
-    directLastObjectIds,
-    groupId,
-    object.subgroupId,
-    object.objectIdDelta,
-    object.objectStatus
-  )
+  const objectId = trackSubgroupObjectId(directLastObjectIds, groupId, object)
   if (!object.objectPayloadLength) {
     return null
   }
 
-  const locMetadata = readLocHeader(object.locHeader)
-  const captureTimestampMicros = getCaptureTimestampMicros(locMetadata.captureTimestampMicros)
-  const parsed = buildVideoChunkFromLoc(object, objectId)
+  const loc = readLocHeader(object.locHeader)
+  const captureTimestampMicros = loc.captureTimestampMicros
+  const parsed = buildVideoChunkFromLoc(loc, object.objectPayload, objectId)
 
   if (typeof captureTimestampMicros === 'number') {
     onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))

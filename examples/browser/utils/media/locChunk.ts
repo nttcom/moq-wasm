@@ -1,37 +1,21 @@
-import { bytesToBase64, readLocHeader } from './loc'
+import { bytesToBase64, type LocMetadata } from './loc'
 import type { DeserializedChunk } from './chunk'
-import type { SubgroupObjectWithLoc } from './jitterBufferTypes'
 
-export function getCaptureTimestampMicros(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined
-  }
-  return value
-}
-
-export function buildAudioChunkFromLoc(object: SubgroupObjectWithLoc): DeserializedChunk {
-  const loc = readLocHeader(object.locHeader)
-  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
+export function buildAudioChunkFromLoc(loc: LocMetadata, payload: Uint8Array): DeserializedChunk {
   return {
-    metadata: {
-      type: 'key',
-      timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
-      duration: null
-    },
-    data: object.objectPayload
+    metadata: { type: 'key', timestamp: loc.captureTimestampMicros ?? 0, duration: null },
+    data: payload
   }
 }
 
-export function buildVideoChunkFromLoc(object: SubgroupObjectWithLoc, objectId: bigint): DeserializedChunk {
-  const loc = readLocHeader(object.locHeader)
-  const captureMicros = getCaptureTimestampMicros(loc.captureTimestampMicros)
+export function buildVideoChunkFromLoc(loc: LocMetadata, payload: Uint8Array, objectId: bigint): DeserializedChunk {
   return {
     metadata: {
       type: objectId === 0n ? 'key' : 'delta',
-      timestamp: typeof captureMicros === 'number' ? captureMicros : 0,
+      timestamp: loc.captureTimestampMicros ?? 0,
       duration: null,
       descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined
     },
-    data: object.objectPayload
+    data: payload
   }
 }
