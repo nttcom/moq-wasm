@@ -17,7 +17,7 @@ use mediapack::{
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
     FetchObjectField, GroupOrder, QUIC, Session, SessionEvent, TrackWriter, TransportProtocol,
-    TransportSendError, WEBTRANSPORT, wire::FetchParams,
+    TransportSendError, TransportStats, WEBTRANSPORT, wire::FetchParams,
 };
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -280,6 +280,13 @@ impl MoqtManager {
             .await
     }
 
+    /// `None` until the relay session exists; the lock is also held for the
+    /// whole connect, so a caller during it sees `None` as well.
+    pub fn transport_stats(&self) -> Option<TransportStats> {
+        let backend = self.inner.try_lock().ok()?.backend.clone()?;
+        Some(backend.transport_stats())
+    }
+
     async fn ensure_backend(&self, target: &MoqtTarget) -> Result<Arc<PublisherBackend>> {
         let mut guard = self.inner.lock().await;
         if guard.backend.is_none() {
@@ -318,6 +325,13 @@ impl PublisherBackend {
         match self {
             Self::Quic(publisher) => publisher.setup_namespace(namespace).await,
             Self::WebTransport(publisher) => publisher.setup_namespace(namespace).await,
+        }
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        match self {
+            Self::Quic(publisher) => publisher.session.transport_stats(),
+            Self::WebTransport(publisher) => publisher.session.transport_stats(),
         }
     }
 
@@ -1033,6 +1047,15 @@ mod tests {
             .iter()
             .find(|track| track.name == name)
             .unwrap_or_else(|| panic!("missing track {name}"))
+    }
+
+    #[test]
+    fn transport_stats_is_none_before_the_relay_session_exists() {
+        // Arrange
+        let manager = MoqtManager::new(None);
+
+        // Act / Assert
+        assert_eq!(manager.transport_stats(), None);
     }
 
     #[test]

@@ -20,7 +20,7 @@ impl MediaPublisher {
     pub fn run(moqt: MoqtManager, namespace: Vec<String>) -> Self {
         let tracks = TrackPublisher::new(moqt.clone(), namespace.clone());
         let timing = tracks.shared_timing();
-        let (queue, consumer) = PublishQueue::open();
+        let (queue, consumer) = PublishQueue::open(moqt.clone());
         Self {
             moqt,
             namespace,

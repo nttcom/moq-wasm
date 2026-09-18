@@ -5,6 +5,8 @@ use tokio::sync::{
     oneshot,
 };
 
+use crate::manager::MoqtManager;
+
 /// About three seconds of 30 fps video with AAC audio: a relay stall shorter
 /// than this is absorbed, a longer one drops media rather than holding back
 /// the ingest, whose SRT or RTMP sender gives up on a connection that is not
@@ -21,6 +23,7 @@ const DROP_LOG_INTERVAL: u64 = 500;
 /// keyframe fits so that no viewer receives a group it cannot decode from its
 /// start.
 pub(crate) struct PublishQueue {
+    moqt: MoqtManager,
     event_sender: mpsc::Sender<MediaEvent>,
     failure_receiver: oneshot::Receiver<anyhow::Error>,
     awaiting_keyframe: bool,
@@ -45,11 +48,12 @@ impl DroppedSamples {
 }
 
 impl PublishQueue {
-    pub(crate) fn open() -> (Self, QueueConsumer) {
+    pub(crate) fn open(moqt: MoqtManager) -> (Self, QueueConsumer) {
         let (event_sender, event_receiver) = mpsc::channel(CAPACITY);
         let (failure_sender, failure_receiver) = oneshot::channel();
         (
             Self {
+                moqt,
                 event_sender,
                 failure_receiver,
                 awaiting_keyframe: false,
@@ -99,6 +103,7 @@ impl PublishQueue {
         if !self.awaiting_keyframe {
             tracing::warn!(
                 capacity = CAPACITY,
+                transport = ?self.moqt.transport_stats(),
                 "publish queue full: the relay is not keeping up, dropping media until a keyframe fits"
             );
         }
@@ -107,6 +112,7 @@ impl PublishQueue {
             tracing::warn!(
                 dropped_video = self.dropped.video,
                 dropped_audio = self.dropped.audio,
+                transport = ?self.moqt.transport_stats(),
                 "still dropping media: the publish queue is full"
             );
         }
@@ -116,6 +122,7 @@ impl PublishQueue {
         tracing::warn!(
             dropped_video = self.dropped.video,
             dropped_audio = self.dropped.audio,
+            transport = ?self.moqt.transport_stats(),
             "publishing resumed at a keyframe"
         );
         self.awaiting_keyframe = false;
@@ -160,7 +167,7 @@ mod tests {
     }
 
     fn stalled_queue() -> (PublishQueue, QueueConsumer) {
-        let (mut queue, consumer) = PublishQueue::open();
+        let (mut queue, consumer) = PublishQueue::open(MoqtManager::new(None));
         for _ in 0..SAMPLE_SLOTS {
             queue.push(video(false)).unwrap();
         }
@@ -265,7 +272,7 @@ mod tests {
     #[test]
     fn reports_why_publishing_stopped() {
         // Arrange
-        let (mut queue, consumer) = PublishQueue::open();
+        let (mut queue, consumer) = PublishQueue::open(MoqtManager::new(None));
         let QueueConsumer {
             event_receiver,
             failure_sender,
