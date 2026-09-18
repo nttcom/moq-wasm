@@ -9,7 +9,7 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -90,13 +90,21 @@ $(BBB_FILE):
 	unzip -o -j $@.zip -d $(dir $@)
 	rm -f $@.zip
 
-ffmpeg-srt-bbb: $(BBB_FILE)
+ffmpeg-srt-bbb-local: $(BBB_FILE)
 	ffmpeg -re -stream_loop -1 -i $(BBB_FILE) \
 		-map 0:v:0 -map 0:a:0 \
 		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
 		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
+
+ffmpeg-srt-bbb-remote: $(BBB_FILE)
+	ffmpeg -re -stream_loop -1 -i $(BBB_FILE) \
+		-map 0:v:0 -map 0:a:0 \
+		-c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
+		-g 60 -sc_threshold 0 \
+		-c:a aac -ar 48000 -ac 2 \
+		-f mpegts "srt://relay-1.moqt.research.skyway.io:9000?mode=caller&streamid=anon/live/test"
 
 # ONVIF Bridges
 onvif:

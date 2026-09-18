@@ -58,7 +58,7 @@ that arrives while a group is open starts receiving at the next group.
 ```shell
 make relay
 make gst-srt-publish     # listens on 0.0.0.0:9000 and publishes anon/live/test
-make ffmpeg-srt-bbb      # or make ffmpeg-srt
+make ffmpeg-srt-bbb-local      # or make ffmpeg-srt
 ```
 
 `make gst-srt-publish` runs:
