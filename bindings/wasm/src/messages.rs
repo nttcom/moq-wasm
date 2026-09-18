@@ -1,11 +1,11 @@
 mod subgroup_state;
 
+use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::wire::{
     ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk, ObjectStatus,
     Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup,
     Subscribe, SubscribeNamespace, SubscribeOk,
 };
-use packages::loc::LocHeader;
 pub use subgroup_state::SubgroupState;
 use wasm_bindgen::prelude::*;
 
@@ -588,7 +588,7 @@ pub struct ObjectDatagramMessage {
     publisher_priority: u8,
     object_payload_length: u32,
     object_payload: Vec<u8>,
-    loc_header: LocHeader,
+    loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
@@ -637,7 +637,7 @@ impl ObjectDatagramMessage {
         object_id: Option<u64>,
         publisher_priority: u8,
         object_payload: Vec<u8>,
-        loc_header: LocHeader,
+        loc_header: Vec<LocExtension>,
     ) -> Self {
         Self {
             track_alias,
@@ -659,7 +659,7 @@ pub struct ObjectDatagramStatusMessage {
     object_id: Option<u64>,
     publisher_priority: u8,
     object_status: u8,
-    loc_header: LocHeader,
+    loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
@@ -703,7 +703,7 @@ impl ObjectDatagramStatusMessage {
         object_id: Option<u64>,
         publisher_priority: u8,
         object_status: ObjectStatus,
-        loc_header: LocHeader,
+        loc_header: Vec<LocExtension>,
     ) -> Self {
         Self {
             track_alias,
@@ -724,7 +724,7 @@ pub struct SubgroupObjectMessage {
     object_status: Option<u8>,
     object_payload_length: u32,
     object_payload: Vec<u8>,
-    loc_header: LocHeader,
+    loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
@@ -772,7 +772,7 @@ impl SubgroupObjectMessage {
         object_id_delta: u64,
         object_status: Option<ObjectStatus>,
         object_payload: Vec<u8>,
-        loc_header: LocHeader,
+        loc_header: Vec<LocExtension>,
     ) -> Self {
         Self {
             subgroup_id,
@@ -833,7 +833,7 @@ pub struct FetchObjectMessage {
     group_id: u64,
     object_id: u64,
     object_payload: Vec<u8>,
-    loc_header: LocHeader,
+    loc_header: Vec<LocExtension>,
 }
 
 #[wasm_bindgen]
@@ -876,7 +876,7 @@ impl FetchObjectMessage {
             group_id: field.group_id,
             object_id: field.object_id,
             object_payload: payload,
-            loc_header: crate::loc::extension_headers_to_loc_header(&field.extension_headers),
+            loc_header: from_extension_headers(&field.extension_headers),
         }
     }
 }

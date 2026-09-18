@@ -1,25 +1,19 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use mediapack::loc::{LocExtension, to_extension_headers};
 use moqt::wire::ExtensionHeaders;
-use packages::loc::LocHeader;
+use wasm_bindgen::JsValue;
 
-pub fn loc_header_to_extension_headers(header: &LocHeader) -> ExtensionHeaders {
-    header.to_extension_headers()
-}
+use crate::js_error;
 
-pub fn extension_headers_to_loc_header(headers: &ExtensionHeaders) -> LocHeader {
-    LocHeader::from_extension_headers(headers)
-}
-
-pub fn parse_loc_header(value: wasm_bindgen::JsValue) -> Result<Option<LocHeader>> {
+pub fn parse_loc_header(value: JsValue) -> Result<ExtensionHeaders, JsValue> {
     if value.is_undefined() || value.is_null() {
-        return Ok(None);
+        return Ok(ExtensionHeaders::default());
     }
-
-    let header: LocHeader = serde_wasm_bindgen::from_value(value)
-        .map_err(|err| anyhow::anyhow!("invalid loc header: {err}"))?;
-    Ok(Some(header))
+    let extensions: Vec<LocExtension> = serde_wasm_bindgen::from_value(value)
+        .map_err(|err| js_error(format!("invalid loc header: {err}")))?;
+    Ok(to_extension_headers(&extensions))
 }
 
-pub fn encode_loc_header(header: &LocHeader) -> Result<wasm_bindgen::JsValue> {
-    serde_wasm_bindgen::to_value(header).map_err(|err| anyhow::anyhow!("loc header: {err}"))
+pub fn encode_loc_header(extensions: &[LocExtension]) -> Result<JsValue> {
+    serde_wasm_bindgen::to_value(extensions).map_err(|err| anyhow!("loc header: {err}"))
 }

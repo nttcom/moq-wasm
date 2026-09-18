@@ -15,6 +15,8 @@ use anyhow::{Result, anyhow};
 #[cfg(web_sys_unstable_apis)]
 use bytes::{Buf, Bytes, BytesMut};
 #[cfg(web_sys_unstable_apis)]
+use mediapack::loc::from_extension_headers;
+#[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
     DatagramField, ExtensionHeaders, Fetch, FetchCancel, FetchHeader, FetchObjectField, FetchOk,
@@ -983,12 +985,7 @@ impl MOQTClient {
         object_payload: Vec<u8>,
         loc_header: JsValue,
     ) -> Result<(), JsValue> {
-        let extension_headers = match crate::loc::parse_loc_header(loc_header)
-            .map_err(|error| js_error(error.to_string()))?
-        {
-            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
-            None => empty_extension_headers(),
-        };
+        let extension_headers = crate::loc::parse_loc_header(loc_header)?;
 
         let field = if extension_headers == empty_extension_headers() {
             DatagramField::Payload0x00 {
@@ -1021,12 +1018,7 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let object_status =
             ObjectStatus::try_from(object_status).map_err(|_| js_error("invalid object status"))?;
-        let extension_headers = match crate::loc::parse_loc_header(loc_header)
-            .map_err(|error| js_error(error.to_string()))?
-        {
-            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
-            None => empty_extension_headers(),
-        };
+        let extension_headers = crate::loc::parse_loc_header(loc_header)?;
 
         let field = if extension_headers == empty_extension_headers() {
             DatagramField::Status0x20 {
@@ -1091,12 +1083,7 @@ impl MOQTClient {
             .cloned()
             .ok_or_else(|| js_error("subgroup writer is None"))?;
 
-        let extension_headers = match crate::loc::parse_loc_header(loc_header)
-            .map_err(|error| js_error(error.to_string()))?
-        {
-            Some(header) => crate::loc::loc_header_to_extension_headers(&header),
-            None => empty_extension_headers(),
-        };
+        let extension_headers = crate::loc::parse_loc_header(loc_header)?;
         let object_id_delta = {
             let stream_object_numbers = self.stream_object_numbers.borrow();
             match stream_object_numbers.get(&writer_key).copied() {
@@ -1707,7 +1694,7 @@ fn emit_object_datagram(
                     Some(object_id),
                     publisher_priority,
                     payload.to_vec(),
-                    packages::loc::LocHeader::default(),
+                    Vec::new(),
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
@@ -1731,7 +1718,7 @@ fn emit_object_datagram(
                     Some(object_id),
                     publisher_priority,
                     payload.to_vec(),
-                    crate::loc::extension_headers_to_loc_header(&extension_headers),
+                    from_extension_headers(&extension_headers),
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
@@ -1753,7 +1740,7 @@ fn emit_object_datagram(
                     None,
                     publisher_priority,
                     payload.to_vec(),
-                    crate::loc::extension_headers_to_loc_header(&extension_headers),
+                    from_extension_headers(&extension_headers),
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
@@ -1773,7 +1760,7 @@ fn emit_object_datagram(
                     None,
                     publisher_priority,
                     payload.to_vec(),
-                    packages::loc::LocHeader::default(),
+                    Vec::new(),
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
@@ -1790,7 +1777,7 @@ fn emit_object_datagram(
                     Some(object_id),
                     publisher_priority,
                     status,
-                    packages::loc::LocHeader::default(),
+                    Vec::new(),
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
@@ -1808,7 +1795,7 @@ fn emit_object_datagram(
                     Some(object_id),
                     publisher_priority,
                     status,
-                    crate::loc::extension_headers_to_loc_header(&extension_headers),
+                    from_extension_headers(&extension_headers),
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
@@ -1860,7 +1847,7 @@ fn emit_subgroup_object(
     object_id_delta: u64,
 ) -> Result<(), JsValue> {
     if let Some(callback) = callbacks.borrow().subgroup_object_callback.clone() {
-        let loc_header = crate::loc::extension_headers_to_loc_header(&field.extension_headers);
+        let loc_header = from_extension_headers(&field.extension_headers);
         let subgroup_id = match header.subgroup_id {
             SubgroupId::Value(value) => Some(value),
             _ => None,

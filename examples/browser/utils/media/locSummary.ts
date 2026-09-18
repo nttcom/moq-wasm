@@ -1,3 +1,5 @@
+import { AUDIO_LEVEL_ID, CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID, VIDEO_FRAME_MARKING_ID, type LocHeader } from './loc'
+
 export type LocHeaderSummary = {
   present: boolean
   extensionCount: number
@@ -8,17 +10,14 @@ export type LocHeaderSummary = {
 }
 
 export function summarizeLocHeader(locHeader: unknown): LocHeaderSummary {
-  const extensions = Array.isArray((locHeader as { extensions?: unknown[] } | undefined)?.extensions)
-    ? ((locHeader as { extensions: unknown[] }).extensions ?? [])
-    : []
-  const has = (type: string) =>
-    extensions.some((ext) => typeof ext === 'object' && ext !== null && (ext as { type?: unknown }).type === type)
+  const extensions: LocHeader = Array.isArray(locHeader) ? locHeader : []
+  const has = (id: number) => extensions.some((ext) => ext.id === id)
   return {
     present: Boolean(locHeader),
     extensionCount: extensions.length,
-    hasCaptureTimestamp: has('captureTimestamp'),
-    hasVideoConfig: has('videoConfig'),
-    hasVideoFrameMarking: has('videoFrameMarking'),
-    hasAudioLevel: has('audioLevel')
+    hasCaptureTimestamp: has(CAPTURE_TIMESTAMP_ID),
+    hasVideoConfig: has(VIDEO_CONFIG_ID),
+    hasVideoFrameMarking: has(VIDEO_FRAME_MARKING_ID),
+    hasAudioLevel: has(AUDIO_LEVEL_ID)
   }
 }
