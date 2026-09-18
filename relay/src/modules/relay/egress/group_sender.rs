@@ -23,7 +23,7 @@ use crate::modules::{
     types::TrackKey,
 };
 
-use super::scheduler::GroupSendTask;
+use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};
 
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
 
@@ -38,6 +38,7 @@ pub(crate) struct GroupSender {
     downstream_subscription: DownstreamSubscription,
     receiver: mpsc::Receiver<GroupSendTask>,
     opened_stream_count: Arc<AtomicU64>,
+    group_sequence: GroupSequence,
 }
 
 struct StreamSendTask {
@@ -47,6 +48,9 @@ struct StreamSendTask {
     cache: Arc<TrackCache>,
     factory: SharedStreamSenderFactory,
     opened_stream_count: Arc<AtomicU64>,
+    subscriber_priority: u8,
+    group_order: moqt::GroupOrder,
+    group_sequence: u64,
 }
 
 impl GroupSender {
@@ -65,6 +69,7 @@ impl GroupSender {
             downstream_subscription,
             receiver,
             opened_stream_count,
+            group_sequence: GroupSequence::new(),
         }
     }
 
@@ -72,6 +77,8 @@ impl GroupSender {
         let mut stream_factory: Option<SharedStreamSenderFactory> = None;
         let mut joinset = JoinSet::<()>::new();
         let track_alias = self.downstream_subscription.track_alias();
+        let subscriber_priority = self.downstream_subscription.subscriber_priority();
+        let group_order = self.downstream_subscription.group_order().as_moqt();
 
         loop {
             tokio::select! {
@@ -85,6 +92,7 @@ impl GroupSender {
                                     ))
                                 })
                                 .clone();
+                            let group_sequence = self.group_sequence.sequence_of(group_id);
                             let span = tracing::info_span!(
                                 "relay.dataplane.egress.stream",
                                 track_key = %self.track_key,
@@ -103,6 +111,9 @@ impl GroupSender {
                                     cache: self.cache.clone(),
                                     factory,
                                     opened_stream_count: self.opened_stream_count.clone(),
+                                    subscriber_priority,
+                                    group_order,
+                                    group_sequence,
                                 })
                                 .instrument(span),
                             );
@@ -148,13 +159,24 @@ impl GroupSender {
             return;
         };
 
+        let priority = moqt::StreamPriority {
+            subscriber_priority: task.subscriber_priority,
+            publisher_priority: first.publisher_priority,
+            group_order: task.group_order,
+            group_sequence: task.group_sequence,
+            subgroup_id,
+        };
         // Opening the stream awaits peer stream credit; if the subscriber
         // stops granting streams every stream task queues on the factory,
         // so leave a trace before it.
-        tracing::debug!("opening egress uni stream");
+        tracing::debug!(
+            group_sequence = task.group_sequence,
+            transport_priority = priority.transport_priority(),
+            "opening egress uni stream"
+        );
         let opened = {
             let mut factory = task.factory.lock().await;
-            factory.next().await
+            factory.next(priority).await
         };
         let mut sender = match opened {
             Ok(sender) => sender,

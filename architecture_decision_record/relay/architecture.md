@@ -348,6 +348,16 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   until `next_subgroup_object_or_wait` reports the subgroup finished (FIN
   downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Datagram groups are
   re-emitted with the downstream track alias.
+  Each stream is opened with a `moqt::StreamPriority` (draft-14 §7.2):
+  the subscription's subscriber priority, the first object's publisher
+  priority, the subscription's group order with a per-subscription
+  `GroupSequence` (incremented for every newer group id the sender sees,
+  shared by the subgroups of one group), and the subgroup id.
+  `ConcreteStreamSenderFactory::next(priority)` applies it before the header
+  is written. The sequence, not the group id, feeds the rank because group
+  ids may be wall-clock timestamps; assigning it at open time means a still
+  buffered tail of group N keeps outranking group N+1's keyframe without
+  re-prioritizing streams already queued in the transport.
 
 ## Cascading relays (`route_registry`, `inter_relay`)
 
@@ -387,6 +397,10 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   it is held by RAII guards in the readers, and live ingest always closes what
   it opened — so every `*_or_wait` is bounded.
 - **Ledger lock is never held across an await**.
+- **Egress streams are prioritized at open**: a downstream subgroup stream's
+  transport priority is fixed before its header (§7.2 order: subscriber
+  priority, publisher priority, group order, subgroup id); the control stream
+  keeps the transport default and so outranks all data streams.
 - **Knowledge follows objects**: evicting an object releases the knowledge at
   exactly that location.
 - **Cache lifetime**: a track cache lives while referenced or until TTL

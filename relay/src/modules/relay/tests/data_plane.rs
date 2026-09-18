@@ -174,6 +174,35 @@ async fn downstream_header_is_regenerated_from_the_cached_objects() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn later_group_stream_opens_with_a_lower_transport_priority() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    // Act
+    let first_group = harness.open_upstream_stream().await;
+    first_group.header(0);
+    first_group.object(0);
+    let first_priority = egress.expect_stream_priority().await;
+    let second_group = harness.open_upstream_stream().await;
+    second_group.header(1);
+    second_group.object(0);
+    let second_priority = egress.expect_stream_priority().await;
+    // Assert
+    assert_eq!(
+        (
+            first_priority.group_sequence,
+            second_priority.group_sequence
+        ),
+        (0, 1)
+    );
+    assert_eq!(first_priority.publisher_priority, FIXTURE_PRIORITY);
+    assert!(
+        first_priority.transport_priority() > second_priority.transport_priority(),
+        "the earlier group must be transmitted first under Ascending group order"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn upstream_reset_is_relayed_as_a_downstream_reset() {
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;

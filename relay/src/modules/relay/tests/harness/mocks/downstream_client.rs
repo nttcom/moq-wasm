@@ -44,11 +44,18 @@ impl DataSender for MockDataSender {
 
 struct MockStreamSenderFactory {
     sent: mpsc::UnboundedSender<Sent>,
+    priorities: mpsc::UnboundedSender<moqt::StreamPriority>,
 }
 
 #[async_trait::async_trait]
 impl StreamSenderFactory for MockStreamSenderFactory {
-    async fn next(&mut self) -> anyhow::Result<Box<dyn DataSender>> {
+    async fn next(
+        &mut self,
+        priority: moqt::StreamPriority,
+    ) -> anyhow::Result<Box<dyn DataSender>> {
+        self.priorities
+            .send(priority)
+            .map_err(|_| anyhow::anyhow!("test side dropped"))?;
         Ok(Box::new(MockDataSender {
             sent: self.sent.clone(),
         }))
@@ -65,25 +72,30 @@ pub(crate) struct SentPublishDone {
 
 pub(crate) struct MockPublisher {
     sent: mpsc::UnboundedSender<Sent>,
+    priorities: mpsc::UnboundedSender<moqt::StreamPriority>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
 }
 
 pub(crate) struct MockPublisherObservers {
     pub(crate) sent: mpsc::UnboundedReceiver<Sent>,
+    pub(crate) priorities: mpsc::UnboundedReceiver<moqt::StreamPriority>,
     pub(crate) publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
 }
 
 impl MockPublisher {
     pub(crate) fn channel() -> (Self, MockPublisherObservers) {
         let (sender, receiver) = mpsc::unbounded_channel();
+        let (priorities_sender, priorities_receiver) = mpsc::unbounded_channel();
         let (publish_done_sender, publish_done_receiver) = mpsc::unbounded_channel();
         (
             Self {
                 sent: sender,
+                priorities: priorities_sender,
                 publish_done: publish_done_sender,
             },
             MockPublisherObservers {
                 sent: receiver,
+                priorities: priorities_receiver,
                 publish_done: publish_done_receiver,
             },
         )
@@ -131,6 +143,7 @@ impl Publisher for MockPublisher {
     ) -> Box<dyn StreamSenderFactory> {
         Box::new(MockStreamSenderFactory {
             sent: self.sent.clone(),
+            priorities: self.priorities.clone(),
         })
     }
 
