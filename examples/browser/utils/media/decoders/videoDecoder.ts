@@ -28,6 +28,15 @@ function postTelemetry(message: unknown): void {
 let videoDecoder: VideoDecoder | undefined
 let currentDecoderHardwareAcceleration: VideoDecoderHardwareAcceleration = DEFAULT_VIDEO_DECODER_HARDWARE_ACCELERATION
 let waitingForKeyFrame = true
+let newestKeyframeGroupId: bigint | undefined
+
+/// Each group travels on its own stream, so the tail of a group can arrive
+/// after the keyframe of the next group has been decoded. Its frames would
+/// predict from references the keyframe has replaced and corrupt the picture
+/// until the following keyframe, so they are dropped.
+function isSupersededGroup(groupId: bigint): boolean {
+  return newestKeyframeGroupId !== undefined && groupId < newestKeyframeGroupId
+}
 let framesSinceLastKeyFrame: number | null = null
 type LastDecodingObjectInfo = {
   groupId: string
@@ -328,6 +337,7 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
     cachedVideoConfig = null
     waitingForKeyFrame = true
   }
+  newestKeyframeGroupId = undefined
   pacingDelayMs = currentJitterConfig.minDelayMs
   resetPlayoutTiming('config')
 }
@@ -885,6 +895,9 @@ async function decode(
   captureTimestampMicros?: number
 ) {
   const decoded = subgroupStreamObject.cachedChunk
+  if (isSupersededGroup(groupId)) {
+    return
+  }
   trackKeyframeInterval(decoded.metadata.type)
 
   const resolvedConfig = resolveVideoConfig(decoded.metadata)
@@ -957,6 +970,7 @@ async function decode(
     await videoDecoder.decode(encodedVideoChunk)
     if (decoded.metadata.type === 'key') {
       waitingForKeyFrame = false
+      newestKeyframeGroupId = groupId
     }
   } catch (error) {
     if (isKeyFrameRequiredError(error)) {
@@ -1080,6 +1094,7 @@ function applyCatalogInfo(
   descriptionBase64?: string,
   avcFormat?: 'annexb' | 'avc'
 ): void {
+  newestKeyframeGroupId = undefined
   if (descriptionBase64) {
     catalogDescriptionBase64 = descriptionBase64
   }
