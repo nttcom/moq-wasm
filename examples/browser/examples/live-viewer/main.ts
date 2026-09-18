@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET } from '../../utils/relayPresets'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import {
   MEDIA_CATALOG_TRACK_NAME,
@@ -17,6 +18,7 @@ import {
 } from '../../utils/media/decoderCatalog'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
+import { BufferingSpinner } from './bufferingSpinner'
 import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
@@ -39,6 +41,7 @@ const REVIEW_HANDOVER_MICROS = 500_000
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
+const POINTER_IDLE_MS = 2_500
 const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
 
 type Packaging = 'loc' | 'cmaf'
@@ -73,6 +76,7 @@ const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
 const videoWriter = videoGenerator.writable.getWriter()
 const livePlayout = new LivePlayout(showLiveFrame)
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
+const bufferingSpinner = new BufferingSpinner(element('buffering'))
 
 let videoTracks: MediaCatalogTrack[] = []
 let audioTracks: MediaCatalogTrack[] = []
@@ -102,8 +106,18 @@ let reviewPlayheadMicros: number | undefined
 let seeking = false
 let paused = false
 let volume = 1
+let pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
 const seekbar = element<HTMLInputElement>('seekbar')
+const stage = element<HTMLDivElement>('stage')
 
+for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.dataset.url = preset.value
+  button.textContent = `Cloud ${preset.label}`
+  button.title = preset.helper
+  element('urlPresets').appendChild(button)
+}
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
@@ -114,6 +128,11 @@ element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpee
 element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
 element<HTMLButtonElement>('playPauseBtn').addEventListener('click', () => setPaused(!paused))
 element<HTMLInputElement>('volume').addEventListener('input', applyVolume)
+element<HTMLButtonElement>('fullscreenBtn').addEventListener('click', () => void toggleFullscreen())
+stage.addEventListener('fullscreenchange', renderFullscreen)
+for (const type of ['pointermove', 'pointerdown', 'keydown']) {
+  stage.addEventListener(type, markPointerActive)
+}
 for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
   button.addEventListener('click', () => skip(Number(button.dataset.skipSeconds)))
 }
@@ -183,6 +202,7 @@ async function stopStream(): Promise<void> {
   backToLive()
   closeMse()
   livePlayout.reset()
+  bufferingSpinner.hide()
   showPicture(element<HTMLVideoElement>('video'))
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
@@ -586,6 +606,7 @@ function showReviewFrame(frame: VideoFrame): void {
     canvas.height = frame.displayHeight
     context.drawImage(frame, 0, 0)
     showPicture(canvas)
+    notePresentedFrame(canvas)
     advanceReviewPlayhead(frame.timestamp)
   }
   frame.close()
@@ -594,6 +615,9 @@ function showReviewFrame(frame: VideoFrame): void {
 function startRendering(): void {
   applyDecoderConfig()
   element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
+  for (const id of ['video', ...MSE_ELEMENT_IDS]) {
+    watchPresentedFrames(element<HTMLVideoElement>(id))
+  }
 
   videoDecoderWorker.onmessage = (event) => {
     if (event.data.type === 'bitrate') {
@@ -610,6 +634,31 @@ function startRendering(): void {
       livePlayout.playAudio(event.data.audioData as AudioData, event.data.captureTimestampMicros as number | undefined)
     }
   }
+}
+
+function watchPresentedFrames(video: HTMLVideoElement): void {
+  const onFrame = () => {
+    notePresentedFrame(video)
+    video.requestVideoFrameCallback(onFrame)
+  }
+  video.requestVideoFrameCallback(onFrame)
+}
+
+/// A picture being replaced plays on until its successor has presented a
+/// frame, and the live picture keeps moving behind a review; only the picture
+/// playback is trying to show counts as progress.
+function notePresentedFrame(picture: HTMLElement): void {
+  if (paused || picture !== wantedPicture()) {
+    return
+  }
+  bufferingSpinner.framePresented()
+}
+
+function wantedPicture(): HTMLElement | undefined {
+  if (!reviewing) {
+    return livePicture()
+  }
+  return packaging === 'cmaf' ? reviewMse?.element : element<HTMLCanvasElement>('review')
 }
 
 function updateVideoStats(frame: VideoFrame): void {
@@ -987,6 +1036,9 @@ function setPaused(next: boolean): void {
   button.textContent = paused ? '\u25B6' : '\u275A\u275A'
   button.setAttribute('aria-label', paused ? 'Play' : 'Pause')
   button.setAttribute('aria-pressed', String(paused))
+  if (paused) {
+    bufferingSpinner.hide()
+  }
   for (const media of playingMedia()) {
     if (paused) {
       media.pause()
@@ -1004,6 +1056,37 @@ function setPaused(next: boolean): void {
   if (!paused && !reviewing && mse && liveEnd !== undefined) {
     mse.element.currentTime = liveEnd
   }
+}
+
+async function toggleFullscreen(): Promise<void> {
+  try {
+    if (document.fullscreenElement === stage) {
+      await document.exitFullscreen()
+    } else {
+      await stage.requestFullscreen()
+    }
+  } catch (error) {
+    appendLog('error', `fullscreen: ${getErrorMessage(error)}`)
+  }
+}
+
+function renderFullscreen(): void {
+  const fullscreen = document.fullscreenElement === stage
+  const button = element<HTMLButtonElement>('fullscreenBtn')
+  button.setAttribute('aria-label', fullscreen ? 'Exit fullscreen' : 'Fullscreen')
+  button.title = fullscreen ? '全画面を終了' : '全画面'
+  markPointerActive()
+}
+
+function markPointerActive(): void {
+  stage.classList.remove('pointer-idle')
+  if (pointerIdleTimer !== undefined) {
+    clearTimeout(pointerIdleTimer)
+  }
+  pointerIdleTimer = setTimeout(() => {
+    pointerIdleTimer = undefined
+    stage.classList.add('pointer-idle')
+  }, POINTER_IDLE_MS)
 }
 
 function playingMedia(): HTMLMediaElement[] {

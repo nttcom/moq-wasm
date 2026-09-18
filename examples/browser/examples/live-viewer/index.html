@@ -71,7 +71,7 @@ make chrome</code></pre>
           <section class="card stack">
             <h2>Stream</h2>
             <label for="url">Relay URL:</label>
-            <input type="url" id="url" value="https://127.0.0.1:4433" data-testid="live-viewer-url-input" />
+            <input type="url" id="url" data-testid="live-viewer-url-input" />
             <div id="urlPresets" class="preset-bar">Preset:</div>
             <label for="namespace"
               >Track Namespace:
@@ -125,12 +125,20 @@ make chrome</code></pre>
             </div>
             <div class="media-grid">
               <div class="playback-panel">
-                <div class="viewer-stage">
+                <div id="stage" class="viewer-stage">
                   <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
                   <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
                   <video id="mse-a" playsinline autoplay hidden></video>
                   <video id="mse-b" playsinline autoplay hidden></video>
                   <video id="mse-c" playsinline autoplay hidden></video>
+                  <div
+                    id="buffering"
+                    class="viewer-buffering"
+                    hidden
+                    role="status"
+                    aria-label="Buffering"
+                    data-testid="live-viewer-buffering"
+                  ></div>
                   <div class="viewer-skip">
                     <button
                       type="button"
@@ -284,12 +292,23 @@ make chrome</code></pre>
                           </label>
                         </div>
                       </div>
+                      <button
+                        type="button"
+                        id="fullscreenBtn"
+                        class="viewer-button"
+                        data-testid="live-viewer-fullscreen-button"
+                        aria-label="Fullscreen"
+                        title="全画面"
+                      >
+                        &#x26F6;
+                      </button>
                     </div>
                   </div>
                 </div>
                 <p class="hint" id="seek-hint">
                   配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
-                  映像にカーソルを合わせると ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が 5 秒）。
+                  映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が
+                  5 秒）。&#x26F6; で全画面になります。
                   <code>--transcode</code> で live-ingest を起動すると歯車から下位画質が選べます。
                 </p>
               </div>
