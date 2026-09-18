@@ -123,8 +123,67 @@
   display: none;
 }
 
-/* Skip buttons sit on the picture and show while the pointer is over the stage
-   or a control in it has focus. */
+.viewer-buffering {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border: 4px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  background: rgba(4, 14, 14, 0.45);
+  animation: viewer-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes viewer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Skip buttons and the bottom overlay sit on the picture and show while the
+   pointer is over the stage, a control in it has focus or the quality menu is
+   open. */
+.viewer-skip,
+.viewer-overlay {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.viewer-stage:hover .viewer-skip,
+.viewer-stage:focus-within .viewer-skip,
+.viewer-stage:has(:popover-open) .viewer-skip,
+.viewer-stage:hover .viewer-overlay,
+.viewer-stage:focus-within .viewer-overlay,
+.viewer-stage:has(:popover-open) .viewer-overlay {
+  opacity: 1;
+}
+
+.viewer-stage:fullscreen {
+  border: 0;
+  border-radius: 0;
+}
+
+.viewer-stage:fullscreen video,
+.viewer-stage:fullscreen canvas {
+  height: 100%;
+  object-fit: contain;
+}
+
+/* In fullscreen the pointer is always over the stage, so the controls hide
+   once it has rested instead of when it leaves. */
+.viewer-stage:fullscreen.pointer-idle:not(:has(:popover-open)) {
+  cursor: none;
+}
+
+.viewer-stage:fullscreen.pointer-idle:not(:has(:popover-open)) .viewer-skip,
+.viewer-stage:fullscreen.pointer-idle:not(:has(:popover-open)) .viewer-overlay {
+  opacity: 0;
+}
+
 .viewer-skip {
   position: absolute;
   top: 50%;
@@ -134,14 +193,12 @@
   justify-content: center;
   gap: 18px;
   transform: translateY(-50%);
-  opacity: 0;
-  transition: opacity 0.15s;
   pointer-events: none;
 }
 
 .viewer-stage:hover .viewer-skip,
-.viewer-stage:focus-within .viewer-skip {
-  opacity: 1;
+.viewer-stage:focus-within .viewer-skip,
+.viewer-stage:has(:popover-open) .viewer-skip {
   pointer-events: auto;
 }
 

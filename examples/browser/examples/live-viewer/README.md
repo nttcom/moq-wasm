@@ -65,7 +65,7 @@ SRT は stream ID）を入れて Watch を押します。`?moqtUrl=...&trackName
 
 ## 巻き戻し
 
-映像にカーソルを合わせると中央に `↺5` `↺1` `1↻` `5↻` が出ます。キーボードでは ← / → が 1 秒、
+映像にカーソルを合わせるとシークバーと、中央に `↺5` `↺1` `1↻` `5↻` が出ます。キーボードでは ← / → が 1 秒、
 ↓ / ↑ が 5 秒です。どれも relay のキャッシュに残っている group を FETCH で取り出し、映像は review canvas
 に、音声は review 用の AudioContext に、capture timestamp のとおりのペースで揃えて再生します。`LIVE` で
 ライブ表示へ戻ります。
@@ -221,10 +221,16 @@ is on by default).
 ## Player controls
 
 The seek bar, the skip buttons and the quality menu sit on the video itself
-rather than in their own cards. The skip buttons appear while the pointer is over
-the picture. The gear opens the video and audio track selection and the
+rather than in their own cards. They appear while the pointer is over the
+picture, while a control has focus or while the quality menu is open, and fade
+out otherwise. The gear opens the video and audio track selection and the
 packaging choice, and closes on a second click, on Escape, or on a click
 outside it.
+
+A spinner appears in the centre of the picture once it has stood still for half
+a second while playback is meant to be running: the data is arriving too slowly
+to decode the next group, or the window a seek asked for is still being fetched.
+It disappears with the next frame, and is not shown while paused or stopped.
 
 The centre button pauses and resumes whatever is on screen. Every other
 transition — seek, skip, `LIVE`, a packaging or quality change — resumes.
@@ -237,6 +243,11 @@ warms up again). The volume slider next to the speed control drives the live aud
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the
 button doubles as the indicator for which of the two the viewer is watching.
+
+The button at the right end of the controls puts the picture into fullscreen and
+takes it out again (Escape also leaves). In fullscreen the pointer never leaves
+the picture, so the controls and the cursor hide once the pointer has rested for
+a few seconds and come back when it moves.
 
 ## Seek bar
 
