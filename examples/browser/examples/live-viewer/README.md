@@ -18,7 +18,6 @@ OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下�
 
 ```shell
 make ffmpeg-srt-bbb-remote
-make browser
 ```
 
 OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
@@ -42,7 +41,6 @@ OBS で RTMP 配信する場合は、サーバーに `rtmp://relay-1.moqt.resear
 ```shell
 make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
 make ffmpeg-srt-bbb-local
-make browser
 ```
 
 OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。
