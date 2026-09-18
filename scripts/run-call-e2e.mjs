@@ -10,6 +10,13 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import {
+  pipeOutput,
+  registerSignalHandlers,
+  runCommand,
+  spawnProcess,
+  terminateProcess,
+} from "./browser-e2e-process.mjs";
+import {
   assertPathExists,
   certPath,
   ensureLinuxEnvironment,
@@ -277,130 +284,6 @@ function waitForRelayReadyFollow(cwd, timeoutMs) {
     child.stderr?.on("data", onData);
     child.on("exit", onExit);
   });
-}
-
-function registerSignalHandlers(cleanup) {
-  const handler = async () => {
-    await cleanup();
-    process.exit(130);
-  };
-
-  process.once("SIGINT", handler);
-  process.once("SIGTERM", handler);
-}
-
-function spawnProcess(label, command, args, options) {
-  const child = spawn(command, args, {
-    cwd: options.cwd,
-    env: process.env,
-    detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  pipeOutput(child.stdout, process.stdout, label);
-  pipeOutput(child.stderr, process.stderr, label);
-
-  child.on("error", (error) => {
-    process.stderr.write(
-      `[${label}] failed to start: ${getErrorMessage(error)}\n`,
-    );
-  });
-
-  return child;
-}
-
-function pipeOutput(stream, destination, label) {
-  if (!stream) {
-    return;
-  }
-
-  stream.on("data", (chunk) => {
-    const text = chunk.toString();
-    const prefixed = text
-      .split("\n")
-      .filter(
-        (line, index, lines) => line.length > 0 || index < lines.length - 1,
-      )
-      .map((line) => `[${label}] ${line}`)
-      .join("\n");
-    if (prefixed.length > 0) {
-      destination.write(`${prefixed}\n`);
-    }
-  });
-}
-
-async function runCommand(command, args, options) {
-  await new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: "inherit",
-    });
-
-    child.on("error", (error) => {
-      rejectPromise(
-        new Error(`${command} failed to start: ${getErrorMessage(error)}`),
-      );
-    });
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      rejectPromise(
-        new Error(`${command} ${args.join(" ")} exited with code ${code}.`),
-      );
-    });
-  });
-}
-
-async function terminateProcess(child) {
-  if (!child || child.exitCode !== null) {
-    return;
-  }
-
-  await new Promise((resolvePromise) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(forceKillTimer);
-      clearTimeout(resolveTimer);
-      child.off("exit", onExit);
-      resolvePromise();
-    };
-    const onExit = () => {
-      finish();
-    };
-    const forceKillTimer = setTimeout(() => {
-      if (child.exitCode === null) {
-        killProcessTree(child, "SIGKILL");
-      }
-    }, 5_000);
-    const resolveTimer = setTimeout(() => {
-      finish();
-    }, 7_000);
-
-    child.on("exit", onExit);
-    killProcessTree(child, "SIGTERM");
-    if (child.exitCode !== null) {
-      finish();
-    }
-  });
-}
-
-function killProcessTree(child, signal) {
-  if (process.platform !== "win32" && typeof child.pid === "number") {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch (_error) {
-      // Fall back to killing the direct child below.
-    }
-  }
-  child.kill(signal);
 }
 
 main().catch((error) => {
