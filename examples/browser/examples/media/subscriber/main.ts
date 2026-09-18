@@ -454,7 +454,6 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
         groupId,
         objectId: subgroupStreamObject.objectId,
         payloadLength: subgroupStreamObject.objectPayloadLength,
-        payloadByteLength: subgroupStreamObject.objectPayload.byteLength,
         status: subgroupStreamObject.objectStatus,
         loc: locSummary
       })
@@ -483,7 +482,6 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
       groupId,
       objectId: subgroupStreamObject.objectId,
       payloadLength: subgroupStreamObject.objectPayloadLength,
-      payloadByteLength: subgroupStreamObject.objectPayload.byteLength,
       status: subgroupStreamObject.objectStatus,
       loc: locSummary
     })

@@ -2,6 +2,7 @@ import type { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import type { CameraId } from '../types/monitoring'
 import { type DeserializedChunk } from '../../../../utils/media/chunk'
 import { postSubgroupObjectToWorker } from '../../../../utils/media/decoderWorker'
+import type { SubgroupObjectWithLoc } from '../../../../utils/media/jitterBufferTypes'
 import { readLocHeader, bytesToBase64, type LocHeader } from '../../../../utils/media/loc'
 import { base64ToUint8Array } from '../../../../utils/media/base64'
 
@@ -25,14 +26,7 @@ export class CameraSubscriber {
   lastSentGroupId: bigint | null = null
   lastSentObjectId: bigint = 0n
 
-  private gopBuffer: Array<{
-    subgroupId: bigint | undefined
-    objectIdDelta: bigint
-    objectPayloadLength: number
-    objectStatus: number | undefined
-    locHeader: unknown
-    payload: Uint8Array
-  }> = []
+  private gopBuffer: SubgroupObjectWithLoc[] = []
   private gopBufferGroupId: bigint | null = null
 
   private reviewDecoder: VideoDecoder | null = null
@@ -82,9 +76,9 @@ export class CameraSubscriber {
         subgroupId: msg.subgroupId,
         objectIdDelta: msg.objectIdDelta,
         objectPayloadLength: msg.objectPayloadLength,
-        objectStatus: msg.objectStatus as number,
+        objectStatus: msg.objectStatus,
         locHeader: msg.locHeader,
-        payload: new Uint8Array(msg.objectPayload)
+        objectPayload: new Uint8Array(msg.objectPayload)
       })
     }
 
@@ -151,14 +145,7 @@ export class CameraSubscriber {
         const obj = this.gopBuffer[i]
         // MoQT: 先頭オブジェクトの objectId = objectIdDelta、以降は前の objectId + objectIdDelta
         replayedObjectId = i === 0 ? obj.objectIdDelta : replayedObjectId + obj.objectIdDelta
-        postSubgroupObjectToWorker(this.worker, this.gopBufferGroupId, {
-          subgroupId: obj.subgroupId,
-          objectIdDelta: obj.objectIdDelta,
-          objectPayloadLength: obj.objectPayloadLength,
-          objectPayload: obj.payload,
-          objectStatus: obj.objectStatus,
-          locHeader: obj.locHeader as LocHeader | undefined
-        })
+        postSubgroupObjectToWorker(this.worker, this.gopBufferGroupId, obj)
       }
       this.lastSentGroupId = this.gopBufferGroupId
       this.lastSentObjectId = replayedObjectId

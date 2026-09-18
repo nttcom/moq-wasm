@@ -1,5 +1,4 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
 import { postSubgroupObjectToWorker } from '../../../../utils/media/decoderWorker'
 import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../../../utils/media/decoderCatalog'
 import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
@@ -108,8 +107,6 @@ interface AudioSubscriptionContext {
   pendingPlaybackQueueMs: number
   lastPlaybackQueueReportAtMs: number
 }
-
-type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?: any }
 
 export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
@@ -326,7 +323,7 @@ export class MediaSubscriber {
     })
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.forwardToWorker(worker, groupId, message)
+      postSubgroupObjectToWorker(worker, groupId, message)
     )
   }
 
@@ -445,7 +442,7 @@ export class MediaSubscriber {
     }
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      this.forwardToWorker(worker, groupId, message)
+      postSubgroupObjectToWorker(worker, groupId, message)
     )
   }
 
@@ -491,10 +488,6 @@ export class MediaSubscriber {
     this.videoCodecByTrackAlias.clear()
     this.videoSizeByTrackAlias.clear()
     this.handlers = {}
-  }
-
-  private forwardToWorker(worker: Worker, groupId: bigint, message: SubgroupObjectMessageWithLoc) {
-    postSubgroupObjectToWorker(worker, groupId, message)
   }
 
   setVideoJitterBufferConfig(userId: string, config: VideoJitterConfig): void {
