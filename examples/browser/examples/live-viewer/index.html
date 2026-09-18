@@ -71,104 +71,144 @@
             <details class="setup-panel setup-toggle">
               <summary>
                 <h3 class="setup-flow">
-                  <span class="setup-node"
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small
                       >SRT / RTMP</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node"
+                  <span class="setup-node setup-node-cloud"
                     ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Cloud Ingestion<small
                       >live-ingest</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node setup-node-relay"
+                  <span class="setup-node setup-node-cloud"
                     ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
-              <p class="hint">
-                クラウドの live-ingest を SRT ポート 9000 または RTMP ポート 1935 で起動しておきます。 ローカルの
-                Ingestion や Relay の起動は不要です。
-              </p>
-              <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
-              <pre><code>make ffmpeg-srt-bbb-remote</code></pre>
-              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
-              <pre><code>srt://relay-1.moqt.research.skyway.io:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
-              <p class="hint">
-                OBS で RTMP 配信する場合は、サーバーに
-                <code>rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test</code>、 ストリームキーに
-                <code>stream</code> を設定します。
-              </p>
+              <ol class="setup-steps">
+                <li>
+                  <h4>配信元を選ぶ（ffmpeg または OBS）</h4>
+                  <p class="hint">次のどちらか一方を選んで配信を開始します。</p>
+                  <div class="setup-choice">
+                    <h5>A. ffmpeg を使う</h5>
+                    <pre><code>make ffmpeg-srt-bbb-remote</code></pre>
+                  </div>
+                  <div class="setup-choice">
+                    <h5>B. OBS を使う</h5>
+                    <p class="hint">SRT のサーバー URL に以下を設定して配信を開始します。</p>
+                    <pre><code>srt://relay-1.moqt.research.skyway.io:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+                    <p class="hint">
+                      RTMP を使う場合は、サーバーに
+                      <code>rtmp://relay-1.moqt.research.skyway.io:1935/anon/live/test</code>、ストリームキーに
+                      <code>stream</code> を設定します。
+                    </p>
+                  </div>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+                  <p class="hint">namespace に <code>anon/live/test</code> を指定し、Watch を押します。</p>
+                </li>
+              </ol>
             </details>
             <details class="setup-panel setup-toggle">
               <summary>
                 <h3 class="setup-flow">
-                  <span class="setup-node"
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node"
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Local Ingestion<small
                       >GStreamer</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node setup-node-relay"
+                  <span class="setup-node setup-node-cloud"
                     ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
-              <p class="hint">
-                既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。
-                ローカルの受信側を起動してから配信を開始します。ローカルの Relay の起動は不要です。
-              </p>
-              <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
-              <pre><code>make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
-make ffmpeg-srt-bbb-local</code></pre>
-              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
-              <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
-              <p class="hint">
-                ffmpeg のテストパターンを配信する場合は、<code>make ffmpeg-srt-bbb-local</code> の代わりに
-                <code>make ffmpeg-srt</code> を実行します。
-              </p>
+              <ol class="setup-steps">
+                <li>
+                  <h4>ローカル Ingestion を起動する</h4>
+                  <pre><code>make gst-srt-publish GST_MOQT_URL=https://relay-1.moqt.research.skyway.io:443</code></pre>
+                </li>
+                <li>
+                  <h4>配信元を選ぶ（ffmpeg または OBS）</h4>
+                  <p class="hint">次のどちらか一方を選んで配信を開始します。</p>
+                  <div class="setup-choice">
+                    <h5>A. ffmpeg を使う</h5>
+                    <pre><code>make ffmpeg-srt-bbb-local</code></pre>
+                    <p class="hint">テストパターンを使う場合は、代わりに <code>make ffmpeg-srt</code> を実行します。</p>
+                  </div>
+                  <div class="setup-choice">
+                    <h5>B. OBS を使う</h5>
+                    <p class="hint">SRT のサーバー URL に以下を設定して配信を開始します。</p>
+                    <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+                  </div>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">視聴先の Relay URL： <code>https://relay-1.moqt.research.skyway.io:443</code></p>
+                  <p class="hint">namespace に <code>anon/live/test</code> を指定し、Watch を押します。</p>
+                </li>
+              </ol>
             </details>
             <details class="setup-panel setup-toggle">
               <summary>
                 <h3 class="setup-flow">
-                  <span class="setup-node"
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node"
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Local Ingestion<small
                       >GStreamer</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node setup-node-relay"
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
-              <p class="hint">
-                既存の GStreamer 用コマンドは SRT 受信専用で、RTMP 受信には対応していません。
-                Relay、受信側、配信元の順に起動します。ローカルの自己署名証明書で接続するため、 Chrome は
-                <code>make chrome</code> で開きます。
-              </p>
-              <p class="hint">視聴先の Relay URL： <code>https://127.0.0.1:4433</code></p>
-              <pre><code>make relay
-make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433
-make ffmpeg-srt-bbb-local
-make browser
+              <ol class="setup-steps">
+                <li>
+                  <h4>ローカル Relay を起動する</h4>
+                  <pre><code>make relay</code></pre>
+                </li>
+                <li>
+                  <h4>ローカル Ingestion を起動する</h4>
+                  <pre><code>make gst-srt-publish GST_MOQT_URL=https://127.0.0.1:4433</code></pre>
+                </li>
+                <li>
+                  <h4>配信元を選ぶ（ffmpeg または OBS）</h4>
+                  <p class="hint">次のどちらか一方を選んで配信を開始します。</p>
+                  <div class="setup-choice">
+                    <h5>A. ffmpeg を使う</h5>
+                    <pre><code>make ffmpeg-srt-bbb-local</code></pre>
+                    <p class="hint">テストパターンを使う場合は、代わりに <code>make ffmpeg-srt</code> を実行します。</p>
+                  </div>
+                  <div class="setup-choice">
+                    <h5>B. OBS を使う</h5>
+                    <p class="hint">SRT のサーバー URL に以下を設定して配信を開始します。</p>
+                    <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
+                  </div>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">別々のターミナルで以下を実行し、Live Viewer を開きます。</p>
+                  <pre><code>make browser
+
 make chrome</code></pre>
-              <p class="hint">OBS で SRT 配信する場合は、ffmpeg の代わりに次のサーバー URL を設定します。</p>
-              <pre><code>srt://localhost:9000?mode=caller&amp;streamid=anon/live/test</code></pre>
-              <p class="hint">
-                ffmpeg のテストパターンを配信する場合は、<code>make ffmpeg-srt-bbb-local</code> の代わりに
-                <code>make ffmpeg-srt</code> を実行します。
-              </p>
+                  <p class="hint">視聴先の Relay URL： <code>https://127.0.0.1:4433</code></p>
+                  <p class="hint">namespace に <code>anon/live/test</code> を指定し、Watch を押します。</p>
+                </li>
+              </ol>
             </details>
           </div>
         </details>
