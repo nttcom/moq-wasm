@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// Orchestration runner for meeting E2E tests.
-// Starts redis + vts + relay-a (4433) + relay-b (4434) via docker compose,
-// launches vite preview, then runs the Playwright meeting-e2e spec with an
-// app-scoped JWT minted from the development ledger.
-//
-// If relay-a and relay-b containers serving ports 4433/4434 are already running
-// (e.g. from a prior test run or a sibling compose project), the runner re-uses
-// them and skips docker compose up to avoid port-allocation conflicts.
 
 import { execFileSync } from "node:child_process";
 import {
@@ -32,8 +24,6 @@ import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
 import { experimentAppId, mintToken } from "./vts-dev.mjs";
 
 const meetingIndexPath = "/moq-wasm/examples/meeting/index.html";
-const defaultRelayAUrl = "https://127.0.0.1:4433";
-const defaultRelayBUrl = "https://127.0.0.1:4434";
 const composeServices = ["redis", "vts", "relay-a", "relay-b"];
 
 const childProcesses = [];
@@ -52,11 +42,7 @@ async function main() {
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
     if (ownedDockerServices) {
-      await runCommand(
-        resolveCommandName("docker"),
-        ["compose", "stop", ...composeServices],
-        { cwd: repoRoot },
-      ).catch(() => {});
+      await dockerCompose("stop", ...composeServices).catch(() => {});
     }
   };
 
@@ -75,33 +61,18 @@ async function main() {
         );
       } else {
         console.error("[setup] Building relay docker image...");
-        await runCommand(
-          resolveCommandName("docker"),
-          ["compose", "build", "relay-common"],
-          { cwd: repoRoot },
-        );
+        await dockerCompose("build", "relay-common");
       }
 
       console.error("[setup] Building vts docker image...");
-      await runCommand(
-        resolveCommandName("docker"),
-        ["compose", "build", "vts"],
-        { cwd: repoRoot },
-      );
+      await dockerCompose("build", "vts");
       console.error(
         `[setup] Starting ${composeServices.join(", ")} via docker compose...`,
       );
-      await runCommand(
-        resolveCommandName("docker"),
-        ["compose", "up", "-d", "--wait", ...composeServices],
-        { cwd: repoRoot },
-      );
+      await dockerCompose("up", "-d", "--wait", ...composeServices);
       ownedDockerServices = true;
     }
 
-    // When reusing existing containers the relays are already bound to their
-    // ports, so they are ready by definition. For newly-started containers
-    // we follow the compose logs until both emit "Relay server started".
     const relayReadyPromise = relaysAlreadyRunning
       ? Promise.resolve()
       : waitForRelaysStarted();
@@ -114,23 +85,15 @@ async function main() {
       waitForHttpOk(`${baseUrl}${meetingIndexPath}`, 120_000),
     ]);
 
-    const relayAUrl = getMeetingRelayUrl(
-      "MEETING_E2E_RELAY_A_URL",
-      defaultRelayAUrl,
-    );
-    const relayBUrl = getMeetingRelayUrl(
-      "MEETING_E2E_RELAY_B_URL",
-      defaultRelayBUrl,
-    );
+    const relayAUrl = getMeetingRelayUrl("MEETING_E2E_RELAY_A_URL", 4433);
+    const relayBUrl = getMeetingRelayUrl("MEETING_E2E_RELAY_B_URL", 4434);
     console.error(
       `[setup] Using meeting relay URLs: ${relayAUrl}, ${relayBUrl}`,
     );
 
     await runCommand(
       resolveCommandName("npm"),
-      playwrightArgs.length > 0
-        ? ["run", "e2e:meeting", "--", ...playwrightArgs]
-        : ["run", "e2e:meeting"],
+      ["run", "e2e:meeting", "--", ...playwrightArgs],
       {
         cwd: jsDir,
         env: {
@@ -147,9 +110,16 @@ async function main() {
   }
 }
 
-function getMeetingRelayUrl(envName, defaultUrl) {
+function dockerCompose(...args) {
+  return runCommand(resolveCommandName("docker"), ["compose", ...args], {
+    cwd: repoRoot,
+  });
+}
+
+function getMeetingRelayUrl(envName, port) {
   const url =
-    process.env[envName] ?? resolveLocalRelayUrl(defaultUrl).toString();
+    process.env[envName] ??
+    resolveLocalRelayUrl(`https://127.0.0.1:${port}`).toString();
   return url.replace(/\/$/, "");
 }
 
