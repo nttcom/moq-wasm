@@ -20,14 +20,6 @@ pub struct StreamPriority {
 }
 
 impl StreamPriority {
-    /// Transport stream priority: a higher value is transmitted first.
-    ///
-    /// The four §7.2 rules are packed most significant first into the 31
-    /// magnitude bits of an `i32`, so any data stream (negative) stays below
-    /// the control stream, which keeps the transport default of 0. The
-    /// group rank is `group_sequence` modulo 2^12 (reversed for Descending),
-    /// so one group boundary in every 4096 orders as if unprioritized; the
-    /// subgroup id saturates at 7, so higher subgroups of one group tie.
     pub fn transport_priority(&self) -> i32 {
         let key = (u64::from(self.subscriber_priority) << SUBSCRIBER_PRIORITY_SHIFT)
             | (u64::from(self.publisher_priority) << PUBLISHER_PRIORITY_SHIFT)

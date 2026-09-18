@@ -65,9 +65,6 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
         )
     }
 
-    /// Applies the §7.2 scheduling inputs to the transport stream. Only
-    /// available before the header is sent: the transport reorders queued
-    /// data by a changed priority only after that stream's next frame.
     pub async fn set_priority(&self, priority: StreamPriority) -> anyhow::Result<()> {
         self.stream_sender
             .set_priority(priority.transport_priority())
