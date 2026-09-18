@@ -258,8 +258,9 @@ than 400 ms past the budget re-anchors the clock so the extra latency is shed.
 The stats line shows the offset between the picture on screen and the sound as
 `A/V +N ms`, as `audio breaks N` how often the sound did not continue where
 the previous chunk ended, and as `video N dropped / M late` how many frames
-fell due together with a newer one and were never shown, and how many were
-shown more than a frame period after they were due.
+fell due together with a newer one or arrived after a newer one was shown and
+were never shown, and how many were shown more than a frame period after they
+were due.
 
 The audio decoder stamps its outputs from the sample count it has produced,
 not from the timestamps of the chunks, so a hole in the source, such as a lost
@@ -270,7 +271,11 @@ from, in the live and the review decoder alike. The relay delivers each group
 on its own stream, and when the tail of one audio group and the head of the
 next are in flight together the streams interleave and the head lands first;
 the audio worker holds the objects of a later group until the group before
-them has ended, for at most 100 ms, so the decoder sees them in order.
+them has ended, for at most 100 ms, so the decoder sees them in order. The
+video worker instead moves on with the keyframe of the newer group as soon as
+it arrives and drops what is left of the older group: those frames predict
+from references the keyframe has replaced, and decoding them would smear the
+picture until the next keyframe and show a frame older than the one on screen.
 
 In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers

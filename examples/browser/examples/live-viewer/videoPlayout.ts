@@ -21,7 +21,8 @@ export class VideoPlayout {
   private timer: ReturnType<typeof setTimeout> | undefined
   private last: Presented | undefined
   private paused = false
-  /// Frames that fell due together with a newer one and were never shown.
+  /// Frames that fell due together with a newer one, or arrived after a newer
+  /// one was shown, and were never shown.
   dropped = 0
   /// Frames shown more than a frame period after they were due.
   late = 0
@@ -29,6 +30,11 @@ export class VideoPlayout {
   constructor(private readonly show: (frame: VideoFrame) => void) {}
 
   present(frame: VideoFrame, atMs: number): void {
+    if (this.last && frame.timestamp && frame.timestamp <= this.last.captureMicros) {
+      frame.close()
+      this.dropped += 1
+      return
+    }
     const index = this.pending.findIndex((pending) => pending.atMs > atMs)
     this.pending.splice(index === -1 ? this.pending.length : index, 0, { frame, atMs })
     this.schedule()
