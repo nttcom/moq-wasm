@@ -122,13 +122,13 @@ function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
       continue
     }
     void session.unsubscribe(track.subscribeId, role).catch((error) => {
-      console.warn(`[call] failed to unsubscribe departed member ${member.id} (${role})`, error)
+      console.warn(`[meeting] failed to unsubscribe departed member ${member.id} (${role})`, error)
     })
   }
 }
 
 // Subscription state (isSubscribing/isSubscribed/subscribeId) is now driven by
-// the awaited result of session.subscribe() in CallRoom, so this handler only
+// the awaited result of session.subscribe() in MeetingRoom, so this handler only
 // surfaces errors for diagnostics.
 function createSubscribeResponseHandler(session: LocalSession) {
   return (response: SubscribeOkMessage | RequestErrorMessage) => {

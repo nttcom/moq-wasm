@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
-import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
+import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
-const VIDEO_ELEMENT_LOG_PREFIX = '[call][media-element][video]'
+const VIDEO_ELEMENT_LOG_PREFIX = '[meeting][media-element][video]'
 
 interface MediaStreamVideoProps {
   stream?: MediaStream | null
@@ -79,7 +79,7 @@ function logVideoElementEvent(
   testId: string | undefined,
   stream?: MediaStream | null
 ): void {
-  if (!isCallVideoPipelineDebugEnabled()) {
+  if (!isMeetingVideoPipelineDebugEnabled()) {
     return
   }
   const videoTracks = stream?.getVideoTracks() ?? []

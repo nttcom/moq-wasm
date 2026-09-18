@@ -39,8 +39,8 @@ CERT_SPKI_BASE64=$(
     | openssl enc -base64
 )
 
-RELAY_A_URL="${MOQT_RELAY_A_URL:-${CALL_RELAY_A_URL:-$(node "${REPO_ROOT}/scripts/resolve-local-relay-url.mjs" https://127.0.0.1:4433)}}"
-RELAY_B_URL="${MOQT_RELAY_B_URL:-${CALL_RELAY_B_URL:-$(node "${REPO_ROOT}/scripts/resolve-local-relay-url.mjs" https://127.0.0.1:4434)}}"
+RELAY_A_URL="${MOQT_RELAY_A_URL:-${MEETING_RELAY_A_URL:-$(node "${REPO_ROOT}/scripts/resolve-local-relay-url.mjs" https://127.0.0.1:4433)}}"
+RELAY_B_URL="${MOQT_RELAY_B_URL:-${MEETING_RELAY_B_URL:-$(node "${REPO_ROOT}/scripts/resolve-local-relay-url.mjs" https://127.0.0.1:4434)}}"
 RELAY_A_AUTHORITY=$(node -e "console.log(new URL(process.argv[1]).host)" "${RELAY_A_URL}")
 RELAY_B_AUTHORITY=$(node -e "console.log(new URL(process.argv[1]).host)" "${RELAY_B_URL}")
 
@@ -58,7 +58,7 @@ if [[ -n "${BROWSER_EXAMPLE_PATH:-}" ]]; then
     BROWSER_APP_URL="${BROWSER_APP_ORIGIN}${NORMALIZED_BROWSER_EXAMPLE_PATH}"
   fi
 else
-  BROWSER_APP_URL="${BROWSER_APP_URL:-${CALL_APP_URL:-${DEFAULT_BROWSER_APP_URL}}}"
+  BROWSER_APP_URL="${BROWSER_APP_URL:-${MEETING_APP_URL:-${DEFAULT_BROWSER_APP_URL}}}"
 fi
 
 BROWSER_APP_URL_WITH_RELAYS=$(

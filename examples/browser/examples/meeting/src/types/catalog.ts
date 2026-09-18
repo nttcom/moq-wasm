@@ -2,7 +2,7 @@ export type CatalogTrackRole = 'video' | 'audio' | 'chat'
 export type CatalogSubscribeRole = 'video' | 'screenshare' | 'audio' | 'chat'
 export type AudioStreamUpdateMode = 'single' | 'interval'
 
-export interface CallCatalogTrack {
+export interface MeetingCatalogTrack {
   name: string
   label: string
   role: CatalogTrackRole
@@ -21,7 +21,7 @@ export interface CallCatalogTrack {
   isLive?: boolean
 }
 
-export interface EditableCallCatalogTrack extends CallCatalogTrack {
+export interface EditableMeetingCatalogTrack extends MeetingCatalogTrack {
   id: string
 }
 

@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@/*": ["./examples/call/src/*"],
+      "@/*": ["./examples/meeting/src/*"],
       "@moqt/*": ["./lib/moqt/*"]
     },
     "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom"],

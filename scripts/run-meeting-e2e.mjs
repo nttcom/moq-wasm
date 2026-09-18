@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Orchestration runner for call E2E tests.
+// Orchestration runner for meeting E2E tests.
 // Starts redis + vts + relay-a (4433) + relay-b (4434) via docker compose,
-// launches vite preview, then runs the Playwright call-e2e spec with an
+// launches vite preview, then runs the Playwright meeting-e2e spec with an
 // app-scoped JWT minted from the development ledger.
 //
 // If relay-a and relay-b containers serving ports 4433/4434 are already running
@@ -25,7 +25,7 @@ import {
 import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
 import { experimentAppId, mintToken } from "./vts-dev.mjs";
 
-const callIndexPath = "/moq-wasm/examples/call/index.html";
+const meetingIndexPath = "/moq-wasm/examples/meeting/index.html";
 const defaultRelayAUrl = "https://127.0.0.1:4433";
 const defaultRelayBUrl = "https://127.0.0.1:4434";
 const composeServices = ["redis", "vts", "relay-a", "relay-b"];
@@ -142,26 +142,26 @@ async function main() {
 
     await Promise.all([
       relayReadyPromise,
-      waitForHttpOk(`${baseUrl}${callIndexPath}`, 120_000),
+      waitForHttpOk(`${baseUrl}${meetingIndexPath}`, 120_000),
     ]);
 
-    const relayAUrl = getCallRelayUrl("CALL_E2E_RELAY_A_URL", defaultRelayAUrl);
-    const relayBUrl = getCallRelayUrl("CALL_E2E_RELAY_B_URL", defaultRelayBUrl);
-    console.error(`[setup] Using call relay URLs: ${relayAUrl}, ${relayBUrl}`);
+    const relayAUrl = getMeetingRelayUrl("MEETING_E2E_RELAY_A_URL", defaultRelayAUrl);
+    const relayBUrl = getMeetingRelayUrl("MEETING_E2E_RELAY_B_URL", defaultRelayBUrl);
+    console.error(`[setup] Using meeting relay URLs: ${relayAUrl}, ${relayBUrl}`);
 
     await runCommand(
       resolveCommandName("npm"),
       playwrightArgs.length > 0
-        ? ["run", "e2e:call", "--", ...playwrightArgs]
-        : ["run", "e2e:call"],
+        ? ["run", "e2e:meeting", "--", ...playwrightArgs]
+        : ["run", "e2e:meeting"],
       {
         cwd: jsDir,
         env: {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
-          CALL_E2E_RELAY_A_URL: relayAUrl,
-          CALL_E2E_RELAY_B_URL: relayBUrl,
-          CALL_E2E_JWT: mintToken(experimentAppId, "12h"),
+          MEETING_E2E_RELAY_A_URL: relayAUrl,
+          MEETING_E2E_RELAY_B_URL: relayBUrl,
+          MEETING_E2E_JWT: mintToken(experimentAppId, "12h"),
         },
       },
     );
@@ -170,7 +170,7 @@ async function main() {
   }
 }
 
-function getCallRelayUrl(envName, defaultUrl) {
+function getMeetingRelayUrl(envName, defaultUrl) {
   const configuredUrl = process.env[envName];
   const url = configuredUrl ?? resolveLocalRelayUrl(defaultUrl).toString();
   return stripTrailingSlash(url);

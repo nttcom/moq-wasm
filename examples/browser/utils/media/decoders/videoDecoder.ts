@@ -132,7 +132,7 @@ type VideoPacingConfig = {
   decodedBufferMax: number
 }
 
-type VideoPacingPreset = 'disabled' | 'onvif' | 'call'
+type VideoPacingPreset = 'disabled' | 'onvif' | 'meeting'
 type VideoPacingPipeline = 'buffer-pacing-decode'
 type VideoPacingConfigInput = Partial<VideoPacingConfig>
 
@@ -162,7 +162,7 @@ function createPacingPresetConfig(preset: VideoPacingPreset): VideoPacingConfig 
   }
   return {
     ...createPacingPresetConfig('onvif'),
-    preset: 'call',
+    preset: 'meeting',
     pipeline: 'buffer-pacing-decode',
     targetLatencyMs: 250
   }
@@ -236,10 +236,10 @@ function clampNumber(value: unknown, fallback: number, min: number, max = Number
 
 function normalizePacingConfig(config?: VideoPacingConfigInput): VideoPacingConfig {
   const preset: VideoPacingPreset =
-    config?.preset === 'disabled' || config?.preset === 'call' || config?.preset === 'onvif'
+    config?.preset === 'disabled' || config?.preset === 'meeting' || config?.preset === 'onvif'
       ? config.preset
       : currentPacingConfig.preset === 'disabled' ||
-          currentPacingConfig.preset === 'call' ||
+          currentPacingConfig.preset === 'meeting' ||
           currentPacingConfig.preset === 'onvif'
         ? currentPacingConfig.preset
         : 'onvif'

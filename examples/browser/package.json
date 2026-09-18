@@ -13,7 +13,7 @@
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
     "e2e:media": "playwright test tests/media-e2e.spec.ts",
-    "e2e:call": "playwright test tests/call-e2e.spec.ts",
+    "e2e:meeting": "playwright test tests/meeting-e2e.spec.ts",
     "e2e:message": "playwright test tests/message-e2e.spec.ts",
     "e2e:live-viewer": "playwright test tests/live-viewer-e2e.spec.ts"
   },
