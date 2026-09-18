@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 
-import { getErrorMessage } from "./media-e2e-helpers.mjs";
+import {
+  getErrorMessage,
+  jsDir,
+  resolveCommandName,
+} from "./media-e2e-helpers.mjs";
 
 export function registerSignalHandlers(cleanup) {
   const handler = async () => {
@@ -30,6 +34,24 @@ export function spawnProcess(label, command, args, options) {
   });
 
   return child;
+}
+
+export function spawnViteServer(webPort) {
+  return spawnProcess(
+    "vite",
+    resolveCommandName("npm"),
+    [
+      "exec",
+      "vite",
+      "--",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(webPort),
+      "--strictPort",
+    ],
+    { cwd: jsDir },
+  );
 }
 
 function pipeOutput(stream, destination, label) {
