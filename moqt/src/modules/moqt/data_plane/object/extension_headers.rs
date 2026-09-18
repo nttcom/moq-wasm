@@ -1,7 +1,7 @@
 use bytes::{Buf, Bytes};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::key_value_pair::{KeyValuePair, VariantType},
 };
 
@@ -35,10 +35,7 @@ impl ExtensionHeaders {
     }
 
     pub fn decode(cursor: &mut impl Buf) -> Option<Self> {
-        let byte_length = cursor
-            .try_get_varint()
-            .log_context("extension headers length")
-            .ok()? as usize;
+        let byte_length = cursor.try_get_varint().ok()? as usize;
         if cursor.remaining() < byte_length {
             return None;
         }
