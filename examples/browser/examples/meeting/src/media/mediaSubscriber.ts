@@ -12,7 +12,7 @@ import {
 import type { JitterBufferEvent } from '../types/media'
 import type { TrackMediaConfig } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isCallVideoPipelineDebugEnabled } from '../utils/debug'
+import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
 export type RemoteVideoSource = 'camera' | 'screenshare'
 type JitterBufferActivity = {
@@ -21,7 +21,7 @@ type JitterBufferActivity = {
   capacityFrames: number
 }
 const AUDIO_PLAYBACK_QUEUE_REPORT_INTERVAL_MS = 100
-const VIDEO_SUBSCRIBER_LOG_PREFIX = '[call][subscriber][video]'
+const VIDEO_SUBSCRIBER_LOG_PREFIX = '[meeting][subscriber][video]'
 
 interface MediaSubscriberHandlers {
   onRemoteVideoStream?: (userId: string, stream: MediaStream, source: RemoteVideoSource) => void
@@ -192,7 +192,7 @@ export class MediaSubscriber {
         return
       }
       if (data.type === 'configError') {
-        console.error('[call][videoDecoder] config error', {
+        console.error('[meeting][videoDecoder] config error', {
           userId,
           source,
           reason: data.reason,
@@ -325,7 +325,7 @@ export class MediaSubscriber {
     }
     worker.postMessage({
       type: 'config',
-      config: { ...jitterConfig, debugVideoPipeline: isCallVideoPipelineDebugEnabled() }
+      config: { ...jitterConfig, debugVideoPipeline: isMeetingVideoPipelineDebugEnabled() }
     })
 
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
@@ -340,7 +340,7 @@ export class MediaSubscriber {
     frame: { width?: number; height?: number },
     error?: unknown
   ): void {
-    if (!isCallVideoPipelineDebugEnabled()) {
+    if (!isMeetingVideoPipelineDebugEnabled()) {
       return
     }
     const shouldLog = context.frameLogCount < 5 || event === 'writer-failed'

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
-  CALL_JWT,
-  arrangeCallClient,
+  MEETING_JWT,
+  arrangeMeetingClient,
   enableMedia,
   getCatalogStatus,
   getChatMessageByText,
@@ -13,7 +13,7 @@ import {
   getTrackStatus,
   joinRoom,
   sendChatMessage
-} from './call-e2e-arrange'
+} from './meeting-e2e-arrange'
 
 // Assert that a video element is actively playing (decoded frames, time advancing, not paused).
 async function expectVideoPlaying(video: import('@playwright/test').Locator): Promise<void> {
@@ -108,8 +108,8 @@ async function subscribeAndExpectMedia(viewer: import('@playwright/test').Page, 
 
 test('cross-relay: two clients on different relays see each other and receive video+audio', async ({ browser }) => {
   // Arrange: relay-a に接続する Client1 と relay-b に接続する Client2 を用意する。
-  const client1 = await arrangeCallClient(browser)
-  const client2 = await arrangeCallClient(browser)
+  const client1 = await arrangeMeetingClient(browser)
+  const client2 = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-cross-relay-${Date.now()}`
@@ -158,8 +158,8 @@ test('cross-relay: two clients on different relays see each other and receive vi
 
 test('leave and rejoin with same memberName succeeds without stale-member failure', async ({ browser }) => {
   // Arrange: 同一ルームに relay-a 経由で 2 クライアントを参加させる。
-  const client1 = await arrangeCallClient(browser)
-  const client2 = await arrangeCallClient(browser)
+  const client1 = await arrangeMeetingClient(browser)
+  const client2 = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-rejoin-${Date.now()}`
@@ -207,9 +207,9 @@ test('leave and rejoin with same memberName succeeds without stale-member failur
 
 test('three clients in the same room all see each other and receive video+audio', async ({ browser }) => {
   // Arrange: relay-a に alice/carol、relay-b に bob を参加させる 3 クライアントを用意する。
-  const alice = await arrangeCallClient(browser)
-  const bob = await arrangeCallClient(browser)
-  const carol = await arrangeCallClient(browser)
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-trio-${Date.now()}`
@@ -256,8 +256,8 @@ test('three clients in the same room all see each other and receive video+audio'
 
 test('repeated leave and rejoin keeps reconnecting with the same memberName', async ({ browser }) => {
   // Arrange: relay-a に alice と bob を参加させる。
-  const alice = await arrangeCallClient(browser)
-  const bob = await arrangeCallClient(browser)
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-rejoin-loop-${Date.now()}`
@@ -300,9 +300,9 @@ test('repeated leave and rejoin keeps reconnecting with the same memberName', as
 
 test('multiple clients on a single relay all connect and receive video+audio', async ({ browser }) => {
   // Arrange: 全員 relay-a に接続する 3 クライアントを用意する（単一リレーで複数接続を検証）。
-  const alice = await arrangeCallClient(browser)
-  const bob = await arrangeCallClient(browser)
-  const carol = await arrangeCallClient(browser)
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-single-relay-${Date.now()}`
@@ -349,8 +349,8 @@ test('multiple clients on a single relay all connect and receive video+audio', a
 
 test('chat message sent by one client is displayed on the receiving client', async ({ browser }) => {
   // Arrange: relay-a に alice と bob を参加させる。
-  const alice = await arrangeCallClient(browser)
-  const bob = await arrangeCallClient(browser)
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
 
   try {
     const roomName = `e2e-chat-${Date.now()}`
@@ -383,7 +383,7 @@ test('chat message sent by one client is displayed on the receiving client', asy
 
 test('an invalid token is rejected by the relay with a surfaced reason', async ({ browser }) => {
   // Arrange: 不正な JWT を提示するクライアントを用意する。
-  const client = await arrangeCallClient(browser, { jwt: 'not-a-jwt' })
+  const client = await arrangeMeetingClient(browser, { jwt: 'not-a-jwt' })
 
   try {
     // Act: 不正トークンのまま relay-a に入室を試みる。

@@ -12,7 +12,7 @@ import {
 } from '../types/jitterBuffer'
 
 const AUDIO_MODES: AudioJitterBufferMode[] = ['ordered', 'latest']
-const VIDEO_PACING_PRESETS: VideoPacingPreset[] = ['disabled', 'call', 'onvif']
+const VIDEO_PACING_PRESETS: VideoPacingPreset[] = ['disabled', 'meeting', 'onvif']
 const VIDEO_DECODER_HWA_OPTIONS: VideoDecoderHardwareAcceleration[] = ['prefer-hardware', 'prefer-software']
 
 interface VideoJitterBufferControlsProps {

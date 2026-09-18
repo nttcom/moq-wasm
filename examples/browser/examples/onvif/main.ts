@@ -64,7 +64,7 @@ type VideoPacingConfigInput = {
   targetLatencyMs?: number
 }
 
-type VideoPacingPreset = 'disabled' | 'onvif' | 'call'
+type VideoPacingPreset = 'disabled' | 'onvif' | 'meeting'
 type VideoPacingPipeline = 'buffer-pacing-decode'
 
 type VideoDecoderRuntimeConfig = {
@@ -201,7 +201,7 @@ function createVideoPacingPresetConfig(preset: VideoPacingPreset): VideoPacingCo
   }
   return {
     ...createVideoPacingPresetConfig('onvif'),
-    preset: 'call',
+    preset: 'meeting',
     pipeline: 'buffer-pacing-decode',
     targetLatencyMs: 250,
     maxWaitMs: 1000,
@@ -827,7 +827,7 @@ function parseBigInt(value: string): bigint {
 function applyVideoDecoderSettings(): void {
   const selectedPreset: VideoPacingPreset =
     pacingPresetInput?.value === 'disabled' ||
-    pacingPresetInput?.value === 'call' ||
+    pacingPresetInput?.value === 'meeting' ||
     pacingPresetInput?.value === 'onvif'
       ? pacingPresetInput.value
       : 'onvif'

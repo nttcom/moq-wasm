@@ -4,7 +4,7 @@ import {
   VIDEO_CODEC_OPTIONS,
   VIDEO_HARDWARE_ACCELERATION_OPTIONS,
   VIDEO_RESOLUTION_OPTIONS
-} from '../call/src/types/videoEncoding'
+} from '../meeting/src/types/videoEncoding'
 
 type DecoderHwa = 'prefer-hardware' | 'prefer-software'
 type AvcFormatMode = 'auto' | 'annexb' | 'avc'

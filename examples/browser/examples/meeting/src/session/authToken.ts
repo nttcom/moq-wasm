@@ -5,12 +5,12 @@ const ANON_ROOT = 'anon'
 // namespace root then follows the appId decoded from the token. Decoding here
 // is only used to build the namespace the client requests — the relay verifies
 // the token itself and authorizes against the appId it verified.
-export type CallAuth = {
+export type MeetingAuth = {
   token?: string
   namespaceRoot: string
 }
 
-export function readCallAuth(): CallAuth {
+export function readMeetingAuth(): MeetingAuth {
   if (typeof window === 'undefined') {
     return { namespaceRoot: ANON_ROOT }
   }

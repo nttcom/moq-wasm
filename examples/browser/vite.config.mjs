@@ -11,7 +11,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'examples/call/src'),
+      '@': resolve(__dirname, 'examples/meeting/src'),
       '@moqt': resolve(__dirname, 'lib/moqt')
     }
   },
@@ -33,7 +33,7 @@ export default defineConfig({
         'media-cmaf-publisher': resolve(__dirname, 'examples/media-cmaf/publisher/index.html'),
         'media-cmaf-subscriber': resolve(__dirname, 'examples/media-cmaf/subscriber/index.html'),
         onvif: resolve(__dirname, 'examples/onvif/index.html'),
-        call: resolve(__dirname, 'examples/call/index.html'),
+        meeting: resolve(__dirname, 'examples/meeting/index.html'),
         webcodecs: resolve(__dirname, 'examples/webcodecs/index.html'),
         'remote-monitoring': resolve(__dirname, 'examples/remote-monitoring/index.html'),
         'live-viewer': resolve(__dirname, 'examples/live-viewer/index.html')

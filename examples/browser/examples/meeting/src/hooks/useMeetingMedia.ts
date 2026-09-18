@@ -25,7 +25,7 @@ import {
   type AudioEncodingSettings
 } from '../types/audioEncoding'
 import type { CaptureSettingsState } from '../types/captureConstraints'
-import type { EditableCallCatalogTrack } from '../types/catalog'
+import type { EditableMeetingCatalogTrack } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import {
   appendCatalogTracks,
@@ -39,10 +39,10 @@ import {
   removeCatalogTracksByNames,
   toCatalogTracks,
   toEditableCatalogTracks
-} from '../media/callCatalog'
+} from '../media/meetingCatalog'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
 
-interface UseCallMediaResult {
+interface UseMeetingMediaResult {
   cameraEnabled: boolean
   screenShareEnabled: boolean
   microphoneEnabled: boolean
@@ -87,10 +87,10 @@ interface UseCallMediaResult {
   captureSettings: CaptureSettingsState
   updateCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
   applyCaptureSettings: () => Promise<void>
-  catalogTracks: EditableCallCatalogTrack[]
+  catalogTracks: EditableMeetingCatalogTrack[]
   subscribedCatalogTracks: SubscribedCatalogTrack[]
-  addCatalogTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
-  updateCatalogTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
+  addCatalogTrack: (track: Omit<EditableMeetingCatalogTrack, 'id'>) => void
+  updateCatalogTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   removeCatalogTrack: (id: string) => void
 }
 
@@ -199,7 +199,7 @@ const RENDERING_RATE_SMOOTHING_FACTOR = 0.2
 const MIN_RENDERING_INTERVAL_MS = 1
 const MAX_RENDERING_FPS = 120
 
-export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
+export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaResult {
   const [cameraEnabled, setCameraEnabled] = useState(false)
   const [screenShareEnabled, setScreenShareEnabled] = useState(false)
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false)
@@ -242,7 +242,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
     noiseSuppression: true,
     autoGainControl: true
   })
-  const [catalogTracks, setCatalogTracks] = useState<EditableCallCatalogTrack[]>([])
+  const [catalogTracks, setCatalogTracks] = useState<EditableMeetingCatalogTrack[]>([])
   const [subscribedCatalogTracks, setSubscribedCatalogTracks] = useState<SubscribedCatalogTrack[]>([])
   const videoRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
   const audioRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
@@ -702,7 +702,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   ])
 
   const persistCatalogTracks = useCallback(
-    async (nextTracks: EditableCallCatalogTrack[]) => {
+    async (nextTracks: EditableMeetingCatalogTrack[]) => {
       if (!session) {
         return
       }
@@ -725,7 +725,7 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   )
 
   const updateCatalogTracks = useCallback(
-    (updater: (prev: EditableCallCatalogTrack[]) => EditableCallCatalogTrack[], actionLabel: string) => {
+    (updater: (prev: EditableMeetingCatalogTrack[]) => EditableMeetingCatalogTrack[], actionLabel: string) => {
       setCatalogTracks((prev) => {
         const next = updater(prev)
         if (next === prev) {
@@ -1098,14 +1098,14 @@ export function useCallMedia(session: LocalSession | null): UseCallMediaResult {
   ])
 
   const addCatalogTrack = useCallback(
-    (track: Omit<EditableCallCatalogTrack, 'id'>) => {
+    (track: Omit<EditableMeetingCatalogTrack, 'id'>) => {
       updateCatalogTracks((prev) => [...prev, { ...track, id: createCatalogTrackId() }], 'add catalog track')
     },
     [updateCatalogTracks]
   )
 
   const updateCatalogTrack = useCallback(
-    (id: string, patch: Partial<EditableCallCatalogTrack>) => {
+    (id: string, patch: Partial<EditableMeetingCatalogTrack>) => {
       updateCatalogTracks(
         (prev) => prev.map((track) => (track.id === id ? { ...track, ...patch } : track)),
         'update catalog track'
@@ -1249,20 +1249,20 @@ function createJitterBufferSnapshot(
 }
 
 function deriveCameraEncodingFromCatalogTracks(
-  tracks: EditableCallCatalogTrack[],
+  tracks: EditableMeetingCatalogTrack[],
   fallback: VideoEncodingSettings
 ): VideoEncodingSettings {
   return deriveVideoEncodingFromCatalogTracks(tracks, fallback, 'camera')
 }
 
 function deriveScreenShareEncodingFromCatalogTracks(
-  tracks: EditableCallCatalogTrack[],
+  tracks: EditableMeetingCatalogTrack[],
   fallback: VideoEncodingSettings
 ): VideoEncodingSettings {
   return deriveVideoEncodingFromCatalogTracks(tracks, fallback, 'screenshare')
 }
 
-function hasCatalogTrackForSource(tracks: EditableCallCatalogTrack[], source: CatalogPresetSource): boolean {
+function hasCatalogTrackForSource(tracks: EditableMeetingCatalogTrack[], source: CatalogPresetSource): boolean {
   if (source === 'audio') {
     return tracks.some((track) => track.role === 'audio')
   }
@@ -1271,7 +1271,7 @@ function hasCatalogTrackForSource(tracks: EditableCallCatalogTrack[], source: Ca
 }
 
 function deriveVideoEncodingFromCatalogTracks(
-  tracks: EditableCallCatalogTrack[],
+  tracks: EditableMeetingCatalogTrack[],
   fallback: VideoEncodingSettings,
   source: 'camera' | 'screenshare'
 ): VideoEncodingSettings {
@@ -1293,7 +1293,7 @@ function deriveVideoEncodingFromCatalogTracks(
   }
 }
 
-function pickVideoTrackByPriority(tracks: EditableCallCatalogTrack[]): EditableCallCatalogTrack | undefined {
+function pickVideoTrackByPriority(tracks: EditableMeetingCatalogTrack[]): EditableMeetingCatalogTrack | undefined {
   const tracksWithBitrate = tracks
     .filter((track) => typeof track.bitrate === 'number')
     .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
@@ -1301,7 +1301,7 @@ function pickVideoTrackByPriority(tracks: EditableCallCatalogTrack[]): EditableC
 }
 
 function deriveAudioEncodingFromCatalogTracks(
-  tracks: EditableCallCatalogTrack[],
+  tracks: EditableMeetingCatalogTrack[],
   fallback: AudioEncodingSettings
 ): AudioEncodingSettings {
   const audioTrack = tracks.find((track) => track.role === 'audio')

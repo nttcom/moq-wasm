@@ -9,7 +9,7 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 
-.PHONY: relay browser chrome chrome\:linux live-ingest gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-call browser-e2e-call-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -144,15 +144,15 @@ browser-e2e-media:
 	node scripts/setup-media-e2e.mjs
 	node scripts/run-media-e2e.mjs
 
-# Two-relay call E2E: brings up relay-a/relay-b via docker compose, then Playwright.
+# Two-relay meeting E2E: brings up relay-a/relay-b via docker compose, then Playwright.
 browser-e2e-live-viewer:
 	node scripts/run-live-viewer-e2e.mjs
 
-browser-e2e-call:
+browser-e2e-meeting:
 	node scripts/setup-media-e2e.mjs
-	node scripts/run-call-e2e.mjs
+	node scripts/run-meeting-e2e.mjs
 
-# Same as browser-e2e-call but with a visible browser to watch behavior.
-# Assumes setup already ran once (via browser-e2e-call or setup-media-e2e.mjs).
-browser-e2e-call-headed:
-	PLAYWRIGHT_HEADLESS=false node scripts/run-call-e2e.mjs
+# Same as browser-e2e-meeting but with a visible browser to watch behavior.
+# Assumes setup already ran once (via browser-e2e-meeting or setup-media-e2e.mjs).
+browser-e2e-meeting-headed:
+	PLAYWRIGHT_HEADLESS=false node scripts/run-meeting-e2e.mjs

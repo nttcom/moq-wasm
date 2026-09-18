@@ -8,7 +8,7 @@ import { BarChart3, LayoutGrid, Mic, MicOff, Minus, Monitor, Plus, Settings2, Vi
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
-import type { CallCatalogTrack, CatalogSubscribeRole, EditableCallCatalogTrack } from '../types/catalog'
+import type { MeetingCatalogTrack, CatalogSubscribeRole, EditableMeetingCatalogTrack } from '../types/catalog'
 import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import type { SidebarStatsSample } from '../types/stats'
@@ -70,12 +70,12 @@ interface MemberGridProps {
   captureSettings: CaptureSettingsState
   onChangeCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
   onApplyCaptureSettings: () => void
-  catalogTracks: EditableCallCatalogTrack[]
+  catalogTracks: EditableMeetingCatalogTrack[]
   subscribedCatalogTracks: SubscribedCatalogTrack[]
-  onAddCatalogTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
-  onUpdateCatalogTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
+  onAddCatalogTrack: (track: Omit<EditableMeetingCatalogTrack, 'id'>) => void
+  onUpdateCatalogTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   onRemoveCatalogTrack: (id: string) => void
-  remoteCatalogTracks: Map<string, CallCatalogTrack[]>
+  remoteCatalogTracks: Map<string, MeetingCatalogTrack[]>
   remoteCatalogSelections: Map<string, { video?: string; screenshare?: string; audio?: string; chat?: string }>
   catalogLoadingMemberIds: Set<string>
   catalogSubscribedMemberIds: Set<string>
@@ -682,12 +682,12 @@ function CatalogTrackEditor({
   onUpdateTrack,
   onRemoveTrack
 }: {
-  tracks: EditableCallCatalogTrack[]
+  tracks: EditableMeetingCatalogTrack[]
   videoEncodingOptions: VideoEncodingOptionSet
   videoHardwareAccelerationOptions: VideoHardwareAccelerationOption[]
   audioEncodingOptions: AudioEncodingOptionSet
-  onAddTrack: (track: Omit<EditableCallCatalogTrack, 'id'>) => void
-  onUpdateTrack: (id: string, patch: Partial<EditableCallCatalogTrack>) => void
+  onAddTrack: (track: Omit<EditableMeetingCatalogTrack, 'id'>) => void
+  onUpdateTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   onRemoveTrack: (id: string) => void
 }) {
   const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
@@ -706,7 +706,7 @@ function CatalogTrackEditor({
     key: CatalogTabKey
     title: string
     description: string
-    tracks: EditableCallCatalogTrack[]
+    tracks: EditableMeetingCatalogTrack[]
   }> = [
     {
       key: 'video',
@@ -735,7 +735,7 @@ function CatalogTrackEditor({
       ? getSupportedVideoResolutionOptions(videoEncodingOptions, currentDraft.codec)
       : videoEncodingOptions.resolutionOptions
 
-  const setCurrentDraft = (patch: Partial<Omit<EditableCallCatalogTrack, 'id'>>) => {
+  const setCurrentDraft = (patch: Partial<Omit<EditableMeetingCatalogTrack, 'id'>>) => {
     setDraftConfigError(null)
     if (addTrackKind === 'video') {
       setVideoDraft((prev) => ({ ...prev, ...patch }))
@@ -1227,7 +1227,7 @@ function findVideoCodecOptionId(options: VideoEncodingOptionSet, codec: string |
   return options.codecOptions.find((entry) => entry.codec === codec)?.id ?? options.codecOptions[0]?.id ?? ''
 }
 
-function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCallCatalogTrack, 'id'> {
+function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableMeetingCatalogTrack, 'id'> {
   const codec = options.codecOptions[0]?.codec ?? 'avc1.42E01E'
   const resolution = pickSupportedVideoResolutionOption(options, codec, undefined, undefined, '1080p')
   const bitrate = options.bitrateOptions[0]?.bitrate ?? 800_000
@@ -1250,7 +1250,7 @@ function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCa
   }
 }
 
-function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<EditableCallCatalogTrack, 'id'> {
+function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<EditableMeetingCatalogTrack, 'id'> {
   const codec = options.codecOptions[0]?.codec ?? 'av01.0.08M.08'
   const resolution = pickSupportedVideoResolutionOption(options, codec, undefined, undefined, '1080p')
   const bitrate = options.bitrateOptions[0]?.bitrate ?? 1_000_000
@@ -1273,7 +1273,7 @@ function createScreenShareTrackDraft(options: VideoEncodingOptionSet): Omit<Edit
   }
 }
 
-function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableCallCatalogTrack, 'id'> {
+function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableMeetingCatalogTrack, 'id'> {
   const codec = options.codecOptions[0]?.codec ?? 'opus'
   const bitrate = options.bitrateOptions[0]?.bitrate ?? 64_000
   const channels = options.channelOptions[0]?.channels ?? 1
@@ -1394,20 +1394,22 @@ function channelConfigForChannels(channels: number): string {
   return `${channels}ch`
 }
 
-function normalizeTrackKeyframeInterval(track: Pick<CallCatalogTrack, 'keyframeInterval'>): number {
+function normalizeTrackKeyframeInterval(track: Pick<MeetingCatalogTrack, 'keyframeInterval'>): number {
   return toPositiveInteger(track.keyframeInterval, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
 }
 
-function normalizeTrackFramerate(track: Pick<CallCatalogTrack, 'framerate'>): number {
+function normalizeTrackFramerate(track: Pick<MeetingCatalogTrack, 'framerate'>): number {
   return toPositiveInteger(track.framerate, 30)
 }
 
-function resolveAudioStreamUpdateMode(track: Pick<CallCatalogTrack, 'audioStreamUpdateMode'>): 'single' | 'interval' {
+function resolveAudioStreamUpdateMode(
+  track: Pick<MeetingCatalogTrack, 'audioStreamUpdateMode'>
+): 'single' | 'interval' {
   return track.audioStreamUpdateMode === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
 }
 
 function resolveAudioStreamUpdateIntervalSeconds(
-  track: Pick<CallCatalogTrack, 'audioStreamUpdateIntervalSeconds'>
+  track: Pick<MeetingCatalogTrack, 'audioStreamUpdateIntervalSeconds'>
 ): number {
   return toPositiveInteger(track.audioStreamUpdateIntervalSeconds, DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds)
 }
@@ -1449,7 +1451,7 @@ function RemoteCatalogSubscribePanel({
   onUnsubscribeChat
 }: {
   memberName: string
-  tracks: CallCatalogTrack[]
+  tracks: MeetingCatalogTrack[]
   selected?: { video?: string; screenshare?: string; audio?: string; chat?: string }
   isLoading: boolean
   isCatalogSubscribed: boolean
@@ -1487,7 +1489,7 @@ function RemoteCatalogSubscribePanel({
   const trackRows: {
     role: CatalogSubscribeRole
     title: string
-    tracks: CallCatalogTrack[]
+    tracks: MeetingCatalogTrack[]
     selectedTrack: string
     subscribed: boolean
     subscribing: boolean
@@ -1600,7 +1602,7 @@ function TrackSubscribeRow({
   onUnsubscribe
 }: {
   title: string
-  tracks: CallCatalogTrack[]
+  tracks: MeetingCatalogTrack[]
   selected: string
   disabled: boolean
   statusText: string
@@ -1690,7 +1692,7 @@ function buildTrackActionKey(memberId: string, role: CatalogSubscribeRole): stri
   return `${memberId}:${role}`
 }
 
-function formatCatalogTrackLabel(track: CallCatalogTrack): string {
+function formatCatalogTrackLabel(track: MeetingCatalogTrack): string {
   const parts: string[] = [track.label || track.name]
   if (typeof track.bitrate === 'number') {
     parts.push(formatTrackBitrateForDisplay(track.bitrate))
@@ -1705,7 +1707,7 @@ function formatCatalogTrackLabel(track: CallCatalogTrack): string {
 }
 
 function buildCatalogTrackMetadataEntries(
-  track: CallCatalogTrack
+  track: MeetingCatalogTrack
 ): Array<{ key: string; label: string; value: string }> {
   const entries: Array<{ key: string; label: string; value: string }> = []
   if (track.codec) {
@@ -1763,7 +1765,7 @@ function formatTrackBitrateForDisplay(bitrate: number): string {
 }
 
 async function validateVideoEncoderCatalogTrackConfig(
-  track: Pick<CallCatalogTrack, 'codec' | 'width' | 'height' | 'bitrate' | 'framerate' | 'hardwareAcceleration'>
+  track: Pick<MeetingCatalogTrack, 'codec' | 'width' | 'height' | 'bitrate' | 'framerate' | 'hardwareAcceleration'>
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (typeof VideoEncoder === 'undefined') {
     return { ok: false, message: 'VideoEncoder is not available in this browser.' }
@@ -1788,7 +1790,7 @@ async function validateVideoEncoderCatalogTrackConfig(
       return { ok: false, message: `VideoEncoder config unsupported: ${track.codec}` }
     }
   } catch (error) {
-    console.error('[call][catalog] VideoEncoder.isConfigSupported failed', error, config)
+    console.error('[meeting][catalog] VideoEncoder.isConfigSupported failed', error, config)
     return { ok: false, message: 'Failed to check VideoEncoder config support.' }
   }
   let encoder: VideoEncoder | undefined
@@ -1799,13 +1801,13 @@ async function validateVideoEncoderCatalogTrackConfig(
         void chunk
       },
       error: (error) => {
-        console.error('[call][catalog] VideoEncoder error during configure check', error, config)
+        console.error('[meeting][catalog] VideoEncoder error during configure check', error, config)
       }
     })
     encoder.configure(config)
     return { ok: true }
   } catch (error) {
-    console.error('[call][catalog] VideoEncoder.configure failed', error, config)
+    console.error('[meeting][catalog] VideoEncoder.configure failed', error, config)
     return { ok: false, message: `VideoEncoder.configure failed: ${track.codec}` }
   } finally {
     try {
@@ -1820,12 +1822,12 @@ function CatalogsPanel({
   tracks,
   subscribedTracks
 }: {
-  tracks: EditableCallCatalogTrack[]
+  tracks: EditableMeetingCatalogTrack[]
   subscribedTracks: SubscribedCatalogTrack[]
 }) {
   const subscribedByName = new Map(subscribedTracks.map((track) => [track.name, track]))
 
-  const sortTracks = (left: CallCatalogTrack, right: CallCatalogTrack) => {
+  const sortTracks = (left: MeetingCatalogTrack, right: MeetingCatalogTrack) => {
     if (left.role !== right.role) {
       return left.role.localeCompare(right.role)
     }
@@ -1854,7 +1856,7 @@ function TrackSettingsTiles({
   emptyText
 }: {
   title: string
-  tracks: CallCatalogTrack[]
+  tracks: MeetingCatalogTrack[]
   getSubscriberCount: (trackName: string) => number
   emptyText: string
 }) {
@@ -1903,7 +1905,7 @@ function TrackSettingTile({ title, rows }: { title: string; rows: [string, strin
   )
 }
 
-function formatTrackRoleLabel(role: CallCatalogTrack['role']): string {
+function formatTrackRoleLabel(role: MeetingCatalogTrack['role']): string {
   if (role === 'video') {
     return 'Video'
   }

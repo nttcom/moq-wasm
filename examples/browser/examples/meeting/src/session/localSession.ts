@@ -7,10 +7,10 @@ import {
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
-import { CallMediaController } from '../media/callMediaController'
-import { parseCallCatalogTracks } from '../media/callCatalog'
-import type { CallCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
-import { readCallAuth } from './authToken'
+import { MeetingMediaController } from '../media/meetingMediaController'
+import { parseMeetingCatalogTracks } from '../media/meetingCatalog'
+import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
+import { readMeetingAuth } from './authToken'
 import { buildNamespacePrefix, buildTrackNamespace, parseTrackNamespace } from './trackNamespace'
 
 interface LocalSessionOptions {
@@ -34,7 +34,7 @@ export class LocalSession {
   private readonly defaultAuthInfo: string
   readonly localMember: LocalMember
   private readonly client = new MoqtClientWrapper()
-  private readonly mediaController: CallMediaController
+  private readonly mediaController: MeetingMediaController
   private state: LocalSessionState
   private chatMessageHandler: ((message: ChatMessage) => void) | null
   private readonly subscribeTrackAliases = new Map<bigint, bigint>()
@@ -53,19 +53,19 @@ export class LocalSession {
       }
     }
     this.client.setOnConnectionClosedHandler(() => {
-      console.info('[call][moqt] connection closed')
+      console.info('[meeting][moqt] connection closed')
       this.transitionToState(LocalSessionState.Disconnected)
     })
     this.client.setOnServerSetupHandler((setup) => {
-      console.info('[call][moqt] received SERVER_SETUP', setup)
+      console.info('[meeting][moqt] received SERVER_SETUP', setup)
     })
     this.client.setOnPublishNamespaceResponseHandler((response) => {
-      console.info('[call][moqt] received PUBLISH_NAMESPACE response', response)
+      console.info('[meeting][moqt] received PUBLISH_NAMESPACE response', response)
     })
     this.client.setOnSubscribeNamespaceResponseHandler((response) => {
-      console.info('[call][moqt] received SUBSCRIBE_NAMESPACE response', response)
+      console.info('[meeting][moqt] received SUBSCRIBE_NAMESPACE response', response)
     })
-    this.mediaController = new CallMediaController(this.client, this.trackNamespace)
+    this.mediaController = new MeetingMediaController(this.client, this.trackNamespace)
     this.state = LocalSessionState.Idle
     this.chatMessageHandler = null
   }
@@ -92,7 +92,7 @@ export class LocalSession {
       return
     }
     this.client.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-      console.info('[call][moqt] received PUBLISH_NAMESPACE', publishNamespace)
+      console.info('[meeting][moqt] received PUBLISH_NAMESPACE', publishNamespace)
       handler(publishNamespace)
       await respondOk()
     })
@@ -104,7 +104,7 @@ export class LocalSession {
       return
     }
     this.client.setOnPublishNamespaceDoneHandler((message) => {
-      console.info('[call][moqt] received PUBLISH_NAMESPACE_DONE', message.trackNamespace)
+      console.info('[meeting][moqt] received PUBLISH_NAMESPACE_DONE', message.trackNamespace)
       handler(message)
     })
   }
@@ -112,13 +112,13 @@ export class LocalSession {
   setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | RequestErrorMessage) => void): void {
     this.client.setOnSubscribeResponseHandler((response) => {
       if (response instanceof SubscribeOkMessage) {
-        console.info('[call][moqt] received SUBSCRIBE_OK', {
+        console.info('[meeting][moqt] received SUBSCRIBE_OK', {
           contentExists: (response as any).contentExists ?? (response as any).content_exists,
           largestGroupId: response.largestGroupId?.toString(),
           largestObjectId: response.largestObjectId?.toString()
         })
       } else {
-        console.info('[call][moqt] received SUBSCRIBE response', response)
+        console.info('[meeting][moqt] received SUBSCRIBE response', response)
       }
       handler(response)
     })
@@ -135,7 +135,7 @@ export class LocalSession {
 
     this.transitionToState(LocalSessionState.Connecting)
     try {
-      await this.client.connect(this.relayUrl, { authToken: readCallAuth().token })
+      await this.client.connect(this.relayUrl, { authToken: readMeetingAuth().token })
       this.transitionToState(LocalSessionState.Ready)
       await this.publishNamespace(this.trackNamespace, this.defaultAuthInfo)
     } catch (error) {
@@ -231,12 +231,12 @@ export class LocalSession {
     trackNamespace: string[],
     authInfo: string = this.defaultAuthInfo,
     timeoutMs: number = 5000,
-    onTracksUpdated?: (tracks: CallCatalogTrack[]) => void
-  ): Promise<CallCatalogTrack[]> {
+    onTracksUpdated?: (tracks: MeetingCatalogTrack[]) => void
+  ): Promise<MeetingCatalogTrack[]> {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe catalog when session state is "${this.state}"`)
     }
-    return new Promise<CallCatalogTrack[]>((resolve, reject) => {
+    return new Promise<MeetingCatalogTrack[]>((resolve, reject) => {
       let settled = false
       const timeoutId = window.setTimeout(() => {
         if (settled) {
@@ -248,8 +248,8 @@ export class LocalSession {
 
       const handleCatalogPayload = (payload: string, source: string, groupId?: bigint) => {
         try {
-          const tracks = parseCallCatalogTracks(payload)
-          console.info('[call][catalog] apply', {
+          const tracks = parseMeetingCatalogTracks(payload)
+          console.info('[meeting][catalog] apply', {
             trackNamespace,
             source,
             groupId: groupId?.toString(),
@@ -284,7 +284,7 @@ export class LocalSession {
           // The fetch id is issued internally by moqtClient; joiningRequestId is the
           // catalog subscribe's request id we just received.
           const contentExists = (subscribeOk as any).contentExists ?? (subscribeOk as any).content_exists
-          console.info('[call][catalog] subscribed', { trackNamespace, contentExists: Boolean(contentExists) })
+          console.info('[meeting][catalog] subscribed', { trackNamespace, contentExists: Boolean(contentExists) })
           if (contentExists) {
             await this.client.relativeJoiningFetch(catalogRequestId, 0n, {
               onObject: (msg) => {
@@ -333,7 +333,7 @@ export class LocalSession {
         try {
           await this.client.unsubscribe(subscribeId)
         } catch (error) {
-          console.warn(`[call] failed to unsubscribe during disconnect (${subscribeId.toString()})`, error)
+          console.warn(`[meeting] failed to unsubscribe during disconnect (${subscribeId.toString()})`, error)
         }
       })
     )
@@ -349,7 +349,7 @@ export class LocalSession {
     await this.client.sendSubgroupTextForTrack(this.trackNamespace, 'chat', encodeChatPayload(message))
   }
 
-  getMediaController(): CallMediaController {
+  getMediaController(): MeetingMediaController {
     return this.mediaController
   }
 
