@@ -56,8 +56,6 @@ impl QUICConnectionCreator {
         transport_config.keep_alive_interval(Some(keep_alive_sec));
         // 単方向ストリーム数を100000に設定
         transport_config.max_concurrent_uni_streams(100000u32.into());
-        // initial_max_stream_data_uniと同義。デフォルトは65,536 バイト (64KB) 大きくするとACKを待たずに送信するため、輻輳が発生する可能性が高まる
-        transport_config.send_window(64 * 1024);
         // パケロス判定して再送を要求するまでの時間(RTTの倍数)を指定する。小さくすると再送が増える Default(RFC推奨値): 1.125
         // transport_config.time_threshold(1.5);
         // パケロス判定して再送を要求するまでのパケット間隔を指定する。小さくすると再送が増える Default(RFC推奨値): 3
