@@ -8,16 +8,13 @@ const __dirname = dirname(__filename);
 
 export const repoRoot = resolve(__dirname, "..");
 export const jsDir = resolve(repoRoot, "examples", "browser");
-export const mediaPublisherPath =
-  "/moq-wasm/examples/media/publisher/index.html";
-export const mediaSubscriberPath =
-  "/moq-wasm/examples/media/subscriber/index.html";
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
 export const liveViewerPath = "/moq-wasm/examples/live-viewer/index.html";
 export const serverKeysDir = resolve(repoRoot, "relay", "keys");
 export const certPath = resolve(serverKeysDir, "cert.pem");
 export const keyPath = resolve(serverKeysDir, "key.pem");
+const setupHelpText = "Run node scripts/setup-media-e2e.mjs first.";
 
 export function ensureLinuxEnvironment() {
   if (process.platform !== "linux" && process.platform !== "darwin") {
@@ -31,7 +28,7 @@ export function resolveCommandName(command) {
   return process.platform === "win32" ? `${command}.cmd` : command;
 }
 
-export function assertPathExists(path, label, helpText) {
+function assertPathExists(path, label, helpText) {
   if (!existsSync(path)) {
     const suffix = helpText ? ` ${helpText}` : "";
     throw new Error(`${label} not found: ${path}.${suffix}`.trim());
@@ -39,18 +36,13 @@ export function assertPathExists(path, label, helpText) {
 }
 
 export function assertE2EPrerequisites() {
-  const helpText = "Run node scripts/setup-media-e2e.mjs first.";
-  assertPathExists(certPath, "TLS certificate", helpText);
-  assertPathExists(keyPath, "TLS private key", helpText);
-  assertPathExists(
-    `${jsDir}/node_modules`,
-    "examples/browser/node_modules",
-    helpText,
-  );
+  assertPathExists(certPath, "TLS certificate", setupHelpText);
+  assertPathExists(keyPath, "TLS private key", setupHelpText);
+  assertPathExists(`${jsDir}/node_modules`, "node_modules", setupHelpText);
   assertPathExists(
     `${jsDir}/pkg/moqt_client_wasm.js`,
-    "bindings/wasm build output",
-    helpText,
+    "wasm build output",
+    setupHelpText,
   );
 }
 
@@ -74,11 +66,7 @@ export function getDefaultBaseUrl() {
 }
 
 export function computeCertificateSpkiBase64(targetCertPath = certPath) {
-  assertPathExists(
-    targetCertPath,
-    "TLS certificate",
-    "Run node scripts/setup-media-e2e.mjs first.",
-  );
+  assertPathExists(targetCertPath, "TLS certificate", setupHelpText);
   const certificatePem = readFileSync(targetCertPath, "utf8");
   const certificate = new X509Certificate(certificatePem);
   const spkiDer = certificate.publicKey.export({ type: "spki", format: "der" });
