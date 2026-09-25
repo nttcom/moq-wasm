@@ -23,7 +23,7 @@ import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
-import { StreamMonitor, renderStreamMonitor, summarizeStreams } from './streamMonitor'
+import { DEFAULT_WINDOW_SECONDS, StreamMonitor, renderStreamMonitor, summarizeStreams } from './streamMonitor'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
@@ -96,6 +96,7 @@ let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 const streamMonitor = new StreamMonitor()
+let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -182,6 +183,12 @@ for (const event of ['pointercancel', 'blur']) {
 }
 startRendering()
 moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
+element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
+  streamMonitor.setKeptGroups(Number((event.target as HTMLInputElement).value) || 1)
+})
+element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
+  streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
+})
 setInterval(renderStreams, 250)
 
 async function watchStream(): Promise<void> {
@@ -702,8 +709,8 @@ function monitored(
 
 function renderStreams(): void {
   const now = Date.now()
-  const records = streamMonitor.snapshot(now)
-  renderStreamMonitor(element<SVGSVGElement>('stream-monitor'), records, now)
+  const records = streamMonitor.snapshot()
+  renderStreamMonitor(element<SVGSVGElement>('stream-monitor'), records, streamWindowSeconds, now)
   element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records)
 }
 

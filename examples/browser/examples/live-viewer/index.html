@@ -463,7 +463,29 @@ make chrome</code></pre>
           <section class="card stack full">
             <div class="card-title-row">
               <h2>Streams</h2>
-              <div class="playback-meta">
+              <div class="playback-meta stream-meta">
+                <label for="stream-window"
+                  >Window (s)
+                  <input
+                    id="stream-window"
+                    type="number"
+                    min="1"
+                    max="120"
+                    value="10"
+                    data-testid="live-viewer-stream-window-input"
+                  />
+                </label>
+                <label for="stream-gops"
+                  >GOPs
+                  <input
+                    id="stream-gops"
+                    type="number"
+                    min="1"
+                    max="30"
+                    value="5"
+                    data-testid="live-viewer-stream-gops-input"
+                  />
+                </label>
                 <span id="stream-stats" data-testid="live-viewer-stream-stats">-</span>
               </div>
             </div>
@@ -474,7 +496,9 @@ make chrome</code></pre>
               aria-label="Subgroup streams per track"
               data-testid="live-viewer-stream-monitor"
             ></svg>
-            <p class="hint">track ごとの subgroup stream を横棒で示します。右端が開いている棒は受信中です</p>
+            <p class="hint">
+              track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
+            </p>
           </section>
 
           <section class="card stack full">

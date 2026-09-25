@@ -538,3 +538,24 @@
 .stream-bar-open {
   opacity: 1;
 }
+
+.stream-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stream-meta input {
+  width: 4em;
+  margin-left: 4px;
+}
+
+.stream-tick {
+  stroke: #e5e7eb;
+  stroke-width: 1;
+}
+
+.stream-axis {
+  font-size: 11px;
+  fill: #6b7280;
+}
