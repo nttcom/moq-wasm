@@ -237,6 +237,7 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   watching = false
+  detachLivePicture()
   timeline.reset()
   streamMonitor.reset()
   decodedFrameIds.clear()
@@ -656,6 +657,7 @@ function applyDecoderConfig(): void {
 function showLiveFrame(frame: VideoFrame): void {
   updateVideoStats(frame)
   markPlayhead(frame)
+  attachLivePicture()
   if (videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
     frame.close()
     return
@@ -685,9 +687,23 @@ function showReviewFrame(frame: VideoFrame): void {
   frame.close()
 }
 
+/// The live picture is a MediaStream fed by WebCodecs. A video element whose
+/// stream has not produced a frame yet never reaches loadedmetadata, and
+/// Chrome keeps the tab in its loading state for as long as that lasts, so
+/// the stream is attached with the first frame and detached on stop.
+function attachLivePicture(): void {
+  const video = element<HTMLVideoElement>('video')
+  if (video.srcObject === null) {
+    video.srcObject = new MediaStream([videoGenerator])
+  }
+}
+
+function detachLivePicture(): void {
+  element<HTMLVideoElement>('video').srcObject = null
+}
+
 function startRendering(): void {
   applyDecoderConfig()
-  element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
   for (const id of ['video', ...MSE_ELEMENT_IDS]) {
     watchPresentedFrames(element<HTMLVideoElement>(id))
   }
