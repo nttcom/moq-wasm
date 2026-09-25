@@ -195,6 +195,29 @@ const DEFAULT_JITTER_CONFIG: NormalizedJitterConfig = {
   holdMs: 0
 }
 const MAX_HOLD_MS = 30_000
+/// A head that would wait this much longer than the hold means the source
+/// clock ran away from the release timeline, so the timeline is rebuilt on it.
+const HOLD_TIMELINE_SLACK_MS = 1_000
+
+/// Objects leave the jitter buffer `holdMs` after the first one arrived, each
+/// at its capture-time offset from that first one, so an object that arrived
+/// late still leaves on schedule instead of late.
+let holdTimeline: { captureMicros: number; releaseAtMs: number } | undefined
+
+function holdReleaseAtMs(entry: { captureTimestampMicros?: number; receivedAtMs: number }): number {
+  const byArrival = entry.receivedAtMs + currentJitterConfig.holdMs
+  if (entry.captureTimestampMicros === undefined) {
+    return byArrival
+  }
+  if (
+    holdTimeline === undefined ||
+    holdTimeline.releaseAtMs + (entry.captureTimestampMicros - holdTimeline.captureMicros) / 1000 >
+      byArrival + HOLD_TIMELINE_SLACK_MS
+  ) {
+    holdTimeline = { captureMicros: entry.captureTimestampMicros, releaseAtMs: byArrival }
+  }
+  return holdTimeline.releaseAtMs + (entry.captureTimestampMicros - holdTimeline.captureMicros) / 1000
+}
 
 let jitterBuffer = createJitterBuffer()
 let currentJitterConfig: NormalizedJitterConfig = { ...DEFAULT_JITTER_CONFIG }
@@ -334,6 +357,7 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
   updatePacingConfig(config.pacing)
   jitterBuffer = createJitterBuffer()
+  holdTimeline = undefined
   if (decoderHardwareAccelerationChanged) {
     if (videoDecoder && videoDecoder.state !== 'closed') {
       try {
@@ -528,7 +552,7 @@ function pumpJitterBuffer(): void {
     schedulePop(POP_INTERVAL_MS)
     return
   }
-  const holdRemainingMs = currentJitterConfig.holdMs - (performance.now() - head.receivedAtMs)
+  const holdRemainingMs = currentJitterConfig.holdMs > 0 ? holdReleaseAtMs(head) - performance.now() : 0
   if (holdRemainingMs > 0) {
     schedulePop(holdRemainingMs)
     return
