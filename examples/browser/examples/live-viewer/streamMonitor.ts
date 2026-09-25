@@ -4,7 +4,7 @@ const AXIS_HEIGHT = 18
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
 const LABEL_WIDTH = 132
-const TOP_MARGIN = 6
+const TOP_MARGIN = 14
 const PALETTE = ['#0f766e', '#e07a5f', '#3d5a80', '#b08968', '#6a4c93', '#2a9d8f']
 
 export type StreamRecord = {
@@ -15,6 +15,13 @@ export type StreamRecord = {
   finishedAt?: number
   bytes: number
   objects: number
+  receivedAtByObjectId: Map<bigint, number>
+}
+
+export type Playhead = {
+  trackAlias: bigint
+  groupId: bigint
+  objectId: bigint
 }
 
 /// Subgroup streams the viewer has received, keyed by track alias and group;
@@ -25,6 +32,15 @@ export class StreamMonitor {
   private readonly records = new Map<string, StreamRecord>()
   private readonly labels = new Map<bigint, string>()
   private keptGroups = DEFAULT_KEPT_GROUPS
+  private playhead?: Playhead
+
+  setPlayhead(playhead: Playhead): void {
+    this.playhead = playhead
+  }
+
+  currentPlayhead(): Playhead | undefined {
+    return this.playhead
+  }
 
   setKeptGroups(count: number): void {
     this.keptGroups = Math.max(1, Math.floor(count))
@@ -48,14 +64,22 @@ export class StreamMonitor {
         groupId,
         openedAt: now,
         bytes: 0,
-        objects: 0
+        objects: 0,
+        receivedAtByObjectId: new Map()
       }
       this.records.set(key, record)
     }
     return record
   }
 
-  object(trackAlias: bigint, groupId: bigint, payloadLength: number, endsGroup: boolean, now = Date.now()): void {
+  object(
+    trackAlias: bigint,
+    groupId: bigint,
+    objectId: bigint,
+    payloadLength: number,
+    endsGroup: boolean,
+    now = Date.now()
+  ): void {
     const record = this.opened(trackAlias, groupId, now)
     if (endsGroup) {
       record.finishedAt = now
@@ -63,11 +87,13 @@ export class StreamMonitor {
     }
     record.bytes += payloadLength
     record.objects += 1
+    record.receivedAtByObjectId.set(objectId, now)
   }
 
   reset(): void {
     this.records.clear()
     this.labels.clear()
+    this.playhead = undefined
   }
 
   snapshot(): StreamRecord[] {
@@ -92,9 +118,15 @@ export function renderIdleStreamMonitor(svg: SVGSVGElement): void {
   svg.innerHTML = ''
 }
 
-export function summarizeStreams(records: StreamRecord[]): string {
+export function summarizeStreams(records: StreamRecord[], playhead?: Playhead, now = Date.now()): string {
   const open = records.filter((record) => record.finishedAt === undefined).length
-  return `${open} open · ${records.length - open} finished`
+  const counts = `${open} open · ${records.length - open} finished`
+  const receivedAt = playheadReceivedAt(records, playhead)
+  if (!playhead || receivedAt === undefined) {
+    return counts
+  }
+  const age = ((now - receivedAt) / 1000).toFixed(2)
+  return `${counts} · playing ${shortGroupId(playhead.groupId)} #${playhead.objectId} received ${age}s ago`
 }
 
 type Slot = { track: string; record?: StreamRecord }
@@ -118,11 +150,21 @@ export function layoutSlots(records: StreamRecord[], slotsPerTrack: number): Slo
   return slots
 }
 
+export function playheadReceivedAt(records: StreamRecord[], playhead?: Playhead): number | undefined {
+  if (!playhead) {
+    return undefined
+  }
+  return records
+    .find((record) => record.trackAlias === playhead.trackAlias && record.groupId === playhead.groupId)
+    ?.receivedAtByObjectId.get(playhead.objectId)
+}
+
 export function renderStreamMonitor(
   svg: SVGSVGElement,
   records: StreamRecord[],
   slotsPerTrack: number,
   windowSeconds = DEFAULT_WINDOW_SECONDS,
+  playhead?: Playhead,
   now = Date.now()
 ): void {
   const slots = layoutSlots(records, slotsPerTrack)
@@ -145,8 +187,16 @@ export function renderStreamMonitor(
     parts.push(`<line x1="${tx}" x2="${tx}" y1="${TOP_MARGIN}" y2="${axisY}" class="stream-tick" />`)
     parts.push(`<text x="${tx}" y="${axisY + 13}" text-anchor="middle" class="stream-axis">${clockLabel(tick)}</text>`)
   }
+  const playheadAt = playheadReceivedAt(records, playhead)
+  if (playheadAt !== undefined) {
+    const px = x(playheadAt)
+    parts.push(`<line x1="${px}" x2="${px}" y1="${TOP_MARGIN}" y2="${axisY}" class="stream-playhead" />`)
+    parts.push(`<text x="${px}" y="${TOP_MARGIN - 1}" text-anchor="middle" class="stream-playhead-label">▼</text>`)
+  }
   slots.forEach(({ track, record }, row) => {
     const y = TOP_MARGIN + row * ROW_HEIGHT
+    const playing =
+      playhead !== undefined && record?.trackAlias === playhead.trackAlias && record.groupId === playhead.groupId
     parts.push(
       `<line x1="${plotLeft}" x2="${plotRight}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
     )
@@ -166,7 +216,7 @@ export function renderStreamMonitor(
       `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label"><title>${escapeXml(title)}</title>${escapeXml(label)}</text>`
     )
     parts.push(
-      `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}"><title>${escapeXml(title)}</title></rect>`
+      `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}${playing ? ' stream-bar-playing' : ''}"><title>${escapeXml(title)}</title></rect>`
     )
   })
   svg.innerHTML = parts.join('')

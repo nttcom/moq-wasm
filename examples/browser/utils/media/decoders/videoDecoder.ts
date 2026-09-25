@@ -750,6 +750,8 @@ function emitDecodedFrame(): void {
     {
       type: 'frame',
       frame: entry.frame,
+      groupId: entry.groupId,
+      objectId: entry.objectId,
       width: entry.frame.displayWidth,
       height: entry.frame.displayHeight
     },

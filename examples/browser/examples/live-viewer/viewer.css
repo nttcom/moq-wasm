@@ -559,3 +559,18 @@
   font-size: 11px;
   fill: #6b7280;
 }
+
+.stream-playhead {
+  stroke: #dc2626;
+  stroke-width: 1.5;
+}
+
+.stream-playhead-label {
+  font-size: 10px;
+  fill: #dc2626;
+}
+
+.stream-bar-playing {
+  stroke: #dc2626;
+  stroke-width: 2;
+}

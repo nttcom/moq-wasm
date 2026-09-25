@@ -25,6 +25,7 @@ import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 import {
   DEFAULT_WINDOW_SECONDS,
+  type Playhead,
   StreamMonitor,
   renderIdleStreamMonitor,
   renderStreamMonitor,
@@ -104,6 +105,7 @@ const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
+const decodedFrameIds = new Map<number, Omit<Playhead, 'trackAlias'>>()
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -217,6 +219,7 @@ async function stopStream(): Promise<void> {
   watching = false
   timeline.reset()
   streamMonitor.reset()
+  decodedFrameIds.clear()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
   newestAudioGroupId = undefined
@@ -618,6 +621,7 @@ function applyDecoderConfig(): void {
 
 function showLiveFrame(frame: VideoFrame): void {
   updateVideoStats(frame)
+  markPlayhead(frame)
   if (videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
     frame.close()
     return
@@ -655,7 +659,9 @@ function startRendering(): void {
       return
     }
     if (event.data.type === 'frame') {
-      livePlayout.presentVideo(event.data.frame as VideoFrame)
+      const frame = event.data.frame as VideoFrame
+      decodedFrameIds.set(frame.timestamp, { groupId: event.data.groupId, objectId: event.data.objectId })
+      livePlayout.presentVideo(frame)
     }
   }
 
@@ -704,6 +710,15 @@ function formatSyncOffset(offsetMs: number | undefined): string {
   return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
 }
 
+function markPlayhead(frame: VideoFrame): void {
+  const ids = decodedFrameIds.get(frame.timestamp)
+  decodedFrameIds.delete(frame.timestamp)
+  const trackAlias = subscriptions.get('video')?.trackAlias
+  if (ids && trackAlias !== undefined) {
+    streamMonitor.setPlayhead({ trackAlias, ...ids })
+  }
+}
+
 function monitored(
   trackAlias: bigint,
   track: string,
@@ -711,7 +726,7 @@ function monitored(
 ): (groupId: bigint, object: SubgroupObject) => void {
   streamMonitor.label(trackAlias, track)
   return (groupId, object) => {
-    streamMonitor.object(trackAlias, groupId, object.objectPayloadLength, object.objectStatus != null)
+    streamMonitor.object(trackAlias, groupId, object.objectId, object.objectPayloadLength, object.objectStatus != null)
     handler(groupId, object)
   }
 }
@@ -724,14 +739,16 @@ function renderStreams(): void {
   }
   const now = Date.now()
   const records = streamMonitor.snapshot()
+  const playhead = streamMonitor.currentPlayhead()
   renderStreamMonitor(
     element<SVGSVGElement>('stream-monitor'),
     records,
     streamMonitor.slotsPerTrack(),
     streamWindowSeconds,
+    playhead,
     now
   )
-  element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records)
+  element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records, playhead, now)
 }
 
 function trackNamespace(): string[] {
