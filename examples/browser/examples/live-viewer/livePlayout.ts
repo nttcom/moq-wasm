@@ -36,8 +36,12 @@ export class LivePlayout {
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
   private newestAudioCaptureMicros: number | undefined
   private paused = false
+  reanchors = 0
 
-  constructor(showVideo: (frame: VideoFrame) => void) {
+  constructor(
+    showVideo: (frame: VideoFrame) => void,
+    private readonly onReanchor?: () => void
+  ) {
     this.video = new VideoPlayout(showVideo)
   }
 
@@ -81,9 +85,11 @@ export class LivePlayout {
   }
 
   /// Re-anchors so the new budget applies to what arrives from now on;
-  /// what was already scheduled plays out on the old timeline.
+  /// what was already scheduled plays out on the old timeline. A deliberate
+  /// buffer is latency the viewer asked for, so the clock only sheds it when
+  /// a sample runs a whole buffer early.
   setPlayoutDelayMs(delayMs: number): void {
-    this.clock.setDelayMs(delayMs)
+    this.clock.setDelayMs(delayMs, Math.max(MAX_EARLY_MS, delayMs))
     this.clock.reset()
     this.newestAudioCaptureMicros = undefined
   }
@@ -160,8 +166,10 @@ export class LivePlayout {
   private playoutTime(captureMicros: number, nowMs: number, master: boolean): number {
     const { atMs, reanchored } = this.clock.playoutTime(captureMicros, nowMs, master)
     if (reanchored) {
+      this.reanchors += 1
       this.video.flush()
       this.audio.dropScheduled()
+      this.onReanchor?.()
     }
     return atMs
   }

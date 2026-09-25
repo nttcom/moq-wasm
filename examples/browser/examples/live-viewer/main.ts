@@ -52,6 +52,7 @@ const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight:
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
 const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
+const PRESENTATION_MARGIN_MS = 200
 
 type Packaging = 'loc' | 'cmaf'
 
@@ -83,7 +84,9 @@ const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioD
 })
 const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
 const videoWriter = videoGenerator.writable.getWriter()
-const livePlayout = new LivePlayout(showLiveFrame)
+const livePlayout = new LivePlayout(showLiveFrame, () =>
+  appendLog('warn', 'playout clock re-anchored: scheduled video and audio were dropped')
+)
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const bufferingSpinner = new BufferingSpinner(element('buffering'))
 
@@ -204,6 +207,7 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
 element<HTMLInputElement>('playout-buffer').addEventListener('change', (event) => {
   const delayMs = Number((event.target as HTMLInputElement).value)
   livePlayout.setPlayoutDelayMs(Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : DEFAULT_PLAYOUT_DELAY_MS)
+  applyDecoderConfig()
   appendLog('info', `playout buffer ${livePlayout.playoutDelayMs()} ms`)
 })
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
@@ -633,12 +637,18 @@ function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
   postAudioCatalogToWorker(audioDecoderWorker, track)
 }
 
-/// The decoders hand every sample over as soon as it is decoded; the live
-/// playout paces them on one clock so that audio and video stay together.
+/// The live playout paces decoded samples on one clock so that audio and
+/// video stay together. All but the last `PRESENTATION_MARGIN_MS` of the
+/// buffer is spent before decoding, in the video worker's jitter buffer, so
+/// objects are decoded in order however they arrived and only a few decoded
+/// frames are ever held.
 function applyDecoderConfig(): void {
-  const config = { telemetryEnabled: true, bypassJitterBuffer: true }
-  videoDecoderWorker.postMessage({ type: 'config', config })
-  audioDecoderWorker.postMessage({ type: 'config', config })
+  const holdMs = Math.max(0, livePlayout.playoutDelayMs() - PRESENTATION_MARGIN_MS)
+  videoDecoderWorker.postMessage({
+    type: 'config',
+    config: { telemetryEnabled: true, bypassJitterBuffer: holdMs === 0, holdMs, pacing: { preset: 'disabled' } }
+  })
+  audioDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
 }
 
 function showLiveFrame(frame: VideoFrame): void {
@@ -721,7 +731,7 @@ function wantedPicture(): HTMLElement | undefined {
 
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()}`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
 }
 
 function formatSyncOffset(offsetMs: number | undefined): string {

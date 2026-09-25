@@ -12,6 +12,7 @@ type VideoJitterBufferEntry = {
   objectId: bigint
   subgroupId: bigint
   captureTimestampMicros?: number
+  receivedAtMs: number
   object: JitterBufferSubgroupObject
   isEndOfGroup: boolean
 }
@@ -50,6 +51,7 @@ export class VideoJitterBuffer {
       objectId,
       subgroupId,
       captureTimestampMicros,
+      receivedAtMs: performance.now(),
       object: bufferObject,
       isEndOfGroup: object.objectStatus === OBJECT_STATUS_END_OF_GROUP
     }
@@ -72,6 +74,10 @@ export class VideoJitterBuffer {
 
   popHolding(): VideoJitterBufferEntry | null {
     return this.buffer.shift() ?? null
+  }
+
+  peek(): VideoJitterBufferEntry | null {
+    return this.buffer[0] ?? null
   }
 
   private findInsertPos(groupId: bigint, objectId: bigint, subgroupId: bigint): number {

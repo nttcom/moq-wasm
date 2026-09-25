@@ -21,12 +21,13 @@ export class PlayoutClock {
 
   constructor(
     private delayMs: number,
-    private readonly maxEarlyMs: number
+    private maxEarlyMs: number
   ) {}
 
   /// Takes effect at the next anchor; callers reset the clock to re-anchor.
-  setDelayMs(delayMs: number): void {
+  setDelayMs(delayMs: number, maxEarlyMs: number): void {
     this.delayMs = delayMs
+    this.maxEarlyMs = maxEarlyMs
   }
 
   get currentDelayMs(): number {

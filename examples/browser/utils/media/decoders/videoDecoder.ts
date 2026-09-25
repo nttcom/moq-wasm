@@ -123,6 +123,10 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
 type VideoJitterBufferConfig = {
   pacing?: VideoPacingConfigInput
   decoderHardwareAcceleration?: VideoDecoderHardwareAcceleration
+  /// How long an object stays in the jitter buffer after arrival before it
+  /// may be decoded, so objects of an earlier group that arrive after a later
+  /// group's keyframe are still decoded in order.
+  holdMs?: number
 }
 
 const POP_INTERVAL_MS = 33
@@ -183,11 +187,14 @@ const DEFAULT_PACING_CONFIG: VideoPacingConfig = createPacingPresetConfig('onvif
 
 type NormalizedJitterConfig = {
   minDelayMs: number
+  holdMs: number
 }
 
 const DEFAULT_JITTER_CONFIG: NormalizedJitterConfig = {
-  minDelayMs: 35
+  minDelayMs: 35,
+  holdMs: 0
 }
+const MAX_HOLD_MS = 30_000
 
 let jitterBuffer = createJitterBuffer()
 let currentJitterConfig: NormalizedJitterConfig = { ...DEFAULT_JITTER_CONFIG }
@@ -234,8 +241,10 @@ type DecodedFrameEntry = {
 type JitterBufferEntryForPacing = NonNullable<ReturnType<VideoJitterBuffer['popWithMetadata']>>
 
 function normalizeJitterConfig(config?: VideoJitterBufferConfig): NormalizedJitterConfig {
-  void config
-  return { ...DEFAULT_JITTER_CONFIG }
+  return {
+    ...DEFAULT_JITTER_CONFIG,
+    holdMs: clampNumber(config?.holdMs, currentJitterConfig.holdMs, 0, MAX_HOLD_MS)
+  }
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max = Number.POSITIVE_INFINITY): number {
@@ -512,6 +521,16 @@ function pumpEncodedPacingDecode(): void {
 function pumpJitterBuffer(): void {
   if (decodedFrameBuffer.length >= currentPacingConfig.decodedBufferMax) {
     schedulePop(POP_INTERVAL_MS)
+    return
+  }
+  const head = jitterBuffer.peek()
+  if (!head) {
+    schedulePop(POP_INTERVAL_MS)
+    return
+  }
+  const holdRemainingMs = currentJitterConfig.holdMs - (performance.now() - head.receivedAtMs)
+  if (holdRemainingMs > 0) {
+    schedulePop(holdRemainingMs)
     return
   }
   const entry = jitterBuffer.popHolding()
