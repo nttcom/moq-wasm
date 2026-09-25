@@ -14,7 +14,9 @@ use tokio::task::JoinHandle;
 
 const LABEL_WIDTH: usize = 40;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
-const CURSOR_UP_AND_CLEAR_BELOW: &str = "\x1b[{n}A\x1b[J";
+const CLEAR_SCREEN: &str = "\x1b[2J";
+const CURSOR_HOME: &str = "\x1b[H";
+const CLEAR_BELOW_CURSOR: &str = "\x1b[J";
 
 /// Relay connections whose QUIC path statistics the panel shows; each
 /// connection stays registered for as long as its `Registration` lives.
@@ -69,8 +71,9 @@ impl Drop for Registration {
     }
 }
 
-/// Redraws the statistics of every registered connection in place on stdout
-/// once a second; logs must go to stderr while it runs.
+/// Redraws the statistics of every registered connection from the top of the
+/// screen once a second, so wrapped lines never leave stale rows behind; logs
+/// must go to stderr while it runs.
 pub struct StatsPanel {
     _task: JoinHandle<()>,
 }
@@ -80,8 +83,8 @@ impl StatsPanel {
         Self {
             _task: tokio::spawn(async move {
                 let mut previous: HashMap<u64, TransportStats> = HashMap::new();
-                let mut drawn_lines = 0;
                 let mut interval = tokio::time::interval(REFRESH_INTERVAL);
+                let _ = write!(std::io::stdout(), "{CLEAR_SCREEN}");
                 loop {
                     interval.tick().await;
                     let rows = registry
@@ -101,16 +104,8 @@ impl StatsPanel {
                         .collect::<Vec<_>>();
                     let table = render_table(&rows);
                     let mut stdout = std::io::stdout().lock();
-                    if drawn_lines > 0 {
-                        let _ = write!(
-                            stdout,
-                            "{}",
-                            CURSOR_UP_AND_CLEAR_BELOW.replace("{n}", &drawn_lines.to_string())
-                        );
-                    }
-                    let _ = stdout.write_all(table.as_bytes());
+                    let _ = write!(stdout, "{CURSOR_HOME}{table}{CLEAR_BELOW_CURSOR}");
                     let _ = stdout.flush();
-                    drawn_lines = table.lines().count();
                 }
             }),
         }
