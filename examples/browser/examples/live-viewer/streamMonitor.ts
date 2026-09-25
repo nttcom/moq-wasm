@@ -3,14 +3,18 @@ export const DEFAULT_WINDOW_SECONDS = 10
 const AXIS_HEIGHT = 18
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
-const LABEL_WIDTH = 132
+const LABEL_WIDTH = 168
 const TOP_MARGIN = 14
 const PALETTE = ['#0f766e', '#e07a5f', '#3d5a80', '#b08968', '#6a4c93', '#2a9d8f']
 
+export type StreamKind = 'subscribe' | 'fetch'
+
 export type StreamRecord = {
+  kind: StreamKind
   trackAlias: bigint
   track: string
   groupId: bigint
+  lastGroupId: bigint
   openedAt: number
   finishedAt?: number
   bytes: number
@@ -59,9 +63,11 @@ export class StreamMonitor {
     let record = this.records.get(key)
     if (!record) {
       record = {
+        kind: 'subscribe',
         trackAlias,
         track: this.labels.get(trackAlias) ?? `alias ${trackAlias}`,
         groupId,
+        lastGroupId: groupId,
         openedAt: now,
         bytes: 0,
         objects: 0,
@@ -90,6 +96,45 @@ export class StreamMonitor {
     record.receivedAtByObjectId.set(objectId, now)
   }
 
+  /// One FETCH response is one stream however many groups it spans; the
+  /// request id stands in for the group id in the row key.
+  fetchObject(
+    requestId: bigint,
+    track: string,
+    groupId: bigint,
+    objectId: bigint,
+    payloadLength: number,
+    now = Date.now()
+  ): void {
+    const key = `fetch:${requestId}`
+    let record = this.records.get(key)
+    if (!record) {
+      record = {
+        kind: 'fetch',
+        trackAlias: requestId,
+        track: `fetch ${track}`,
+        groupId: groupId,
+        lastGroupId: groupId,
+        openedAt: now,
+        bytes: 0,
+        objects: 0,
+        receivedAtByObjectId: new Map()
+      }
+      this.records.set(key, record)
+    }
+    record.lastGroupId = groupId
+    record.bytes += payloadLength
+    record.objects += 1
+    record.receivedAtByObjectId.set(objectId, now)
+  }
+
+  fetchFinished(requestId: bigint, now = Date.now()): void {
+    const record = this.records.get(`fetch:${requestId}`)
+    if (record && record.finishedAt === undefined) {
+      record.finishedAt = now
+    }
+  }
+
   reset(): void {
     this.records.clear()
     this.labels.clear()
@@ -106,9 +151,7 @@ export class StreamMonitor {
         this.records.delete(key)
       }
     }
-    return [...this.records.values()].sort((a, b) =>
-      a.track === b.track ? Number(a.groupId - b.groupId) : a.track.localeCompare(b.track)
-    )
+    return [...this.records.values()].sort(compareRecords)
   }
 }
 
@@ -129,20 +172,33 @@ export function summarizeStreams(records: StreamRecord[], playhead?: Playhead, n
   return `${counts} · playing ${shortGroupId(playhead.groupId)} #${playhead.objectId} received ${age}s ago`
 }
 
+/// FETCH streams come first, then subscriptions by track name.
+function compareRecords(a: StreamRecord, b: StreamRecord): number {
+  if (a.kind !== b.kind) {
+    return a.kind === 'fetch' ? -1 : 1
+  }
+  return a.track === b.track ? Number(a.groupId - b.groupId) : a.track.localeCompare(b.track)
+}
+
+function slotKey(record: StreamRecord): bigint {
+  return record.kind === 'fetch' ? record.trackAlias : record.groupId
+}
+
 type Slot = { track: string; record?: StreamRecord }
 
 /// Every track owns a fixed block of rows and a group always sits in the row
 /// `groupId mod slots`, so the group that replaces an evicted one lands in the
 /// same row and nothing below it moves.
 export function layoutSlots(records: StreamRecord[], slotsPerTrack: number): Slot[] {
-  const tracks = [...new Set(records.map((record) => record.track))].sort()
+  const ordered = [...records].sort(compareRecords)
+  const tracks = [...new Set(ordered.map((record) => record.track))]
   const slots: Slot[] = []
   for (const track of tracks) {
-    const ofTrack = records.filter((record) => record.track === track)
+    const ofTrack = ordered.filter((record) => record.track === track)
     const count = Math.min(slotsPerTrack, ofTrack.length)
     for (let slot = 0; slot < count; slot++) {
       const record = ofTrack
-        .filter((candidate) => Number(candidate.groupId % BigInt(count)) === slot)
+        .filter((candidate) => Number(slotKey(candidate) % BigInt(count)) === slot)
         .sort((a, b) => b.openedAt - a.openedAt)[0]
       slots.push({ track, record })
     }
@@ -210,13 +266,17 @@ export function renderStreamMonitor(
     const open = record.finishedAt === undefined
     const start = x(record.openedAt)
     const end = open ? plotRight : x(record.finishedAt as number)
-    const label = `${record.track} ${shortGroupId(record.groupId)}`
-    const title = `${record.track} group ${record.groupId}: opened ${clockLabel(record.openedAt)}, ${record.objects} objects, ${(record.bytes / 1024).toFixed(1)} KB, ${open ? 'open' : `finished ${clockLabel(record.finishedAt as number)}`}`
+    const groups =
+      record.lastGroupId === record.groupId
+        ? shortGroupId(record.groupId)
+        : `${shortGroupId(record.groupId)}–${shortGroupId(record.lastGroupId)}`
+    const label = `${record.track} ${groups}`
+    const title = `${record.track} group ${record.groupId}${record.lastGroupId === record.groupId ? '' : `–${record.lastGroupId}`}: opened ${clockLabel(record.openedAt)}, ${record.objects} objects, ${(record.bytes / 1024).toFixed(1)} KB, ${open ? 'open' : `finished ${clockLabel(record.finishedAt as number)}`}`
     parts.push(
       `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label"><title>${escapeXml(title)}</title>${escapeXml(label)}</text>`
     )
     parts.push(
-      `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}${playing ? ' stream-bar-playing' : ''}"><title>${escapeXml(title)}</title></rect>`
+      `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}${playing ? ' stream-bar-playing' : ''}${record.kind === 'fetch' ? ' stream-bar-fetch' : ''}"><title>${escapeXml(title)}</title></rect>`
     )
   })
   svg.innerHTML = parts.join('')

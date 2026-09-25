@@ -278,14 +278,22 @@ async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (
   const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
   const endObject = largestGroup === undefined ? 0n : (subscribeOk.largestObjectId ?? 0n) + 1n
   try {
-    await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
+    const { requestId } = await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
       onObject: (message) => {
+        streamMonitor.fetchObject(
+          message.requestId,
+          name,
+          message.groupId,
+          message.objectId,
+          message.objectPayload.byteLength
+        )
         const payload = new Uint8Array(message.objectPayload)
         if (payload.byteLength > 0) {
           onText(new TextDecoder().decode(payload))
         }
       }
     })
+    streamMonitor.fetchFinished(requestId)
     appendLog('info', `fetched ${name}`)
   } catch (error) {
     appendLog('info', `fetch ${name}: ${getErrorMessage(error)}`)
@@ -894,9 +902,17 @@ async function fetchFrames(
 ): Promise<ReviewFrame[] | undefined> {
   const frames: ReviewFrame[] = []
   let lastArrival = performance.now()
+  let requestId: bigint | undefined
   try {
-    await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
+    ;({ requestId } = await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
       onObject: (message) => {
+        streamMonitor.fetchObject(
+          message.requestId,
+          trackName,
+          message.groupId,
+          message.objectId,
+          message.objectPayload.byteLength
+        )
         if (generation !== reviewGeneration) {
           return
         }
@@ -906,7 +922,7 @@ async function fetchFrames(
           frames.push(frame)
         }
       }
-    })
+    }))
   } catch (error) {
     if (generation === reviewGeneration) {
       setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
@@ -916,6 +932,9 @@ async function fetchFrames(
   }
 
   await waitForFetchIdle(() => lastArrival, generation)
+  if (requestId !== undefined) {
+    streamMonitor.fetchFinished(requestId)
+  }
   return generation === reviewGeneration ? frames : undefined
 }
 

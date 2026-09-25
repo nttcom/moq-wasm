@@ -574,3 +574,9 @@
   stroke: #dc2626;
   stroke-width: 2;
 }
+
+.stream-bar-fetch {
+  stroke: #d97706;
+  stroke-width: 2;
+  fill: #fde68a;
+}
