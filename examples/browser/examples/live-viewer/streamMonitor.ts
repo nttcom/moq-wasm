@@ -5,7 +5,7 @@ const CELL_ROW_HEIGHT = 16
 const GRID_LABEL_WIDTH = 48
 const CELL_GAP = 1
 const CELL_SIZE = 7
-const GROUP_GAP = 6
+const GROUP_GAP = 9
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
 const LABEL_WIDTH = 168
@@ -321,9 +321,10 @@ function escapeXml(text: string): string {
 export type DeliveryRow = { label: string; trackAlias?: bigint }
 
 /// One fixed-size cell per object of the newest `groupsToShow` groups of
-/// each track, filled when it has arrived, hollow when a later object of the
-/// same group has arrived but this one has not (or, for a finished group,
-/// never did); cells past the right edge are not drawn.
+/// each track: filled when it has arrived, hollow when it has not. An open
+/// group is drawn as long as the track's last finished group, so the hollow
+/// tail shows how much of the group is still to come; cells past the right
+/// edge are not drawn.
 /// `from` puts the object being played at the left edge: earlier groups and,
 /// on the played track, earlier objects of that group are left out. Other
 /// tracks start at the same group, because the publisher aligns group
@@ -356,13 +357,13 @@ export function renderDeliveryGrid(
       )
       .sort((a, b) => Number(a.groupId - b.groupId))
       .slice(-groupsToShow)
-      .map((record) => ({
+      .map((record, _index, ofTrack) => ({
         record,
         firstObjectId:
           from !== undefined && record.trackAlias === from.trackAlias && record.groupId === from.groupId
             ? Number(from.objectId)
             : 0,
-        cells: cellCount(record)
+        cells: expectedCellCount(record, ofTrack)
       }))
   )
   const plotRight = plotLeft + plotWidth
@@ -374,7 +375,13 @@ export function renderDeliveryGrid(
       `<text x="${GRID_LABEL_WIDTH - 6}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(row.label)}</text>`
     )
     let x = plotLeft
-    for (const { record, firstObjectId, cells } of rowGroups[index]) {
+    rowGroups[index].forEach(({ record, firstObjectId, cells }, groupIndex) => {
+      if (groupIndex > 0) {
+        const dividerX = x - GROUP_GAP / 2
+        parts.push(
+          `<line x1="${dividerX}" x2="${dividerX}" y1="${y + 1}" y2="${y + CELL_ROW_HEIGHT - 1}" class="delivery-divider" />`
+        )
+      }
       for (let objectId = firstObjectId; objectId < cells && x + CELL_SIZE <= plotRight; objectId++) {
         const received = record.receivedAtByObjectId.has(BigInt(objectId))
         parts.push(
@@ -383,15 +390,26 @@ export function renderDeliveryGrid(
         x += CELL_SIZE
       }
       x += GROUP_GAP
-    }
+    })
   })
   svg.innerHTML = parts.join('')
 }
 
-function cellCount(record: StreamRecord): number {
+function receivedCellCount(record: StreamRecord): number {
   let highest = -1
   for (const objectId of record.receivedAtByObjectId.keys()) {
     highest = Math.max(highest, Number(objectId))
   }
   return highest + 1
+}
+
+function expectedCellCount(record: StreamRecord, ofTrack: StreamRecord[]): number {
+  const received = receivedCellCount(record)
+  if (record.finishedAt !== undefined) {
+    return received
+  }
+  const lastFinished = ofTrack
+    .filter((candidate) => candidate.finishedAt !== undefined && candidate.groupId < record.groupId)
+    .sort((a, b) => Number(b.groupId - a.groupId))[0]
+  return Math.max(received, lastFinished ? receivedCellCount(lastFinished) : 0)
 }

@@ -204,7 +204,10 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
 })
-setInterval(renderStreams, 100)
+requestAnimationFrame(function renderStreamsEachFrame() {
+  renderStreams()
+  requestAnimationFrame(renderStreamsEachFrame)
+})
 
 async function watchStream(): Promise<void> {
   try {

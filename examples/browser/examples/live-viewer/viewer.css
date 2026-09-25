@@ -620,3 +620,8 @@
 .delivery-cell-missing {
   fill: #ffffff;
 }
+
+.delivery-divider {
+  stroke: #f59e0b;
+  stroke-width: 2;
+}
