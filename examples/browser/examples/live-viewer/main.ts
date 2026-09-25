@@ -110,6 +110,8 @@ const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
 const decodedFrameIds = new Map<number, Omit<Playhead, 'trackAlias'>>()
+const reviewFrameIds = new Map<number, Playhead>()
+let reviewFetchIds: { video?: bigint; audio?: bigint } = {}
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -665,6 +667,11 @@ function showLiveFrame(frame: VideoFrame): void {
 }
 
 function showReviewFrame(frame: VideoFrame): void {
+  const ids = reviewFrameIds.get(frame.timestamp)
+  reviewFrameIds.delete(frame.timestamp)
+  if (ids) {
+    streamMonitor.setPlayhead(ids)
+  }
   const canvas = element<HTMLCanvasElement>('review')
   const context = canvas.getContext('2d')
   if (context) {
@@ -785,10 +792,15 @@ function renderStreams(): void {
   renderDeliveryGrid(
     element<SVGSVGElement>('delivery-grid'),
     records,
-    [
-      { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
-      { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
-    ],
+    reviewing
+      ? [
+          { label: 'audio', trackAlias: reviewFetchIds.audio, cadenceAlias: subscriptions.get('audio')?.trackAlias },
+          { label: 'video', trackAlias: reviewFetchIds.video, cadenceAlias: subscriptions.get('video')?.trackAlias }
+        ]
+      : [
+          { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
+          { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
+        ],
     streamMonitor.slotsPerTrack(),
     playhead,
     livePlayout.playoutDelayMs()
@@ -906,6 +918,7 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
     return undefined
   }
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
+  reviewFetchIds = { video: frames[0]?.requestId, audio: audio?.[0]?.requestId }
   return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audio ?? []) }
 }
 
@@ -955,6 +968,7 @@ async function fetchFrames(
         lastArrival = performance.now()
         const frame = toReviewFrame(message)
         if (frame) {
+          frame.requestId = message.requestId
           frames.push(frame)
         }
       }
@@ -1044,6 +1058,13 @@ async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generatio
     }
     if (generation !== reviewGeneration || decoder.state === 'closed') {
       break
+    }
+    if (frame.captureMicros !== undefined && frame.requestId !== undefined) {
+      reviewFrameIds.set(frame.captureMicros, {
+        trackAlias: frame.requestId,
+        groupId: frame.groupId,
+        objectId: frame.objectId
+      })
     }
     decoder.decode(
       new EncodedVideoChunk({
@@ -1144,6 +1165,8 @@ function reviewAudioConfig(): AudioDecoderConfig | undefined {
 function backToLive(): void {
   reviewGeneration += 1
   reviewing = false
+  reviewFrameIds.clear()
+  reviewFetchIds = {}
   seeking = false
   setPaused(false)
   reviewAnchorMicros = undefined

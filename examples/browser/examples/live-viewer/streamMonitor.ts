@@ -10,7 +10,7 @@ const DEFAULT_OBJECT_INTERVAL_MS = 1000 / 30
 const GROUP_GAP = 9
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
-const LABEL_WIDTH = 168
+const LABEL_WIDTH = 210
 const TOP_MARGIN = 14
 const PALETTE = ['#0f766e', '#e07a5f', '#3d5a80', '#b08968', '#6a4c93', '#2a9d8f']
 
@@ -27,6 +27,8 @@ export type StreamRecord = {
   bytes: number
   objects: number
   receivedAtByObjectId: Map<bigint, number>
+  /// FETCH streams span groups, so their arrivals are kept per group.
+  receivedAtByGroup: Map<bigint, Map<bigint, number>>
 }
 
 export type Playhead = {
@@ -78,7 +80,8 @@ export class StreamMonitor {
         openedAt: now,
         bytes: 0,
         objects: 0,
-        receivedAtByObjectId: new Map()
+        receivedAtByObjectId: new Map(),
+        receivedAtByGroup: new Map()
       }
       this.records.set(key, record)
     }
@@ -125,14 +128,20 @@ export class StreamMonitor {
         openedAt: now,
         bytes: 0,
         objects: 0,
-        receivedAtByObjectId: new Map()
+        receivedAtByObjectId: new Map(),
+        receivedAtByGroup: new Map()
       }
       this.records.set(key, record)
     }
     record.lastGroupId = groupId
     record.bytes += payloadLength
     record.objects += 1
-    record.receivedAtByObjectId.set(objectId, now)
+    let ofGroup = record.receivedAtByGroup.get(groupId)
+    if (!ofGroup) {
+      ofGroup = new Map()
+      record.receivedAtByGroup.set(groupId, ofGroup)
+    }
+    ofGroup.set(objectId, now)
   }
 
   fetchFinished(requestId: bigint, now = Date.now()): void {
@@ -213,13 +222,29 @@ export function layoutSlots(records: StreamRecord[], slotsPerTrack: number): Slo
   return slots
 }
 
-export function playheadReceivedAt(records: StreamRecord[], playhead?: Playhead): number | undefined {
+/// A subscribe stream is one group; a FETCH stream (alias = request id) covers
+/// every group of its range.
+export function playheadRecord(records: StreamRecord[], playhead?: Playhead): StreamRecord | undefined {
   if (!playhead) {
     return undefined
   }
-  return records
-    .find((record) => record.trackAlias === playhead.trackAlias && record.groupId === playhead.groupId)
-    ?.receivedAtByObjectId.get(playhead.objectId)
+  return records.find(
+    (record) =>
+      record.trackAlias === playhead.trackAlias &&
+      (record.kind === 'fetch'
+        ? record.groupId <= playhead.groupId && playhead.groupId <= record.lastGroupId
+        : record.groupId === playhead.groupId)
+  )
+}
+
+export function playheadReceivedAt(records: StreamRecord[], playhead?: Playhead): number | undefined {
+  const record = playheadRecord(records, playhead)
+  if (!record || !playhead) {
+    return undefined
+  }
+  return record.kind === 'fetch'
+    ? record.receivedAtByGroup.get(playhead.groupId)?.get(playhead.objectId)
+    : record.receivedAtByObjectId.get(playhead.objectId)
 }
 
 export function renderStreamMonitor(
@@ -262,8 +287,7 @@ export function renderStreamMonitor(
   }
   slots.forEach(({ track, record }, row) => {
     const y = TOP_MARGIN + row * ROW_HEIGHT
-    const playing =
-      playhead !== undefined && record?.trackAlias === playhead.trackAlias && record.groupId === playhead.groupId
+    const playing = record !== undefined && record === playheadRecord(records, playhead)
     parts.push(
       `<line x1="${plotLeft}" x2="${plotRight}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
     )
@@ -320,7 +344,9 @@ function escapeXml(text: string): string {
   return text.replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[char] ?? char)
 }
 
-export type DeliveryRow = { label: string; trackAlias?: bigint }
+/// `cadenceAlias` names the live subscription whose arrival spacing gives the
+/// object interval; a FETCH row needs it because a FETCH arrives in a burst.
+export type DeliveryRow = { label: string; trackAlias?: bigint; cadenceAlias?: bigint }
 
 /// Cells from the playing object rightwards, sized so that `GOPS_ACROSS`
 /// groups of the track's usual length fill the width: filled once the object
@@ -351,16 +377,15 @@ export function renderDeliveryGrid(
     parts.push(
       `<text x="${GRID_LABEL_WIDTH - 6}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(row.label)}</text>`
     )
-    const ofTrack = records
-      .filter((record) => record.kind === 'subscribe' && record.trackAlias === row.trackAlias)
-      .sort((a, b) => Number(a.groupId - b.groupId))
+    const ofTrack = gridGroups(records, row.trackAlias)
     const groupLength = expectedGroupLength(ofTrack) || DEFAULT_GROUP_LENGTH
     const cellSize = Math.max(
       2,
       Math.floor((plotRight - plotLeft - (GOPS_ACROSS - 1) * GROUP_GAP) / (GOPS_ACROSS * groupLength))
     )
-    const shown = ofTrack.filter((record) => from === undefined || record.groupId >= from.groupId).slice(-groupsToShow)
-    const bufferCells = bufferMs > 0 ? Math.round(bufferMs / objectIntervalMs(ofTrack)) : 0
+    const shown = ofTrack.filter((group) => from === undefined || group.groupId >= from.groupId).slice(-groupsToShow)
+    const cadence = row.cadenceAlias === undefined ? ofTrack : gridGroups(records, row.cadenceAlias)
+    const bufferCells = bufferMs > 0 ? Math.round(bufferMs / objectIntervalMs(cadence)) : 0
     if (bufferCells > 0) {
       const bufferWidth = Math.min(
         plotRight - plotLeft,
@@ -372,12 +397,12 @@ export function renderDeliveryGrid(
     }
     let x = plotLeft
     let groupIndex = 0
-    const cellsOf = (record?: StreamRecord) =>
-      record === undefined
+    const cellsOf = (group?: GridGroup) =>
+      group === undefined
         ? groupLength
-        : record.finishedAt !== undefined
-          ? receivedCellCount(record)
-          : Math.max(receivedCellCount(record), groupLength)
+        : group.finished
+          ? receivedCellCount(group)
+          : Math.max(receivedCellCount(group), groupLength)
     while (x + cellSize <= plotRight) {
       const record = shown[groupIndex]
       if (groupIndex > 0) {
@@ -389,15 +414,15 @@ export function renderDeliveryGrid(
       const firstObjectId =
         record !== undefined &&
         from !== undefined &&
-        record.trackAlias === from.trackAlias &&
+        row.trackAlias === from.trackAlias &&
         record.groupId === from.groupId
           ? Number(from.objectId)
           : 0
       const cells = cellsOf(record)
       for (let objectId = firstObjectId; objectId < cells && x + cellSize <= plotRight; objectId++) {
-        const received = record?.receivedAtByObjectId.has(BigInt(objectId)) ?? false
+        const received = record?.receivedAt.has(BigInt(objectId)) ?? false
         const title = record
-          ? `${record.track} group ${record.groupId} object ${objectId}: ${received ? 'received' : 'missing'}`
+          ? `${row.label} group ${record.groupId} object ${objectId}: ${received ? 'received' : 'missing'}`
           : `${row.label}: not yet received`
         parts.push(
           `<rect x="${x}" y="${y + 3}" width="${Math.max(1, cellSize - CELL_GAP)}" height="${CELL_ROW_HEIGHT - 6}" class="delivery-cell ${received ? 'delivery-cell-received' : 'delivery-cell-missing'}"><title>${escapeXml(title)}</title></rect>`
@@ -411,26 +436,57 @@ export function renderDeliveryGrid(
   svg.innerHTML = parts.join('')
 }
 
-function receivedCellCount(record: StreamRecord): number {
+type GridGroup = {
+  groupId: bigint
+  receivedAt: Map<bigint, number>
+  finished: boolean
+}
+
+/// One grid group per subscribe stream of the alias, or per group inside the
+/// FETCH stream whose request id is the alias; a fetched group is complete
+/// once a later group of the same FETCH has started.
+function gridGroups(records: StreamRecord[], trackAlias?: bigint): GridGroup[] {
+  const groups: GridGroup[] = []
+  for (const record of records) {
+    if (record.trackAlias !== trackAlias) {
+      continue
+    }
+    if (record.kind === 'subscribe') {
+      groups.push({
+        groupId: record.groupId,
+        receivedAt: record.receivedAtByObjectId,
+        finished: record.finishedAt !== undefined
+      })
+      continue
+    }
+    for (const [groupId, receivedAt] of record.receivedAtByGroup) {
+      groups.push({ groupId, receivedAt, finished: record.finishedAt !== undefined || groupId < record.lastGroupId })
+    }
+  }
+  return groups.sort((a, b) => Number(a.groupId - b.groupId))
+}
+
+function receivedCellCount(group: GridGroup): number {
   let highest = -1
-  for (const objectId of record.receivedAtByObjectId.keys()) {
+  for (const objectId of group.receivedAt.keys()) {
     highest = Math.max(highest, Number(objectId))
   }
   return highest + 1
 }
 
-function expectedGroupLength(ofTrack: StreamRecord[]): number {
-  const lastFinished = ofTrack.filter((record) => record.finishedAt !== undefined).at(-1)
+function expectedGroupLength(groups: GridGroup[]): number {
+  const lastFinished = groups.filter((group) => group.finished).at(-1)
   return lastFinished ? receivedCellCount(lastFinished) : 0
 }
 
 /// Wall-clock spacing of the track's objects, from the last finished group;
 /// 30 fps video until one has finished.
-function objectIntervalMs(ofTrack: StreamRecord[]): number {
-  const lastFinished = ofTrack.filter((record) => record.finishedAt !== undefined).at(-1)
+function objectIntervalMs(groups: GridGroup[]): number {
+  const lastFinished = groups.filter((group) => group.finished).at(-1)
   const count = lastFinished ? receivedCellCount(lastFinished) : 0
-  if (!lastFinished || count < 2 || lastFinished.finishedAt === undefined) {
+  if (!lastFinished || count < 2) {
     return DEFAULT_OBJECT_INTERVAL_MS
   }
-  return Math.max(1, (lastFinished.finishedAt - lastFinished.openedAt) / count)
+  const arrivals = [...lastFinished.receivedAt.values()]
+  return Math.max(1, (Math.max(...arrivals) - Math.min(...arrivals)) / count)
 }
