@@ -119,7 +119,7 @@ struct StatsRow {
     previous: Option<TransportStats>,
 }
 
-const HEADER: &str = "connection                                  rtt     cwnd  lost  cong_ev  stream_blocked  data_blocked  max_stream_data";
+const HEADER: &str = "connection                                  rtt     cwnd      sent  lost  cong_ev  stream_blocked  data_blocked  max_stream_data";
 
 fn render_table(rows: &[StatsRow]) -> String {
     let mut out = format!(
@@ -143,10 +143,11 @@ fn render_row(row: &StatsRow) -> String {
     };
     let previous = row.previous.unwrap_or(stats);
     format!(
-        "{:<LABEL_WIDTH$}  {:>5.1}ms  {:>5}K  {:>4}  {:>7}  {:>14}  {:>12}  {:>15}",
+        "{:<LABEL_WIDTH$}  {:>5.1}ms  {:>5}K  {:>8}  {:>4}  {:>7}  {:>14}  {:>12}  {:>15}",
         truncate(&row.label, LABEL_WIDTH),
         stats.rtt.as_secs_f64() * 1000.0,
         stats.cwnd / 1024,
+        counter(stats.sent_packets, previous.sent_packets),
         counter(stats.lost_packets, previous.lost_packets),
         counter(stats.congestion_events, previous.congestion_events),
         counter(
@@ -187,6 +188,7 @@ mod tests {
         TransportStats {
             rtt: Duration::from_micros(12_345),
             cwnd: 2 * 1024 * 1024,
+            sent_packets: 100,
             lost_packets,
             congestion_events: 0,
             sent_stream_data_blocked,
