@@ -116,7 +116,7 @@ const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
-const decodedFrameIds = new Map<number, Omit<Playhead, 'trackAlias'>>()
+const decodedFrameIds = new Map<number, Omit<Playhead, 'kind' | 'trackAlias'>>()
 const reviewFrameIds = new Map<number, Playhead>()
 let reviewFetchIds: { video?: bigint; audio?: bigint } = {}
 let reviewBehindSeconds = 0
@@ -783,7 +783,7 @@ function markPlayhead(frame: VideoFrame): void {
   decodedFrameIds.delete(frame.timestamp)
   const trackAlias = subscriptions.get('video')?.trackAlias
   if (ids && trackAlias !== undefined) {
-    streamMonitor.setPlayhead({ trackAlias, ...ids })
+    streamMonitor.setPlayhead({ kind: 'subscribe', trackAlias, ...ids })
   }
 }
 
@@ -800,40 +800,56 @@ function monitored(
 }
 
 function renderStreams(): void {
+  const reviewGrid = element<SVGSVGElement>('delivery-grid-review')
   if (!watching) {
     renderIdleStreamMonitor(element<SVGSVGElement>('stream-monitor'))
     renderIdleStreamMonitor(element<SVGSVGElement>('delivery-grid'))
+    reviewGrid.style.display = 'none'
     element<HTMLSpanElement>('stream-stats').textContent = '-'
     return
   }
   const now = Date.now()
   const records = streamMonitor.snapshot()
-  const playhead = streamMonitor.currentPlayhead()
+  const playheads = streamMonitor.currentPlayheads()
+  const livePlayhead = playheads.find((playhead) => playhead.kind === 'subscribe')
+  const reviewPlayhead = playheads.find((playhead) => playhead.kind === 'fetch')
   renderStreamMonitor(
     element<SVGSVGElement>('stream-monitor'),
     records,
     streamMonitor.slotsPerTrack(),
     streamWindowSeconds,
-    playhead,
+    playheads,
     now
   )
-  element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records, playhead, now)
+  element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records, playheads, now)
   renderDeliveryGrid(
     element<SVGSVGElement>('delivery-grid'),
     records,
-    reviewing
-      ? [
-          { label: 'audio', trackAlias: reviewFetchIds.audio, cadenceAlias: subscriptions.get('audio')?.trackAlias },
-          { label: 'video', trackAlias: reviewFetchIds.video, cadenceAlias: subscriptions.get('video')?.trackAlias }
-        ]
-      : [
-          { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
-          { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
-        ],
+    [
+      { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
+      { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
+    ],
     streamMonitor.slotsPerTrack(),
-    playhead,
+    livePlayhead,
     livePlayout.playoutDelayMs()
   )
+  reviewGrid.style.display = reviewing ? '' : 'none'
+  if (reviewing) {
+    renderDeliveryGrid(
+      reviewGrid,
+      records,
+      [
+        {
+          label: 'fetch audio',
+          trackAlias: reviewFetchIds.audio,
+          cadenceAlias: subscriptions.get('audio')?.trackAlias
+        },
+        { label: 'fetch video', trackAlias: reviewFetchIds.video, cadenceAlias: subscriptions.get('video')?.trackAlias }
+      ],
+      streamMonitor.slotsPerTrack(),
+      reviewPlayhead
+    )
+  }
 }
 
 function trackNamespace(): string[] {
@@ -1090,6 +1106,7 @@ async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generatio
     }
     if (frame.captureMicros !== undefined && frame.requestId !== undefined) {
       reviewFrameIds.set(frame.captureMicros, {
+        kind: 'fetch',
         trackAlias: frame.requestId,
         groupId: frame.groupId,
         objectId: frame.objectId
@@ -1196,6 +1213,7 @@ function backToLive(): void {
   reviewing = false
   reviewFrameIds.clear()
   reviewFetchIds = {}
+  streamMonitor.clearPlayhead('fetch')
   seeking = false
   setPaused(false)
   reviewAnchorMicros = undefined

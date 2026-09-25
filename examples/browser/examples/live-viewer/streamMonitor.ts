@@ -2,7 +2,7 @@ const DEFAULT_KEPT_GROUPS = 5
 export const DEFAULT_WINDOW_SECONDS = 10
 const AXIS_HEIGHT = 18
 const CELL_ROW_HEIGHT = 16
-const GRID_LABEL_WIDTH = 48
+const GRID_LABEL_WIDTH = 78
 const CELL_GAP = 1
 const GOPS_ACROSS = 3
 const DEFAULT_GROUP_LENGTH = 60
@@ -31,7 +31,10 @@ export type StreamRecord = {
   receivedAtByGroup: Map<bigint, Map<bigint, number>>
 }
 
+/// Live playback follows a subscribe stream, review playback a FETCH stream;
+/// each keeps its own playhead so a rewind does not move the live one.
 export type Playhead = {
+  kind: StreamKind
   trackAlias: bigint
   groupId: bigint
   objectId: bigint
@@ -45,14 +48,18 @@ export class StreamMonitor {
   private readonly records = new Map<string, StreamRecord>()
   private readonly labels = new Map<bigint, string>()
   private keptGroups = DEFAULT_KEPT_GROUPS
-  private playhead?: Playhead
+  private readonly playheads = new Map<StreamKind, Playhead>()
 
   setPlayhead(playhead: Playhead): void {
-    this.playhead = playhead
+    this.playheads.set(playhead.kind, playhead)
   }
 
-  currentPlayhead(): Playhead | undefined {
-    return this.playhead
+  clearPlayhead(kind: StreamKind): void {
+    this.playheads.delete(kind)
+  }
+
+  currentPlayheads(): Playhead[] {
+    return [...this.playheads.values()]
   }
 
   setKeptGroups(count: number): void {
@@ -154,7 +161,7 @@ export class StreamMonitor {
   reset(): void {
     this.records.clear()
     this.labels.clear()
-    this.playhead = undefined
+    this.playheads.clear()
   }
 
   snapshot(): StreamRecord[] {
@@ -177,15 +184,19 @@ export function renderIdleStreamMonitor(svg: SVGSVGElement): void {
   svg.innerHTML = ''
 }
 
-export function summarizeStreams(records: StreamRecord[], playhead?: Playhead, now = Date.now()): string {
+export function summarizeStreams(records: StreamRecord[], playheads: Playhead[] = [], now = Date.now()): string {
   const open = records.filter((record) => record.finishedAt === undefined).length
-  const counts = `${open} open · ${records.length - open} finished`
-  const receivedAt = playheadReceivedAt(records, playhead)
-  if (!playhead || receivedAt === undefined) {
-    return counts
+  const parts = [`${open} open · ${records.length - open} finished`]
+  for (const playhead of playheads) {
+    const receivedAt = playheadReceivedAt(records, playhead)
+    if (receivedAt === undefined) {
+      continue
+    }
+    const age = ((now - receivedAt) / 1000).toFixed(2)
+    const verb = playhead.kind === 'fetch' ? 'reviewing' : 'playing'
+    parts.push(`${verb} ${shortGroupId(playhead.groupId)} #${playhead.objectId} received ${age}s ago`)
   }
-  const age = ((now - receivedAt) / 1000).toFixed(2)
-  return `${counts} · playing ${shortGroupId(playhead.groupId)} #${playhead.objectId} received ${age}s ago`
+  return parts.join(' · ')
 }
 
 /// FETCH streams come first, then subscriptions by track name.
@@ -230,6 +241,7 @@ export function playheadRecord(records: StreamRecord[], playhead?: Playhead): St
   }
   return records.find(
     (record) =>
+      record.kind === playhead.kind &&
       record.trackAlias === playhead.trackAlias &&
       (record.kind === 'fetch'
         ? record.groupId <= playhead.groupId && playhead.groupId <= record.lastGroupId
@@ -252,7 +264,7 @@ export function renderStreamMonitor(
   records: StreamRecord[],
   slotsPerTrack: number,
   windowSeconds = DEFAULT_WINDOW_SECONDS,
-  playhead?: Playhead,
+  playheads: Playhead[] = [],
   now = Date.now()
 ): void {
   const slots = layoutSlots(records, slotsPerTrack)
@@ -279,15 +291,29 @@ export function renderStreamMonitor(
     parts.push(`<line x1="${tx}" x2="${tx}" y1="${TOP_MARGIN}" y2="${axisY}" class="stream-tick" />`)
     parts.push(`<text x="${tx}" y="${axisY + 13}" text-anchor="middle" class="stream-axis">${clockLabel(tick)}</text>`)
   }
-  const playheadAt = playheadReceivedAt(records, playhead)
-  if (playheadAt !== undefined) {
+  const playingRecords = playheads.map((playhead) => playheadRecord(records, playhead))
+  for (const playhead of playheads) {
+    const playheadAt = playheadReceivedAt(records, playhead)
+    if (playheadAt === undefined) {
+      continue
+    }
+    const rowsOfKind = slots
+      .map((slot, row) => ({
+        row,
+        kind: slot.record?.kind ?? (slot.track.startsWith('fetch ') ? 'fetch' : 'subscribe')
+      }))
+      .filter((slot) => slot.kind === playhead.kind)
+      .map((slot) => slot.row)
+    const top = TOP_MARGIN + (rowsOfKind.length ? Math.min(...rowsOfKind) : 0) * ROW_HEIGHT
+    const bottom = TOP_MARGIN + (rowsOfKind.length ? Math.max(...rowsOfKind) + 1 : 1) * ROW_HEIGHT
     const px = x(playheadAt)
-    parts.push(`<line x1="${px}" x2="${px}" y1="${TOP_MARGIN}" y2="${axisY}" class="stream-playhead" />`)
-    parts.push(`<text x="${px}" y="${TOP_MARGIN - 1}" text-anchor="middle" class="stream-playhead-label">▼</text>`)
+    const kindClass = playhead.kind === 'fetch' ? ' stream-playhead-review' : ''
+    parts.push(`<line x1="${px}" x2="${px}" y1="${top}" y2="${bottom}" class="stream-playhead${kindClass}" />`)
+    parts.push(`<text x="${px}" y="${top - 1}" text-anchor="middle" class="stream-playhead-label${kindClass}">▼</text>`)
   }
   slots.forEach(({ track, record }, row) => {
     const y = TOP_MARGIN + row * ROW_HEIGHT
-    const playing = record !== undefined && record === playheadRecord(records, playhead)
+    const playing = record !== undefined && playingRecords.includes(record)
     parts.push(
       `<line x1="${plotLeft}" x2="${plotRight}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
     )
