@@ -14,7 +14,9 @@ use tokio::task::JoinHandle;
 
 const LABEL_WIDTH: usize = 40;
 const BAR_WIDTH: usize = 30;
-const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+/// Counters show their increase over this much time, whatever the redraw rate.
+const DELTA_INTERVAL: Duration = Duration::from_secs(1);
 const CLEAR_SCREEN: &str = "\x1b[2J";
 const CURSOR_HOME: &str = "\x1b[H";
 const CLEAR_BELOW_CURSOR: &str = "\x1b[J";
@@ -96,7 +98,7 @@ impl StatsPanel {
     pub fn run(registry: ConnectionRegistry) -> Self {
         Self {
             _task: tokio::spawn(async move {
-                let mut previous: HashMap<u64, TransportStats> = HashMap::new();
+                let mut checkpoints: HashMap<u64, (Instant, TransportStats)> = HashMap::new();
                 let mut interval = tokio::time::interval(REFRESH_INTERVAL);
                 let _ = write!(std::io::stdout(), "{CLEAR_SCREEN}");
                 loop {
@@ -105,14 +107,19 @@ impl StatsPanel {
                         .snapshot()
                         .into_iter()
                         .map(|connection| {
+                            let now = Instant::now();
+                            let checkpoint = checkpoints.get(&connection.id).copied();
                             let row = StatsRow {
                                 label: connection.label,
                                 stats: connection.stats,
-                                previous: previous.get(&connection.id).copied(),
+                                previous: checkpoint.map(|(_, stats)| stats),
                                 streams: connection.streams,
                             };
-                            if let Some(stats) = connection.stats {
-                                previous.insert(connection.id, stats);
+                            if let Some(stats) = connection.stats
+                                && checkpoint
+                                    .is_none_or(|(at, _)| now.duration_since(at) >= DELTA_INTERVAL)
+                            {
+                                checkpoints.insert(connection.id, (now, stats));
                             }
                             row
                         })
