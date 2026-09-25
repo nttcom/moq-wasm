@@ -23,6 +23,7 @@ import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
+import { StreamMonitor, renderStreamMonitor, summarizeStreams } from './streamMonitor'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
@@ -94,6 +95,7 @@ const subscriptions = new Map<MediaKind, TrackSubscription>()
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+const streamMonitor = new StreamMonitor()
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -179,6 +181,8 @@ for (const event of ['pointercancel', 'blur']) {
   })
 }
 startRendering()
+moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
+setInterval(renderStreams, 250)
 
 async function watchStream(): Promise<void> {
   try {
@@ -196,6 +200,7 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   timeline.reset()
+  streamMonitor.reset()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
   newestAudioGroupId = undefined
@@ -235,12 +240,15 @@ async function subscribeCatalog(): Promise<void> {
 async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<SubscribeOk> {
   const namespace = trackNamespace()
   const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
-  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    const payload = new Uint8Array(object.objectPayload)
-    if (payload.byteLength > 0) {
-      onText(new TextDecoder().decode(payload))
-    }
-  })
+  moqtClient.setOnSubgroupObjectHandler(
+    subscribeOk.trackAlias,
+    monitored(subscribeOk.trackAlias, name, (_groupId, object) => {
+      const payload = new Uint8Array(object.objectPayload)
+      if (payload.byteLength > 0) {
+        onText(new TextDecoder().decode(payload))
+      }
+    })
+  )
   appendLog('info', `subscribed ${namespace.join('/')}/${name}`)
   return subscribeOk
 }
@@ -529,26 +537,32 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   })
   subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name })
   if (packaging === 'cmaf') {
-    moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) =>
-      handleCmafObject(kind, wire.name, groupId, object)
+    moqtClient.setOnSubgroupObjectHandler(
+      subscribeOk.trackAlias,
+      monitored(subscribeOk.trackAlias, wire.name, (groupId, object) =>
+        handleCmafObject(kind, wire.name, groupId, object)
+      )
     )
     appendLog('info', `subscribed ${trackNamespace().join('/')}/${wire.name}`)
     return
   }
   const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
-  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {
-    if (kind === 'video') {
-      videoObjectCount += 1
-      timeline.record(groupId, object.locHeader)
-      renderSeekbar()
-      if (!reviewing) {
-        setStatusText('playback-status', `Playing ${trackName}`)
+  moqtClient.setOnSubgroupObjectHandler(
+    subscribeOk.trackAlias,
+    monitored(subscribeOk.trackAlias, wire.name, (groupId, object) => {
+      if (kind === 'video') {
+        videoObjectCount += 1
+        timeline.record(groupId, object.locHeader)
+        renderSeekbar()
+        if (!reviewing) {
+          setStatusText('playback-status', `Playing ${trackName}`)
+        }
+      } else {
+        newestAudioGroupId = groupId
       }
-    } else {
-      newestAudioGroupId = groupId
-    }
-    postSubgroupObjectToWorker(worker, groupId, object)
-  })
+      postSubgroupObjectToWorker(worker, groupId, object)
+    })
+  )
   appendLog('info', `subscribed ${trackNamespace().join('/')}/${trackName}`)
 }
 
@@ -674,6 +688,25 @@ function formatSyncOffset(offsetMs: number | undefined): string {
   return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
 }
 
+function monitored(
+  trackAlias: bigint,
+  track: string,
+  handler: (groupId: bigint, object: SubgroupObject) => void
+): (groupId: bigint, object: SubgroupObject) => void {
+  streamMonitor.label(trackAlias, track)
+  return (groupId, object) => {
+    streamMonitor.object(trackAlias, groupId, object.objectPayloadLength, object.objectStatus != null)
+    handler(groupId, object)
+  }
+}
+
+function renderStreams(): void {
+  const now = Date.now()
+  const records = streamMonitor.snapshot(now)
+  renderStreamMonitor(element<SVGSVGElement>('stream-monitor'), records, now)
+  element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records)
+}
+
 function trackNamespace(): string[] {
   return parseTrackNamespace(element<HTMLInputElement>('namespace').value)
 }
@@ -690,12 +723,12 @@ function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
   panel.prepend(entry)
 }
 
-function element<T extends HTMLElement>(id: string): T {
+function element<T extends Element>(id: string): T {
   const found = document.getElementById(id)
   if (!found) {
     throw new Error(`missing element: ${id}`)
   }
-  return found as T
+  return found as Element as T
 }
 
 /// Selects and text inputs use the arrow keys themselves. The seek bar's own

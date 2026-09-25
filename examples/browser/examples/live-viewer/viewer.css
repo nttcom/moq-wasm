@@ -513,3 +513,28 @@
 .setup-steps .hint {
   margin: 10px 0;
 }
+
+.stream-monitor {
+  display: block;
+  width: 100%;
+  background: #f4f6f8;
+  border-radius: 8px;
+}
+
+.stream-label {
+  font-size: 12px;
+  fill: #4b5563;
+}
+
+.stream-baseline {
+  stroke: #d1d5db;
+  stroke-width: 1;
+}
+
+.stream-bar {
+  opacity: 0.55;
+}
+
+.stream-bar-open {
+  opacity: 1;
+}
