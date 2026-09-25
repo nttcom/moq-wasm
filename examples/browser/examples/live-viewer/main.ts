@@ -142,6 +142,11 @@ element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
 element<HTMLButtonElement>('playPauseBtn').addEventListener('click', () => setPaused(!paused))
 element<HTMLInputElement>('volume').addEventListener('input', applyVolume)
 element<HTMLButtonElement>('fullscreenBtn').addEventListener('click', () => void toggleFullscreen())
+element<HTMLButtonElement>('deliveryToggleBtn').addEventListener('click', () => {
+  const overlay = element<HTMLDivElement>('delivery-overlay')
+  overlay.hidden = !overlay.hidden
+  element<HTMLButtonElement>('deliveryToggleBtn').setAttribute('aria-pressed', String(!overlay.hidden))
+})
 stage.addEventListener('fullscreenchange', renderFullscreen)
 for (const type of ['pointermove', 'pointerdown', 'keydown']) {
   stage.addEventListener(type, markPointerActive)
@@ -766,7 +771,8 @@ function renderStreams(): void {
       { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
       { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
     ],
-    streamMonitor.slotsPerTrack()
+    streamMonitor.slotsPerTrack(),
+    playhead
   )
 }
 

@@ -581,12 +581,42 @@
   fill: #fde68a;
 }
 
+.viewer-delivery {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 48px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: rgba(12, 17, 17, 0.55);
+  pointer-events: none;
+}
+
+.viewer-delivery-grid {
+  display: block;
+  width: 100%;
+}
+
+.viewer-delivery .stream-label {
+  fill: #e5e7eb;
+}
+
+.viewer-delivery-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.viewer-delivery-toggle[aria-pressed='false'] {
+  opacity: 0.5;
+}
+
 .delivery-cell-received {
   fill: #111827;
+  stroke: #9ca3af;
+  stroke-width: 0.5;
 }
 
 .delivery-cell-missing {
   fill: #ffffff;
-  stroke: #9ca3af;
-  stroke-width: 1;
 }
