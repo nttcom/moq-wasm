@@ -1,7 +1,7 @@
 const WINDOW_MS = 20_000
 const FINISHED_RETENTION_MS = 5_000
 const ROW_HEIGHT = 22
-const LABEL_WIDTH = 96
+const LABEL_WIDTH = 132
 const TOP_MARGIN = 6
 const PALETTE = ['#0f766e', '#e07a5f', '#3d5a80', '#b08968', '#6a4c93', '#2a9d8f']
 
@@ -78,33 +78,39 @@ export function summarizeStreams(records: StreamRecord[]): string {
 export function renderStreamMonitor(svg: SVGSVGElement, records: StreamRecord[], now = Date.now()): void {
   const tracks = [...new Set(records.map((record) => record.track))]
   const width = Math.max(Math.round(svg.getBoundingClientRect().width), 320)
-  const height = TOP_MARGIN * 2 + Math.max(tracks.length, 1) * ROW_HEIGHT
+  const height = TOP_MARGIN * 2 + Math.max(records.length, 1) * ROW_HEIGHT
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
   svg.setAttribute('height', `${height}`)
   const plotWidth = width - LABEL_WIDTH - 8
   const x = (at: number) => LABEL_WIDTH + Math.max(0, plotWidth - ((now - at) * plotWidth) / WINDOW_MS)
 
   const parts: string[] = []
-  tracks.forEach((track, row) => {
+  records.forEach((record, row) => {
     const y = TOP_MARGIN + row * ROW_HEIGHT
-    const color = PALETTE[row % PALETTE.length]
+    const color = PALETTE[tracks.indexOf(record.track) % PALETTE.length]
+    const open = record.finishedAt === undefined
+    const start = x(record.openedAt)
+    const end = open ? width - 8 : x(record.finishedAt as number)
+    const label = `${record.track} ${shortGroupId(record.groupId)}`
+    const title = `${record.track} group ${record.groupId}: ${record.objects} objects, ${(record.bytes / 1024).toFixed(1)} KB, ${open ? 'open' : 'finished'}`
     parts.push(
-      `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(track)}</text>`
+      `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label"><title>${escapeXml(title)}</title>${escapeXml(label)}</text>`
     )
     parts.push(
       `<line x1="${LABEL_WIDTH}" x2="${width - 8}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
     )
-    for (const record of records.filter((candidate) => candidate.track === track)) {
-      const start = x(record.openedAt)
-      const end = record.finishedAt === undefined ? width - 8 : x(record.finishedAt)
-      const open = record.finishedAt === undefined
-      const title = `${track} group ${record.groupId}: ${record.objects} objects, ${(record.bytes / 1024).toFixed(1)} KB, ${open ? 'open' : 'finished'}`
-      parts.push(
-        `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}"><title>${escapeXml(title)}</title></rect>`
-      )
-    }
+    parts.push(
+      `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}"><title>${escapeXml(title)}</title></rect>`
+    )
   })
   svg.innerHTML = parts.join('')
+}
+
+/// Group ids are time-seeded 16-digit numbers, so only the tail distinguishes
+/// neighbouring groups; the full id stays in the tooltip.
+function shortGroupId(groupId: bigint): string {
+  const digits = groupId.toString()
+  return digits.length > 6 ? `…${digits.slice(-6)}` : digits
 }
 
 function escapeXml(text: string): string {
