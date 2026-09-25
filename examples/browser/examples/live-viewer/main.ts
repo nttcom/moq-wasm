@@ -84,8 +84,15 @@ const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioD
 })
 const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
 const videoWriter = videoGenerator.writable.getWriter()
-const livePlayout = new LivePlayout(showLiveFrame, () =>
-  appendLog('warn', 'playout clock re-anchored: scheduled video and audio were dropped')
+const livePlayout = new LivePlayout(
+  showLiveFrame,
+  () => appendLog('warn', 'playout clock re-anchored: scheduled video and audio were dropped'),
+  (origin) =>
+    videoDecoderWorker.postMessage({
+      type: 'timeline',
+      captureMicros: origin?.captureMicros,
+      dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
+    })
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const bufferingSpinner = new BufferingSpinner(element('buffering'))
@@ -649,7 +656,13 @@ function applyDecoderConfig(): void {
   const holdMs = Math.max(0, livePlayout.playoutDelayMs() - PRESENTATION_MARGIN_MS)
   videoDecoderWorker.postMessage({
     type: 'config',
-    config: { telemetryEnabled: true, bypassJitterBuffer: holdMs === 0, holdMs, pacing: { preset: 'disabled' } }
+    config: {
+      telemetryEnabled: true,
+      bypassJitterBuffer: holdMs === 0,
+      holdMs,
+      releaseMarginMs: PRESENTATION_MARGIN_MS,
+      pacing: { preset: 'disabled' }
+    }
   })
   audioDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
 }

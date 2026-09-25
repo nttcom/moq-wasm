@@ -1,5 +1,5 @@
 import { AudioPlayout } from './audioPlayout'
-import { PlayoutClock } from './playoutClock'
+import { PlayoutClock, type PlayoutOrigin } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
 
 export const DEFAULT_PLAYOUT_DELAY_MS = 200
@@ -40,9 +40,13 @@ export class LivePlayout {
 
   constructor(
     showVideo: (frame: VideoFrame) => void,
-    private readonly onReanchor?: () => void
+    private readonly onReanchor?: () => void,
+    onTimeline?: (origin: PlayoutOrigin | undefined) => void
   ) {
     this.video = new VideoPlayout(showVideo)
+    if (onTimeline) {
+      this.clock.setOriginListener(onTimeline)
+    }
   }
 
   presentVideo(frame: VideoFrame): void {
