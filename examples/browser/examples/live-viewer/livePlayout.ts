@@ -2,7 +2,7 @@ import { AudioPlayout } from './audioPlayout'
 import { PlayoutClock } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
 
-const PLAYOUT_DELAY_MS = 200
+export const DEFAULT_PLAYOUT_DELAY_MS = 200
 const WARMUP_MS = 400
 const MAX_EARLY_MS = 400
 const MICROS_PER_MILLI = 1_000
@@ -30,7 +30,7 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// late. Pausing drops what arrives, and resuming warms up again at the live
 /// edge.
 export class LivePlayout {
-  private readonly clock = new PlayoutClock(PLAYOUT_DELAY_MS, MAX_EARLY_MS)
+  private readonly clock = new PlayoutClock(DEFAULT_PLAYOUT_DELAY_MS, MAX_EARLY_MS)
   private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
   private readonly video: VideoPlayout
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
@@ -78,6 +78,18 @@ export class LivePlayout {
 
   setVolume(volume: number): void {
     this.audio.setVolume(volume)
+  }
+
+  /// Re-anchors so the new budget applies to what arrives from now on;
+  /// what was already scheduled plays out on the old timeline.
+  setPlayoutDelayMs(delayMs: number): void {
+    this.clock.setDelayMs(delayMs)
+    this.clock.reset()
+    this.newestAudioCaptureMicros = undefined
+  }
+
+  playoutDelayMs(): number {
+    return this.clock.currentDelayMs
   }
 
   setPaused(paused: boolean): void {
@@ -170,7 +182,7 @@ export class LivePlayout {
     }
     const nowMs = performance.now()
     const newest = Math.max(...held.map((sample) => sample.captureMicros))
-    this.clock.anchor(newest, nowMs, PLAYOUT_DELAY_MS + longestArrivalGapMs(held))
+    this.clock.anchor(newest, nowMs, this.clock.currentDelayMs + longestArrivalGapMs(held))
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
       if (due < nowMs) {

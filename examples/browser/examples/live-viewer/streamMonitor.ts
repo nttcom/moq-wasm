@@ -6,6 +6,7 @@ const GRID_LABEL_WIDTH = 48
 const CELL_GAP = 1
 const GOPS_ACROSS = 3
 const DEFAULT_GROUP_LENGTH = 60
+const DEFAULT_OBJECT_INTERVAL_MS = 1000 / 30
 const GROUP_GAP = 9
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
@@ -330,7 +331,8 @@ export function renderDeliveryGrid(
   records: StreamRecord[],
   rows: DeliveryRow[],
   groupsToShow: number,
-  from?: Playhead
+  from?: Playhead,
+  bufferMs = 0
 ): void {
   const measured = Math.round(svg.getBoundingClientRect().width)
   if (measured === 0) {
@@ -358,6 +360,16 @@ export function renderDeliveryGrid(
       Math.floor((plotRight - plotLeft - (GOPS_ACROSS - 1) * GROUP_GAP) / (GOPS_ACROSS * groupLength))
     )
     const shown = ofTrack.filter((record) => from === undefined || record.groupId >= from.groupId).slice(-groupsToShow)
+    const bufferCells = bufferMs > 0 ? Math.round(bufferMs / objectIntervalMs(ofTrack)) : 0
+    if (bufferCells > 0) {
+      const bufferWidth = Math.min(
+        plotRight - plotLeft,
+        bufferCells * cellSize + Math.floor(bufferCells / groupLength) * GROUP_GAP
+      )
+      parts.push(
+        `<rect x="${plotLeft - 1}" y="${y + 1}" width="${bufferWidth + 1}" height="${CELL_ROW_HEIGHT - 2}" rx="2" class="delivery-buffer"><title>${escapeXml(`${row.label}: ${bufferMs} ms playout buffer ≈ ${bufferCells} objects`)}</title></rect>`
+      )
+    }
     let x = plotLeft
     let groupIndex = 0
     const cellsOf = (record?: StreamRecord) =>
@@ -410,4 +422,15 @@ function receivedCellCount(record: StreamRecord): number {
 function expectedGroupLength(ofTrack: StreamRecord[]): number {
   const lastFinished = ofTrack.filter((record) => record.finishedAt !== undefined).at(-1)
   return lastFinished ? receivedCellCount(lastFinished) : 0
+}
+
+/// Wall-clock spacing of the track's objects, from the last finished group;
+/// 30 fps video until one has finished.
+function objectIntervalMs(ofTrack: StreamRecord[]): number {
+  const lastFinished = ofTrack.filter((record) => record.finishedAt !== undefined).at(-1)
+  const count = lastFinished ? receivedCellCount(lastFinished) : 0
+  if (!lastFinished || count < 2 || lastFinished.finishedAt === undefined) {
+    return DEFAULT_OBJECT_INTERVAL_MS
+  }
+  return Math.max(1, (lastFinished.finishedAt - lastFinished.openedAt) / count)
 }

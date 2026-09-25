@@ -455,6 +455,18 @@ make chrome</code></pre>
                               <option value="cmaf">CMAF (MSE)</option>
                             </select>
                           </label>
+                          <label for="playout-buffer"
+                            >Buffer (ms)
+                            <input
+                              id="playout-buffer"
+                              type="number"
+                              min="0"
+                              max="5000"
+                              step="50"
+                              value="200"
+                              data-testid="live-viewer-playout-buffer-input"
+                            />
+                          </label>
                         </div>
                       </div>
                       <button

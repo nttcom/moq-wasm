@@ -20,9 +20,18 @@ export class PlayoutClock {
   private origin: { captureMicros: number; atMs: number; budgetMs: number } | undefined
 
   constructor(
-    private readonly delayMs: number,
+    private delayMs: number,
     private readonly maxEarlyMs: number
   ) {}
+
+  /// Takes effect at the next anchor; callers reset the clock to re-anchor.
+  setDelayMs(delayMs: number): void {
+    this.delayMs = delayMs
+  }
+
+  get currentDelayMs(): number {
+    return this.delayMs
+  }
 
   get anchored(): boolean {
     return this.origin !== undefined

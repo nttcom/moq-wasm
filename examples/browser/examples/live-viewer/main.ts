@@ -19,7 +19,7 @@ import {
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { BufferingSpinner } from './bufferingSpinner'
-import { LivePlayout } from './livePlayout'
+import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
@@ -200,6 +200,11 @@ startRendering()
 moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
 element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
   streamMonitor.setKeptGroups(Number((event.target as HTMLInputElement).value) || 1)
+})
+element<HTMLInputElement>('playout-buffer').addEventListener('change', (event) => {
+  const delayMs = Number((event.target as HTMLInputElement).value)
+  livePlayout.setPlayoutDelayMs(Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : DEFAULT_PLAYOUT_DELAY_MS)
+  appendLog('info', `playout buffer ${livePlayout.playoutDelayMs()} ms`)
 })
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
@@ -775,7 +780,8 @@ function renderStreams(): void {
       { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
     ],
     streamMonitor.slotsPerTrack(),
-    playhead
+    playhead,
+    livePlayout.playoutDelayMs()
   )
 }
 
