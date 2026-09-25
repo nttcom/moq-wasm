@@ -160,7 +160,6 @@ fn render_streams(streams: &[StreamRecord]) -> Vec<String> {
         "    streams: {open} open, {} finished within 5s",
         streams.len() - open
     )];
-    let widest = streams.iter().map(|s| s.bytes).max().unwrap_or(0).max(1);
     let now = Instant::now();
     let mut ordered: Vec<&StreamRecord> = streams.iter().collect();
     ordered.sort_by(|a, b| {
@@ -179,7 +178,14 @@ fn render_streams(streams: &[StreamRecord]) -> Vec<String> {
                 finished_at.duration_since(stream.opened_at).as_secs_f64()
             ),
         };
-        let filled = (stream.bytes * BAR_WIDTH as u64 / widest) as usize;
+        let widest_of_track = streams
+            .iter()
+            .filter(|s| s.track_name == stream.track_name)
+            .map(|s| s.bytes)
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        let filled = (stream.bytes * BAR_WIDTH as u64 / widest_of_track) as usize;
         lines.push(format!(
             "    {:<12} g{:<16} {state}  {:>4} obj  {:>8.1} KB  {}{}",
             truncate(&stream.track_name, 12),
@@ -291,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_lines_scale_the_bar_to_the_largest_stream() {
+    fn stream_lines_scale_each_bar_to_the_largest_stream_of_its_track() {
         // Arrange
         let opened_at = Instant::now();
         let streams = vec![
@@ -320,8 +326,7 @@ mod tests {
         assert_eq!(lines[0], "    streams: 1 open, 1 finished within 5s");
         assert!(lines[1].starts_with("    audio        g7"), "{}", lines[1]);
         assert!(lines[1].contains("done"), "{}", lines[1]);
-        assert!(lines[1].contains(&"█".repeat(10)), "{}", lines[1]);
-        assert!(!lines[1].contains(&"█".repeat(11)), "{}", lines[1]);
+        assert!(lines[1].ends_with(&"█".repeat(30)), "{}", lines[1]);
         assert!(lines[2].contains("open"), "{}", lines[2]);
         assert!(lines[2].ends_with(&"█".repeat(30)), "{}", lines[2]);
     }
