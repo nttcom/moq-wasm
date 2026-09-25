@@ -27,6 +27,7 @@ import {
   DEFAULT_WINDOW_SECONDS,
   type Playhead,
   StreamMonitor,
+  renderDeliveryGrid,
   renderIdleStreamMonitor,
   renderStreamMonitor,
   summarizeStreams
@@ -742,6 +743,7 @@ function monitored(
 function renderStreams(): void {
   if (!watching) {
     renderIdleStreamMonitor(element<SVGSVGElement>('stream-monitor'))
+    renderIdleStreamMonitor(element<SVGSVGElement>('delivery-grid'))
     element<HTMLSpanElement>('stream-stats').textContent = '-'
     return
   }
@@ -757,6 +759,15 @@ function renderStreams(): void {
     now
   )
   element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records, playhead, now)
+  renderDeliveryGrid(
+    element<SVGSVGElement>('delivery-grid'),
+    records,
+    [
+      { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
+      { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
+    ],
+    streamMonitor.slotsPerTrack()
+  )
 }
 
 function trackNamespace(): string[] {

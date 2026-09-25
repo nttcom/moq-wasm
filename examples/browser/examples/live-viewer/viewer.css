@@ -580,3 +580,13 @@
   stroke-width: 2;
   fill: #fde68a;
 }
+
+.delivery-cell-received {
+  fill: #111827;
+}
+
+.delivery-cell-missing {
+  fill: #ffffff;
+  stroke: #9ca3af;
+  stroke-width: 1;
+}

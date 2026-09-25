@@ -1,6 +1,9 @@
 const DEFAULT_KEPT_GROUPS = 5
 export const DEFAULT_WINDOW_SECONDS = 10
 const AXIS_HEIGHT = 18
+const CELL_ROW_HEIGHT = 16
+const CELL_GAP = 1
+const GROUP_GAP = 6
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
 const LABEL_WIDTH = 168
@@ -225,7 +228,11 @@ export function renderStreamMonitor(
 ): void {
   const slots = layoutSlots(records, slotsPerTrack)
   const tracks = [...new Set(slots.map((slot) => slot.track))]
-  const width = Math.max(Math.round(svg.getBoundingClientRect().width), 320)
+  const measured = Math.round(svg.getBoundingClientRect().width)
+  if (measured === 0) {
+    return
+  }
+  const width = Math.max(measured, 320)
   const height = TOP_MARGIN * 2 + Math.max(slots.length, 1) * ROW_HEIGHT + AXIS_HEIGHT
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
   svg.setAttribute('height', `${height}`)
@@ -307,4 +314,70 @@ function shortGroupId(groupId: bigint): string {
 
 function escapeXml(text: string): string {
   return text.replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[char] ?? char)
+}
+
+export type DeliveryRow = { label: string; trackAlias?: bigint }
+
+/// One cell per object of the newest `groupsToShow` groups of each track:
+/// filled when it has arrived, hollow when a later object of the same group
+/// has arrived but this one has not (or, for a finished group, never did).
+export function renderDeliveryGrid(
+  svg: SVGSVGElement,
+  records: StreamRecord[],
+  rows: DeliveryRow[],
+  groupsToShow: number
+): void {
+  const measured = Math.round(svg.getBoundingClientRect().width)
+  if (measured === 0) {
+    return
+  }
+  const width = Math.max(measured, 320)
+  const height = TOP_MARGIN + rows.length * CELL_ROW_HEIGHT + TOP_MARGIN
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
+  svg.setAttribute('height', `${height}`)
+  const plotLeft = LABEL_WIDTH
+  const plotWidth = width - 8 - plotLeft
+
+  const rowGroups = rows.map((row) =>
+    records
+      .filter((record) => record.kind === 'subscribe' && record.trackAlias === row.trackAlias)
+      .sort((a, b) => Number(a.groupId - b.groupId))
+      .slice(-groupsToShow)
+      .map((record) => ({ record, cells: cellCount(record) }))
+  )
+  const widestRow = Math.max(
+    1,
+    ...rowGroups.map(
+      (groups) => groups.reduce((sum, group) => sum + group.cells, 0) + Math.max(0, groups.length - 1) * 2
+    )
+  )
+  const cell = Math.max(2, Math.min(10, Math.floor(plotWidth / widestRow)))
+
+  const parts: string[] = []
+  rows.forEach((row, index) => {
+    const y = TOP_MARGIN + index * CELL_ROW_HEIGHT
+    parts.push(
+      `<text x="${LABEL_WIDTH - 8}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(row.label)}</text>`
+    )
+    let x = plotLeft
+    for (const { record, cells } of rowGroups[index]) {
+      for (let objectId = 0; objectId < cells; objectId++) {
+        const received = record.receivedAtByObjectId.has(BigInt(objectId))
+        parts.push(
+          `<rect x="${x}" y="${y + 3}" width="${cell - CELL_GAP}" height="${CELL_ROW_HEIGHT - 6}" class="delivery-cell ${received ? 'delivery-cell-received' : 'delivery-cell-missing'}"><title>${escapeXml(`${record.track} group ${record.groupId} object ${objectId}: ${received ? 'received' : 'missing'}`)}</title></rect>`
+        )
+        x += cell
+      }
+      x += GROUP_GAP
+    }
+  })
+  svg.innerHTML = parts.join('')
+}
+
+function cellCount(record: StreamRecord): number {
+  let highest = -1
+  for (const objectId of record.receivedAtByObjectId.keys()) {
+    highest = Math.max(highest, Number(objectId))
+  }
+  return highest + 1
 }

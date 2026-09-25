@@ -499,6 +499,16 @@ make chrome</code></pre>
             <p class="hint">
               track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
             </p>
+            <svg
+              id="delivery-grid"
+              class="stream-monitor"
+              role="img"
+              aria-label="Received objects per group"
+              data-testid="live-viewer-delivery-grid"
+            ></svg>
+            <p class="hint">
+              group ごとの object を 1 マスずつ並べます。黒は受信済み、白は後続が届いたのにまだ届いていない object です
+            </p>
           </section>
 
           <section class="card stack full">
