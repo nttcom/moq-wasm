@@ -17,6 +17,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CLEAR_SCREEN: &str = "\x1b[2J";
 const CURSOR_HOME: &str = "\x1b[H";
 const CLEAR_BELOW_CURSOR: &str = "\x1b[J";
+const CLEAR_TO_LINE_END: &str = "\x1b[K";
 
 /// Relay connections whose QUIC path statistics the panel shows; each
 /// connection stays registered for as long as its `Registration` lives.
@@ -122,11 +123,12 @@ const HEADER: &str = "connection                                  rtt     cwnd  
 
 fn render_table(rows: &[StatsRow]) -> String {
     let mut out = format!(
-        "MoQT transport statistics ({} connections)\n{HEADER}\n",
+        "MoQT transport statistics ({} connections){CLEAR_TO_LINE_END}\n{HEADER}{CLEAR_TO_LINE_END}\n",
         rows.len()
     );
     for row in rows {
         out.push_str(&render_row(row));
+        out.push_str(CLEAR_TO_LINE_END);
         out.push('\n');
     }
     out
