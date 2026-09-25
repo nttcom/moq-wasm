@@ -20,6 +20,7 @@ import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { BufferingSpinner } from './bufferingSpinner'
 import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
+import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
@@ -82,8 +83,13 @@ const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoD
 const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
   type: 'module'
 })
-const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-const videoWriter = videoGenerator.writable.getWriter()
+/// `?livePicture=canvas` forces the canvas sink, to see the Safari path in Chrome.
+const livePictureSink = createLivePictureSink(
+  element<HTMLVideoElement>('video'),
+  element<HTMLCanvasElement>('live-canvas'),
+  (picture) => notePresentedFrame(picture),
+  (new URLSearchParams(location.search).get('livePicture') as LivePictureKind | null) ?? undefined
+)
 const livePlayout = new LivePlayout(
   showLiveFrame,
   () => appendLog('warn', 'playout clock re-anchored: scheduled video and audio were dropped'),
@@ -105,6 +111,7 @@ let mse: MseSink | undefined
 let reviewMse: MseSink | undefined
 let reviewMseOpened = false
 let visiblePicture: HTMLElement = element('video')
+showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
@@ -244,7 +251,7 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   watching = false
-  detachLivePicture()
+  livePictureSink.detach()
   timeline.reset()
   streamMonitor.reset()
   decodedFrameIds.clear()
@@ -255,7 +262,7 @@ async function stopStream(): Promise<void> {
   closeMse()
   livePlayout.reset()
   bufferingSpinner.hide()
-  showPicture(element<HTMLVideoElement>('video'))
+  showPicture(livePictureSink.element)
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
@@ -397,7 +404,7 @@ async function switchPackaging(): Promise<void> {
   } else {
     const previous = mse
     mse = undefined
-    replacePicture(element<HTMLVideoElement>('video'), () => packaging === 'loc' && !reviewing, previous)
+    replacePicture(livePictureSink.element, () => packaging === 'loc' && !reviewing, previous)
   }
   appendLog('info', `packaging switched to ${packaging}`)
 }
@@ -471,20 +478,25 @@ function showPicture(next: HTMLElement): void {
 
 /// The sink being replaced is closed as soon as it is off screen; while it is
 /// on screen it plays on until the replacement has presented a frame.
-function replacePicture(next: HTMLVideoElement, stillWanted: () => boolean, previous: MseSink | undefined): void {
+function replacePicture(next: HTMLElement, stillWanted: () => boolean, previous: MseSink | undefined): void {
   if (previous && previous.element !== visiblePicture) {
     previous.close()
   }
-  next.requestVideoFrameCallback(() => {
+  const swap = () => {
     previous?.close()
     if (stillWanted()) {
       showPicture(next)
     }
-  })
+  }
+  if (next instanceof HTMLVideoElement) {
+    next.requestVideoFrameCallback(swap)
+  } else {
+    requestAnimationFrame(swap)
+  }
 }
 
 function livePicture(): HTMLElement {
-  return mse?.element ?? element<HTMLVideoElement>('video')
+  return mse?.element ?? livePictureSink.element
 }
 
 function freeMseElement(): HTMLVideoElement {
@@ -670,15 +682,7 @@ function applyDecoderConfig(): void {
 function showLiveFrame(frame: VideoFrame): void {
   updateVideoStats(frame)
   markPlayhead(frame)
-  attachLivePicture()
-  if (videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
-    frame.close()
-    return
-  }
-  void videoWriter
-    .write(frame)
-    .catch(() => undefined)
-    .finally(() => frame.close())
+  livePictureSink.present(frame)
 }
 
 function showReviewFrame(frame: VideoFrame): void {
@@ -698,21 +702,6 @@ function showReviewFrame(frame: VideoFrame): void {
     advanceReviewPlayhead(frame.timestamp)
   }
   frame.close()
-}
-
-/// The live picture is a MediaStream fed by WebCodecs. A video element whose
-/// stream has not produced a frame yet never reaches loadedmetadata, and
-/// Chrome keeps the tab in its loading state for as long as that lasts, so
-/// the stream is attached with the first frame and detached on stop.
-function attachLivePicture(): void {
-  const video = element<HTMLVideoElement>('video')
-  if (video.srcObject === null) {
-    video.srcObject = new MediaStream([videoGenerator])
-  }
-}
-
-function detachLivePicture(): void {
-  element<HTMLVideoElement>('video').srcObject = null
 }
 
 function startRendering(): void {
@@ -1295,7 +1284,10 @@ function playingMedia(): HTMLMediaElement[] {
   if (reviewing) {
     return reviewMse ? [reviewMse.element] : []
   }
-  return mse ? [mse.element] : [element<HTMLVideoElement>('video')]
+  if (mse) {
+    return [mse.element]
+  }
+  return livePictureSink.element instanceof HTMLMediaElement ? [livePictureSink.element] : []
 }
 
 /// Review carries its own sound, so the live audio is silenced rather than
