@@ -30,6 +30,10 @@ export class StreamMonitor {
     this.keptGroups = Math.max(1, Math.floor(count))
   }
 
+  slotsPerTrack(): number {
+    return this.keptGroups
+  }
+
   label(trackAlias: bigint, track: string): void {
     this.labels.set(trackAlias, track)
   }
@@ -82,20 +86,49 @@ export class StreamMonitor {
   }
 }
 
+export function renderIdleStreamMonitor(svg: SVGSVGElement): void {
+  svg.setAttribute('height', `${TOP_MARGIN * 2 + ROW_HEIGHT}`)
+  svg.removeAttribute('viewBox')
+  svg.innerHTML = ''
+}
+
 export function summarizeStreams(records: StreamRecord[]): string {
   const open = records.filter((record) => record.finishedAt === undefined).length
   return `${open} open · ${records.length - open} finished`
 }
 
+type Slot = { track: string; record?: StreamRecord }
+
+/// Every track owns a fixed block of rows and a group always sits in the row
+/// `groupId mod slots`, so the group that replaces an evicted one lands in the
+/// same row and nothing below it moves.
+export function layoutSlots(records: StreamRecord[], slotsPerTrack: number): Slot[] {
+  const tracks = [...new Set(records.map((record) => record.track))].sort()
+  const slots: Slot[] = []
+  for (const track of tracks) {
+    const ofTrack = records.filter((record) => record.track === track)
+    const count = Math.min(slotsPerTrack, ofTrack.length)
+    for (let slot = 0; slot < count; slot++) {
+      const record = ofTrack
+        .filter((candidate) => Number(candidate.groupId % BigInt(count)) === slot)
+        .sort((a, b) => b.openedAt - a.openedAt)[0]
+      slots.push({ track, record })
+    }
+  }
+  return slots
+}
+
 export function renderStreamMonitor(
   svg: SVGSVGElement,
   records: StreamRecord[],
+  slotsPerTrack: number,
   windowSeconds = DEFAULT_WINDOW_SECONDS,
   now = Date.now()
 ): void {
-  const tracks = [...new Set(records.map((record) => record.track))]
+  const slots = layoutSlots(records, slotsPerTrack)
+  const tracks = [...new Set(slots.map((slot) => slot.track))]
   const width = Math.max(Math.round(svg.getBoundingClientRect().width), 320)
-  const height = TOP_MARGIN * 2 + Math.max(records.length, 1) * ROW_HEIGHT + AXIS_HEIGHT
+  const height = TOP_MARGIN * 2 + Math.max(slots.length, 1) * ROW_HEIGHT + AXIS_HEIGHT
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
   svg.setAttribute('height', `${height}`)
   const plotLeft = LABEL_WIDTH
@@ -106,15 +139,24 @@ export function renderStreamMonitor(
   const x = (at: number) => plotLeft + Math.max(0, plotWidth - ((now - at) * plotWidth) / windowMs)
 
   const parts: string[] = []
-  const axisY = TOP_MARGIN + Math.max(records.length, 1) * ROW_HEIGHT
+  const axisY = TOP_MARGIN + Math.max(slots.length, 1) * ROW_HEIGHT
   for (const tick of timeTicks(oldest, now)) {
     const tx = x(tick)
     parts.push(`<line x1="${tx}" x2="${tx}" y1="${TOP_MARGIN}" y2="${axisY}" class="stream-tick" />`)
     parts.push(`<text x="${tx}" y="${axisY + 13}" text-anchor="middle" class="stream-axis">${clockLabel(tick)}</text>`)
   }
-  records.forEach((record, row) => {
+  slots.forEach(({ track, record }, row) => {
     const y = TOP_MARGIN + row * ROW_HEIGHT
-    const color = PALETTE[tracks.indexOf(record.track) % PALETTE.length]
+    parts.push(
+      `<line x1="${plotLeft}" x2="${plotRight}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
+    )
+    if (!record) {
+      parts.push(
+        `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(track)}</text>`
+      )
+      return
+    }
+    const color = PALETTE[tracks.indexOf(track) % PALETTE.length]
     const open = record.finishedAt === undefined
     const start = x(record.openedAt)
     const end = open ? plotRight : x(record.finishedAt as number)
@@ -122,9 +164,6 @@ export function renderStreamMonitor(
     const title = `${record.track} group ${record.groupId}: opened ${clockLabel(record.openedAt)}, ${record.objects} objects, ${(record.bytes / 1024).toFixed(1)} KB, ${open ? 'open' : `finished ${clockLabel(record.finishedAt as number)}`}`
     parts.push(
       `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label"><title>${escapeXml(title)}</title>${escapeXml(label)}</text>`
-    )
-    parts.push(
-      `<line x1="${plotLeft}" x2="${plotRight}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
     )
     parts.push(
       `<rect x="${start}" y="${y + 3}" width="${Math.max(end - start, 2)}" height="${ROW_HEIGHT - 8}" rx="3" fill="${color}" class="stream-bar${open ? ' stream-bar-open' : ''}"><title>${escapeXml(title)}</title></rect>`

@@ -23,7 +23,13 @@ import { LivePlayout } from './livePlayout'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
-import { DEFAULT_WINDOW_SECONDS, StreamMonitor, renderStreamMonitor, summarizeStreams } from './streamMonitor'
+import {
+  DEFAULT_WINDOW_SECONDS,
+  StreamMonitor,
+  renderIdleStreamMonitor,
+  renderStreamMonitor,
+  summarizeStreams
+} from './streamMonitor'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
@@ -97,6 +103,7 @@ let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
+let watching = false
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -189,13 +196,14 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
 })
-setInterval(renderStreams, 250)
+setInterval(renderStreams, 100)
 
 async function watchStream(): Promise<void> {
   try {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
     await moqtClient.connect(url)
+    watching = true
     setStatusText('connection-status', `Connected: ${url}`)
     appendLog('info', `connected to ${url}`)
     await subscribeCatalog()
@@ -206,6 +214,7 @@ async function watchStream(): Promise<void> {
 }
 
 async function stopStream(): Promise<void> {
+  watching = false
   timeline.reset()
   streamMonitor.reset()
   mediaTimeline.reset()
@@ -708,9 +717,20 @@ function monitored(
 }
 
 function renderStreams(): void {
+  if (!watching) {
+    renderIdleStreamMonitor(element<SVGSVGElement>('stream-monitor'))
+    element<HTMLSpanElement>('stream-stats').textContent = '-'
+    return
+  }
   const now = Date.now()
   const records = streamMonitor.snapshot()
-  renderStreamMonitor(element<SVGSVGElement>('stream-monitor'), records, streamWindowSeconds, now)
+  renderStreamMonitor(
+    element<SVGSVGElement>('stream-monitor'),
+    records,
+    streamMonitor.slotsPerTrack(),
+    streamWindowSeconds,
+    now
+  )
   element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records)
 }
 
