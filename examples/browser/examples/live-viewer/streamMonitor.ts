@@ -4,7 +4,8 @@ const AXIS_HEIGHT = 18
 const CELL_ROW_HEIGHT = 16
 const GRID_LABEL_WIDTH = 48
 const CELL_GAP = 1
-const CELL_SIZE = 7
+const GOPS_ACROSS = 3
+const DEFAULT_GROUP_LENGTH = 60
 const GROUP_GAP = 9
 const TICK_STEPS_MS = [500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000]
 const ROW_HEIGHT = 22
@@ -320,15 +321,10 @@ function escapeXml(text: string): string {
 
 export type DeliveryRow = { label: string; trackAlias?: bigint }
 
-/// One fixed-size cell per object of the newest `groupsToShow` groups of
-/// each track: filled when it has arrived, hollow when it has not. An open
-/// group is drawn as long as the track's last finished group, so the hollow
-/// tail shows how much of the group is still to come; cells past the right
-/// edge are not drawn.
-/// `from` puts the object being played at the left edge: earlier groups and,
-/// on the played track, earlier objects of that group are left out. Other
-/// tracks start at the same group, because the publisher aligns group
-/// boundaries across tracks.
+/// Cells from the playing object rightwards, sized so that `GOPS_ACROSS`
+/// groups of the track's usual length fill the width: filled once the object
+/// has arrived, hollow until then, so the hollow cells show where the coming
+/// frames will land.
 export function renderDeliveryGrid(
   svg: SVGSVGElement,
   records: StreamRecord[],
@@ -345,28 +341,7 @@ export function renderDeliveryGrid(
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
   svg.setAttribute('height', `${height}`)
   const plotLeft = GRID_LABEL_WIDTH
-  const plotWidth = width - 4 - plotLeft
-
-  const rowGroups = rows.map((row) =>
-    records
-      .filter(
-        (record) =>
-          record.kind === 'subscribe' &&
-          record.trackAlias === row.trackAlias &&
-          (from === undefined || record.groupId >= from.groupId)
-      )
-      .sort((a, b) => Number(a.groupId - b.groupId))
-      .slice(-groupsToShow)
-      .map((record, _index, ofTrack) => ({
-        record,
-        firstObjectId:
-          from !== undefined && record.trackAlias === from.trackAlias && record.groupId === from.groupId
-            ? Number(from.objectId)
-            : 0,
-        cells: expectedCellCount(record, ofTrack)
-      }))
-  )
-  const plotRight = plotLeft + plotWidth
+  const plotRight = width - 4
 
   const parts: string[] = []
   rows.forEach((row, index) => {
@@ -374,23 +349,52 @@ export function renderDeliveryGrid(
     parts.push(
       `<text x="${GRID_LABEL_WIDTH - 6}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(row.label)}</text>`
     )
+    const ofTrack = records
+      .filter((record) => record.kind === 'subscribe' && record.trackAlias === row.trackAlias)
+      .sort((a, b) => Number(a.groupId - b.groupId))
+    const groupLength = expectedGroupLength(ofTrack) || DEFAULT_GROUP_LENGTH
+    const cellSize = Math.max(
+      2,
+      Math.floor((plotRight - plotLeft - (GOPS_ACROSS - 1) * GROUP_GAP) / (GOPS_ACROSS * groupLength))
+    )
+    const shown = ofTrack.filter((record) => from === undefined || record.groupId >= from.groupId).slice(-groupsToShow)
     let x = plotLeft
-    rowGroups[index].forEach(({ record, firstObjectId, cells }, groupIndex) => {
+    let groupIndex = 0
+    const cellsOf = (record?: StreamRecord) =>
+      record === undefined
+        ? groupLength
+        : record.finishedAt !== undefined
+          ? receivedCellCount(record)
+          : Math.max(receivedCellCount(record), groupLength)
+    while (x + cellSize <= plotRight) {
+      const record = shown[groupIndex]
       if (groupIndex > 0) {
         const dividerX = x - GROUP_GAP / 2
         parts.push(
           `<line x1="${dividerX}" x2="${dividerX}" y1="${y + 1}" y2="${y + CELL_ROW_HEIGHT - 1}" class="delivery-divider" />`
         )
       }
-      for (let objectId = firstObjectId; objectId < cells && x + CELL_SIZE <= plotRight; objectId++) {
-        const received = record.receivedAtByObjectId.has(BigInt(objectId))
+      const firstObjectId =
+        record !== undefined &&
+        from !== undefined &&
+        record.trackAlias === from.trackAlias &&
+        record.groupId === from.groupId
+          ? Number(from.objectId)
+          : 0
+      const cells = cellsOf(record)
+      for (let objectId = firstObjectId; objectId < cells && x + cellSize <= plotRight; objectId++) {
+        const received = record?.receivedAtByObjectId.has(BigInt(objectId)) ?? false
+        const title = record
+          ? `${record.track} group ${record.groupId} object ${objectId}: ${received ? 'received' : 'missing'}`
+          : `${row.label}: not yet received`
         parts.push(
-          `<rect x="${x}" y="${y + 3}" width="${CELL_SIZE - CELL_GAP}" height="${CELL_ROW_HEIGHT - 6}" class="delivery-cell ${received ? 'delivery-cell-received' : 'delivery-cell-missing'}"><title>${escapeXml(`${record.track} group ${record.groupId} object ${objectId}: ${received ? 'received' : 'missing'}`)}</title></rect>`
+          `<rect x="${x}" y="${y + 3}" width="${Math.max(1, cellSize - CELL_GAP)}" height="${CELL_ROW_HEIGHT - 6}" class="delivery-cell ${received ? 'delivery-cell-received' : 'delivery-cell-missing'}"><title>${escapeXml(title)}</title></rect>`
         )
-        x += CELL_SIZE
+        x += cellSize
       }
       x += GROUP_GAP
-    })
+      groupIndex += 1
+    }
   })
   svg.innerHTML = parts.join('')
 }
@@ -403,13 +407,7 @@ function receivedCellCount(record: StreamRecord): number {
   return highest + 1
 }
 
-function expectedCellCount(record: StreamRecord, ofTrack: StreamRecord[]): number {
-  const received = receivedCellCount(record)
-  if (record.finishedAt !== undefined) {
-    return received
-  }
-  const lastFinished = ofTrack
-    .filter((candidate) => candidate.finishedAt !== undefined && candidate.groupId < record.groupId)
-    .sort((a, b) => Number(b.groupId - a.groupId))[0]
-  return Math.max(received, lastFinished ? receivedCellCount(lastFinished) : 0)
+function expectedGroupLength(ofTrack: StreamRecord[]): number {
+  const lastFinished = ofTrack.filter((record) => record.finishedAt !== undefined).at(-1)
+  return lastFinished ? receivedCellCount(lastFinished) : 0
 }
