@@ -178,13 +178,6 @@ mod tests {
         datagram_object, open_group, stream_key, stream_object, stream_object_in_subgroup,
     };
 
-    fn location(group_id: u64, object_id: u64) -> moqt::Location {
-        moqt::Location {
-            group_id,
-            object_id,
-        }
-    }
-
     #[tokio::test]
     async fn next_subgroup_object_or_wait_returns_exact_match() {
         // Arrange: objects at ids 0, 3, 5

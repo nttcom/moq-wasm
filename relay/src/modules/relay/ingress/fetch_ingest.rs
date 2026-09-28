@@ -234,12 +234,22 @@ mod tests {
     use super::*;
     use crate::modules::{
         core::mocks::session_repository_with_upstream_session,
-        relay::cache::track_cache::FetchRangeResolution, session_event::EventKind,
+        relay::{
+            cache::track_cache::FetchRangeResolution,
+            tests::harness::fixtures::{
+                cached_object::{status_object, stream_object, stream_object_with_payload},
+                location,
+            },
+        },
+        session_event::EventKind,
     };
     use bytes::Bytes;
-    use moqt::{ExtensionHeaders, FetchObject, FetchObjectField, ObjectStatus};
+    use moqt::ObjectStatus;
     use std::time::Duration;
-    use tokio::sync::mpsc;
+
+    fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
+        FetchIngest::append_fetch_object(cache, object.to_fetch_object_field())
+    }
 
     #[tokio::test]
     async fn malformed_track_cancels_upstream_fetch_while_awaiting_data() {
@@ -251,37 +261,19 @@ mod tests {
             session_repository_with_upstream_session(UPSTREAM_SESSION).await;
 
         let cache = Arc::new(TrackCache::new());
-        FetchIngest::append_fetch_object(
+        fill(
             &cache,
-            FetchObjectField::new(
-                0,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::from_static(b"a")),
-            ),
+            stream_object_with_payload(0, 0, Bytes::from_static(b"a")),
         )
         .unwrap();
-        let _ = FetchIngest::append_fetch_object(
+        let _ = fill(
             &cache,
-            FetchObjectField::new(
-                0,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::from_static(b"b")),
-            ),
+            stream_object_with_payload(0, 0, Bytes::from_static(b"b")),
         );
         assert!(cache.is_malformed());
 
         let (egress_sender, _egress_receiver) = mpsc::channel(1);
         let (session_event_sender, mut session_event_receiver) = mpsc::unbounded_channel();
-        let location = |group_id, object_id| moqt::Location {
-            group_id,
-            object_id,
-        };
         let start = FetchIngestStart {
             track_key: TrackKey::new("ns", "track"),
             upstream_publisher_session_id: UPSTREAM_SESSION,
@@ -347,42 +339,11 @@ mod tests {
         // Arrange: a FETCH response can contain EndOfGroup status, but that
         // must not close the shared live GroupCache.
         let cache = Arc::new(TrackCache::new());
-        FetchIngest::append_fetch_object(
-            &cache,
-            FetchObjectField::new(
-                0,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Status(ObjectStatus::EndOfGroup),
-            ),
-        )
-        .unwrap();
-        FetchIngest::append_fetch_object(
-            &cache,
-            FetchObjectField::new(
-                1,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::new()),
-            ),
-        )
-        .unwrap();
+        fill(&cache, status_object(0, 0, ObjectStatus::EndOfGroup)).unwrap();
+        fill(&cache, status_object(1, 0, ObjectStatus::Normal)).unwrap();
 
         // Act
-        let resolution = cache.resolve_fetch_range(
-            moqt::Location {
-                group_id: 0,
-                object_id: 0,
-            },
-            moqt::Location {
-                group_id: 1,
-                object_id: 1,
-            },
-        );
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(1, 1));
 
         // Assert: only a completed FETCH known range may cover this historical gap.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
@@ -392,30 +353,16 @@ mod tests {
     async fn conflicting_fetch_object_fails_the_fill_and_latches_the_track() {
         // Arrange: a fill stored the object once
         let cache = Arc::new(TrackCache::new());
-        FetchIngest::append_fetch_object(
+        fill(
             &cache,
-            FetchObjectField::new(
-                0,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::from_static(b"a")),
-            ),
+            stream_object_with_payload(0, 0, Bytes::from_static(b"a")),
         )
         .unwrap();
 
         // Act: a second fill delivers the same object with another payload
-        let result = FetchIngest::append_fetch_object(
+        let result = fill(
             &cache,
-            FetchObjectField::new(
-                0,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::from_static(b"b")),
-            ),
+            stream_object_with_payload(0, 0, Bytes::from_static(b"b")),
         );
 
         // Assert: the fill fails and the track is quarantined
@@ -427,30 +374,10 @@ mod tests {
     async fn partial_fetch_ingest_does_not_register_coverage() {
         // Arrange: a FETCH fill wrote an object but has not reached Fetch::End.
         let cache = Arc::new(TrackCache::new());
-        FetchIngest::append_fetch_object(
-            &cache,
-            FetchObjectField::new(
-                0,
-                0,
-                0,
-                0,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::new()),
-            ),
-        )
-        .unwrap();
+        fill(&cache, stream_object(0, 0)).unwrap();
 
         // Act
-        let resolution = cache.resolve_fetch_range(
-            moqt::Location {
-                group_id: 0,
-                object_id: 0,
-            },
-            moqt::Location {
-                group_id: 0,
-                object_id: 1,
-            },
-        );
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 1));
 
         // Assert: only Fetch::End may register the filled range as known.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);

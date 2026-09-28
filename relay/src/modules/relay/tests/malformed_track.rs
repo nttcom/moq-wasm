@@ -1,27 +1,12 @@
-use bytes::Bytes;
-
 use moqt::wire::publish_done_status_code;
 
 use crate::modules::{
-    core::data_object::DataObject,
     relay::tests::harness::{
-        PUBLISHER_SESSION_ID, RelayHarness, ordered_payload, receive_objects_until_close,
+        PUBLISHER_SESSION_ID, RelayHarness, fixtures::location, ordered_payload, payloads_of,
+        receive_objects_until_close,
     },
     session_event::EventKind,
 };
-
-fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
-    objects
-        .iter()
-        .filter_map(|object| match object {
-            DataObject::SubgroupObject(field) => match &field.subgroup_object {
-                moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn duplicate_object_with_different_payload_terminates_subscription() {
@@ -29,15 +14,10 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
 
-    // Act: a second stream re-delivers object 0 with a different payload
-    let first_stream = harness.open_upstream_stream();
-    first_stream.header(0);
-    first_stream.object(0);
-    let second_stream = harness.open_upstream_stream();
-    second_stream.header(0);
-    second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
+    // Act
+    let _streams = harness.ingest_conflicting_duplicate();
 
-    // Assert: the subscription ends with PUBLISH_DONE(MALFORMED_TRACK)
+    // Assert
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(
         publish_done.status_code,
@@ -60,12 +40,7 @@ async fn identical_duplicate_from_second_stream_is_not_malformed() {
     second_stream.header(0);
     second_stream.object(0);
     first_stream.object(1);
-    harness
-        .wait_largest_location(moqt::Location {
-            group_id: 0,
-            object_id: 1,
-        })
-        .await;
+    harness.wait_largest_location(location(0, 1)).await;
     first_stream.fin();
     second_stream.fin();
 
@@ -82,18 +57,13 @@ async fn identical_duplicate_from_second_stream_is_not_malformed() {
 async fn subscription_started_after_detection_is_terminated_immediately() {
     // Arrange: latch the track before any downstream subscriber attaches
     let harness = RelayHarness::new();
-
-    let first_stream = harness.open_upstream_stream();
-    first_stream.header(0);
-    first_stream.object(0);
-    let second_stream = harness.open_upstream_stream();
-    second_stream.header(0);
-    second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
+    let _streams = harness.ingest_conflicting_duplicate();
     harness.wait_track_malformed().await;
 
     // Act
     let mut egress = harness.start_egress(None).await;
     let publish_done = egress.expect_publish_done().await;
+
     // Assert: the runner terminates right away, with Stream Count 0
     assert_eq!(
         publish_done.status_code,
@@ -107,16 +77,11 @@ async fn detection_reports_the_publisher_session_and_track() {
     // Arrange
     let mut harness = RelayHarness::new();
 
-    // Act: a second stream re-delivers object 0 with a different payload.
-    let first_stream = harness.open_upstream_stream();
-    first_stream.header(0);
-    first_stream.object(0);
-    let second_stream = harness.open_upstream_stream();
-    second_stream.header(0);
-    second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
+    // Act
+    let _streams = harness.ingest_conflicting_duplicate();
 
-    // Assert: the appender reports the detection for upstream teardown.
-    let event = harness.expect_malformed_track_detected().await;
+    // Assert
+    let event = harness.expect_session_event().await;
     assert_eq!(event.session_id, PUBLISHER_SESSION_ID);
     assert!(matches!(
         event.kind,
