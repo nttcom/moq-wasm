@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
-    wire::{AuthorizationToken, ClientSetup, SetupParameter},
+    wire::{AuthorizationToken, ClientSetup, RequestError, SetupParameter},
 };
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
@@ -18,7 +18,7 @@ use crate::{
         auth::{
             session_authenticator::SessionAuthenticator,
             token_verifier::{TokenVerifier, VerifyError},
-            verified_token::VerifiedToken,
+            verified_token::{VerifiedToken, parse_namespace_path},
         },
         route_registry::NoopRelayRouteRegistry,
         session_handler::SessionHandler,
@@ -44,6 +44,30 @@ pub(crate) fn client_setup(authorization_token: Vec<AuthorizationToken>) -> Clie
             moq_implementation: None,
         },
     )
+}
+
+pub(crate) fn app_token(publish: Option<&str>, subscribe: Option<&str>) -> VerifiedToken {
+    VerifiedToken {
+        app_id: "APP".to_string(),
+        publish: publish.map(parse_namespace_path),
+        subscribe: subscribe.map(parse_namespace_path),
+        is_relay: false,
+        expires_at: None,
+    }
+}
+
+pub(crate) fn relay_token() -> VerifiedToken {
+    VerifiedToken {
+        is_relay: true,
+        ..app_token(Some(""), Some(""))
+    }
+}
+
+pub(crate) fn request_error_code(error: anyhow::Error) -> u64 {
+    error
+        .downcast_ref::<RequestError>()
+        .unwrap_or_else(|| panic!("expected a request error, got {error:?}"))
+        .error_code
 }
 
 pub(crate) enum StubOutcome {
