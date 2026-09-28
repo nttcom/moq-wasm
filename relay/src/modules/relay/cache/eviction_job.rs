@@ -2,12 +2,18 @@ use std::sync::Arc;
 
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
-use crate::modules::relay::cache::{duration::duration_from_env, store::TrackCacheStore};
+use crate::modules::relay::{
+    cache::{duration::duration_from_env, store::TrackCacheStore},
+    notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
+};
 
 const DEFAULT_TTL_SECS: u64 = 1_800;
 const DEFAULT_INTERVAL_SECS: u64 = 5;
 
-pub(crate) fn spawn_cache_eviction_job(cache_store: Arc<TrackCacheStore>) -> JoinHandle<()> {
+pub(crate) fn spawn_cache_eviction_job(
+    cache_store: Arc<TrackCacheStore>,
+    subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
+) -> JoinHandle<()> {
     let ttl = duration_from_env("RELAY_CACHE_TTL_SECS", DEFAULT_TTL_SECS);
     let interval = duration_from_env("RELAY_CACHE_EVICT_INTERVAL_SECS", DEFAULT_INTERVAL_SECS);
     tokio::spawn(async move {
@@ -16,6 +22,7 @@ pub(crate) fn spawn_cache_eviction_job(cache_store: Arc<TrackCacheStore>) -> Joi
         loop {
             ticker.tick().await;
             cache_store.evict(ttl);
+            subgroup_opened_notifier_map.remove_unused();
         }
     })
 }

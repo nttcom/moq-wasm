@@ -249,7 +249,11 @@ per-request authorization gate under "Event pipeline".
 - `TrackCacheStore` — `DashMap<TrackKey, Arc<TrackCache>>`.
 - `SubgroupOpenedNotifierMap` — `DashMap<TrackKey, broadcast::Sender<SubgroupOpened>>`
   (capacity 256); ingress announces `SubgroupOpened(SubgroupKey)` when a live
-  subgroup stream (or datagram group) starts, egress schedulers listen.
+  subgroup stream (or datagram group) starts, egress schedulers listen. Each
+  eviction tick drops the channels whose only sender is the map's own and
+  that have no receiver, checked under the shard lock that `get_or_create`
+  also takes, so a channel is only ever recreated when no reader or writer
+  holds the old one.
 
 ### Ingress (`modules/relay/ingress`)
 `IngressCoordinator` consumes `IngressCommand::{Start, StopTrack}`:
@@ -330,7 +334,8 @@ per-request authorization gate under "Event pipeline".
   (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (30 min) and release
   knowledge exactly for the removed locations; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
-  ingress/egress holds it — avoiding races with new joiners.
+  ingress/egress holds it — avoiding races with new joiners. The same job
+  then drops the unused `SubgroupOpenedNotifierMap` channels.
 
 ### Egress (`modules/relay/egress`)
 `EgressCoordinator` consumes `StartReader` / `StopReader` / `StartFetch` and
