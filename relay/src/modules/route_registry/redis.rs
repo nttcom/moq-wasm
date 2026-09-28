@@ -3,10 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::SystemTime};
 use async_trait::async_trait;
 use redis::AsyncCommands;
 
-use super::{
-    NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError, RelayInfo,
-    RelayRouteRegistry,
-};
+use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 
 #[derive(Clone)]
 pub(crate) struct RedisRelayRouteRegistry {
@@ -18,6 +15,7 @@ impl RedisRelayRouteRegistry {
     const RELAY_TTL_SECONDS: u64 = 15;
     const ROUTE_TTL_SECONDS: u64 = 15;
     const ACTIVE_STATUS: &str = "active";
+    const PUBLISHER_NAMESPACE_KEY_PREFIX: &str = "route:publisher:namespace:";
 
     // --- lifecycle ---
 
@@ -137,6 +135,36 @@ impl RedisRelayRouteRegistry {
         Ok(routes)
     }
 
+    async fn register_route(
+        &self,
+        script: &redis::Script,
+        key: &str,
+    ) -> Result<(), RegisterRouteError> {
+        let mut connection = self.connection.clone();
+        let registered: i64 = script
+            .key(key)
+            .key(Self::relay_routes_key(&self.relay.relay_id))
+            .arg(&self.relay.relay_id)
+            .arg(Self::ROUTE_TTL_SECONDS)
+            .arg(Self::RELAY_TTL_SECONDS)
+            .invoke_async(&mut connection)
+            .await
+            .map_err(|e| RegisterRouteError::Other(e.into()))?;
+        if registered == 0 {
+            return Err(RegisterRouteError::Conflict);
+        }
+        Ok(())
+    }
+
+    async fn unregister_route(&self, key: &str) -> anyhow::Result<()> {
+        let mut connection = self.connection.clone();
+        let _: () = connection.hdel(key, &self.relay.relay_id).await?;
+        let _: () = connection
+            .srem(Self::relay_routes_key(&self.relay.relay_id), key)
+            .await?;
+        Ok(())
+    }
+
     // --- key builders ---
 
     fn relay_key(relay_id: &str) -> String {
@@ -148,11 +176,7 @@ impl RedisRelayRouteRegistry {
     }
 
     fn publisher_namespace_key(track_namespace: &str) -> String {
-        format!("route:publisher:namespace:{track_namespace}")
-    }
-
-    fn publisher_namespace_prefix() -> &'static str {
-        "route:publisher:namespace:"
+        format!("{}{track_namespace}", Self::PUBLISHER_NAMESPACE_KEY_PREFIX)
     }
 
     fn subscriber_namespace_key(track_namespace_prefix: &str) -> String {
@@ -174,47 +198,22 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     async fn register_namespace_publisher(
         &self,
         track_namespace: &str,
-    ) -> Result<(), RegisterNamespacePublisherError> {
+    ) -> Result<(), RegisterRouteError> {
         let script = redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"));
-        let mut connection = self.connection.clone();
-        let key = Self::publisher_namespace_key(track_namespace);
-        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
-        let result: i64 = script
-            .key(&key)
-            .key(&relay_routes_key)
-            .arg(&self.relay.relay_id)
-            .arg(Self::ROUTE_TTL_SECONDS)
-            .arg(Self::RELAY_TTL_SECONDS)
-            .invoke_async(&mut connection)
+        self.register_route(&script, &Self::publisher_namespace_key(track_namespace))
             .await
-            .map_err(|e| RegisterNamespacePublisherError::Other(e.into()))?;
-        if result == 0 {
-            return Err(RegisterNamespacePublisherError::Conflict);
-        }
-        Ok(())
     }
 
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterNamespaceSubscriberError> {
+    ) -> Result<(), RegisterRouteError> {
         let script = redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"));
-        let mut connection = self.connection.clone();
-        let key = Self::subscriber_namespace_key(track_namespace_prefix);
-        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
-        let result: i64 = script
-            .key(&key)
-            .key(&relay_routes_key)
-            .arg(&self.relay.relay_id)
-            .arg(Self::ROUTE_TTL_SECONDS)
-            .arg(Self::RELAY_TTL_SECONDS)
-            .invoke_async(&mut connection)
-            .await
-            .map_err(|e| RegisterNamespaceSubscriberError::Other(e.into()))?;
-        if result == 0 {
-            return Err(RegisterNamespaceSubscriberError::Conflict);
-        }
-        Ok(())
+        self.register_route(
+            &script,
+            &Self::subscriber_namespace_key(track_namespace_prefix),
+        )
+        .await
     }
 
     async fn find_active_namespace_publisher(
@@ -235,7 +234,7 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         let mut connection = self.connection.clone();
         let pattern = format!(
             "{}{}*",
-            Self::publisher_namespace_prefix(),
+            Self::PUBLISHER_NAMESPACE_KEY_PREFIX,
             track_namespace_prefix
         );
         let keys: Vec<String> = connection.keys(pattern).await?;
@@ -243,7 +242,7 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
 
         for key in keys {
             let Some(track_namespace) = key
-                .strip_prefix(Self::publisher_namespace_prefix())
+                .strip_prefix(Self::PUBLISHER_NAMESPACE_KEY_PREFIX)
                 .map(ToString::to_string)
             else {
                 continue;
@@ -258,24 +257,16 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 
     async fn unregister_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
-        let mut connection = self.connection.clone();
-        let key = Self::publisher_namespace_key(track_namespace);
-        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
-        let _: () = connection.hdel(&key, &self.relay.relay_id).await?;
-        let _: () = connection.srem(relay_routes_key, &key).await?;
-        Ok(())
+        self.unregister_route(&Self::publisher_namespace_key(track_namespace))
+            .await
     }
 
     async fn unregister_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
     ) -> anyhow::Result<()> {
-        let mut connection = self.connection.clone();
-        let key = Self::subscriber_namespace_key(track_namespace_prefix);
-        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
-        let _: () = connection.hdel(&key, &self.relay.relay_id).await?;
-        let _: () = connection.srem(relay_routes_key, &key).await?;
-        Ok(())
+        self.unregister_route(&Self::subscriber_namespace_key(track_namespace_prefix))
+            .await
     }
 
     async fn find_namespace_subscribers(

@@ -19,16 +19,8 @@ pub(crate) struct NamespaceRoute {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum RegisterNamespacePublisherError {
-    #[error("namespace already has an active publisher")]
-    Conflict,
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum RegisterNamespaceSubscriberError {
-    #[error("namespace already has an active subscriber")]
+pub(crate) enum RegisterRouteError {
+    #[error("namespace route is already registered")]
     Conflict,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -39,11 +31,11 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
     async fn register_namespace_publisher(
         &self,
         track_namespace: &str,
-    ) -> Result<(), RegisterNamespacePublisherError>;
+    ) -> Result<(), RegisterRouteError>;
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-    ) -> Result<(), RegisterNamespaceSubscriberError>;
+    ) -> Result<(), RegisterRouteError>;
     async fn find_active_namespace_publisher(
         &self,
         track_namespace: &str,

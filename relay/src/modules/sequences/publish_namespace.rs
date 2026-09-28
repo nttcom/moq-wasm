@@ -3,7 +3,7 @@ use crate::modules::{
     core::handler::publish_namespace::PublishNamespaceHandler,
     enums::PublishNamespaceErrorCode,
     inter_relay::InterRelayConnectionManager,
-    route_registry::{RegisterNamespacePublisherError, RelayRouteRegistry},
+    route_registry::{RegisterRouteError, RelayRouteRegistry},
     sequences::{
         CascadingRelayContext,
         tables::table::{LocalPubSubDirectory, PeerKind},
@@ -183,7 +183,7 @@ impl PublishNamespace {
             .await
         {
             Ok(()) => true,
-            Err(RegisterNamespacePublisherError::Conflict) => {
+            Err(RegisterRouteError::Conflict) => {
                 tracing::warn!(track_namespace = %track_namespace, "namespace already has an active publisher");
                 match handler
                     .error(

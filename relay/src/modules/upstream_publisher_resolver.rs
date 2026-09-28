@@ -115,10 +115,7 @@ impl UpstreamPublisherResolver {
 mod tests {
     use super::*;
     use crate::modules::{
-        route_registry::{
-            NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError,
-            RelayInfo,
-        },
+        route_registry::{NamespaceRoute, RegisterRouteError, RelayInfo},
         sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
         session_repository::SessionRepository,
     };
@@ -138,14 +135,14 @@ mod tests {
         async fn register_namespace_publisher(
             &self,
             _track_namespace: &str,
-        ) -> Result<(), RegisterNamespacePublisherError> {
+        ) -> Result<(), RegisterRouteError> {
             unimplemented!("not used in resolver tests")
         }
 
         async fn register_namespace_subscriber(
             &self,
             _track_namespace_prefix: &str,
-        ) -> Result<(), RegisterNamespaceSubscriberError> {
+        ) -> Result<(), RegisterRouteError> {
             unimplemented!("not used in resolver tests")
         }
 
