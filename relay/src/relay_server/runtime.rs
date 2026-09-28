@@ -8,8 +8,10 @@ use crate::modules::{
     event_handler::{EventHandler, WorkerDeps},
     inter_relay::InterRelayConnectionManager,
     relay::{
-        cache::eviction_job::spawn_cache_eviction_job, egress::coordinator::EgressCoordinator,
+        cache::{eviction_job::spawn_cache_eviction_job, store::TrackCacheStore},
+        egress::coordinator::EgressCoordinator,
         ingress::ingress_coordinator::IngressCoordinator,
+        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     route_registry::RelayRouteRegistry,
     sequences::{
@@ -20,12 +22,6 @@ use crate::modules::{
     session_repository::SessionRepository,
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
-use crate::relay_server::store::RelayStore;
-
-pub(crate) struct CascadingDeps {
-    pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
-    pub(crate) relay_token: String,
-}
 
 pub(crate) struct RelayRuntime {
     _ingress: IngressCoordinator,
@@ -37,15 +33,13 @@ pub(crate) struct RelayRuntime {
 impl RelayRuntime {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        store: &Arc<RelayStore>,
-        cascading: CascadingDeps,
+        route_registry: Arc<dyn RelayRouteRegistry>,
+        relay_token: String,
         token_verifier: Arc<dyn TokenVerifier>,
     ) -> (UnboundedSender<SessionEvent>, Self) {
-        let CascadingDeps {
-            route_registry,
-            relay_token,
-        } = cascading;
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let subgroup_opened_notifier_map = Arc::new(SubgroupOpenedNotifierMap::new());
         let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
             repo.clone(),
             sender.clone(),
@@ -57,14 +51,14 @@ impl RelayRuntime {
         ));
         let ingress = IngressCoordinator::new(
             repo.clone(),
-            store.cache_store.clone(),
-            store.subgroup_opened_notifier_map.clone(),
+            cache_store.clone(),
+            subgroup_opened_notifier_map.clone(),
             sender.clone(),
         );
         let egress = EgressCoordinator::new(
             repo.clone(),
-            store.cache_store.clone(),
-            store.subgroup_opened_notifier_map.clone(),
+            cache_store.clone(),
+            subgroup_opened_notifier_map.clone(),
         );
         let manager = EventHandler::run(
             receiver,
@@ -80,15 +74,13 @@ impl RelayRuntime {
                 route_registry,
                 inter_relay_connection_manager,
                 upstream_publisher_resolver,
-                cache_store: store.cache_store.clone(),
+                cache_store: cache_store.clone(),
                 upstream_serializer: UpstreamCreationSerializer::new(),
                 token_verifier,
             },
         );
-        let evict_job = spawn_cache_eviction_job(
-            store.cache_store.clone(),
-            store.subgroup_opened_notifier_map.clone(),
-        );
+        let evict_job =
+            spawn_cache_eviction_job(cache_store.clone(), subgroup_opened_notifier_map.clone());
         (
             sender,
             Self {
