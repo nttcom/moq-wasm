@@ -164,6 +164,16 @@ impl RelayHarness {
         })
     }
 
+    pub(crate) fn ingest_conflicting_duplicate(&self) -> [UpstreamSubgroupStream; 2] {
+        let first_stream = self.open_upstream_stream();
+        first_stream.header(0);
+        first_stream.object(0);
+        let second_stream = self.open_upstream_stream();
+        second_stream.header(0);
+        second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
+        [first_stream, second_stream]
+    }
+
     pub(crate) fn stop_ingest(&self) {
         self.stop_sender
             .send(true)
@@ -361,16 +371,7 @@ pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
         ),
         "downstream stream should start with the group 0 subgroup header"
     );
-    let payloads: Vec<Bytes> = objects
-        .iter()
-        .filter_map(|object| match object {
-            DataObject::SubgroupObject(field) => match &field.subgroup_object {
-                moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect();
+    let payloads = payloads_of(objects);
     let expected: Vec<Bytes> = (0..OBJECT_COUNT).map(ordered_payload).collect();
     assert_eq!(
         payloads.len(),
@@ -379,6 +380,19 @@ pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
         payloads.len()
     );
     assert_eq!(payloads, expected, "objects must arrive in publish order");
+}
+
+pub(crate) fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
+    objects
+        .iter()
+        .filter_map(|object| match object {
+            DataObject::SubgroupObject(field) => match &field.subgroup_object {
+                moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn resolve_downstream_object_ids(objects: &[DataObject]) -> Vec<u64> {
