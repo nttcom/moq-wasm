@@ -1,6 +1,8 @@
-use std::sync::{Arc, Weak};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
-use dashmap::DashMap;
 use tracing::{Instrument, Span};
 
 use crate::modules::{
@@ -10,17 +12,20 @@ use crate::modules::{
         subscriber::Subscriber,
     },
     session_event::{EventKind, SessionEvent},
-    session_event_forward_task_registry::SessionEventForwardTaskRegistry,
     types::SessionId,
 };
 
 pub(crate) struct SessionRepository {
-    session_event_forward_task_registry: SessionEventForwardTaskRegistry,
-    sessions: DashMap<SessionId, Arc<dyn Session>>,
-    session_spans: DashMap<SessionId, Span>,
-    session_peers: DashMap<SessionId, SessionPeer>,
-    session_tokens: DashMap<SessionId, Arc<VerifiedToken>>,
-    session_expiry_tasks: DashMap<SessionId, SessionExpiryTask>,
+    sessions: HashMap<SessionId, SessionEntry>,
+}
+
+struct SessionEntry {
+    session: Arc<dyn Session>,
+    span: Span,
+    peer: SessionPeer,
+    verified_token: Arc<VerifiedToken>,
+    expiry_task: Option<SessionExpiryTask>,
+    _event_forward_task: SessionEventForwardTask,
 }
 
 pub(crate) struct NewSession {
@@ -53,15 +58,22 @@ impl SessionPeer {
     }
 }
 
+fn expiry_task(
+    session: &Arc<dyn Session>,
+    verified_token: &VerifiedToken,
+) -> Option<SessionExpiryTask> {
+    match (verified_token.is_relay, verified_token.expires_at) {
+        (false, Some(expires_at)) => {
+            Some(SessionExpiryTask::run(Arc::downgrade(session), expires_at))
+        }
+        _ => None,
+    }
+}
+
 impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
-            session_event_forward_task_registry: SessionEventForwardTaskRegistry::new(),
-            sessions: DashMap::new(),
-            session_spans: DashMap::new(),
-            session_peers: DashMap::new(),
-            session_tokens: DashMap::new(),
-            session_expiry_tasks: DashMap::new(),
+            sessions: HashMap::new(),
         }
     }
 
@@ -77,7 +89,7 @@ impl SessionRepository {
             peer,
             verified_token,
         } = new_session;
-        let arc_session: Arc<dyn Session> = Arc::from(session);
+        let session: Arc<dyn Session> = Arc::from(session);
         tracing::info!(
             session_id = %session_id,
             peer = ?peer,
@@ -85,10 +97,7 @@ impl SessionRepository {
             is_relay = verified_token.is_relay,
             "session peer classified"
         );
-        self.sessions.insert(session_id, arc_session.clone());
-        self.session_spans.insert(session_id, session_span.clone());
-        self.session_peers.insert(session_id, peer);
-        self.store_verified_token(session_id, &arc_session, verified_token);
+        let expiry_task = expiry_task(&session, &verified_token);
         if relay_session_event_sender
             .send(SessionEvent::session_registered(session_id))
             .is_err()
@@ -98,49 +107,49 @@ impl SessionRepository {
                 "relay event channel closed; session is not handled"
             );
         }
-        self.start_session_event_forwarding(
+        let event_forward_task = SessionEventForwardTask::run(
             session_id,
-            Arc::downgrade(&arc_session),
+            Arc::downgrade(&session),
             relay_session_event_sender,
-            session_span,
+            &session_span,
+        );
+        self.sessions.insert(
+            session_id,
+            SessionEntry {
+                session,
+                span: session_span,
+                peer,
+                verified_token: Arc::new(verified_token),
+                expiry_task,
+                _event_forward_task: event_forward_task,
+            },
         );
     }
 
     pub(crate) fn remove(&mut self, session_id: SessionId) {
         let session_removed = self.sessions.remove(&session_id).is_some();
-        let session_span_removed = self.session_spans.remove(&session_id).is_some();
-        let session_peer_removed = self.session_peers.remove(&session_id).is_some();
-        self.session_tokens.remove(&session_id);
-        self.session_expiry_tasks.remove(&session_id);
-        self.session_event_forward_task_registry.remove(&session_id);
         tracing::info!(
             session_id = %session_id,
             session_removed,
-            session_span_removed,
-            session_peer_removed,
-            remaining_session_spans = self.session_spans.len(),
+            remaining_sessions = self.sessions.len(),
             "session removed from repository"
         );
     }
 
     pub(crate) fn session_span(&self, session_id: SessionId) -> Option<Span> {
-        self.session_spans.get(&session_id).map(|span| span.clone())
+        self.sessions
+            .get(&session_id)
+            .map(|entry| entry.span.clone())
     }
 
     pub(crate) fn has_session(&self, session_id: SessionId) -> bool {
         self.sessions.contains_key(&session_id)
     }
 
-    pub(crate) fn peer(&self, session_id: SessionId) -> Option<SessionPeer> {
-        self.session_peers
-            .get(&session_id)
-            .map(|peer| peer.value().clone())
-    }
-
     pub(crate) fn verified_token(&self, session_id: SessionId) -> Option<Arc<VerifiedToken>> {
-        self.session_tokens
+        self.sessions
             .get(&session_id)
-            .map(|token| token.value().clone())
+            .map(|entry| entry.verified_token.clone())
     }
 
     pub(crate) fn replace_verified_token(
@@ -148,42 +157,53 @@ impl SessionRepository {
         session_id: SessionId,
         verified_token: VerifiedToken,
     ) -> Option<Arc<VerifiedToken>> {
-        let session = self.sessions.get(&session_id)?.value().clone();
-        Some(self.store_verified_token(session_id, &session, verified_token))
-    }
-
-    fn store_verified_token(
-        &self,
-        session_id: SessionId,
-        session: &Arc<dyn Session>,
-        verified_token: VerifiedToken,
-    ) -> Arc<VerifiedToken> {
-        self.session_expiry_tasks.remove(&session_id);
-        if let (false, Some(expires_at)) = (verified_token.is_relay, verified_token.expires_at) {
-            self.session_expiry_tasks.insert(
-                session_id,
-                SessionExpiryTask::run(Arc::downgrade(session), expires_at),
-            );
-        }
-        let verified_token = Arc::new(verified_token);
-        self.session_tokens
-            .insert(session_id, verified_token.clone());
-        verified_token
+        let entry = self.sessions.get_mut(&session_id)?;
+        entry.expiry_task = expiry_task(&entry.session, &verified_token);
+        entry.verified_token = Arc::new(verified_token);
+        Some(entry.verified_token.clone())
     }
 
     pub(crate) fn is_client_session(&self, session_id: SessionId) -> bool {
-        matches!(self.peer(session_id), Some(SessionPeer::Client))
+        self.sessions
+            .get(&session_id)
+            .is_some_and(|entry| entry.peer == SessionPeer::Client)
     }
 
-    fn start_session_event_forwarding(
-        &mut self,
+    pub(crate) fn subscriber(&self, session_id: SessionId) -> Option<Box<dyn Subscriber>> {
+        self.sessions
+            .get(&session_id)
+            .map(|entry| entry.session.as_subscriber())
+    }
+
+    pub(crate) fn publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
+        self.sessions
+            .get(&session_id)
+            .map(|entry| entry.session.as_publisher())
+    }
+
+    pub(crate) fn close_with_protocol_violation(&self, session_id: SessionId, reason: &str) {
+        match self.sessions.get(&session_id) {
+            Some(entry) => entry
+                .session
+                .close(moqt::TerminationErrorCode::ProtocolViolation, reason),
+            None => tracing::debug!(session_id, "session already gone; nothing to close"),
+        }
+    }
+}
+
+struct SessionEventForwardTask {
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl SessionEventForwardTask {
+    fn run(
         session_id: SessionId,
         session: Weak<dyn Session>,
         relay_session_event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        session_span: Span,
-    ) {
+        session_span: &Span,
+    ) -> Self {
         let session_event_forwarder_span = tracing::info_span!(
-            parent: &session_span,
+            parent: session_span,
             "relay.session.event_forwarder",
             session_id = session_id
         );
@@ -227,33 +247,13 @@ impl SessionRepository {
                 .instrument(session_event_forwarder_span),
             )
             .unwrap();
-        self.session_event_forward_task_registry
-            .add(session_id, join_handle);
+        Self { join_handle }
     }
+}
 
-    pub(crate) fn subscriber(&self, session_id: SessionId) -> Option<Box<dyn Subscriber>> {
-        if let Some(session) = self.sessions.get(&session_id) {
-            Some(session.value().as_subscriber())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn close_with_protocol_violation(&self, session_id: SessionId, reason: &str) {
-        match self.sessions.get(&session_id) {
-            Some(session) => session
-                .value()
-                .close(moqt::TerminationErrorCode::ProtocolViolation, reason),
-            None => tracing::debug!(session_id, "session already gone; nothing to close"),
-        }
-    }
-
-    pub(crate) fn publisher(&self, session_id: SessionId) -> Option<Box<dyn Publisher>> {
-        if let Some(session) = self.sessions.get(&session_id) {
-            Some(session.value().as_publisher())
-        } else {
-            None
-        }
+impl Drop for SessionEventForwardTask {
+    fn drop(&mut self) {
+        self.join_handle.abort();
     }
 }
 
