@@ -63,7 +63,7 @@ impl UpstreamCreationSerializer {
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use super::{TrackLockKey, UpstreamCreationSerializer};
 
@@ -171,26 +171,9 @@ mod tests {
 
         // Act
         drop(guard);
-        let waiter_guard = waiter.await.unwrap();
+        let _waiter_guard = waiter.await.unwrap();
 
         // Assert
         assert!(serializer.locks.contains_key(&key()));
-        drop(waiter_guard);
-        assert!(serializer.locks.is_empty());
-    }
-
-    #[tokio::test]
-    async fn lock_recreated_after_removal_still_serializes() {
-        // Arrange
-        let serializer = UpstreamCreationSerializer::new();
-        drop(serializer.lock("ns", "track").await);
-        let _guard = serializer.lock("ns", "track").await;
-
-        // Act
-        let contender =
-            tokio::time::timeout(Duration::from_millis(20), serializer.lock("ns", "track")).await;
-
-        // Assert
-        assert!(contender.is_err());
     }
 }

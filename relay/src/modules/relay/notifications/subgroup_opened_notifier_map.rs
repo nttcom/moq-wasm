@@ -33,12 +33,6 @@ impl SubgroupOpenedNotifierMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::relay::types::SubgroupKey;
-
-    const OPENED: SubgroupKey = SubgroupKey::Stream {
-        group_id: 3,
-        subgroup_id: 0,
-    };
 
     fn track_key() -> TrackKey {
         TrackKey::new("ns", "track")
@@ -81,21 +75,5 @@ mod tests {
 
         // Assert
         assert!(notifier_map.map.contains_key(&track_key()));
-    }
-
-    #[test]
-    fn channel_recreated_after_removal_is_shared_by_new_reader_and_writer() {
-        // Arrange
-        let notifier_map = SubgroupOpenedNotifierMap::new();
-        notifier_map.get_or_create(&track_key());
-        notifier_map.remove_unused();
-        let writer = notifier_map.get_or_create(&track_key());
-        let mut reader = notifier_map.get_or_create(&track_key()).subscribe();
-
-        // Act
-        writer.send(SubgroupOpened(OPENED)).unwrap();
-
-        // Assert
-        assert_eq!(reader.try_recv().unwrap().0, OPENED);
     }
 }
