@@ -453,6 +453,8 @@ impl<T: TransportProtocol> Drop for SessionContext<T> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc::error::TryRecvError;
+
     use super::{IncomingObjectNotification, LateResponseAction};
     use crate::{
         GroupOrder,
@@ -466,7 +468,9 @@ mod tests {
                 },
                 runtime::dispatch::incoming_object::IncomingObject,
             },
-            test_support::{connected_sessions, notify_datagram},
+            test_support::{
+                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+            },
         },
     };
 
@@ -489,21 +493,12 @@ mod tests {
     #[tokio::test]
     async fn objects_buffered_before_registration_are_delivered_to_the_receiver() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-early-object").await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-early-object").await;
         let context = server.subscriber().session;
         notify_datagram(&context, TRACK_ALIAS).await;
 
         // Act
-        context
-            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
-        let mut receiver = context
-            .receiver_map
-            .lock()
-            .await
-            .remove(&TRACK_ALIAS)
-            .unwrap();
+        let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
         // Assert
         assert!(matches!(
@@ -515,7 +510,7 @@ mod tests {
     #[tokio::test]
     async fn unsubscribe_drops_the_unaccepted_receiver_and_discards_later_objects() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-unsubscribe-unaccepted").await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-unaccepted").await;
         let context = server.subscriber().session;
         context
             .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
@@ -537,18 +532,9 @@ mod tests {
     #[tokio::test]
     async fn unsubscribe_ends_the_accepted_receiver() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-unsubscribe-accepted").await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-accepted").await;
         let context = server.subscriber().session;
-        context
-            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
-        let mut receiver = context
-            .receiver_map
-            .lock()
-            .await
-            .remove(&TRACK_ALIAS)
-            .unwrap();
+        let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
         // Act
         server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
@@ -560,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn late_subscribe_ok_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-late-subscribe-ok").await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-late-subscribe-ok").await;
         let context = server.subscriber().session;
         notify_datagram(&context, TRACK_ALIAS).await;
 
@@ -579,12 +565,16 @@ mod tests {
             notification,
             IncomingObjectNotification::Discarded
         ));
+        let mut receiver =
+            register_and_take_data_receiver(&context, OTHER_REQUEST_ID, TRACK_ALIAS).await;
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
     }
 
     #[tokio::test]
     async fn late_subscribe_ok_keeps_the_receiver_of_another_subscription() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-late-subscribe-ok-other").await;
+        let (_client, server) =
+            spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
         let context = server.subscriber().session;
         context
             .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
@@ -608,7 +598,7 @@ mod tests {
     #[tokio::test]
     async fn track_alias_of_a_cancelled_subscription_can_be_reused() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-reuse-alias").await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-reuse-alias").await;
         let context = server.subscriber().session;
         context
             .register_data_receiver(REQUEST_ID, TRACK_ALIAS)

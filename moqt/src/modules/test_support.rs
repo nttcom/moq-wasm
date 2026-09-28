@@ -86,7 +86,7 @@ pub(crate) async fn connect_sessions(
     Ok((client, server))
 }
 
-pub(crate) async fn connected_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
+pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
     let (port, accept) = spawn_dual_server(name);
     connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
         .await
@@ -121,7 +121,7 @@ pub(crate) async fn subscribed_track_reader(
     TrackReader::new(factory)
 }
 
-pub(crate) fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
+fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
     IncomingObject::Datagram(ObjectDatagram::new(
         track_alias,
         0,
@@ -140,4 +140,21 @@ pub(crate) async fn notify_datagram(
     context
         .notify_incoming_object(track_alias, datagram_object(track_alias))
         .await
+}
+
+pub(crate) async fn register_and_take_data_receiver(
+    context: &SessionContext<DUAL>,
+    request_id: u64,
+    track_alias: u64,
+) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject<DUAL>> {
+    context
+        .register_data_receiver(request_id, track_alias)
+        .await
+        .unwrap();
+    context
+        .receiver_map
+        .lock()
+        .await
+        .remove(&track_alias)
+        .unwrap()
 }

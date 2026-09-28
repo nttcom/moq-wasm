@@ -141,24 +141,25 @@ impl<T: TransportProtocol> PublishHandler<T> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::mpsc::error::TryRecvError;
+
     use crate::PublishOption;
     use crate::{
         SessionEvent,
         modules::{
             moqt::domains::session_context::IncomingObjectNotification,
             test_support::{
-                connect_sessions, connected_sessions, notify_datagram, spawn_dual_server,
+                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
             },
         },
     };
 
+    const OTHER_REQUEST_ID: u64 = 99;
+
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("publish-handler-namespace");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
+        let (client, server) = spawn_connected_dual_sessions("publish-handler-namespace").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()
@@ -184,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn publish_error_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (client, server) = connected_sessions("publish-handler-error-buffer").await;
+        let (client, server) = spawn_connected_dual_sessions("publish-handler-error-buffer").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()
@@ -213,6 +214,9 @@ mod tests {
             notification,
             IncomingObjectNotification::Discarded
         ));
+        let mut receiver =
+            register_and_take_data_receiver(&context, OTHER_REQUEST_ID, handler.track_alias).await;
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
         request.abort();
     }
 }
