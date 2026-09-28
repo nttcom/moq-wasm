@@ -384,24 +384,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }
 
   useEffect(() => {
-    catalogSubscribeBackoff.retain(new Set(room.remoteMembers.keys()))
-  }, [catalogSubscribeBackoff, room.remoteMembers])
-
-  useEffect(() => {
+    catalogSubscribeBackoff.retain(room.remoteMembers)
     for (const memberId of room.remoteMembers.keys()) {
       if (catalogLoadingMemberIds.has(memberId) || catalogSubscribedMemberIds.has(memberId)) {
         continue
       }
-      const attempt = catalogSubscribeBackoff.begin(memberId)
-      if (!attempt) {
-        continue
-      }
-      handleLoadCatalogTracks(memberId)
-        .then(() => catalogSubscribeBackoff.succeed(attempt))
-        .catch((error) => {
-          console.error(`Failed to load catalog tracks for ${memberId}:`, error)
-          catalogSubscribeBackoff.fail(attempt)
-        })
+      catalogSubscribeBackoff.run(memberId, () => handleLoadCatalogTracks(memberId))
     }
   }, [
     catalogLoadingMemberIds,
@@ -562,10 +550,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }
 
   useEffect(() => {
-    chatSubscribeBackoff.retain(new Set(room.remoteMembers.keys()))
-  }, [chatSubscribeBackoff, room.remoteMembers])
-
-  useEffect(() => {
+    chatSubscribeBackoff.retain(room.remoteMembers)
     for (const member of room.remoteMembers.values()) {
       const chatState = member.subscribedTracks.chat
       const chatTrackKey = buildTrackActionKey(member.id, 'chat')
@@ -579,16 +564,9 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       const selected = remoteCatalogSelections.get(member.id)
       const catalogChatTrackName = remoteCatalogTracks.get(member.id)?.find((track) => track.role === 'chat')?.name
       const chatTrackName = selected?.chat ?? catalogChatTrackName ?? 'chat'
-      const attempt = chatSubscribeBackoff.begin(member.id)
-      if (!attempt) {
-        continue
-      }
-      subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName)
-        .then(() => chatSubscribeBackoff.succeed(attempt))
-        .catch((error) => {
-          console.error(`Failed to auto-subscribe chat track for ${member.id}:`, error)
-          chatSubscribeBackoff.fail(attempt)
-        })
+      chatSubscribeBackoff.run(member.id, () =>
+        subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName)
+      )
     }
   }, [
     catalogUnsubscribingTrackKeys,
