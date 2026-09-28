@@ -160,7 +160,9 @@ One struct owns all cross-task state:
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
-  for FETCH data streams.
+  for FETCH data streams. A FETCH is answered on a single stream (draft-14
+  §9.16.3), so `FetchNotifier` removes the sender when that stream arrives;
+  the receiver keeps it until `accept_fetch_receiver`.
 
 ## Control plane (`modules/moqt/control_plane`)
 
@@ -256,9 +258,19 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   256 objects per track alias (`SubscriptionNotifier::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS`),
   dropping the oldest on overflow. `register_data_receiver` drains the buffer
   into the new channel atomically under the sinks lock.
+- **Cancelled subscriptions discard late objects** (draft-14 §10.1):
+  `Subscriber::unsubscribe`, the UNSUBSCRIBE sent for a late SUBSCRIBE_OK and
+  `PublishHandler::error` (a PUBLISH with Forward=1 sends objects before its
+  answer, §9.13) turn the track alias's sink into `Cancelled`, which drops
+  the buffered objects, the channel sender and a receiver not yet taken by
+  `accept_data_receiver`. Objects still in flight are then dropped on arrival
+  instead of being buffered as an unknown alias until the session ends. The
+  `Cancelled` marker stays until a new subscription reuses the alias; it is
+  not released on PUBLISH_DONE because late streams may follow it (§9.12).
 - **Duplicate track alias**: if SUBSCRIBE_OK carries a track alias that already
   has a registered receiver, the subscriber closes the session with
-  `DuplicateTrackAlias` (draft-14 §9.8).
+  `DuplicateTrackAlias` (draft-14 §9.8). A cancelled subscription's alias does
+  not count as in use.
 - **Unknown response request id**: a response that matches no `sender_map`
   entry is a protocol violation; the session is closed with
   `ProtocolViolation`.

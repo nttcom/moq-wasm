@@ -137,7 +137,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                     tracing::info!("Subscribe ok");
                     if let Err(code) = self
                         .session
-                        .register_data_receiver(message.track_alias)
+                        .register_data_receiver(message.request_id, message.track_alias)
                         .await
                     {
                         // The track alias is already bound to another active subscription.
@@ -254,7 +254,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
         self.session
             .fetch_notification_map
-            .write()
+            .lock()
             .await
             .insert(request_id, fetch_stream_tx);
         self.session
@@ -336,7 +336,7 @@ impl<T: TransportProtocol> Subscriber<T> {
     async fn remove_pending_fetch(&self, request_id: u64) {
         self.session
             .fetch_notification_map
-            .write()
+            .lock()
             .await
             .remove(&request_id);
         self.session
@@ -364,7 +364,7 @@ impl<T: TransportProtocol> Subscriber<T> {
             tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
         self.session
             .fetch_notification_map
-            .write()
+            .lock()
             .await
             .insert(request_id, fetch_stream_tx);
         self.session
@@ -432,6 +432,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         fields(subscribe_id = %subscribe_id)
     )]
     pub async fn unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
+        self.session.cancel_subscription(subscribe_id).await;
         let unsubscribe = Unsubscribe {
             request_id: subscribe_id,
         };
@@ -554,5 +555,90 @@ impl<T: TransportProtocol> Subscriber<T> {
                 anyhow::bail!("Expected StreamHeader or Datagram but got Fetch")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use crate::{
+        ExtensionHeaders, Fetch, FetchObject, FetchObjectField, FetchOption, Location,
+        SessionEvent,
+        modules::test_support::{connect_sessions, spawn_dual_server},
+    };
+
+    const START: Location = Location {
+        group_id: 0,
+        object_id: 0,
+    };
+    const END: Location = Location {
+        group_id: 1,
+        object_id: 0,
+    };
+
+    fn fetch_object() -> FetchObjectField {
+        FetchObjectField::new(
+            0,
+            0,
+            0,
+            128,
+            ExtensionHeaders::default(),
+            FetchObject::Payload(Bytes::from_static(b"object")),
+        )
+    }
+
+    #[tokio::test]
+    async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("subscriber-fetch-sender");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .fetch(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    START,
+                    END,
+                    FetchOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected FETCH from the client");
+        };
+        handler.ok(false, END).await.unwrap();
+        let fetch_sender = server
+            .publisher()
+            .create_fetch_stream(handler.request_id)
+            .await
+            .unwrap();
+        let fetch_handle = request.await.unwrap().unwrap();
+
+        // Act
+        let mut fetch_receiver = client
+            .subscriber()
+            .accept_fetch_receiver(&fetch_handle)
+            .await
+            .unwrap();
+        fetch_sender.send(fetch_object()).await.unwrap();
+        let header = fetch_receiver.receive().await.unwrap();
+        let object = fetch_receiver.receive().await.unwrap();
+
+        // Assert
+        assert!(
+            !client
+                .subscriber()
+                .session
+                .fetch_notification_map
+                .lock()
+                .await
+                .contains_key(&fetch_handle.request_id)
+        );
+        assert!(matches!(header, Fetch::Header(_)));
+        assert!(matches!(object, Fetch::Object(field) if field == fetch_object()));
     }
 }

@@ -90,7 +90,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>>>,
     pub(crate) fetch_receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
 }
@@ -98,12 +98,26 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
 enum ObjectSink<T: TransportProtocol> {
     /// Buffers objects that arrive before the receiver is registered.
     Buffer(VecDeque<IncomingObject<T>>),
-    Receiver(tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>),
+    Receiver {
+        request_id: RequestId,
+        sender: tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>,
+    },
+    /// Draft-14 §10.1: objects of a cancelled subscription can still arrive
+    /// and are discarded instead of being buffered as an unknown track alias.
+    /// Kept until a new subscription reuses the track alias.
+    Cancelled,
 }
 
 impl<T: TransportProtocol> ObjectSink<T> {
     fn is_receiver_registered(&self) -> bool {
-        matches!(self, ObjectSink::Receiver(_))
+        matches!(self, ObjectSink::Receiver { .. })
+    }
+
+    fn is_receiver_of(&self, subscription_request_id: RequestId) -> bool {
+        matches!(
+            self,
+            ObjectSink::Receiver { request_id, .. } if *request_id == subscription_request_id
+        )
     }
 }
 
@@ -114,6 +128,7 @@ pub(crate) enum IncomingObjectNotification {
         dropped_oldest: bool,
     },
     ReceiverClosed,
+    Discarded,
 }
 
 /// Holds the `sender_map` registration for an in-flight request. On drop, a
@@ -156,7 +171,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             sender_map: std::sync::Mutex::new(HashMap::new()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_notification_map: tokio::sync::RwLock::new(HashMap::new()),
+            fetch_notification_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -214,7 +229,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                 }
             }
             Entry::Occupied(mut entry) => match entry.get_mut() {
-                ObjectSink::Receiver(sender) => {
+                ObjectSink::Receiver { sender, .. } => {
                     if sender.send(incoming_object).is_err() {
                         IncomingObjectNotification::ReceiverClosed
                     } else {
@@ -232,6 +247,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                         dropped_oldest,
                     }
                 }
+                ObjectSink::Cancelled => IncomingObjectNotification::Discarded,
             },
         }
     }
@@ -241,6 +257,7 @@ impl<T: TransportProtocol> SessionContext<T> {
     /// Returns `Err(TerminationErrorCode::DuplicateTrackAlias)` if a receiver already exists.
     pub(crate) async fn register_data_receiver(
         &self,
+        request_id: RequestId,
         track_alias: u64,
     ) -> Result<(), TerminationErrorCode> {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
@@ -258,11 +275,36 @@ impl<T: TransportProtocol> SessionContext<T> {
                 let _ = sender.send(incoming_object);
             }
         }
-        sinks.insert(track_alias, ObjectSink::Receiver(sender));
+        sinks.insert(track_alias, ObjectSink::Receiver { request_id, sender });
 
         self.receiver_map.lock().await.insert(track_alias, receiver);
 
         Ok(())
+    }
+
+    pub(crate) async fn cancel_subscription(&self, request_id: RequestId) {
+        let mut sinks = self.object_sinks.lock().await;
+        let track_alias = sinks.iter().find_map(|(track_alias, sink)| {
+            sink.is_receiver_of(request_id).then_some(*track_alias)
+        });
+        if let Some(track_alias) = track_alias {
+            self.cancel_track_alias(&mut sinks, track_alias).await;
+        }
+    }
+
+    pub(crate) async fn cancel_unclaimed_track_alias(&self, track_alias: u64) {
+        let mut sinks = self.object_sinks.lock().await;
+        if !sinks
+            .get(&track_alias)
+            .is_some_and(ObjectSink::is_receiver_registered)
+        {
+            self.cancel_track_alias(&mut sinks, track_alias).await;
+        }
+    }
+
+    async fn cancel_track_alias(&self, sinks: &mut HashMap<u64, ObjectSink<T>>, track_alias: u64) {
+        sinks.insert(track_alias, ObjectSink::Cancelled);
+        self.receiver_map.lock().await.remove(&track_alias);
     }
 
     /// Awaits a response to a control message with a bounded timeout (§12.2).
@@ -297,12 +339,14 @@ impl<T: TransportProtocol> SessionContext<T> {
         response: ResponseMessage,
     ) {
         let send_result = match &response {
-            ResponseMessage::SubscribeOk(_) => match &action {
+            ResponseMessage::SubscribeOk(subscribe_ok) => match &action {
                 LateResponseAction::Unsubscribe => {
                     tracing::warn!(
                         request_id,
                         "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
                     );
+                    self.cancel_unclaimed_track_alias(subscribe_ok.track_alias)
+                        .await;
                     self.send_stream
                         .send(
                             ControlMessageType::UnSubscribe,
@@ -410,5 +454,204 @@ impl<T: TransportProtocol> Drop for SessionContext<T> {
     fn drop(&mut self) {
         tracing::info!("SessionContext dropped.");
         // send goaway
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{IncomingObjectNotification, LateResponseAction, SessionContext};
+    use crate::{
+        DUAL, GroupOrder, Session,
+        modules::{
+            moqt::{
+                control_plane::{
+                    control_messages::messages::{
+                        parameters::content_exists::ContentExists, subscribe_ok::SubscribeOk,
+                    },
+                    enums::ResponseMessage,
+                },
+                runtime::dispatch::incoming_object::IncomingObject,
+            },
+            test_support::{connect_sessions, datagram_object, spawn_dual_server},
+        },
+    };
+
+    const MAX_PENDING_OBJECTS: usize = 256;
+    const REQUEST_ID: u64 = 1;
+    const OTHER_REQUEST_ID: u64 = 3;
+    const TRACK_ALIAS: u64 = 5;
+
+    async fn connected_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
+        let (port, accept) = spawn_dual_server(name);
+        connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap()
+    }
+
+    fn context_of(session: &Session<DUAL>) -> Arc<SessionContext<DUAL>> {
+        session.subscriber().session
+    }
+
+    fn late_subscribe_ok() -> ResponseMessage {
+        ResponseMessage::SubscribeOk(SubscribeOk {
+            request_id: REQUEST_ID,
+            track_alias: TRACK_ALIAS,
+            expires: 0,
+            group_order: GroupOrder::Ascending,
+            content_exists: ContentExists::False,
+            delivery_timeout: None,
+            max_duration: None,
+        })
+    }
+
+    async fn notify_datagram(context: &SessionContext<DUAL>) -> IncomingObjectNotification {
+        context
+            .notify_incoming_object(
+                TRACK_ALIAS,
+                datagram_object(TRACK_ALIAS),
+                MAX_PENDING_OBJECTS,
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn objects_buffered_before_registration_are_delivered_to_the_receiver() {
+        // Arrange
+        let (_client, server) = connected_sessions("sinks-early-object").await;
+        let context = context_of(&server);
+        notify_datagram(&context).await;
+
+        // Act
+        context
+            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
+            .await
+            .unwrap();
+        let mut receiver = context
+            .receiver_map
+            .lock()
+            .await
+            .remove(&TRACK_ALIAS)
+            .unwrap();
+
+        // Assert
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(IncomingObject::Datagram(object)) if object.track_alias == TRACK_ALIAS
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_drops_the_unaccepted_receiver_and_discards_later_objects() {
+        // Arrange
+        let (_client, server) = connected_sessions("sinks-unsubscribe-unaccepted").await;
+        let context = context_of(&server);
+        context
+            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
+            .await
+            .unwrap();
+
+        // Act
+        server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
+        let notification = notify_datagram(&context).await;
+
+        // Assert
+        assert!(!context.receiver_map.lock().await.contains_key(&TRACK_ALIAS));
+        assert!(matches!(
+            notification,
+            IncomingObjectNotification::Discarded
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_ends_the_accepted_receiver() {
+        // Arrange
+        let (_client, server) = connected_sessions("sinks-unsubscribe-accepted").await;
+        let context = context_of(&server);
+        context
+            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
+            .await
+            .unwrap();
+        let mut receiver = context
+            .receiver_map
+            .lock()
+            .await
+            .remove(&TRACK_ALIAS)
+            .unwrap();
+
+        // Act
+        server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
+
+        // Assert
+        assert!(receiver.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn late_subscribe_ok_drops_the_objects_buffered_for_its_track_alias() {
+        // Arrange
+        let (_client, server) = connected_sessions("sinks-late-subscribe-ok").await;
+        let context = context_of(&server);
+        notify_datagram(&context).await;
+
+        // Act
+        context
+            .handle_late_response(
+                REQUEST_ID,
+                LateResponseAction::Unsubscribe,
+                late_subscribe_ok(),
+            )
+            .await;
+        let notification = notify_datagram(&context).await;
+
+        // Assert
+        assert!(matches!(
+            notification,
+            IncomingObjectNotification::Discarded
+        ));
+    }
+
+    #[tokio::test]
+    async fn late_subscribe_ok_keeps_the_receiver_of_another_subscription() {
+        // Arrange
+        let (_client, server) = connected_sessions("sinks-late-subscribe-ok-other").await;
+        let context = context_of(&server);
+        context
+            .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
+            .await
+            .unwrap();
+
+        // Act
+        context
+            .handle_late_response(
+                REQUEST_ID,
+                LateResponseAction::Unsubscribe,
+                late_subscribe_ok(),
+            )
+            .await;
+        let notification = notify_datagram(&context).await;
+
+        // Assert
+        assert!(matches!(notification, IncomingObjectNotification::Notified));
+    }
+
+    #[tokio::test]
+    async fn track_alias_of_a_cancelled_subscription_can_be_reused() {
+        // Arrange
+        let (_client, server) = connected_sessions("sinks-reuse-alias").await;
+        let context = context_of(&server);
+        context
+            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
+            .await
+            .unwrap();
+        context.cancel_subscription(REQUEST_ID).await;
+
+        // Act
+        let registration = context
+            .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
+            .await;
+
+        // Assert
+        assert!(registration.is_ok());
     }
 }

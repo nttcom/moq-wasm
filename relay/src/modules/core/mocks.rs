@@ -54,6 +54,23 @@ pub(crate) async fn session_repository_with_upstream_session(
     session_repository_with_upstream_session_token(session_id, VerifiedToken::full_access()).await
 }
 
+pub(crate) fn mock_new_session(
+    session_id: SessionId,
+    verified_token: VerifiedToken,
+) -> (NewSession, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let new_session = NewSession {
+        session_id,
+        session: Box::new(MockUpstreamSession {
+            recorded: recorded.clone(),
+        }),
+        session_span: tracing::Span::none(),
+        peer: SessionPeer::Client,
+        verified_token,
+    };
+    (new_session, recorded)
+}
+
 pub(crate) async fn session_repository_with_upstream_session_token(
     session_id: SessionId,
     verified_token: VerifiedToken,
