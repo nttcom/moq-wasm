@@ -29,15 +29,14 @@ optionally cascades across relays via a Redis-backed route registry.
      accepting both WebTransport and raw QUIC on one port.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
 
-`RelayServer` (in `relay_server/`) wires three long-lived pieces:
+`RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
 - `SessionRepository` (shared `Arc<Mutex<_>>`).
-- `RelayStore` — `TrackCacheStore` + `SubgroupOpenedNotifierMap`, the shared
-  data-plane state.
-- `RelayRuntime` — constructs `InterRelayConnectionManager`,
+- `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`
+  + `SubgroupOpenedNotifierMap`), `InterRelayConnectionManager`,
   `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
-  `EventHandler`, and the cache-eviction job, and returns the relay-wide
-  `SessionEvent` sender.
+  `EventHandler` (with the `WorkerDeps` every session worker clones), and the
+  cache-eviction job, and returns the relay-wide `SessionEvent` sender.
 
 ## Control plane
 
@@ -138,8 +137,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   `UNAUTHORIZED (0x1)` and the sequence is never invoked.
 - `EventHandler` implements a **reader/worker** structure: the single reader
   only dispatches to per-session unbounded channels, so a slow or blocked
-  session can never head-of-line-block another (unit tests in
-  `event_handler.rs` pin this). Workers process one event at a time, fully
+  session can never head-of-line-block another. Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
   session are strictly ordered.
 - TRACK_STATUS is handled by the worker itself as a token refresh (see
@@ -266,7 +264,7 @@ per-request authorization gate under "Event pipeline".
 
 ## Data plane
 
-### Shared state (`RelayStore`)
+### Shared state
 - `TrackCacheStore` — `DashMap<TrackKey, Arc<TrackCache>>`.
 - `SubgroupOpenedNotifierMap` — `DashMap<TrackKey, broadcast::Sender<SubgroupOpened>>`
   (capacity 256); ingress announces `SubgroupOpened(SubgroupKey)` when a live
