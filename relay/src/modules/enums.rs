@@ -20,7 +20,7 @@ impl Location {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum FilterType {
     NextGroupStart,
     LargestObject,

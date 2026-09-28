@@ -126,8 +126,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   terminal event. A late relay-internal event for a departed session (e.g. a
   reader reporting `MalformedTrackDetected` after the publisher disconnected)
   therefore never resurrects a worker.
-- Before dispatching, each session worker runs
-  `auth::request_gate::authorize_request` against the session's
+- Each session worker opens the event's `relay.session.event` span, the one
+  place that lists the event's fields, and logs `Received session event` in
+  it. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
   TRACK_STATUS token refresh succeeds). PUBLISH and
   PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE
