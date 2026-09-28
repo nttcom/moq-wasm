@@ -160,7 +160,9 @@ One struct owns all cross-task state:
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
-  for FETCH data streams.
+  for FETCH data streams. A FETCH is answered on a single stream (draft-14
+  §9.16.3), so `FetchNotifier` removes the sender when that stream arrives;
+  the receiver keeps it until `accept_fetch_receiver`.
 
 ## Control plane (`modules/moqt/control_plane`)
 
