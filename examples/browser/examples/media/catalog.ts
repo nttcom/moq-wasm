@@ -55,7 +55,7 @@ export const MEDIA_AUDIO_PROFILES: MediaAudioProfile[] = [
   }
 ]
 
-type MsfTrack = {
+export type MsfTrack = {
   namespace?: string
   name: string
   packaging: string
@@ -63,6 +63,8 @@ type MsfTrack = {
   isLive: boolean
   label?: string
   codec?: string
+  mimeType?: string
+  framerate?: number
   bitrate?: number
   width?: number
   height?: number
@@ -131,7 +133,10 @@ export function buildMediaCatalogJson(trackNamespace: string[]): string {
     samplerate: profile.sampleRate,
     channelConfig: profile.channels === 1 ? 'mono' : `${profile.channels}ch`
   }))
-  const tracks: MsfTrack[] = [...videoTracks, ...audioTracks]
+  return buildMsfCatalogJson([...videoTracks, ...audioTracks])
+}
+
+export function buildMsfCatalogJson(tracks: MsfTrack[]): string {
   const catalog: MsfCatalog = {
     version: 1,
     generatedAt: Date.now(),
