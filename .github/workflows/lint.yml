@@ -107,7 +107,7 @@ jobs:
         run: cargo install --locked cargo-llvm-cov --version "$CARGO_LLVM_COV_VERSION"
       - name: Verify cargo-llvm-cov version
         run: |
-          actual="$(cargo-llvm-cov --version)"
+          actual="$(cargo llvm-cov --version)"
           expected="cargo-llvm-cov ${CARGO_LLVM_COV_VERSION}"
           case "$actual" in
             "$expected"*) ;;
