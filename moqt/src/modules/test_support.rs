@@ -1,10 +1,15 @@
 use std::{net::UdpSocket, path::Path, time::Duration};
 
+use bytes::Bytes;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 use crate::{
     ClientConfig, DUAL, DataReceiver, Endpoint, FilterType, Handshake, ServerConfig, Session,
     SessionEvent, Subscription, TrackReader,
+    modules::moqt::{
+        data_plane::object::{datagram_field::DatagramField, object_datagram::ObjectDatagram},
+        runtime::dispatch::incoming_object::IncomingObject,
+    },
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -106,4 +111,16 @@ pub(crate) async fn subscribed_track_reader(
         panic!("expected a subgroup stream receiver");
     };
     TrackReader::new(factory)
+}
+
+pub(crate) fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
+    IncomingObject::Datagram(ObjectDatagram::new(
+        track_alias,
+        0,
+        DatagramField::Payload0x00 {
+            object_id: 0,
+            publisher_priority: 128,
+            payload: Bytes::from_static(b"object"),
+        },
+    ))
 }

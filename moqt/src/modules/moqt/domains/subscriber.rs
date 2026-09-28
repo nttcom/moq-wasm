@@ -137,7 +137,7 @@ impl<T: TransportProtocol> Subscriber<T> {
                     tracing::info!("Subscribe ok");
                     if let Err(code) = self
                         .session
-                        .register_data_receiver(message.track_alias)
+                        .register_data_receiver(message.request_id, message.track_alias)
                         .await
                     {
                         // The track alias is already bound to another active subscription.
@@ -432,6 +432,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         fields(subscribe_id = %subscribe_id)
     )]
     pub async fn unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
+        self.session.cancel_subscription(subscribe_id).await;
         let unsubscribe = Unsubscribe {
             request_id: subscribe_id,
         };
