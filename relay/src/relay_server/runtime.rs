@@ -4,13 +4,18 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
     auth::token_verifier::TokenVerifier,
-    event_handler::EventHandler,
+    control_message_forwarder::ControlMessageForwarder,
+    event_handler::{EventHandler, WorkerDeps},
     inter_relay::InterRelayConnectionManager,
     relay::{
         cache::eviction_job::spawn_cache_eviction_job, egress::coordinator::EgressCoordinator,
         ingress::ingress_coordinator::IngressCoordinator,
     },
     route_registry::RelayRouteRegistry,
+    sequences::{
+        tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::LocalPubSubDirectory},
+        upstream_serializer::UpstreamCreationSerializer,
+    },
     session_event::SessionEvent,
     session_repository::SessionRepository,
     upstream_publisher_resolver::UpstreamPublisherResolver,
@@ -62,16 +67,23 @@ impl RelayRuntime {
             store.subgroup_opened_notifier_map.clone(),
         );
         let manager = EventHandler::run(
-            repo,
             receiver,
-            sender.clone(),
-            ingress.sender(),
-            egress.sender(),
-            route_registry,
-            inter_relay_connection_manager,
-            upstream_publisher_resolver,
-            store.cache_store.clone(),
-            token_verifier,
+            WorkerDeps {
+                control_message_forwarder: ControlMessageForwarder {
+                    repository: repo.clone(),
+                },
+                repo,
+                relay_event_sender: sender.clone(),
+                local_pub_sub_directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
+                ingress_sender: ingress.sender(),
+                egress_sender: egress.sender(),
+                route_registry,
+                inter_relay_connection_manager,
+                upstream_publisher_resolver,
+                cache_store: store.cache_store.clone(),
+                upstream_serializer: UpstreamCreationSerializer::new(),
+                token_verifier,
+            },
         );
         let evict_job = spawn_cache_eviction_job(
             store.cache_store.clone(),

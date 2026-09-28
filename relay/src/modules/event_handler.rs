@@ -26,11 +26,8 @@ use crate::modules::{
         publish_namespace_done::PublishNamespaceDone,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
-        tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{
-                LocalPubSubDirectory, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin,
-            },
+        tables::table::{
+            LocalPubSubDirectory, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin,
         },
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
@@ -47,77 +44,30 @@ pub(crate) struct EventHandler {
     relay_session_event_handler: tokio::task::JoinHandle<()>,
 }
 
-/// All deps cloned from the reader into a newly spawned session worker.
-struct WorkerDeps {
-    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
-    control_message_forwarder: ControlMessageForwarder,
-    local_pub_sub_directory: Arc<dyn LocalPubSubDirectory>,
-    ingress_sender: mpsc::Sender<IngressCommand>,
-    egress_sender: mpsc::Sender<EgressCommand>,
-    route_registry: Arc<dyn RelayRouteRegistry>,
-    inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
-    upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
-    cache_store: Arc<TrackCacheStore>,
-    upstream_serializer: UpstreamCreationSerializer,
-    token_verifier: Arc<dyn TokenVerifier>,
+#[derive(Clone)]
+pub(crate) struct WorkerDeps {
+    pub(crate) repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    pub(crate) relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) control_message_forwarder: ControlMessageForwarder,
+    pub(crate) local_pub_sub_directory: Arc<dyn LocalPubSubDirectory>,
+    pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
+    pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
+    pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
+    pub(crate) inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+    pub(crate) upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
+    pub(crate) upstream_serializer: UpstreamCreationSerializer,
+    pub(crate) token_verifier: Arc<dyn TokenVerifier>,
 }
 
 impl EventHandler {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
-        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        relay_event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
-        relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
-        ingress_sender: mpsc::Sender<IngressCommand>,
-        egress_sender: mpsc::Sender<EgressCommand>,
-        route_registry: Arc<dyn RelayRouteRegistry>,
-        inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
-        upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
-        cache_store: Arc<TrackCacheStore>,
-        token_verifier: Arc<dyn TokenVerifier>,
+        mut receiver: mpsc::UnboundedReceiver<SessionEvent>,
+        deps: WorkerDeps,
     ) -> Self {
-        let relay_session_event_handler = Self::create_relay_session_event_handler(
-            repo,
-            relay_event_receiver,
-            relay_event_sender,
-            ingress_sender,
-            egress_sender,
-            route_registry,
-            inter_relay_connection_manager,
-            upstream_publisher_resolver,
-            cache_store,
-            token_verifier,
-        );
-        Self {
-            relay_session_event_handler,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn create_relay_session_event_handler(
-        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        mut receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
-        relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
-        ingress_sender: mpsc::Sender<IngressCommand>,
-        egress_sender: mpsc::Sender<EgressCommand>,
-        route_registry: Arc<dyn RelayRouteRegistry>,
-        inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
-        upstream_publisher_resolver: Arc<UpstreamPublisherResolver>,
-        cache_store: Arc<TrackCacheStore>,
-        token_verifier: Arc<dyn TokenVerifier>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
+        let relay_session_event_handler = tokio::task::Builder::new()
             .name("Relay Session Event Handler")
             .spawn(async move {
-                let control_message_forwarder = ControlMessageForwarder {
-                    repository: repo.clone(),
-                };
-                let local_pub_sub_directory: Arc<dyn LocalPubSubDirectory> =
-                    Arc::new(InMemoryLocalPubSubDirectory::new());
-                // One serializer per relay; cloned (Arc-backed) into each worker.
-                let upstream_serializer = UpstreamCreationSerializer::new();
-
                 // sender_map: session_id -> per-session channel sender.
                 // Only the reader touches this map; no locking needed.
                 let mut sender_map: HashMap<SessionId, mpsc::UnboundedSender<SessionEvent>> =
@@ -156,21 +106,7 @@ impl EventHandler {
 
                             if matches!(event.kind, EventKind::SessionRegistered) {
                                 let (tx, rx) = mpsc::unbounded_channel::<SessionEvent>();
-                                let deps = WorkerDeps {
-                                    repo: repo.clone(),
-                                    relay_event_sender: relay_event_sender.clone(),
-                                    control_message_forwarder: control_message_forwarder.clone(),
-                                    local_pub_sub_directory: local_pub_sub_directory.clone(),
-                                    ingress_sender: ingress_sender.clone(),
-                                    egress_sender: egress_sender.clone(),
-                                    route_registry: route_registry.clone(),
-                                    inter_relay_connection_manager: inter_relay_connection_manager.clone(),
-                                    upstream_publisher_resolver: upstream_publisher_resolver.clone(),
-                                    cache_store: cache_store.clone(),
-                                    upstream_serializer: upstream_serializer.clone(),
-                                    token_verifier: token_verifier.clone(),
-                                };
-                                workers.spawn(Self::session_worker(session_id, rx, deps));
+                                workers.spawn(Self::session_worker(session_id, rx, deps.clone()));
                                 sender_map.insert(session_id, tx);
                                 continue;
                             }
@@ -192,7 +128,10 @@ impl EventHandler {
                 drop(sender_map);
                 while workers.join_next().await.is_some() {}
             })
-            .unwrap()
+            .unwrap();
+        Self {
+            relay_session_event_handler,
+        }
     }
 
     /// Per-session worker.  Processes events STRICTLY IN ORDER, fully awaiting
@@ -843,12 +782,13 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
-    use super::EventHandler;
+    use super::{EventHandler, WorkerDeps};
     use crate::modules::{
         auth::{
             test_support::{StubOutcome, StubVerifier},
             verified_token::VerifiedToken,
         },
+        control_message_forwarder::ControlMessageForwarder,
         core::{
             mocks::{RecordedControlMessages, mock_new_session},
             session_event::MoqtSessionEvent,
@@ -859,6 +799,10 @@ mod tests {
             ingress::ingress_coordinator::IngressCommand,
         },
         route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
+        sequences::{
+            tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::LocalPubSubDirectory},
+            upstream_serializer::UpstreamCreationSerializer,
+        },
         session_event::{EventKind, SessionEvent},
         session_repository::SessionRepository,
         types::{SessionId, TrackKey},
@@ -895,16 +839,23 @@ mod tests {
             ));
             let cache_store = Arc::new(TrackCacheStore::new());
             let event_handler = EventHandler::run(
-                repo.clone(),
                 event_receiver,
-                event_sender.clone(),
-                ingress_sender,
-                egress_sender,
-                route_registry,
-                inter_relay_connection_manager,
-                upstream_publisher_resolver,
-                cache_store.clone(),
-                Arc::new(StubVerifier(StubOutcome::Unauthorized)),
+                WorkerDeps {
+                    control_message_forwarder: ControlMessageForwarder {
+                        repository: repo.clone(),
+                    },
+                    repo: repo.clone(),
+                    relay_event_sender: event_sender.clone(),
+                    local_pub_sub_directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
+                    ingress_sender,
+                    egress_sender,
+                    route_registry,
+                    inter_relay_connection_manager,
+                    upstream_publisher_resolver,
+                    cache_store: cache_store.clone(),
+                    upstream_serializer: UpstreamCreationSerializer::new(),
+                    token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
+                },
             );
             let cache_store_references_without_workers = Arc::strong_count(&cache_store);
             Self {
