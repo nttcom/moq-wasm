@@ -284,6 +284,11 @@ impl EventHandler {
                     continue;
                 }
             };
+            let event_span = Self::session_event_span(session_id, &session_span, &event);
+            event_span.in_scope(|| match event {
+                MoqtSessionEvent::ProtocolViolation() => tracing::error!("Received session event"),
+                _ => tracing::info!("Received session event"),
+            });
             if let Err(denied) = authorize_request(verified_token.as_deref(), &event) {
                 let reject_span = tracing::info_span!(
                     parent: &session_span,
@@ -297,7 +302,6 @@ impl EventHandler {
                     .await;
                 continue;
             }
-            let event_span = Self::session_event_span(session_id, &session_span, &event);
 
             match event {
                 MoqtSessionEvent::PublishNamespace(handler) => {
@@ -580,6 +584,11 @@ impl EventHandler {
                 track_namespace = %handler.track_namespace(),
                 track_name = %handler.track_name(),
                 track_alias = handler.track_alias(),
+                group_order = ?handler._group_order(),
+                content_exists = ?handler._content_exists(),
+                forward = handler._forward(),
+                delivery_timeout = ?handler._delivery_timeout(),
+                max_cache_duration = ?handler._max_cache_duration(),
             ),
             MoqtSessionEvent::Subscribe(handler) => tracing::info_span!(
                 parent: session_span,
@@ -589,6 +598,12 @@ impl EventHandler {
                 subscribe_id = handler.subscribe_id(),
                 track_namespace = %handler.track_namespace(),
                 track_name = %handler.track_name(),
+                subscriber_priority = handler._subscriber_priority(),
+                group_order = ?handler._group_order(),
+                forward = handler._forward(),
+                filter_type = ?handler._filter_type(),
+                max_cache_duration = ?handler._max_cache_duration(),
+                delivery_timeout = ?handler._delivery_timeout(),
             ),
             MoqtSessionEvent::Unsubscribe(handler) => tracing::info_span!(
                 parent: session_span,
@@ -609,6 +624,7 @@ impl EventHandler {
                 session_id = %session_id,
                 event = "Fetch",
                 request_id = handler.request_id(),
+                fetch_params = ?handler.fetch_params(),
             ),
             MoqtSessionEvent::ProtocolViolation() => tracing::info_span!(
                 parent: session_span,
@@ -644,6 +660,7 @@ impl EventHandler {
                 event = "PublishNamespaceCancel",
                 track_namespace = %handler.track_namespace(),
                 error_code = handler.error_code(),
+                error_reason = %handler.error_reason(),
             ),
             MoqtSessionEvent::PublishDone(handler) => tracing::info_span!(
                 parent: session_span,
@@ -653,6 +670,7 @@ impl EventHandler {
                 request_id = handler.request_id(),
                 status_code = handler.status_code(),
                 stream_count = handler.stream_count(),
+                error_reason = %handler.error_reason(),
             ),
             MoqtSessionEvent::SubscribeUpdate(handler) => tracing::info_span!(
                 parent: session_span,
@@ -661,7 +679,9 @@ impl EventHandler {
                 event = "SubscribeUpdate",
                 request_id = handler.request_id(),
                 subscription_request_id = handler.subscription_request_id(),
+                start_location = ?handler.start_location(),
                 end_group = handler.end_group(),
+                subscriber_priority = handler.subscriber_priority(),
                 forward = handler.forward(),
             ),
             MoqtSessionEvent::FetchCancel(handler) => tracing::info_span!(
