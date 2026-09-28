@@ -196,8 +196,8 @@ Each sequence owns the relay-side protocol logic for one message
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Relative
 Joining from the downstream subscription's start location), reply FETCH_OK,
-then delegate to `EgressCommand::StartFetch`, which serves the range entirely
-from `TrackCache` over a new uni stream.
+then delegate to `EgressCommand::StartFetch`, which serves the range from
+`TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
 
 ## Authentication and authorization (`modules/auth`)
 
@@ -319,6 +319,13 @@ per-request authorization gate under "Event pipeline".
   `[start, end)` in location order, reading positions inside knowledge without
   waiting and waiting past the frontier only while some subgroup of the group
   is open.
+- `fetch_objects(start, end, group_order)` returns a `FetchCursor` (`track_cache/fetch_cursor.rs`)
+  that walks `[start, end)` in delivery order (Descending reverses the group
+  list) and yields one object per `next`, reading positions inside knowledge
+  without waiting and waiting past the frontier only while some subgroup of
+  the group is open. `Aborted` from such a wait surfaces as
+  `FetchInterrupted::Incomplete`, the malformed latch as
+  `FetchInterrupted::Malformed`.
 - Eviction job (`eviction_job.rs`): every `RELAY_CACHE_EVICT_INTERVAL_SECS`
   (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (30 min) and release
   knowledge exactly for the removed locations; a `TrackCache` entry is removed
@@ -358,6 +365,13 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   ids may be wall-clock timestamps; assigning it at open time means a still
   buffered tail of group N keeps outranking group N+1's keyframe without
   re-prioritizing streams already queued in the transport.
+- Fetch delivery (`fetch_delivery.rs`) — one task per FETCH served from the
+  cache: it opens the fetch stream, drives the `FetchCursor` and writes each
+  object as soon as the cursor yields it, so objects of already-closed groups
+  reach the subscriber while a later group in the range is still open. The
+  stream is FIN'd when the cursor is exhausted and reset with
+  MALFORMED_TRACK / INTERNAL_ERROR when the cursor reports `Malformed` /
+  `Incomplete`.
 
 ## Cascading relays (`route_registry`, `inter_relay`)
 

@@ -8,7 +8,9 @@ use crate::modules::{
     core::data_object::DataObject,
     relay::{
         cache::store::TrackCacheStore,
-        egress::runner::EgressRunner,
+        egress::{
+            coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
+        },
         ingress::stream_reader::{StreamOpened, StreamReader},
         notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
@@ -19,14 +21,14 @@ use crate::modules::{
 pub(crate) mod fixtures;
 mod mocks;
 
-pub(crate) use self::mocks::downstream_client::Sent;
+pub(crate) use self::mocks::downstream_client::{FetchSent, Sent};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
     fixtures::subscription::make_subscription,
     mocks::{
-        downstream_client::{MockPublisher, SentPublishDone},
+        downstream_client::{MockFetchSender, MockPublisher, SentPublishDone},
         upstream_client::UpstreamSubgroupStream,
     },
 };
@@ -85,6 +87,47 @@ impl EgressRunnerHandle {
 }
 
 impl Drop for EgressRunnerHandle {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
+}
+
+pub(crate) struct FetchDeliveryHandle {
+    sent: mpsc::UnboundedReceiver<FetchSent>,
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl FetchDeliveryHandle {
+    pub(crate) async fn expect_objects(&mut self, expected: &[(u64, u64)]) {
+        for &(group_id, object_id) in expected {
+            match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+                Ok(Some(FetchSent::Object(object))) => assert_eq!(
+                    (object.group_id, object.object_id),
+                    (group_id, object_id),
+                    "fetch objects must arrive in range order"
+                ),
+                other => panic!("expected fetch object {{{group_id}, {object_id}}}, got {other:?}"),
+            }
+        }
+    }
+
+    pub(crate) async fn expect_end(&mut self) -> FetchSent {
+        match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+            Ok(Some(end @ (FetchSent::Closed | FetchSent::Reset(_)))) => end,
+            other => panic!("expected the fetch stream to end, got {other:?}"),
+        }
+    }
+
+    pub(crate) async fn assert_nothing_sent_within(&mut self, window: Duration) {
+        let sent = tokio::time::timeout(window, self.sent.recv()).await;
+        assert!(
+            sent.is_err(),
+            "fetch delivery must wait for the open group: {sent:?}"
+        );
+    }
+}
+
+impl Drop for FetchDeliveryHandle {
     fn drop(&mut self) {
         self.join_handle.abort();
     }
@@ -179,6 +222,40 @@ impl RelayHarness {
             priorities: observers.priorities,
             publish_done: observers.publish_done,
             join_handle,
+        }
+    }
+
+    pub(crate) fn start_fetch(
+        &self,
+        start_location: moqt::Location,
+        end_location: moqt::Location,
+    ) -> FetchDeliveryHandle {
+        let (sender, sent) = MockFetchSender::channel();
+        let request = EgressFetchRequest {
+            subscriber_session_id: 2,
+            request_id: 0,
+            cache: self.cache_store.get_or_create(&self.track_key),
+            start_location,
+            end_location,
+            group_order: moqt::GroupOrder::Ascending,
+        };
+        let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
+        FetchDeliveryHandle { sent, join_handle }
+    }
+
+    pub(crate) async fn wait_group_closed(&self, group_id: u64) {
+        let cache = self.cache_store.get_or_create(&self.track_key);
+        let whole_group = moqt::Location {
+            group_id,
+            object_id: 0,
+        };
+        let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
+        while !cache.covers(whole_group, whole_group) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "group {group_id} never closed"
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
 

@@ -8,13 +8,9 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     core::subscription::DownstreamSubscription,
-    enums::FetchErrorCode,
     relay::{
-        cache::{
-            store::TrackCacheStore,
-            track_cache::{FetchInterrupted, TrackCache},
-        },
-        egress::runner::EgressRunner,
+        cache::{store::TrackCacheStore, track_cache::TrackCache},
+        egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
         notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_repository::SessionRepository,
@@ -138,8 +134,6 @@ impl EgressCoordinator {
             return;
         };
 
-        let cache = request.cache.clone();
-
         tokio::spawn(async move {
             let sender = match publisher.new_fetch_sender(request.request_id).await {
                 Ok(s) => s,
@@ -148,46 +142,7 @@ impl EgressCoordinator {
                     return;
                 }
             };
-            let objects = match cache
-                .fetch_objects(
-                    request.start_location,
-                    request.end_location,
-                    request.group_order,
-                )
-                .await
-            {
-                Ok(objects) => objects,
-                Err(interrupted) => {
-                    let error_code = match interrupted {
-                        FetchInterrupted::Malformed => FetchErrorCode::MalformedTrack as u64,
-                        FetchInterrupted::Incomplete => FetchErrorCode::InternalError as u64,
-                    };
-                    tracing::warn!(
-                        request_id = request.request_id,
-                        ?interrupted,
-                        "fetch cannot be completed from cache; resetting fetch stream"
-                    );
-                    if let Err(e) = sender.reset(error_code).await {
-                        tracing::error!(?e, "failed to reset fetch stream");
-                    }
-                    return;
-                }
-            };
-            for object in objects {
-                if let Err(e) = sender.send(object).await {
-                    tracing::error!(?e, "failed to send fetch object");
-                    return;
-                }
-            }
-            if cache.is_malformed() {
-                if let Err(e) = sender.reset(FetchErrorCode::MalformedTrack as u64).await {
-                    tracing::error!(?e, "failed to reset fetch stream");
-                }
-                return;
-            }
-            if let Err(e) = sender.close().await {
-                tracing::error!(?e, "failed to close fetch stream");
-            }
+            deliver_fetch(&request, sender.as_ref()).await;
         });
     }
 
