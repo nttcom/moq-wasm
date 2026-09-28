@@ -512,12 +512,8 @@ impl Subscribe {
 mod tests {
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
-    use crate::modules::core::mocks::MockSubscribeHandler;
-    use crate::modules::core::{
-        data_receiver::fetch_receiver::UpstreamFetchReceiver,
-        data_receiver::receiver::DataReceiver, handler::publish::SubscribeOption,
-        publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
-        subscriber::Subscriber, subscription::UpstreamSubscription,
+    use crate::modules::core::mocks::{
+        MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
     };
     use crate::modules::inter_relay::InterRelayConnectionManager;
     use crate::modules::relay::cache::track_cache::TrackCache;
@@ -527,7 +523,6 @@ mod tests {
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
     };
     use crate::modules::sequences::test_fixtures::{active_upstream, upstream_key};
-    use crate::modules::session_repository::{NewSession, SessionPeer, SessionRepository};
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);
@@ -563,110 +558,6 @@ mod tests {
         assert_eq!(code, SubscribeErrorCode::TrackDoesNotExist as u64);
     }
 
-    struct MockUpstreamSession {
-        cache_store: Arc<TrackCacheStore>,
-        track_key: TrackKey,
-        content_exists: moqt::ContentExists,
-        bursts_on_subscribe: bool,
-    }
-
-    struct MockUpstreamSubscriber {
-        cache_store: Arc<TrackCacheStore>,
-        track_key: TrackKey,
-        content_exists: moqt::ContentExists,
-        bursts_on_subscribe: bool,
-    }
-
-    #[async_trait::async_trait]
-    impl Session for MockUpstreamSession {
-        fn as_publisher(&self) -> Box<dyn Publisher> {
-            unimplemented!("not used in subscribe tests")
-        }
-
-        fn as_subscriber(&self) -> Box<dyn Subscriber> {
-            Box::new(MockUpstreamSubscriber {
-                cache_store: self.cache_store.clone(),
-                track_key: self.track_key.clone(),
-                content_exists: self.content_exists,
-                bursts_on_subscribe: self.bursts_on_subscribe,
-            })
-        }
-
-        async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
-            std::future::pending().await
-        }
-
-        fn close(&self, _code: moqt::TerminationErrorCode, _reason: &str) {
-            unimplemented!("not used in subscribe tests")
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl Subscriber for MockUpstreamSubscriber {
-        async fn send_subscribe(
-            &mut self,
-            track_namespace: String,
-            track_name: String,
-            _option: SubscribeOption,
-        ) -> anyhow::Result<UpstreamSubscription> {
-            if self.bursts_on_subscribe {
-                let cache = self.cache_store.get_or_create(&self.track_key);
-                append_one_object(&cache, 0);
-            }
-            Ok(UpstreamSubscription::from(
-                moqt::Subscription::SubscriberInitiated(moqt::SubscriberInitiatedSubscription {
-                    request_id: 1,
-                    track_namespace,
-                    track_name,
-                    track_alias: 0,
-                    expires: 0,
-                    group_order: moqt::GroupOrder::Ascending,
-                    subscriber_priority: 128,
-                    content_exists: self.content_exists,
-                    filter_type: moqt::FilterType::LargestObject,
-                    delivery_timeout: None,
-                }),
-            ))
-        }
-
-        async fn send_unsubscribe(&self, _subscribe_id: u64) -> anyhow::Result<()> {
-            unimplemented!("not used in subscribe tests")
-        }
-
-        async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
-            unimplemented!("not used in subscribe tests")
-        }
-
-        async fn create_data_receiver(
-            &mut self,
-            _subscription: &UpstreamSubscription,
-        ) -> anyhow::Result<DataReceiver> {
-            unimplemented!("not used in subscribe tests")
-        }
-
-        async fn send_fetch(
-            &mut self,
-            _track_namespace: String,
-            _track_name: String,
-            _start_location: moqt::Location,
-            _end_location: moqt::Location,
-            _option: moqt::FetchOption,
-        ) -> anyhow::Result<moqt::FetchHandle> {
-            unimplemented!("not used in subscribe tests")
-        }
-
-        async fn create_fetch_receiver(
-            &mut self,
-            _handle: &moqt::FetchHandle,
-        ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
-            unimplemented!("not used in subscribe tests")
-        }
-
-        async fn send_fetch_cancel(&self, _request_id: u64) -> anyhow::Result<()> {
-            unimplemented!("not used in subscribe tests")
-        }
-    }
-
     async fn create_upstream_and_resolve_largest(
         cache_store: Arc<TrackCacheStore>,
         track_key: TrackKey,
@@ -683,27 +574,24 @@ mod tests {
             PeerKind::Client,
         );
 
-        let mut repository = SessionRepository::new();
+        let session = mock_session_answering_subscribe({
+            let cache_store = cache_store.clone();
+            let track_key = track_key.clone();
+            move || {
+                if bursts_on_subscribe {
+                    append_one_object(&cache_store.get_or_create(&track_key), 0);
+                }
+                content_exists
+            }
+        });
+        let repository = session_repository_with_session(
+            PUBLISHER_SESSION,
+            session,
+            VerifiedToken::full_access(),
+        )
+        .await;
         let (session_event_sender, _session_event_receiver) =
             tokio::sync::mpsc::unbounded_channel();
-        repository
-            .add(
-                NewSession {
-                    session_id: PUBLISHER_SESSION,
-                    session: Box::new(MockUpstreamSession {
-                        cache_store: cache_store.clone(),
-                        track_key: track_key.clone(),
-                        content_exists,
-                        bursts_on_subscribe,
-                    }),
-                    session_span: tracing::Span::none(),
-                    peer: SessionPeer::Client,
-                    verified_token: VerifiedToken::full_access(),
-                },
-                session_event_sender.clone(),
-            )
-            .await;
-        let repository = Arc::new(tokio::sync::Mutex::new(repository));
         let forwarder = ControlMessageForwarder {
             repository: repository.clone(),
         };
