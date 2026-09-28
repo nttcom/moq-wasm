@@ -85,6 +85,7 @@ permissions:
 env:
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   changes:

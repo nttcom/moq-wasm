@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
