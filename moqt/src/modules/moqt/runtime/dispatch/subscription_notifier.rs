@@ -55,6 +55,12 @@ impl SubscriptionNotifier {
             IncomingObjectNotification::ReceiverClosed => {
                 tracing::warn!("Failed to notify incoming object: receiver closed");
             }
+            IncomingObjectNotification::Discarded => {
+                tracing::debug!(
+                    track_alias,
+                    "discarding incoming object of a cancelled subscription"
+                );
+            }
         }
     }
 }

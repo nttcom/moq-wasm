@@ -97,7 +97,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
     pub async fn accept_data_receiver(&self) {
         if let Err(code) = self
             .session_context
-            .register_data_receiver(self.track_alias)
+            .register_data_receiver(self.request_id, self.track_alias)
             .await
         {
             // The track alias is already bound to another active subscription.
@@ -122,6 +122,9 @@ impl<T: TransportProtocol> PublishHandler<T> {
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
+        self.session_context
+            .cancel_unclaimed_track_alias(self.track_alias)
+            .await;
         let err = RequestError {
             // TODO: assign correct request id.
             request_id: self.request_id,
@@ -141,8 +144,13 @@ mod tests {
     use crate::PublishOption;
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::{
+            moqt::domains::session_context::IncomingObjectNotification,
+            test_support::{connect_sessions, datagram_object, spawn_dual_server},
+        },
     };
+
+    const MAX_PENDING_OBJECTS: usize = 256;
 
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
@@ -170,6 +178,56 @@ mod tests {
         // Assert
         assert_eq!(handler.track_namespace_tuple, vec!["a", "b", "c"]);
         assert_eq!(handler.track_namespace, "a/b/c");
+        request.abort();
+    }
+
+    #[tokio::test]
+    async fn publish_error_drops_the_objects_buffered_for_its_track_alias() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("publish-handler-error-buffer");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .publisher()
+                .publish(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    PublishOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH from the client");
+        };
+        let context = server.subscriber().session;
+        context
+            .notify_incoming_object(
+                handler.track_alias,
+                datagram_object(handler.track_alias),
+                MAX_PENDING_OBJECTS,
+            )
+            .await;
+
+        // Act
+        handler
+            .error(0x0, "uninterested".to_string())
+            .await
+            .unwrap();
+        let notification = context
+            .notify_incoming_object(
+                handler.track_alias,
+                datagram_object(handler.track_alias),
+                MAX_PENDING_OBJECTS,
+            )
+            .await;
+
+        // Assert
+        assert!(matches!(
+            notification,
+            IncomingObjectNotification::Discarded
+        ));
         request.abort();
     }
 }
