@@ -135,8 +135,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   `UNAUTHORIZED (0x1)` and the sequence is never invoked.
 - `EventHandler` implements a **reader/worker** structure: the single reader
   only dispatches to per-session unbounded channels, so a slow or blocked
-  session can never head-of-line-block another (unit tests in
-  `event_handler.rs` pin this). Workers process one event at a time, fully
+  session can never head-of-line-block another. Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
   session are strictly ordered.
 - TRACK_STATUS is handled by the worker itself as a token refresh (see
