@@ -13,8 +13,9 @@ pub(crate) mod upstream_serializer;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     inter_relay::InterRelayConnectionManager,
+    relay::ingress::ingress_coordinator::IngressCommand,
     route_registry::{RelayInfo, RelayRouteRegistry},
-    types::SessionId,
+    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct CascadingRelayContext<'a> {
@@ -46,4 +47,41 @@ pub(crate) async fn connect_relay(
             |err| tracing::warn!(?err, relay_id = %relay.relay_id, "failed to connect relay"),
         )
         .ok()
+}
+
+pub(crate) async fn release_upstream(
+    forwarder: &ControlMessageForwarder,
+    ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+    publisher_session_id: SessionId,
+    upstream_request_id: u64,
+    track_key: &TrackKey,
+) {
+    if let Err(err) = forwarder
+        .unsubscribe(publisher_session_id, upstream_request_id)
+        .await
+    {
+        tracing::warn!(
+            ?err,
+            upstream_session_id = %publisher_session_id,
+            request_id = %upstream_request_id,
+            "failed to forward upstream unsubscribe"
+        );
+    } else {
+        tracing::info!(
+            upstream_session_id = %publisher_session_id,
+            request_id = %upstream_request_id,
+            "forwarded upstream unsubscribe"
+        );
+    }
+
+    if ingress_sender
+        .send(IngressCommand::StopTrack {
+            track_key: track_key.clone(),
+            publisher_session_id,
+        })
+        .await
+        .is_err()
+    {
+        tracing::error!(track_key = %track_key, "failed to send ingress stop request");
+    }
 }
