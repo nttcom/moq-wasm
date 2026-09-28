@@ -682,11 +682,11 @@ mod tests {
         const SUBSCRIBER_SESSION: SessionId = 2;
 
         let table = InMemoryLocalPubSubDirectory::new();
-        assert!(table.register_publish_namespace(
+        table.register_publish_namespace(
             PUBLISHER_SESSION,
             track_key.track_namespace.clone(),
-            PeerKind::Client
-        ));
+            PeerKind::Client,
+        );
 
         let mut repository = SessionRepository::new();
         let (session_event_sender, _session_event_receiver) =

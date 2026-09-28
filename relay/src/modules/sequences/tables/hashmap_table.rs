@@ -185,7 +185,7 @@ impl InMemoryLocalPubSubDirectory {
         session_id: SessionId,
         track_namespace: String,
         peer_kind: PeerKind,
-    ) -> bool {
+    ) {
         if let Some(sessions) = self.publisher_namespaces.get_mut(&track_namespace) {
             sessions.insert(session_id, peer_kind);
         } else {
@@ -193,7 +193,6 @@ impl InMemoryLocalPubSubDirectory {
             sessions.insert(session_id, peer_kind);
             self.publisher_namespaces.insert(track_namespace, sessions);
         }
-        true
     }
 
     /// Returns true when no client publisher remains for the namespace,
@@ -646,8 +645,8 @@ mod tests {
         // Arrange: Register namespace and track state for the session.
         let table = InMemoryLocalPubSubDirectory::new();
 
-        assert!(table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client));
-        assert!(table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client));
+        table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
+        table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client);
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(1, "solo/".to_string(), PeerKind::Client);

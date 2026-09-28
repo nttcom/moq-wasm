@@ -31,10 +31,10 @@ impl PublishNamespace {
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn PublishNamespaceHandler,
     ) {
-        let requested_track_namespace = handler.track_namespace();
+        let track_namespace = handler.track_namespace();
         tracing::info!(
             session_id = %session_id,
-            track_namespace = %requested_track_namespace,
+            track_namespace = %track_namespace,
             "SequenceHandler::PublishNamespace"
         );
 
@@ -44,7 +44,7 @@ impl PublishNamespace {
             && !self
                 .register_route(
                     cascading_relay_context.route_registry,
-                    requested_track_namespace,
+                    track_namespace,
                     handler,
                 )
                 .await
@@ -57,10 +57,7 @@ impl PublishNamespace {
         } else {
             PeerKind::Relay
         };
-        let Some(track_namespace) = self.register(session_id, table, peer_kind, handler).await
-        else {
-            return;
-        };
+        table.register_publish_namespace(session_id, track_namespace.to_string(), peer_kind);
 
         if !self.response(handler).await {
             return;
@@ -71,53 +68,17 @@ impl PublishNamespace {
         // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 
         // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
-        self.notify_to_subscribers(&track_namespace, table, forwarder)
+        self.notify_to_subscribers(track_namespace, table, forwarder)
             .await;
 
         if is_origin {
             self.notify_remote_subscribers(
-                &track_namespace,
+                track_namespace,
                 forwarder,
                 cascading_relay_context.route_registry,
                 cascading_relay_context.inter_relay_connection_manager,
             )
             .await;
-        }
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish_namespace.register",
-        skip_all,
-        fields(session_id = %session_id, track_namespace = %handler.track_namespace())
-    )]
-    async fn register(
-        &self,
-        session_id: SessionId,
-        table: &InMemoryLocalPubSubDirectory,
-        peer_kind: PeerKind,
-        handler: &dyn PublishNamespaceHandler,
-    ) -> Option<String> {
-        let track_namespace = handler.track_namespace();
-
-        if !table.register_publish_namespace(session_id, track_namespace.to_string(), peer_kind) {
-            // TODO: Session close.
-            tracing::error!("Failed to register publish namespace");
-            match handler
-                .error(
-                    PublishNamespaceErrorCode::InternalError as u64,
-                    "Failed to register publish namespace".to_string(),
-                )
-                .await
-            {
-                Ok(_) => tracing::info!("send `PUBLISH_NAMESPACE_ERROR` ok"),
-                Err(_) => {
-                    tracing::error!("Failed to send `PUBLISH_NAMESPACE_ERROR`. Session close.")
-                }
-            }
-            None
-        } else {
-            Some(track_namespace.to_string())
         }
     }
 
