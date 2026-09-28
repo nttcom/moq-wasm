@@ -640,8 +640,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn remove_session_cleans_up_all_session_scoped_entries() {
+    #[test]
+    fn remove_session_cleans_up_all_session_scoped_entries() {
         // Arrange: Register namespace and track state for the session.
         let table = InMemoryLocalPubSubDirectory::new();
 
@@ -684,8 +684,8 @@ mod tests {
         assert!(removed.publish_namespace_track_namespaces.is_empty());
     }
 
-    #[tokio::test]
-    async fn register_subscribe_namespace_reports_only_the_first_client() {
+    #[test]
+    fn register_subscribe_namespace_reports_only_the_first_client() {
         // Arrange: Start with a relay subscriber, which never owns the route.
         let table = InMemoryLocalPubSubDirectory::new();
 
@@ -703,8 +703,8 @@ mod tests {
         assert!(!second_client);
     }
 
-    #[tokio::test]
-    async fn unregister_subscribe_namespace_reports_when_last_client_leaves() {
+    #[test]
+    fn unregister_subscribe_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client subscribers for the same namespace prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Client);
@@ -720,8 +720,8 @@ mod tests {
         assert!(table.subscriber_namespaces.get("room/").is_none());
     }
 
-    #[tokio::test]
-    async fn unregister_subscribe_namespace_ignores_remaining_relay_subscribers() {
+    #[test]
+    fn unregister_subscribe_namespace_ignores_remaining_relay_subscribers() {
         // Arrange: Register a client subscriber alongside a relay subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Client);
@@ -737,8 +737,8 @@ mod tests {
         assert!(!room_subscribers.contains(&1));
     }
 
-    #[tokio::test]
-    async fn remove_session_reports_empty_client_prefix_even_when_relay_subscriber_remains() {
+    #[test]
+    fn remove_session_reports_empty_client_prefix_even_when_relay_subscriber_remains() {
         // Arrange: Register one client-origin subscriber and one relay-origin subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Client);
@@ -757,8 +757,8 @@ mod tests {
         assert!(!room_subscribers.contains(&1));
     }
 
-    #[tokio::test]
-    async fn remove_session_does_not_report_relay_only_prefixes() {
+    #[test]
+    fn remove_session_does_not_report_relay_only_prefixes() {
         // Arrange: Register only relay-origin subscribers for the prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Relay);
@@ -773,8 +773,8 @@ mod tests {
         assert!(room_subscribers.contains(&2));
     }
 
-    #[tokio::test]
-    async fn remove_session_reports_publish_namespace_when_last_client_publisher_leaves() {
+    #[test]
+    fn remove_session_reports_publish_namespace_when_last_client_publisher_leaves() {
         // Arrange: Register one client-origin publisher and one relay-origin publisher.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
@@ -796,8 +796,8 @@ mod tests {
         assert_eq!(publisher_session_ids, vec![2]);
     }
 
-    #[tokio::test]
-    async fn remove_session_does_not_report_relay_only_publish_namespaces() {
+    #[test]
+    fn remove_session_does_not_report_relay_only_publish_namespaces() {
         // Arrange: Register only relay-origin publishers for the namespace.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Relay);
@@ -810,8 +810,8 @@ mod tests {
         assert!(removed.publish_namespace_track_namespaces.is_empty());
     }
 
-    #[tokio::test]
-    async fn purge_relay_publish_namespaces_drops_uncovered_relay_entries() {
+    #[test]
+    fn purge_relay_publish_namespaces_drops_uncovered_relay_entries() {
         // Arrange: A relay-origin namespace learned over an inter-relay session,
         // alongside a local client publisher in another namespace.
         let table = InMemoryLocalPubSubDirectory::new();
@@ -826,8 +826,8 @@ mod tests {
         assert!(table.publisher_namespaces.get("research/local").is_some());
     }
 
-    #[tokio::test]
-    async fn purge_relay_publish_namespaces_keeps_entries_covered_by_client_prefix() {
+    #[test]
+    fn purge_relay_publish_namespaces_keeps_entries_covered_by_client_prefix() {
         // Arrange: A relay-origin namespace still watched via another client prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(10, "research/ghost".to_string(), PeerKind::Relay);
@@ -840,8 +840,8 @@ mod tests {
         assert!(table.publisher_namespaces.get("research/ghost").is_some());
     }
 
-    #[tokio::test]
-    async fn unregister_publish_namespace_reports_when_last_client_leaves() {
+    #[test]
+    fn unregister_publish_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client publishers for the same namespace.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
@@ -857,8 +857,8 @@ mod tests {
         assert!(table.publisher_namespaces.get("room/member").is_none());
     }
 
-    #[tokio::test]
-    async fn unregister_publish_namespace_ignores_remaining_relay_publishers() {
+    #[test]
+    fn unregister_publish_namespace_ignores_remaining_relay_publishers() {
         // Arrange: Register a client publisher alongside a relay publisher.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
@@ -877,8 +877,8 @@ mod tests {
         assert_eq!(publisher_session_ids, vec![2]);
     }
 
-    #[tokio::test]
-    async fn allows_multiple_publishers_for_the_same_namespace_and_track() {
+    #[test]
+    fn allows_multiple_publishers_for_the_same_namespace_and_track() {
         // Arrange: Register multiple publishers for the same namespace and track.
         let table = InMemoryLocalPubSubDirectory::new();
 
@@ -936,8 +936,8 @@ mod tests {
         (table, upstream_key)
     }
 
-    #[tokio::test]
-    async fn register_downstream_subscription_stores_start_location() {
+    #[test]
+    fn register_downstream_subscription_stores_start_location() {
         // Arrange
         let (table, upstream_key) = subscribed_track_table();
         let largest = moqt::Location {
@@ -962,8 +962,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn register_downstream_subscription_none_start_location() {
+    #[test]
+    fn register_downstream_subscription_none_start_location() {
         // Arrange
         let (table, upstream_key) = subscribed_track_table();
 
@@ -978,8 +978,8 @@ mod tests {
         assert!(sub.start_location.is_none());
     }
 
-    #[tokio::test]
-    async fn publisher_disconnect_stops_the_runners_of_its_downstream_subscriptions() {
+    #[test]
+    fn publisher_disconnect_stops_the_runners_of_its_downstream_subscriptions() {
         // Arrange
         let (table, upstream_key) = subscribed_track_table();
         let mut runner_stop_receiver = table
@@ -993,8 +993,8 @@ mod tests {
         assert!(runner_stopped(&mut runner_stop_receiver));
     }
 
-    #[tokio::test]
-    async fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
+    #[test]
+    fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
         // Arrange
         let (table, upstream_key) = subscribed_track_table();
         let mut runner_stop_receiver = table
@@ -1010,8 +1010,8 @@ mod tests {
         assert!(table.downstream_subscriptions.is_empty());
     }
 
-    #[tokio::test]
-    async fn registration_for_a_removed_upstream_yields_no_runner() {
+    #[test]
+    fn registration_for_a_removed_upstream_yields_no_runner() {
         // Arrange
         let (table, upstream_key) = subscribed_track_table();
         table.remove_session(1);
@@ -1110,8 +1110,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn finds_active_upstream_subscriptions_separately_from_publishers() {
+    #[test]
+    fn finds_active_upstream_subscriptions_separately_from_publishers() {
         // Arrange: Register an active upstream subscription separately from publishers.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
