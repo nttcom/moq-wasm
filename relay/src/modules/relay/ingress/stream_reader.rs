@@ -264,6 +264,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         relay::{
+            cache::track_cache::NextObject,
             tests::harness::{
                 PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
                 fixtures::{
@@ -312,12 +313,10 @@ mod tests {
             harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal), (1, ObjectStatus::EndOfGroup)]
         );
-        assert!(
-            harness
-                .subgroup_end_after(stream_key(0), 1)
-                .await
-                .is_finished()
-        );
+        assert!(matches!(
+            harness.subgroup_end_after(stream_key(0), 1).await,
+            NextObject::Finished
+        ));
     }
 
     async fn assert_open_subgroup_ends_on(
@@ -335,7 +334,11 @@ mod tests {
         // Assert
         assert_eq!(subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
         let end = harness.subgroup_end_after(stream_key(0), 0).await;
-        assert_eq!(end.is_finished(), finished, "unexpected end: {end:?}");
+        assert_eq!(
+            matches!(end, NextObject::Finished),
+            finished,
+            "unexpected end: {end:?}"
+        );
     }
 
     #[tokio::test]
@@ -364,12 +367,10 @@ mod tests {
         harness.stop_ingest();
         upstream_stream.wait_reader_end().await;
         // Assert: a stopped reader cannot vouch for the subgroup's tail
-        assert!(
-            harness
-                .subgroup_end_after(stream_key(0), 0)
-                .await
-                .is_aborted()
-        );
+        assert!(matches!(
+            harness.subgroup_end_after(stream_key(0), 0).await,
+            NextObject::Aborted
+        ));
     }
 
     #[tokio::test]

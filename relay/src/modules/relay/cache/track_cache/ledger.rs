@@ -110,16 +110,6 @@ impl Ledger {
         self.live_groups.contains_key(&group_id)
     }
 
-    #[cfg(test)]
-    pub(super) fn has_group(&self, group_id: u64) -> bool {
-        self.next_group_object(group_id, 0).is_some()
-            || self.has_open_subgroup_in_group(group_id)
-            || self
-                .known_ranges
-                .end_of_range_containing(location(group_id, 0))
-                .is_some()
-    }
-
     pub(super) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {
         let mut keys: BTreeSet<SubgroupKey> = self
             .group_objects(group_id, 0)

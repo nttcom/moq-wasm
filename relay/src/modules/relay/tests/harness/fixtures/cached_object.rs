@@ -6,7 +6,7 @@ use super::location;
 use crate::modules::relay::{
     cache::{
         cached_object::{CachedObject, ForwardingPreference, SubgroupHeaderFields},
-        track_cache::{FetchInterrupted, OpenSubgroupGuard, TrackCache},
+        track_cache::{FetchCursor, FetchInterrupted, OpenSubgroupGuard, TrackCache},
     },
     types::SubgroupKey,
 };
@@ -95,7 +95,7 @@ pub(crate) async fn fetch_all(
     end: moqt::Location,
     group_order: moqt::GroupOrder,
 ) -> Result<Vec<moqt::FetchObjectField>, FetchInterrupted> {
-    let mut cursor = cache.fetch_objects(start, end, group_order);
+    let mut cursor = FetchCursor::new(cache, start, end, group_order);
     let mut objects = Vec::new();
     while let Some(object) = cursor.next().await? {
         objects.push(object.to_fetch_object_field());

@@ -118,49 +118,36 @@ impl TrackCache {
             return Err(TrackMalformed);
         }
         let at = object.location;
-        let result = {
-            let mut ledger = self.write();
-            let result = match ledger.objects.entry(at) {
-                Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
-                    Err(TrackMalformed)
-                }
-                Entry::Occupied(mut existing) => {
-                    if object.is_datagram() && !existing.get().is_datagram() {
-                        // A fetched copy arrived first; the live datagram fixes the
-                        // forwarding preference so datagram egress can find it.
-                        let mut upgraded = (**existing.get()).clone();
-                        upgraded.forwarding = ForwardingPreference::Datagram;
-                        *existing.get_mut() = Arc::new(upgraded);
-                    }
-                    Ok(false)
-                }
-                Entry::Vacant(slot) => {
-                    slot.insert(Arc::new(object));
-                    Ok(true)
-                }
-            };
-            if result.is_ok() && registers_knowledge {
-                ledger.register_live_object(at);
-            }
-            result
-        };
-        match result {
-            Ok(inserted) => {
-                if inserted {
-                    self.notify.notify_waiters();
-                }
-                Ok(())
-            }
-            Err(TrackMalformed) => {
+        let mut ledger = self.write();
+        let inserted = match ledger.objects.entry(at) {
+            Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
+                drop(ledger);
                 self.mark_malformed();
-                Err(TrackMalformed)
+                return Err(TrackMalformed);
             }
+            Entry::Occupied(mut existing) => {
+                if object.is_datagram() && !existing.get().is_datagram() {
+                    // A fetched copy arrived first; the live datagram fixes the
+                    // forwarding preference so datagram egress can find it.
+                    let mut upgraded = (**existing.get()).clone();
+                    upgraded.forwarding = ForwardingPreference::Datagram;
+                    *existing.get_mut() = Arc::new(upgraded);
+                }
+                false
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(Arc::new(object));
+                true
+            }
+        };
+        if registers_knowledge {
+            ledger.register_live_object(at);
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn has_group(&self, group_id: u64) -> bool {
-        self.read().has_group(group_id)
+        drop(ledger);
+        if inserted {
+            self.notify.notify_waiters();
+        }
+        Ok(())
     }
 
     pub(crate) fn groups_at_or_after(&self, group_id: u64) -> Vec<u64> {
@@ -220,11 +207,7 @@ impl TrackCache {
     }
 
     pub(crate) fn end_live_ingest(&self) {
-        let _ = self.live_ingest_count.fetch_update(
-            AtomicOrdering::Relaxed,
-            AtomicOrdering::Relaxed,
-            |count| Some(count.saturating_sub(1)),
-        );
+        self.live_ingest_count.fetch_sub(1, AtomicOrdering::Relaxed);
     }
 }
 
@@ -334,15 +317,6 @@ impl TrackCache {
         }
 
         requested_end
-    }
-
-    pub(crate) fn fetch_objects(
-        &self,
-        start: moqt::Location,
-        end: moqt::Location,
-        group_order: moqt::GroupOrder,
-    ) -> FetchCursor<'_> {
-        FetchCursor::new(self, start, end, group_order)
     }
 }
 
@@ -510,7 +484,7 @@ mod tests {
                 SubgroupKey::Datagram { group_id: 0 }
             ])
         );
-        assert!(!cache.has_group(1));
+        assert!(cache.subgroups_in_group(1).is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -601,7 +575,6 @@ mod tests {
         cache.evict(ttl);
         // Assert
         assert!(cache.is_empty());
-        assert!(cache.has_group(0));
         assert_eq!(cache.subgroups_in_group(0), BTreeSet::from([stream_key(0)]));
     }
 

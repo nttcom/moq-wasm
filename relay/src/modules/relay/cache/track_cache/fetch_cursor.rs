@@ -34,7 +34,7 @@ impl GroupCursor {
 }
 
 impl<'a> FetchCursor<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         cache: &'a TrackCache,
         start: moqt::Location,
         end: moqt::Location,
