@@ -6,6 +6,9 @@ use crate::modules::core::{
         DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
     },
     publisher::Publisher,
+    session::Session,
+    session_event::MoqtSessionEvent,
+    subscriber::Subscriber,
     subscription::DownstreamSubscription,
 };
 
@@ -70,6 +73,7 @@ pub(crate) struct SentPublishDone {
     pub(crate) error_reason: String,
 }
 
+#[derive(Clone)]
 pub(crate) struct MockPublisher {
     sent: mpsc::UnboundedSender<Sent>,
     priorities: mpsc::UnboundedSender<moqt::StreamPriority>,
@@ -197,4 +201,25 @@ impl FetchSender for MockFetchSender {
             .send(FetchSent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
+}
+
+pub(crate) struct MockDownstreamSession {
+    pub(crate) publisher: MockPublisher,
+}
+
+#[async_trait::async_trait]
+impl Session for MockDownstreamSession {
+    fn as_publisher(&self) -> Box<dyn Publisher> {
+        Box::new(self.publisher.clone())
+    }
+
+    fn as_subscriber(&self) -> Box<dyn Subscriber> {
+        unreachable!("not used by the egress path under test")
+    }
+
+    async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {
+        std::future::pending().await
+    }
+
+    fn close(&self, _code: moqt::TerminationErrorCode, _reason: &str) {}
 }

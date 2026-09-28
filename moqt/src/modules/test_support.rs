@@ -8,6 +8,7 @@ use crate::{
     SessionEvent, Subscription, TrackReader,
     modules::moqt::{
         data_plane::object::{datagram_field::DatagramField, object_datagram::ObjectDatagram},
+        domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
 };
@@ -85,6 +86,13 @@ pub(crate) async fn connect_sessions(
     Ok((client, server))
 }
 
+pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
+    let (port, accept) = spawn_dual_server(name);
+    connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+        .await
+        .unwrap()
+}
+
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session<DUAL>) -> Subscription {
@@ -113,7 +121,7 @@ pub(crate) async fn subscribed_track_reader(
     TrackReader::new(factory)
 }
 
-pub(crate) fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
+fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
     IncomingObject::Datagram(ObjectDatagram::new(
         track_alias,
         0,
@@ -123,4 +131,30 @@ pub(crate) fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
             payload: Bytes::from_static(b"object"),
         },
     ))
+}
+
+pub(crate) async fn notify_datagram(
+    context: &SessionContext<DUAL>,
+    track_alias: u64,
+) -> IncomingObjectNotification {
+    context
+        .notify_incoming_object(track_alias, datagram_object(track_alias))
+        .await
+}
+
+pub(crate) async fn register_and_take_data_receiver(
+    context: &SessionContext<DUAL>,
+    request_id: u64,
+    track_alias: u64,
+) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject<DUAL>> {
+    context
+        .register_data_receiver(request_id, track_alias)
+        .await
+        .unwrap();
+    context
+        .receiver_map
+        .lock()
+        .await
+        .remove(&track_alias)
+        .unwrap()
 }

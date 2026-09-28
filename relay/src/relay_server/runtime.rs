@@ -73,7 +73,10 @@ impl RelayRuntime {
             store.cache_store.clone(),
             token_verifier,
         );
-        let evict_job = spawn_cache_eviction_job(store.cache_store.clone());
+        let evict_job = spawn_cache_eviction_job(
+            store.cache_store.clone(),
+            store.subgroup_opened_notifier_map.clone(),
+        );
         (
             sender,
             Self {

@@ -79,6 +79,8 @@ pub(crate) enum InflightRequest {
     Abandoned(LateResponseAction),
 }
 
+const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
+
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: BiStreamSender<T>,
@@ -111,13 +113,6 @@ enum ObjectSink<T: TransportProtocol> {
 impl<T: TransportProtocol> ObjectSink<T> {
     fn is_receiver_registered(&self) -> bool {
         matches!(self, ObjectSink::Receiver { .. })
-    }
-
-    fn is_receiver_of(&self, subscription_request_id: RequestId) -> bool {
-        matches!(
-            self,
-            ObjectSink::Receiver { request_id, .. } if *request_id == subscription_request_id
-        )
     }
 }
 
@@ -215,7 +210,6 @@ impl<T: TransportProtocol> SessionContext<T> {
         &self,
         track_alias: u64,
         incoming_object: IncomingObject<T>,
-        max_pending_objects: usize,
     ) -> IncomingObjectNotification {
         let mut sinks = self.object_sinks.lock().await;
         match sinks.entry(track_alias) {
@@ -237,7 +231,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                     }
                 }
                 ObjectSink::Buffer(objects) => {
-                    let dropped_oldest = objects.len() >= max_pending_objects;
+                    let dropped_oldest = objects.len() >= MAX_PENDING_OBJECTS_PER_TRACK_ALIAS;
                     if dropped_oldest {
                         objects.pop_front();
                     }
@@ -252,9 +246,8 @@ impl<T: TransportProtocol> SessionContext<T> {
         }
     }
 
-    /// Drains objects buffered before SUBSCRIBE_OK into a new receiver and goes Live,
-    /// updating both maps under the object-sinks lock so the registration is atomic.
-    /// Returns `Err(TerminationErrorCode::DuplicateTrackAlias)` if a receiver already exists.
+    /// `receiver_map` is updated while the object-sinks lock is held, so the
+    /// drain, the sink switch and the receiver registration are atomic.
     pub(crate) async fn register_data_receiver(
         &self,
         request_id: RequestId,
@@ -285,7 +278,8 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn cancel_subscription(&self, request_id: RequestId) {
         let mut sinks = self.object_sinks.lock().await;
         let track_alias = sinks.iter().find_map(|(track_alias, sink)| {
-            sink.is_receiver_of(request_id).then_some(*track_alias)
+            matches!(sink, ObjectSink::Receiver { request_id: id, .. } if *id == request_id)
+                .then_some(*track_alias)
         });
         if let Some(track_alias) = track_alias {
             self.cancel_track_alias(&mut sinks, track_alias).await;
@@ -459,11 +453,11 @@ impl<T: TransportProtocol> Drop for SessionContext<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use tokio::sync::mpsc::error::TryRecvError;
 
-    use super::{IncomingObjectNotification, LateResponseAction, SessionContext};
+    use super::{IncomingObjectNotification, LateResponseAction};
     use crate::{
-        DUAL, GroupOrder, Session,
+        GroupOrder,
         modules::{
             moqt::{
                 control_plane::{
@@ -474,25 +468,15 @@ mod tests {
                 },
                 runtime::dispatch::incoming_object::IncomingObject,
             },
-            test_support::{connect_sessions, datagram_object, spawn_dual_server},
+            test_support::{
+                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+            },
         },
     };
 
-    const MAX_PENDING_OBJECTS: usize = 256;
     const REQUEST_ID: u64 = 1;
     const OTHER_REQUEST_ID: u64 = 3;
     const TRACK_ALIAS: u64 = 5;
-
-    async fn connected_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
-        let (port, accept) = spawn_dual_server(name);
-        connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap()
-    }
-
-    fn context_of(session: &Session<DUAL>) -> Arc<SessionContext<DUAL>> {
-        session.subscriber().session
-    }
 
     fn late_subscribe_ok() -> ResponseMessage {
         ResponseMessage::SubscribeOk(SubscribeOk {
@@ -506,34 +490,15 @@ mod tests {
         })
     }
 
-    async fn notify_datagram(context: &SessionContext<DUAL>) -> IncomingObjectNotification {
-        context
-            .notify_incoming_object(
-                TRACK_ALIAS,
-                datagram_object(TRACK_ALIAS),
-                MAX_PENDING_OBJECTS,
-            )
-            .await
-    }
-
     #[tokio::test]
     async fn objects_buffered_before_registration_are_delivered_to_the_receiver() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-early-object").await;
-        let context = context_of(&server);
-        notify_datagram(&context).await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-early-object").await;
+        let context = server.subscriber().session;
+        notify_datagram(&context, TRACK_ALIAS).await;
 
         // Act
-        context
-            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
-        let mut receiver = context
-            .receiver_map
-            .lock()
-            .await
-            .remove(&TRACK_ALIAS)
-            .unwrap();
+        let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
         // Assert
         assert!(matches!(
@@ -545,8 +510,8 @@ mod tests {
     #[tokio::test]
     async fn unsubscribe_drops_the_unaccepted_receiver_and_discards_later_objects() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-unsubscribe-unaccepted").await;
-        let context = context_of(&server);
+        let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-unaccepted").await;
+        let context = server.subscriber().session;
         context
             .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
             .await
@@ -554,7 +519,7 @@ mod tests {
 
         // Act
         server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
-        let notification = notify_datagram(&context).await;
+        let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
         // Assert
         assert!(!context.receiver_map.lock().await.contains_key(&TRACK_ALIAS));
@@ -567,18 +532,9 @@ mod tests {
     #[tokio::test]
     async fn unsubscribe_ends_the_accepted_receiver() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-unsubscribe-accepted").await;
-        let context = context_of(&server);
-        context
-            .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
-        let mut receiver = context
-            .receiver_map
-            .lock()
-            .await
-            .remove(&TRACK_ALIAS)
-            .unwrap();
+        let (_client, server) = spawn_connected_dual_sessions("sinks-unsubscribe-accepted").await;
+        let context = server.subscriber().session;
+        let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
         // Act
         server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
@@ -590,9 +546,9 @@ mod tests {
     #[tokio::test]
     async fn late_subscribe_ok_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-late-subscribe-ok").await;
-        let context = context_of(&server);
-        notify_datagram(&context).await;
+        let (_client, server) = spawn_connected_dual_sessions("sinks-late-subscribe-ok").await;
+        let context = server.subscriber().session;
+        notify_datagram(&context, TRACK_ALIAS).await;
 
         // Act
         context
@@ -602,20 +558,24 @@ mod tests {
                 late_subscribe_ok(),
             )
             .await;
-        let notification = notify_datagram(&context).await;
+        let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
         // Assert
         assert!(matches!(
             notification,
             IncomingObjectNotification::Discarded
         ));
+        let mut receiver =
+            register_and_take_data_receiver(&context, OTHER_REQUEST_ID, TRACK_ALIAS).await;
+        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
     }
 
     #[tokio::test]
     async fn late_subscribe_ok_keeps_the_receiver_of_another_subscription() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-late-subscribe-ok-other").await;
-        let context = context_of(&server);
+        let (_client, server) =
+            spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
+        let context = server.subscriber().session;
         context
             .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
             .await
@@ -629,7 +589,7 @@ mod tests {
                 late_subscribe_ok(),
             )
             .await;
-        let notification = notify_datagram(&context).await;
+        let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
         // Assert
         assert!(matches!(notification, IncomingObjectNotification::Notified));
@@ -638,8 +598,8 @@ mod tests {
     #[tokio::test]
     async fn track_alias_of_a_cancelled_subscription_can_be_reused() {
         // Arrange
-        let (_client, server) = connected_sessions("sinks-reuse-alias").await;
-        let context = context_of(&server);
+        let (_client, server) = spawn_connected_dual_sessions("sinks-reuse-alias").await;
+        let context = server.subscriber().session;
         context
             .register_data_receiver(REQUEST_ID, TRACK_ALIAS)
             .await
