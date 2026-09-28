@@ -205,7 +205,7 @@ mod tests {
 
     const SUBSCRIBER_SESSION_ID: SessionId = 2;
     const DOWNSTREAM_SUBSCRIBE_ID: u64 = 7;
-    const RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
+    const TEST_TIMEOUT: Duration = Duration::from_secs(3);
 
     struct TestContext {
         coordinator: EgressCoordinator,
@@ -257,7 +257,7 @@ mod tests {
             })))
             .await
             .expect("coordinator should accept commands");
-        tokio::time::timeout(RELEASE_TIMEOUT, ready_receiver)
+        tokio::time::timeout(TEST_TIMEOUT, ready_receiver)
             .await
             .expect("runner should resolve its readiness")
     }
@@ -267,7 +267,7 @@ mod tests {
     }
 
     async fn wait_until_runner_released_cache(ctx: &TestContext) {
-        tokio::time::timeout(RELEASE_TIMEOUT, async {
+        tokio::time::timeout(TEST_TIMEOUT, async {
             while runner_holds_cache(ctx) {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }

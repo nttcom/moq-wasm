@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_subscription_sends_no_commands() {
+    async fn unknown_subscription_stops_no_runner_and_forwards_nothing() {
         // Arrange
         let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[(101, 11)]).await;
 

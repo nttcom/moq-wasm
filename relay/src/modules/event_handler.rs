@@ -702,7 +702,6 @@ impl EventHandler {
     /// directory, run subscription teardown, then drop the session from the
     /// repository.  Safe to call when the session is already absent; all
     /// operations degrade gracefully.
-    #[allow(clippy::too_many_arguments)]
     async fn cleanup_session(
         session_id: SessionId,
         local_pub_sub_directory: &dyn LocalPubSubDirectory,
@@ -729,7 +728,6 @@ impl EventHandler {
             .remove(session_id);
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn cleanup_removed_session(
         removed_session_id: SessionId,
         removed: RemovedSessionSubscriptions,
