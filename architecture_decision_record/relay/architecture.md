@@ -349,12 +349,9 @@ per-request authorization gate under "Event pipeline".
   generation counter); datagram objects register nothing.
 - `next_subgroup_object_or_wait(key, from)` (live egress) returns the next object of that
   subgroup, `Finished` once it closed cleanly, or `Aborted` once it closed without
-  a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks. `fetch_objects` walks
-  `[start, end)` in location order, reading positions inside knowledge without
-  waiting and waiting past the frontier only while some subgroup of the group
-  is open.
-- `fetch_objects(start, end, group_order)` returns a `FetchCursor` (`track_cache/fetch_cursor.rs`)
-  that walks `[start, end)` in delivery order (Descending reverses the group
+  a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks.
+- `FetchCursor::new(cache, start, end, group_order)` (`track_cache/fetch_cursor.rs`)
+  walks `[start, end)` in delivery order (Descending reverses the group
   list) and yields one object per `next`, reading positions inside knowledge
   without waiting and waiting past the frontier only while some subgroup of
   the group is open. `Aborted` from such a wait surfaces as
