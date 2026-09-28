@@ -113,7 +113,7 @@ fn otel_service_name(default_service_name: &str) -> String {
     std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| default_service_name.to_string())
 }
 
-fn relay_hostname() -> String {
+pub(crate) fn relay_hostname() -> String {
     std::env::var("RELAY_HOSTNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "unknown".to_string())

@@ -3,18 +3,15 @@ use std::sync::Arc;
 use moqt::{Accepting, Endpoint, TransportProtocol};
 use tracing::{Instrument, Span};
 
-use crate::modules::{
-    auth::session_authenticator::SessionAuthenticator,
-    session_event::SessionEvent,
-    session_repository::{NewSession, SessionPeer, SessionRepository},
-    types::{SessionId, generate_session_id},
+use crate::{
+    logging::relay_hostname,
+    modules::{
+        auth::session_authenticator::SessionAuthenticator,
+        session_event::SessionEvent,
+        session_repository::{NewSession, SessionPeer, SessionRepository},
+        types::{SessionId, generate_session_id},
+    },
 };
-
-fn relay_hostname() -> String {
-    std::env::var("RELAY_HOSTNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
-}
 
 #[derive(Clone)]
 pub(crate) struct SessionIntake {
