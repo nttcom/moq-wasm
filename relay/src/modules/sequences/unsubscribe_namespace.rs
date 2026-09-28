@@ -82,17 +82,10 @@ impl UnsubscribeNamespace {
 
         let routes = Self::find_publisher_relays(track_namespace_prefix, route_registry).await;
         for route in routes {
-            let session_id = match inter_relay_connection_manager.get_or_connect(&route).await {
-                Ok(session_id) => session_id,
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        relay_id = %route.relay_id,
-                        track_namespace_prefix = %track_namespace_prefix,
-                        "failed to connect upstream relay for UNSUBSCRIBE_NAMESPACE"
-                    );
-                    continue;
-                }
+            let Some(session_id) =
+                super::connect_relay(inter_relay_connection_manager, &route).await
+            else {
+                continue;
             };
 
             if let Err(err) = forwarder

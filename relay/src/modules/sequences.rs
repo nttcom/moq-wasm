@@ -11,8 +11,10 @@ pub(crate) mod unsubscribe_namespace;
 pub(crate) mod upstream_serializer;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder, inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry, types::SessionId,
+    control_message_forwarder::ControlMessageForwarder,
+    inter_relay::InterRelayConnectionManager,
+    route_registry::{RelayInfo, RelayRouteRegistry},
+    types::SessionId,
 };
 
 pub(crate) struct CascadingRelayContext<'a> {
@@ -31,4 +33,17 @@ pub(crate) async fn is_origin_client(
         .lock()
         .await
         .is_client_session(session_id)
+}
+
+pub(crate) async fn connect_relay(
+    inter_relay_connection_manager: &InterRelayConnectionManager,
+    relay: &RelayInfo,
+) -> Option<SessionId> {
+    inter_relay_connection_manager
+        .get_or_connect(relay)
+        .await
+        .inspect_err(
+            |err| tracing::warn!(?err, relay_id = %relay.relay_id, "failed to connect relay"),
+        )
+        .ok()
 }
