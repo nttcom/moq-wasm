@@ -159,6 +159,10 @@ impl EventHandler {
             upstream_serializer,
             token_verifier,
         } = deps;
+        let cascading_relay_context = || CascadingRelayContext {
+            route_registry: route_registry.as_ref(),
+            inter_relay_connection_manager: inter_relay_connection_manager.as_ref(),
+        };
         let (session_span, mut verified_token) = {
             let repo = repo.lock().await;
             (
@@ -250,11 +254,7 @@ impl EventHandler {
                             &session_span,
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
-                            CascadingRelayContext {
-                                route_registry: route_registry.as_ref(),
-                                inter_relay_connection_manager: inter_relay_connection_manager
-                                    .as_ref(),
-                            },
+                            cascading_relay_context(),
                             handler.as_ref(),
                         )
                         .instrument(event_span)
@@ -267,11 +267,7 @@ impl EventHandler {
                             &session_span,
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
-                            CascadingRelayContext {
-                                route_registry: route_registry.as_ref(),
-                                inter_relay_connection_manager: inter_relay_connection_manager
-                                    .as_ref(),
-                            },
+                            cascading_relay_context(),
                             handler.as_ref(),
                         )
                         .instrument(event_span)
@@ -297,11 +293,7 @@ impl EventHandler {
                             &session_span,
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
-                            CascadingRelayContext {
-                                route_registry: route_registry.as_ref(),
-                                inter_relay_connection_manager: inter_relay_connection_manager
-                                    .as_ref(),
-                            },
+                            cascading_relay_context(),
                             handler.as_ref(),
                         )
                         .instrument(event_span)
@@ -315,11 +307,7 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             &ingress_sender,
-                            CascadingRelayContext {
-                                route_registry: route_registry.as_ref(),
-                                inter_relay_connection_manager: inter_relay_connection_manager
-                                    .as_ref(),
-                            },
+                            cascading_relay_context(),
                             handler,
                         )
                         .instrument(event_span)
