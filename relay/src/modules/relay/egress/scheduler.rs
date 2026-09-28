@@ -20,13 +20,10 @@ fn resolve_start_location(
         (
             FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. },
             largest,
-        ) => {
-            let requested = *location;
-            match largest {
-                Some(largest) if requested <= *largest => after(largest),
-                _ => requested,
-            }
-        }
+        ) => match largest {
+            Some(largest) if location <= largest => after(largest),
+            _ => *location,
+        },
         // Largest Object (0x2): Start = {Largest.Group, Largest.Object + 1}.
         (FilterType::LargestObject, Some(largest)) => after(largest),
         // Next Group Start (0x1): Start = {Largest.Group + 1, 0}.

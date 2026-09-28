@@ -316,6 +316,6 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 
     fn to_downstream_subscription(&self, _track_alias: u64) -> DownstreamSubscription {
-        make_subscription(moqt::FilterType::LargestObject)
+        make_subscription(FilterType::LargestObject)
     }
 }
