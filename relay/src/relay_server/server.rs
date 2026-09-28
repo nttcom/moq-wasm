@@ -3,10 +3,7 @@ use std::sync::Arc;
 use moqt::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::relay_server::{
-    runtime::{CascadingDeps, RelayRuntime},
-    store::RelayStore,
-};
+use crate::relay_server::runtime::RelayRuntime;
 use crate::{
     RelayConfig,
     modules::{
@@ -30,7 +27,6 @@ pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     sender: UnboundedSender<SessionEvent>,
     authenticator: Arc<SessionAuthenticator>,
-    _store: Arc<RelayStore>,
     _runtime: RelayRuntime,
     key_path: String,
     cert_path: String,
@@ -72,14 +68,10 @@ impl RelayServer {
             relay_token,
         } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
-        let store = RelayStore::new();
         let (sender, runtime) = RelayRuntime::new(
             repo.clone(),
-            &store,
-            CascadingDeps {
-                route_registry,
-                relay_token,
-            },
+            route_registry,
+            relay_token,
             authenticator.verifier.clone(),
         );
 
@@ -87,7 +79,6 @@ impl RelayServer {
             repo,
             sender,
             authenticator: Arc::new(authenticator),
-            _store: store,
             _runtime: runtime,
             key_path: key_path.to_string(),
             cert_path: cert_path.to_string(),
