@@ -48,7 +48,6 @@ impl IngressCoordinator {
         let track_ingest = TrackIngestTask::run(ingest_rx, cache_store, session_event_sender);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
-        let session_repo_for_runner = session_repo;
 
         let command_runner = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
@@ -69,7 +68,7 @@ impl IngressCoordinator {
                             "ingress start command received"
                         );
                         let (subscriber, publisher_session_span) = {
-                            let session_repo = session_repo_for_runner.lock().await;
+                            let session_repo = session_repo.lock().await;
                             let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
                                 tracing::info!(%track_key, "publisher session not found for subscription");
                                 continue;
