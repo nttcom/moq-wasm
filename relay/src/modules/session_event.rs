@@ -9,12 +9,20 @@ pub(crate) struct SessionEvent {
 }
 
 pub(crate) enum EventKind {
+    SessionRegistered,
     FromSession(MoqtSessionEvent),
     MalformedTrackDetected(TrackKey),
     ProtocolViolationDetected { reason: String },
 }
 
 impl SessionEvent {
+    pub(crate) fn session_registered(session_id: SessionId) -> Self {
+        Self {
+            session_id,
+            kind: EventKind::SessionRegistered,
+        }
+    }
+
     pub(crate) fn malformed_track_detected(session_id: SessionId, track_key: TrackKey) -> Self {
         Self {
             session_id,
