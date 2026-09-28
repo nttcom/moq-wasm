@@ -32,14 +32,18 @@ impl RecordedControlMessages {
     }
 }
 
+type SubscribeAnswer = Arc<dyn Fn() -> ContentExists + Send + Sync>;
+
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
+    answer_subscribe: Option<SubscribeAnswer>,
 }
 
 pub(crate) fn mock_session() -> (Arc<dyn Session>, RecordedControlMessages) {
     let recorded = RecordedControlMessages::default();
     let session: Arc<dyn Session> = Arc::new(MockUpstreamSession {
         recorded: recorded.clone(),
+        answer_subscribe: None,
     });
     (session, recorded)
 }
@@ -62,6 +66,7 @@ pub(crate) fn mock_new_session(
         session_id,
         session: Box::new(MockUpstreamSession {
             recorded: recorded.clone(),
+            answer_subscribe: None,
         }),
         session_span: tracing::Span::none(),
         peer: SessionPeer::Client,
@@ -80,9 +85,19 @@ pub(crate) async fn session_repository_with_upstream_session_token(
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
         recorded: recorded.clone(),
+        answer_subscribe: None,
     });
     let repository = session_repository_with_session(session_id, session, verified_token).await;
     (repository, recorded)
+}
+
+pub(crate) fn mock_session_answering_subscribe(
+    answer_subscribe: impl Fn() -> ContentExists + Send + Sync + 'static,
+) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        recorded: RecordedControlMessages::default(),
+        answer_subscribe: Some(Arc::new(answer_subscribe)),
+    })
 }
 
 pub(crate) async fn session_repository_with_session(
@@ -123,6 +138,7 @@ impl Session for MockUpstreamSession {
     fn as_subscriber(&self) -> Box<dyn Subscriber> {
         Box::new(MockUpstreamSubscriber {
             recorded: self.recorded.clone(),
+            answer_subscribe: self.answer_subscribe.clone(),
         })
     }
 
@@ -141,17 +157,34 @@ impl Session for MockUpstreamSession {
 
 struct MockUpstreamSubscriber {
     recorded: RecordedControlMessages,
+    answer_subscribe: Option<SubscribeAnswer>,
 }
 
 #[async_trait::async_trait]
 impl Subscriber for MockUpstreamSubscriber {
     async fn send_subscribe(
         &mut self,
-        _track_namespace: String,
-        _track_name: String,
+        track_namespace: String,
+        track_name: String,
         _option: SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
-        unimplemented!("not used by MockUpstreamSession tests")
+        let Some(answer_subscribe) = &self.answer_subscribe else {
+            unimplemented!("not used by MockUpstreamSession tests")
+        };
+        Ok(UpstreamSubscription::from(
+            moqt::Subscription::SubscriberInitiated(moqt::SubscriberInitiatedSubscription {
+                request_id: 1,
+                track_namespace,
+                track_name,
+                track_alias: 0,
+                expires: 0,
+                group_order: GroupOrder::Ascending,
+                subscriber_priority: 128,
+                content_exists: answer_subscribe(),
+                filter_type: FilterType::LargestObject,
+                delivery_timeout: None,
+            }),
+        ))
     }
 
     async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {

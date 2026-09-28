@@ -540,6 +540,7 @@ impl InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::core::mocks::runner_stopped;
+    use crate::modules::sequences::test_fixtures::table_with_upstream;
     use crate::modules::types::TrackKey;
     use moqt::{ContentExists, FilterType, GroupOrder};
 
@@ -903,31 +904,10 @@ mod tests {
         assert_eq!(upstream_publishers, vec![1, 2]);
     }
 
-    fn subscribed_track_table() -> (InMemoryLocalPubSubDirectory, UpstreamSubscriptionKey) {
-        let table = InMemoryLocalPubSubDirectory::new();
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        };
-        table.register_upstream_subscription(
-            upstream_key.clone(),
-            ActiveUpstreamSubscription {
-                upstream_request_id: 1,
-                track_key: TrackKey::new("ns", "track"),
-                expires: None,
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 0,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-            },
-        );
-        (table, upstream_key)
-    }
-
     #[test]
     fn register_downstream_subscription_stores_start_location() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let largest = moqt::Location {
             group_id: 5,
             object_id: 3,
@@ -953,7 +933,7 @@ mod tests {
     #[test]
     fn register_downstream_subscription_none_start_location() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
 
         // Act
         let runner_stop_receiver =
@@ -969,7 +949,7 @@ mod tests {
     #[test]
     fn publisher_disconnect_stops_the_runners_of_its_downstream_subscriptions() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
             .register_downstream_subscription(2, 100, upstream_key, None)
             .unwrap();
@@ -984,7 +964,7 @@ mod tests {
     #[test]
     fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
             .register_downstream_subscription(2, 100, upstream_key.clone(), None)
             .unwrap();
@@ -1001,7 +981,7 @@ mod tests {
     #[test]
     fn registration_for_a_removed_upstream_yields_no_runner() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.remove_session(1);
 
         // Act
@@ -1017,7 +997,7 @@ mod tests {
     async fn registration_racing_publisher_removal_leaves_no_orphan() {
         for _ in 0..2000 {
             // Arrange
-            let (table, upstream_key) = subscribed_track_table();
+            let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
             let table = Arc::new(table);
             let barrier = Arc::new(tokio::sync::Barrier::new(2));
 
@@ -1053,7 +1033,7 @@ mod tests {
     async fn registration_racing_last_subscriber_removal_leaves_no_orphan() {
         for _ in 0..20000 {
             // Arrange
-            let (table, upstream_key) = subscribed_track_table();
+            let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
             table
                 .register_downstream_subscription(2, 100, upstream_key.clone(), None)
                 .unwrap();

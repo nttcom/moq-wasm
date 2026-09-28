@@ -50,71 +50,25 @@ impl MalformedTrackCleanup {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc;
-
     use super::*;
-    use crate::modules::{
-        core::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
-        sequences::tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
+    use crate::modules::sequences::{
+        tables::table::UpstreamSubscriptionOrigin,
+        test_fixtures::{
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
+            upstream_release_context,
         },
     };
-    use moqt::ContentExists;
 
-    const PUBLISHER_SESSION: SessionId = 1;
-    const UPSTREAM_REQUEST_ID: u64 = 42;
-
-    struct TestContext {
-        table: InMemoryLocalPubSubDirectory,
-        forwarder: ControlMessageForwarder,
-        ingress_sender: mpsc::Sender<IngressCommand>,
-        ingress_receiver: mpsc::Receiver<IngressCommand>,
-        recorded: RecordedControlMessages,
-        track_key: TrackKey,
+    async fn setup() -> UpstreamReleaseContext {
+        upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await
     }
 
-    async fn setup() -> TestContext {
-        let track_key = TrackKey::new("ns", "track");
-        let table = InMemoryLocalPubSubDirectory::new();
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: PUBLISHER_SESSION,
-            track_namespace: track_key.track_namespace.clone(),
-            track_name: track_key.track_name.clone(),
-        };
-        table.register_upstream_subscription(
-            upstream_key,
-            ActiveUpstreamSubscription {
-                upstream_request_id: UPSTREAM_REQUEST_ID,
-                track_key: track_key.clone(),
-                expires: None,
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 1,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-            },
-        );
-
-        let (repository, recorded) =
-            session_repository_with_upstream_session(PUBLISHER_SESSION).await;
-        let forwarder = ControlMessageForwarder { repository };
-
-        let (ingress_sender, ingress_receiver) = mpsc::channel(8);
-        TestContext {
-            table,
-            forwarder,
-            ingress_sender,
-            ingress_receiver,
-            recorded,
-            track_key,
-        }
-    }
-
-    async fn run_cleanup(ctx: &TestContext) {
+    async fn run_cleanup(ctx: &UpstreamReleaseContext) {
         MalformedTrackCleanup
             .handle(
                 PUBLISHER_SESSION,
                 &tracing::Span::none(),
-                &ctx.track_key,
+                &TrackKey::new("ns", "track"),
                 &ctx.table,
                 &ctx.forwarder,
                 &ctx.ingress_sender,
@@ -141,7 +95,7 @@ mod tests {
                 track_key,
                 publisher_session_id,
             }) => {
-                assert_eq!(track_key, ctx.track_key);
+                assert_eq!(track_key, TrackKey::new("ns", "track"));
                 assert_eq!(publisher_session_id, PUBLISHER_SESSION);
             }
             other => panic!("Expected StopTrack, got {:?}", other.is_ok()),
