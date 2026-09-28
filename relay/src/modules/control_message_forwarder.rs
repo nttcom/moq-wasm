@@ -86,25 +86,22 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
-    ) -> Option<u64> {
-        let publisher = self.publisher(session_id).await?;
-        match publisher
+    ) -> bool {
+        let Some(publisher) = self.publisher(session_id).await else {
+            return false;
+        };
+        publisher
             .send_publish(track_namespace.clone(), track_name)
             .await
-        {
-            Ok(published_resource) => {
+            .inspect(|_| {
                 tracing::info!(
                     "Forwarded PUBLISH '{}' to session:{}",
                     track_namespace,
                     session_id
-                );
-                Some(published_resource.track_alias())
-            }
-            Err(_) => {
-                tracing::error!("Failed to send publish namespace");
-                None
-            }
-        }
+                )
+            })
+            .inspect_err(|_| tracing::error!("Failed to send publish namespace"))
+            .is_ok()
     }
 
     #[tracing::instrument(

@@ -122,13 +122,8 @@ impl Publish {
         subscription: &UpstreamSubscription,
         is_origin_client: bool,
     ) {
-        self.notify_local_namespace_subscribers(
-            publisher_session_id,
-            forwarder,
-            table,
-            subscription,
-        )
-        .await;
+        self.notify_local_namespace_subscribers(forwarder, table, subscription)
+            .await;
 
         if is_origin_client {
             self.notify_remote_subscribers(
@@ -146,11 +141,10 @@ impl Publish {
         level = "info",
         name = "relay.sequence.publish.notify_local_namespace_subscribers",
         skip_all,
-        fields(publisher_session_id = %publisher_session_id, track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
+        fields(track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
     )]
     async fn notify_local_namespace_subscribers(
         &self,
-        publisher_session_id: SessionId,
         forwarder: &ControlMessageForwarder,
         table: &InMemoryLocalPubSubDirectory,
         subscription: &UpstreamSubscription,
@@ -167,7 +161,6 @@ impl Publish {
                     track_name.clone(),
                 )
                 .await
-                .is_some()
             {
                 tracing::info!(
                     "Sent publish '{}' to {}",
@@ -282,7 +275,6 @@ impl Publish {
                     track_name.to_string(),
                 )
                 .await
-                .is_some()
             {
                 tracing::info!(
                     relay_id = %relay.relay_id,

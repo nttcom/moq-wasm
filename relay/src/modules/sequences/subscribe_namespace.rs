@@ -122,7 +122,6 @@ impl SubscribeNameSpace {
                 if forwarder
                     .publish(session_id, track_namespace.clone(), track_name.clone())
                     .await
-                    .is_some()
                 {
                     tracing::info!(
                         "Forwarded PUBLISH '{}' to session:{}",

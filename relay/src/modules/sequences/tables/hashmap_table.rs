@@ -629,7 +629,7 @@ mod tests {
 
     #[test]
     fn remove_session_cleans_up_all_session_scoped_entries() {
-        // Arrange: Register namespace and track state for the session.
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
 
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
