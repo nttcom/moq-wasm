@@ -99,6 +99,7 @@ export type SubscribedCatalogTrack = MeetingCatalogTrack & {
 const CATALOG_TRACK_NAME = 'catalog'
 const CHAT_TRACK_NAME = 'chat'
 const VIDEO_PUBLISHER_LOG_PREFIX = '[meeting][publisher][video]'
+const MAX_VIDEO_STREAM_RECOVERY_ATTEMPTS = 3
 
 export class MediaPublisher {
   private handlers: MediaPublisherHandlers = {}
@@ -108,6 +109,7 @@ export class MediaPublisher {
   private readonly audioTrackContexts = new Map<string, AudioTrackEncoderContext>()
 
   private readonly videoBitrateByTrackName = new Map<string, number>()
+  private readonly videoStreamRecoveryAttemptsByTrackName = new Map<string, number>()
   private readonly audioBitrateByTrackName = new Map<string, number>()
 
   private cameraStream: MediaStream | null = null
@@ -473,7 +475,7 @@ export class MediaPublisher {
 
     for (const [trackName, context] of this.videoTrackContexts.entries()) {
       if (context.source === source && !desiredNames.has(trackName)) {
-        this.stopVideoTrackContext(trackName)
+        this.retireVideoTrackContext(trackName)
       }
     }
 
@@ -587,6 +589,8 @@ export class MediaPublisher {
           }
         | { type: 'bitrate'; kbps: number }
         | { type: 'configError'; reason: string; config: any }
+        | { type: 'encoderError'; message: string }
+        | { type: 'streamEnded'; error?: string }
         | {
             chunk: EncodedVideoChunk
             metadata: EncodedVideoChunkMetadata | undefined
@@ -610,7 +614,16 @@ export class MediaPublisher {
         )
         return
       }
+      if ('type' in data && data.type === 'encoderError') {
+        console.warn(`${VIDEO_PUBLISHER_LOG_PREFIX} encoder error`, { trackName, message: data.message })
+        return
+      }
+      if ('type' in data && data.type === 'streamEnded') {
+        this.recoverEndedVideoStream(context, data.error)
+        return
+      }
 
+      this.videoStreamRecoveryAttemptsByTrackName.delete(trackName)
       const chunkData = 'type' in data ? data.chunk : data.chunk
       const metadata = 'type' in data ? data.metadata : data.metadata
       const captureTimestampMicros = 'type' in data ? data.captureTimestampMicros : data.captureTimestampMicros
@@ -745,8 +758,13 @@ export class MediaPublisher {
       .filter(([, context]) => context.source === source)
       .map(([trackName]) => trackName)
     for (const trackName of names) {
-      this.stopVideoTrackContext(trackName)
+      this.retireVideoTrackContext(trackName)
     }
+  }
+
+  private retireVideoTrackContext(trackName: string): void {
+    this.stopVideoTrackContext(trackName)
+    this.videoStreamRecoveryAttemptsByTrackName.delete(trackName)
   }
 
   private stopAllAudioTrackContexts(): void {
@@ -783,6 +801,29 @@ export class MediaPublisher {
         this.startVideoTrackEncoding(next)
       }
     }
+  }
+
+  private recoverEndedVideoStream(context: VideoTrackEncoderContext, error: string | undefined): void {
+    const { trackName } = context
+    if (this.videoTrackContexts.get(trackName) !== context) {
+      return
+    }
+    const attempt = (this.videoStreamRecoveryAttemptsByTrackName.get(trackName) ?? 0) + 1
+    const sourceTrackLive = this.getSourceTrack(context.source)?.readyState === 'live'
+    const restarting = sourceTrackLive && attempt <= MAX_VIDEO_STREAM_RECOVERY_ATTEMPTS
+    console.warn(`${VIDEO_PUBLISHER_LOG_PREFIX} frame stream ended`, {
+      trackName,
+      error,
+      attempt,
+      sourceTrackLive,
+      restarting
+    })
+    if (!restarting) {
+      this.videoStreamRecoveryAttemptsByTrackName.delete(trackName)
+      return
+    }
+    this.videoStreamRecoveryAttemptsByTrackName.set(trackName, attempt)
+    this.restartVideoTrackContext(trackName)
   }
 
   private restartAudioTrackContext(trackName: string): void {
