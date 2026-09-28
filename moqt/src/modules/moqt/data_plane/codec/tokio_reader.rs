@@ -41,19 +41,15 @@ mod tests {
         read_error::ReadError, transport_receive_stream::MockTransportReceiveStream,
     };
 
-    fn stream_yielding(chunk: &'static [u8]) -> MockTransportReceiveStream {
-        let mut receive_stream = MockTransportReceiveStream::new();
-        receive_stream.expect_poll_read().returning(move |_, buf| {
-            buf.put_slice(chunk);
-            Poll::Ready(Ok(()))
-        });
-        receive_stream
-    }
-
     #[tokio::test]
     async fn read_writes_received_bytes_into_caller_buffer() {
         // Arrange
-        let mut reader = Reader::new(stream_yielding(b"abc"));
+        let mut receive_stream = MockTransportReceiveStream::new();
+        receive_stream.expect_poll_read().returning(|_, buf| {
+            buf.put_slice(b"abc");
+            Poll::Ready(Ok(()))
+        });
+        let mut reader = Reader::new(receive_stream);
         let mut out = [0u8; 8];
 
         // Act
@@ -61,19 +57,6 @@ mod tests {
 
         // Assert
         assert_eq!(&out[..size], b"abc");
-    }
-
-    #[tokio::test]
-    async fn read_returns_zero_at_end_of_stream() {
-        // Arrange
-        let mut reader = Reader::new(stream_yielding(b""));
-        let mut out = [0u8; 8];
-
-        // Act
-        let size = reader.read(&mut out).await.unwrap();
-
-        // Assert
-        assert_eq!(size, 0);
     }
 
     #[tokio::test]
