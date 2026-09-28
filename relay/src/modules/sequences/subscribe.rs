@@ -215,10 +215,6 @@ impl Subscribe {
             return Ok((upstream_key, active_upstream, largest_location));
         }
 
-        // Still a miss: we are the first task for this track. Create the
-        // upstream subscription while holding the guard. The guard is dropped
-        // at the end of this scope, after register_upstream_subscription
-        // has been called inside create_upstream_subscription.
         self.create_upstream_subscription(
             session_id,
             track_namespace,
@@ -466,8 +462,6 @@ impl Subscribe {
                 subscriber_track_alias = subscriber_track_alias,
                 "failed to send SUBSCRIBE_OK"
             );
-            // TODO: send_unsubscribe
-            // TODO: close session
             return;
         }
         tracing::info!(

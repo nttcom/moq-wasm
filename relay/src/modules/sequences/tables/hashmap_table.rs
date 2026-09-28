@@ -70,13 +70,6 @@ fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespa
 
 #[derive(Debug)]
 pub(crate) struct InMemoryLocalPubSubDirectory {
-    /**
-     * namespace mechanism
-     * publish_namespace: room/member
-     * subscriber_namespace: room/
-     * publish: room/member + video
-     * subscribe: room/member/video
-     */
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, PeerKind>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashMap<SessionId, PeerKind>>,
     pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
@@ -335,8 +328,6 @@ impl InMemoryLocalPubSubDirectory {
         let combined = DashSet::new();
         self.subscriber_namespaces
             .iter()
-            // Check if the published namespace (track_namespace) falls under the subscribed prefix (entry.key())
-            // Example: Published "room/member" starts with Subscribed "room" -> Match
             .filter(|entry| track_namespace.starts_with(entry.key()))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session| {
@@ -454,9 +445,6 @@ impl InMemoryLocalPubSubDirectory {
             .map(|entry| entry.value().clone())
     }
 
-    /// Resolves the upstream subscription key linked to a downstream
-    /// subscription identified by its Request ID, scoped to the given session.
-    /// Used by Joining Fetch to find the subscription it joins.
     pub(crate) fn get_downstream_subscription(
         &self,
         downstream_session_id: SessionId,

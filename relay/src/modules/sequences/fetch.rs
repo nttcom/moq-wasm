@@ -47,14 +47,11 @@ struct PreparedUpstreamFetch {
     upstream_publisher_session_id: SessionId,
 }
 
-/// Where the data for a FETCH will come from: the local cache, or an
-/// upstream fetch for the range the cache cannot serve.
 enum FetchSource {
     Cache(CacheTarget),
     Upstream(LocationRange),
 }
 
-/// A reason a FETCH could not be resolved, mapped to a FETCH_ERROR.
 #[derive(Debug)]
 enum FetchError {
     TrackNotFound,
@@ -137,7 +134,6 @@ impl Fetch {
                     return;
                 }
 
-                // Delegate data delivery to egress.
                 let fetch_request = EgressFetchRequest {
                     subscriber_session_id: session_id,
                     request_id,
@@ -204,7 +200,6 @@ impl Fetch {
         }
     }
 
-    /// Create upstream FETCH relay state before FETCH_OK is sent downstream.
     async fn create_upstream_fetch(
         &self,
         table: &InMemoryLocalPubSubDirectory,
@@ -215,14 +210,10 @@ impl Fetch {
         range: &LocationRange,
     ) -> Option<PreparedUpstreamFetch> {
         let fetch_option = moqt::FetchOption {
-            // Subscriber Priority is a mandatory FETCH field; forward the default
-            // for now. Propagating the downstream request's priority belongs to
-            // the priority-control work, tracked separately.
             subscriber_priority: moqt::FetchOption::default().subscriber_priority,
             group_order: handler.group_order(),
         };
 
-        // Resolve upstream publisher via route registry / inter-relay.
         let upstream_key = match upstream_publisher_resolver
             .resolve(table, &target.track_namespace, &target.track_name)
             .await
@@ -261,7 +252,6 @@ impl Fetch {
             }
         };
 
-        // Forward FETCH to the upstream publisher session.
         let handle = match forwarder
             .fetch(
                 upstream_key.publisher_session_id,
@@ -417,9 +407,6 @@ impl Fetch {
         Ok(source)
     }
 
-    /// Resolves a Joining Fetch against the joined subscription's Largest Location at
-    /// subscribe time; `start_group` picks the start group from that location.
-    ///
     /// When no objects existed at subscribe time (`start_location` is `None`), §9.16.2
     /// requires rejecting the Joining Fetch with INVALID_RANGE.
     fn resolve_joining_target(
@@ -429,9 +416,6 @@ impl Fetch {
         table: &InMemoryLocalPubSubDirectory,
         start_group: impl FnOnce(moqt::Location) -> u64,
     ) -> Result<FetchTarget, FetchError> {
-        // TODO: validate the joined Subscribe has Filter Type Largest Object;
-        // otherwise close the session with PROTOCOL_VIOLATION (§9.16.2).
-
         let Some(downstream_sub) =
             table.get_downstream_subscription(session_id, joining_request_id)
         else {

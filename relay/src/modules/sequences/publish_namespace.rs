@@ -64,11 +64,6 @@ impl PublishNamespace {
             return;
         }
 
-        // The draft defines that the relay requires to send `PUBLISH_NAMESPACE` message to
-        // any subscriber that has interests in the namespace
-        // https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
-
-        // Convert DashMap<Namespace, DashSet<SessionId>> to DashMap<SessionId, DashSet<Namespace>>
         self.notify_to_subscribers(track_namespace, table, forwarder)
             .await;
 
