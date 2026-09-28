@@ -65,6 +65,7 @@ async function initializeVideoEncoder() {
   const init: VideoEncoderInit = {
     output: sendVideoChunkMessage,
     error: (e: DOMException) => {
+      console.error('[videoEncoder] encoder error', e)
       self.postMessage({ type: 'encoderError', message: e.message })
     }
   }
