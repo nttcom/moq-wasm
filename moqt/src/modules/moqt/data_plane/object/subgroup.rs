@@ -181,10 +181,11 @@ impl SubgroupObject {
     }
 
     pub(crate) fn decode_payload(length: usize, buf: &mut BytesMut) -> Self {
-        let payload = buf.split_to(length);
+        let payload = Bytes::copy_from_slice(&buf[..length]);
+        buf.advance(length);
         Self::Payload {
             length,
-            data: payload.freeze(),
+            data: payload,
         }
     }
 
@@ -583,6 +584,32 @@ mod tests {
             // Assert
             assert!(matches!(result, Err(DecodeError::NeedMoreData)));
             assert_eq!(buf.len(), 2);
+        }
+    }
+
+    mod ownership {
+        use super::super::*;
+
+        #[test]
+        fn decoded_payload_does_not_share_receive_buffer() {
+            // Arrange
+            const RECEIVE_BUFFER_CAPACITY: usize = 1024;
+            let message_type = SubgroupHeaderType::new(0x10).unwrap();
+            let object_field = SubgroupObjectField {
+                message_type,
+                object_id_delta: 0,
+                extension_headers: ExtensionHeaders::default(),
+                subgroup_object: SubgroupObject::new_payload(Bytes::from_static(b"payload")),
+            };
+            let mut buf = BytesMut::with_capacity(RECEIVE_BUFFER_CAPACITY);
+            buf.extend_from_slice(&object_field.encode());
+
+            // Act
+            let decoded = SubgroupObjectField::decode(message_type, &mut buf).unwrap();
+
+            // Assert
+            assert!(buf.try_reclaim(RECEIVE_BUFFER_CAPACITY));
+            assert_eq!(decoded.subgroup_object, object_field.subgroup_object);
         }
     }
 }
