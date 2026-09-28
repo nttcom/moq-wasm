@@ -181,10 +181,11 @@ impl SubgroupObject {
     }
 
     pub(crate) fn decode_payload(length: usize, buf: &mut BytesMut) -> Self {
-        let payload = buf.split_to(length);
+        let payload = Bytes::copy_from_slice(&buf[..length]);
+        buf.advance(length);
         Self::Payload {
             length,
-            data: payload.freeze(),
+            data: payload,
         }
     }
 

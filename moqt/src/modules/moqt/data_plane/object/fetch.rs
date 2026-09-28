@@ -111,7 +111,8 @@ impl FetchObjectField {
                 return Err(DecodeError::NeedMoreData);
             }
             let _ = buf.split_to(cursor.position() as usize);
-            let payload = buf.split_to(payload_length as usize).freeze();
+            let payload = Bytes::copy_from_slice(&buf[..payload_length as usize]);
+            buf.advance(payload_length as usize);
             FetchObject::Payload(payload)
         };
         Ok(Self {
