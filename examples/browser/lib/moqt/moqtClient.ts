@@ -1,6 +1,7 @@
 import init, {
   FetchObjectMessage,
   FetchOkMessage,
+  FetchStreamEndMessage,
   MOQTClient,
   NamespaceOkMessage,
   ObjectDatagramMessage,
@@ -25,6 +26,7 @@ type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void
 type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
 type PendingFetchResolver = { resolve: (response: FetchOkMessage) => void; reject: (error: Error) => void }
 type FetchObjectHandler = ((message: FetchObjectMessage) => void) | null
+type FetchStreamEndHandler = (message: FetchStreamEndMessage) => void
 type SubscribeResponseHandler = ((response: SubscribeOkMessage | RequestErrorMessage) => void) | null
 type NamespaceResponseHandler = ((response: NamespaceOkMessage | RequestErrorMessage) => void) | null
 export interface ConnectionCloseInfo {
@@ -75,6 +77,11 @@ export interface FetchOptions {
   requestId?: bigint
   /** Handler for FETCH objects, registered before the request is sent. */
   onObject?: FetchObjectHandler
+  /**
+   * Called once when the fetch stream ends: after the last object on a FIN,
+   * or on a RESET_STREAM when the publisher could not complete the range.
+   */
+  onStreamEnd?: FetchStreamEndHandler
 }
 
 /** Result of subscribe(): the id we issued plus the SUBSCRIBE_OK response. */
@@ -132,6 +139,7 @@ export class MoqtClientWrapper {
   private onObjectDatagramStatusHandler: ObjectDatagramStatusHandler = null
   private onSubgroupHeaderHandler: SubgroupHeaderHandler = null
   private readonly fetchObjectHandlers = new Map<bigint, FetchObjectHandler>()
+  private readonly fetchStreamEndHandlers = new Map<bigint, FetchStreamEndHandler>()
   private readonly subscriptionState: SubscriptionStateStore
   private readonly pendingPublishNamespace = new Map<bigint, PendingVoidResolver>()
   private readonly pendingSubscribeNamespace = new Map<bigint, PendingVoidResolver>()
@@ -365,6 +373,9 @@ export class MoqtClientWrapper {
     if (options.onObject) {
       this.setOnFetchObjectHandler(requestId, options.onObject)
     }
+    if (options.onStreamEnd) {
+      this.fetchStreamEndHandlers.set(requestId, options.onStreamEnd)
+    }
     const response = this.awaitFetchResponse(requestId)
     try {
       await client.sendFetch(requestId, trackNamespace, trackName, startGroupId, startObjectId, endGroupId, endObjectId)
@@ -374,6 +385,7 @@ export class MoqtClientWrapper {
       if (options.onObject) {
         this.clearFetchObjectHandler(requestId)
       }
+      this.fetchStreamEndHandlers.delete(requestId)
       this.pendingFetch.delete(requestId)
       throw error
     }
@@ -389,6 +401,9 @@ export class MoqtClientWrapper {
     if (options.onObject) {
       this.setOnFetchObjectHandler(requestId, options.onObject)
     }
+    if (options.onStreamEnd) {
+      this.fetchStreamEndHandlers.set(requestId, options.onStreamEnd)
+    }
     const response = this.awaitFetchResponse(requestId)
     try {
       await client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart)
@@ -398,6 +413,7 @@ export class MoqtClientWrapper {
       if (options.onObject) {
         this.clearFetchObjectHandler(requestId)
       }
+      this.fetchStreamEndHandlers.delete(requestId)
       this.pendingFetch.delete(requestId)
       throw error
     }
@@ -621,6 +637,12 @@ export class MoqtClientWrapper {
       const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
       handler?.(message)
     })
+    this.client.onFetchStreamEnd((message: FetchStreamEndMessage) => {
+      const requestId = BigInt(message.requestId)
+      const handler = this.fetchStreamEndHandlers.get(requestId)
+      this.fetchStreamEndHandlers.delete(requestId)
+      handler?.(message)
+    })
     this.client.onConnectionClosed((info: ConnectionCloseInfo | null) => this.handleConnectionClosed(info ?? {}))
   }
 
@@ -670,6 +692,7 @@ export class MoqtClientWrapper {
     this.pendingSubscribeNamespace.clear()
     this.pendingSubscribe.clear()
     this.pendingFetch.clear()
+    this.fetchStreamEndHandlers.clear()
     this.subscriptionTrackAliases.clear()
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null

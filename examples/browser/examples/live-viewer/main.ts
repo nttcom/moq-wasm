@@ -40,7 +40,6 @@ const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
 const TIMELINE_CAPACITY = 64
 const REWIND_GROUP_COUNT = 4n
-const FETCH_IDLE_MS = 400
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
 const AUDIO_GROUP_CLOSE_WAIT_MS = 2_000
@@ -1021,8 +1020,11 @@ async function fetchFrames(
   generation: number
 ): Promise<ReviewFrame[] | undefined> {
   const frames: ReviewFrame[] = []
-  let lastArrival = performance.now()
   let requestId: bigint | undefined
+  let endStream: (end: FetchStreamEnd) => void = () => {}
+  const streamEnd = new Promise<FetchStreamEnd>((resolve) => {
+    endStream = resolve
+  })
   try {
     ;({ requestId } = await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
       onObject: (message) => {
@@ -1036,13 +1038,14 @@ async function fetchFrames(
         if (generation !== reviewGeneration) {
           return
         }
-        lastArrival = performance.now()
         const frame = toReviewFrame(message)
         if (frame) {
           frame.requestId = message.requestId
           frames.push(frame)
         }
-      }
+      },
+      onStreamEnd: (message) =>
+        endStream(message.isReset ? { kind: 'reset', code: message.resetErrorCode } : { kind: 'fin' })
     }))
   } catch (error) {
     if (generation === reviewGeneration) {
@@ -1052,11 +1055,25 @@ async function fetchFrames(
     return undefined
   }
 
-  await waitForFetchIdle(() => lastArrival, generation)
+  const outcome = await waitForFetchStreamEnd(streamEnd)
   if (requestId !== undefined) {
     streamMonitor.fetchFinished(requestId)
   }
-  return generation === reviewGeneration ? frames : undefined
+  if (generation !== reviewGeneration) {
+    return undefined
+  }
+  if (outcome.kind === 'reset') {
+    setStatusText('rewind-status', `Rewind failed: fetch stream reset (code ${outcome.code ?? 'unknown'})`)
+    appendLog('error', `fetch ${trackName}: stream reset (code ${outcome.code ?? 'unknown'})`)
+    return undefined
+  }
+  if (outcome.kind === 'deadline') {
+    appendLog(
+      'warn',
+      `fetch ${trackName}: no stream end within ${FETCH_DEADLINE_MS} ms, playing ${frames.length} objects`
+    )
+  }
+  return frames
 }
 
 /// The live edge group is still open and a FETCH that reaches into it escapes
@@ -1080,16 +1097,20 @@ async function awaitClosedWindowEnd(start: bigint, generation: number): Promise<
   return undefined
 }
 
-/// FETCH_OK only acknowledges the request. The objects follow on their own
-/// stream and no completion event is surfaced, so wait for the arrivals to go
-/// quiet before replaying them.
-async function waitForFetchIdle(lastArrival: () => number, generation: number): Promise<void> {
-  const deadline = performance.now() + FETCH_DEADLINE_MS
-  while (generation === reviewGeneration && performance.now() < deadline) {
-    if (performance.now() - lastArrival() > FETCH_IDLE_MS) {
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+type FetchStreamEnd = { kind: 'fin' } | { kind: 'reset'; code: bigint | undefined } | { kind: 'deadline' }
+
+/// The relay FINs the fetch stream once every object up to the FETCH_OK End
+/// Location is written; the deadline only guards against a stream that never
+/// ends.
+async function waitForFetchStreamEnd(streamEnd: Promise<FetchStreamEnd>): Promise<FetchStreamEnd> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<FetchStreamEnd>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'deadline' }), FETCH_DEADLINE_MS)
+  })
+  try {
+    return await Promise.race([streamEnd, deadline])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
