@@ -171,24 +171,18 @@ impl Publish {
     ) {
         let track_namespace = subscription.track_namespace().to_string();
         let track_name = subscription.track_name().to_string();
-        let track_alias = subscription.track_alias();
 
         let combined = table.get_namespace_subscribers(&track_namespace);
         for subscriber_session_id in combined {
-            if let Some(subscriber_track_alias) = forwarder
+            if forwarder
                 .publish(
                     subscriber_session_id,
                     track_namespace.clone(),
                     track_name.clone(),
                 )
                 .await
+                .is_some()
             {
-                table.register_track_alias_link(
-                    publisher_session_id,
-                    track_alias,
-                    subscriber_session_id,
-                    subscriber_track_alias,
-                );
                 tracing::info!(
                     "Sent publish '{}' to {}",
                     track_namespace,

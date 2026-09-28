@@ -31,7 +31,6 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, PeerKind>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashMap<SessionId, PeerKind>>,
     pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
-    pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
     pub(crate) active_upstream_subscriptions:
         DashMap<UpstreamSubscriptionKey, ActiveUpstreamSubscription>,
     pub(crate) downstream_subscriptions:
@@ -44,7 +43,6 @@ impl InMemoryLocalPubSubDirectory {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
             published_handlers: RwLock::new(Vec::new()),
-            track_alias_links: DashMap::new(),
             active_upstream_subscriptions: DashMap::new(),
             downstream_subscriptions: DashMap::new(),
         }
@@ -110,26 +108,6 @@ impl InMemoryLocalPubSubDirectory {
             .write()
             .await
             .retain(|(registered_session_id, _)| *registered_session_id != session_id);
-
-        let aliases_to_remove: Vec<_> = self
-            .track_alias_links
-            .iter()
-            .filter_map(|entry| {
-                let (publisher_session_id, publisher_track_alias, subscriber_session_id) =
-                    *entry.key();
-                (publisher_session_id == session_id || subscriber_session_id == session_id)
-                    .then_some({
-                        (
-                            publisher_session_id,
-                            publisher_track_alias,
-                            subscriber_session_id,
-                        )
-                    })
-            })
-            .collect();
-        for key in aliases_to_remove {
-            self.track_alias_links.remove(&key);
-        }
 
         let downstream_keys: Vec<_> = self
             .downstream_subscriptions
@@ -485,59 +463,6 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.local_pub_sub_directory.register_track_alias_link",
-        skip_all,
-        fields(
-            publisher_session_id = %publisher_session_id,
-            publisher_track_alias = %publisher_track_alias,
-            subscriber_session_id = %subscriber_session_id,
-            subscriber_track_alias = %subscriber_track_alias
-        )
-    )]
-    pub(crate) fn register_track_alias_link(
-        &self,
-        publisher_session_id: SessionId,
-        publisher_track_alias: u64,
-        subscriber_session_id: SessionId,
-        subscriber_track_alias: u64,
-    ) {
-        self.track_alias_links.insert(
-            (
-                publisher_session_id,
-                publisher_track_alias,
-                subscriber_session_id,
-            ),
-            subscriber_track_alias,
-        );
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.local_pub_sub_directory.find_subscriber_track_alias",
-        skip_all,
-        fields(
-            publisher_session_id = %publisher_session_id,
-            publisher_track_alias = %publisher_track_alias,
-            subscriber_session_id = %subscriber_session_id
-        )
-    )]
-    pub(crate) fn _find_subscriber_track_alias(
-        &self,
-        publisher_session_id: SessionId,
-        publisher_track_alias: u64,
-        subscriber_session_id: SessionId,
-    ) -> Option<u64> {
-        self.track_alias_links
-            .get(&(
-                publisher_session_id,
-                publisher_track_alias,
-                subscriber_session_id,
-            ))
-            .map(|value| *value)
-    }
-
     pub(crate) fn get_active_upstream_subscription(
         &self,
         publisher_session_id: SessionId,
@@ -741,7 +666,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_session_cleans_up_all_session_scoped_entries() {
-        // Arrange: Register namespace, track, and alias state for the session.
+        // Arrange: Register namespace and track state for the session.
         let table = InMemoryLocalPubSubDirectory::new();
 
         assert!(table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client));
@@ -760,8 +685,6 @@ mod tests {
                 }),
             )
             .await;
-        table.register_track_alias_link(1, 10, 2, 20);
-        table.register_track_alias_link(2, 30, 1, 40);
 
         // Act: Remove all state associated with session 1.
         let removed = table.remove_session(1).await;
@@ -773,8 +696,6 @@ mod tests {
             .map(|subscription| subscription.publisher_session_id)
             .collect();
         assert_eq!(publisher_session_ids, vec![2]);
-        assert!(table._find_subscriber_track_alias(1, 10, 2).is_none());
-        assert!(table._find_subscriber_track_alias(2, 30, 1).is_none());
 
         let room_subscribers = table.get_namespace_subscribers("room/member");
         assert!(room_subscribers.contains(&2));
