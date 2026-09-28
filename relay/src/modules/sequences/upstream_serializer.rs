@@ -3,24 +3,34 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-type TrackLockMap = DashMap<(String, String), Arc<Mutex<()>>>;
+type TrackLockKey = (String, String);
+type TrackLockMap = DashMap<TrackLockKey, Arc<Mutex<()>>>;
 
 /// Per-`(track_namespace, track_name)` async mutex map.
 ///
-/// Callers acquire an owned guard for a given track key before calling
+/// Callers acquire a guard for a given track key before calling
 /// `create_upstream_subscription`. While the guard is held, any other
 /// concurrent task trying to acquire the same key will wait. Different
 /// track keys use independent locks and do not block each other.
-///
-/// # Entry lifecycle
-/// Entries are left in place after the guard is dropped (option b).
-/// The map grows by the number of distinct tracks seen in this relay
-/// instance and can be GC-ed as a follow-up if needed.
-/// NOTE: for typical MoQT deployments the number of distinct tracks is
-/// bounded and small, so growth is not a concern in practice.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UpstreamCreationSerializer {
     locks: Arc<TrackLockMap>,
+}
+
+pub(crate) struct UpstreamCreationGuard {
+    mutex_guard: Option<OwnedMutexGuard<()>>,
+    key: TrackLockKey,
+    locks: Arc<TrackLockMap>,
+}
+
+impl Drop for UpstreamCreationGuard {
+    fn drop(&mut self) {
+        drop(self.mutex_guard.take());
+        // A waiter holds its own clone of the mutex, so the entry is only removed when nobody
+        // waits on it; a later lock() then creates a fresh mutex no one else can hold.
+        self.locks
+            .remove_if(&self.key, |_, mutex| Arc::strong_count(mutex) == 1);
+    }
 }
 
 impl UpstreamCreationSerializer {
@@ -30,20 +40,22 @@ impl UpstreamCreationSerializer {
         }
     }
 
-    /// Acquire an exclusive async guard for the given track key.
-    /// Returns an owned guard; dropping the guard releases the lock.
     pub(crate) async fn lock(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> OwnedMutexGuard<()> {
+    ) -> UpstreamCreationGuard {
         let key = (track_namespace.to_owned(), track_name.to_owned());
         let mutex = self
             .locks
-            .entry(key)
+            .entry(key.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
-        mutex.lock_owned().await
+        UpstreamCreationGuard {
+            mutex_guard: Some(mutex.lock_owned().await),
+            key,
+            locks: self.locks.clone(),
+        }
     }
 }
 
@@ -51,9 +63,13 @@ impl UpstreamCreationSerializer {
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
-    use super::UpstreamCreationSerializer;
+    use super::{TrackLockKey, UpstreamCreationSerializer};
+
+    fn key() -> TrackLockKey {
+        ("ns".to_string(), "track".to_string())
+    }
 
     /// Two tasks contending on the same key execute serially, not concurrently.
     /// We verify this by checking a shared counter: the second task must see
@@ -125,5 +141,56 @@ mod tests {
             "different keys should not block each other, elapsed={elapsed:?}"
         );
         let _ = (end1, end2);
+    }
+
+    #[tokio::test]
+    async fn released_lock_removes_its_entry() {
+        // Arrange
+        let serializer = UpstreamCreationSerializer::new();
+        let guard = serializer.lock("ns", "track").await;
+
+        // Act
+        drop(guard);
+
+        // Assert
+        assert!(serializer.locks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn released_lock_keeps_its_entry_for_a_waiter() {
+        // Arrange
+        let serializer = UpstreamCreationSerializer::new();
+        let guard = serializer.lock("ns", "track").await;
+        let waiter = tokio::spawn({
+            let serializer = serializer.clone();
+            async move { serializer.lock("ns", "track").await }
+        });
+        while Arc::strong_count(&serializer.locks.get(&key()).unwrap()) < 3 {
+            tokio::task::yield_now().await;
+        }
+
+        // Act
+        drop(guard);
+        let waiter_guard = waiter.await.unwrap();
+
+        // Assert
+        assert!(serializer.locks.contains_key(&key()));
+        drop(waiter_guard);
+        assert!(serializer.locks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn lock_recreated_after_removal_still_serializes() {
+        // Arrange
+        let serializer = UpstreamCreationSerializer::new();
+        drop(serializer.lock("ns", "track").await);
+        let _guard = serializer.lock("ns", "track").await;
+
+        // Act
+        let contender =
+            tokio::time::timeout(Duration::from_millis(20), serializer.lock("ns", "track")).await;
+
+        // Assert
+        assert!(contender.is_err());
     }
 }

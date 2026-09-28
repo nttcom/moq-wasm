@@ -171,7 +171,9 @@ Each sequence owns the relay-side protocol logic for one message
   (with `PeerKind` so client-owned Redis routes are cleaned up when the last
   *client* leaves), active upstream subscriptions, and downstream
   subscriptions. `remove_session` returns everything cleanup needs.
-- `UpstreamCreationSerializer` — per-(namespace, track) async lock.
+- `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
+  guard removes the track's entry on release unless a waiter still holds the
+  mutex, so the map only holds tracks whose upstream creation is in progress.
 
 ### SUBSCRIBE sequence (the central flow)
 1. **Find-or-create upstream subscription.** Fast path: an
