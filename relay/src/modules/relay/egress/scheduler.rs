@@ -4,10 +4,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::modules::{
     enums::{FilterType, GroupOrder},
-    relay::{
-        cache::track_cache::TrackCache, notifications::subgroup_opened::SubgroupOpened,
-        types::SubgroupKey,
-    },
+    relay::{cache::track_cache::TrackCache, types::SubgroupKey},
 };
 
 fn resolve_start_location(
@@ -80,7 +77,6 @@ impl StartLocationProgress {
 /// Watches track events and decides which egress units to schedule and when.
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
-    subgroup_opened_sender: broadcast::Sender<SubgroupOpened>,
     filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
@@ -93,7 +89,6 @@ pub(crate) struct EgressScheduler {
 impl EgressScheduler {
     pub(crate) fn new(
         cache: Arc<TrackCache>,
-        subgroup_opened_sender: broadcast::Sender<SubgroupOpened>,
         filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
@@ -102,7 +97,6 @@ impl EgressScheduler {
     ) -> Self {
         Self {
             cache,
-            subgroup_opened_sender,
             filter_type,
             group_order,
             sender,
@@ -112,7 +106,7 @@ impl EgressScheduler {
     }
 
     pub(crate) async fn run(mut self) {
-        let mut receiver = self.subgroup_opened_sender.subscribe();
+        let mut receiver = self.cache.subscribe_subgroup_opened();
         let mut scheduled = HashSet::<SubgroupKey>::new();
 
         let start = resolve_start_location(&self.filter_type, &self.largest_location);
@@ -125,7 +119,7 @@ impl EgressScheduler {
 
         loop {
             match receiver.recv().await {
-                Ok(SubgroupOpened(key)) => {
+                Ok(key) => {
                     if let Some(object_id) = progress.accept(key.group_id())
                         && self
                             .schedule(key, object_id, &mut scheduled)
@@ -226,7 +220,6 @@ mod tests {
 
     struct RunningScheduler {
         task_receiver: mpsc::Receiver<GroupSendTask>,
-        event_sender: broadcast::Sender<SubgroupOpened>,
         handle: tokio::task::JoinHandle<()>,
     }
 
@@ -241,12 +234,10 @@ mod tests {
         filter_type: FilterType,
         largest_location: Option<moqt::Location>,
     ) -> RunningScheduler {
-        let (event_sender, _event_receiver) = broadcast::channel(16);
         let (task_sender, task_receiver) = mpsc::channel(16);
         let (ready_sender, ready_receiver) = oneshot::channel();
         let scheduler = EgressScheduler::new(
             cache,
-            event_sender.clone(),
             filter_type,
             GroupOrder::Ascending,
             task_sender,
@@ -260,7 +251,6 @@ mod tests {
             .expect("scheduler should start");
         RunningScheduler {
             task_receiver,
-            event_sender,
             handle,
         }
     }
@@ -348,12 +338,9 @@ mod tests {
     async fn start_location_is_lower_bound_for_first_arriving_group() {
         // Arrange
         let cache = Arc::new(TrackCache::new());
-        let mut scheduler = start_scheduler(cache, FilterType::LargestObject, None).await;
+        let mut scheduler = start_scheduler(cache.clone(), FilterType::LargestObject, None).await;
         // Act
-        scheduler
-            .event_sender
-            .send(SubgroupOpened(stream_key(5)))
-            .expect("event should reach the scheduler");
+        let _open = cache.open_subgroup(stream_key(5));
         // Assert
         let task = scheduler
             .task_receiver

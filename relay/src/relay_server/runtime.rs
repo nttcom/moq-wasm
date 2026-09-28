@@ -11,7 +11,6 @@ use crate::modules::{
         cache::{eviction_job::spawn_cache_eviction_job, store::TrackCacheStore},
         egress::coordinator::EgressCoordinator,
         ingress::ingress_coordinator::IngressCoordinator,
-        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     route_registry::RelayRouteRegistry,
     sequences::{
@@ -39,7 +38,6 @@ impl RelayRuntime {
     ) -> (UnboundedSender<SessionEvent>, Self) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
         let cache_store = Arc::new(TrackCacheStore::new());
-        let subgroup_opened_notifier_map = Arc::new(SubgroupOpenedNotifierMap::new());
         let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
             repo.clone(),
             sender.clone(),
@@ -49,17 +47,8 @@ impl RelayRuntime {
             route_registry.clone(),
             inter_relay_connection_manager.clone(),
         ));
-        let ingress = IngressCoordinator::new(
-            repo.clone(),
-            cache_store.clone(),
-            subgroup_opened_notifier_map.clone(),
-            sender.clone(),
-        );
-        let egress = EgressCoordinator::new(
-            repo.clone(),
-            cache_store.clone(),
-            subgroup_opened_notifier_map.clone(),
-        );
+        let ingress = IngressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
+        let egress = EgressCoordinator::new(repo.clone(), cache_store.clone());
         let manager = EventHandler::run(
             receiver,
             WorkerDeps {
@@ -79,8 +68,7 @@ impl RelayRuntime {
                 token_verifier,
             },
         );
-        let evict_job =
-            spawn_cache_eviction_job(cache_store.clone(), subgroup_opened_notifier_map.clone());
+        let evict_job = spawn_cache_eviction_job(cache_store.clone());
         (
             sender,
             Self {

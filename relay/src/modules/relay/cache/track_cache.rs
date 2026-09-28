@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::Notify;
+use tokio::sync::{Notify, broadcast};
 
 use crate::modules::relay::{
     cache::cached_object::{CachedObject, ForwardingPreference},
@@ -43,6 +43,7 @@ pub(crate) struct TrackCache {
     eviction_generation: AtomicU64,
     malformed: AtomicBool,
     malformed_notify: Notify,
+    subgroup_opened_sender: broadcast::Sender<SubgroupKey>,
 }
 
 impl TrackCache {
@@ -54,7 +55,12 @@ impl TrackCache {
             eviction_generation: AtomicU64::new(0),
             malformed: AtomicBool::new(false),
             malformed_notify: Notify::new(),
+            subgroup_opened_sender: broadcast::channel(256).0,
         }
+    }
+
+    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupKey> {
+        self.subgroup_opened_sender.subscribe()
     }
 
     // The ledger is never held across an await, so poisoning can only come from

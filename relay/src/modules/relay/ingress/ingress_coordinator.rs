@@ -13,7 +13,6 @@ use crate::modules::{
             datagram_reader::{DatagramReader, DatagramReceiveCommand, DatagramReceiveStart},
             stream_ingress_task::{StreamIngressCommand, StreamIngressTask, StreamReceiveStart},
         },
-        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -48,23 +47,13 @@ impl IngressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         let (stream_tx, stream_rx) = mpsc::channel::<StreamIngressCommand>(64);
         let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveCommand>(64);
-        let stream_task = StreamIngressTask::new(
-            stream_rx,
-            cache_store.clone(),
-            subgroup_opened_notifier_map.clone(),
-            session_event_sender.clone(),
-        );
-        let datagram_reader = DatagramReader::run(
-            datagram_rx,
-            cache_store,
-            subgroup_opened_notifier_map,
-            session_event_sender,
-        );
+        let stream_task =
+            StreamIngressTask::new(stream_rx, cache_store.clone(), session_event_sender.clone());
+        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, session_event_sender);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
         let session_repo_for_runner = session_repo;

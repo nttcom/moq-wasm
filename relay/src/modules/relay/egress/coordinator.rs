@@ -11,7 +11,6 @@ use crate::modules::{
     relay::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
-        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -55,7 +54,6 @@ impl EgressCoordinator {
     pub(crate) fn new(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
     ) -> Self {
         let (command_sender, mut command_receiver) = mpsc::channel::<EgressCommand>(512);
 
@@ -74,7 +72,6 @@ impl EgressCoordinator {
                                     &mut runners,
                                     session_repo.clone(),
                                     cache_store.clone(),
-                                    subgroup_opened_notifier_map.clone(),
                                     *request,
                                 )
                                 .await;
@@ -128,7 +125,6 @@ impl EgressCoordinator {
         runners: &mut JoinSet<()>,
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
-        subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         request: EgressStartRequest,
     ) {
         let publisher = session_repo
@@ -144,7 +140,6 @@ impl EgressCoordinator {
         };
 
         let cache = cache_store.get_or_create(&request.track_key);
-        let subgroup_opened_sender = subgroup_opened_notifier_map.get_or_create(&request.track_key);
         let track_alias = request.downstream_subscription.track_alias();
         let egress_track_span = tracing::info_span!(
             parent: &request.parent_span,
@@ -160,7 +155,6 @@ impl EgressCoordinator {
         let runner = EgressRunner::new(
             request.track_key,
             cache,
-            subgroup_opened_sender,
             publisher,
             request.downstream_subscription.clone(),
             request.ready_sender,
@@ -222,11 +216,7 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let idle_cache_reference_count = Arc::strong_count(&cache);
-        let coordinator = EgressCoordinator::new(
-            session_repo,
-            cache_store,
-            Arc::new(SubgroupOpenedNotifierMap::new()),
-        );
+        let coordinator = EgressCoordinator::new(session_repo, cache_store);
         TestContext {
             coordinator,
             track_key,

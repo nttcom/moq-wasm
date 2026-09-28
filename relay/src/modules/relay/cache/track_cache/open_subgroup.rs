@@ -69,6 +69,7 @@ impl TrackCache {
             .entry(key)
             .or_default() += 1;
         self.notify.notify_waiters();
+        let _ = self.subgroup_opened_sender.send(key);
         OpenSubgroupGuard {
             cache: self,
             key,

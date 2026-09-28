@@ -3,13 +3,13 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 use moqt::wire::publish_done_status_code;
 
 use crate::modules::{
     core::{publisher::Publisher, subscription::DownstreamSubscription},
-    relay::{cache::track_cache::TrackCache, notifications::subgroup_opened::SubgroupOpened},
+    relay::cache::track_cache::TrackCache,
     types::TrackKey,
 };
 
@@ -18,7 +18,6 @@ use super::{group_sender::GroupSender, scheduler::EgressScheduler};
 pub(crate) struct EgressRunner {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
-    subgroup_opened_sender: broadcast::Sender<SubgroupOpened>,
     publisher: Box<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
@@ -29,7 +28,6 @@ impl EgressRunner {
     pub(crate) fn new(
         track_key: TrackKey,
         cache: Arc<TrackCache>,
-        subgroup_opened_sender: broadcast::Sender<SubgroupOpened>,
         publisher: Box<dyn Publisher>,
         downstream_subscription: DownstreamSubscription,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
@@ -38,7 +36,6 @@ impl EgressRunner {
         Self {
             track_key,
             cache,
-            subgroup_opened_sender,
             publisher,
             downstream_subscription,
             ready_sender,
@@ -63,7 +60,6 @@ impl EgressRunner {
         let group_order = self.downstream_subscription.group_order();
         let scheduler = EgressScheduler::new(
             self.cache.clone(),
-            self.subgroup_opened_sender,
             filter_type,
             group_order,
             sender,

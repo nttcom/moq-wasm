@@ -13,7 +13,6 @@ use crate::modules::{
             coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
         },
         ingress::stream_reader::{StreamOpened, StreamReader},
-        notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -44,7 +43,6 @@ const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 pub(crate) struct RelayHarness {
     track_key: TrackKey,
     cache_store: Arc<TrackCacheStore>,
-    notify_map: Arc<SubgroupOpenedNotifierMap>,
     opened_sender: mpsc::Sender<StreamOpened>,
     session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     _stream_reader: StreamReader,
@@ -141,20 +139,14 @@ impl RelayHarness {
     pub(crate) fn new() -> Self {
         let track_key = TrackKey::new("ns", "track");
         let cache_store = Arc::new(TrackCacheStore::new());
-        let notify_map = Arc::new(SubgroupOpenedNotifierMap::new());
         let (opened_sender, opened_receiver) = mpsc::channel(16);
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
-        let stream_reader = StreamReader::run(
-            opened_receiver,
-            cache_store.clone(),
-            notify_map.clone(),
-            session_event_sender,
-        );
+        let stream_reader =
+            StreamReader::run(opened_receiver, cache_store.clone(), session_event_sender);
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
             track_key,
             cache_store,
-            notify_map,
             opened_sender,
             session_event_receiver,
             _stream_reader: stream_reader,
@@ -207,7 +199,6 @@ impl RelayHarness {
         let runner = EgressRunner::new(
             self.track_key.clone(),
             self.cache_store.get_or_create(&self.track_key),
-            self.notify_map.get_or_create(&self.track_key),
             Box::new(publisher),
             make_subscription(filter_type),
             ready_sender,

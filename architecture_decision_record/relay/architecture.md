@@ -34,9 +34,8 @@ optionally cascades across relays via a Redis-backed route registry.
 - `SessionRepository` (shared `Arc<Mutex<_>>`) — one `SessionEntry` per
   session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task
   and event forwarder task.
-- `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`
-  + `SubgroupOpenedNotifierMap`), `InterRelayConnectionManager`,
-  `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
+- `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`),
+  `InterRelayConnectionManager`, `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
   `EventHandler` (with the `WorkerDeps` every session worker clones), and the
   cache-eviction job, and returns the relay-wide `SessionEvent` sender.
 
@@ -272,13 +271,6 @@ per-request authorization gate under "Event pipeline".
 
 ### Shared state
 - `TrackCacheStore` — `DashMap<TrackKey, Arc<TrackCache>>`.
-- `SubgroupOpenedNotifierMap` — `DashMap<TrackKey, broadcast::Sender<SubgroupOpened>>`
-  (capacity 256); ingress announces `SubgroupOpened(SubgroupKey)` when a live
-  subgroup stream (or datagram group) starts, egress schedulers listen. Each
-  eviction tick drops the channels whose only sender is the map's own and
-  that have no receiver, checked under the shard lock that `get_or_create`
-  also takes, so a channel is only ever recreated when no reader or writer
-  holds the old one.
 
 ### Ingress (`modules/relay/ingress`)
 `IngressCoordinator` consumes `IngressCommand::{Start, StopTrack}`:
@@ -293,8 +285,8 @@ per-request authorization gate under "Event pipeline".
 - Readers convert every wire object into a canonical `CachedObject` and insert
   it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
   group id, subgroup id and priority as the per-stream context, opens the
-  subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard`) and
-  broadcasts `SubgroupOpened`. Only a FIN or an End of Group / End of Track
+  subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard`),
+  which also announces the `SubgroupKey` to egress. Only a FIN or an End of Group / End of Track
   object `finish`es the guard; every other end (RESET_STREAM, stop, decode
   error, task abort) drops it, which marks the subgroup aborted: its group is
   never declared complete (draft-14 §10.4.2) and egress resets, rather than
@@ -334,6 +326,12 @@ per-request authorization gate under "Event pipeline".
   semantics). One `Notify` per track wakes every waiter on insert, open and
   close; waiters re-check the ledger under a single read guard, so there is no
   check-order race between "object present" and "subgroup closed".
+- Subgroup-opened channel: each `TrackCache` owns a
+  `broadcast::Sender<SubgroupKey>` (capacity 256). `open_subgroup` sends the key
+  after the subgroup is in the ledger, and egress schedulers subscribe through
+  `subscribe_subgroup_opened`, so a subgroup is either announced to a
+  subscribed scheduler or already visible to its cache scan. The channel lives
+  and is evicted with the cache it belongs to.
 - Knowledge: a live subgroup insert registers only the received position
   (§10.4.2: ids skipped by a non-zero delta cannot be inferred). Each open
   group keeps the largest object id live ingest has seen (`LiveGroup`), and
@@ -359,8 +357,7 @@ per-request authorization gate under "Event pipeline".
   (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (30 min) and release
   knowledge exactly for the removed locations; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
-  ingress/egress holds it — avoiding races with new joiners. The same job
-  then drops the unused `SubgroupOpenedNotifierMap` channels.
+  ingress/egress holds it — avoiding races with new joiners.
 
 ### Egress (`modules/relay/egress`)
 `EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
@@ -375,7 +372,7 @@ coordinator keeps the runner tasks in a `JoinSet`, reaping each one as it
 finishes (including runners that end on their own, e.g. on a malformed track)
 and aborting the rest when it shuts down. `EgressRunner` splits into:
 
-- `EgressScheduler` — listens on the track's broadcast channel and the cache,
+- `EgressScheduler` — listens on the cache's subgroup-opened channel and the cache,
   computes the delivery start per draft-14 filter type (`NextGroupStart`,
   `LargestObject`, `AbsoluteStart`, `AbsoluteRange`; an absolute start at or
   below Largest is clamped to Largest+1), and emits one `GroupSendTask` per
