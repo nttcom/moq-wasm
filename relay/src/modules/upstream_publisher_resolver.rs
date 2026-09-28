@@ -34,42 +34,22 @@ impl UpstreamPublisherResolver {
         track_namespace: &str,
         track_name: &str,
     ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
-        if let Some(local_publisher) = self
-            .find_local_publisher(table, track_namespace, track_name)
-            .await
-        {
-            return Ok(Some(local_publisher));
-        }
-
-        self.find_remote_publisher(track_namespace, track_name)
-            .await
-    }
-
-    // TODO(draft-14 8.4.2 Graceful Publisher Relay Switchover): min session_id
-    // implements first-writer-wins, which conflicts with GOAWAY migration —
-    // during the switchover overlap the NEWER session is the correct target
-    // for new subscriptions, while the old one keeps serving established
-    // ones. Introduce a per-session Active/Draining status and prefer Active
-    // publishers here, keeping min session_id only as the deterministic
-    // tie-break.
-    async fn find_local_publisher(
-        &self,
-        table: &dyn LocalPubSubDirectory,
-        track_namespace: &str,
-        track_name: &str,
-    ) -> Option<UpstreamSubscriptionKey> {
-        table
+        // TODO(draft-14 8.4.2 Graceful Publisher Relay Switchover): min session_id
+        // implements first-writer-wins, which conflicts with GOAWAY migration —
+        // during the switchover overlap the NEWER session is the correct target
+        // for new subscriptions, while the old one keeps serving established
+        // ones. Introduce a per-session Active/Draining status and prefer Active
+        // publishers here, keeping min session_id only as the deterministic
+        // tie-break.
+        if let Some(local_publisher) = table
             .find_upstream_publishers(track_namespace, track_name)
             .await
             .into_iter()
             .min_by_key(|publisher| publisher.publisher_session_id)
-    }
+        {
+            return Ok(Some(local_publisher));
+        }
 
-    async fn find_remote_publisher(
-        &self,
-        track_namespace: &str,
-        track_name: &str,
-    ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
         let Some(relay) = self
             .route_registry
             .find_active_namespace_publisher(track_namespace)
