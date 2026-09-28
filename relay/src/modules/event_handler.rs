@@ -415,46 +415,35 @@ impl EventHandler {
                         tracing::warn!("Relay handling for this event is not implemented");
                     });
                 }
-                MoqtSessionEvent::Disconnected() => {
-                    let disconnected_span = tracing::info_span!(
-                        parent: &event_span,
-                        "relay.session.disconnected",
-                        session_id = session_id
-                    );
-                    async {
-                        tracing::info!("Session disconnected: {}", session_id);
-                        Self::cleanup_session(
-                            session_id,
-                            local_pub_sub_directory.as_ref(),
-                            &control_message_forwarder,
-                            &ingress_sender,
-                            route_registry.as_ref(),
-                            inter_relay_connection_manager.as_ref(),
-                        )
-                        .await;
-                    }
-                    .instrument(disconnected_span)
-                    .await;
-                }
-                MoqtSessionEvent::ProtocolViolation() => {
-                    let protocol_violation_span = tracing::info_span!(
-                        parent: &event_span,
-                        "relay.session.protocol_violation",
-                        session_id = session_id
-                    );
-                    async {
-                        tracing::error!("Session protocol violation: {}", session_id);
-                        Self::cleanup_session(
-                            session_id,
-                            local_pub_sub_directory.as_ref(),
-                            &control_message_forwarder,
-                            &ingress_sender,
-                            route_registry.as_ref(),
-                            inter_relay_connection_manager.as_ref(),
-                        )
-                        .await;
-                    }
-                    .instrument(protocol_violation_span)
+                MoqtSessionEvent::Disconnected() | MoqtSessionEvent::ProtocolViolation() => {
+                    let terminal_span = if matches!(event, MoqtSessionEvent::Disconnected()) {
+                        let span = tracing::info_span!(
+                            parent: &event_span,
+                            "relay.session.disconnected",
+                            session_id = session_id
+                        );
+                        span.in_scope(|| tracing::info!("Session disconnected: {}", session_id));
+                        span
+                    } else {
+                        let span = tracing::info_span!(
+                            parent: &event_span,
+                            "relay.session.protocol_violation",
+                            session_id = session_id
+                        );
+                        span.in_scope(|| {
+                            tracing::error!("Session protocol violation: {}", session_id)
+                        });
+                        span
+                    };
+                    Self::cleanup_session(
+                        session_id,
+                        local_pub_sub_directory.as_ref(),
+                        &control_message_forwarder,
+                        &ingress_sender,
+                        route_registry.as_ref(),
+                        inter_relay_connection_manager.as_ref(),
+                    )
+                    .instrument(terminal_span)
                     .await;
                 }
             }
