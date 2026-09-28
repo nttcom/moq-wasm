@@ -83,29 +83,13 @@ mod tests {
     use crate::modules::{
         auth::{
             test_support::{
-                StubOutcome, StubVerifier, connect_client_with_token, spawn_relay_with_verifier,
+                StubOutcome, StubVerifier, app_token, relay_token, request_error_code,
+                spawn_relay_and_connect_client,
             },
             verified_token::VerifiedToken,
         },
         enums::SubscribeErrorCode,
     };
-
-    fn client_token(app_id: &str) -> VerifiedToken {
-        VerifiedToken {
-            app_id: app_id.to_string(),
-            publish: Some(vec![]),
-            subscribe: None,
-            is_relay: false,
-            expires_at: None,
-        }
-    }
-
-    fn relay_token() -> VerifiedToken {
-        VerifiedToken {
-            is_relay: true,
-            ..client_token("APP")
-        }
-    }
 
     fn jwt() -> Vec<AuthorizationToken> {
         vec![AuthorizationToken::use_value_utf8("jwt")]
@@ -126,10 +110,10 @@ mod tests {
     #[tokio::test]
     async fn verified_token_of_the_same_app_is_adopted() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
         let renewed = VerifiedToken {
             subscribe: Some(vec!["site1".to_string()]),
-            ..client_token("APP")
+            ..app_token(Some(""), None)
         };
 
         // Act
@@ -147,7 +131,7 @@ mod tests {
     #[tokio::test]
     async fn missing_token_is_not_supported() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
 
         // Act
         let result = refresh(StubOutcome::Verified(current.clone()), Some(&current), &[]).await;
@@ -159,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn register_alias_type_is_malformed() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
         let tokens = [AuthorizationToken::Register {
             token_alias: 1,
             token_type: 0,
@@ -181,7 +165,7 @@ mod tests {
     #[tokio::test]
     async fn rejected_token_is_unauthorized() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
 
         // Act
         let result = refresh(StubOutcome::Unauthorized, Some(&current), &jwt()).await;
@@ -193,7 +177,7 @@ mod tests {
     #[tokio::test]
     async fn unavailable_verifier_is_an_internal_error() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
 
         // Act
         let result = refresh(StubOutcome::Unavailable, Some(&current), &jwt()).await;
@@ -205,7 +189,7 @@ mod tests {
     #[tokio::test]
     async fn relay_token_is_unauthorized() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
 
         // Act
         let result = refresh(StubOutcome::Verified(relay_token()), Some(&current), &jwt()).await;
@@ -217,11 +201,14 @@ mod tests {
     #[tokio::test]
     async fn token_of_another_app_is_unauthorized() {
         // Arrange
-        let current = client_token("APP");
+        let current = app_token(Some(""), None);
 
         // Act
         let result = refresh(
-            StubOutcome::Verified(client_token("OTHER")),
+            StubOutcome::Verified(VerifiedToken {
+                app_id: "OTHER".to_string(),
+                ..app_token(Some(""), None)
+            }),
             Some(&current),
             &jwt(),
         )
@@ -251,7 +238,12 @@ mod tests {
     #[tokio::test]
     async fn session_without_a_token_is_unauthorized() {
         // Act
-        let result = refresh(StubOutcome::Verified(client_token("APP")), None, &jwt()).await;
+        let result = refresh(
+            StubOutcome::Verified(app_token(Some(""), None)),
+            None,
+            &jwt(),
+        )
+        .await;
 
         // Assert
         assert_eq!(code(result), SubscribeErrorCode::Unauthorized);
@@ -260,8 +252,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn track_status_carrying_a_token_is_answered_with_ok() {
         // Arrange
-        let relay = spawn_relay_with_verifier(client_token("APP")).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(app_token(Some(""), None)).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -282,8 +273,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn track_status_without_a_token_is_answered_with_not_supported() {
         // Arrange
-        let relay = spawn_relay_with_verifier(client_token("APP")).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(app_token(Some(""), None)).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -296,12 +286,8 @@ mod tests {
         .unwrap();
 
         // Assert
-        let error = result.unwrap_err();
-        let request_error = error
-            .downcast_ref::<moqt::wire::RequestError>()
-            .unwrap_or_else(|| panic!("expected a request error, got {error:?}"));
         assert_eq!(
-            request_error.error_code,
+            request_error_code(result.unwrap_err()),
             SubscribeErrorCode::NotSupported as u64
         );
     }
