@@ -23,6 +23,7 @@ import { BufferingSpinner } from './bufferingSpinner'
 import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
 import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
+import { Mp4Publisher } from './mp4Publisher'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 import {
@@ -102,6 +103,10 @@ const livePlayout = new LivePlayout(
     })
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
+const mp4Publisher = new Mp4Publisher({
+  onStatus: (text) => setStatusText('publish-status', text),
+  onLog: appendLog
+})
 const bufferingSpinner = new BufferingSpinner(element('buffering'))
 
 let videoTracks: MediaCatalogTrack[] = []
@@ -156,6 +161,8 @@ for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
+element<HTMLButtonElement>('publishBtn').addEventListener('click', () => void publishMp4())
+element<HTMLButtonElement>('stopPublishBtn').addEventListener('click', () => void mp4Publisher.stop())
 element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video').then(openLiveMse))
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio').then(openLiveMse))
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
@@ -284,6 +291,33 @@ async function stopStream(): Promise<void> {
   setStatusText('playback-status', 'Playback idle')
 }
 
+async function publishMp4(): Promise<void> {
+  const file = element<HTMLInputElement>('mp4-file').files?.[0]
+  if (!file) {
+    setStatusText('publish-status', 'Choose an MP4 file first')
+    return
+  }
+  setStatusText('publish-status', `Opening ${file.name}`)
+  try {
+    await mp4Publisher.start({
+      file,
+      url: element<HTMLInputElement>('url').value.trim(),
+      namespace: trackNamespace(),
+      authInfo: AUTH_INFO,
+      loop: element<HTMLInputElement>('mp4-loop').checked
+    })
+  } catch (error) {
+    setStatusText('publish-status', `Publish failed: ${getErrorMessage(error)}`)
+    appendLog('error', `publish: ${getErrorMessage(error)}`)
+  }
+}
+
+/// A SUBSCRIBE delivers objects published after the largest one and the bridge
+/// publishes the catalog once per upstream subscription, so a viewer joining a
+/// subscription the relay already holds would never see it. The current
+/// catalog is fetched instead: the group SUBSCRIBE_OK names when the relay
+/// still knows it, otherwise the whole track, which the relay completes from
+/// the bridge.
 /// The FETCH and the SUBSCRIBE race, and the relay keeps the catalog of a
 /// publisher that has since been replaced, so the catalog of the newest group
 /// wins whatever order they arrive in.
