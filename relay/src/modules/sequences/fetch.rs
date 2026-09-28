@@ -37,11 +37,6 @@ struct FetchTarget {
     end_location: moqt::Location,
 }
 
-struct LocationRange {
-    start_location: moqt::Location,
-    end_location: moqt::Location,
-}
-
 struct PreparedUpstreamFetch {
     handle: moqt::FetchHandle,
     upstream_publisher_session_id: SessionId,
@@ -49,7 +44,7 @@ struct PreparedUpstreamFetch {
 
 enum FetchSource {
     Cache(CacheTarget),
-    Upstream(LocationRange),
+    Upstream,
 }
 
 #[derive(Debug)]
@@ -149,7 +144,7 @@ impl Fetch {
                     tracing::error!(?e, "Failed to send fetch request to egress");
                 }
             }
-            FetchSource::Upstream(missing_range) => {
+            FetchSource::Upstream => {
                 // Joining Fetches forward as Standalone: the target is already
                 // resolved to the absolute range whose end is the equivalent
                 // Standalone Fetch encoding (§9.16.2.1, largest + 1).
@@ -162,7 +157,6 @@ impl Fetch {
                         upstream_publisher_resolver,
                         handler.as_ref(),
                         &target,
-                        &missing_range,
                     )
                     .await
                 else {
@@ -181,7 +175,7 @@ impl Fetch {
                     subscriber_session_id: session_id,
                     request_id,
                     cache: cache_store.get_or_create(&target.track_key),
-                    start_location: missing_range.start_location,
+                    start_location: target.start_location,
                     end_location: prepared.handle.end_location,
                     group_order: handler.group_order(),
                 };
@@ -207,7 +201,6 @@ impl Fetch {
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         handler: &dyn FetchHandler,
         target: &FetchTarget,
-        range: &LocationRange,
     ) -> Option<PreparedUpstreamFetch> {
         let fetch_option = moqt::FetchOption {
             subscriber_priority: moqt::FetchOption::default().subscriber_priority,
@@ -257,8 +250,8 @@ impl Fetch {
                 upstream_key.publisher_session_id,
                 upstream_key.track_namespace.clone(),
                 upstream_key.track_name.clone(),
-                range.start_location,
-                range.end_location,
+                target.start_location,
+                target.end_location,
                 fetch_option,
             )
             .await
@@ -375,10 +368,7 @@ impl Fetch {
                 track_name = %target.track_name,
                 "No cached track for fetch"
             );
-            return Ok(FetchSource::Upstream(LocationRange {
-                start_location,
-                end_location,
-            }));
+            return Ok(FetchSource::Upstream);
         };
         let source = match cache.resolve_fetch_range(start_location, end_location) {
             FetchRangeResolution::Serve { end_location } => FetchSource::Cache(CacheTarget {
@@ -398,10 +388,7 @@ impl Fetch {
                     end_object_id = end_location.object_id,
                     "Cached track cannot serve full fetch range locally"
                 );
-                FetchSource::Upstream(LocationRange {
-                    start_location,
-                    end_location,
-                })
+                FetchSource::Upstream
             }
         };
         Ok(source)
@@ -538,11 +525,11 @@ mod tests {
 
         // Assert
         match source {
-            FetchSource::Upstream(missing_range) => {
+            FetchSource::Upstream => {
                 assert_eq!(target.track_namespace, "ns");
                 assert_eq!(target.track_name, "track");
-                assert_eq!(missing_range.start_location, start);
-                assert_eq!(missing_range.end_location, end);
+                assert_eq!(target.start_location, start);
+                assert_eq!(target.end_location, end);
             }
             FetchSource::Cache(_) => panic!("expected upstream fetch"),
         }
@@ -573,7 +560,7 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(matches!(source, FetchSource::Upstream(_)));
+        assert!(matches!(source, FetchSource::Upstream));
     }
 
     #[test]
@@ -603,7 +590,7 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(matches!(source, FetchSource::Upstream(_)));
+        assert!(matches!(source, FetchSource::Upstream));
     }
 
     #[test]
@@ -623,7 +610,7 @@ mod tests {
         };
 
         // Act
-        let (_, source) = Fetch
+        let (target, source) = Fetch
             .resolve_target_and_source(
                 2,
                 standalone_fetch_params(start, end),
@@ -634,9 +621,9 @@ mod tests {
 
         // Assert
         match source {
-            FetchSource::Upstream(missing_range) => {
-                assert_eq!(missing_range.start_location, start);
-                assert_eq!(missing_range.end_location, end);
+            FetchSource::Upstream => {
+                assert_eq!(target.start_location, start);
+                assert_eq!(target.end_location, end);
             }
             FetchSource::Cache(_) => {
                 panic!("leading cache gaps must be forwarded upstream")
@@ -681,7 +668,7 @@ mod tests {
                     }
                 );
             }
-            FetchSource::Upstream(_) => {
+            FetchSource::Upstream => {
                 panic!("covered fetch range should be served locally with clamped end")
             }
         }
@@ -780,7 +767,7 @@ mod tests {
                 assert_eq!(resolved.start_location, start);
                 assert_eq!(resolved.end_location, end);
             }
-            FetchSource::Upstream(_) => {
+            FetchSource::Upstream => {
                 panic!("expected cache fetch readiness")
             }
         }
@@ -879,18 +866,18 @@ mod tests {
 
         // Assert
         match source {
-            FetchSource::Upstream(missing_range) => {
+            FetchSource::Upstream => {
                 assert_eq!(target.track_namespace, "ns");
                 assert_eq!(target.track_name, "track");
                 assert_eq!(
-                    missing_range.start_location,
+                    target.start_location,
                     moqt::Location {
                         group_id: 0,
                         object_id: 0
                     }
                 );
                 assert_eq!(
-                    missing_range.end_location,
+                    target.end_location,
                     moqt::Location {
                         group_id: 1,
                         object_id: 2
@@ -919,7 +906,7 @@ mod tests {
         );
 
         // Act
-        let (_, source) = Fetch
+        let (target, source) = Fetch
             .resolve_target_and_source(
                 2,
                 FetchParams::AbsoluteJoining {
@@ -933,16 +920,16 @@ mod tests {
 
         // Assert: start = {joining_start, 0}, end = largest + 1 (Standalone encoding, §9.16.2.1)
         match source {
-            FetchSource::Upstream(missing_range) => {
+            FetchSource::Upstream => {
                 assert_eq!(
-                    missing_range.start_location,
+                    target.start_location,
                     moqt::Location {
                         group_id: 1,
                         object_id: 0
                     }
                 );
                 assert_eq!(
-                    missing_range.end_location,
+                    target.end_location,
                     moqt::Location {
                         group_id: 2,
                         object_id: 4
@@ -969,7 +956,7 @@ mod tests {
         );
 
         // Act
-        let (_, source) = Fetch
+        let (target, source) = Fetch
             .resolve_target_and_source(
                 2,
                 FetchParams::RelativeJoining {
@@ -983,16 +970,16 @@ mod tests {
 
         // Assert
         match source {
-            FetchSource::Upstream(missing_range) => {
+            FetchSource::Upstream => {
                 assert_eq!(
-                    missing_range.start_location,
+                    target.start_location,
                     moqt::Location {
                         group_id: 0,
                         object_id: 0
                     }
                 );
                 assert_eq!(
-                    missing_range.end_location,
+                    target.end_location,
                     moqt::Location {
                         group_id: 1,
                         object_id: 2

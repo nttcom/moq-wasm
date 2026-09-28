@@ -192,8 +192,8 @@ impl Publish {
         let track_key = TrackKey::new(&track_namespace, &track_name);
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: session_id,
-            track_namespace: track_namespace.clone(),
-            track_name: track_name.clone(),
+            track_namespace,
+            track_name,
         };
         let active_upstream = ActiveUpstreamSubscription {
             upstream_request_id: subscription.request_id(),
@@ -217,12 +217,6 @@ impl Publish {
             .await
             .is_err()
         {
-            tracing::error!(
-                session_id = %session_id,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "failed to send ingress start request for published track"
-            );
             anyhow::bail!("failed to send ingress start request");
         }
 
