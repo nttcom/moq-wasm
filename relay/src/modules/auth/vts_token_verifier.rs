@@ -5,7 +5,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use crate::modules::auth::{
-    token_claims::{ClaimPolicy, SignedToken, TokenClaims, build_verified_token},
+    token_claims::{ClaimPolicy, SignedToken, build_verified_token},
     token_verifier::{TokenVerifier, VerifyError},
     verified_token::VerifiedToken,
 };
@@ -23,27 +23,9 @@ struct VerifyRequest<'a> {
     token: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VerifyResponse {
-    app_id: String,
-    is_relay: bool,
-    claims: TokenClaims,
-}
-
 #[derive(Deserialize)]
 struct VerifyErrorResponse {
     error: String,
-}
-
-impl From<VerifyResponse> for SignedToken {
-    fn from(response: VerifyResponse) -> Self {
-        Self {
-            app_id: response.app_id,
-            is_relay: response.is_relay,
-            claims: response.claims,
-        }
-    }
 }
 
 impl VtsTokenVerifier {
@@ -69,11 +51,10 @@ impl TokenVerifier for VtsTokenVerifier {
             .map_err(|error| VerifyError::Unavailable(error.into()))?;
         match response.status() {
             StatusCode::OK => {
-                let signed: SignedToken = response
-                    .json::<VerifyResponse>()
+                let signed = response
+                    .json::<SignedToken>()
                     .await
-                    .map_err(|error| VerifyError::Unavailable(error.into()))?
-                    .into();
+                    .map_err(|error| VerifyError::Unavailable(error.into()))?;
                 build_verified_token(signed, self.claim_policy, SystemTime::now())
                     .map_err(|reason| VerifyError::Unauthorized(reason.to_string()))
             }
@@ -94,12 +75,12 @@ impl TokenVerifier for VtsTokenVerifier {
 
 #[cfg(test)]
 mod tests {
-    use super::VerifyResponse;
+    use crate::modules::auth::token_claims::SignedToken;
 
     #[test]
     fn response_carries_the_raw_claims_and_the_relay_flag() {
         // Act
-        let response: VerifyResponse = serde_json::from_str(
+        let response: SignedToken = serde_json::from_str(
             r#"{"appId":"APP","isRelay":true,"claims":{"appId":"APP","publish":"","iat":1,"exp":2,"custom":"ignored"}}"#,
         )
         .unwrap();

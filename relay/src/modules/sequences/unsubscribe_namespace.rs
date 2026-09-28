@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::unsubscribe_namespace::UnsubscribeNamespaceHandler,
     inter_relay::InterRelayConnectionManager,
     route_registry::{RelayInfo, RelayRouteRegistry},
     sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
@@ -27,7 +26,7 @@ impl UnsubscribeNamespace {
         table: &dyn LocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
-        handler: &dyn UnsubscribeNamespaceHandler,
+        handler: &moqt::UnsubscribeNamespaceHandler,
     ) {
         let track_namespace_prefix = handler.track_namespace_prefix();
         tracing::info!(

@@ -268,7 +268,7 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             cascading_relay_context(),
-                            handler.as_ref(),
+                            &handler,
                         )
                         .instrument(event_span)
                         .await;
@@ -294,7 +294,7 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             cascading_relay_context(),
-                            handler.as_ref(),
+                            &handler,
                         )
                         .instrument(event_span)
                         .await;
