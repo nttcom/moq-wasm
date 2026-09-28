@@ -34,13 +34,6 @@ impl UpstreamPublisherResolver {
         track_namespace: &str,
         track_name: &str,
     ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
-        // TODO(draft-14 8.4.2 Graceful Publisher Relay Switchover): min session_id
-        // implements first-writer-wins, which conflicts with GOAWAY migration —
-        // during the switchover overlap the NEWER session is the correct target
-        // for new subscriptions, while the old one keeps serving established
-        // ones. Introduce a per-session Active/Draining status and prefer Active
-        // publishers here, keeping min session_id only as the deterministic
-        // tie-break.
         if let Some(local_publisher) = table
             .find_upstream_publishers(track_namespace, track_name)
             .await
@@ -182,10 +175,6 @@ mod tests {
         )
     }
 
-    // Pins the current first-writer-wins policy (min session_id = oldest).
-    // Expected to change to "Active first, min session_id as tie-break" once
-    // GOAWAY migration adds per-session Active/Draining status (see the
-    // find_local_publisher TODO).
     #[tokio::test]
     async fn prefers_local_publisher_and_picks_min_session_id() {
         let table = InMemoryLocalPubSubDirectory::new();

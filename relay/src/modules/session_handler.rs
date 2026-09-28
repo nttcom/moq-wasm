@@ -142,7 +142,6 @@ impl SessionHandler {
                         }
                     };
 
-                    // Spawn per connection so a slow ClientSetup cannot block the accept loop.
                     let intake = intake.clone();
                     tokio::spawn(async move {
                         intake
