@@ -27,14 +27,6 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
-/// Where the subscribe-time Largest Object comes from: the local cache when
-/// joining an active upstream, or a value already determined while creating
-/// the upstream subscription.
-enum LargestObjectSource {
-    LocalCache,
-    Resolved(Option<moqt::Location>),
-}
-
 /// Return the location with the greater `(group_id, object_id)`, treating
 /// `None` as "no content" (i.e. smaller than any location).
 fn max_location(a: Option<moqt::Location>, b: Option<moqt::Location>) -> Option<moqt::Location> {
@@ -50,18 +42,10 @@ fn max_location(a: Option<moqt::Location>, b: Option<moqt::Location>) -> Option<
     }
 }
 
-async fn resolve_subscribe_largest(
-    largest_source: &LargestObjectSource,
-    track_key: &TrackKey,
-    cache_store: &TrackCacheStore,
-) -> Option<moqt::Location> {
-    match largest_source {
-        LargestObjectSource::LocalCache => match cache_store.get(track_key) {
-            Some(cache) => cache.largest_location(),
-            None => None,
-        },
-        LargestObjectSource::Resolved(largest) => *largest,
-    }
+fn cached_largest(cache_store: &TrackCacheStore, track_key: &TrackKey) -> Option<moqt::Location> {
+    cache_store
+        .get(track_key)
+        .and_then(|cache| cache.largest_location())
 }
 
 enum UpstreamSubscriptionError {
@@ -137,7 +121,7 @@ impl Subscribe {
             "SequenceHandler::subscribe"
         );
 
-        let (upstream_key, active_upstream, largest_source) = match self
+        let (upstream_key, active_upstream, largest_location) = match self
             .get_or_create_upstream_subscription(
                 session_id,
                 track_namespace,
@@ -180,7 +164,7 @@ impl Subscribe {
             session_id,
             upstream_key,
             active_upstream,
-            largest_source,
+            largest_location,
             table,
             egress_sender,
             cache_store,
@@ -215,7 +199,7 @@ impl Subscribe {
         (
             UpstreamSubscriptionKey,
             ActiveUpstreamSubscription,
-            LargestObjectSource,
+            Option<moqt::Location>,
         ),
         UpstreamSubscriptionError,
     > {
@@ -223,11 +207,8 @@ impl Subscribe {
         if let Some((upstream_key, active_upstream)) =
             table.find_active_upstream_subscription(track_namespace, track_name)
         {
-            return Ok((
-                upstream_key,
-                active_upstream,
-                LargestObjectSource::LocalCache,
-            ));
+            let largest_location = cached_largest(cache_store, &active_upstream.track_key);
+            return Ok((upstream_key, active_upstream, largest_location));
         }
 
         // Cache miss: acquire the per-track lock so that concurrent tasks for
@@ -245,35 +226,25 @@ impl Subscribe {
                 track_name = %track_name,
                 "upstream subscription found after serializer lock (joined existing)"
             );
-            return Ok((
-                upstream_key,
-                active_upstream,
-                LargestObjectSource::LocalCache,
-            ));
+            let largest_location = cached_largest(cache_store, &active_upstream.track_key);
+            return Ok((upstream_key, active_upstream, largest_location));
         }
 
         // Still a miss: we are the first task for this track. Create the
         // upstream subscription while holding the guard. The guard is dropped
         // at the end of this scope, after register_upstream_subscription
         // has been called inside create_upstream_subscription.
-        let (upstream_key, active_upstream, subscribe_time_largest) = self
-            .create_upstream_subscription(
-                session_id,
-                track_namespace,
-                track_name,
-                table,
-                forwarder,
-                ingress_sender,
-                upstream_publisher_resolver,
-                cache_store,
-            )
-            .await?;
-
-        Ok((
-            upstream_key,
-            active_upstream,
-            LargestObjectSource::Resolved(subscribe_time_largest),
-        ))
+        self.create_upstream_subscription(
+            session_id,
+            track_namespace,
+            track_name,
+            table,
+            forwarder,
+            ingress_sender,
+            upstream_publisher_resolver,
+            cache_store,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -320,10 +291,7 @@ impl Subscribe {
             .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
 
         let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
-        let cache_before_subscribe = match cache_store.get(&track_key) {
-            Some(cache) => cache.largest_location(),
-            None => None,
-        };
+        let cache_before_subscribe = cached_largest(cache_store, &track_key);
 
         let pub_session_id = upstream_key.publisher_session_id;
         let subscription = match forwarder
@@ -413,7 +381,7 @@ impl Subscribe {
         session_id: SessionId,
         upstream_key: UpstreamSubscriptionKey,
         active_upstream: ActiveUpstreamSubscription,
-        largest_source: LargestObjectSource,
+        largest_location: Option<moqt::Location>,
         table: &InMemoryLocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         cache_store: &Arc<TrackCacheStore>,
@@ -435,11 +403,6 @@ impl Subscribe {
 
         let subscriber_track_alias = handler.allocate_track_alias();
 
-        // Determined here so the Largest Location advertised in SUBSCRIBE_OK
-        // and the egress delivery start agree.
-        let largest_location =
-            resolve_subscribe_largest(&largest_source, &active_upstream.track_key, cache_store)
-                .await;
         let content_exists = match largest_location {
             Some(location) => ContentExists::True { location },
             None => active_upstream.content_exists,
@@ -775,7 +738,7 @@ mod tests {
         let serializer = UpstreamCreationSerializer::new();
         let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
 
-        let Ok((_, _, largest_source)) = Subscribe
+        let Ok((_, _, largest_location)) = Subscribe
             .get_or_create_upstream_subscription(
                 SUBSCRIBER_SESSION,
                 &track_key.track_namespace,
@@ -792,7 +755,7 @@ mod tests {
             panic!("upstream subscription should be created");
         };
 
-        resolve_subscribe_largest(&largest_source, &track_key, &cache_store).await
+        largest_location
     }
 
     #[tokio::test]
@@ -898,7 +861,7 @@ mod tests {
                 2,
                 upstream_key(),
                 active_upstream(),
-                LargestObjectSource::Resolved(None),
+                None,
                 table,
                 egress_sender,
                 &Arc::new(TrackCacheStore::new()),
