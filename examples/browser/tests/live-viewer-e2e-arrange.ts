@@ -1,12 +1,68 @@
-import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
+import { type Browser, type BrowserContext, type Locator, type Page, expect } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { LIVE_VIEWER_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? 'anon/live/e2e'
+const mp4Namespace = process.env.LIVE_VIEWER_MP4_E2E_NAMESPACE ?? `${namespace}-mp4`
 
 export const liveViewerE2EConfig = {
   moqtUrl,
-  namespace
+  namespace,
+  mp4Namespace
+}
+
+export type Mp4FixtureAudio = 'aac' | 'mp3'
+
+export const MP4_FIXTURE = { width: 320, height: 180, fps: 15, seconds: 6 }
+
+const FFMPEG_AUDIO_ENCODERS: Record<Mp4FixtureAudio, string> = { aac: 'aac', mp3: 'libmp3lame' }
+
+export function mp4FixtureFileName(audio: Mp4FixtureAudio): string {
+  return `moqt-live-viewer-mp4-e2e-${audio}.mp4`
+}
+
+export function ensureMp4Fixture(audio: Mp4FixtureAudio): string {
+  const filePath = join(tmpdir(), mp4FixtureFileName(audio))
+  if (existsSync(filePath)) {
+    return filePath
+  }
+  execFileSync('ffmpeg', [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    `testsrc=size=${MP4_FIXTURE.width}x${MP4_FIXTURE.height}:rate=${MP4_FIXTURE.fps}`,
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=1000:sample_rate=48000',
+    '-t',
+    String(MP4_FIXTURE.seconds),
+    '-c:v',
+    'libx264',
+    '-preset',
+    'veryfast',
+    '-profile:v',
+    'baseline',
+    '-pix_fmt',
+    'yuv420p',
+    '-g',
+    String(MP4_FIXTURE.fps),
+    '-c:a',
+    FFMPEG_AUDIO_ENCODERS[audio],
+    '-ac',
+    '1',
+    '-movflags',
+    '+faststart',
+    filePath
+  ])
+  return filePath
 }
 
 export interface LiveViewerPageModel {
@@ -41,6 +97,11 @@ export interface LiveViewerPageModel {
   reviewCanvas: Locator
   visibleVideo: Locator
   logPanel: Locator
+  mp4FileInput: Locator
+  mp4LoopInput: Locator
+  publishButton: Locator
+  stopPublishButton: Locator
+  publishStatus: Locator
 }
 
 export interface LiveViewerE2ESession {
@@ -48,8 +109,8 @@ export interface LiveViewerE2ESession {
   viewer: LiveViewerPageModel
 }
 
-function buildPagePath(path: string): string {
-  const params = new URLSearchParams({ moqtUrl, trackNamespace: namespace })
+function buildPagePath(path: string, trackNamespace: string): string {
+  const params = new URLSearchParams({ moqtUrl, trackNamespace })
   return `${path}?${params.toString()}`
 }
 
@@ -85,13 +146,43 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     video: page.getByTestId('live-viewer-video'),
     reviewCanvas: page.getByTestId('live-viewer-review-canvas'),
     visibleVideo: page.locator('.viewer-stage video:visible'),
-    logPanel: page.getByTestId('live-viewer-log-panel')
+    logPanel: page.getByTestId('live-viewer-log-panel'),
+    mp4FileInput: page.getByTestId('live-viewer-mp4-file-input'),
+    mp4LoopInput: page.getByTestId('live-viewer-mp4-loop-input'),
+    publishButton: page.getByTestId('live-viewer-publish-button'),
+    stopPublishButton: page.getByTestId('live-viewer-stop-publish-button'),
+    publishStatus: page.getByTestId('live-viewer-publish-status')
   }
 }
 
-export async function arrangeLiveViewerE2ESession(browser: Browser): Promise<LiveViewerE2ESession> {
+export async function arrangeLiveViewerE2ESession(
+  browser: Browser,
+  trackNamespace = namespace
+): Promise<LiveViewerE2ESession> {
   const context = await browser.newContext({ ignoreHTTPSErrors: true })
   const page = await context.newPage()
-  await page.goto(buildPagePath(LIVE_VIEWER_PATH), { waitUntil: 'domcontentloaded' })
+  await page.goto(buildPagePath(LIVE_VIEWER_PATH, trackNamespace), { waitUntil: 'domcontentloaded' })
   return { context, viewer: createLiveViewerPageModel(page) }
+}
+
+export async function expectVideoDecoded(video: Locator): Promise<void> {
+  await expect
+    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).readyState), {
+      timeout: 30_000
+    })
+    .toBeGreaterThanOrEqual(2)
+  await expect
+    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
+    .toBeGreaterThan(0)
+}
+
+/// The stats line reads `A/V +12 ms` once both media have been presented and
+/// `A/V --` until then.
+export async function syncOffsetMs(viewer: LiveViewerPageModel): Promise<number> {
+  const match = (await viewer.videoStats.innerText()).match(/A\/V ([+-]\d+) ms/)
+  return match ? Math.abs(Number(match[1])) : Number.POSITIVE_INFINITY
+}
+
+export async function parseSeconds(locator: Locator): Promise<number> {
+  return Number.parseFloat((await locator.innerText()).replace('s', ''))
 }
