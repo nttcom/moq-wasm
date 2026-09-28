@@ -6,5 +6,3 @@ pub(crate) enum DataReceiver {
     Datagram(Box<dyn DatagramReceiver>),
     Stream(Box<dyn StreamReceiverFactory>),
 }
-
-impl DataReceiver {}

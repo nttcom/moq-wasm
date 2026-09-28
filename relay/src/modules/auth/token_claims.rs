@@ -27,6 +27,8 @@ impl Default for ClaimPolicy {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SignedToken {
     pub(crate) app_id: String,
     pub(crate) is_relay: bool,

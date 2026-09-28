@@ -119,7 +119,6 @@ fn write_self_signed_cert(dir: &Path) -> (String, String) {
     )
 }
 
-/// Starts a relay whose client endpoint verifies every token as `token`.
 pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
     let _bind_guard = PORT_BIND_LOCK.lock().unwrap();
     let port = free_udp_port();
