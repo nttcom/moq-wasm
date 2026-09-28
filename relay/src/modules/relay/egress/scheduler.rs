@@ -44,8 +44,6 @@ fn resolve_start_location(
     }
 }
 
-/// Instruction for `GroupSender` to transmit one subgroup (or datagram group)
-/// from `object_id` on.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct GroupSendTask {
     pub(crate) key: SubgroupKey,
@@ -70,7 +68,6 @@ impl StartLocationProgress {
     }
 }
 
-/// Watches track events and decides which egress units to schedule and when.
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
     filter_type: FilterType,
@@ -179,8 +176,6 @@ impl EgressScheduler {
         }
     }
 
-    /// Schedules delivery of one subgroup starting at `object_id`.
-    /// Returns `None` when the task channel is closed.
     async fn schedule(
         &self,
         key: SubgroupKey,

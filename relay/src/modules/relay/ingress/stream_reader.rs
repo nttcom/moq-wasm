@@ -177,8 +177,6 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 return;
             }
             Ok(None) => {
-                // FIN: the routine end of a subgroup stream that carries
-                // no explicit end-of-group status object.
                 span.record("end_reason", "fin");
                 if let (Some(header), Some(ingest)) = (&header, &ingest)
                     && header.ends_group_on_fin
@@ -205,15 +203,11 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 return;
             }
             Err(moqt::StreamReceiveError::Closed(error)) => {
-                // Transport-level interruption: RESET_STREAM or the
-                // publisher connection was lost mid-subgroup.
                 span.record("end_reason", "transport_closed");
                 tracing::info!(%track_key, %error, "stream transport closed");
                 return;
             }
             Err(moqt::StreamReceiveError::Decode(error)) => {
-                // Malformed data on the wire: a peer bug or protocol
-                // violation, unlike the two endings above.
                 span.record("end_reason", "decode_error");
                 tracing::error!(%track_key, %error, "failed to decode stream data");
                 return;

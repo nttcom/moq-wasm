@@ -12,7 +12,6 @@ use crate::modules::core::{
     subscription::DownstreamSubscription,
 };
 
-/// What the downstream side observed on its data streams.
 #[derive(Debug)]
 pub(crate) enum Sent {
     Object(DataObject),
@@ -161,7 +160,6 @@ impl Publisher for MockPublisher {
     }
 }
 
-/// What the downstream side observed on a fetch stream.
 #[derive(Debug)]
 pub(crate) enum FetchSent {
     Object(moqt::FetchObjectField),

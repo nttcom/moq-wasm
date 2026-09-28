@@ -30,7 +30,6 @@ type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
 /// draft-14 §10.4.3 RESET_STREAM error code INTERNAL_ERROR.
 const DATA_STREAM_INTERNAL_ERROR: u64 = 0x0;
 
-/// Receives `GroupSendTask` entries and spawns per-subgroup send tasks.
 pub(crate) struct GroupSender {
     track_key: TrackKey,
     cache: Arc<TrackCache>,

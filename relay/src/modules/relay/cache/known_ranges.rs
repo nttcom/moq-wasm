@@ -80,7 +80,6 @@ impl KnownRanges {
             .any(|range| range.start <= start && end <= range.end)
     }
 
-    /// Returns the exclusive end of the range containing `location`, if any.
     /// Positions below that end are fully decided: an absent object there is
     /// known-nonexistent, so readers never need to wait on them.
     pub(crate) fn end_of_range_containing(

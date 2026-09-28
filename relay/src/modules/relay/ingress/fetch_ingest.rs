@@ -24,14 +24,9 @@ pub(crate) struct FetchIngestStart {
     pub(crate) egress_start: EgressFetchRequest,
 }
 
-/// Ingests one upstream FETCH response into the track cache, then hands
-/// delivery to egress.
-///
-/// v1 limitation: strict store-and-forward. Delivery starts only after the
-/// whole response reached `Fetch::End`, so first-byte latency equals the
-/// upstream transfer time and fills longer than MOQT_FETCH_FILL_TIMEOUT_SECS
-/// fail. Streaming delivery (serving while filling, bounded by the knowledge
-/// frontier) is planned as a follow-up.
+/// Strict store-and-forward: delivery starts only after the whole response
+/// reached `Fetch::End`, so first-byte latency equals the upstream transfer
+/// time and fills longer than MOQT_FETCH_FILL_TIMEOUT_SECS fail.
 pub(crate) struct FetchIngest {
     _join_handle: JoinHandle<()>,
 }

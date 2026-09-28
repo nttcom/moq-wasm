@@ -3,7 +3,6 @@ struct NewestGroup {
     sequence: u64,
 }
 
-/// Counts the groups a subscription has opened so far, in group id order.
 pub(super) struct GroupSequence {
     newest: Option<NewestGroup>,
 }

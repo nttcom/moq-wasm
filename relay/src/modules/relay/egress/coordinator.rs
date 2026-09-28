@@ -97,12 +97,11 @@ impl EgressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         request: EgressFetchRequest,
     ) {
-        // publisher = relay's outbound handle to the session that issued FETCH
-        let publisher = session_repo
+        let fetching_session_publisher = session_repo
             .lock()
             .await
             .publisher(request.subscriber_session_id);
-        let Some(publisher) = publisher else {
+        let Some(publisher) = fetching_session_publisher else {
             tracing::error!("session not found for fetch");
             return;
         };

@@ -101,8 +101,6 @@ impl TrackCache {
         self.insert_with_knowledge(object, false)
     }
 
-    /// Live ingest: a subgroup stream delivers ids in order, so the object
-    /// also proves every lower position of its group known.
     fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
         let registers_knowledge =
             matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
