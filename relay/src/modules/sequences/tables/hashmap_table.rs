@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dashmap::{DashMap, DashSet};
+use dashmap::{DashMap, DashSet, Entry};
 use tokio::sync::{RwLock, oneshot};
 
 use crate::modules::{
@@ -139,16 +139,19 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             }
         }
 
-        let upstream_subscriptions: Vec<_> = self
+        let upstream_keys: Vec<_> = self
             .active_upstream_subscriptions
             .iter()
             .filter_map(|entry| {
-                (entry.key().publisher_session_id == session_id)
-                    .then_some((entry.key().clone(), entry.value().clone()))
+                (entry.key().publisher_session_id == session_id).then_some(entry.key().clone())
             })
             .collect();
-        for (upstream_key, active_subscription) in upstream_subscriptions {
-            self.active_upstream_subscriptions.remove(&upstream_key);
+        for upstream_key in upstream_keys {
+            let Some((_, active_subscription)) =
+                self.active_upstream_subscriptions.remove(&upstream_key)
+            else {
+                continue;
+            };
             removed
                 .upstream_track_keys
                 .push(active_subscription.track_key.clone());
@@ -588,22 +591,27 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .downstream_subscriptions
             .remove(&(downstream_session_id, downstream_subscribe_id))?;
         let upstream_key = row.subscription.upstream_key;
-        let mut entry = self.active_upstream_subscriptions.get_mut(&upstream_key)?;
-        if entry.downstream_subscriber_count > 0 {
-            entry.downstream_subscriber_count -= 1;
+        let Entry::Occupied(mut entry) = self
+            .active_upstream_subscriptions
+            .entry(upstream_key.clone())
+        else {
+            return None;
+        };
+        let upstream = entry.get_mut();
+        if upstream.downstream_subscriber_count > 0 {
+            upstream.downstream_subscriber_count -= 1;
         }
         let removed = RemovedDownstreamSubscription {
-            upstream_key: upstream_key.clone(),
-            upstream_request_id: entry.upstream_request_id,
-            track_key: entry.track_key.clone(),
-            remaining_downstream_subscriber_count: entry.downstream_subscriber_count,
-            upstream_origin: entry.origin,
+            upstream_key,
+            upstream_request_id: upstream.upstream_request_id,
+            track_key: upstream.track_key.clone(),
+            remaining_downstream_subscriber_count: upstream.downstream_subscriber_count,
+            upstream_origin: upstream.origin,
         };
-        let should_remove = entry.downstream_subscriber_count == 0
-            && entry.origin == UpstreamSubscriptionOrigin::Subscribe;
-        drop(entry);
-        if should_remove {
-            self.active_upstream_subscriptions.remove(&upstream_key);
+        if upstream.downstream_subscriber_count == 0
+            && upstream.origin == UpstreamSubscriptionOrigin::Subscribe
+        {
+            entry.remove();
         }
         Some(removed)
     }
@@ -1130,6 +1138,55 @@ mod tests {
             let reported = !removed.downstream_subscriptions.is_empty();
             assert_eq!(registered, reported);
             assert!(table.downstream_subscriptions.is_empty());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn downstream_registration_racing_last_subscriber_removal_never_leaves_an_orphan_row() {
+        for _ in 0..20000 {
+            // Arrange
+            let (table, upstream_key) = subscribed_track_table();
+            table
+                .register_downstream_subscription(2, 100, upstream_key.clone(), None)
+                .unwrap();
+            let table = Arc::new(table);
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+
+            // Act
+            let register = tokio::spawn({
+                let table = table.clone();
+                let barrier = barrier.clone();
+                let upstream_key = upstream_key.clone();
+                async move {
+                    barrier.wait().await;
+                    table
+                        .register_downstream_subscription(3, 200, upstream_key, None)
+                        .is_some()
+                }
+            });
+            let remove = tokio::spawn({
+                let table = table.clone();
+                async move {
+                    barrier.wait().await;
+                    table.remove_downstream_subscription(2, 100)
+                }
+            });
+            let registered = register.await.unwrap();
+            let removed = remove.await.unwrap().unwrap();
+
+            // Assert
+            let upstream_exists = table
+                .active_upstream_subscriptions
+                .contains_key(&upstream_key);
+            assert_eq!(registered, upstream_exists);
+            assert_eq!(
+                removed.remaining_downstream_subscriber_count,
+                usize::from(registered)
+            );
+            assert_eq!(
+                table.downstream_subscriptions.len(),
+                usize::from(registered)
+            );
         }
     }
 
