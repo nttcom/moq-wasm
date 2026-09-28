@@ -23,8 +23,6 @@ pub(crate) struct CascadingRelayContext<'a> {
     pub(crate) inter_relay_connection_manager: &'a InterRelayConnectionManager,
 }
 
-/// True when the message originated from a directly connected client
-/// (as opposed to being forwarded by another relay).
 pub(crate) async fn is_origin_client(
     session_id: SessionId,
     forwarder: &ControlMessageForwarder,

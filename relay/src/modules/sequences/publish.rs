@@ -24,25 +24,6 @@ use tracing::Span;
 
 pub(crate) struct Publish;
 
-#[derive(Debug)]
-enum RegisterUpstreamSubscriptionError {
-    IngressStartFailed,
-}
-
-impl RegisterUpstreamSubscriptionError {
-    fn code(&self) -> u64 {
-        match self {
-            Self::IngressStartFailed => PublishErrorCode::InternalError as u64,
-        }
-    }
-
-    fn reason_phrase(&self) -> String {
-        match self {
-            Self::IngressStartFailed => "Failed to start ingress for published track".to_string(),
-        }
-    }
-}
-
 impl Publish {
     #[tracing::instrument(
         level = "info",
@@ -91,7 +72,10 @@ impl Publish {
                 "failed to register upstream subscription"
             );
             if handler
-                .error(error.code(), error.reason_phrase())
+                .error(
+                    PublishErrorCode::InternalError as u64,
+                    "Failed to start ingress for published track".to_string(),
+                )
                 .await
                 .is_err()
             {
@@ -209,7 +193,7 @@ impl Publish {
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
-    ) -> Result<(), RegisterUpstreamSubscriptionError> {
+    ) -> anyhow::Result<()> {
         let track_namespace = subscription.track_namespace().to_string();
         let track_name = subscription.track_name().to_string();
         let track_key = TrackKey::new(&track_namespace, &track_name);
@@ -246,11 +230,11 @@ impl Publish {
                 track_name = %track_name,
                 "failed to send ingress start request for published track"
             );
-            return Err(RegisterUpstreamSubscriptionError::IngressStartFailed);
+            anyhow::bail!("failed to send ingress start request");
         }
 
         table.register_upstream_subscription(upstream_key, active_upstream);
-        table.register_publish(session_id, handler).await;
+        table.register_publish(session_id, handler);
         Ok(())
     }
 

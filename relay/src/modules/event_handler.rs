@@ -618,7 +618,7 @@ impl EventHandler {
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
-        let removed = local_pub_sub_directory.remove_session(session_id).await;
+        let removed = local_pub_sub_directory.remove_session(session_id);
         Self::cleanup_removed_session(
             session_id,
             removed,
@@ -816,7 +816,7 @@ mod tests {
                     inter_relay_connection_manager,
                     upstream_publisher_resolver,
                     cache_store: cache_store.clone(),
-                    upstream_serializer: UpstreamCreationSerializer::new(),
+                    upstream_serializer: UpstreamCreationSerializer::default(),
                     token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
                 },
             );

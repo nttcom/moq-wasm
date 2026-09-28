@@ -28,12 +28,6 @@ impl Drop for UpstreamCreationGuard {
 }
 
 impl UpstreamCreationSerializer {
-    pub(crate) fn new() -> Self {
-        Self {
-            locks: Arc::new(DashMap::new()),
-        }
-    }
-
     pub(crate) async fn lock(
         &self,
         track_namespace: &str,
@@ -70,7 +64,7 @@ mod tests {
     /// the counter already incremented by the first.
     #[tokio::test]
     async fn same_key_tasks_serialize() {
-        let serializer = UpstreamCreationSerializer::new();
+        let serializer = UpstreamCreationSerializer::default();
         let counter = Arc::new(AtomicUsize::new(0));
 
         let s1 = serializer.clone();
@@ -108,24 +102,22 @@ mod tests {
     /// Tasks on different keys must NOT block each other.
     #[tokio::test]
     async fn different_keys_run_concurrently() {
-        let serializer = UpstreamCreationSerializer::new();
+        let serializer = UpstreamCreationSerializer::default();
 
         let s1 = serializer.clone();
         let t1 = tokio::spawn(async move {
             let _guard = s1.lock("ns", "track-a").await;
             tokio::time::sleep(tokio::time::Duration::from_millis(40)).await;
-            Instant::now()
         });
 
         let s2 = serializer.clone();
         let t2 = tokio::spawn(async move {
             let _guard = s2.lock("ns", "track-b").await;
             tokio::time::sleep(tokio::time::Duration::from_millis(40)).await;
-            Instant::now()
         });
 
         let start = Instant::now();
-        let (end1, end2) = tokio::join!(t1, t2);
+        let _ = tokio::join!(t1, t2);
         let elapsed = start.elapsed();
 
         // Both tasks hold their locks simultaneously for ~40 ms each;
@@ -134,13 +126,12 @@ mod tests {
             elapsed.as_millis() < 70,
             "different keys should not block each other, elapsed={elapsed:?}"
         );
-        let _ = (end1, end2);
     }
 
     #[tokio::test]
     async fn released_lock_removes_its_entry() {
         // Arrange
-        let serializer = UpstreamCreationSerializer::new();
+        let serializer = UpstreamCreationSerializer::default();
         let guard = serializer.lock("ns", "track").await;
 
         // Act
@@ -153,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn released_lock_keeps_its_entry_for_a_waiter() {
         // Arrange
-        let serializer = UpstreamCreationSerializer::new();
+        let serializer = UpstreamCreationSerializer::default();
         let guard = serializer.lock("ns", "track").await;
         let waiter = tokio::spawn({
             let serializer = serializer.clone();

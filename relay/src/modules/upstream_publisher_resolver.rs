@@ -38,7 +38,6 @@ impl UpstreamPublisherResolver {
     ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
         if let Some(local_publisher) = table
             .find_upstream_publishers(track_namespace, track_name)
-            .await
             .into_iter()
             .min_by_key(|publisher| publisher.publisher_session_id)
         {

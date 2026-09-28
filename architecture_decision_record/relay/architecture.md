@@ -200,9 +200,10 @@ Each sequence owns the relay-side protocol logic for one message
    publisher switchover, where the newer session should take new
    subscriptions during the overlap, is not implemented.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
-   and the local cache's largest location (`resolve_subscribe_largest`). The
-   cache is consulted even for a fresh upstream: a publisher that rejoined
-   under the same track must not make the relay advertise
+   and the local cache's largest location, resolved together with the upstream
+   subscription (`get_or_create_upstream_subscription`). The cache is
+   consulted even for a fresh upstream: a publisher that rejoined under the
+   same track must not make the relay advertise
    `contentExists=false` and replay stale cache from {0,0}.
 4. **Downstream registration + egress start**: register the downstream
    subscription — atomically with the upstream subscription's existence, so a
