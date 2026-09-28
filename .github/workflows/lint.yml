@@ -24,6 +24,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Install Clippy and Rustfmt
         run: |
           rustup component add clippy
@@ -85,6 +87,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Install FFmpeg build dependencies
         uses: ./.github/actions/install-ffmpeg-deps
       - name: Generate code coverage
