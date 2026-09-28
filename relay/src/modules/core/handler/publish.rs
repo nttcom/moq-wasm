@@ -1,11 +1,9 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
+use moqt::{ContentExists, FilterType, GroupOrder};
 
-use crate::modules::{
-    core::subscription::UpstreamSubscription,
-    enums::{ContentExists, FilterType, GroupOrder},
-};
+use crate::modules::core::subscription::UpstreamSubscription;
 
 pub(crate) struct SubscribeOption {
     pub(crate) subscriber_priority: u8,
@@ -52,10 +50,10 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
         self.track_alias
     }
     fn _group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.group_order)
+        self.group_order
     }
     fn _content_exists(&self) -> ContentExists {
-        ContentExists::from(self.content_exists)
+        self.content_exists
     }
     fn _forward(&self) -> bool {
         self.forward
@@ -81,7 +79,7 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
             content_exists: self.content_exists,
             subscriber_priority,
             forward: self.forward,
-            filter_type: filter_type.as_moqt(),
+            filter_type,
             delivery_timeout: self.delivery_timeout,
         })
     }
@@ -94,7 +92,7 @@ impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
             tracing::error!("PUBLISH_OK requires publisher-initiated upstream subscription");
             return Ok(());
         };
-        self.ok(subscriber_priority, filter_type.as_moqt(), 0)
+        self.ok(subscriber_priority, filter_type, 0)
             .await
             .map(|_| ())
     }

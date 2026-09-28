@@ -1,4 +1,4 @@
-use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
+use moqt::{ContentExists, FilterType, GroupOrder};
 
 #[derive(Clone)]
 pub(crate) struct UpstreamSubscription {
@@ -36,15 +36,14 @@ impl UpstreamSubscription {
     }
 
     pub(crate) fn content_exists(&self) -> ContentExists {
-        ContentExists::from(self.inner.content_exists())
+        self.inner.content_exists()
     }
 
     pub(crate) fn publish_accept_options(&self) -> Option<(u8, FilterType)> {
         match &self.inner {
-            moqt::Subscription::PublisherInitiated(subscription) => Some((
-                subscription.subscriber_priority,
-                FilterType::from(subscription.filter_type),
-            )),
+            moqt::Subscription::PublisherInitiated(subscription) => {
+                Some((subscription.subscriber_priority, subscription.filter_type))
+            }
             moqt::Subscription::SubscriberInitiated(_) => None,
         }
     }
@@ -78,11 +77,11 @@ impl DownstreamSubscription {
     }
 
     pub(crate) fn filter_type(&self) -> FilterType {
-        FilterType::from(self.inner.filter_type())
+        self.inner.filter_type()
     }
 
     pub(crate) fn group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.inner.group_order())
+        self.inner.group_order()
     }
 
     pub(crate) fn subscriber_priority(&self) -> u8 {

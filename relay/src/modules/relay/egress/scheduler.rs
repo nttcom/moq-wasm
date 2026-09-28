@@ -1,11 +1,9 @@
 use std::{collections::HashSet, sync::Arc};
 
+use moqt::{FilterType, GroupOrder};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::modules::{
-    enums::{FilterType, GroupOrder},
-    relay::{cache::track_cache::TrackCache, types::SubgroupKey},
-};
+use crate::modules::relay::{cache::track_cache::TrackCache, types::SubgroupKey};
 
 fn after(largest: &moqt::Location) -> moqt::Location {
     moqt::Location {
@@ -23,7 +21,7 @@ fn resolve_start_location(
             FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. },
             largest,
         ) => {
-            let requested = location.as_moqt();
+            let requested = *location;
             match largest {
                 Some(largest) if requested <= *largest => after(largest),
                 _ => requested,
@@ -277,7 +275,7 @@ mod tests {
         let mut scheduler = start_scheduler(
             cache,
             FilterType::AbsoluteStart {
-                location: crate::modules::enums::Location {
+                location: moqt::Location {
                     group_id: 0,
                     object_id: 0,
                 },

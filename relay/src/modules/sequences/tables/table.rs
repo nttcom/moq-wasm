@@ -1,7 +1,6 @@
-use crate::modules::{
-    enums::ContentExists,
-    types::{SessionId, TrackKey},
-};
+use moqt::ContentExists;
+
+use crate::modules::types::{SessionId, TrackKey};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct UpstreamSubscriptionKey {

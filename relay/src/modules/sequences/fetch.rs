@@ -571,7 +571,6 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::modules::{
-        enums::ContentExists,
         relay::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
@@ -580,6 +579,7 @@ mod tests {
             },
         },
     };
+    use moqt::ContentExists;
 
     fn setup_upstream(
         table: &InMemoryLocalPubSubDirectory,

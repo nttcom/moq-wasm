@@ -73,12 +73,12 @@ mod tests {
     use super::*;
     use crate::modules::{
         core::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
-        enums::ContentExists,
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
         },
     };
+    use moqt::ContentExists;
 
     const PUBLISHER_SESSION: SessionId = 1;
     const UPSTREAM_REQUEST_ID: u64 = 42;

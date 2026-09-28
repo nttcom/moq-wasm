@@ -1,9 +1,7 @@
 use async_trait::async_trait;
+use moqt::{ContentExists, FilterType, GroupOrder};
 
-use crate::modules::{
-    core::subscription::DownstreamSubscription,
-    enums::{ContentExists, FilterType, GroupOrder},
-};
+use crate::modules::core::subscription::DownstreamSubscription;
 
 #[async_trait]
 pub(crate) trait SubscribeHandler: 'static + Send + Sync {
@@ -47,13 +45,13 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         self.subscriber_priority
     }
     fn _group_order(&self) -> GroupOrder {
-        GroupOrder::from(self.group_order)
+        self.group_order
     }
     fn _forward(&self) -> bool {
         self.forward
     }
     fn _filter_type(&self) -> FilterType {
-        FilterType::from(self.filter_type)
+        self.filter_type
     }
     fn _max_cache_duration(&self) -> Option<u64> {
         self.max_cache_duration
@@ -71,13 +69,8 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), moqt::TransportSendError> {
-        moqt::SubscribeHandler::ok_with_track_alias(
-            self,
-            track_alias,
-            expires,
-            content_exists.as_moqt(),
-        )
-        .await
+        moqt::SubscribeHandler::ok_with_track_alias(self, track_alias, expires, content_exists)
+            .await
     }
 
     async fn error(
