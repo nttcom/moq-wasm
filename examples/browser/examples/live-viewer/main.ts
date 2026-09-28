@@ -118,6 +118,8 @@ showPicture(livePictureSink.element)
 let cmafAwaitingKeyframe = true
 const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
+const decoderTracks = new Map<MediaKind, MediaCatalogTrack>()
+let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
@@ -267,6 +269,8 @@ async function stopStream(): Promise<void> {
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
+  decoderTracks.clear()
+  catalogGroupId = undefined
   videoTracks = []
   audioTracks = []
   cmafTracks = []
@@ -280,27 +284,32 @@ async function stopStream(): Promise<void> {
   setStatusText('playback-status', 'Playback idle')
 }
 
-/// A SUBSCRIBE delivers objects published after the largest one and the bridge
-/// publishes the catalog once per upstream subscription, so a viewer joining a
-/// subscription the relay already holds would never see it. The current
-/// catalog is fetched instead: the group SUBSCRIBE_OK names when the relay
-/// still knows it, otherwise the whole track, which the relay completes from
-/// the bridge.
+/// The FETCH and the SUBSCRIBE race, and the relay keeps the catalog of a
+/// publisher that has since been replaced, so the catalog of the newest group
+/// wins whatever order they arrive in.
 async function subscribeCatalog(): Promise<void> {
-  const onText = (text: string) => void applyCatalog(text)
+  const onText = (text: string, groupId: bigint) => {
+    if (catalogGroupId !== undefined && groupId < catalogGroupId) {
+      return
+    }
+    catalogGroupId = groupId
+    void applyCatalog(text)
+  }
   const subscribeOk = await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, onText)
   await fetchLatestText(MEDIA_CATALOG_TRACK_NAME, subscribeOk, onText)
 }
 
-async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<SubscribeOk> {
+type TextTrackHandler = (text: string, groupId: bigint) => void
+
+async function subscribeTextTrack(name: string, onText: TextTrackHandler): Promise<SubscribeOk> {
   const namespace = trackNamespace()
   const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
   moqtClient.setOnSubgroupObjectHandler(
     subscribeOk.trackAlias,
-    monitored(subscribeOk.trackAlias, name, (_groupId, object) => {
+    monitored(subscribeOk.trackAlias, name, (groupId, object) => {
       const payload = new Uint8Array(object.objectPayload)
       if (payload.byteLength > 0) {
-        onText(new TextDecoder().decode(payload))
+        onText(new TextDecoder().decode(payload), groupId)
       }
     })
   )
@@ -308,7 +317,7 @@ async function subscribeTextTrack(name: string, onText: (text: string) => void):
   return subscribeOk
 }
 
-async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (text: string) => void): Promise<void> {
+async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: TextTrackHandler): Promise<void> {
   const largestGroup = subscribeOk.largestGroupId
   const startGroup = largestGroup ?? 0n
   const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
@@ -325,7 +334,7 @@ async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (
         )
         const payload = new Uint8Array(message.objectPayload)
         if (payload.byteLength > 0) {
-          onText(new TextDecoder().decode(payload))
+          onText(new TextDecoder().decode(payload), message.groupId)
         }
       }
     })
@@ -350,6 +359,8 @@ async function applyCatalog(payload: string): Promise<void> {
       await resubscribe('video')
       await resubscribe('audio')
       await openLiveMse()
+    } else {
+      reconfigureDecoders()
     }
   } catch (error) {
     setStatusText('catalog-status', `Catalog error: ${getErrorMessage(error)}`)
@@ -600,6 +611,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   if (packaging === 'loc') {
     postCatalogToDecoder(kind, track)
   }
+  decoderTracks.set(kind, track)
   const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), wire.name, AUTH_INFO, {
     forward: true
   })
@@ -646,6 +658,24 @@ async function unsubscribeTrack(kind: MediaKind): Promise<void> {
     await moqtClient.unsubscribe(subscription.requestId)
   }
   appendLog('info', `unsubscribed ${subscription.name}`)
+}
+
+/// A catalog update may redefine a track under the same name, as when the
+/// publisher is replaced by one with another audio codec, so the decoders
+/// take the new definition of the tracks they are already subscribed to.
+function reconfigureDecoders(): void {
+  if (packaging !== 'loc') {
+    return
+  }
+  for (const [kind, previous] of decoderTracks) {
+    const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === previous.name)
+    if (!track || JSON.stringify(track) === JSON.stringify(previous)) {
+      continue
+    }
+    postCatalogToDecoder(kind, track)
+    decoderTracks.set(kind, track)
+    appendLog('info', `${kind} track ${track.name} redefined by the catalog`)
+  }
 }
 
 function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
