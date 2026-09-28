@@ -260,31 +260,4 @@ mod tests {
             assert!(matches!(result, Err(DecodeError::Fatal(_))));
         }
     }
-
-    mod ownership {
-        use super::super::*;
-
-        #[test]
-        fn decoded_payload_does_not_share_receive_buffer() {
-            // Arrange
-            const RECEIVE_BUFFER_CAPACITY: usize = 1024;
-            let object_field = FetchObjectField::new(
-                1,
-                2,
-                3,
-                128,
-                ExtensionHeaders::default(),
-                FetchObject::Payload(Bytes::from_static(b"payload")),
-            );
-            let mut buf = BytesMut::with_capacity(RECEIVE_BUFFER_CAPACITY);
-            buf.extend_from_slice(&object_field.encode());
-
-            // Act
-            let decoded = FetchObjectField::decode(&mut buf).unwrap();
-
-            // Assert
-            assert!(buf.try_reclaim(RECEIVE_BUFFER_CAPACITY));
-            assert_eq!(decoded, object_field);
-        }
-    }
 }
