@@ -37,32 +37,14 @@ impl MalformedTrackCleanup {
             return;
         };
 
-        if let Err(err) = forwarder
-            .unsubscribe(publisher_session_id, removed.upstream_request_id)
-            .await
-        {
-            tracing::warn!(
-                ?err,
-                request_id = %removed.upstream_request_id,
-                "failed to send upstream unsubscribe for malformed track"
-            );
-        } else {
-            tracing::info!(
-                request_id = %removed.upstream_request_id,
-                "sent upstream unsubscribe for malformed track"
-            );
-        }
-
-        if ingress_sender
-            .send(IngressCommand::StopTrack {
-                track_key: track_key.clone(),
-                publisher_session_id,
-            })
-            .await
-            .is_err()
-        {
-            tracing::error!("failed to send ingress stop request");
-        }
+        super::release_upstream(
+            forwarder,
+            ingress_sender,
+            publisher_session_id,
+            removed.upstream_request_id,
+            track_key,
+        )
+        .await;
     }
 }
 
@@ -149,11 +131,7 @@ mod tests {
         run_cleanup(&ctx).await;
 
         // Assert
-        assert!(
-            ctx.table
-                .get_active_upstream_subscription(PUBLISHER_SESSION, "ns", "track")
-                .is_none()
-        );
+        assert!(ctx.table.active_upstream_subscriptions.is_empty());
         assert_eq!(
             *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]

@@ -251,17 +251,10 @@ impl PublishNamespace {
                 continue;
             }
 
-            let session_id = match inter_relay_connection_manager.get_or_connect(&relay).await {
-                Ok(session_id) => session_id,
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        relay_id = %relay.relay_id,
-                        track_namespace = %track_namespace,
-                        "failed to connect remote namespace subscriber"
-                    );
-                    continue;
-                }
+            let Some(session_id) =
+                super::connect_relay(inter_relay_connection_manager, &relay).await
+            else {
+                continue;
             };
 
             if forwarder

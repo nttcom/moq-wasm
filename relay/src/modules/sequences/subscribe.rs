@@ -221,7 +221,7 @@ impl Subscribe {
     > {
         // Fast path: cache hit without acquiring the per-track lock.
         if let Some((upstream_key, active_upstream)) =
-            self.find_active_upstream_subscription(table, track_namespace, track_name)
+            table.find_active_upstream_subscription(track_namespace, track_name)
         {
             return Ok((
                 upstream_key,
@@ -238,7 +238,7 @@ impl Subscribe {
         // Re-check after acquiring the lock: a sibling task may have created
         // and registered the upstream subscription while we were waiting.
         if let Some((upstream_key, active_upstream)) =
-            self.find_active_upstream_subscription(table, track_namespace, track_name)
+            table.find_active_upstream_subscription(track_namespace, track_name)
         {
             tracing::debug!(
                 track_namespace = %track_namespace,
@@ -274,35 +274,6 @@ impl Subscribe {
             active_upstream,
             LargestObjectSource::Resolved(subscribe_time_largest),
         ))
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe.find_active_upstream_subscription",
-        skip_all,
-        fields(
-            track_namespace = %track_namespace,
-            track_name = %track_name
-        )
-    )]
-    fn find_active_upstream_subscription(
-        &self,
-        table: &InMemoryLocalPubSubDirectory,
-        track_namespace: &str,
-        track_name: &str,
-    ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
-        table
-            .find_active_upstream_subscriptions(track_namespace, track_name)
-            .into_iter()
-            .min_by_key(|publisher| publisher.publisher_session_id)
-            .and_then(|upstream_key| {
-                let active_upstream = table.get_active_upstream_subscription(
-                    upstream_key.publisher_session_id,
-                    upstream_key.track_namespace.as_str(),
-                    upstream_key.track_name.as_str(),
-                )?;
-                Some((upstream_key, active_upstream))
-            })
     }
 
     #[allow(clippy::too_many_arguments)]
