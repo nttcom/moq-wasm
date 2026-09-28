@@ -16,13 +16,35 @@ export type PlayoutTime = {
 /// due more than `maxEarlyMs` past the budget re-anchors so the extra latency
 /// it reveals is shed. Samples that are not the master are placed on the
 /// clock as it stands.
+export type PlayoutOrigin = { captureMicros: number; atMs: number }
+
 export class PlayoutClock {
   private origin: { captureMicros: number; atMs: number; budgetMs: number } | undefined
+  private originListener: ((origin: PlayoutOrigin | undefined) => void) | undefined
+
+  /// Called whenever the mapping from capture time to local time changes.
+  setOriginListener(listener: (origin: PlayoutOrigin | undefined) => void): void {
+    this.originListener = listener
+  }
+
+  private originChanged(): void {
+    this.originListener?.(this.origin && { captureMicros: this.origin.captureMicros, atMs: this.origin.atMs })
+  }
 
   constructor(
-    private readonly delayMs: number,
-    private readonly maxEarlyMs: number
+    private delayMs: number,
+    private maxEarlyMs: number
   ) {}
+
+  /// Takes effect at the next anchor; callers reset the clock to re-anchor.
+  setDelayMs(delayMs: number, maxEarlyMs: number): void {
+    this.delayMs = delayMs
+    this.maxEarlyMs = maxEarlyMs
+  }
+
+  get currentDelayMs(): number {
+    return this.delayMs
+  }
 
   get anchored(): boolean {
     return this.origin !== undefined
@@ -30,6 +52,7 @@ export class PlayoutClock {
 
   anchor(captureMicros: number, nowMs: number, budgetMs = this.delayMs): void {
     this.origin = { captureMicros, atMs: nowMs + budgetMs, budgetMs }
+    this.originChanged()
   }
 
   dueAt(captureMicros: number): number | undefined {
@@ -64,10 +87,12 @@ export class PlayoutClock {
   shift(deltaMs: number): void {
     if (this.origin) {
       this.origin = { ...this.origin, atMs: this.origin.atMs + deltaMs }
+      this.originChanged()
     }
   }
 
   reset(): void {
     this.origin = undefined
+    this.originChanged()
   }
 }

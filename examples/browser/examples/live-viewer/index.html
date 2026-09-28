@@ -272,10 +272,39 @@ make chrome</code></pre>
               <div class="playback-panel">
                 <div id="stage" class="viewer-stage">
                   <video id="video" playsinline muted autoplay data-testid="live-viewer-video"></video>
+                  <canvas id="live-canvas" hidden data-testid="live-viewer-live-canvas"></canvas>
                   <canvas id="review" hidden data-testid="live-viewer-review-canvas"></canvas>
                   <video id="mse-a" playsinline autoplay hidden></video>
                   <video id="mse-b" playsinline autoplay hidden></video>
                   <video id="mse-c" playsinline autoplay hidden></video>
+                  <div id="delivery-overlay" class="viewer-delivery" data-testid="live-viewer-delivery-overlay">
+                    <svg
+                      id="delivery-grid"
+                      class="viewer-delivery-grid"
+                      role="img"
+                      aria-label="Received objects from the playing frame onward"
+                      data-testid="live-viewer-delivery-grid"
+                    ></svg>
+                    <svg
+                      id="delivery-grid-review"
+                      class="viewer-delivery-grid viewer-delivery-grid-review"
+                      role="img"
+                      aria-label="Received objects of the reviewed FETCH from the playing frame onward"
+                      style="display: none"
+                      data-testid="live-viewer-delivery-grid-review"
+                    ></svg>
+                  </div>
+                  <button
+                    type="button"
+                    id="deliveryToggleBtn"
+                    class="viewer-button viewer-delivery-toggle"
+                    aria-pressed="true"
+                    aria-label="Toggle delivery grid"
+                    title="受信状況の表示 / 非表示"
+                    data-testid="live-viewer-delivery-toggle-button"
+                  >
+                    &#x25A6;
+                  </button>
                   <div
                     id="buffering"
                     class="viewer-buffering"
@@ -435,6 +464,18 @@ make chrome</code></pre>
                               <option value="cmaf">CMAF (MSE)</option>
                             </select>
                           </label>
+                          <label for="playout-buffer"
+                            >Buffer (ms)
+                            <input
+                              id="playout-buffer"
+                              type="number"
+                              min="0"
+                              max="5000"
+                              step="50"
+                              value="200"
+                              data-testid="live-viewer-playout-buffer-input"
+                            />
+                          </label>
                         </div>
                       </div>
                       <button
@@ -458,6 +499,55 @@ make chrome</code></pre>
                 </p>
               </div>
             </div>
+          </section>
+
+          <section class="card stack full">
+            <div class="card-title-row">
+              <h2>Streams</h2>
+              <div class="playback-meta stream-meta">
+                <label for="stream-window"
+                  >Window (s)
+                  <input
+                    id="stream-window"
+                    type="number"
+                    min="1"
+                    max="120"
+                    value="10"
+                    data-testid="live-viewer-stream-window-input"
+                  />
+                </label>
+                <label for="stream-gops"
+                  >GOPs
+                  <input
+                    id="stream-gops"
+                    type="number"
+                    min="1"
+                    max="30"
+                    value="5"
+                    data-testid="live-viewer-stream-gops-input"
+                  />
+                </label>
+                <span id="stream-stats" data-testid="live-viewer-stream-stats">-</span>
+              </div>
+            </div>
+            <svg
+              id="stream-monitor"
+              class="stream-monitor"
+              role="img"
+              aria-label="Subgroup streams per track"
+              data-testid="live-viewer-stream-monitor"
+            ></svg>
+            <svg
+              id="stream-monitor-review"
+              class="stream-monitor stream-monitor-review"
+              role="img"
+              aria-label="FETCH streams of the review, on their own time axis"
+              style="display: none"
+              data-testid="live-viewer-stream-monitor-review"
+            ></svg>
+            <p class="hint">
+              track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
+            </p>
           </section>
 
           <section class="card stack full">

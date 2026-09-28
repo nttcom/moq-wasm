@@ -94,6 +94,7 @@ export type ReviewFrame = {
   objectId: bigint
   data: Uint8Array
   captureMicros?: number
+  requestId?: bigint
 }
 
 export function toReviewFrame(message: {

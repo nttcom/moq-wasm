@@ -4,7 +4,7 @@ use super::dual_receive_stream::DualReceiveStream;
 use super::dual_send_stream::DualSendStream;
 use crate::modules::transport::{
     quic::quic_connection::QUICConnection, transport_connection::TransportConnection,
-    webtransport::wt_connection::WtConnection,
+    transport_stats::TransportStats, webtransport::wt_connection::WtConnection,
 };
 
 #[derive(Debug)]
@@ -93,6 +93,13 @@ impl TransportConnection for DualConnection {
         match self {
             DualConnection::Quic(c) => c.close(code, reason),
             DualConnection::WebTransport(c) => c.close(code, reason),
+        }
+    }
+
+    fn stats(&self) -> TransportStats {
+        match self {
+            DualConnection::Quic(c) => c.stats(),
+            DualConnection::WebTransport(c) => c.stats(),
         }
     }
 }

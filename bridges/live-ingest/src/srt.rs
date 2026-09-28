@@ -60,13 +60,15 @@ async fn publish(
     options: &IngestOptions,
     namespace: Vec<String>,
 ) -> Result<StreamSummary> {
+    let remote = request.remote();
     let mut socket = request.accept(None).await?;
     let mut demuxer = mpegts::Demuxer::new();
-    let mut publisher = IngestPublisher::new(
-        MoqtManager::new(options.moqt.clone()),
-        namespace,
-        options.transcode,
-    );
+    let moqt = MoqtManager::new(options.moqt.clone());
+    let _registration = options
+        .stats
+        .as_ref()
+        .map(|registry| registry.register(format!("srt {remote} {}", namespace.join("/")), &moqt));
+    let mut publisher = IngestPublisher::new(moqt, namespace, options.transcode);
     let mut packets = 0_u64;
     let mut discontinuities = 0_u64;
     while let Some(packet) = socket.next().await {

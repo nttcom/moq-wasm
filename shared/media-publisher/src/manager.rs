@@ -17,10 +17,11 @@ use mediapack::{
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
     FetchObjectField, GroupOrder, QUIC, Session, SessionEvent, TrackWriter, TransportProtocol,
-    TransportSendError, WEBTRANSPORT, wire::FetchParams,
+    TransportSendError, TransportStats, WEBTRANSPORT, wire::FetchParams,
 };
 use tokio::{sync::Mutex, task::JoinHandle};
 
+use crate::stream_ledger::{StreamLedger, StreamRecord};
 use crate::{
     object_cache::{CachedObject, FetchRange, ObjectCache},
     object_numbering::{ObjectNumbering, Placement},
@@ -54,6 +55,7 @@ pub struct MoqtTarget {
 pub struct MoqtManager {
     target: Option<MoqtTarget>,
     inner: Arc<Mutex<ManagerState>>,
+    ledger: StreamLedger,
 }
 
 #[derive(Default)]
@@ -202,6 +204,7 @@ pub enum GroupBoundary {
 struct ConnectedPublisher<T: TransportProtocol> {
     session: Arc<Session<T>>,
     state: Arc<Mutex<BackendState<T>>>,
+    ledger: StreamLedger,
     event_task: tokio::task::JoinHandle<()>,
 }
 
@@ -215,7 +218,12 @@ impl MoqtManager {
         Self {
             target,
             inner: Arc::new(Mutex::new(ManagerState::default())),
+            ledger: StreamLedger::default(),
         }
+    }
+
+    pub fn streams(&self) -> Vec<StreamRecord> {
+        self.ledger.snapshot()
     }
 
     /// Announce namespace (once) and prepare tracks (video/audio) by waiting for SubscribeOk.
@@ -280,10 +288,19 @@ impl MoqtManager {
             .await
     }
 
+    /// `None` until the relay session exists; the lock is also held for the
+    /// whole connect, so a caller during it sees `None` as well.
+    pub fn transport_stats(&self) -> Option<TransportStats> {
+        let backend = self.inner.try_lock().ok()?.backend.clone()?;
+        Some(backend.transport_stats())
+    }
+
     async fn ensure_backend(&self, target: &MoqtTarget) -> Result<Arc<PublisherBackend>> {
         let mut guard = self.inner.lock().await;
         if guard.backend.is_none() {
-            guard.backend = Some(Arc::new(PublisherBackend::connect(target).await?));
+            guard.backend = Some(Arc::new(
+                PublisherBackend::connect(target, self.ledger.clone()).await?,
+            ));
         }
         let backend = guard
             .backend
@@ -296,7 +313,7 @@ impl MoqtManager {
 }
 
 impl PublisherBackend {
-    async fn connect(target: &MoqtTarget) -> Result<Self> {
+    async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let parsed = url::Url::parse(&target.url).context("parse moqt url")?;
         let client_config = ClientConfig {
             port: 0,
@@ -305,10 +322,11 @@ impl PublisherBackend {
         };
         match parsed.scheme() {
             "moqt" => Ok(Self::Quic(
-                ConnectedPublisher::<QUIC>::connect(&parsed, &client_config).await?,
+                ConnectedPublisher::<QUIC>::connect(&parsed, &client_config, ledger).await?,
             )),
             "https" => Ok(Self::WebTransport(
-                ConnectedPublisher::<WEBTRANSPORT>::connect(&parsed, &client_config).await?,
+                ConnectedPublisher::<WEBTRANSPORT>::connect(&parsed, &client_config, ledger)
+                    .await?,
             )),
             scheme => bail!("unsupported moqt url scheme: {scheme}"),
         }
@@ -318,6 +336,13 @@ impl PublisherBackend {
         match self {
             Self::Quic(publisher) => publisher.setup_namespace(namespace).await,
             Self::WebTransport(publisher) => publisher.setup_namespace(namespace).await,
+        }
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        match self {
+            Self::Quic(publisher) => publisher.session.transport_stats(),
+            Self::WebTransport(publisher) => publisher.session.transport_stats(),
         }
     }
 
@@ -370,7 +395,11 @@ impl PublisherBackend {
 }
 
 impl<T: TransportProtocol> ConnectedPublisher<T> {
-    async fn connect(url: &url::Url, client_config: &ClientConfig) -> Result<Self> {
+    async fn connect(
+        url: &url::Url,
+        client_config: &ClientConfig,
+        ledger: StreamLedger,
+    ) -> Result<Self> {
         let endpoint = Endpoint::<T>::create_client(client_config)?;
         let connecting = endpoint
             .connect(url.as_str())
@@ -379,11 +408,12 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let session = Arc::new(connecting.await.context("establish moqt session")?);
 
         let state = Arc::new(Mutex::new(BackendState::default()));
-        let event_task = Self::spawn_event_loop(session.clone(), state.clone());
+        let event_task = Self::spawn_event_loop(session.clone(), state.clone(), ledger.clone());
 
         Ok(Self {
             session,
             state,
+            ledger,
             event_task,
         })
     }
@@ -391,6 +421,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     fn spawn_event_loop(
         session: Arc<Session<T>>,
         state: Arc<Mutex<BackendState<T>>>,
+        ledger: StreamLedger,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
@@ -459,7 +490,8 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         drop(guard);
                         tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
                         if should_send_catalog
-                            && let Err(err) = Self::send_catalog_snapshot(&state, &namespace).await
+                            && let Err(err) =
+                                Self::send_catalog_snapshot(&state, &ledger, &namespace).await
                         {
                             tracing::warn!(%namespace, ?err, "failed to send initial catalog");
                         }
@@ -471,6 +503,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                             Some(key) => {
                                 if let Some(track) = guard.tracks.get_mut(&key) {
                                     track.unsubscribe();
+                                    ledger.finish(&key.1);
                                 }
                                 tracing::info!(request_id, namespace = %key.0, track_name = %key.1, "UNSUBSCRIBE received; track released");
                             }
@@ -571,7 +604,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let Some(mut writer) = writer else {
             return Ok(false);
         };
-        let result = write_object(&mut writer, placement, object).await;
+        let result = write_object(&mut writer, placement, object, &self.ledger, &key.1).await;
         let mut guard = self.state.lock().await;
         let Some(track) = guard.tracks.get_mut(&key) else {
             return result;
@@ -581,6 +614,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
             track.unsubscribe();
+            self.ledger.finish(&key.1);
             return Ok(false);
         }
         if track.subscribed {
@@ -700,7 +734,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         };
 
         if should_send {
-            Self::send_catalog_snapshot(&self.state, &namespace_path).await?;
+            Self::send_catalog_snapshot(&self.state, &self.ledger, &namespace_path).await?;
         }
 
         Ok(())
@@ -727,7 +761,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         };
 
         if should_send {
-            Self::send_catalog_snapshot(&self.state, &namespace_path).await?;
+            Self::send_catalog_snapshot(&self.state, &self.ledger, &namespace_path).await?;
         }
 
         Ok(())
@@ -735,6 +769,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
 
     async fn send_catalog_snapshot(
         state: &Arc<Mutex<BackendState<T>>>,
+        ledger: &StreamLedger,
         namespace_path: &str,
     ) -> Result<()> {
         let key = (namespace_path.to_string(), CATALOG_TRACK_NAME.to_string());
@@ -768,10 +803,13 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             writer.next_group_id(),
             placement.location.group_id
         );
+        ledger.open(CATALOG_TRACK_NAME, placement.location.group_id);
+        ledger.add_object(CATALOG_TRACK_NAME, payload.len());
         writer
             .write_group(payload)
             .await
             .context("send catalog group")?;
+        ledger.finish(CATALOG_TRACK_NAME);
         tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
         Ok(())
     }
@@ -789,19 +827,24 @@ async fn write_object<T: TransportProtocol>(
     writer: &mut TrackWriter<T>,
     placement: Placement,
     object: OutgoingObject,
+    ledger: &StreamLedger,
+    track_name: &str,
 ) -> Result<bool> {
     if placement.starts_group {
         writer
             .start_group_at(placement.location.group_id)
             .await
             .context("start group")?;
+        ledger.open(track_name, placement.location.group_id);
     } else if writer.current_group_id() != Some(placement.location.group_id) {
         return Ok(false);
     }
+    let bytes = object.payload.len();
     writer
         .write_with_extension_headers(object.payload, object.extension_headers)
         .await
         .context("send subgroup object")?;
+    ledger.add_object(track_name, bytes);
     Ok(true)
 }
 
@@ -1033,6 +1076,15 @@ mod tests {
             .iter()
             .find(|track| track.name == name)
             .unwrap_or_else(|| panic!("missing track {name}"))
+    }
+
+    #[test]
+    fn transport_stats_is_none_before_the_relay_session_exists() {
+        // Arrange
+        let manager = MoqtManager::new(None);
+
+        // Act / Assert
+        assert_eq!(manager.transport_stats(), None);
     }
 
     #[test]

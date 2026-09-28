@@ -11,6 +11,7 @@ import {
 } from '../media/catalog'
 import { base64ToUint8Array } from '../../utils/media/base64'
 import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
+import { readLocHeader } from '../../utils/media/loc'
 import {
   parseAudioChannelCount,
   postAudioCatalogToWorker,
@@ -19,10 +20,21 @@ import {
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
 import { BufferingSpinner } from './bufferingSpinner'
-import { LivePlayout } from './livePlayout'
+import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
+import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
+import {
+  DEFAULT_WINDOW_SECONDS,
+  type Playhead,
+  StreamMonitor,
+  type StreamRecord,
+  renderDeliveryGrid,
+  renderIdleStreamMonitor,
+  renderStreamMonitor,
+  summarizeStreams
+} from './streamMonitor'
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
@@ -43,6 +55,7 @@ const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight:
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
 const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
+const PRESENTATION_MARGIN_MS = 200
 
 type Packaging = 'loc' | 'cmaf'
 
@@ -72,9 +85,23 @@ const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoD
 const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
   type: 'module'
 })
-const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-const videoWriter = videoGenerator.writable.getWriter()
-const livePlayout = new LivePlayout(showLiveFrame)
+/// `?livePicture=canvas` forces the canvas sink, to see the Safari path in Chrome.
+const livePictureSink = createLivePictureSink(
+  element<HTMLVideoElement>('video'),
+  element<HTMLCanvasElement>('live-canvas'),
+  (picture) => notePresentedFrame(picture),
+  (new URLSearchParams(location.search).get('livePicture') as LivePictureKind | null) ?? undefined
+)
+const livePlayout = new LivePlayout(
+  showLiveFrame,
+  () => appendLog('warn', 'playout clock re-anchored: scheduled video and audio were dropped'),
+  (origin) =>
+    videoDecoderWorker.postMessage({
+      type: 'timeline',
+      captureMicros: origin?.captureMicros,
+      dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
+    })
+)
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const bufferingSpinner = new BufferingSpinner(element('buffering'))
 
@@ -86,6 +113,7 @@ let mse: MseSink | undefined
 let reviewMse: MseSink | undefined
 let reviewMseOpened = false
 let visiblePicture: HTMLElement = element('video')
+showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
@@ -94,6 +122,12 @@ const subscriptions = new Map<MediaKind, TrackSubscription>()
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+const streamMonitor = new StreamMonitor()
+let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
+let watching = false
+const decodedFrameIds = new Map<number, Omit<Playhead, 'kind' | 'trackAlias'>>()
+const reviewFrameIds = new Map<number, Playhead>()
+let reviewFetchIds: { video?: bigint; audio?: bigint } = {}
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -129,6 +163,11 @@ element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
 element<HTMLButtonElement>('playPauseBtn').addEventListener('click', () => setPaused(!paused))
 element<HTMLInputElement>('volume').addEventListener('input', applyVolume)
 element<HTMLButtonElement>('fullscreenBtn').addEventListener('click', () => void toggleFullscreen())
+element<HTMLButtonElement>('deliveryToggleBtn').addEventListener('click', () => {
+  const overlay = element<HTMLDivElement>('delivery-overlay')
+  overlay.hidden = !overlay.hidden
+  element<HTMLButtonElement>('deliveryToggleBtn').setAttribute('aria-pressed', String(!overlay.hidden))
+})
 stage.addEventListener('fullscreenchange', renderFullscreen)
 for (const type of ['pointermove', 'pointerdown', 'keydown']) {
   stage.addEventListener(type, markPointerActive)
@@ -179,12 +218,30 @@ for (const event of ['pointercancel', 'blur']) {
   })
 }
 startRendering()
+moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
+element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
+  streamMonitor.setKeptGroups(Number((event.target as HTMLInputElement).value) || 1)
+})
+element<HTMLInputElement>('playout-buffer').addEventListener('change', (event) => {
+  const delayMs = Number((event.target as HTMLInputElement).value)
+  livePlayout.setPlayoutDelayMs(Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : DEFAULT_PLAYOUT_DELAY_MS)
+  applyDecoderConfig()
+  appendLog('info', `playout buffer ${livePlayout.playoutDelayMs()} ms`)
+})
+element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
+  streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
+})
+requestAnimationFrame(function renderStreamsEachFrame() {
+  renderStreams()
+  requestAnimationFrame(renderStreamsEachFrame)
+})
 
 async function watchStream(): Promise<void> {
   try {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
     await moqtClient.connect(url)
+    watching = true
     setStatusText('connection-status', `Connected: ${url}`)
     appendLog('info', `connected to ${url}`)
     await subscribeCatalog()
@@ -195,7 +252,11 @@ async function watchStream(): Promise<void> {
 }
 
 async function stopStream(): Promise<void> {
+  watching = false
+  livePictureSink.detach()
   timeline.reset()
+  streamMonitor.reset()
+  decodedFrameIds.clear()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
   newestAudioGroupId = undefined
@@ -203,7 +264,7 @@ async function stopStream(): Promise<void> {
   closeMse()
   livePlayout.reset()
   bufferingSpinner.hide()
-  showPicture(element<HTMLVideoElement>('video'))
+  showPicture(livePictureSink.element)
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
@@ -235,12 +296,15 @@ async function subscribeCatalog(): Promise<void> {
 async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<SubscribeOk> {
   const namespace = trackNamespace()
   const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
-  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => {
-    const payload = new Uint8Array(object.objectPayload)
-    if (payload.byteLength > 0) {
-      onText(new TextDecoder().decode(payload))
-    }
-  })
+  moqtClient.setOnSubgroupObjectHandler(
+    subscribeOk.trackAlias,
+    monitored(subscribeOk.trackAlias, name, (_groupId, object) => {
+      const payload = new Uint8Array(object.objectPayload)
+      if (payload.byteLength > 0) {
+        onText(new TextDecoder().decode(payload))
+      }
+    })
+  )
   appendLog('info', `subscribed ${namespace.join('/')}/${name}`)
   return subscribeOk
 }
@@ -251,14 +315,22 @@ async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (
   const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
   const endObject = largestGroup === undefined ? 0n : (subscribeOk.largestObjectId ?? 0n) + 1n
   try {
-    await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
+    const { requestId } = await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
       onObject: (message) => {
+        streamMonitor.fetchObject(
+          message.requestId,
+          name,
+          message.groupId,
+          message.objectId,
+          message.objectPayload.byteLength
+        )
         const payload = new Uint8Array(message.objectPayload)
         if (payload.byteLength > 0) {
           onText(new TextDecoder().decode(payload))
         }
       }
     })
+    streamMonitor.fetchFinished(requestId)
     appendLog('info', `fetched ${name}`)
   } catch (error) {
     appendLog('info', `fetch ${name}: ${getErrorMessage(error)}`)
@@ -334,7 +406,7 @@ async function switchPackaging(): Promise<void> {
   } else {
     const previous = mse
     mse = undefined
-    replacePicture(element<HTMLVideoElement>('video'), () => packaging === 'loc' && !reviewing, previous)
+    replacePicture(livePictureSink.element, () => packaging === 'loc' && !reviewing, previous)
   }
   appendLog('info', `packaging switched to ${packaging}`)
 }
@@ -408,20 +480,25 @@ function showPicture(next: HTMLElement): void {
 
 /// The sink being replaced is closed as soon as it is off screen; while it is
 /// on screen it plays on until the replacement has presented a frame.
-function replacePicture(next: HTMLVideoElement, stillWanted: () => boolean, previous: MseSink | undefined): void {
+function replacePicture(next: HTMLElement, stillWanted: () => boolean, previous: MseSink | undefined): void {
   if (previous && previous.element !== visiblePicture) {
     previous.close()
   }
-  next.requestVideoFrameCallback(() => {
+  const swap = () => {
     previous?.close()
     if (stillWanted()) {
       showPicture(next)
     }
-  })
+  }
+  if (next instanceof HTMLVideoElement) {
+    next.requestVideoFrameCallback(swap)
+  } else {
+    requestAnimationFrame(swap)
+  }
 }
 
 function livePicture(): HTMLElement {
-  return mse?.element ?? element<HTMLVideoElement>('video')
+  return mse?.element ?? livePictureSink.element
 }
 
 function freeMseElement(): HTMLVideoElement {
@@ -529,26 +606,32 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   })
   subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name })
   if (packaging === 'cmaf') {
-    moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) =>
-      handleCmafObject(kind, wire.name, groupId, object)
+    moqtClient.setOnSubgroupObjectHandler(
+      subscribeOk.trackAlias,
+      monitored(subscribeOk.trackAlias, wire.name, (groupId, object) =>
+        handleCmafObject(kind, wire.name, groupId, object)
+      )
     )
     appendLog('info', `subscribed ${trackNamespace().join('/')}/${wire.name}`)
     return
   }
   const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
-  moqtClient.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {
-    if (kind === 'video') {
-      videoObjectCount += 1
-      timeline.record(groupId, object.locHeader)
-      renderSeekbar()
-      if (!reviewing) {
-        setStatusText('playback-status', `Playing ${trackName}`)
+  moqtClient.setOnSubgroupObjectHandler(
+    subscribeOk.trackAlias,
+    monitored(subscribeOk.trackAlias, wire.name, (groupId, object) => {
+      if (kind === 'video') {
+        videoObjectCount += 1
+        timeline.record(groupId, object.locHeader)
+        renderSeekbar()
+        if (!reviewing) {
+          setStatusText('playback-status', `Playing ${trackName}`)
+        }
+      } else {
+        newestAudioGroupId = groupId
       }
-    } else {
-      newestAudioGroupId = groupId
-    }
-    postSubgroupObjectToWorker(worker, groupId, object)
-  })
+      postSubgroupObjectToWorker(worker, groupId, object)
+    })
+  )
   appendLog('info', `subscribed ${trackNamespace().join('/')}/${trackName}`)
 }
 
@@ -578,27 +661,38 @@ function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
   postAudioCatalogToWorker(audioDecoderWorker, track)
 }
 
-/// The decoders hand every sample over as soon as it is decoded; the live
-/// playout paces them on one clock so that audio and video stay together.
+/// The live playout paces decoded samples on one clock so that audio and
+/// video stay together. All but the last `PRESENTATION_MARGIN_MS` of the
+/// buffer is spent before decoding, in the video worker's jitter buffer, so
+/// objects are decoded in order however they arrived and only a few decoded
+/// frames are ever held.
 function applyDecoderConfig(): void {
-  const config = { telemetryEnabled: true, bypassJitterBuffer: true }
-  videoDecoderWorker.postMessage({ type: 'config', config })
-  audioDecoderWorker.postMessage({ type: 'config', config })
+  const holdMs = Math.max(0, livePlayout.playoutDelayMs() - PRESENTATION_MARGIN_MS)
+  videoDecoderWorker.postMessage({
+    type: 'config',
+    config: {
+      telemetryEnabled: true,
+      bypassJitterBuffer: holdMs === 0,
+      holdMs,
+      releaseMarginMs: PRESENTATION_MARGIN_MS,
+      pacing: { preset: 'disabled' }
+    }
+  })
+  audioDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
 }
 
 function showLiveFrame(frame: VideoFrame): void {
   updateVideoStats(frame)
-  if (videoWriter.desiredSize === null || videoWriter.desiredSize <= 0) {
-    frame.close()
-    return
-  }
-  void videoWriter
-    .write(frame)
-    .catch(() => undefined)
-    .finally(() => frame.close())
+  markPlayhead(frame)
+  livePictureSink.present(frame)
 }
 
 function showReviewFrame(frame: VideoFrame): void {
+  const ids = reviewFrameIds.get(frame.timestamp)
+  reviewFrameIds.delete(frame.timestamp)
+  if (ids) {
+    streamMonitor.setPlayhead(ids)
+  }
   const canvas = element<HTMLCanvasElement>('review')
   const context = canvas.getContext('2d')
   if (context) {
@@ -614,7 +708,6 @@ function showReviewFrame(frame: VideoFrame): void {
 
 function startRendering(): void {
   applyDecoderConfig()
-  element<HTMLVideoElement>('video').srcObject = new MediaStream([videoGenerator])
   for (const id of ['video', ...MSE_ELEMENT_IDS]) {
     watchPresentedFrames(element<HTMLVideoElement>(id))
   }
@@ -625,7 +718,9 @@ function startRendering(): void {
       return
     }
     if (event.data.type === 'frame') {
-      livePlayout.presentVideo(event.data.frame as VideoFrame)
+      const frame = event.data.frame as VideoFrame
+      decodedFrameIds.set(frame.timestamp, { groupId: event.data.groupId, objectId: event.data.objectId })
+      livePlayout.presentVideo(frame)
     }
   }
 
@@ -663,7 +758,7 @@ function wantedPicture(): HTMLElement | undefined {
 
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()}`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
 }
 
 function formatSyncOffset(offsetMs: number | undefined): string {
@@ -672,6 +767,115 @@ function formatSyncOffset(offsetMs: number | undefined): string {
   }
   const rounded = Math.round(offsetMs)
   return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
+}
+
+function markPlayhead(frame: VideoFrame): void {
+  const ids = decodedFrameIds.get(frame.timestamp)
+  decodedFrameIds.delete(frame.timestamp)
+  const trackAlias = subscriptions.get('video')?.trackAlias
+  if (ids && trackAlias !== undefined) {
+    streamMonitor.setPlayhead({ kind: 'subscribe', trackAlias, ...ids })
+  }
+}
+
+function monitored(
+  trackAlias: bigint,
+  track: string,
+  handler: (groupId: bigint, object: SubgroupObject) => void
+): (groupId: bigint, object: SubgroupObject) => void {
+  streamMonitor.label(trackAlias, track)
+  return (groupId, object) => {
+    streamMonitor.object(
+      trackAlias,
+      groupId,
+      object.objectId,
+      object.objectPayloadLength,
+      object.objectStatus != null,
+      Date.now(),
+      readLocHeader(object.locHeader).captureTimestampMicros
+    )
+    handler(groupId, object)
+  }
+}
+
+function renderStreams(): void {
+  const reviewGrid = element<SVGSVGElement>('delivery-grid-review')
+  const reviewTimeline = element<SVGSVGElement>('stream-monitor-review')
+  if (!watching) {
+    renderIdleStreamMonitor(element<SVGSVGElement>('stream-monitor'))
+    renderIdleStreamMonitor(element<SVGSVGElement>('delivery-grid'))
+    reviewGrid.style.display = 'none'
+    reviewTimeline.style.display = 'none'
+    element<HTMLSpanElement>('stream-stats').textContent = '-'
+    return
+  }
+  const now = Date.now()
+  const records = streamMonitor.snapshot()
+  const liveRecords = records.filter((record) => record.kind === 'subscribe')
+  const fetchRecords = records.filter((record) => record.kind === 'fetch')
+  const playheads = streamMonitor.currentPlayheads()
+  const livePlayhead = playheads.find((playhead) => playhead.kind === 'subscribe')
+  const reviewPlayhead = playheads.find((playhead) => playhead.kind === 'fetch')
+  renderStreamMonitor(
+    element<SVGSVGElement>('stream-monitor'),
+    liveRecords,
+    streamMonitor.slotsPerTrack(),
+    streamWindowSeconds,
+    livePlayhead ? [livePlayhead] : [],
+    now
+  )
+  element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records, playheads, now)
+  reviewTimeline.style.display = reviewing && fetchRecords.length > 0 ? '' : 'none'
+  if (reviewing && fetchRecords.length > 0) {
+    renderStreamMonitor(
+      reviewTimeline,
+      fetchRecords,
+      streamMonitor.slotsPerTrack(),
+      streamWindowSeconds,
+      reviewPlayhead ? [reviewPlayhead] : [],
+      latestFetchActivity(fetchRecords, now)
+    )
+  }
+  renderDeliveryGrid(
+    element<SVGSVGElement>('delivery-grid'),
+    records,
+    [
+      { label: 'audio', kind: 'subscribe', trackAlias: subscriptions.get('audio')?.trackAlias },
+      { label: 'video', kind: 'subscribe', trackAlias: subscriptions.get('video')?.trackAlias }
+    ],
+    streamMonitor.slotsPerTrack(),
+    livePlayhead,
+    livePlayout.playoutDelayMs()
+  )
+  reviewGrid.style.display = reviewing ? '' : 'none'
+  if (reviewing) {
+    renderDeliveryGrid(
+      reviewGrid,
+      records,
+      [
+        {
+          label: 'fetch audio',
+          kind: 'fetch',
+          trackAlias: reviewFetchIds.audio,
+          cadenceAlias: subscriptions.get('audio')?.trackAlias
+        },
+        {
+          label: 'fetch video',
+          kind: 'fetch',
+          trackAlias: reviewFetchIds.video,
+          cadenceAlias: subscriptions.get('video')?.trackAlias
+        }
+      ],
+      streamMonitor.slotsPerTrack(),
+      reviewPlayhead
+    )
+  }
+}
+
+/// A FETCH arrives in a burst well before it is played, so the review
+/// timeline ends at the newest FETCH activity rather than at the wall clock.
+function latestFetchActivity(records: StreamRecord[], now: number): number {
+  return Math.max(...records.map((record) => record.finishedAt ?? now))
 }
 
 function trackNamespace(): string[] {
@@ -690,12 +894,12 @@ function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
   panel.prepend(entry)
 }
 
-function element<T extends HTMLElement>(id: string): T {
+function element<T extends Element>(id: string): T {
   const found = document.getElementById(id)
   if (!found) {
     throw new Error(`missing element: ${id}`)
   }
-  return found as T
+  return found as Element as T
 }
 
 /// Selects and text inputs use the arrow keys themselves. The seek bar's own
@@ -785,6 +989,7 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
     return undefined
   }
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
+  reviewFetchIds = { video: frames[0]?.requestId, audio: audio?.[0]?.requestId }
   return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audio ?? []) }
 }
 
@@ -817,19 +1022,28 @@ async function fetchFrames(
 ): Promise<ReviewFrame[] | undefined> {
   const frames: ReviewFrame[] = []
   let lastArrival = performance.now()
+  let requestId: bigint | undefined
   try {
-    await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
+    ;({ requestId } = await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
       onObject: (message) => {
+        streamMonitor.fetchObject(
+          message.requestId,
+          trackName,
+          message.groupId,
+          message.objectId,
+          message.objectPayload.byteLength
+        )
         if (generation !== reviewGeneration) {
           return
         }
         lastArrival = performance.now()
         const frame = toReviewFrame(message)
         if (frame) {
+          frame.requestId = message.requestId
           frames.push(frame)
         }
       }
-    })
+    }))
   } catch (error) {
     if (generation === reviewGeneration) {
       setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
@@ -839,6 +1053,9 @@ async function fetchFrames(
   }
 
   await waitForFetchIdle(() => lastArrival, generation)
+  if (requestId !== undefined) {
+    streamMonitor.fetchFinished(requestId)
+  }
   return generation === reviewGeneration ? frames : undefined
 }
 
@@ -912,6 +1129,14 @@ async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generatio
     }
     if (generation !== reviewGeneration || decoder.state === 'closed') {
       break
+    }
+    if (frame.captureMicros !== undefined && frame.requestId !== undefined) {
+      reviewFrameIds.set(frame.captureMicros, {
+        kind: 'fetch',
+        trackAlias: frame.requestId,
+        groupId: frame.groupId,
+        objectId: frame.objectId
+      })
     }
     decoder.decode(
       new EncodedVideoChunk({
@@ -1012,6 +1237,9 @@ function reviewAudioConfig(): AudioDecoderConfig | undefined {
 function backToLive(): void {
   reviewGeneration += 1
   reviewing = false
+  reviewFrameIds.clear()
+  reviewFetchIds = {}
+  streamMonitor.clearPlayhead('fetch')
   seeking = false
   setPaused(false)
   reviewAnchorMicros = undefined
@@ -1093,7 +1321,10 @@ function playingMedia(): HTMLMediaElement[] {
   if (reviewing) {
     return reviewMse ? [reviewMse.element] : []
   }
-  return mse ? [mse.element] : [element<HTMLVideoElement>('video')]
+  if (mse) {
+    return [mse.element]
+  }
+  return livePictureSink.element instanceof HTMLMediaElement ? [livePictureSink.element] : []
 }
 
 /// Review carries its own sound, so the live audio is silenced rather than

@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
 use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::transport_stats::TransportStats;
 
 #[derive(Debug)]
 pub struct WtConnection {
@@ -68,5 +69,9 @@ impl TransportConnection for WtConnection {
                 anyhow::bail!("Failed to receive datagram: {:?}", e)
             }
         }
+    }
+
+    fn stats(&self) -> TransportStats {
+        quinn::Connection::stats(&self.session).into()
     }
 }

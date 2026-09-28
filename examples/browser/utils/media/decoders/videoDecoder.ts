@@ -123,7 +123,16 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
 type VideoJitterBufferConfig = {
   pacing?: VideoPacingConfigInput
   decoderHardwareAcceleration?: VideoDecoderHardwareAcceleration
+  /// How long an object stays in the jitter buffer after arrival before it
+  /// may be decoded, so objects of an earlier group that arrive after a later
+  /// group's keyframe are still decoded in order.
+  holdMs?: number
+  /// With a playout timeline from the page, an object is released this long
+  /// before it is due to be shown instead of `holdMs` after arrival.
+  releaseMarginMs?: number
 }
+
+type PlayoutTimelineMessage = { type: 'timeline'; captureMicros?: number; dueAtUnixMs?: number }
 
 const POP_INTERVAL_MS = 33
 const MISSING_META_WARN_SUPPRESS_AFTER_RESET_MS = 3000
@@ -183,10 +192,51 @@ const DEFAULT_PACING_CONFIG: VideoPacingConfig = createPacingPresetConfig('onvif
 
 type NormalizedJitterConfig = {
   minDelayMs: number
+  holdMs: number
+  releaseMarginMs: number
 }
 
 const DEFAULT_JITTER_CONFIG: NormalizedJitterConfig = {
-  minDelayMs: 35
+  minDelayMs: 35,
+  holdMs: 0,
+  releaseMarginMs: 200
+}
+const MAX_HOLD_MS = 30_000
+/// A head that would wait this much longer than the hold means the source
+/// clock ran away from the release timeline, so the timeline is rebuilt on it.
+const HOLD_TIMELINE_SLACK_MS = 1_000
+
+/// The page's playout clock, as capture time → wall time of presentation.
+/// While it is known, objects are released `releaseMarginMs` before they are
+/// due, which is what keeps them from arriving at the page already late.
+let playoutTimeline: { captureMicros: number; dueAtUnixMs: number } | undefined
+
+/// Without a playout timeline, objects leave the jitter buffer `holdMs` after
+/// the first one arrived, each at its capture-time offset from that first one,
+/// so an object that arrived late still leaves on schedule instead of late.
+let holdTimeline: { captureMicros: number; releaseAtMs: number } | undefined
+
+function holdReleaseAtMs(entry: { captureTimestampMicros?: number; receivedAtMs: number }): number {
+  const byArrival = entry.receivedAtMs + currentJitterConfig.holdMs
+  if (entry.captureTimestampMicros === undefined) {
+    return byArrival
+  }
+  if (playoutTimeline !== undefined) {
+    const dueAtUnixMs =
+      playoutTimeline.dueAtUnixMs + (entry.captureTimestampMicros - playoutTimeline.captureMicros) / 1000
+    const releaseAtMs = performance.now() + (dueAtUnixMs - currentJitterConfig.releaseMarginMs - Date.now())
+    if (releaseAtMs <= byArrival + HOLD_TIMELINE_SLACK_MS) {
+      return releaseAtMs
+    }
+  }
+  if (
+    holdTimeline === undefined ||
+    holdTimeline.releaseAtMs + (entry.captureTimestampMicros - holdTimeline.captureMicros) / 1000 >
+      byArrival + HOLD_TIMELINE_SLACK_MS
+  ) {
+    holdTimeline = { captureMicros: entry.captureTimestampMicros, releaseAtMs: byArrival }
+  }
+  return holdTimeline.releaseAtMs + (entry.captureTimestampMicros - holdTimeline.captureMicros) / 1000
 }
 
 let jitterBuffer = createJitterBuffer()
@@ -234,8 +284,11 @@ type DecodedFrameEntry = {
 type JitterBufferEntryForPacing = NonNullable<ReturnType<VideoJitterBuffer['popWithMetadata']>>
 
 function normalizeJitterConfig(config?: VideoJitterBufferConfig): NormalizedJitterConfig {
-  void config
-  return { ...DEFAULT_JITTER_CONFIG }
+  return {
+    ...DEFAULT_JITTER_CONFIG,
+    holdMs: clampNumber(config?.holdMs, currentJitterConfig.holdMs, 0, MAX_HOLD_MS),
+    releaseMarginMs: clampNumber(config?.releaseMarginMs, currentJitterConfig.releaseMarginMs, 0, MAX_HOLD_MS)
+  }
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max = Number.POSITIVE_INFINITY): number {
@@ -324,7 +377,8 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   currentDecoderHardwareAcceleration = nextDecoderHardwareAcceleration
   currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
   updatePacingConfig(config.pacing)
-  jitterBuffer = createJitterBuffer()
+  holdTimeline = undefined
+  playoutTimeline = undefined
   if (decoderHardwareAccelerationChanged) {
     if (videoDecoder && videoDecoder.state !== 'closed') {
       try {
@@ -509,9 +563,29 @@ function pumpEncodedPacingDecode(): void {
   scheduleEncodedPacing(0)
 }
 
+/// Switching to direct decoding must not let a fresh object overtake what
+/// is still held, or the decoder sees P-frames out of order and smears.
+function drainJitterBufferInOrder(): void {
+  for (let entry = jitterBuffer.popHolding(); entry; entry = jitterBuffer.popHolding()) {
+    if (!entry.isEndOfGroup) {
+      decodeBufferedEntryNow(entry)
+    }
+  }
+}
+
 function pumpJitterBuffer(): void {
   if (decodedFrameBuffer.length >= currentPacingConfig.decodedBufferMax) {
     schedulePop(POP_INTERVAL_MS)
+    return
+  }
+  const head = jitterBuffer.peek()
+  if (!head) {
+    schedulePop(POP_INTERVAL_MS)
+    return
+  }
+  const holdRemainingMs = currentJitterConfig.holdMs > 0 ? holdReleaseAtMs(head) - performance.now() : 0
+  if (holdRemainingMs > 0) {
+    schedulePop(holdRemainingMs)
     return
   }
   const entry = jitterBuffer.popHolding()
@@ -750,6 +824,8 @@ function emitDecodedFrame(): void {
     {
       type: 'frame',
       frame: entry.frame,
+      groupId: entry.groupId,
+      objectId: entry.objectId,
       width: entry.frame.displayWidth,
       height: entry.frame.displayHeight
     },
@@ -769,6 +845,7 @@ type DecoderControlMessage =
       }
     }
   | CatalogMessage
+  | PlayoutTimelineMessage
 type CatalogMessage = {
   type: 'catalog'
   codec?: string
@@ -793,16 +870,32 @@ function isCatalogMessage(message: WorkerMessage): message is CatalogMessage {
   return (message as { type?: string }).type === 'catalog'
 }
 
+function isTimelineMessage(message: WorkerMessage): message is PlayoutTimelineMessage {
+  return (message as { type?: string }).type === 'timeline'
+}
+
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   if (isConfigMessage(event.data)) {
     telemetryEnabled = event.data.config.telemetryEnabled ?? telemetryEnabled
-    bypassJitterBuffer = event.data.config.bypassJitterBuffer ?? bypassJitterBuffer
+    const nextBypass = event.data.config.bypassJitterBuffer ?? bypassJitterBuffer
+    if (nextBypass && !bypassJitterBuffer) {
+      drainJitterBufferInOrder()
+    }
+    bypassJitterBuffer = nextBypass
     debugVideoPipeline = event.data.config.debugVideoPipeline ?? debugVideoPipeline
     updateJitterBuffer(event.data.config)
     return
   }
   if (isCatalogMessage(event.data)) {
     applyCatalogInfo(event.data.codec, event.data.framerate, event.data.descriptionBase64, event.data.avcFormat)
+    return
+  }
+  if (isTimelineMessage(event.data)) {
+    playoutTimeline =
+      event.data.captureMicros !== undefined && event.data.dueAtUnixMs !== undefined
+        ? { captureMicros: event.data.captureMicros, dueAtUnixMs: event.data.dueAtUnixMs }
+        : undefined
+    schedulePop(0)
     return
   }
   const subgroupStreamObject: SubgroupObjectWithLoc = {
