@@ -177,17 +177,20 @@ mod tests {
 
     #[tokio::test]
     async fn prefers_local_publisher_and_picks_min_session_id() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(5, "ns".to_string(), PeerKind::Client);
         table.register_publish_namespace(3, "ns".to_string(), PeerKind::Client);
         let resolver = make_resolver(PublisherLookup::MustNotBeCalled);
 
+        // Act
         let resolved = resolver
             .resolve(&table, "ns", "track")
             .await
             .expect("resolve should succeed")
             .expect("local publisher should be found");
 
+        // Assert
         assert_eq!(resolved.publisher_session_id, 3);
         assert_eq!(resolved.track_namespace, "ns");
         assert_eq!(resolved.track_name, "track");
@@ -195,24 +198,30 @@ mod tests {
 
     #[tokio::test]
     async fn returns_none_when_no_publisher_anywhere() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let resolver = make_resolver(PublisherLookup::NotFound);
 
+        // Act
         let resolved = resolver
             .resolve(&table, "ns", "track")
             .await
             .expect("resolve should succeed");
 
+        // Assert
         assert!(resolved.is_none());
     }
 
     #[tokio::test]
     async fn propagates_route_registry_error() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let resolver = make_resolver(PublisherLookup::Fails);
 
+        // Act
         let result = resolver.resolve(&table, "ns", "track").await;
 
+        // Assert
         assert!(result.is_err());
     }
 }
