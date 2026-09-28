@@ -15,7 +15,6 @@ use crate::modules::{
     types::{SessionId, TrackKey},
 };
 
-const DATA_STREAM_INTERNAL_ERROR: u64 = 0x0;
 const DEFAULT_FETCH_FILL_TIMEOUT_SECS: u64 = 20;
 
 pub(crate) struct FetchIngestStart {
@@ -68,7 +67,7 @@ impl FetchIngest {
                     .await;
                     FetchErrorCode::MalformedTrack as u64
                 } else {
-                    DATA_STREAM_INTERNAL_ERROR
+                    FetchErrorCode::InternalError as u64
                 };
                 Self::reset_downstream_fetch(
                     session_repo,
@@ -89,19 +88,16 @@ impl FetchIngest {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         start: FetchIngestStart,
     ) -> anyhow::Result<()> {
-        let timeout = Self::timeout();
-        let result = tokio::time::timeout(
+        let timeout = duration_from_env(
+            "MOQT_FETCH_FILL_TIMEOUT_SECS",
+            DEFAULT_FETCH_FILL_TIMEOUT_SECS,
+        );
+        tokio::time::timeout(
             timeout,
-            Self::ingest_fetch_stream(session_repo.clone(), egress_sender, start),
+            Self::ingest_fetch_stream(session_repo, egress_sender, start),
         )
-        .await;
-
-        match result {
-            Ok(result) => result,
-            Err(_) => {
-                anyhow::bail!("fetch ingest timed out after {:?}", timeout);
-            }
-        }
+        .await
+        .map_err(|_| anyhow::anyhow!("fetch ingest timed out after {:?}", timeout))?
     }
 
     async fn ingest_fetch_stream(
@@ -166,13 +162,6 @@ impl FetchIngest {
                     "malformed track detected during fetch fill (group {group_id}, object {object_id})"
                 )
             })
-    }
-
-    fn timeout() -> std::time::Duration {
-        duration_from_env(
-            "MOQT_FETCH_FILL_TIMEOUT_SECS",
-            DEFAULT_FETCH_FILL_TIMEOUT_SECS,
-        )
     }
 
     async fn cancel_upstream_fetch(
