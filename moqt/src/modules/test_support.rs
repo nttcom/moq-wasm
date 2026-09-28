@@ -14,7 +14,6 @@ use crate::{
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_PENDING_OBJECTS: usize = 256;
 
 pub(crate) fn free_udp_port() -> u16 {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -139,10 +138,6 @@ pub(crate) async fn notify_datagram(
     track_alias: u64,
 ) -> IncomingObjectNotification {
     context
-        .notify_incoming_object(
-            track_alias,
-            datagram_object(track_alias),
-            MAX_PENDING_OBJECTS,
-        )
+        .notify_incoming_object(track_alias, datagram_object(track_alias))
         .await
 }

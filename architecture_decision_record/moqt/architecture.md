@@ -255,9 +255,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 - **Buffer-before-subscribe**: objects can arrive before the application
   registers a receiver (data races SUBSCRIBE_OK). `object_sinks` buffers up to
-  256 objects per track alias (`SubscriptionNotifier::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS`),
-  dropping the oldest on overflow. `register_data_receiver` drains the buffer
-  into the new channel atomically under the sinks lock.
+  256 objects per track alias (`MAX_PENDING_OBJECTS_PER_TRACK_ALIAS` in
+  `session_context.rs`), dropping the oldest on overflow.
+  `register_data_receiver` drains the buffer into the new channel atomically
+  under the sinks lock.
 - **Cancelled subscriptions discard late objects** (draft-14 §10.1):
   `Subscriber::unsubscribe`, the UNSUBSCRIBE sent for a late SUBSCRIBE_OK and
   `PublishHandler::error` (a PUBLISH with Forward=1 sends objects before its

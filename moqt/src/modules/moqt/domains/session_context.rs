@@ -79,6 +79,8 @@ pub(crate) enum InflightRequest {
     Abandoned(LateResponseAction),
 }
 
+const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
+
 pub(crate) struct SessionContext<T: TransportProtocol> {
     pub(crate) transport_connection: T::Connection,
     pub(crate) send_stream: BiStreamSender<T>,
@@ -208,7 +210,6 @@ impl<T: TransportProtocol> SessionContext<T> {
         &self,
         track_alias: u64,
         incoming_object: IncomingObject<T>,
-        max_pending_objects: usize,
     ) -> IncomingObjectNotification {
         let mut sinks = self.object_sinks.lock().await;
         match sinks.entry(track_alias) {
@@ -230,7 +231,7 @@ impl<T: TransportProtocol> SessionContext<T> {
                     }
                 }
                 ObjectSink::Buffer(objects) => {
-                    let dropped_oldest = objects.len() >= max_pending_objects;
+                    let dropped_oldest = objects.len() >= MAX_PENDING_OBJECTS_PER_TRACK_ALIAS;
                     if dropped_oldest {
                         objects.pop_front();
                     }
@@ -245,9 +246,8 @@ impl<T: TransportProtocol> SessionContext<T> {
         }
     }
 
-    /// Drains objects buffered before SUBSCRIBE_OK into a new receiver and goes Live,
-    /// updating both maps under the object-sinks lock so the registration is atomic.
-    /// Returns `Err(TerminationErrorCode::DuplicateTrackAlias)` if a receiver already exists.
+    /// `receiver_map` is updated while the object-sinks lock is held, so the
+    /// drain, the sink switch and the receiver registration are atomic.
     pub(crate) async fn register_data_receiver(
         &self,
         request_id: RequestId,
