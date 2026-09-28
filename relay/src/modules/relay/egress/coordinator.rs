@@ -70,16 +70,14 @@ impl EgressCoordinator {
                         };
                         match command {
                             EgressCommand::StartReader(request) => {
-                                if let Some(runner_task) = Self::prepare_runner_task(
+                                Self::spawn_runner(
+                                    &mut runners,
                                     session_repo.clone(),
                                     cache_store.clone(),
                                     subgroup_opened_notifier_map.clone(),
                                     *request,
                                 )
-                                .await
-                                {
-                                    runners.spawn(runner_task);
-                                }
+                                .await;
                             }
                             EgressCommand::StartFetch(request) => {
                                 Self::spawn_fetch_delivery(session_repo.clone(), request).await;
@@ -126,12 +124,13 @@ impl EgressCoordinator {
         });
     }
 
-    async fn prepare_runner_task(
+    async fn spawn_runner(
+        runners: &mut JoinSet<()>,
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         cache_store: Arc<TrackCacheStore>,
         subgroup_opened_notifier_map: Arc<SubgroupOpenedNotifierMap>,
         request: EgressStartRequest,
-    ) -> Option<impl Future<Output = ()> + Send + 'static> {
+    ) {
         let publisher = session_repo
             .lock()
             .await
@@ -141,7 +140,7 @@ impl EgressCoordinator {
             let _ = request
                 .ready_sender
                 .send(Err(anyhow::anyhow!("subscriber session not found")));
-            return None;
+            return;
         };
 
         let cache = cache_store.get_or_create(&request.track_key);
@@ -169,7 +168,7 @@ impl EgressCoordinator {
         );
 
         let runner_stop_receiver = request.runner_stop_receiver;
-        Some(
+        runners.spawn(
             async move {
                 tokio::select! {
                     biased;
@@ -184,7 +183,7 @@ impl EgressCoordinator {
                 }
             }
             .instrument(egress_track_span),
-        )
+        );
     }
 }
 
