@@ -720,7 +720,7 @@ mod tests {
                 "unused-relay-token".to_string(),
             )),
         );
-        let serializer = UpstreamCreationSerializer::new();
+        let serializer = UpstreamCreationSerializer::default();
         let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
 
         let Ok((_, _, largest_location)) = Subscribe

@@ -816,7 +816,7 @@ mod tests {
                     inter_relay_connection_manager,
                     upstream_publisher_resolver,
                     cache_store: cache_store.clone(),
-                    upstream_serializer: UpstreamCreationSerializer::new(),
+                    upstream_serializer: UpstreamCreationSerializer::default(),
                     token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
                 },
             );
