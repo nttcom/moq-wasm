@@ -959,7 +959,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn downstream_row_removed_before_runner_readiness_sends_subscribe_error() {
+    async fn downstream_registration_removed_before_runner_readiness_sends_subscribe_error() {
         // Arrange
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_upstream_subscription(upstream_key(), active_upstream());

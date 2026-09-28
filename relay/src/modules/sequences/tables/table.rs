@@ -155,7 +155,7 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         key: &UpstreamSubscriptionKey,
     ) -> Option<ActiveUpstreamSubscription>;
     /// Returns `None` when the upstream subscription is gone. The returned
-    /// receiver resolves once the row is removed, however that happens; the
+    /// receiver resolves once the registration is removed, however that happens; the
     /// subscription's egress runner lives exactly until then.
     fn register_downstream_subscription(
         &self,

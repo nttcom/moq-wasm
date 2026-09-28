@@ -14,7 +14,7 @@ use crate::modules::{
 };
 
 #[derive(Debug)]
-pub(crate) struct DownstreamSubscriptionRow {
+pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     _runner_stop_sender: oneshot::Sender<()>,
 }
@@ -34,7 +34,8 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
     pub(crate) active_upstream_subscriptions:
         DashMap<UpstreamSubscriptionKey, ActiveUpstreamSubscription>,
-    pub(crate) downstream_subscriptions: DashMap<(SessionId, u64), DownstreamSubscriptionRow>,
+    pub(crate) downstream_subscriptions:
+        DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
 }
 
 #[async_trait::async_trait]
@@ -563,15 +564,15 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         upstream_key: UpstreamSubscriptionKey,
         start_location: Option<moqt::Location>,
     ) -> Option<oneshot::Receiver<()>> {
-        // The upstream entry stays locked until the row is inserted: a concurrent removal of the
-        // upstream either finds this row or makes this registration fail. Lock order is always
+        // The upstream entry stays locked until the registration is inserted: a concurrent removal
+        // of the upstream either finds it or makes this registration fail. Lock order is always
         // upstream before downstream.
         let mut upstream = self.active_upstream_subscriptions.get_mut(&upstream_key)?;
         upstream.downstream_subscriber_count += 1;
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
-            DownstreamSubscriptionRow {
+            RegisteredDownstreamSubscription {
                 subscription: DownstreamSubscription {
                     upstream_key,
                     start_location,
@@ -587,10 +588,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
     ) -> Option<RemovedDownstreamSubscription> {
-        let (_, row) = self
+        let (_, registered) = self
             .downstream_subscriptions
             .remove(&(downstream_session_id, downstream_subscribe_id))?;
-        let upstream_key = row.subscription.upstream_key;
+        let upstream_key = registered.subscription.upstream_key;
         let Entry::Occupied(mut entry) = self
             .active_upstream_subscriptions
             .entry(upstream_key.clone())
@@ -1106,7 +1107,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn downstream_registration_racing_publisher_removal_never_leaves_an_orphan_row() {
+    async fn registration_racing_publisher_removal_leaves_no_orphan() {
         for _ in 0..2000 {
             // Arrange
             let (table, upstream_key) = subscribed_track_table();
@@ -1142,7 +1143,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn downstream_registration_racing_last_subscriber_removal_never_leaves_an_orphan_row() {
+    async fn registration_racing_last_subscriber_removal_leaves_no_orphan() {
         for _ in 0..20000 {
             // Arrange
             let (table, upstream_key) = subscribed_track_table();
