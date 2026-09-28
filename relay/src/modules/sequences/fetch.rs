@@ -120,32 +120,11 @@ impl Fetch {
         let fetch_params = handler.fetch_params();
         let request_id = handler.request_id();
 
-        let target = match self
-            .resolve_fetch_target(session_id, fetch_params, table)
+        let (target, source) = match self
+            .resolve_target_and_source(session_id, fetch_params, table, cache_store)
             .await
         {
-            Ok(target) => target,
-            Err(err) => {
-                let _ = handler
-                    .error(err.code() as u64, err.reason().to_string())
-                    .await;
-                return;
-            }
-        };
-
-        if cache_store
-            .get(&target.track_key)
-            .is_some_and(|cache| cache.is_malformed())
-        {
-            let err = FetchError::MalformedTrack;
-            let _ = handler
-                .error(err.code() as u64, err.reason().to_string())
-                .await;
-            return;
-        }
-
-        let source = match self.resolve_fetch_source(&target, cache_store).await {
-            Ok(source) => source,
+            Ok(resolved) => resolved,
             Err(err) => {
                 let _ = handler
                     .error(err.code() as u64, err.reason().to_string())
@@ -355,6 +334,26 @@ impl Fetch {
             FetchErrorCode::InternalError as u64,
             "Internal relay error".to_string(),
         )
+    }
+
+    async fn resolve_target_and_source(
+        &self,
+        session_id: SessionId,
+        fetch_params: FetchParams,
+        table: &InMemoryLocalPubSubDirectory,
+        cache_store: &TrackCacheStore,
+    ) -> Result<(FetchTarget, FetchSource), FetchError> {
+        let target = self
+            .resolve_fetch_target(session_id, fetch_params, table)
+            .await?;
+        if cache_store
+            .get(&target.track_key)
+            .is_some_and(|cache| cache.is_malformed())
+        {
+            return Err(FetchError::MalformedTrack);
+        }
+        let source = self.resolve_fetch_source(&target, cache_store).await?;
+        Ok((target, source))
     }
 
     async fn resolve_fetch_target(
@@ -574,19 +573,6 @@ mod tests {
         assert_eq!(reason, "not supported");
     }
 
-    async fn resolve_target_and_source(
-        session_id: SessionId,
-        fetch_params: FetchParams,
-        table: &InMemoryLocalPubSubDirectory,
-        cache_store: &Arc<TrackCacheStore>,
-    ) -> Result<(FetchTarget, FetchSource), FetchError> {
-        let target = Fetch
-            .resolve_fetch_target(session_id, fetch_params, table)
-            .await?;
-        let source = Fetch.resolve_fetch_source(&target, cache_store).await?;
-        Ok((target, source))
-    }
-
     #[tokio::test]
     async fn fetch_source_is_upstream_when_track_entry_missing() {
         let cache_store = Arc::new(TrackCacheStore::new());
@@ -598,14 +584,15 @@ mod tests {
             group_id: 0,
             object_id: 1,
         };
-        let (target, source) = resolve_target_and_source(
-            2,
-            standalone_fetch_params(start, end),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (target, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(start, end),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await
+            .unwrap();
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(target.track_namespace, "ns");
@@ -629,14 +616,15 @@ mod tests {
             group_id: 0,
             object_id: 1,
         };
-        let (_, source) = resolve_target_and_source(
-            2,
-            standalone_fetch_params(start, end),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(start, end),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await
+            .unwrap();
         assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
@@ -654,14 +642,15 @@ mod tests {
             group_id: 0,
             object_id: 3,
         };
-        let (_, source) = resolve_target_and_source(
-            2,
-            standalone_fetch_params(start, end),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(start, end),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await
+            .unwrap();
         assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
@@ -679,14 +668,15 @@ mod tests {
             group_id: 1,
             object_id: 2,
         };
-        let (_, source) = resolve_target_and_source(
-            2,
-            standalone_fetch_params(start, end),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(start, end),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await
+            .unwrap();
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(missing_range.start_location, start);
@@ -712,14 +702,15 @@ mod tests {
             group_id: 2,
             object_id: 0,
         };
-        let (_, source) = resolve_target_and_source(
-            2,
-            standalone_fetch_params(start, requested_end),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(start, requested_end),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await
+            .unwrap();
         match source {
             FetchSource::Cache(resolved) => {
                 assert_eq!(
@@ -743,22 +734,23 @@ mod tests {
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0]);
         cache.begin_live_ingest();
-        let result = resolve_target_and_source(
-            2,
-            standalone_fetch_params(
-                moqt::Location {
-                    group_id: 0,
-                    object_id: 1,
-                },
-                moqt::Location {
-                    group_id: 0,
-                    object_id: 2,
-                },
-            ),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await;
+        let result = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 1,
+                    },
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 2,
+                    },
+                ),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await;
         assert!(matches!(result, Err(FetchError::InvalidRange)));
     }
 
@@ -771,22 +763,23 @@ mod tests {
         insert_closed_group(&cache, 1, &[]);
         let _open_g2 = open_group(&cache, 2, &[0]);
 
-        let result = resolve_target_and_source(
-            2,
-            standalone_fetch_params(
-                moqt::Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
-                moqt::Location {
-                    group_id: 1,
-                    object_id: 0,
-                },
-            ),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await;
+        let result = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(
+                    moqt::Location {
+                        group_id: 1,
+                        object_id: 0,
+                    },
+                    moqt::Location {
+                        group_id: 1,
+                        object_id: 0,
+                    },
+                ),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await;
         assert!(matches!(result, Err(FetchError::NoObjects)));
     }
 
@@ -804,14 +797,15 @@ mod tests {
             group_id: 1,
             object_id: 4,
         };
-        let (_, source) = resolve_target_and_source(
-            2,
-            standalone_fetch_params(start, end),
-            &InMemoryLocalPubSubDirectory::new(),
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                standalone_fetch_params(start, end),
+                &InMemoryLocalPubSubDirectory::new(),
+                &cache_store,
+            )
+            .await
+            .unwrap();
         match source {
             FetchSource::Cache(resolved) => {
                 assert_eq!(resolved.start_location, start);
@@ -894,17 +888,18 @@ mod tests {
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
 
-        let (target, source) = resolve_target_and_source(
-            2,
-            FetchParams::RelativeJoining {
-                joining_request_id: 100,
-                joining_start: 1,
-            },
-            &table,
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (target, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                FetchParams::RelativeJoining {
+                    joining_request_id: 100,
+                    joining_start: 1,
+                },
+                &table,
+                &cache_store,
+            )
+            .await
+            .unwrap();
 
         match source {
             FetchSource::Upstream(missing_range) => {
@@ -946,17 +941,18 @@ mod tests {
             }),
         );
 
-        let (_, source) = resolve_target_and_source(
-            2,
-            FetchParams::AbsoluteJoining {
-                joining_request_id: 100,
-                joining_start: 1,
-            },
-            &table,
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                FetchParams::AbsoluteJoining {
+                    joining_request_id: 100,
+                    joining_start: 1,
+                },
+                &table,
+                &cache_store,
+            )
+            .await
+            .unwrap();
 
         // Upstream range: start = {joining_start, 0}, end = largest + 1
         // (the equivalent Standalone Fetch encoding, §9.16.2.1).
@@ -996,18 +992,19 @@ mod tests {
             }),
         );
 
-        let (_, source) = resolve_target_and_source(
-            2,
-            FetchParams::RelativeJoining {
-                joining_request_id: 100,
-                // Further back than the track head: the start group saturates to 0.
-                joining_start: 5,
-            },
-            &table,
-            &cache_store,
-        )
-        .await
-        .unwrap();
+        let (_, source) = Fetch
+            .resolve_target_and_source(
+                2,
+                FetchParams::RelativeJoining {
+                    joining_request_id: 100,
+                    // Further back than the track head: the start group saturates to 0.
+                    joining_start: 5,
+                },
+                &table,
+                &cache_store,
+            )
+            .await
+            .unwrap();
 
         match source {
             FetchSource::Upstream(missing_range) => {
@@ -1045,16 +1042,17 @@ mod tests {
             }),
         );
 
-        let result = resolve_target_and_source(
-            2,
-            FetchParams::AbsoluteJoining {
-                joining_request_id: 100,
-                joining_start: 2,
-            },
-            &table,
-            &cache_store,
-        )
-        .await;
+        let result = Fetch
+            .resolve_target_and_source(
+                2,
+                FetchParams::AbsoluteJoining {
+                    joining_request_id: 100,
+                    joining_start: 2,
+                },
+                &table,
+                &cache_store,
+            )
+            .await;
 
         assert!(matches!(result, Err(FetchError::InvalidRange)));
     }
