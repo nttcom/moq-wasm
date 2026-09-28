@@ -99,7 +99,9 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        core::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
+        core::mocks::{
+            RecordedControlMessages, runner_stopped, session_repository_with_upstream_session,
+        },
         enums::ContentExists,
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
@@ -128,13 +130,6 @@ mod tests {
         ingress_receiver: mpsc::Receiver<IngressCommand>,
         runner_stop_receivers: Vec<oneshot::Receiver<()>>,
         recorded: RecordedControlMessages,
-    }
-
-    fn runner_stopped(runner_stop_receiver: &mut oneshot::Receiver<()>) -> bool {
-        matches!(
-            runner_stop_receiver.try_recv(),
-            Err(oneshot::error::TryRecvError::Closed)
-        )
     }
 
     async fn setup(

@@ -576,7 +576,6 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
                 _runner_stop_sender: runner_stop_sender,
             },
         );
-        drop(upstream);
         Some(runner_stop_receiver)
     }
 
@@ -613,6 +612,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::core::mocks::runner_stopped;
     use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
     use crate::modules::types::TrackKey;
 
@@ -987,8 +987,7 @@ mod tests {
         assert_eq!(upstream_publishers, vec![1, 2]);
     }
 
-    #[tokio::test]
-    async fn register_downstream_subscription_stores_start_location() {
+    fn subscribed_track_table() -> (InMemoryLocalPubSubDirectory, UpstreamSubscriptionKey) {
         let table = InMemoryLocalPubSubDirectory::new();
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: 1,
@@ -1006,17 +1005,24 @@ mod tests {
                 origin: UpstreamSubscriptionOrigin::Subscribe,
             },
         );
+        (table, upstream_key)
+    }
+
+    #[tokio::test]
+    async fn register_downstream_subscription_stores_start_location() {
+        // Arrange
+        let (table, upstream_key) = subscribed_track_table();
         let largest = moqt::Location {
             group_id: 5,
             object_id: 3,
         };
 
-        assert!(
-            table
-                .register_downstream_subscription(2, 100, upstream_key.clone(), Some(largest))
-                .is_some()
-        );
+        // Act
+        let runner_stop_receiver =
+            table.register_downstream_subscription(2, 100, upstream_key.clone(), Some(largest));
 
+        // Assert
+        assert!(runner_stop_receiver.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.upstream_key, upstream_key);
         assert_eq!(
@@ -1030,65 +1036,18 @@ mod tests {
 
     #[tokio::test]
     async fn register_downstream_subscription_none_start_location() {
-        let table = InMemoryLocalPubSubDirectory::new();
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        };
-        table.register_upstream_subscription(
-            upstream_key.clone(),
-            ActiveUpstreamSubscription {
-                upstream_request_id: 1,
-                track_key: TrackKey::new("ns", "track"),
-                expires: None,
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 0,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-            },
-        );
+        // Arrange
+        let (table, upstream_key) = subscribed_track_table();
 
-        assert!(
-            table
-                .register_downstream_subscription(2, 100, upstream_key.clone(), None)
-                .is_some()
-        );
+        // Act
+        let runner_stop_receiver =
+            table.register_downstream_subscription(2, 100, upstream_key.clone(), None);
 
+        // Assert
+        assert!(runner_stop_receiver.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.upstream_key, upstream_key);
         assert!(sub.start_location.is_none());
-    }
-
-    fn subscribe_origin_upstream(track_key: TrackKey) -> ActiveUpstreamSubscription {
-        ActiveUpstreamSubscription {
-            upstream_request_id: 1,
-            track_key,
-            expires: None,
-            content_exists: ContentExists::False,
-            downstream_subscriber_count: 0,
-            origin: UpstreamSubscriptionOrigin::Subscribe,
-        }
-    }
-
-    fn subscribed_track_table() -> (InMemoryLocalPubSubDirectory, UpstreamSubscriptionKey) {
-        let table = InMemoryLocalPubSubDirectory::new();
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        };
-        table.register_upstream_subscription(
-            upstream_key.clone(),
-            subscribe_origin_upstream(TrackKey::new("ns", "track")),
-        );
-        (table, upstream_key)
-    }
-
-    fn runner_stopped(runner_stop_receiver: &mut oneshot::Receiver<()>) -> bool {
-        matches!(
-            runner_stop_receiver.try_recv(),
-            Err(oneshot::error::TryRecvError::Closed)
-        )
     }
 
     #[tokio::test]

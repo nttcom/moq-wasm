@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
-    core::data_object::DataObject,
+    core::{data_object::DataObject, mocks::session_repository_with_session},
     relay::{
         cache::store::TrackCacheStore,
         egress::{
@@ -16,7 +16,7 @@ use crate::modules::{
         notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
-    session_repository::{NewSession, SessionPeer, SessionRepository},
+    session_repository::SessionRepository,
     types::{SessionId, TrackKey},
 };
 
@@ -297,21 +297,13 @@ pub(crate) async fn session_repository_with_downstream_session(
     MockPublisherObservers,
 ) {
     let (publisher, observers) = MockPublisher::channel();
-    let mut repository = SessionRepository::new();
-    let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
-    repository
-        .add(
-            NewSession {
-                session_id,
-                session: Box::new(MockDownstreamSession { publisher }),
-                session_span: tracing::Span::none(),
-                peer: SessionPeer::Client,
-                verified_token: VerifiedToken::full_access(),
-            },
-            session_event_sender,
-        )
-        .await;
-    (Arc::new(tokio::sync::Mutex::new(repository)), observers)
+    let repository = session_repository_with_session(
+        session_id,
+        Box::new(MockDownstreamSession { publisher }),
+        VerifiedToken::full_access(),
+    )
+    .await;
+    (repository, observers)
 }
 
 pub(crate) async fn receive_objects_until_close(

@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use moqt::TerminationErrorCode;
+use tokio::sync::oneshot;
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
@@ -59,15 +60,25 @@ pub(crate) async fn session_repository_with_upstream_session_token(
     RecordedControlMessages,
 ) {
     let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        recorded: recorded.clone(),
+    });
+    let repository = session_repository_with_session(session_id, session, verified_token).await;
+    (repository, recorded)
+}
+
+pub(crate) async fn session_repository_with_session(
+    session_id: SessionId,
+    session: Box<dyn Session>,
+    verified_token: VerifiedToken,
+) -> Arc<tokio::sync::Mutex<SessionRepository>> {
     let mut repository = SessionRepository::new();
     let (session_event_sender, _session_event_receiver) = tokio::sync::mpsc::unbounded_channel();
     repository
         .add(
             NewSession {
                 session_id,
-                session: Box::new(MockUpstreamSession {
-                    recorded: recorded.clone(),
-                }),
+                session,
                 session_span: tracing::Span::none(),
                 peer: SessionPeer::Client,
                 verified_token,
@@ -75,7 +86,14 @@ pub(crate) async fn session_repository_with_upstream_session_token(
             session_event_sender,
         )
         .await;
-    (Arc::new(tokio::sync::Mutex::new(repository)), recorded)
+    Arc::new(tokio::sync::Mutex::new(repository))
+}
+
+pub(crate) fn runner_stopped(runner_stop_receiver: &mut oneshot::Receiver<()>) -> bool {
+    matches!(
+        runner_stop_receiver.try_recv(),
+        Err(oneshot::error::TryRecvError::Closed)
+    )
 }
 
 #[async_trait::async_trait]
