@@ -85,6 +85,7 @@ permissions:
 env:
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   changes:
@@ -308,6 +309,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -365,6 +368,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -376,7 +381,12 @@ jobs:
         run: node scripts/setup-media-e2e.mjs
 
       - name: Build relay and live ingest
-        run: cargo build -p relay -p moqt-bridge-live-ingest
+        # One invocation per package: run-live-viewer-e2e.mjs starts each with
+        # its own `cargo run -p`, and a combined build unifies features
+        # differently, which would recompile the dependencies at run time.
+        run: |
+          cargo build -p relay
+          cargo build -p moqt-bridge-live-ingest
 
       - name: Install Playwright Linux dependencies
         working-directory: examples/browser
@@ -428,6 +438,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -488,6 +500,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -572,6 +586,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -635,6 +651,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -698,6 +716,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -761,6 +781,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -824,6 +846,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -887,6 +911,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
