@@ -301,7 +301,7 @@ impl RelayHarness {
         let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
         loop {
             if let Some(largest) = cache.largest_location()
-                && (largest.group_id, largest.object_id) >= (expected.group_id, expected.object_id)
+                && largest >= expected
             {
                 return largest;
             }

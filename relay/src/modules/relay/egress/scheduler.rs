@@ -7,6 +7,13 @@ use crate::modules::{
     relay::{cache::track_cache::TrackCache, types::SubgroupKey},
 };
 
+fn after(largest: &moqt::Location) -> moqt::Location {
+    moqt::Location {
+        group_id: largest.group_id,
+        object_id: largest.object_id + 1,
+    }
+}
+
 fn resolve_start_location(
     filter_type: &FilterType,
     largest: &Option<moqt::Location>,
@@ -18,23 +25,12 @@ fn resolve_start_location(
         ) => {
             let requested = location.as_moqt();
             match largest {
-                Some(largest)
-                    if (requested.group_id, requested.object_id)
-                        <= (largest.group_id, largest.object_id) =>
-                {
-                    moqt::Location {
-                        group_id: largest.group_id,
-                        object_id: largest.object_id + 1,
-                    }
-                }
+                Some(largest) if requested <= *largest => after(largest),
                 _ => requested,
             }
         }
         // Largest Object (0x2): Start = {Largest.Group, Largest.Object + 1}.
-        (FilterType::LargestObject, Some(largest)) => moqt::Location {
-            group_id: largest.group_id,
-            object_id: largest.object_id + 1,
-        },
+        (FilterType::LargestObject, Some(largest)) => after(largest),
         // Next Group Start (0x1): Start = {Largest.Group + 1, 0}.
         (FilterType::NextGroupStart, Some(largest)) => moqt::Location {
             group_id: largest.group_id + 1,
