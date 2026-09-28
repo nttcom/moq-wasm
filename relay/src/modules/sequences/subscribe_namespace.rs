@@ -117,11 +117,8 @@ impl SubscribeNameSpace {
         table: &InMemoryLocalPubSubDirectory,
     ) {
         let filtered = table.get_subscribers(track_namespace_prefix);
-        for (track_namespace, publish_values) in filtered {
-            if let (Some(track_name), track_alias) = publish_values {
-                if track_alias.is_none() {
-                    continue;
-                }
+        for (track_namespace, published_track) in filtered {
+            if let Some((track_name, _)) = published_track {
                 if forwarder
                     .publish(session_id, track_namespace.clone(), track_name.clone())
                     .await

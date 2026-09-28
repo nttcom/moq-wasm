@@ -1,4 +1,7 @@
-use std::sync::{Arc, PoisonError, RwLock};
+use std::{
+    collections::HashSet,
+    sync::{Arc, PoisonError, RwLock},
+};
 
 use dashmap::{DashMap, DashSet, Entry};
 use tokio::sync::oneshot;
@@ -349,15 +352,14 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    #[allow(clippy::type_complexity)]
     pub(crate) fn get_subscribers(
         &self,
         track_namespace_prefix: &str,
-    ) -> DashSet<(String, (Option<String>, Option<u64>))> {
-        let filtered = DashSet::new();
+    ) -> HashSet<(String, Option<(String, u64)>)> {
+        let mut filtered = HashSet::new();
         for entry in self.publisher_namespaces.iter() {
             if entry.key().starts_with(track_namespace_prefix) {
-                filtered.insert((entry.key().clone(), (None, None)));
+                filtered.insert((entry.key().clone(), None));
             }
         }
 
@@ -373,10 +375,7 @@ impl InMemoryLocalPubSubDirectory {
             {
                 filtered.insert((
                     handler.track_namespace().to_string(),
-                    (
-                        Some(handler.track_name().to_string()),
-                        Some(handler.track_alias()),
-                    ),
+                    Some((handler.track_name().to_string(), handler.track_alias())),
                 ));
             }
         }
