@@ -90,7 +90,7 @@ pub(crate) struct SessionContext<T: TransportProtocol> {
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::RwLock<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>>>,
     pub(crate) fetch_receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
 }
@@ -156,7 +156,7 @@ impl<T: TransportProtocol> SessionContext<T> {
             sender_map: std::sync::Mutex::new(HashMap::new()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_notification_map: tokio::sync::RwLock::new(HashMap::new()),
+            fetch_notification_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: tokio::sync::Mutex::new(HashMap::new()),
         }
     }

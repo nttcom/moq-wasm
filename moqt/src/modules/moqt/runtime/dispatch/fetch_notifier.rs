@@ -22,7 +22,13 @@ impl FetchNotifier {
         request_id: u64,
         incoming_object: IncomingObject<T>,
     ) {
-        if let Some(sender) = context.fetch_notification_map.read().await.get(&request_id) {
+        // Draft-14 §9.16.3: a FETCH response is delivered on a single stream.
+        let sender = context
+            .fetch_notification_map
+            .lock()
+            .await
+            .remove(&request_id);
+        if let Some(sender) = sender {
             if let Err(e) = sender.send(incoming_object) {
                 tracing::warn!("Failed to notify fetch stream: {}", e);
             }
