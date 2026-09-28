@@ -16,7 +16,6 @@ use crate::modules::{
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
-#[derive(Debug)]
 pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     _runner_stop_sender: oneshot::Sender<()>,
@@ -68,7 +67,6 @@ fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespa
     no_clients_remain
 }
 
-#[derive(Debug)]
 pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, PeerKind>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashMap<SessionId, PeerKind>>,
@@ -384,17 +382,14 @@ impl InMemoryLocalPubSubDirectory {
         track_namespace: &str,
         track_name: &str,
     ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
-        let upstream_key = self
-            .active_upstream_subscriptions
+        self.active_upstream_subscriptions
             .iter()
             .filter(|entry| {
                 entry.key().track_namespace == track_namespace
                     && entry.key().track_name == track_name
             })
-            .map(|entry| entry.key().clone())
-            .min_by_key(|key| key.publisher_session_id)?;
-        let active_upstream = self.get_active_upstream_subscription(&upstream_key)?;
-        Some((upstream_key, active_upstream))
+            .min_by_key(|entry| entry.key().publisher_session_id)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
     #[tracing::instrument(
@@ -601,8 +596,8 @@ mod tests {
                     track_namespace: self.track_namespace.clone(),
                     track_name: self.track_name.clone(),
                     track_alias: self.track_alias,
-                    group_order: moqt::GroupOrder::Ascending,
-                    content_exists: moqt::ContentExists::False,
+                    group_order: GroupOrder::Ascending,
+                    content_exists: ContentExists::False,
                     subscriber_priority,
                     forward: true,
                     filter_type,
@@ -631,7 +626,7 @@ mod tests {
 
     #[test]
     fn remove_session_cleans_up_all_session_scoped_entries() {
-        // Arrange: Register namespace and track state for the session.
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
 
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);

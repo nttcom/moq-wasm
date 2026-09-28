@@ -44,7 +44,6 @@ pub(crate) fn table_with_upstream(
 
 pub(crate) struct UpstreamReleaseContext {
     pub(crate) table: InMemoryLocalPubSubDirectory,
-    pub(crate) upstream_key: UpstreamSubscriptionKey,
     pub(crate) forwarder: ControlMessageForwarder,
     pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
     pub(crate) ingress_receiver: mpsc::Receiver<IngressCommand>,
@@ -54,12 +53,11 @@ pub(crate) struct UpstreamReleaseContext {
 pub(crate) async fn upstream_release_context(
     origin: UpstreamSubscriptionOrigin,
 ) -> UpstreamReleaseContext {
-    let (table, upstream_key) = table_with_upstream(origin);
+    let (table, _) = table_with_upstream(origin);
     let (repository, recorded) = session_repository_with_upstream_session(PUBLISHER_SESSION).await;
     let (ingress_sender, ingress_receiver) = mpsc::channel(8);
     UpstreamReleaseContext {
         table,
-        upstream_key,
         forwarder: ControlMessageForwarder { repository },
         ingress_sender,
         ingress_receiver,

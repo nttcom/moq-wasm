@@ -21,12 +21,16 @@ use crate::modules::{
 
 #[derive(Clone, Default)]
 pub(crate) struct RecordedControlMessages {
-    pub(crate) unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
+    unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
 }
 
 impl RecordedControlMessages {
+    pub(crate) fn unsubscribed_request_ids(&self) -> Vec<u64> {
+        self.unsubscribed_request_ids.lock().unwrap().clone()
+    }
+
     pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
         self.closes.lock().unwrap().clone()
     }
@@ -39,12 +43,18 @@ pub(crate) struct MockUpstreamSession {
     answer_subscribe: Option<SubscribeAnswer>,
 }
 
+impl MockUpstreamSession {
+    fn new(recorded: RecordedControlMessages) -> Self {
+        Self {
+            recorded,
+            answer_subscribe: None,
+        }
+    }
+}
+
 pub(crate) fn mock_session() -> (Arc<dyn Session>, RecordedControlMessages) {
     let recorded = RecordedControlMessages::default();
-    let session: Arc<dyn Session> = Arc::new(MockUpstreamSession {
-        recorded: recorded.clone(),
-        answer_subscribe: None,
-    });
+    let session: Arc<dyn Session> = Arc::new(MockUpstreamSession::new(recorded.clone()));
     (session, recorded)
 }
 
@@ -64,10 +74,7 @@ pub(crate) fn mock_new_session(
     let recorded = RecordedControlMessages::default();
     let new_session = NewSession {
         session_id,
-        session: Box::new(MockUpstreamSession {
-            recorded: recorded.clone(),
-            answer_subscribe: None,
-        }),
+        session: Box::new(MockUpstreamSession::new(recorded.clone())),
         session_span: tracing::Span::none(),
         peer: SessionPeer::Client,
         verified_token,
@@ -83,10 +90,7 @@ pub(crate) async fn session_repository_with_upstream_session_token(
     RecordedControlMessages,
 ) {
     let recorded = RecordedControlMessages::default();
-    let session = Box::new(MockUpstreamSession {
-        recorded: recorded.clone(),
-        answer_subscribe: None,
-    });
+    let session = Box::new(MockUpstreamSession::new(recorded.clone()));
     let repository = session_repository_with_session(session_id, session, verified_token).await;
     (repository, recorded)
 }
@@ -316,6 +320,6 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 
     fn to_downstream_subscription(&self, _track_alias: u64) -> DownstreamSubscription {
-        make_subscription(moqt::FilterType::LargestObject)
+        make_subscription(FilterType::LargestObject)
     }
 }

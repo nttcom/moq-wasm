@@ -77,7 +77,7 @@ mod tests {
     use crate::modules::{
         core::mocks::runner_stopped,
         sequences::test_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
             upstream_release_context,
         },
         types::TrackKey,
@@ -111,7 +111,7 @@ mod tests {
                     .register_downstream_subscription(
                         *session_id,
                         *subscribe_id,
-                        upstream.upstream_key.clone(),
+                        upstream_key(),
                         None,
                     )
                     .unwrap()
@@ -147,11 +147,7 @@ mod tests {
         // Assert
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert_eq!(
-            *ctx.upstream
-                .recorded
-                .unsubscribed_request_ids
-                .lock()
-                .unwrap(),
+            ctx.upstream.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
         match ctx.upstream.ingress_receiver.try_recv() {
@@ -181,14 +177,7 @@ mod tests {
         // Assert
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(!runner_stopped(&mut ctx.runner_stop_receivers[1]));
-        assert!(
-            ctx.upstream
-                .recorded
-                .unsubscribed_request_ids
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(ctx.upstream.recorded.unsubscribed_request_ids().is_empty());
         assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
     }
 
@@ -202,14 +191,7 @@ mod tests {
 
         // Assert
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
-        assert!(
-            ctx.upstream
-                .recorded
-                .unsubscribed_request_ids
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(ctx.upstream.recorded.unsubscribed_request_ids().is_empty());
         assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
     }
 
@@ -223,14 +205,7 @@ mod tests {
 
         // Assert
         assert!(!runner_stopped(&mut ctx.runner_stop_receivers[0]));
-        assert!(
-            ctx.upstream
-                .recorded
-                .unsubscribed_request_ids
-                .lock()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(ctx.upstream.recorded.unsubscribed_request_ids().is_empty());
         assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
     }
 }

@@ -120,9 +120,8 @@ impl SubscribeNameSpace {
         for (track_namespace, published_track) in filtered {
             if let Some((track_name, _)) = published_track {
                 if forwarder
-                    .publish(session_id, track_namespace.clone(), track_name.clone())
+                    .publish(session_id, track_namespace.clone(), track_name)
                     .await
-                    .is_some()
                 {
                     tracing::info!(
                         "Forwarded PUBLISH '{}' to session:{}",

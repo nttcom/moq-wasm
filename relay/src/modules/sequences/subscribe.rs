@@ -522,7 +522,9 @@ mod tests {
     use crate::modules::sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
     };
-    use crate::modules::sequences::test_fixtures::{active_upstream, upstream_key};
+    use crate::modules::sequences::test_fixtures::{
+        PUBLISHER_SESSION, active_upstream, upstream_key,
+    };
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);
@@ -564,7 +566,6 @@ mod tests {
         content_exists: moqt::ContentExists,
         bursts_on_subscribe: bool,
     ) -> Option<moqt::Location> {
-        const PUBLISHER_SESSION: SessionId = 1;
         const SUBSCRIBER_SESSION: SessionId = 2;
 
         let table = InMemoryLocalPubSubDirectory::new();
