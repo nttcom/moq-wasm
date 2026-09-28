@@ -27,21 +27,6 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
-/// Return the location with the greater `(group_id, object_id)`, treating
-/// `None` as "no content" (i.e. smaller than any location).
-fn max_location(a: Option<moqt::Location>, b: Option<moqt::Location>) -> Option<moqt::Location> {
-    match (a, b) {
-        (Some(a), Some(b)) => {
-            if (a.group_id, a.object_id) >= (b.group_id, b.object_id) {
-                Some(a)
-            } else {
-                Some(b)
-            }
-        }
-        (some, None) | (None, some) => some,
-    }
-}
-
 fn cached_largest(cache_store: &TrackCacheStore, track_key: &TrackKey) -> Option<moqt::Location> {
     cache_store
         .get(track_key)
@@ -363,7 +348,7 @@ impl Subscribe {
             ContentExists::True { location } => Some(location),
             ContentExists::False => None,
         };
-        let subscribe_time_largest = max_location(upstream_largest, cache_before_subscribe);
+        let subscribe_time_largest = upstream_largest.max(cache_before_subscribe);
         Ok((upstream_key, active_upstream, subscribe_time_largest))
     }
 

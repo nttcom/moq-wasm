@@ -478,7 +478,7 @@ impl Fetch {
             group_id: start_group(largest),
             object_id: 0,
         };
-        if Self::location_is_after_largest(start_location, largest) {
+        if start_location > largest {
             return Err(FetchError::InvalidRange);
         }
         Ok(FetchTarget {
@@ -495,11 +495,6 @@ impl Fetch {
             group_id: largest.group_id,
             object_id: largest.object_id + 1,
         }
-    }
-
-    fn location_is_after_largest(location: moqt::Location, largest: moqt::Location) -> bool {
-        location.group_id > largest.group_id
-            || (location.group_id == largest.group_id && location.object_id > largest.object_id)
     }
 }
 
