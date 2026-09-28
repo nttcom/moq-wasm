@@ -1,9 +1,6 @@
 use async_trait::async_trait;
 
-use super::{
-    NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError, RelayInfo,
-    RelayRouteRegistry, RouteStatus,
-};
+use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 
 #[derive(Debug)]
 pub(crate) struct NoopRelayRouteRegistry;
@@ -13,16 +10,14 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
     async fn register_namespace_publisher(
         &self,
         _track_namespace: &str,
-        _status: RouteStatus,
-    ) -> Result<(), RegisterNamespacePublisherError> {
+    ) -> Result<(), RegisterRouteError> {
         Ok(())
     }
 
     async fn register_namespace_subscriber(
         &self,
         _track_namespace_prefix: &str,
-        _status: RouteStatus,
-    ) -> Result<(), RegisterNamespaceSubscriberError> {
+    ) -> Result<(), RegisterRouteError> {
         Ok(())
     }
 
