@@ -38,48 +38,31 @@ impl SubscribeNameSpace {
         } else {
             PeerKind::Relay
         };
-        let (track_namespace_prefix, is_first_client) =
-            self.register(session_id, table, peer_kind, handler).await;
-        if is_first_client
-            && !self
-                .register_route(route_registry, &track_namespace_prefix, handler)
-                .await
-        {
-            table.unregister_subscribe_namespace(session_id, &track_namespace_prefix);
-            return;
-        }
-        self.broadcast_to_subscribers(session_id, &track_namespace_prefix, forwarder, table)
-            .await;
-        self.notify_remote_publish_namespaces(
-            session_id,
-            &track_namespace_prefix,
-            forwarder,
-            route_registry,
-        )
-        .await;
-        self.response(handler).await;
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_namespace.register",
-        skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %handler.track_namespace_prefix())
-    )]
-    async fn register(
-        &self,
-        session_id: SessionId,
-        table: &InMemoryLocalPubSubDirectory,
-        peer_kind: PeerKind,
-        handler: &dyn SubscribeNamespaceHandler,
-    ) -> (String, bool) {
-        let track_namespace_prefix = handler.track_namespace_prefix();
         let is_first_client = table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),
             peer_kind,
         );
-        (track_namespace_prefix.to_string(), is_first_client)
+        if is_first_client
+            && !self
+                .register_route(route_registry, track_namespace_prefix, handler)
+                .await
+        {
+            table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
+            return;
+        }
+        self.broadcast_to_subscribers(session_id, track_namespace_prefix, forwarder, table)
+            .await;
+        self.notify_remote_publish_namespaces(
+            session_id,
+            track_namespace_prefix,
+            forwarder,
+            route_registry,
+        )
+        .await;
+        if let Err(e) = handler.ok().await {
+            tracing::error!("Subscribe Namespace Error: {:?}", e);
+        }
     }
 
     #[tracing::instrument(
@@ -212,20 +195,6 @@ impl SubscribeNameSpace {
                     track_namespace = %route.track_namespace,
                     "failed to forward remote PUBLISH_NAMESPACE"
                 );
-            }
-        }
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_namespace.response",
-        skip_all
-    )]
-    async fn response(&self, handler: &dyn SubscribeNamespaceHandler) {
-        match handler.ok().await {
-            Ok(_) => (),
-            Err(e) => {
-                tracing::error!("Subscribe Namespace Error: {:?}", e);
             }
         }
     }

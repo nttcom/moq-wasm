@@ -59,7 +59,8 @@ impl PublishNamespace {
         };
         table.register_publish_namespace(session_id, track_namespace.to_string(), peer_kind);
 
-        if !self.response(handler).await {
+        if let Err(e) = handler.ok().await {
+            tracing::error!("Publish Namespace Error: {:?}", e);
             return;
         }
 
@@ -108,21 +109,6 @@ impl PublishNamespace {
                 )
             } else {
                 tracing::warn!("Failed to send publish namespace: {}", session_id);
-            }
-        }
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.publish_namespace.response",
-        skip_all
-    )]
-    async fn response(&self, handler: &dyn PublishNamespaceHandler) -> bool {
-        match handler.ok().await {
-            Ok(_) => true,
-            Err(e) => {
-                tracing::error!("Publish Namespace Error: {:?}", e);
-                false
             }
         }
     }
