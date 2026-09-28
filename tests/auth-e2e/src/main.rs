@@ -31,10 +31,10 @@ const DEFAULT_RELAY_B_URL: &str = "moqt://127.0.0.1:4434";
 const TEST_PAYLOAD: &[u8] = b"auth e2e payload";
 const UNAUTHORIZED: u64 = 0x1;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const EXPIRY_TIMEOUT: Duration = Duration::from_secs(90);
-/// scripts/auth-e2e.sh mints the short token with `--ttl 30s`; probing after
+const EXPIRY_TIMEOUT: Duration = Duration::from_secs(60);
+/// scripts/auth-e2e.sh mints the short token with `--ttl 15s`; probing after
 /// this delay only succeeds if the refresh moved the session's expiry.
-const REFRESH_PROBE_DELAY: Duration = Duration::from_secs(40);
+const REFRESH_PROBE_DELAY: Duration = Duration::from_secs(20);
 const REFRESH_TRACK_NAME: &str = "update_auth_token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
