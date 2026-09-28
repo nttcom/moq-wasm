@@ -20,6 +20,10 @@ const CAPACITY: usize = 30 * SAMPLES_PER_SECOND;
 /// many slots free for them.
 const CONFIG_HEADROOM: usize = 8;
 const DROP_LOG_INTERVAL: u64 = 500;
+/// Queued samples are delivered late by however long they sit here; a backlog
+/// this deep is worth attention well before anything is dropped.
+const BACKLOG_WARN_DEPTH: usize = 3 * SAMPLES_PER_SECOND;
+const BACKLOG_CLEARED_DEPTH: usize = BACKLOG_WARN_DEPTH / 2;
 
 /// Hands media to the publish task without ever waiting for the relay. When
 /// the queue is full, samples are dropped, and video stays dropped until a
@@ -30,6 +34,7 @@ pub(crate) struct PublishQueue {
     event_sender: mpsc::Sender<MediaEvent>,
     failure_receiver: oneshot::Receiver<anyhow::Error>,
     awaiting_keyframe: bool,
+    backlog_reported: bool,
     dropped: DroppedSamples,
 }
 
@@ -60,6 +65,7 @@ impl PublishQueue {
                 event_sender,
                 failure_receiver,
                 awaiting_keyframe: false,
+                backlog_reported: false,
                 dropped: DroppedSamples::default(),
             },
             QueueConsumer {
@@ -70,6 +76,7 @@ impl PublishQueue {
     }
 
     pub(crate) fn push(&mut self, event: MediaEvent) -> Result<()> {
+        self.report_backlog();
         let has_room = self.event_sender.capacity() > CONFIG_HEADROOM;
         match &event {
             MediaEvent::Video(sample)
@@ -99,6 +106,22 @@ impl PublishQueue {
                 bail!("publish queue full: the relay is not keeping up")
             }
             Err(TrySendError::Closed(_)) => Err(self.failure()),
+        }
+    }
+
+    fn report_backlog(&mut self) {
+        let queued = CAPACITY - self.event_sender.capacity();
+        if !self.backlog_reported && queued >= BACKLOG_WARN_DEPTH {
+            self.backlog_reported = true;
+            tracing::warn!(
+                queued,
+                capacity = CAPACITY,
+                transport = ?self.moqt.transport_stats(),
+                "publish queue backlog: the relay is not keeping up, media is delivered late"
+            );
+        } else if self.backlog_reported && queued <= BACKLOG_CLEARED_DEPTH {
+            self.backlog_reported = false;
+            tracing::info!(queued, "publish queue backlog drained");
         }
     }
 
@@ -189,6 +212,42 @@ mod tests {
             events.push(event);
         }
         events
+    }
+
+    #[test]
+    fn reports_a_backlog_once_it_reaches_the_warn_depth() {
+        // Arrange
+        let (mut queue, _consumer) = PublishQueue::open(MoqtManager::new(None));
+        for _ in 0..BACKLOG_WARN_DEPTH {
+            queue.push(audio()).unwrap();
+        }
+        assert!(!queue.backlog_reported);
+
+        // Act
+        queue.push(audio()).unwrap();
+
+        // Assert
+        assert!(queue.backlog_reported);
+    }
+
+    #[test]
+    fn clears_the_backlog_report_only_after_the_queue_drains_below_half_the_warn_depth() {
+        // Arrange
+        let (mut queue, mut consumer) = PublishQueue::open(MoqtManager::new(None));
+        for _ in 0..=BACKLOG_WARN_DEPTH {
+            queue.push(audio()).unwrap();
+        }
+        assert!(queue.backlog_reported);
+
+        // Act / Assert: draining to just above the cleared depth keeps the report
+        free_slots(&mut consumer, BACKLOG_WARN_DEPTH - BACKLOG_CLEARED_DEPTH);
+        queue.push(audio()).unwrap();
+        assert!(queue.backlog_reported);
+
+        // Act / Assert: draining to the cleared depth clears it
+        free_slots(&mut consumer, 2);
+        queue.push(audio()).unwrap();
+        assert!(!queue.backlog_reported);
     }
 
     #[test]
