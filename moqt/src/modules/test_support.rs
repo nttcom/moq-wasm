@@ -8,11 +8,13 @@ use crate::{
     SessionEvent, Subscription, TrackReader,
     modules::moqt::{
         data_plane::object::{datagram_field::DatagramField, object_datagram::ObjectDatagram},
+        domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_PENDING_OBJECTS: usize = 256;
 
 pub(crate) fn free_udp_port() -> u16 {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -85,6 +87,13 @@ pub(crate) async fn connect_sessions(
     Ok((client, server))
 }
 
+pub(crate) async fn connected_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
+    let (port, accept) = spawn_dual_server(name);
+    connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+        .await
+        .unwrap()
+}
+
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session<DUAL>) -> Subscription {
@@ -123,4 +132,17 @@ pub(crate) fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
             payload: Bytes::from_static(b"object"),
         },
     ))
+}
+
+pub(crate) async fn notify_datagram(
+    context: &SessionContext<DUAL>,
+    track_alias: u64,
+) -> IncomingObjectNotification {
+    context
+        .notify_incoming_object(
+            track_alias,
+            datagram_object(track_alias),
+            MAX_PENDING_OBJECTS,
+        )
+        .await
 }
