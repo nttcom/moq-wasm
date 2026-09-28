@@ -258,245 +258,134 @@ impl ReceivedHeader {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-    use std::sync::Arc;
-    use std::time::Duration;
-
     use bytes::Bytes;
     use moqt::{ObjectStatus, SubgroupId};
-    use tokio::sync::{oneshot, watch};
 
     use super::*;
-    use crate::modules::relay::tests::harness::fixtures::{
-        cached_object::stream_key,
-        data_object::{
-            make_header, make_header_with, make_payload_object, make_raw_status_object,
-            make_status_object,
+    use crate::modules::{
+        relay::{
+            tests::harness::{
+                PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
+                fixtures::{
+                    cached_object::stream_key,
+                    data_object::{
+                        make_header, make_header_with, make_payload_object, make_raw_status_object,
+                        make_status_object,
+                    },
+                    location,
+                },
+            },
+            types::SubgroupKey,
         },
+        session_event::EventKind,
     };
-    use crate::modules::relay::{
-        cache::{store::TrackCacheStore, track_cache::NextObject},
-        types::SubgroupKey,
-    };
-
-    // How the scripted stream ends once all objects were consumed.
-    enum TerminalOutcome {
-        Fin,
-        TransportClosed,
-        DecodeFailed,
-        Hang,
-    }
-
-    struct ScriptedStreamReceiver {
-        objects: VecDeque<DataObject>,
-        // Fired once all scripted objects were consumed; lets tests order a
-        // stop signal after ingestion without racing the read loop.
-        exhausted_sender: Option<oneshot::Sender<()>>,
-        terminal: TerminalOutcome,
-    }
-
-    #[async_trait::async_trait]
-    impl StreamReceiver for ScriptedStreamReceiver {
-        async fn receive_object(&mut self) -> Result<Option<DataObject>, moqt::StreamReceiveError> {
-            if let Some(object) = self.objects.pop_front() {
-                return Ok(Some(object));
-            }
-            if let Some(sender) = self.exhausted_sender.take() {
-                let _ = sender.send(());
-            }
-            match self.terminal {
-                TerminalOutcome::Fin => Ok(None),
-                TerminalOutcome::TransportClosed => Err(moqt::StreamReceiveError::Closed(
-                    "stream reset by peer".to_string(),
-                )),
-                TerminalOutcome::DecodeFailed => Err(moqt::StreamReceiveError::Decode(
-                    "malformed object field".to_string(),
-                )),
-                TerminalOutcome::Hang => {
-                    std::future::pending::<()>().await;
-                    unreachable!()
-                }
-            }
-        }
-    }
 
     fn payload(object_id_delta: u64) -> DataObject {
         make_payload_object(object_id_delta, Bytes::from_static(b"payload"))
     }
 
-    const PUBLISHER_SESSION: SessionId = 1;
-
-    struct TestEnv {
-        track_key: TrackKey,
-        cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
-        session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
-        subgroup_opened_receiver: tokio::sync::broadcast::Receiver<SubgroupKey>,
-        stop_sender: watch::Sender<bool>,
-        stop_receiver: watch::Receiver<bool>,
-    }
-
-    impl TestEnv {
-        fn new() -> Self {
-            let track_key = TrackKey::new("ns", "track");
-            let cache_store = Arc::new(TrackCacheStore::new());
-            let subgroup_opened_receiver = cache_store
-                .get_or_create(&track_key)
-                .subscribe_subgroup_opened();
-            let (stop_sender, stop_receiver) = watch::channel(false);
-            let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
-            TestEnv {
-                track_key,
-                cache_store,
-                session_event_sender,
-                session_event_receiver,
-                subgroup_opened_receiver,
-                stop_sender,
-                stop_receiver,
-            }
-        }
-
-        fn read_loop(
-            &self,
-            receiver: ScriptedStreamReceiver,
-        ) -> impl Future<Output = ()> + Send + 'static {
-            read_stream(
-                TrackIngest {
-                    track_key: self.track_key.clone(),
-                    publisher_session_id: PUBLISHER_SESSION,
-                    cache: self.cache(),
-                    session_event_sender: self.session_event_sender.clone(),
-                    stop_receiver: self.stop_receiver.clone(),
-                },
-                Box::new(receiver),
-            )
-        }
-
-        fn cache(&self) -> Arc<TrackCache> {
-            self.cache_store.get_or_create(&self.track_key)
-        }
-
-        async fn cached_object_ids(&self, key: SubgroupKey) -> Vec<(u64, ObjectStatus)> {
-            let cache = self.cache();
-            let mut objects = Vec::new();
-            let mut cursor = 0;
-            while let NextObject::Object(object) = cache
-                .next_subgroup_object_or_wait(key, cursor)
-                .await
-                .unwrap()
-            {
-                objects.push((object.location.object_id, object.status));
-                cursor = object.location.object_id + 1;
-            }
-            objects
-        }
-
-        async fn subgroup_end_after(&self, key: SubgroupKey, last_object_id: u64) -> NextObject {
-            let cache = self.cache();
-            tokio::time::timeout(
-                Duration::from_secs(1),
-                cache.next_subgroup_object_or_wait(key, last_object_id + 1),
-            )
-            .await
-            .expect("subgroup should be closed, not waiting for more objects")
-            .unwrap()
-        }
-    }
-
-    fn scripted(objects: Vec<DataObject>, terminal: TerminalOutcome) -> ScriptedStreamReceiver {
-        ScriptedStreamReceiver {
-            objects: VecDeque::from(objects),
-            exhausted_sender: None,
-            terminal,
+    fn send_all(upstream_stream: &UpstreamSubgroupStream, objects: Vec<DataObject>) {
+        for object in objects {
+            upstream_stream.send(object);
         }
     }
 
     #[tokio::test]
     async fn end_of_group_status_closes_subgroup_and_notifies() {
         // Arrange
-        let mut env = TestEnv::new();
-        let receiver = scripted(
+        let harness = RelayHarness::new();
+        let mut subgroup_opened_receiver = harness.subscribe_subgroup_opened();
+        let mut upstream_stream = harness.open_upstream_stream();
+        // Act
+        send_all(
+            &upstream_stream,
             vec![
                 make_header(0),
                 payload(0),
                 make_status_object(0, ObjectStatus::EndOfGroup),
             ],
-            TerminalOutcome::Fin,
         );
-        // Act
-        env.read_loop(receiver).await;
+        upstream_stream.wait_reader_end().await;
         // Assert
-        assert_eq!(env.subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
+        assert_eq!(subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
         assert_eq!(
-            env.cached_object_ids(stream_key(0)).await,
+            harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal), (1, ObjectStatus::EndOfGroup)]
         );
-        assert!(env.subgroup_end_after(stream_key(0), 1).await.is_finished());
+        assert!(
+            harness
+                .subgroup_end_after(stream_key(0), 1)
+                .await
+                .is_finished()
+        );
     }
 
-    async fn assert_open_subgroup_ends_on(terminal: TerminalOutcome, finished: bool) {
+    async fn assert_open_subgroup_ends_on(
+        terminate: impl FnOnce(&UpstreamSubgroupStream),
+        finished: bool,
+    ) {
         // Arrange
-        let mut env = TestEnv::new();
-        let receiver = scripted(vec![make_header(0), payload(0)], terminal);
+        let harness = RelayHarness::new();
+        let mut subgroup_opened_receiver = harness.subscribe_subgroup_opened();
+        let mut upstream_stream = harness.open_upstream_stream();
+        send_all(&upstream_stream, vec![make_header(0), payload(0)]);
         // Act
-        env.read_loop(receiver).await;
+        terminate(&upstream_stream);
+        upstream_stream.wait_reader_end().await;
         // Assert
-        assert_eq!(env.subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
-        let end = env.subgroup_end_after(stream_key(0), 0).await;
+        assert_eq!(subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
+        let end = harness.subgroup_end_after(stream_key(0), 0).await;
         assert_eq!(end.is_finished(), finished, "unexpected end: {end:?}");
     }
 
     #[tokio::test]
     async fn fin_finishes_the_open_subgroup() {
-        assert_open_subgroup_ends_on(TerminalOutcome::Fin, true).await;
+        assert_open_subgroup_ends_on(UpstreamSubgroupStream::fin, true).await;
     }
 
     #[tokio::test]
     async fn transport_close_aborts_the_open_subgroup() {
-        assert_open_subgroup_ends_on(TerminalOutcome::TransportClosed, false).await;
+        assert_open_subgroup_ends_on(UpstreamSubgroupStream::reset, false).await;
     }
 
     #[tokio::test]
     async fn decode_failure_aborts_the_open_subgroup() {
-        assert_open_subgroup_ends_on(TerminalOutcome::DecodeFailed, false).await;
+        assert_open_subgroup_ends_on(UpstreamSubgroupStream::decode_error, false).await;
     }
 
     #[tokio::test]
     async fn stop_signal_closes_open_subgroup() {
-        // Arrange: the stream hangs after two objects
-        let env = TestEnv::new();
-        let (exhausted_sender, exhausted_receiver) = oneshot::channel();
-        let receiver = ScriptedStreamReceiver {
-            objects: VecDeque::from([make_header(0), payload(0)]),
-            exhausted_sender: Some(exhausted_sender),
-            terminal: TerminalOutcome::Hang,
-        };
-        let read_task = tokio::spawn(env.read_loop(receiver));
-        exhausted_receiver
-            .await
-            .expect("reader should consume all scripted objects");
+        // Arrange: the stream stays open after two objects
+        let harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
+        send_all(&upstream_stream, vec![make_header(0), payload(0)]);
+        harness.wait_largest_location(location(0, 0)).await;
         // Act
-        env.stop_sender.send(true).expect("stop signal should send");
-        tokio::time::timeout(Duration::from_secs(1), read_task)
-            .await
-            .expect("read loop should stop on signal")
-            .expect("read loop should not panic");
+        harness.stop_ingest();
+        upstream_stream.wait_reader_end().await;
         // Assert: a stopped reader cannot vouch for the subgroup's tail
-        assert!(env.subgroup_end_after(stream_key(0), 0).await.is_aborted());
+        assert!(
+            harness
+                .subgroup_end_after(stream_key(0), 0)
+                .await
+                .is_aborted()
+        );
     }
 
     #[tokio::test]
     async fn resolves_absolute_object_ids_from_deltas() {
         // Arrange: deltas 0, 0, 1 resolve to absolute ids 0, 1, 3
-        let env = TestEnv::new();
-        let receiver = scripted(
-            vec![make_header(0), payload(0), payload(0), payload(1)],
-            TerminalOutcome::Fin,
-        );
+        let harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
         // Act
-        env.read_loop(receiver).await;
+        send_all(
+            &upstream_stream,
+            vec![make_header(0), payload(0), payload(0), payload(1)],
+        );
+        upstream_stream.fin();
+        upstream_stream.wait_reader_end().await;
         // Assert
-        let ids: Vec<u64> = env
+        let ids: Vec<u64> = harness
             .cached_object_ids(stream_key(0))
             .await
             .into_iter()
@@ -508,20 +397,22 @@ mod tests {
     #[tokio::test]
     async fn end_of_group_header_type_synthesizes_status_object_on_fin() {
         // Arrange: Type 0x18 header (last object before FIN ends the group)
-        let env = TestEnv::new();
-        let receiver = scripted(
+        let harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
+        // Act
+        send_all(
+            &upstream_stream,
             vec![
                 make_header_with(0, SubgroupId::None, true),
                 payload(0),
                 payload(0),
             ],
-            TerminalOutcome::Fin,
         );
-        // Act
-        env.read_loop(receiver).await;
+        upstream_stream.fin();
+        upstream_stream.wait_reader_end().await;
         // Assert: the End of Group becomes canonical data at last_id + 1
         assert_eq!(
-            env.cached_object_ids(stream_key(0)).await,
+            harness.cached_object_ids(stream_key(0)).await,
             vec![
                 (0, ObjectStatus::Normal),
                 (1, ObjectStatus::Normal),
@@ -534,69 +425,64 @@ mod tests {
     async fn conflicting_synthesized_end_of_group_reports_the_malformed_track() {
         // Arrange: subgroup 0 already holds a Normal object 1; a Type 0x1C stream
         // for subgroup 1 ends after object 0, so its End of Group lands on id 1
-        let mut env = TestEnv::new();
-        env.read_loop(scripted(
-            vec![make_header(0), payload(0), payload(0)],
-            TerminalOutcome::Fin,
-        ))
-        .await;
+        let mut harness = RelayHarness::new();
+        let mut first_stream = harness.open_upstream_stream();
+        send_all(&first_stream, vec![make_header(0), payload(0), payload(0)]);
+        first_stream.fin();
+        first_stream.wait_reader_end().await;
+        let mut second_stream = harness.open_upstream_stream();
         // Act
-        env.read_loop(scripted(
+        send_all(
+            &second_stream,
             vec![make_header_with(0, SubgroupId::Value(1), true), payload(0)],
-            TerminalOutcome::Fin,
-        ))
-        .await;
+        );
+        second_stream.fin();
+        second_stream.wait_reader_end().await;
         // Assert
-        assert!(env.cache().is_malformed());
-        let event = env
-            .session_event_receiver
-            .try_recv()
-            .expect("the latching insert must report the detection");
-        assert!(matches!(
-            event.kind,
-            crate::modules::session_event::EventKind::MalformedTrackDetected(_)
-        ));
+        harness.wait_track_malformed().await;
+        let event = harness.expect_session_event().await;
+        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
     }
 
     #[tokio::test]
     async fn unknown_object_status_terminates_the_publisher_session() {
         // Arrange: status code 0x2 is not defined by draft-14 §10.2.1.1
-        let mut env = TestEnv::new();
-        let receiver = scripted(
-            vec![make_header(0), payload(0), make_raw_status_object(0, 0x2)],
-            TerminalOutcome::Fin,
-        );
+        let mut harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
         // Act
-        env.read_loop(receiver).await;
+        send_all(
+            &upstream_stream,
+            vec![make_header(0), payload(0), make_raw_status_object(0, 0x2)],
+        );
+        upstream_stream.wait_reader_end().await;
         // Assert: the object is not cached and the session is reported for termination
         assert_eq!(
-            env.cached_object_ids(stream_key(0)).await,
+            harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal)]
         );
-        let event = env
-            .session_event_receiver
-            .try_recv()
-            .expect("the reader must report the protocol violation");
-        assert_eq!(event.session_id, PUBLISHER_SESSION);
+        let event = harness.expect_session_event().await;
+        assert_eq!(event.session_id, PUBLISHER_SESSION_ID);
         assert!(matches!(
             event.kind,
-            crate::modules::session_event::EventKind::ProtocolViolationDetected { .. }
+            EventKind::ProtocolViolationDetected { .. }
         ));
     }
 
     #[tokio::test]
     async fn end_of_group_header_type_does_not_synthesize_on_reset() {
         // Arrange: a reset stream cannot tell where the group ended (§10.4.2)
-        let env = TestEnv::new();
-        let receiver = scripted(
-            vec![make_header_with(0, SubgroupId::None, true), payload(0)],
-            TerminalOutcome::TransportClosed,
-        );
+        let harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
         // Act
-        env.read_loop(receiver).await;
+        send_all(
+            &upstream_stream,
+            vec![make_header_with(0, SubgroupId::None, true), payload(0)],
+        );
+        upstream_stream.reset();
+        upstream_stream.wait_reader_end().await;
         // Assert
         assert_eq!(
-            env.cached_object_ids(stream_key(0)).await,
+            harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal)]
         );
     }
@@ -604,24 +490,27 @@ mod tests {
     #[tokio::test]
     async fn first_object_id_delta_header_takes_subgroup_id_from_first_object() {
         // Arrange: Type 0x12 header; the first object arrives with id 5
-        let mut env = TestEnv::new();
-        let receiver = scripted(
+        let harness = RelayHarness::new();
+        let mut subgroup_opened_receiver = harness.subscribe_subgroup_opened();
+        let mut upstream_stream = harness.open_upstream_stream();
+        // Act
+        send_all(
+            &upstream_stream,
             vec![
                 make_header_with(0, SubgroupId::FirstObjectIdDelta, false),
                 payload(5),
                 payload(0),
             ],
-            TerminalOutcome::Fin,
         );
-        // Act
-        env.read_loop(receiver).await;
+        upstream_stream.fin();
+        upstream_stream.wait_reader_end().await;
         // Assert: the subgroup is opened, and announced, only once its id is known
         let key = SubgroupKey::Stream {
             group_id: 0,
             subgroup_id: 5,
         };
-        assert_eq!(env.subgroup_opened_receiver.try_recv(), Ok(key));
-        let ids: Vec<u64> = env
+        assert_eq!(subgroup_opened_receiver.try_recv(), Ok(key));
+        let ids: Vec<u64> = harness
             .cached_object_ids(key)
             .await
             .into_iter()

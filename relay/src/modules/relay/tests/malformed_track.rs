@@ -112,7 +112,7 @@ async fn detection_reports_the_publisher_session_and_track() {
     second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
 
     // Assert: the appender reports the detection for upstream teardown.
-    let event = harness.expect_malformed_track_detected().await;
+    let event = harness.expect_session_event().await;
     assert_eq!(event.session_id, PUBLISHER_SESSION_ID);
     assert!(matches!(
         event.kind,
