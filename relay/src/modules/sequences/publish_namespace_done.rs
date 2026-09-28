@@ -4,7 +4,7 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
+    sequences::{CascadingRelayContext, tables::hashmap_table::InMemoryLocalPubSubDirectory},
     types::SessionId,
 };
 use tracing::Span;
@@ -23,7 +23,7 @@ impl PublishNamespaceDone {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &moqt::PublishNamespaceDoneHandler,
@@ -59,7 +59,7 @@ impl PublishNamespaceDone {
     pub(crate) async fn notify_local_subscribers(
         publisher_session_id: SessionId,
         track_namespace: &str,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
     ) {
         for subscriber_session_id in table.get_namespace_subscribers(track_namespace) {

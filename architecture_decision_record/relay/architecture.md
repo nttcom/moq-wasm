@@ -178,11 +178,10 @@ Each sequence owns the relay-side protocol logic for one message
 - `ControlMessageForwarder` — sends control messages on *other* sessions via
   the repository (e.g. forwarding SUBSCRIBE upstream, PUBLISH_NAMESPACE to
   interested subscribers).
-- `LocalPubSubDirectory` (trait; `InMemoryLocalPubSubDirectory` impl in
-  `tables/`) — the relay's in-memory registry of publish/subscribe namespaces
-  (with `PeerKind` so client-owned Redis routes are cleaned up when the last
-  *client* leaves), active upstream subscriptions, and downstream
-  subscriptions. `remove_session` returns everything cleanup needs.
+- `InMemoryLocalPubSubDirectory` (in `tables/`) — the relay's in-memory
+  registry of publish/subscribe namespaces (with `PeerKind` so client-owned
+  Redis routes are cleaned up when the last *client* leaves), active upstream
+  subscriptions, and downstream subscriptions. `remove_session` returns everything cleanup needs.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
   guard removes the track's entry on release unless a waiter still holds the
   mutex, so the map only holds tracks whose upstream creation is in progress.

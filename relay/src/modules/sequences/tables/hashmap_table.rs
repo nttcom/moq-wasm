@@ -6,7 +6,7 @@ use tokio::sync::{RwLock, oneshot};
 use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
-        ActiveUpstreamSubscription, DownstreamSubscription, LocalPubSubDirectory, PeerKind,
+        ActiveUpstreamSubscription, DownstreamSubscription, PeerKind,
         RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
         UpstreamSubscriptionOrigin,
     },
@@ -38,9 +38,8 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
         DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
 }
 
-#[async_trait::async_trait]
-impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
-    fn new() -> Self {
+impl InMemoryLocalPubSubDirectory {
+    pub(crate) fn new() -> Self {
         Self {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
@@ -51,13 +50,28 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         }
     }
 
+    /// Returns true when no client publisher remains for the namespace,
+    /// i.e. the caller may clean up the Redis route.
+    /// Returns true when this registration adds the first client subscriber
+    /// for the prefix, i.e. the caller should register the Redis route.
+    /// Drops relay-origin publisher namespaces under the prefix once no
+    /// client subscriber covers them anymore. Relay-learned namespaces are
+    /// only withdrawn by a best-effort PUBLISH_NAMESPACE_DONE, which can be
+    /// missed when the remote publisher and the local subscriber leave at the
+    /// same time; purging here lets the next subscriber re-learn them from
+    /// the route registry instead of a stale local copy.
+    /// Returns true when no client subscriber remains for the prefix,
+    /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.remove_session",
         skip_all,
         fields(session_id = %session_id)
     )]
-    async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions {
+    pub(crate) async fn remove_session(
+        &self,
+        session_id: SessionId,
+    ) -> RemovedSessionSubscriptions {
         let mut removed = RemovedSessionSubscriptions::default();
 
         let mut empty_namespaces = Vec::new();
@@ -188,7 +202,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, peer_kind = ?peer_kind)
     )]
-    fn register_publish_namespace(
+    pub(crate) fn register_publish_namespace(
         &self,
         session_id: SessionId,
         track_namespace: String,
@@ -210,7 +224,11 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
-    fn unregister_publish_namespace(&self, session_id: SessionId, track_namespace: &str) -> bool {
+    pub(crate) fn unregister_publish_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace: &str,
+    ) -> bool {
         let Some(sessions) = self.publisher_namespaces.get(track_namespace) else {
             return true;
         };
@@ -235,7 +253,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    fn purge_relay_publish_namespaces(&self, track_namespace_prefix: &str) {
+    pub(crate) fn purge_relay_publish_namespaces(&self, track_namespace_prefix: &str) {
         let mut empty_namespaces = Vec::new();
         for entry in self.publisher_namespaces.iter() {
             if !entry.key().starts_with(track_namespace_prefix) {
@@ -282,7 +300,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, peer_kind = ?peer_kind)
     )]
-    fn register_subscribe_namespace(
+    pub(crate) fn register_subscribe_namespace(
         &self,
         session_id: SessionId,
         track_namespace_prefix: String,
@@ -314,7 +332,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
-    fn unregister_subscribe_namespace(
+    pub(crate) fn unregister_subscribe_namespace(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
@@ -343,7 +361,11 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id)
     )]
-    async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
+    pub(crate) async fn register_publish(
+        &self,
+        session_id: SessionId,
+        handler: Arc<dyn PublishHandler>,
+    ) {
         self.published_handlers
             .write()
             .await
@@ -356,7 +378,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace)
     )]
-    fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
+    pub(crate) fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
         let combined = DashSet::new();
         self.subscriber_namespaces
             .iter()
@@ -377,7 +399,8 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    async fn get_subscribers(
+    #[allow(clippy::type_complexity)]
+    pub(crate) async fn get_subscribers(
         &self,
         track_namespace_prefix: &str,
     ) -> DashSet<(String, (Option<String>, Option<u64>))> {
@@ -411,7 +434,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    fn find_active_upstream_subscriptions(
+    pub(crate) fn find_active_upstream_subscriptions(
         &self,
         track_namespace: &str,
         track_name: &str,
@@ -432,7 +455,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    async fn find_upstream_publishers(
+    pub(crate) async fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
@@ -473,7 +496,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             subscriber_track_alias = %subscriber_track_alias
         )
     )]
-    fn register_track_alias_link(
+    pub(crate) fn register_track_alias_link(
         &self,
         publisher_session_id: SessionId,
         publisher_track_alias: u64,
@@ -500,7 +523,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             subscriber_session_id = %subscriber_session_id
         )
     )]
-    fn _find_subscriber_track_alias(
+    pub(crate) fn _find_subscriber_track_alias(
         &self,
         publisher_session_id: SessionId,
         publisher_track_alias: u64,
@@ -515,7 +538,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|value| *value)
     }
 
-    fn get_active_upstream_subscription(
+    pub(crate) fn get_active_upstream_subscription(
         &self,
         publisher_session_id: SessionId,
         track_namespace: &str,
@@ -530,7 +553,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|entry| entry.value().clone())
     }
 
-    fn get_downstream_subscription(
+    /// Resolves the upstream subscription key linked to a downstream
+    /// subscription identified by its Request ID, scoped to the given session.
+    /// Used by Joining Fetch to find the subscription it joins.
+    pub(crate) fn get_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
@@ -540,7 +566,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|entry| entry.value().subscription.clone())
     }
 
-    fn register_upstream_subscription(
+    pub(crate) fn register_upstream_subscription(
         &self,
         key: UpstreamSubscriptionKey,
         subscription: ActiveUpstreamSubscription,
@@ -548,7 +574,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         self.active_upstream_subscriptions.insert(key, subscription);
     }
 
-    fn remove_upstream_subscription(
+    pub(crate) fn remove_upstream_subscription(
         &self,
         key: &UpstreamSubscriptionKey,
     ) -> Option<ActiveUpstreamSubscription> {
@@ -557,7 +583,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|(_, subscription)| subscription)
     }
 
-    fn register_downstream_subscription(
+    /// Returns `None` when the upstream subscription is gone. The returned
+    /// receiver resolves once the registration is removed, however that happens; the
+    /// subscription's egress runner lives exactly until then.
+    pub(crate) fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
@@ -583,7 +612,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         Some(runner_stop_receiver)
     }
 
-    fn remove_downstream_subscription(
+    pub(crate) fn remove_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,

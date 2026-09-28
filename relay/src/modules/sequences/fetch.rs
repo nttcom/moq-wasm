@@ -15,7 +15,7 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
-    sequences::tables::table::LocalPubSubDirectory,
+    sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
@@ -116,7 +116,7 @@ impl Fetch {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         cache_store: &Arc<TrackCacheStore>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         session_event_sender: &tokio::sync::mpsc::UnboundedSender<SessionEvent>,
@@ -254,7 +254,7 @@ impl Fetch {
     /// Create upstream FETCH relay state before FETCH_OK is sent downstream.
     async fn create_upstream_fetch(
         &self,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         handler: &dyn FetchHandler,
@@ -368,7 +368,7 @@ impl Fetch {
         &self,
         session_id: SessionId,
         fetch_params: FetchParams,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
     ) -> Result<FetchTarget, FetchError> {
         match fetch_params {
             FetchParams::Standalone {
@@ -418,7 +418,7 @@ impl Fetch {
         session_id: SessionId,
         joining_request_id: u64,
         joining_start: u64,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
     ) -> Result<FetchTarget, FetchError> {
         let joined_target = self
             .resolve_joined_subscription(session_id, joining_request_id, table)
@@ -441,7 +441,7 @@ impl Fetch {
         session_id: SessionId,
         joining_request_id: u64,
         joining_start: u64,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
     ) -> Result<FetchTarget, FetchError> {
         let joined_target = self
             .resolve_joined_subscription(session_id, joining_request_id, table)
@@ -517,7 +517,7 @@ impl Fetch {
         &self,
         session_id: SessionId,
         joining_request_id: u64,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
     ) -> Result<JoinedSubscriptionTarget, FetchError> {
         // TODO: validate the joined Subscribe has Filter Type Largest Object;
         // otherwise close the session with PROTOCOL_VIOLATION (§9.16.2).
@@ -638,7 +638,7 @@ mod tests {
     async fn resolve_target_and_source(
         session_id: SessionId,
         fetch_params: FetchParams,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Result<(FetchTarget, FetchSource), FetchError> {
         let target = Fetch

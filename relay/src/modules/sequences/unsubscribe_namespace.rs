@@ -4,7 +4,7 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     inter_relay::InterRelayConnectionManager,
     route_registry::{RelayInfo, RelayRouteRegistry},
-    sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
+    sequences::{CascadingRelayContext, tables::hashmap_table::InMemoryLocalPubSubDirectory},
     types::SessionId,
 };
 use tracing::Span;
@@ -23,7 +23,7 @@ impl UnsubscribeNamespace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &moqt::UnsubscribeNamespaceHandler,
@@ -62,7 +62,7 @@ impl UnsubscribeNamespace {
     )]
     pub(crate) async fn cleanup_empty_namespace_subscription(
         track_namespace_prefix: &str,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
