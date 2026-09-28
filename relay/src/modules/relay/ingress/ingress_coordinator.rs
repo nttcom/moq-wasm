@@ -19,8 +19,7 @@ use crate::modules::{
 pub(crate) struct IngressStartRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) publisher_session_id: SessionId,
-    pub(crate) track_namespace: String,
-    pub(crate) track_name: String,
+    pub(crate) track_key: TrackKey,
     pub(crate) subscription: UpstreamSubscription,
     pub(crate) parent_span: Span,
 }
@@ -59,17 +58,14 @@ impl IngressCoordinator {
                     Some(command) = command_receiver.recv() => {
                         match command {
                         IngressCommand::Start(command) => {
-                        let track_key = TrackKey::new(
-                            &command.track_namespace,
-                            &command.track_name,
-                        );
+                        let track_key = command.track_key.clone();
                         tracing::info!(
                             track_key = %track_key,
                             subscriber_session_id = %command.subscriber_session_id,
                             publisher_session_id = %command.publisher_session_id,
                             track_alias = command.subscription.track_alias(),
-                            track_namespace = %command.track_namespace,
-                            track_name = %command.track_name,
+                            track_namespace = %track_key.track_namespace,
+                            track_name = %track_key.track_name,
                             "ingress start command received"
                         );
                         let (subscriber, publisher_session_span) = {
@@ -97,8 +93,8 @@ impl IngressCoordinator {
                             publisher_session_id = command.publisher_session_id,
                             track_key = %track_key,
                             track_alias = command.subscription.track_alias(),
-                            track_namespace = %command.track_namespace,
-                            track_name = %command.track_name,
+                            track_namespace = %track_key.track_namespace,
+                            track_name = %track_key.track_name,
                         );
                         create_receiver_span.add_link(
                             publisher_session_span
@@ -132,8 +128,8 @@ impl IngressCoordinator {
                                         publisher_session_id = command.publisher_session_id,
                                         track_key = %track_key,
                                         track_alias = subscription.track_alias(),
-                                        track_namespace = %command.track_namespace,
-                                        track_name = %command.track_name,
+                                        track_namespace = %track_key.track_namespace,
+                                        track_name = %track_key.track_name,
                                     );
                                     dataplane_track_span.add_link(
                                         command

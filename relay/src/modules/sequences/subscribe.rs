@@ -393,8 +393,7 @@ impl Subscribe {
             .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: pub_session_id,
-                track_namespace: upstream_key.track_namespace.clone(),
-                track_name: upstream_key.track_name.clone(),
+                track_key: active_upstream.track_key.clone(),
                 subscription,
                 parent_span: Span::current(),
             })))
@@ -497,8 +496,6 @@ impl Subscribe {
                 subscriber_session_id: session_id,
                 downstream_subscribe_id: handler.subscribe_id(),
                 track_key: active_upstream.track_key,
-                track_namespace: upstream_key.track_namespace.clone(),
-                track_name: upstream_key.track_name.clone(),
                 downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
                 ready_sender,
