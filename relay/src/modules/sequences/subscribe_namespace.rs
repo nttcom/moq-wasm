@@ -116,7 +116,7 @@ impl SubscribeNameSpace {
         forwarder: &ControlMessageForwarder,
         table: &InMemoryLocalPubSubDirectory,
     ) {
-        let filtered = table.get_subscribers(track_namespace_prefix).await;
+        let filtered = table.get_subscribers(track_namespace_prefix);
         for (track_namespace, publish_values) in filtered {
             if let (Some(track_name), track_alias) = publish_values {
                 if track_alias.is_none() {

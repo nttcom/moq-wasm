@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use dashmap::{DashMap, DashSet, Entry};
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::oneshot;
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
@@ -100,10 +100,7 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id)
     )]
-    pub(crate) async fn remove_session(
-        &self,
-        session_id: SessionId,
-    ) -> RemovedSessionSubscriptions {
+    pub(crate) fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions {
         let mut removed = RemovedSessionSubscriptions {
             publish_namespace_track_namespaces: remove_peer_from_namespaces(
                 &self.publisher_namespaces,
@@ -118,7 +115,7 @@ impl InMemoryLocalPubSubDirectory {
 
         self.published_handlers
             .write()
-            .await
+            .unwrap_or_else(PoisonError::into_inner)
             .retain(|(registered_session_id, _)| *registered_session_id != session_id);
 
         let downstream_keys: Vec<_> = self
@@ -318,14 +315,10 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id)
     )]
-    pub(crate) async fn register_publish(
-        &self,
-        session_id: SessionId,
-        handler: Arc<dyn PublishHandler>,
-    ) {
+    pub(crate) fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
         self.published_handlers
             .write()
-            .await
+            .unwrap_or_else(PoisonError::into_inner)
             .push((session_id, handler));
     }
 
@@ -357,7 +350,7 @@ impl InMemoryLocalPubSubDirectory {
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
     #[allow(clippy::type_complexity)]
-    pub(crate) async fn get_subscribers(
+    pub(crate) fn get_subscribers(
         &self,
         track_namespace_prefix: &str,
     ) -> DashSet<(String, (Option<String>, Option<u64>))> {
@@ -368,7 +361,12 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
 
-        for (_, handler) in self.published_handlers.read().await.iter() {
+        for (_, handler) in self
+            .published_handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+        {
             if handler
                 .track_namespace()
                 .starts_with(track_namespace_prefix)
@@ -415,7 +413,7 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    pub(crate) async fn find_upstream_publishers(
+    pub(crate) fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
@@ -427,7 +425,10 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
 
-        let handlers = self.published_handlers.read().await;
+        let handlers = self
+            .published_handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
         for session_id in handlers
             .iter()
             .filter(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
@@ -650,23 +651,21 @@ mod tests {
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(1, "solo/".to_string(), PeerKind::Client);
-        table
-            .register_publish(
-                1,
-                Arc::new(StubPublishHandler {
-                    track_namespace: "room/member".to_string(),
-                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                    track_name: "video".to_string(),
-                    track_alias: 10,
-                }),
-            )
-            .await;
+        table.register_publish(
+            1,
+            Arc::new(StubPublishHandler {
+                track_namespace: "room/member".to_string(),
+                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 10,
+            }),
+        );
 
         // Act: Remove all state associated with session 1.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
-        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video").await;
+        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = upstream_subscriptions
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -747,7 +746,7 @@ mod tests {
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
 
         // Act: Disconnect the client-origin subscriber.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: Redis cleanup is requested while the relay subscriber stays registered locally.
         assert_eq!(
@@ -767,7 +766,7 @@ mod tests {
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
 
         // Act: Disconnect one relay subscriber.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.subscribe_namespace_prefixes.is_empty());
@@ -783,14 +782,14 @@ mod tests {
         table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Relay);
 
         // Act: Disconnect the client-origin publisher.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: Redis cleanup is requested while the relay publisher stays registered locally.
         assert_eq!(
             removed.publish_namespace_track_namespaces,
             vec!["room/member".to_string()]
         );
-        let publishers = table.find_upstream_publishers("room/member", "video").await;
+        let publishers = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = publishers
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -806,7 +805,7 @@ mod tests {
         table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Relay);
 
         // Act: Disconnect one relay publisher.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.publish_namespace_track_namespaces.is_empty());
@@ -871,7 +870,7 @@ mod tests {
 
         // Assert: Route cleanup is allowed while the relay publisher stays registered.
         assert!(clients_became_empty);
-        let publishers = table.find_upstream_publishers("room/member", "video").await;
+        let publishers = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = publishers
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -886,33 +885,28 @@ mod tests {
 
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
         table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client);
-        table
-            .register_publish(
-                1,
-                Arc::new(StubPublishHandler {
-                    track_namespace: "room/member".to_string(),
-                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                    track_name: "video".to_string(),
-                    track_alias: 10,
-                }),
-            )
-            .await;
-        table
-            .register_publish(
-                2,
-                Arc::new(StubPublishHandler {
-                    track_namespace: "room/member".to_string(),
-                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                    track_name: "video".to_string(),
-                    track_alias: 20,
-                }),
-            )
-            .await;
+        table.register_publish(
+            1,
+            Arc::new(StubPublishHandler {
+                track_namespace: "room/member".to_string(),
+                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 10,
+            }),
+        );
+        table.register_publish(
+            2,
+            Arc::new(StubPublishHandler {
+                track_namespace: "room/member".to_string(),
+                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 20,
+            }),
+        );
 
         // Act: Find upstream publishers available for subscribe.
         let mut upstream_publishers: Vec<_> = table
             .find_upstream_publishers("room/member", "video")
-            .await
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
             .collect();
@@ -994,7 +988,7 @@ mod tests {
             .unwrap();
 
         // Act
-        table.remove_session(1).await;
+        table.remove_session(1);
 
         // Assert
         assert!(runner_stopped(&mut runner_stop_receiver));
@@ -1010,7 +1004,7 @@ mod tests {
         table.remove_upstream_subscription(&upstream_key).unwrap();
 
         // Act
-        table.remove_session(2).await;
+        table.remove_session(2);
 
         // Assert
         assert!(runner_stopped(&mut runner_stop_receiver));
@@ -1021,7 +1015,7 @@ mod tests {
     async fn registration_for_a_removed_upstream_yields_no_runner() {
         // Arrange
         let (table, upstream_key) = subscribed_track_table();
-        table.remove_session(1).await;
+        table.remove_session(1);
 
         // Act
         let runner_stop_receiver =
@@ -1055,7 +1049,7 @@ mod tests {
                 let table = table.clone();
                 async move {
                     barrier.wait().await;
-                    table.remove_session(1).await
+                    table.remove_session(1)
                 }
             });
             let registered = register.await.unwrap();
@@ -1141,7 +1135,7 @@ mod tests {
 
         // Act: Fetch the active upstream subscription and upstream publishers separately.
         let active_subscription = table.find_active_upstream_subscription("room/member", "video");
-        let publisher_subscriptions = table.find_upstream_publishers("room/member", "video").await;
+        let publisher_subscriptions = table.find_upstream_publishers("room/member", "video");
 
         // Assert: Active subscriptions and upstream publishers are both discoverable.
         assert_eq!(

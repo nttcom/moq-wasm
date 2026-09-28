@@ -618,7 +618,7 @@ impl EventHandler {
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
-        let removed = local_pub_sub_directory.remove_session(session_id).await;
+        let removed = local_pub_sub_directory.remove_session(session_id);
         Self::cleanup_removed_session(
             session_id,
             removed,

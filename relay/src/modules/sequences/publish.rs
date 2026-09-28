@@ -234,7 +234,7 @@ impl Publish {
         }
 
         table.register_upstream_subscription(upstream_key, active_upstream);
-        table.register_publish(session_id, handler).await;
+        table.register_publish(session_id, handler);
         Ok(())
     }
 
