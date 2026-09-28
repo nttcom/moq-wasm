@@ -113,18 +113,16 @@ impl Fetch {
         let fetch_params = handler.fetch_params();
         let request_id = handler.request_id();
 
-        let (target, source) = match self
-            .resolve_target_and_source(session_id, fetch_params, table, cache_store)
-            .await
-        {
-            Ok(resolved) => resolved,
-            Err(err) => {
-                let _ = handler
-                    .error(err.code() as u64, err.reason().to_string())
-                    .await;
-                return;
-            }
-        };
+        let (target, source) =
+            match self.resolve_target_and_source(session_id, fetch_params, table, cache_store) {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    let _ = handler
+                        .error(err.code() as u64, err.reason().to_string())
+                        .await;
+                    return;
+                }
+            };
 
         match source {
             FetchSource::Cache(CacheTarget {
@@ -320,27 +318,25 @@ impl Fetch {
         )
     }
 
-    async fn resolve_target_and_source(
+    fn resolve_target_and_source(
         &self,
         session_id: SessionId,
         fetch_params: FetchParams,
         table: &InMemoryLocalPubSubDirectory,
         cache_store: &TrackCacheStore,
     ) -> Result<(FetchTarget, FetchSource), FetchError> {
-        let target = self
-            .resolve_fetch_target(session_id, fetch_params, table)
-            .await?;
+        let target = self.resolve_fetch_target(session_id, fetch_params, table)?;
         if cache_store
             .get(&target.track_key)
             .is_some_and(|cache| cache.is_malformed())
         {
             return Err(FetchError::MalformedTrack);
         }
-        let source = self.resolve_fetch_source(&target, cache_store).await?;
+        let source = self.resolve_fetch_source(&target, cache_store)?;
         Ok((target, source))
     }
 
-    async fn resolve_fetch_target(
+    fn resolve_fetch_target(
         &self,
         session_id: SessionId,
         fetch_params: FetchParams,
@@ -376,7 +372,7 @@ impl Fetch {
         }
     }
 
-    async fn resolve_fetch_source(
+    fn resolve_fetch_source(
         &self,
         target: &FetchTarget,
         cache_store: &TrackCacheStore,
@@ -550,8 +546,8 @@ mod tests {
         assert_eq!(reason, "not supported");
     }
 
-    #[tokio::test]
-    async fn fetch_source_is_upstream_when_track_entry_missing() {
+    #[test]
+    fn fetch_source_is_upstream_when_track_entry_missing() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let start = moqt::Location {
             group_id: 0,
@@ -568,7 +564,6 @@ mod tests {
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
-            .await
             .unwrap();
         match source {
             FetchSource::Upstream(missing_range) => {
@@ -581,8 +576,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn fetch_source_is_upstream_when_cache_entry_is_empty() {
+    #[test]
+    fn fetch_source_is_upstream_when_cache_entry_is_empty() {
         let cache_store = Arc::new(TrackCacheStore::new());
         cache_store.get_or_create(&TrackKey::new("ns", "track"));
         let start = moqt::Location {
@@ -600,13 +595,12 @@ mod tests {
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
-            .await
             .unwrap();
         assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
-    #[tokio::test]
-    async fn fetch_source_is_upstream_across_a_skipped_object_id() {
+    #[test]
+    fn fetch_source_is_upstream_across_a_skipped_object_id() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -626,13 +620,12 @@ mod tests {
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
-            .await
             .unwrap();
         assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
-    #[tokio::test]
-    async fn fetch_source_is_upstream_when_request_starts_before_cache_coverage() {
+    #[test]
+    fn fetch_source_is_upstream_when_request_starts_before_cache_coverage() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -652,7 +645,6 @@ mod tests {
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
-            .await
             .unwrap();
         match source {
             FetchSource::Upstream(missing_range) => {
@@ -665,8 +657,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn fetch_source_clamps_standalone_end_when_request_exceeds_largest() {
+    #[test]
+    fn fetch_source_clamps_standalone_end_when_request_exceeds_largest() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -686,7 +678,6 @@ mod tests {
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
-            .await
             .unwrap();
         match source {
             FetchSource::Cache(resolved) => {
@@ -704,35 +695,33 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn fetch_source_rejects_standalone_start_after_largest_as_invalid_range() {
+    #[test]
+    fn fetch_source_rejects_standalone_start_after_largest_as_invalid_range() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0]);
         cache.begin_live_ingest();
-        let result = Fetch
-            .resolve_target_and_source(
-                2,
-                standalone_fetch_params(
-                    moqt::Location {
-                        group_id: 0,
-                        object_id: 1,
-                    },
-                    moqt::Location {
-                        group_id: 0,
-                        object_id: 2,
-                    },
-                ),
-                &InMemoryLocalPubSubDirectory::new(),
-                &cache_store,
-            )
-            .await;
+        let result = Fetch.resolve_target_and_source(
+            2,
+            standalone_fetch_params(
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 1,
+                },
+                moqt::Location {
+                    group_id: 0,
+                    object_id: 2,
+                },
+            ),
+            &InMemoryLocalPubSubDirectory::new(),
+            &cache_store,
+        );
         assert!(matches!(result, Err(FetchError::InvalidRange)));
     }
 
-    #[tokio::test]
-    async fn fetch_source_rejects_standalone_covered_empty_range_as_no_objects() {
+    #[test]
+    fn fetch_source_rejects_standalone_covered_empty_range_as_no_objects() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -740,28 +729,26 @@ mod tests {
         insert_closed_group(&cache, 1, &[]);
         let _open_g2 = open_group(&cache, 2, &[0]);
 
-        let result = Fetch
-            .resolve_target_and_source(
-                2,
-                standalone_fetch_params(
-                    moqt::Location {
-                        group_id: 1,
-                        object_id: 0,
-                    },
-                    moqt::Location {
-                        group_id: 1,
-                        object_id: 0,
-                    },
-                ),
-                &InMemoryLocalPubSubDirectory::new(),
-                &cache_store,
-            )
-            .await;
+        let result = Fetch.resolve_target_and_source(
+            2,
+            standalone_fetch_params(
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+                moqt::Location {
+                    group_id: 1,
+                    object_id: 0,
+                },
+            ),
+            &InMemoryLocalPubSubDirectory::new(),
+            &cache_store,
+        );
         assert!(matches!(result, Err(FetchError::NoObjects)));
     }
 
-    #[tokio::test]
-    async fn fetch_source_is_cache_when_standalone_cache_covers_range() {
+    #[test]
+    fn fetch_source_is_cache_when_standalone_cache_covers_range() {
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -781,7 +768,6 @@ mod tests {
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
-            .await
             .unwrap();
         match source {
             FetchSource::Cache(resolved) => {
@@ -801,29 +787,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn resolve_joining_target_unknown_request_id() {
+    #[test]
+    fn resolve_joining_target_unknown_request_id() {
         let table = InMemoryLocalPubSubDirectory::new();
-        let result = Fetch
-            .resolve_fetch_target(1, relative_joining_fetch_params(999), &table)
-            .await;
+        let result = Fetch.resolve_fetch_target(1, relative_joining_fetch_params(999), &table);
         assert!(matches!(result, Err(FetchError::UnknownJoiningRequestId)));
     }
 
-    #[tokio::test]
-    async fn resolve_joining_target_no_objects_published() {
+    #[test]
+    fn resolve_joining_target_no_objects_published() {
         let table = InMemoryLocalPubSubDirectory::new();
         let key = setup_upstream(&table, TrackKey::new("ns", "track"));
         table.register_downstream_subscription(2, 100, key, None);
         // No objects in cache either, so NoObjectsPublished.
-        let result = Fetch
-            .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
-            .await;
+        let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
         assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
     }
 
-    #[tokio::test]
-    async fn resolve_joining_target_ends_after_stored_largest() {
+    #[test]
+    fn resolve_joining_target_ends_after_stored_largest() {
         let table = InMemoryLocalPubSubDirectory::new();
         let largest = moqt::Location {
             group_id: 10,
@@ -833,7 +815,6 @@ mod tests {
         table.register_downstream_subscription(2, 100, key, Some(largest));
         let target = Fetch
             .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
-            .await
             .unwrap();
         assert_eq!(target.track_key, TrackKey::new("ns", "track"));
         assert_eq!(target.track_namespace, "ns");
@@ -847,8 +828,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
+    #[test]
+    fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
@@ -875,7 +856,6 @@ mod tests {
                 &table,
                 &cache_store,
             )
-            .await
             .unwrap();
 
         match source {
@@ -903,8 +883,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn absolute_joining_forwards_resolved_range_upstream() {
+    #[test]
+    fn absolute_joining_forwards_resolved_range_upstream() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
@@ -928,7 +908,6 @@ mod tests {
                 &table,
                 &cache_store,
             )
-            .await
             .unwrap();
 
         // Upstream range: start = {joining_start, 0}, end = largest + 1
@@ -954,8 +933,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn relative_joining_start_saturates_at_group_zero() {
+    #[test]
+    fn relative_joining_start_saturates_at_group_zero() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
@@ -980,7 +959,6 @@ mod tests {
                 &table,
                 &cache_store,
             )
-            .await
             .unwrap();
 
         match source {
@@ -1004,8 +982,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
+    #[test]
+    fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
         let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
@@ -1019,17 +997,15 @@ mod tests {
             }),
         );
 
-        let result = Fetch
-            .resolve_target_and_source(
-                2,
-                FetchParams::AbsoluteJoining {
-                    joining_request_id: 100,
-                    joining_start: 2,
-                },
-                &table,
-                &cache_store,
-            )
-            .await;
+        let result = Fetch.resolve_target_and_source(
+            2,
+            FetchParams::AbsoluteJoining {
+                joining_request_id: 100,
+                joining_start: 2,
+            },
+            &table,
+            &cache_store,
+        );
 
         assert!(matches!(result, Err(FetchError::InvalidRange)));
     }
