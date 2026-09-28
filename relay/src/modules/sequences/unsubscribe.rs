@@ -71,23 +71,17 @@ impl Unsubscribe {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::{mpsc, oneshot};
+    use tokio::sync::oneshot;
 
     use super::*;
     use crate::modules::{
-        core::mocks::{
-            RecordedControlMessages, runner_stopped, session_repository_with_upstream_session,
-        },
-        sequences::tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{ActiveUpstreamSubscription, UpstreamSubscriptionKey},
+        core::mocks::runner_stopped,
+        sequences::test_fixtures::{
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
+            upstream_release_context,
         },
         types::TrackKey,
     };
-    use moqt::ContentExists;
-
-    const PUBLISHER_SESSION: SessionId = 1;
-    const UPSTREAM_REQUEST_ID: u64 = 42;
 
     struct MockUnsubscribeHandler {
         subscribe_id: u64,
@@ -100,61 +94,32 @@ mod tests {
     }
 
     struct TestContext {
-        table: InMemoryLocalPubSubDirectory,
-        forwarder: ControlMessageForwarder,
-        ingress_sender: mpsc::Sender<IngressCommand>,
-        ingress_receiver: mpsc::Receiver<IngressCommand>,
+        upstream: UpstreamReleaseContext,
         runner_stop_receivers: Vec<oneshot::Receiver<()>>,
-        recorded: RecordedControlMessages,
     }
 
     async fn setup(
         origin: UpstreamSubscriptionOrigin,
         downstream_subscriptions: &[(SessionId, u64)],
     ) -> TestContext {
-        let table = InMemoryLocalPubSubDirectory::new();
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: PUBLISHER_SESSION,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        };
-        table.register_upstream_subscription(
-            upstream_key.clone(),
-            ActiveUpstreamSubscription {
-                upstream_request_id: UPSTREAM_REQUEST_ID,
-                track_key: TrackKey::new("ns", "track"),
-                expires: None,
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 0,
-                origin,
-            },
-        );
+        let upstream = upstream_release_context(origin).await;
         let runner_stop_receivers = downstream_subscriptions
             .iter()
             .map(|(session_id, subscribe_id)| {
-                table
+                upstream
+                    .table
                     .register_downstream_subscription(
                         *session_id,
                         *subscribe_id,
-                        upstream_key.clone(),
+                        upstream.upstream_key.clone(),
                         None,
                     )
                     .unwrap()
             })
             .collect();
-
-        let (repository, recorded) =
-            session_repository_with_upstream_session(PUBLISHER_SESSION).await;
-        let forwarder = ControlMessageForwarder { repository };
-
-        let (ingress_sender, ingress_receiver) = mpsc::channel(8);
         TestContext {
-            table,
-            forwarder,
-            ingress_sender,
-            ingress_receiver,
+            upstream,
             runner_stop_receivers,
-            recorded,
         }
     }
 
@@ -163,9 +128,9 @@ mod tests {
             .handle(
                 session_id,
                 &tracing::Span::none(),
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.ingress_sender,
+                &ctx.upstream.table,
+                &ctx.upstream.forwarder,
+                &ctx.upstream.ingress_sender,
                 Box::new(MockUnsubscribeHandler { subscribe_id }),
             )
             .await;
@@ -182,10 +147,14 @@ mod tests {
         // Assert
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert_eq!(
-            *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
+            *ctx.upstream
+                .recorded
+                .unsubscribed_request_ids
+                .lock()
+                .unwrap(),
             vec![UPSTREAM_REQUEST_ID]
         );
-        match ctx.ingress_receiver.try_recv() {
+        match ctx.upstream.ingress_receiver.try_recv() {
             Ok(IngressCommand::StopTrack {
                 track_key,
                 publisher_session_id,
@@ -213,13 +182,14 @@ mod tests {
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(!runner_stopped(&mut ctx.runner_stop_receivers[1]));
         assert!(
-            ctx.recorded
+            ctx.upstream
+                .recorded
                 .unsubscribed_request_ids
                 .lock()
                 .unwrap()
                 .is_empty()
         );
-        assert!(ctx.ingress_receiver.try_recv().is_err());
+        assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -233,13 +203,14 @@ mod tests {
         // Assert
         assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(
-            ctx.recorded
+            ctx.upstream
+                .recorded
                 .unsubscribed_request_ids
                 .lock()
                 .unwrap()
                 .is_empty()
         );
-        assert!(ctx.ingress_receiver.try_recv().is_err());
+        assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -253,12 +224,13 @@ mod tests {
         // Assert
         assert!(!runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(
-            ctx.recorded
+            ctx.upstream
+                .recorded
                 .unsubscribed_request_ids
                 .lock()
                 .unwrap()
                 .is_empty()
         );
-        assert!(ctx.ingress_receiver.try_recv().is_err());
+        assert!(ctx.upstream.ingress_receiver.try_recv().is_err());
     }
 }

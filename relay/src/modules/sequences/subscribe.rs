@@ -526,6 +526,7 @@ mod tests {
     use crate::modules::sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
     };
+    use crate::modules::sequences::test_fixtures::{active_upstream, upstream_key};
     use crate::modules::session_repository::{NewSession, SessionPeer, SessionRepository};
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
@@ -811,25 +812,6 @@ mod tests {
         );
     }
 
-    fn upstream_key() -> UpstreamSubscriptionKey {
-        UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        }
-    }
-
-    fn active_upstream() -> ActiveUpstreamSubscription {
-        ActiveUpstreamSubscription {
-            upstream_request_id: 1,
-            track_key: TrackKey::new("ns", "track"),
-            expires: None,
-            content_exists: ContentExists::False,
-            downstream_subscriber_count: 0,
-            origin: UpstreamSubscriptionOrigin::Subscribe,
-        }
-    }
-
     async fn accept_downstream(
         table: &InMemoryLocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
@@ -839,7 +821,7 @@ mod tests {
             .accept_downstream_subscription(
                 2,
                 upstream_key(),
-                active_upstream(),
+                active_upstream(UpstreamSubscriptionOrigin::Subscribe),
                 None,
                 table,
                 egress_sender,
@@ -872,7 +854,10 @@ mod tests {
     async fn downstream_registration_removed_before_runner_readiness_sends_subscribe_error() {
         // Arrange
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        table.register_upstream_subscription(upstream_key(), active_upstream());
+        table.register_upstream_subscription(
+            upstream_key(),
+            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+        );
         let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
         let concurrent_cleanup = tokio::spawn({
             let table = table.clone();

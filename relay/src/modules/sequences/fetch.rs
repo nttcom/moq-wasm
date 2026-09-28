@@ -467,37 +467,10 @@ mod tests {
     use super::*;
     use crate::modules::{
         relay::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
-        sequences::tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{
-                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-            },
+        sequences::{
+            tables::table::UpstreamSubscriptionOrigin, test_fixtures::table_with_upstream,
         },
     };
-    use moqt::ContentExists;
-
-    fn setup_upstream(
-        table: &InMemoryLocalPubSubDirectory,
-        track_key: TrackKey,
-    ) -> UpstreamSubscriptionKey {
-        let key = UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        };
-        table.register_upstream_subscription(
-            key.clone(),
-            ActiveUpstreamSubscription {
-                upstream_request_id: 1,
-                track_key,
-                expires: None,
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 0,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-            },
-        );
-        key
-    }
 
     fn standalone_fetch_params(
         start_location: moqt::Location,
@@ -780,8 +753,7 @@ mod tests {
 
     #[test]
     fn resolve_joining_target_no_objects_published() {
-        let table = InMemoryLocalPubSubDirectory::new();
-        let key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(2, 100, key, None);
         // No objects in cache either, so NoObjectsPublished.
         let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
@@ -790,12 +762,11 @@ mod tests {
 
     #[test]
     fn resolve_joining_target_ends_after_stored_largest() {
-        let table = InMemoryLocalPubSubDirectory::new();
         let largest = moqt::Location {
             group_id: 10,
             object_id: 5,
         };
-        let key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(2, 100, key, Some(largest));
         let target = Fetch
             .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
@@ -814,11 +785,10 @@ mod tests {
 
     #[test]
     fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
-        let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
-        let upstream_key = setup_upstream(&table, track_key.clone());
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -869,9 +839,8 @@ mod tests {
 
     #[test]
     fn absolute_joining_forwards_resolved_range_upstream() {
-        let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
-        let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -919,9 +888,8 @@ mod tests {
 
     #[test]
     fn relative_joining_start_saturates_at_group_zero() {
-        let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
-        let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
@@ -968,9 +936,8 @@ mod tests {
 
     #[test]
     fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
-        let table = InMemoryLocalPubSubDirectory::new();
         let cache_store = Arc::new(TrackCacheStore::new());
-        let upstream_key = setup_upstream(&table, TrackKey::new("ns", "track"));
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
             2,
             100,
