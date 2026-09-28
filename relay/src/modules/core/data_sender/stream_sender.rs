@@ -1,7 +1,5 @@
 use crate::modules::core::{data_object::DataObject, data_sender::DataSender};
 
-/// Internal enum that holds the `StreamDataSender` across its typestate transitions.
-/// Since `send_header` consumes `self`, we wrap it in `Option` to allow `take()`.
 enum SenderInner<T: moqt::TransportProtocol> {
     Uninitialized(moqt::SubgroupHeaderSender<T>),
     HeaderSent(moqt::SubgroupObjectSender<T>),

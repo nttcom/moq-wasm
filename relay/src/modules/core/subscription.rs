@@ -5,10 +5,6 @@ pub(crate) struct UpstreamSubscription {
     inner: moqt::Subscription,
 }
 
-/// A subscription the relay serves toward a downstream subscriber. Mirrors
-/// `UpstreamSubscription`: it holds the moqt `Subscription` and the relay sends
-/// objects on it. Receiving a SUBSCRIBE makes it subscriber-initiated; the relay
-/// forwarding a PUBLISH makes it publisher-initiated.
 #[derive(Clone)]
 pub(crate) struct DownstreamSubscription {
     inner: moqt::Subscription,

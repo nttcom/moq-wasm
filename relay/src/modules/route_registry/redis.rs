@@ -17,8 +17,6 @@ impl RedisRelayRouteRegistry {
     const ACTIVE_STATUS: &str = "active";
     const PUBLISHER_NAMESPACE_KEY_PREFIX: &str = "route:publisher:namespace:";
 
-    // --- lifecycle ---
-
     pub(crate) async fn connect(redis_url: &str, relay: RelayInfo) -> anyhow::Result<Arc<Self>> {
         let client = redis::Client::open(redis_url)?;
         let connection = redis::aio::ConnectionManager::new(client).await?;
@@ -46,8 +44,6 @@ impl RedisRelayRouteRegistry {
             })
             .expect("failed to spawn relay redis heartbeat");
     }
-
-    // --- relay operations ---
 
     async fn register_relay(&self, relay: &RelayInfo) -> anyhow::Result<()> {
         let mut connection = self.connection.clone();
@@ -88,8 +84,6 @@ impl RedisRelayRouteRegistry {
             port,
         })
     }
-
-    // --- route operations ---
 
     async fn refresh_route_ttls(&self) -> anyhow::Result<()> {
         let mut connection = self.connection.clone();
@@ -165,8 +159,6 @@ impl RedisRelayRouteRegistry {
         Ok(())
     }
 
-    // --- key builders ---
-
     fn relay_key(relay_id: &str) -> String {
         format!("relay:{relay_id}")
     }
@@ -182,8 +174,6 @@ impl RedisRelayRouteRegistry {
     fn subscriber_namespace_key(track_namespace_prefix: &str) -> String {
         format!("route:subscriber:namespace:{track_namespace_prefix}")
     }
-
-    // --- utilities ---
 
     fn now_millis() -> u128 {
         SystemTime::now()

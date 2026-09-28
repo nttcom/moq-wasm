@@ -43,8 +43,6 @@ impl SessionAuthenticator {
         let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
         let token = match extract_token(&client_setup.setup_parameters.authorization_token) {
             Ok(token) => token,
-            // A client that presents no token is accepted with the anonymous
-            // scope (anon/**); the inter-relay endpoint still requires a token.
             Err(TokenParameterError::Missing) if !relay_endpoint => {
                 return Ok(VerifiedToken::anonymous());
             }
