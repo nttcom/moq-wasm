@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 const BASE_RETRY_DELAY_MS = 500
 const MAX_FAILURES = 6
@@ -61,12 +61,6 @@ class RetryBackoff {
     }
   }
 
-  clear(): void {
-    for (const attempt of this.attempts.values()) {
-      this.forget(attempt)
-    }
-  }
-
   private forget(attempt: RetryAttempt): void {
     if (attempt.retryTimerId !== null) {
       window.clearTimeout(attempt.retryTimerId)
@@ -78,6 +72,5 @@ class RetryBackoff {
 export function useRetryBackoff(label: string): { backoff: RetryBackoff; retryTick: number } {
   const [retryTick, setRetryTick] = useState(0)
   const [backoff] = useState(() => new RetryBackoff(label, () => setRetryTick((tick) => tick + 1)))
-  useEffect(() => () => backoff.clear(), [backoff])
   return { backoff, retryTick }
 }
