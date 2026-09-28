@@ -65,12 +65,11 @@ impl StreamSenderFactory for MockStreamSenderFactory {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct SentPublishDone {
     pub(crate) request_id: u64,
     pub(crate) status_code: u64,
     pub(crate) stream_count: u64,
-    pub(crate) error_reason: String,
 }
 
 #[derive(Clone)]
@@ -129,14 +128,13 @@ impl Publisher for MockPublisher {
         request_id: u64,
         status_code: u64,
         stream_count: u64,
-        error_reason: String,
+        _error_reason: String,
     ) -> anyhow::Result<()> {
         self.publish_done
             .send(SentPublishDone {
                 request_id,
                 status_code,
                 stream_count,
-                error_reason,
             })
             .map_err(|_| anyhow::anyhow!("test side dropped"))
     }
