@@ -11,6 +11,7 @@ import {
 } from '../media/catalog'
 import { base64ToUint8Array } from '../../utils/media/base64'
 import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
+import { readLocHeader } from '../../utils/media/loc'
 import {
   parseAudioChannelCount,
   postAudioCatalogToWorker,
@@ -783,7 +784,15 @@ function monitored(
 ): (groupId: bigint, object: SubgroupObject) => void {
   streamMonitor.label(trackAlias, track)
   return (groupId, object) => {
-    streamMonitor.object(trackAlias, groupId, object.objectId, object.objectPayloadLength, object.objectStatus != null)
+    streamMonitor.object(
+      trackAlias,
+      groupId,
+      object.objectId,
+      object.objectPayloadLength,
+      object.objectStatus != null,
+      Date.now(),
+      readLocHeader(object.locHeader).captureTimestampMicros
+    )
     handler(groupId, object)
   }
 }

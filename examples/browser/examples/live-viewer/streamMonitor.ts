@@ -29,6 +29,9 @@ export type StreamRecord = {
   receivedAtByObjectId: Map<bigint, number>
   /// FETCH streams span groups, so their arrivals are kept per group.
   receivedAtByGroup: Map<bigint, Map<bigint, number>>
+  /// Capture-time span of the objects seen, for the media cadence: arrival
+  /// times are bursty and stretch over stalls, capture times are not.
+  captureSpanMicros?: { first: number; last: number }
 }
 
 /// Live playback follows a subscribe stream, review playback a FETCH stream;
@@ -101,7 +104,8 @@ export class StreamMonitor {
     objectId: bigint,
     payloadLength: number,
     endsGroup: boolean,
-    now = Date.now()
+    now = Date.now(),
+    captureMicros?: number
   ): void {
     const record = this.opened(trackAlias, groupId, now)
     if (endsGroup) {
@@ -111,6 +115,12 @@ export class StreamMonitor {
     record.bytes += payloadLength
     record.objects += 1
     record.receivedAtByObjectId.set(objectId, now)
+    if (captureMicros !== undefined) {
+      record.captureSpanMicros = {
+        first: Math.min(record.captureSpanMicros?.first ?? captureMicros, captureMicros),
+        last: Math.max(record.captureSpanMicros?.last ?? captureMicros, captureMicros)
+      }
+    }
   }
 
   /// One FETCH response is one stream however many groups it spans; the
@@ -466,6 +476,7 @@ type GridGroup = {
   groupId: bigint
   receivedAt: Map<bigint, number>
   finished: boolean
+  captureSpanMicros?: { first: number; last: number }
 }
 
 /// One grid group per subscribe stream of the alias, or per group inside the
@@ -481,7 +492,8 @@ function gridGroups(records: StreamRecord[], trackAlias?: bigint): GridGroup[] {
       groups.push({
         groupId: record.groupId,
         receivedAt: record.receivedAtByObjectId,
-        finished: record.finishedAt !== undefined
+        finished: record.finishedAt !== undefined,
+        captureSpanMicros: record.captureSpanMicros
       })
       continue
     }
@@ -505,13 +517,18 @@ function expectedGroupLength(groups: GridGroup[]): number {
   return lastFinished ? receivedCellCount(lastFinished) : 0
 }
 
-/// Wall-clock spacing of the track's objects, from the last finished group;
-/// 30 fps video until one has finished.
+/// Media-time spacing of the track's objects, from the capture timestamps of
+/// the last finished group, falling back to arrival spacing without them and
+/// to 30 fps until a group has finished.
 function objectIntervalMs(groups: GridGroup[]): number {
   const lastFinished = groups.filter((group) => group.finished).at(-1)
   const count = lastFinished ? receivedCellCount(lastFinished) : 0
   if (!lastFinished || count < 2) {
     return DEFAULT_OBJECT_INTERVAL_MS
+  }
+  const span = lastFinished.captureSpanMicros
+  if (span && span.last > span.first) {
+    return Math.max(1, (span.last - span.first) / 1000 / (count - 1))
   }
   const arrivals = [...lastFinished.receivedAt.values()]
   return Math.max(1, (Math.max(...arrivals) - Math.min(...arrivals)) / count)
