@@ -667,17 +667,13 @@ mod tests {
 
 #[cfg(test)]
 mod fetch_tests {
-    use std::{sync::Arc, time::Duration};
-
     use moqt::ObjectStatus;
+    use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::modules::relay::{
-        tests::harness::fixtures::cached_object::{
-            datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
-            stream_object, stream_object_in_subgroup,
-        },
-        types::SubgroupKey,
+    use crate::modules::relay::tests::harness::fixtures::cached_object::{
+        datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
+        stream_object, stream_object_in_subgroup,
     };
 
     fn object_ids(objects: &[moqt::FetchObjectField]) -> Vec<(u64, u64)> {
@@ -685,6 +681,17 @@ mod fetch_tests {
             .iter()
             .map(|object| (object.group_id, object.object_id))
             .collect()
+    }
+
+    fn spawn_fetch(
+        cache: &Arc<TrackCache>,
+        start: moqt::Location,
+        end: moqt::Location,
+    ) -> JoinHandle<Result<Vec<moqt::FetchObjectField>, FetchInterrupted>> {
+        let cache = cache.clone();
+        tokio::spawn(
+            async move { fetch_all(&cache, start, end, moqt::GroupOrder::Ascending).await },
+        )
     }
 
     async fn fetch(
@@ -1031,18 +1038,7 @@ mod fetch_tests {
         let open_g0 = cache.open_subgroup(stream_key(0));
         insert_closed_group(&cache, 1, &[0, 1, 2, 3, 4]);
         // Act: fetch [{0,0}, {1,3}) while group 0's objects have not arrived yet
-        let fetch = tokio::spawn({
-            let cache = cache.clone();
-            async move {
-                fetch_all(
-                    &cache,
-                    location(0, 0),
-                    location(1, 3),
-                    moqt::GroupOrder::Ascending,
-                )
-                .await
-            }
-        });
+        let fetch = spawn_fetch(&cache, location(0, 0), location(1, 3));
         tokio::task::yield_now().await;
         for object_id in 0..3 {
             let _ = open_g0.insert(stream_object(0, object_id));
@@ -1065,18 +1061,7 @@ mod fetch_tests {
         // Arrange: a live group whose tail the fetch will wait for
         let cache = Arc::new(TrackCache::new());
         let open = open_group(&cache, 0, &[0]);
-        let fetch = tokio::spawn({
-            let cache = cache.clone();
-            async move {
-                fetch_all(
-                    &cache,
-                    location(0, 0),
-                    location(0, 3),
-                    moqt::GroupOrder::Ascending,
-                )
-                .await
-            }
-        });
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
         tokio::task::yield_now().await;
         // Act: a conflicting duplicate latches the track mid-wait
         let outcome = open.insert(stream_object_in_subgroup(0, 1, 0));
@@ -1094,18 +1079,7 @@ mod fetch_tests {
         // Arrange: the fetch waits on an open group whose stream is then reset upstream
         let cache = Arc::new(TrackCache::new());
         let open = open_group(&cache, 0, &[0]);
-        let fetch = tokio::spawn({
-            let cache = cache.clone();
-            async move {
-                fetch_all(
-                    &cache,
-                    location(0, 0),
-                    location(0, 3),
-                    moqt::GroupOrder::Ascending,
-                )
-                .await
-            }
-        });
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
         tokio::task::yield_now().await;
         // Act
         drop(open);
