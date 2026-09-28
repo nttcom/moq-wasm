@@ -475,7 +475,7 @@ export class MediaPublisher {
 
     for (const [trackName, context] of this.videoTrackContexts.entries()) {
       if (context.source === source && !desiredNames.has(trackName)) {
-        this.stopVideoTrackContext(trackName)
+        this.retireVideoTrackContext(trackName)
       }
     }
 
@@ -758,8 +758,13 @@ export class MediaPublisher {
       .filter(([, context]) => context.source === source)
       .map(([trackName]) => trackName)
     for (const trackName of names) {
-      this.stopVideoTrackContext(trackName)
+      this.retireVideoTrackContext(trackName)
     }
+  }
+
+  private retireVideoTrackContext(trackName: string): void {
+    this.stopVideoTrackContext(trackName)
+    this.videoStreamRecoveryAttemptsByTrackName.delete(trackName)
   }
 
   private stopAllAudioTrackContexts(): void {
@@ -814,6 +819,7 @@ export class MediaPublisher {
       restarting
     })
     if (!restarting) {
+      this.videoStreamRecoveryAttemptsByTrackName.delete(trackName)
       return
     }
     this.videoStreamRecoveryAttemptsByTrackName.set(trackName, attempt)
