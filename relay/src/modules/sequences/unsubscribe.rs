@@ -2,7 +2,9 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::unsubscribe::UnsubscribeHandler,
     relay::ingress::ingress_coordinator::IngressCommand,
-    sequences::tables::table::{LocalPubSubDirectory, UpstreamSubscriptionOrigin},
+    sequences::tables::{
+        hashmap_table::InMemoryLocalPubSubDirectory, table::UpstreamSubscriptionOrigin,
+    },
     types::SessionId,
 };
 use tracing::Span;
@@ -21,7 +23,7 @@ impl Unsubscribe {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Box<dyn UnsubscribeHandler>,

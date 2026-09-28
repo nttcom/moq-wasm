@@ -6,7 +6,7 @@ use crate::modules::{
     route_registry::{RegisterRouteError, RelayRouteRegistry},
     sequences::{
         CascadingRelayContext,
-        tables::table::{LocalPubSubDirectory, PeerKind},
+        tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
     },
     types::SessionId,
 };
@@ -26,7 +26,7 @@ impl PublishNamespace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn PublishNamespaceHandler,
@@ -94,7 +94,7 @@ impl PublishNamespace {
     async fn register(
         &self,
         session_id: SessionId,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         peer_kind: PeerKind,
         handler: &dyn PublishNamespaceHandler,
     ) -> Option<String> {
@@ -130,7 +130,7 @@ impl PublishNamespace {
     async fn notify_to_subscribers(
         &self,
         track_namespace: &str,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
     ) {
         let combined = table.get_namespace_subscribers(track_namespace);

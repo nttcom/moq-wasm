@@ -9,9 +9,11 @@ use crate::modules::{
     route_registry::RelayRouteRegistry,
     sequences::{
         CascadingRelayContext,
-        tables::table::{
-            ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
-            UpstreamSubscriptionOrigin,
+        tables::{
+            hashmap_table::InMemoryLocalPubSubDirectory,
+            table::{
+                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+            },
         },
     },
     types::{SessionId, TrackKey},
@@ -52,7 +54,7 @@ impl Publish {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         cascading_relay_context: CascadingRelayContext<'_>,
@@ -129,7 +131,7 @@ impl Publish {
         &self,
         publisher_session_id: SessionId,
         forwarder: &ControlMessageForwarder,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         cascading_relay_context: CascadingRelayContext<'_>,
         subscription: &UpstreamSubscription,
         is_origin_client: bool,
@@ -164,7 +166,7 @@ impl Publish {
         &self,
         publisher_session_id: SessionId,
         forwarder: &ControlMessageForwarder,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         subscription: &UpstreamSubscription,
     ) {
         let track_namespace = subscription.track_namespace().to_string();
@@ -207,7 +209,7 @@ impl Publish {
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,

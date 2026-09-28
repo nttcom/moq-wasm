@@ -10,9 +10,11 @@ use crate::modules::{
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
     sequences::{
-        tables::table::{
-            ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
-            UpstreamSubscriptionOrigin,
+        tables::{
+            hashmap_table::InMemoryLocalPubSubDirectory,
+            table::{
+                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+            },
         },
         upstream_serializer::UpstreamCreationSerializer,
     },
@@ -115,7 +117,7 @@ impl Subscribe {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
@@ -201,7 +203,7 @@ impl Subscribe {
         session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
@@ -283,7 +285,7 @@ impl Subscribe {
     )]
     fn find_active_upstream_subscription(
         &self,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         track_namespace: &str,
         track_name: &str,
     ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
@@ -317,7 +319,7 @@ impl Subscribe {
         session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
@@ -438,7 +440,7 @@ impl Subscribe {
         upstream_key: UpstreamSubscriptionKey,
         active_upstream: ActiveUpstreamSubscription,
         largest_source: LargestObjectSource,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,

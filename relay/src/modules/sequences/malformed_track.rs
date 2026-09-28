@@ -1,7 +1,9 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     relay::ingress::ingress_coordinator::IngressCommand,
-    sequences::tables::table::{LocalPubSubDirectory, UpstreamSubscriptionKey},
+    sequences::tables::{
+        hashmap_table::InMemoryLocalPubSubDirectory, table::UpstreamSubscriptionKey,
+    },
     types::{SessionId, TrackKey},
 };
 use tracing::Span;
@@ -21,7 +23,7 @@ impl MalformedTrackCleanup {
         publisher_session_id: SessionId,
         session_span: &Span,
         track_key: &TrackKey,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
     ) {

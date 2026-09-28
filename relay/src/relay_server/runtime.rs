@@ -14,7 +14,7 @@ use crate::modules::{
     },
     route_registry::RelayRouteRegistry,
     sequences::{
-        tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::LocalPubSubDirectory},
+        tables::hashmap_table::InMemoryLocalPubSubDirectory,
         upstream_serializer::UpstreamCreationSerializer,
     },
     session_event::SessionEvent,

@@ -3,7 +3,7 @@ use crate::modules::{
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
     enums::SubscribeNamespaceErrorCode,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
-    sequences::tables::table::{LocalPubSubDirectory, PeerKind},
+    sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
     types::SessionId,
 };
 use tracing::Span;
@@ -22,7 +22,7 @@ impl SubscribeNameSpace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
         handler: &dyn SubscribeNamespaceHandler,
@@ -69,7 +69,7 @@ impl SubscribeNameSpace {
     async fn register(
         &self,
         session_id: SessionId,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         peer_kind: PeerKind,
         handler: &dyn SubscribeNamespaceHandler,
     ) -> (String, bool) {
@@ -131,7 +131,7 @@ impl SubscribeNameSpace {
         session_id: SessionId,
         track_namespace_prefix: &str,
         forwarder: &ControlMessageForwarder,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
     ) {
         let filtered = table.get_subscribers(track_namespace_prefix).await;
         for (track_namespace, publish_values) in filtered {
