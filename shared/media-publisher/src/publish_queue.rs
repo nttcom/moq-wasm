@@ -7,11 +7,14 @@ use tokio::sync::{
 
 use crate::manager::MoqtManager;
 
-/// About three seconds of 30 fps video with AAC audio: a relay stall shorter
-/// than this is absorbed, a longer one drops media rather than holding back
-/// the ingest, whose SRT or RTMP sender gives up on a connection that is not
-/// drained.
-const CAPACITY: usize = 256;
+/// 30 fps video with 48 kHz AAC audio (1024 samples per frame) is about 77
+/// samples per second.
+const SAMPLES_PER_SECOND: usize = 77;
+/// A relay stall shorter than this is absorbed so the relay cache stays
+/// complete for FETCH; live viewers skip the backlog on the next keyframe. A
+/// longer stall drops media rather than holding back the ingest, whose SRT or
+/// RTMP sender gives up on a connection that is not drained.
+const CAPACITY: usize = 30 * SAMPLES_PER_SECOND;
 /// Codec configurations are never dropped, because a catalog that misses one
 /// leaves viewers unable to decode the media that follows; samples leave this
 /// many slots free for them.
