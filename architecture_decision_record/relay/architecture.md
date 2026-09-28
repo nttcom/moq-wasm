@@ -196,6 +196,9 @@ Each sequence owns the relay-side protocol logic for one message
    `EgressCommand::StartReader` carrying it and wait for the runner's
    readiness `oneshot`, then send SUBSCRIBE_OK with the allocated track alias
    and resolved largest location — SUBSCRIBE_OK and egress start always agree.
+   If a concurrent cleanup removed the upstream before registration, or the
+   row before the runner reported readiness, reply SUBSCRIBE_ERROR
+   TRACK_DOES_NOT_EXIST instead.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Relative

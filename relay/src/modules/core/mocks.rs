@@ -7,13 +7,15 @@ use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
-        handler::publish::SubscribeOption,
+        handler::{publish::SubscribeOption, subscribe::SubscribeHandler},
         publisher::Publisher,
         session::Session,
         session_event::MoqtSessionEvent,
         subscriber::Subscriber,
-        subscription::UpstreamSubscription,
+        subscription::{DownstreamSubscription, UpstreamSubscription},
     },
+    enums::{ContentExists, FilterType, GroupOrder},
+    relay::tests::harness::fixtures::subscription::make_subscription,
     session_repository::{NewSession, SessionPeer, SessionRepository},
     types::SessionId,
 };
@@ -190,5 +192,81 @@ struct PendingFetchReceiver;
 impl UpstreamFetchReceiver for PendingFetchReceiver {
     async fn receive(&mut self) -> anyhow::Result<moqt::Fetch> {
         std::future::pending().await
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MockSubscribeHandler {
+    pub(crate) subscribe_ok_count: Mutex<usize>,
+    pub(crate) subscribe_errors: Mutex<Vec<u64>>,
+}
+
+#[async_trait::async_trait]
+impl SubscribeHandler for MockSubscribeHandler {
+    fn subscribe_id(&self) -> u64 {
+        100
+    }
+
+    fn track_namespace(&self) -> &str {
+        "ns"
+    }
+
+    fn track_namespace_tuple(&self) -> &[String] {
+        &[]
+    }
+
+    fn track_name(&self) -> &str {
+        "track"
+    }
+
+    fn _subscriber_priority(&self) -> u8 {
+        128
+    }
+
+    fn _group_order(&self) -> GroupOrder {
+        GroupOrder::Ascending
+    }
+
+    fn _forward(&self) -> bool {
+        true
+    }
+
+    fn _filter_type(&self) -> FilterType {
+        FilterType::LargestObject
+    }
+
+    fn _max_cache_duration(&self) -> Option<u64> {
+        None
+    }
+
+    fn _delivery_timeout(&self) -> Option<u64> {
+        None
+    }
+
+    fn allocate_track_alias(&self) -> u64 {
+        0
+    }
+
+    async fn ok_with_track_alias(
+        &self,
+        _track_alias: u64,
+        _expires: u64,
+        _content_exists: ContentExists,
+    ) -> Result<(), moqt::TransportSendError> {
+        *self.subscribe_ok_count.lock().unwrap() += 1;
+        Ok(())
+    }
+
+    async fn error(
+        &self,
+        code: u64,
+        _reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
+        self.subscribe_errors.lock().unwrap().push(code);
+        Ok(())
+    }
+
+    fn to_downstream_subscription(&self, _track_alias: u64) -> DownstreamSubscription {
+        make_subscription(moqt::FilterType::LargestObject)
     }
 }
