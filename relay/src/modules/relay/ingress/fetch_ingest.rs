@@ -21,12 +21,7 @@ const DEFAULT_FETCH_FILL_TIMEOUT_SECS: u64 = 20;
 pub(crate) struct FetchIngestStart {
     pub(crate) track_key: TrackKey,
     pub(crate) upstream_publisher_session_id: SessionId,
-    pub(crate) downstream_subscriber_session_id: SessionId,
-    pub(crate) request_id: u64,
     pub(crate) fetch_handle: moqt::FetchHandle,
-    pub(crate) cache: Arc<TrackCache>,
-    pub(crate) requested_start: moqt::Location,
-    pub(crate) requested_end: moqt::Location,
     pub(crate) egress_start: EgressFetchRequest,
 }
 
@@ -49,12 +44,12 @@ impl FetchIngest {
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
         start: FetchIngestStart,
     ) -> Self {
-        let downstream_subscriber_session_id = start.downstream_subscriber_session_id;
-        let request_id = start.request_id;
+        let downstream_subscriber_session_id = start.egress_start.subscriber_session_id;
+        let request_id = start.egress_start.request_id;
         let upstream_publisher_session_id = start.upstream_publisher_session_id;
         let upstream_request_id = start.fetch_handle.request_id;
         let track_key = start.track_key.clone();
-        let cache = start.cache.clone();
+        let cache = start.egress_start.cache.clone();
         let join_handle = tokio::spawn(async move {
             if let Err(error) = Self::run_inner(session_repo.clone(), &egress_sender, start).await {
                 // Expected request-scoped failures (timeout, upstream reset):
@@ -123,31 +118,33 @@ impl FetchIngest {
         let mut receiver = subscriber
             .create_fetch_receiver(&start.fetch_handle)
             .await?;
-        let start_eviction_generation = start.cache.eviction_generation();
+        let cache = start.egress_start.cache.clone();
+        let start_eviction_generation = cache.eviction_generation();
 
         loop {
             let received = tokio::select! {
                 received = receiver.receive() => received?,
-                _ = start.cache.malformed_track_detected() => {
+                _ = cache.malformed_track_detected() => {
                     anyhow::bail!("malformed track detected while awaiting fetch data");
                 }
             };
             match received {
                 moqt::Fetch::Header(_) => {}
                 moqt::Fetch::Object(object) => {
-                    Self::append_fetch_object(&start.cache, object)?;
+                    Self::append_fetch_object(&cache, object)?;
                 }
                 moqt::Fetch::End => {
-                    if start.cache.eviction_generation() != start_eviction_generation {
+                    if cache.eviction_generation() != start_eviction_generation {
                         tracing::warn!(
-                            request_id = start.request_id,
+                            request_id = start.egress_start.request_id,
                             "fetch fill crossed cache eviction; resetting downstream fetch"
                         );
                         anyhow::bail!("fetch fill crossed cache eviction");
                     }
-                    start
-                        .cache
-                        .insert_fetch_known_range(start.requested_start, start.requested_end);
+                    cache.insert_fetch_known_range(
+                        start.egress_start.start_location,
+                        start.egress_start.end_location,
+                    );
                     egress_sender
                         .send(EgressCommand::StartFetch(start.egress_start))
                         .await?;
@@ -277,17 +274,12 @@ mod tests {
         let start = FetchIngestStart {
             track_key: TrackKey::new("ns", "track"),
             upstream_publisher_session_id: UPSTREAM_SESSION,
-            downstream_subscriber_session_id: DOWNSTREAM_SESSION,
-            request_id: 3,
             fetch_handle: moqt::FetchHandle {
                 request_id: UPSTREAM_FETCH_REQUEST_ID,
                 group_order: moqt::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 1),
             },
-            cache: cache.clone(),
-            requested_start: location(0, 0),
-            requested_end: location(0, 1),
             egress_start: EgressFetchRequest {
                 subscriber_session_id: DOWNSTREAM_SESSION,
                 request_id: 3,
