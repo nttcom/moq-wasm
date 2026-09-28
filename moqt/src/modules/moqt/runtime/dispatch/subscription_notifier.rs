@@ -11,8 +11,6 @@ use crate::{
 pub(crate) struct SubscriptionNotifier;
 
 impl SubscriptionNotifier {
-    const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
-
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscription_notifier.notify",
@@ -25,11 +23,7 @@ impl SubscriptionNotifier {
         incoming_object: IncomingObject<T>,
     ) {
         match context
-            .notify_incoming_object(
-                track_alias,
-                incoming_object,
-                Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
-            )
+            .notify_incoming_object(track_alias, incoming_object)
             .await
         {
             IncomingObjectNotification::Notified => {
@@ -42,7 +36,7 @@ impl SubscriptionNotifier {
                 if dropped_oldest {
                     tracing::warn!(
                         track_alias,
-                        max_pending_objects = Self::MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
+                        pending_objects,
                         "pending incoming object buffer is full; dropping oldest object"
                     );
                 }
