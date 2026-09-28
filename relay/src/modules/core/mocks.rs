@@ -1,18 +1,21 @@
 use std::sync::{Arc, Mutex};
 
 use moqt::TerminationErrorCode;
+use tokio::sync::oneshot;
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
-        handler::publish::SubscribeOption,
+        handler::{publish::SubscribeOption, subscribe::SubscribeHandler},
         publisher::Publisher,
         session::Session,
         session_event::MoqtSessionEvent,
         subscriber::Subscriber,
-        subscription::UpstreamSubscription,
+        subscription::{DownstreamSubscription, UpstreamSubscription},
     },
+    enums::{ContentExists, FilterType, GroupOrder},
+    relay::tests::harness::fixtures::subscription::make_subscription,
     session_repository::{NewSession, SessionPeer, SessionRepository},
     types::SessionId,
 };
@@ -75,11 +78,41 @@ pub(crate) async fn session_repository_with_upstream_session_token(
     Arc<tokio::sync::Mutex<SessionRepository>>,
     RecordedControlMessages,
 ) {
-    let (new_session, recorded) = mock_new_session(session_id, verified_token);
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        recorded: recorded.clone(),
+    });
+    let repository = session_repository_with_session(session_id, session, verified_token).await;
+    (repository, recorded)
+}
+
+pub(crate) async fn session_repository_with_session(
+    session_id: SessionId,
+    session: Box<dyn Session>,
+    verified_token: VerifiedToken,
+) -> Arc<tokio::sync::Mutex<SessionRepository>> {
     let mut repository = SessionRepository::new();
     let (session_event_sender, _session_event_receiver) = tokio::sync::mpsc::unbounded_channel();
-    repository.add(new_session, session_event_sender).await;
-    (Arc::new(tokio::sync::Mutex::new(repository)), recorded)
+    repository
+        .add(
+            NewSession {
+                session_id,
+                session,
+                session_span: tracing::Span::none(),
+                peer: SessionPeer::Client,
+                verified_token,
+            },
+            session_event_sender,
+        )
+        .await;
+    Arc::new(tokio::sync::Mutex::new(repository))
+}
+
+pub(crate) fn runner_stopped(runner_stop_receiver: &mut oneshot::Receiver<()>) -> bool {
+    matches!(
+        runner_stop_receiver.try_recv(),
+        Err(oneshot::error::TryRecvError::Closed)
+    )
 }
 
 #[async_trait::async_trait]
@@ -176,5 +209,81 @@ struct PendingFetchReceiver;
 impl UpstreamFetchReceiver for PendingFetchReceiver {
     async fn receive(&mut self) -> anyhow::Result<moqt::Fetch> {
         std::future::pending().await
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MockSubscribeHandler {
+    pub(crate) subscribe_ok_count: Mutex<usize>,
+    pub(crate) subscribe_errors: Mutex<Vec<u64>>,
+}
+
+#[async_trait::async_trait]
+impl SubscribeHandler for MockSubscribeHandler {
+    fn subscribe_id(&self) -> u64 {
+        100
+    }
+
+    fn track_namespace(&self) -> &str {
+        "ns"
+    }
+
+    fn track_namespace_tuple(&self) -> &[String] {
+        &[]
+    }
+
+    fn track_name(&self) -> &str {
+        "track"
+    }
+
+    fn _subscriber_priority(&self) -> u8 {
+        128
+    }
+
+    fn _group_order(&self) -> GroupOrder {
+        GroupOrder::Ascending
+    }
+
+    fn _forward(&self) -> bool {
+        true
+    }
+
+    fn _filter_type(&self) -> FilterType {
+        FilterType::LargestObject
+    }
+
+    fn _max_cache_duration(&self) -> Option<u64> {
+        None
+    }
+
+    fn _delivery_timeout(&self) -> Option<u64> {
+        None
+    }
+
+    fn allocate_track_alias(&self) -> u64 {
+        0
+    }
+
+    async fn ok_with_track_alias(
+        &self,
+        _track_alias: u64,
+        _expires: u64,
+        _content_exists: ContentExists,
+    ) -> Result<(), moqt::TransportSendError> {
+        *self.subscribe_ok_count.lock().unwrap() += 1;
+        Ok(())
+    }
+
+    async fn error(
+        &self,
+        code: u64,
+        _reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
+        self.subscribe_errors.lock().unwrap().push(code);
+        Ok(())
+    }
+
+    fn to_downstream_subscription(&self, _track_alias: u64) -> DownstreamSubscription {
+        make_subscription(moqt::FilterType::LargestObject)
     }
 }

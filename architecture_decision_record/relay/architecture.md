@@ -160,7 +160,8 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
     terminal cleanup.
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
   `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
-  session from the pub/sub directory, stop affected egress readers, forward
+  session from the pub/sub directory (which stops the egress runners of every
+  removed downstream subscription, see "Egress"), forward
   upstream UNSUBSCRIBE / stop ingress when the last downstream subscriber
   left, withdraw namespace routes for client sessions, then drop the session
   from the repository.
@@ -197,9 +198,16 @@ Each sequence owns the relay-side protocol logic for one message
    under the same track must not make the relay advertise
    `contentExists=false` and replay stale cache from {0,0}.
 4. **Downstream registration + egress start**: register the downstream
-   subscription, send `EgressCommand::StartReader` and wait for the runner's
+   subscription — atomically with the upstream subscription's existence, so a
+   registration never outlives an upstream a concurrent cleanup already
+   removed — which returns the registered subscription's runner stop
+   `oneshot::Receiver`. Send
+   `EgressCommand::StartReader` carrying it and wait for the runner's
    readiness `oneshot`, then send SUBSCRIBE_OK with the allocated track alias
    and resolved largest location — SUBSCRIBE_OK and egress start always agree.
+   If a concurrent cleanup removed the upstream before registration, or the
+   registration before the runner reported readiness, reply SUBSCRIBE_ERROR
+   TRACK_DOES_NOT_EXIST instead.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Relative
@@ -341,9 +349,17 @@ per-request authorization gate under "Event pipeline".
   ingress/egress holds it — avoiding races with new joiners.
 
 ### Egress (`modules/relay/egress`)
-`EgressCoordinator` consumes `StartReader` / `StopReader` / `StartFetch` and
-keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
-(restart replaces the old runner). `EgressRunner` splits into:
+`EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
+command: each registered downstream subscription in the pub/sub directory owns the
+`oneshot::Sender` whose receiver the runner's task selects on (biased, before
+the runner itself), so the runner lives exactly as long as the registration.
+Whoever removes the registration — UNSUBSCRIBE, the subscriber's or the publisher's session
+cleanup — stops the runner, and a registration removed before the coordinator got to
+`StartReader` yields a runner that never runs; the order in which different
+session workers touch the registration and the coordinator cannot leak a runner. The
+coordinator keeps the runner tasks in a `JoinSet`, reaping each one as it
+finishes (including runners that end on their own, e.g. on a malformed track)
+and aborting the rest when it shuts down. `EgressRunner` splits into:
 
 - `EgressScheduler` — listens on the track's broadcast channel and the cache,
   computes the delivery start per draft-14 filter type (`NextGroupStart`,
@@ -415,6 +431,10 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
   neither path requires the start group id itself to exist.
 - **First-publisher-wins ingress**: one active reader per track; stop is
   owner-checked.
+- **Egress runner lifetime is the downstream registration's**: a runner stops
+  when its registered downstream subscription is removed, regardless of which
+  session worker removes it or when; a downstream subscription is only ever
+  registered while its upstream subscription exists.
 - **Cache identity is the key**: a cached object is self-contained (§8.1 "MUST
   store all properties"); nothing in the cache refers to an entry by handle,
   so eviction can never orphan a header or resurrect a partial entry.

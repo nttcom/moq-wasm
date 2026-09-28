@@ -1,7 +1,7 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::unsubscribe::UnsubscribeHandler,
-    relay::{egress::coordinator::EgressCommand, ingress::ingress_coordinator::IngressCommand},
+    relay::ingress::ingress_coordinator::IngressCommand,
     sequences::tables::table::{LocalPubSubDirectory, UpstreamSubscriptionOrigin},
     types::SessionId,
 };
@@ -17,7 +17,6 @@ impl Unsubscribe {
         parent = session_span,
         fields(session_id = %session_id)
     )]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
@@ -25,7 +24,6 @@ impl Unsubscribe {
         table: &dyn LocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: Box<dyn UnsubscribeHandler>,
     ) {
         let subscribe_id = handler.subscribe_id();
@@ -43,17 +41,6 @@ impl Unsubscribe {
             );
             return;
         };
-
-        if egress_sender
-            .send(EgressCommand::StopReader {
-                subscriber_session_id: session_id,
-                downstream_subscribe_id: subscribe_id,
-            })
-            .await
-            .is_err()
-        {
-            tracing::error!("Failed to send EgressStopRequest.");
-        }
 
         tracing::info!(
             session_id = %session_id,
@@ -108,11 +95,13 @@ impl Unsubscribe {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
 
     use super::*;
     use crate::modules::{
-        core::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
+        core::mocks::{
+            RecordedControlMessages, runner_stopped, session_repository_with_upstream_session,
+        },
         enums::ContentExists,
         sequences::tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
@@ -139,8 +128,7 @@ mod tests {
         forwarder: ControlMessageForwarder,
         ingress_sender: mpsc::Sender<IngressCommand>,
         ingress_receiver: mpsc::Receiver<IngressCommand>,
-        egress_sender: mpsc::Sender<EgressCommand>,
-        egress_receiver: mpsc::Receiver<EgressCommand>,
+        runner_stop_receivers: Vec<oneshot::Receiver<()>>,
         recorded: RecordedControlMessages,
     }
 
@@ -165,28 +153,31 @@ mod tests {
                 origin,
             },
         );
-        for (session_id, subscribe_id) in downstream_subscriptions {
-            assert!(table.register_downstream_subscription(
-                *session_id,
-                *subscribe_id,
-                upstream_key.clone(),
-                None,
-            ));
-        }
+        let runner_stop_receivers = downstream_subscriptions
+            .iter()
+            .map(|(session_id, subscribe_id)| {
+                table
+                    .register_downstream_subscription(
+                        *session_id,
+                        *subscribe_id,
+                        upstream_key.clone(),
+                        None,
+                    )
+                    .unwrap()
+            })
+            .collect();
 
         let (repository, recorded) =
             session_repository_with_upstream_session(PUBLISHER_SESSION).await;
         let forwarder = ControlMessageForwarder { repository };
 
         let (ingress_sender, ingress_receiver) = mpsc::channel(8);
-        let (egress_sender, egress_receiver) = mpsc::channel(8);
         TestContext {
             table,
             forwarder,
             ingress_sender,
             ingress_receiver,
-            egress_sender,
-            egress_receiver,
+            runner_stop_receivers,
             recorded,
         }
     }
@@ -199,7 +190,6 @@ mod tests {
                 &ctx.table,
                 &ctx.forwarder,
                 &ctx.ingress_sender,
-                &ctx.egress_sender,
                 Box::new(MockUnsubscribeHandler { subscribe_id }),
             )
             .await;
@@ -214,16 +204,7 @@ mod tests {
         run_unsubscribe(&ctx, 100, 10).await;
 
         // Assert
-        match ctx.egress_receiver.try_recv() {
-            Ok(EgressCommand::StopReader {
-                subscriber_session_id,
-                downstream_subscribe_id,
-            }) => {
-                assert_eq!(subscriber_session_id, 100);
-                assert_eq!(downstream_subscribe_id, 10);
-            }
-            other => panic!("Expected StopReader, got {:?}", other.is_ok()),
-        }
+        assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert_eq!(
             *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]
@@ -253,10 +234,8 @@ mod tests {
         run_unsubscribe(&ctx, 100, 10).await;
 
         // Assert
-        assert!(matches!(
-            ctx.egress_receiver.try_recv(),
-            Ok(EgressCommand::StopReader { .. })
-        ));
+        assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
+        assert!(!runner_stopped(&mut ctx.runner_stop_receivers[1]));
         assert!(
             ctx.recorded
                 .unsubscribed_request_ids
@@ -276,10 +255,7 @@ mod tests {
         run_unsubscribe(&ctx, 100, 10).await;
 
         // Assert
-        assert!(matches!(
-            ctx.egress_receiver.try_recv(),
-            Ok(EgressCommand::StopReader { .. })
-        ));
+        assert!(runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(
             ctx.recorded
                 .unsubscribed_request_ids
@@ -291,15 +267,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_subscription_sends_no_commands() {
+    async fn unknown_subscription_stops_no_runner_and_forwards_nothing() {
         // Arrange
-        let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[]).await;
+        let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[(101, 11)]).await;
 
         // Act
         run_unsubscribe(&ctx, 100, 10).await;
 
         // Assert
-        assert!(ctx.egress_receiver.try_recv().is_err());
+        assert!(!runner_stopped(&mut ctx.runner_stop_receivers[0]));
         assert!(
             ctx.recorded
                 .unsubscribed_request_ids

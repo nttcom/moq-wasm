@@ -5,7 +5,8 @@ use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
-    core::data_object::DataObject,
+    auth::verified_token::VerifiedToken,
+    core::{data_object::DataObject, mocks::session_repository_with_session},
     relay::{
         cache::store::TrackCacheStore,
         egress::{
@@ -15,20 +16,23 @@ use crate::modules::{
         notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
+    session_repository::SessionRepository,
     types::{SessionId, TrackKey},
 };
 
 pub(crate) mod fixtures;
 mod mocks;
 
-pub(crate) use self::mocks::downstream_client::{FetchSent, Sent};
+pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
     fixtures::subscription::make_subscription,
     mocks::{
-        downstream_client::{MockFetchSender, MockPublisher, SentPublishDone},
+        downstream_client::{
+            MockDownstreamSession, MockFetchSender, MockPublisher, SentPublishDone,
+        },
         upstream_client::UpstreamSubgroupStream,
     },
 };
@@ -284,6 +288,22 @@ impl RelayHarness {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
+}
+
+pub(crate) async fn session_repository_with_downstream_session(
+    session_id: SessionId,
+) -> (
+    Arc<tokio::sync::Mutex<SessionRepository>>,
+    MockPublisherObservers,
+) {
+    let (publisher, observers) = MockPublisher::channel();
+    let repository = session_repository_with_session(
+        session_id,
+        Box::new(MockDownstreamSession { publisher }),
+        VerifiedToken::full_access(),
+    )
+    .await;
+    (repository, observers)
 }
 
 pub(crate) async fn receive_objects_until_close(
