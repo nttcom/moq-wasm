@@ -31,7 +31,9 @@ optionally cascades across relays via a Redis-backed route registry.
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
-- `SessionRepository` (shared `Arc<Mutex<_>>`).
+- `SessionRepository` (shared `Arc<Mutex<_>>`) — one `SessionEntry` per
+  session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task
+  and event forwarder task.
 - `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`
   + `SubgroupOpenedNotifierMap`), `InterRelayConnectionManager`,
   `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
@@ -115,8 +117,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 ```
 
 - `SessionRepository::add` sends `EventKind::SessionRegistered` on the
-  relay-wide channel before `start_session_event_forwarding` spawns the
-  session's forwarder task, which pumps `moqt` events into the same channel,
+  relay-wide channel before `SessionEventForwardTask::run` spawns the
+  session's forwarder task (aborted when the session's entry leaves the
+  repository), which pumps `moqt` events into the same channel,
   stopping after `Disconnected` / `ProtocolViolation`. The reader spawns a
   session's worker only on `SessionRegistered` and drops events for a session
   that has no worker: every other event for a session (from its forwarder or

@@ -8,7 +8,6 @@ pub(crate) mod relay;
 pub(crate) mod route_registry;
 pub(crate) mod sequences;
 pub(crate) mod session_event;
-pub(crate) mod session_event_forward_task_registry;
 pub(crate) mod session_handler;
 pub(crate) mod session_repository;
 pub(crate) mod types;
