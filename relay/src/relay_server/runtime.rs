@@ -50,17 +50,9 @@ impl RelayRuntime {
             route_registry.clone(),
             inter_relay_connection_manager.clone(),
         ));
-        let ingress = IngressCoordinator::new(
-            repo.clone(),
-            store.cache_store.clone(),
-            store.subgroup_opened_notifier_map.clone(),
-            sender.clone(),
-        );
-        let egress = EgressCoordinator::new(
-            repo.clone(),
-            store.cache_store.clone(),
-            store.subgroup_opened_notifier_map.clone(),
-        );
+        let ingress =
+            IngressCoordinator::new(repo.clone(), store.cache_store.clone(), sender.clone());
+        let egress = EgressCoordinator::new(repo.clone(), store.cache_store.clone());
         let manager = EventHandler::run(
             repo,
             receiver,
@@ -73,10 +65,7 @@ impl RelayRuntime {
             store.cache_store.clone(),
             token_verifier,
         );
-        let evict_job = spawn_cache_eviction_job(
-            store.cache_store.clone(),
-            store.subgroup_opened_notifier_map.clone(),
-        );
+        let evict_job = spawn_cache_eviction_job(store.cache_store.clone());
         (
             sender,
             Self {
