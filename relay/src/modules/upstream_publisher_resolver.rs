@@ -49,9 +49,9 @@ impl UpstreamPublisherResolver {
     // implements first-writer-wins, which conflicts with GOAWAY migration —
     // during the switchover overlap the NEWER session is the correct target
     // for new subscriptions, while the old one keeps serving established
-    // ones. Introduce a per-session Active/Draining status (mirroring
-    // route_registry::RouteStatus) and prefer Active publishers here,
-    // keeping min session_id only as the deterministic tie-break.
+    // ones. Introduce a per-session Active/Draining status and prefer Active
+    // publishers here, keeping min session_id only as the deterministic
+    // tie-break.
     async fn find_local_publisher(
         &self,
         table: &dyn LocalPubSubDirectory,
@@ -117,7 +117,7 @@ mod tests {
     use crate::modules::{
         route_registry::{
             NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError,
-            RelayInfo, RouteStatus,
+            RelayInfo,
         },
         sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
         session_repository::SessionRepository,
@@ -138,7 +138,6 @@ mod tests {
         async fn register_namespace_publisher(
             &self,
             _track_namespace: &str,
-            _status: RouteStatus,
         ) -> Result<(), RegisterNamespacePublisherError> {
             unimplemented!("not used in resolver tests")
         }
@@ -146,7 +145,6 @@ mod tests {
         async fn register_namespace_subscriber(
             &self,
             _track_namespace_prefix: &str,
-            _status: RouteStatus,
         ) -> Result<(), RegisterNamespaceSubscriberError> {
             unimplemented!("not used in resolver tests")
         }

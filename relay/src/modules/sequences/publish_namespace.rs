@@ -3,7 +3,7 @@ use crate::modules::{
     core::handler::publish_namespace::PublishNamespaceHandler,
     enums::PublishNamespaceErrorCode,
     inter_relay::InterRelayConnectionManager,
-    route_registry::{RegisterNamespacePublisherError, RelayRouteRegistry, RouteStatus},
+    route_registry::{RegisterNamespacePublisherError, RelayRouteRegistry},
     sequences::{
         CascadingRelayContext,
         tables::table::{LocalPubSubDirectory, PeerKind},
@@ -179,7 +179,7 @@ impl PublishNamespace {
         handler: &dyn PublishNamespaceHandler,
     ) -> bool {
         match route_registry
-            .register_namespace_publisher(track_namespace, RouteStatus::Active)
+            .register_namespace_publisher(track_namespace)
             .await
         {
             Ok(()) => true,

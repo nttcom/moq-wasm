@@ -6,35 +6,11 @@ pub(crate) use redis::RedisRelayRouteRegistry;
 
 use async_trait::async_trait;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum RouteStatus {
-    Active,
-    Draining,
-}
-
-impl RouteStatus {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Draining => "draining",
-        }
-    }
-
-    pub(crate) fn from_str(value: &str) -> Option<Self> {
-        match value {
-            "active" => Some(Self::Active),
-            "draining" => Some(Self::Draining),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct RelayInfo {
     pub(crate) relay_id: String,
     pub(crate) host: String,
     pub(crate) port: u16,
-    pub(crate) status: RouteStatus,
 }
 
 #[derive(Clone, Debug)]
@@ -63,12 +39,10 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
     async fn register_namespace_publisher(
         &self,
         track_namespace: &str,
-        status: RouteStatus,
     ) -> Result<(), RegisterNamespacePublisherError>;
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-        status: RouteStatus,
     ) -> Result<(), RegisterNamespaceSubscriberError>;
     async fn find_active_namespace_publisher(
         &self,

@@ -5,7 +5,7 @@ use redis::AsyncCommands;
 
 use super::{
     NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError, RelayInfo,
-    RelayRouteRegistry, RouteStatus,
+    RelayRouteRegistry,
 };
 
 #[derive(Clone)]
@@ -17,6 +17,7 @@ pub(crate) struct RedisRelayRouteRegistry {
 impl RedisRelayRouteRegistry {
     const RELAY_TTL_SECONDS: u64 = 15;
     const ROUTE_TTL_SECONDS: u64 = 15;
+    const ACTIVE_STATUS: &str = "active";
 
     // --- lifecycle ---
 
@@ -60,7 +61,7 @@ impl RedisRelayRouteRegistry {
                     ("relay_id", relay.relay_id.as_str()),
                     ("host", relay.host.as_str()),
                     ("port", &relay.port.to_string()),
-                    ("status", relay.status.as_str()),
+                    ("status", Self::ACTIVE_STATUS),
                     ("updated_at", &Self::now_millis().to_string()),
                 ],
             )
@@ -80,33 +81,14 @@ impl RedisRelayRouteRegistry {
         Ok(())
     }
 
-    async fn find_relay_info(&self, relay_id: &str) -> anyhow::Result<Option<RelayInfo>> {
-        let mut connection = self.connection.clone();
-        let values: HashMap<String, String> = connection.hgetall(Self::relay_key(relay_id)).await?;
-        if values.is_empty() {
-            return Ok(None);
-        }
-
-        let Some(host) = values.get("host").cloned() else {
-            return Ok(None);
-        };
-        let Some(port) = values
-            .get("port")
-            .and_then(|value| value.parse::<u16>().ok())
-        else {
-            return Ok(None);
-        };
-        let status = values
-            .get("status")
-            .and_then(|value| RouteStatus::from_str(value))
-            .unwrap_or(RouteStatus::Draining);
-
-        Ok(Some(RelayInfo {
+    fn parse_relay_info(relay_id: &str, values: &HashMap<String, String>) -> Option<RelayInfo> {
+        let host = values.get("host")?.clone();
+        let port = values.get("port")?.parse::<u16>().ok()?;
+        Some(RelayInfo {
             relay_id: relay_id.to_string(),
             host,
             port,
-            status,
-        }))
+        })
     }
 
     // --- route operations ---
@@ -135,19 +117,20 @@ impl RedisRelayRouteRegistry {
         let candidates: Vec<String> = route_statuses
             .into_iter()
             .filter(|(relay_id, status)| {
-                relay_id != &self.relay.relay_id
-                    && RouteStatus::from_str(status) == Some(RouteStatus::Active)
+                relay_id != &self.relay.relay_id && status == Self::ACTIVE_STATUS
             })
             .map(|(relay_id, _)| relay_id)
             .collect();
 
         let mut routes = Vec::new();
         for relay_id in candidates {
-            let Some(relay) = self.find_relay_info(&relay_id).await? else {
+            let values: HashMap<String, String> =
+                connection.hgetall(Self::relay_key(&relay_id)).await?;
+            let Some(relay) = Self::parse_relay_info(&relay_id, &values) else {
                 let _: () = connection.hdel(&key, &relay_id).await?;
                 continue;
             };
-            if relay.status == RouteStatus::Active {
+            if values.get("status").map(String::as_str) == Some(Self::ACTIVE_STATUS) {
                 routes.push(relay);
             }
         }
@@ -191,10 +174,7 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     async fn register_namespace_publisher(
         &self,
         track_namespace: &str,
-        status: RouteStatus,
     ) -> Result<(), RegisterNamespacePublisherError> {
-        // When registering as Active, atomically check that no other relay is already Active.
-        // Draining status (graceful shutdown) skips the conflict check.
         let script = redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"));
         let mut connection = self.connection.clone();
         let key = Self::publisher_namespace_key(track_namespace);
@@ -203,7 +183,6 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
             .key(&key)
             .key(&relay_routes_key)
             .arg(&self.relay.relay_id)
-            .arg(status.as_str())
             .arg(Self::ROUTE_TTL_SECONDS)
             .arg(Self::RELAY_TTL_SECONDS)
             .invoke_async(&mut connection)
@@ -218,7 +197,6 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
-        status: RouteStatus,
     ) -> Result<(), RegisterNamespaceSubscriberError> {
         let script = redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"));
         let mut connection = self.connection.clone();
@@ -228,7 +206,6 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
             .key(&key)
             .key(&relay_routes_key)
             .arg(&self.relay.relay_id)
-            .arg(status.as_str())
             .arg(Self::ROUTE_TTL_SECONDS)
             .arg(Self::RELAY_TTL_SECONDS)
             .invoke_async(&mut connection)
@@ -322,19 +299,16 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
 
         let mut routes = Vec::new();
         for chunk in raw.chunks(4) {
-            let [relay_id, host, port_str, status_str] = chunk else {
+            let [relay_id, host, port_str, _active_status] = chunk else {
                 continue;
             };
             let port = port_str
                 .parse::<u16>()
                 .map_err(|_| anyhow::anyhow!("invalid port in relay info: {port_str}"))?;
-            let status = RouteStatus::from_str(status_str)
-                .ok_or_else(|| anyhow::anyhow!("unknown route status: {status_str}"))?;
             routes.push(RelayInfo {
                 relay_id: relay_id.clone(),
                 host: host.clone(),
                 port,
-                status,
             });
         }
 

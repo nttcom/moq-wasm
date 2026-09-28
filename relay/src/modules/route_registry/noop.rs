@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use super::{
     NamespaceRoute, RegisterNamespacePublisherError, RegisterNamespaceSubscriberError, RelayInfo,
-    RelayRouteRegistry, RouteStatus,
+    RelayRouteRegistry,
 };
 
 #[derive(Debug)]
@@ -13,7 +13,6 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
     async fn register_namespace_publisher(
         &self,
         _track_namespace: &str,
-        _status: RouteStatus,
     ) -> Result<(), RegisterNamespacePublisherError> {
         Ok(())
     }
@@ -21,7 +20,6 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
     async fn register_namespace_subscriber(
         &self,
         _track_namespace_prefix: &str,
-        _status: RouteStatus,
     ) -> Result<(), RegisterNamespaceSubscriberError> {
         Ok(())
     }
