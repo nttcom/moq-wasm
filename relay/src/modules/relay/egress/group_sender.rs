@@ -77,7 +77,7 @@ impl GroupSender {
         let mut joinset = JoinSet::<()>::new();
         let track_alias = self.downstream_subscription.track_alias();
         let subscriber_priority = self.downstream_subscription.subscriber_priority();
-        let group_order = self.downstream_subscription.group_order().as_moqt();
+        let group_order = self.downstream_subscription.group_order();
 
         loop {
             tokio::select! {

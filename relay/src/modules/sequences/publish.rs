@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
-    enums::{FilterType, PublishErrorCode},
+    enums::PublishErrorCode,
     inter_relay::InterRelayConnectionManager,
     relay::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     route_registry::RelayRouteRegistry,
@@ -18,6 +18,8 @@ use crate::modules::{
     },
     types::{SessionId, TrackKey},
 };
+
+use moqt::FilterType;
 use tracing::Span;
 
 pub(crate) struct Publish;

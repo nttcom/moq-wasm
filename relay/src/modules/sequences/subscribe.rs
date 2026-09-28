@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe::SubscribeHandler,
-    enums::{ContentExists, Location, SubscribeErrorCode},
+    enums::SubscribeErrorCode,
     relay::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
@@ -21,6 +21,8 @@ use crate::modules::{
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
+
+use moqt::ContentExists;
 use tracing::Span;
 
 pub(crate) struct Subscribe;
@@ -418,10 +420,11 @@ impl Subscribe {
             "upstream subscription registered"
         );
 
-        let subscribe_time_largest = max_location(
-            active_upstream.content_exists.location(),
-            cache_before_subscribe,
-        );
+        let upstream_largest = match active_upstream.content_exists {
+            ContentExists::True { location } => Some(location),
+            ContentExists::False => None,
+        };
+        let subscribe_time_largest = max_location(upstream_largest, cache_before_subscribe);
         Ok((upstream_key, active_upstream, subscribe_time_largest))
     }
 
@@ -466,14 +469,9 @@ impl Subscribe {
         let largest_location =
             resolve_subscribe_largest(&largest_source, &active_upstream.track_key, cache_store)
                 .await;
-        let content_exists = match &largest_location {
-            Some(loc) => ContentExists::True {
-                location: Location {
-                    group_id: loc.group_id,
-                    object_id: loc.object_id,
-                },
-            },
-            None => active_upstream.content_exists.clone(),
+        let content_exists = match largest_location {
+            Some(location) => ContentExists::True { location },
+            None => active_upstream.content_exists,
         };
 
         let Some(runner_stop_receiver) = table.register_downstream_subscription(

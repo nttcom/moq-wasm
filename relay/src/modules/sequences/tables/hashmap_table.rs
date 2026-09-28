@@ -576,8 +576,8 @@ impl InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::core::mocks::runner_stopped;
-    use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
     use crate::modules::types::TrackKey;
+    use moqt::{ContentExists, FilterType, GroupOrder};
 
     #[derive(Debug)]
     struct StubPublishHandler {
@@ -640,7 +640,7 @@ mod tests {
                     content_exists: moqt::ContentExists::False,
                     subscriber_priority,
                     forward: true,
-                    filter_type: filter_type.as_moqt(),
+                    filter_type,
                     delivery_timeout: None,
                 },
             )
