@@ -59,10 +59,6 @@ mod tests {
         },
     };
 
-    async fn setup() -> UpstreamReleaseContext {
-        upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await
-    }
-
     async fn run_cleanup(ctx: &UpstreamReleaseContext) {
         MalformedTrackCleanup
             .handle(
@@ -79,7 +75,7 @@ mod tests {
     #[tokio::test]
     async fn detection_unsubscribes_upstream_and_stops_ingress() {
         // Arrange
-        let mut ctx = setup().await;
+        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
 
         // Act
         run_cleanup(&ctx).await;
@@ -87,7 +83,7 @@ mod tests {
         // Assert
         assert!(ctx.table.active_upstream_subscriptions.is_empty());
         assert_eq!(
-            *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
+            ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
         match ctx.ingress_receiver.try_recv() {
@@ -105,7 +101,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_detection_reports_are_idempotent() {
         // Arrange: the first report already ran the cleanup.
-        let mut ctx = setup().await;
+        let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Subscribe).await;
         run_cleanup(&ctx).await;
         let _ = ctx.ingress_receiver.try_recv();
 
@@ -114,7 +110,7 @@ mod tests {
 
         // Assert
         assert_eq!(
-            *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
+            ctx.recorded.unsubscribed_request_ids(),
             vec![UPSTREAM_REQUEST_ID]
         );
         assert!(ctx.ingress_receiver.try_recv().is_err());
