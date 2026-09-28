@@ -28,9 +28,11 @@ fn after(at: moqt::Location) -> moqt::Location {
     location(at.group_id, at.object_id.saturating_add(1))
 }
 
+mod fetch_cursor;
 mod ledger;
 mod open_subgroup;
 
+pub(crate) use fetch_cursor::FetchCursor;
 use ledger::Ledger;
 pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard};
 
@@ -328,74 +330,13 @@ impl TrackCache {
         requested_end
     }
 
-    pub(crate) async fn fetch_objects(
+    pub(crate) fn fetch_objects(
         &self,
         start: moqt::Location,
         end: moqt::Location,
         group_order: moqt::GroupOrder,
-    ) -> Result<Vec<moqt::FetchObjectField>, FetchInterrupted> {
-        let mut groups = self.read().groups_in_range(start.group_id, end.group_id);
-        if matches!(group_order, moqt::GroupOrder::Descending) {
-            groups.reverse();
-        }
-
-        let mut fetch_objects = Vec::new();
-        for group_id in groups {
-            let known_prefix_end = self
-                .read()
-                .known_ranges
-                .end_of_range_containing(location(group_id, 0));
-            let group_fully_known =
-                matches!(known_prefix_end, Some(end) if end.group_id > group_id);
-            let frontier: Option<u64> = match known_prefix_end {
-                Some(end) if end.group_id == group_id => Some(end.object_id),
-                _ => None,
-            };
-            let mut next_object_id = if group_id == start.group_id {
-                start.object_id
-            } else {
-                0
-            };
-            let end_exclusive: Option<u64> = if group_id == end.group_id && end.object_id != 0 {
-                Some(end.object_id)
-            } else {
-                None
-            };
-
-            loop {
-                if end_exclusive.is_some_and(|end_object_id| next_object_id >= end_object_id) {
-                    break;
-                }
-                let in_known =
-                    group_fully_known || frontier.is_some_and(|frontier| next_object_id < frontier);
-                let found = if in_known {
-                    match self.read().next_group_object(group_id, next_object_id) {
-                        Some(object) => NextObject::Object(object),
-                        None => NextObject::Finished,
-                    }
-                } else {
-                    self.next_group_object_or_wait(group_id, next_object_id)
-                        .await?
-                };
-                match found {
-                    NextObject::Object(object) => {
-                        let object_id = object.location.object_id;
-                        next_object_id = object_id.saturating_add(1);
-                        if end_exclusive.is_some_and(|end_object_id| object_id >= end_object_id) {
-                            break;
-                        }
-                        fetch_objects.push(object.to_fetch_object_field());
-                    }
-                    NextObject::Aborted => return Err(FetchInterrupted::Incomplete),
-                    NextObject::Finished if group_fully_known => break,
-                    NextObject::Finished if in_known => {
-                        next_object_id = frontier.unwrap_or(next_object_id);
-                    }
-                    NextObject::Finished => break,
-                }
-            }
-        }
-        Ok(fetch_objects)
+    ) -> FetchCursor<'_> {
+        FetchCursor::new(self, start, end, group_order)
     }
 }
 
@@ -727,7 +668,7 @@ mod fetch_tests {
     use super::*;
     use crate::modules::relay::{
         tests::harness::fixtures::cached_object::{
-            datagram_object, insert_closed_group, open_group, status_object, stream_key,
+            datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
             stream_object, stream_object_in_subgroup,
         },
         types::SubgroupKey,
@@ -745,8 +686,7 @@ mod fetch_tests {
         start: moqt::Location,
         end: moqt::Location,
     ) -> Vec<moqt::FetchObjectField> {
-        cache
-            .fetch_objects(start, end, moqt::GroupOrder::Ascending)
+        fetch_all(cache, start, end, moqt::GroupOrder::Ascending)
             .await
             .unwrap()
     }
@@ -1065,10 +1005,14 @@ mod fetch_tests {
         insert_closed_group(&cache, 0, &[0, 1]);
         insert_closed_group(&cache, 1, &[0, 1]);
         // Act
-        let objects = cache
-            .fetch_objects(location(0, 0), location(1, 2), moqt::GroupOrder::Descending)
-            .await
-            .unwrap();
+        let objects = fetch_all(
+            &cache,
+            location(0, 0),
+            location(1, 2),
+            moqt::GroupOrder::Descending,
+        )
+        .await
+        .unwrap();
         // Assert
         assert_eq!(object_ids(&objects), vec![(1, 0), (1, 1), (0, 0), (0, 1)]);
     }
@@ -1084,9 +1028,13 @@ mod fetch_tests {
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
-                cache
-                    .fetch_objects(location(0, 0), location(1, 3), moqt::GroupOrder::Ascending)
-                    .await
+                fetch_all(
+                    &cache,
+                    location(0, 0),
+                    location(1, 3),
+                    moqt::GroupOrder::Ascending,
+                )
+                .await
             }
         });
         tokio::task::yield_now().await;
@@ -1114,9 +1062,13 @@ mod fetch_tests {
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
-                cache
-                    .fetch_objects(location(0, 0), location(0, 3), moqt::GroupOrder::Ascending)
-                    .await
+                fetch_all(
+                    &cache,
+                    location(0, 0),
+                    location(0, 3),
+                    moqt::GroupOrder::Ascending,
+                )
+                .await
             }
         });
         tokio::task::yield_now().await;
@@ -1139,9 +1091,13 @@ mod fetch_tests {
         let fetch = tokio::spawn({
             let cache = cache.clone();
             async move {
-                cache
-                    .fetch_objects(location(0, 0), location(0, 3), moqt::GroupOrder::Ascending)
-                    .await
+                fetch_all(
+                    &cache,
+                    location(0, 0),
+                    location(0, 3),
+                    moqt::GroupOrder::Ascending,
+                )
+                .await
             }
         });
         tokio::task::yield_now().await;

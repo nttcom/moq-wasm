@@ -5,7 +5,7 @@ use tokio::time::Instant;
 use crate::modules::relay::{
     cache::{
         cached_object::{CachedObject, ForwardingPreference, SubgroupHeaderFields},
-        track_cache::{OpenSubgroupGuard, TrackCache},
+        track_cache::{FetchInterrupted, OpenSubgroupGuard, TrackCache},
     },
     types::SubgroupKey,
 };
@@ -89,4 +89,18 @@ pub(crate) fn open_group<'a>(
 
 pub(crate) fn insert_closed_group(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
     open_group(cache, group_id, object_ids).finish();
+}
+
+pub(crate) async fn fetch_all(
+    cache: &TrackCache,
+    start: moqt::Location,
+    end: moqt::Location,
+    group_order: moqt::GroupOrder,
+) -> Result<Vec<moqt::FetchObjectField>, FetchInterrupted> {
+    let mut cursor = cache.fetch_objects(start, end, group_order);
+    let mut objects = Vec::new();
+    while let Some(object) = cursor.next().await? {
+        objects.push(object.to_fetch_object_field());
+    }
+    Ok(objects)
 }

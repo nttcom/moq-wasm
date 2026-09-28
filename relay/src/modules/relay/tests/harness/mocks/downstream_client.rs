@@ -158,3 +158,43 @@ impl Publisher for MockPublisher {
         unreachable!("not used by the egress path under test")
     }
 }
+
+/// What the downstream side observed on a fetch stream.
+#[derive(Debug)]
+pub(crate) enum FetchSent {
+    Object(moqt::FetchObjectField),
+    Closed,
+    Reset(u64),
+}
+
+pub(crate) struct MockFetchSender {
+    sent: mpsc::UnboundedSender<FetchSent>,
+}
+
+impl MockFetchSender {
+    pub(crate) fn channel() -> (Self, mpsc::UnboundedReceiver<FetchSent>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (Self { sent: sender }, receiver)
+    }
+}
+
+#[async_trait::async_trait]
+impl FetchSender for MockFetchSender {
+    async fn send(&self, object: moqt::FetchObjectField) -> anyhow::Result<()> {
+        self.sent
+            .send(FetchSent::Object(object))
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+
+    async fn close(&self) -> anyhow::Result<()> {
+        self.sent
+            .send(FetchSent::Closed)
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+
+    async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
+        self.sent
+            .send(FetchSent::Reset(error_code))
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+}
