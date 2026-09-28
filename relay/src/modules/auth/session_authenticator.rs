@@ -43,8 +43,6 @@ impl SessionAuthenticator {
         let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
         let token = match extract_token(&client_setup.setup_parameters.authorization_token) {
             Ok(token) => token,
-            // A client that presents no token is accepted with the anonymous
-            // scope (anon/**); the inter-relay endpoint still requires a token.
             Err(TokenParameterError::Missing) if !relay_endpoint => {
                 return Ok(VerifiedToken::anonymous());
             }
@@ -96,7 +94,7 @@ mod tests {
     use super::SessionAuthenticator;
     use crate::modules::{
         auth::{
-            test_support::{StubOutcome, StubVerifier, client_setup},
+            test_support::{StubOutcome, StubVerifier, app_token, client_setup, relay_token},
             verified_token::VerifiedToken,
         },
         session_repository::SessionPeer,
@@ -108,23 +106,6 @@ mod tests {
         }
     }
 
-    fn app_token() -> VerifiedToken {
-        VerifiedToken {
-            app_id: "APP".to_string(),
-            publish: Some(vec![]),
-            subscribe: None,
-            is_relay: false,
-            expires_at: None,
-        }
-    }
-
-    fn relay_token() -> VerifiedToken {
-        VerifiedToken {
-            is_relay: true,
-            ..app_token()
-        }
-    }
-
     fn setup_with_jwt() -> moqt::wire::ClientSetup {
         client_setup(vec![AuthorizationToken::use_value_utf8("jwt")])
     }
@@ -132,7 +113,7 @@ mod tests {
     #[tokio::test]
     async fn missing_token_on_client_endpoint_is_anonymous() {
         // Arrange
-        let authenticator = authenticator(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token(Some(""), None)));
 
         // Act
         let token = authenticator
@@ -147,7 +128,7 @@ mod tests {
     #[tokio::test]
     async fn missing_token_on_inter_relay_endpoint_is_unauthorized() {
         // Arrange
-        let authenticator = authenticator(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token(Some(""), None)));
 
         // Act
         let rejected = authenticator
@@ -211,7 +192,7 @@ mod tests {
     #[tokio::test]
     async fn client_token_on_inter_relay_endpoint_is_unauthorized() {
         // Arrange
-        let authenticator = authenticator(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token(Some(""), None)));
 
         // Act
         let rejected = authenticator
@@ -226,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn matching_token_and_endpoint_returns_the_claims() {
         // Arrange
-        let authenticator = authenticator(StubOutcome::Verified(app_token()));
+        let authenticator = authenticator(StubOutcome::Verified(app_token(Some(""), None)));
 
         // Act
         let token = authenticator
@@ -235,6 +216,6 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert_eq!(token, app_token());
+        assert_eq!(token, app_token(Some(""), None));
     }
 }

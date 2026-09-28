@@ -10,7 +10,6 @@ use crate::{
         auth::session_authenticator::SessionAuthenticator,
         route_registry::{
             NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
-            RouteStatus,
         },
         session_event::SessionEvent,
         session_handler::{SessionHandler, SessionIntake},
@@ -43,7 +42,6 @@ impl RelayServer {
             relay_id: config.relay_id,
             host: config.advertise_host,
             port: config.inner_port,
-            status: RouteStatus::Active,
         };
         let route_registry: Arc<dyn RelayRouteRegistry> = if let Some(redis_url) = config.redis_url
         {

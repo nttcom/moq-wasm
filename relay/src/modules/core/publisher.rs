@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use crate::modules::core::{
     data_sender::{
         DataSender,
-        datagram_sender::DatagramSender,
         fetch_sender::FetchSender,
         stream_sender_factory::{ConcreteStreamSenderFactory, StreamSenderFactory},
     },
@@ -82,9 +81,7 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
         &self,
         downstream_subscription: &DownstreamSubscription,
     ) -> Box<dyn DataSender> {
-        let sender = self.create_datagram(downstream_subscription.as_moqt());
-        let sender = DatagramSender::new(sender);
-        Box::new(sender)
+        Box::new(self.create_datagram(downstream_subscription.as_moqt()))
     }
 
     async fn new_fetch_sender(&self, request_id: u64) -> anyhow::Result<Box<dyn FetchSender>> {

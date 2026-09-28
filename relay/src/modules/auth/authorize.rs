@@ -55,27 +55,10 @@ pub(crate) fn authorize(
 #[cfg(test)]
 mod tests {
     use super::{Operation, authorize};
-    use crate::modules::auth::verified_token::{VerifiedToken, parse_namespace_path};
-
-    fn app_token(publish: Option<&str>, subscribe: Option<&str>) -> VerifiedToken {
-        VerifiedToken {
-            app_id: "APP".to_string(),
-            publish: publish.map(parse_namespace_path),
-            subscribe: subscribe.map(parse_namespace_path),
-            is_relay: false,
-            expires_at: None,
-        }
-    }
-
-    fn relay_token() -> VerifiedToken {
-        VerifiedToken {
-            app_id: "RELAY".to_string(),
-            publish: Some(vec![]),
-            subscribe: Some(vec![]),
-            is_relay: true,
-            expires_at: None,
-        }
-    }
+    use crate::modules::auth::{
+        test_support::{app_token, relay_token},
+        verified_token::VerifiedToken,
+    };
 
     fn namespace(elements: &[&str]) -> Vec<String> {
         elements.iter().map(|element| element.to_string()).collect()
