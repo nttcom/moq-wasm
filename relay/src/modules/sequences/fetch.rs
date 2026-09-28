@@ -42,13 +42,6 @@ struct LocationRange {
     end_location: moqt::Location,
 }
 
-struct UpstreamFetch {
-    track_namespace: String,
-    track_name: String,
-    start_location: moqt::Location,
-    end_location: moqt::Location,
-}
-
 struct PreparedUpstreamFetch {
     handle: moqt::FetchHandle,
     upstream_publisher_session_id: SessionId,
@@ -166,8 +159,6 @@ impl Fetch {
                 // Joining Fetches forward as Standalone: the target is already
                 // resolved to the absolute range whose end is the equivalent
                 // Standalone Fetch encoding (§9.16.2.1, largest + 1).
-                let start_location = missing_range.start_location;
-                let request = Self::build_upstream_fetch(&target, missing_range);
                 // This awaits the upstream FETCH_OK before returning to the session
                 // worker; object ingestion continues in a background task afterwards.
                 let Some(prepared) = self
@@ -176,7 +167,8 @@ impl Fetch {
                         forwarder,
                         upstream_publisher_resolver,
                         handler.as_ref(),
-                        request,
+                        &target,
+                        &missing_range,
                     )
                     .await
                 else {
@@ -195,7 +187,7 @@ impl Fetch {
                     subscriber_session_id: session_id,
                     request_id,
                     cache: cache_store.get_or_create(&target.track_key),
-                    start_location,
+                    start_location: missing_range.start_location,
                     end_location: prepared.handle.end_location,
                     group_order: handler.group_order(),
                 };
@@ -214,15 +206,6 @@ impl Fetch {
         }
     }
 
-    fn build_upstream_fetch(target: &FetchTarget, missing_range: LocationRange) -> UpstreamFetch {
-        UpstreamFetch {
-            track_namespace: target.track_namespace.clone(),
-            track_name: target.track_name.clone(),
-            start_location: missing_range.start_location,
-            end_location: missing_range.end_location,
-        }
-    }
-
     /// Create upstream FETCH relay state before FETCH_OK is sent downstream.
     async fn create_upstream_fetch(
         &self,
@@ -230,7 +213,8 @@ impl Fetch {
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         handler: &dyn FetchHandler,
-        request: UpstreamFetch,
+        target: &FetchTarget,
+        range: &LocationRange,
     ) -> Option<PreparedUpstreamFetch> {
         let fetch_option = moqt::FetchOption {
             // Subscriber Priority is a mandatory FETCH field; forward the default
@@ -242,14 +226,14 @@ impl Fetch {
 
         // Resolve upstream publisher via route registry / inter-relay.
         let upstream_key = match upstream_publisher_resolver
-            .resolve(table, &request.track_namespace, &request.track_name)
+            .resolve(table, &target.track_namespace, &target.track_name)
             .await
         {
             Ok(Some(key)) => key,
             Ok(None) => {
                 tracing::warn!(
-                    track_namespace = %request.track_namespace,
-                    track_name = %request.track_name,
+                    track_namespace = %target.track_namespace,
+                    track_name = %target.track_name,
                     "No upstream publisher found for fetch"
                 );
                 let _ = handler
@@ -265,8 +249,8 @@ impl Fetch {
                 // backtrace: these are expected request-scoped failures.
                 tracing::warn!(
                     err = %format!("{err:#}"),
-                    track_namespace = %request.track_namespace,
-                    track_name = %request.track_name,
+                    track_namespace = %target.track_namespace,
+                    track_name = %target.track_name,
                     "Failed to resolve upstream publisher for fetch"
                 );
                 let _ = handler
@@ -285,8 +269,8 @@ impl Fetch {
                 upstream_key.publisher_session_id,
                 upstream_key.track_namespace.clone(),
                 upstream_key.track_name.clone(),
-                request.start_location,
-                request.end_location,
+                range.start_location,
+                range.end_location,
                 fetch_option,
             )
             .await
@@ -296,8 +280,8 @@ impl Fetch {
                 tracing::warn!(
                     err = %format!("{err:#}"),
                     pub_session_id = upstream_key.publisher_session_id,
-                    track_namespace = %request.track_namespace,
-                    track_name = %request.track_name,
+                    track_namespace = %target.track_namespace,
+                    track_name = %target.track_name,
                     "Upstream FETCH failed"
                 );
                 let (error_code, reason) = Self::upstream_fetch_error_response(&err);
@@ -308,8 +292,8 @@ impl Fetch {
 
         tracing::info!(
             pub_session_id = upstream_key.publisher_session_id,
-            track_namespace = %request.track_namespace,
-            track_name = %request.track_name,
+            track_namespace = %target.track_namespace,
+            track_name = %target.track_name,
             upstream_request_id = handle.request_id,
             "Upstream FETCH_OK received; starting cache fill"
         );
