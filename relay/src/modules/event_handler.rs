@@ -182,9 +182,7 @@ impl EventHandler {
                             // Unbounded send never blocks, so the reader never
                             // stalls on a slow or blocked worker.
                             if sender.send(event).is_err() {
-                                // Worker already exited (race with join_next);
-                                // the sender will be removed on the next join poll.
-                                tracing::warn!(session_id, "session worker channel closed before send");
+                                tracing::debug!(session_id, "session has no worker; event dropped");
                             }
                         }
                     }
