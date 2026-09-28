@@ -377,7 +377,6 @@ function updateJitterBuffer(config: VideoJitterBufferConfig): void {
   currentDecoderHardwareAcceleration = nextDecoderHardwareAcceleration
   currentJitterConfig = normalizeJitterConfig({ ...currentJitterConfig, ...config })
   updatePacingConfig(config.pacing)
-  jitterBuffer = createJitterBuffer()
   holdTimeline = undefined
   playoutTimeline = undefined
   if (decoderHardwareAccelerationChanged) {
@@ -562,6 +561,16 @@ function pumpEncodedPacingDecode(): void {
   }
   reportPacingStatus('decode', lateByMs)
   scheduleEncodedPacing(0)
+}
+
+/// Switching to direct decoding must not let a fresh object overtake what
+/// is still held, or the decoder sees P-frames out of order and smears.
+function drainJitterBufferInOrder(): void {
+  for (let entry = jitterBuffer.popHolding(); entry; entry = jitterBuffer.popHolding()) {
+    if (!entry.isEndOfGroup) {
+      decodeBufferedEntryNow(entry)
+    }
+  }
 }
 
 function pumpJitterBuffer(): void {
@@ -868,7 +877,11 @@ function isTimelineMessage(message: WorkerMessage): message is PlayoutTimelineMe
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   if (isConfigMessage(event.data)) {
     telemetryEnabled = event.data.config.telemetryEnabled ?? telemetryEnabled
-    bypassJitterBuffer = event.data.config.bypassJitterBuffer ?? bypassJitterBuffer
+    const nextBypass = event.data.config.bypassJitterBuffer ?? bypassJitterBuffer
+    if (nextBypass && !bypassJitterBuffer) {
+      drainJitterBufferInOrder()
+    }
+    bypassJitterBuffer = nextBypass
     debugVideoPipeline = event.data.config.debugVideoPipeline ?? debugVideoPipeline
     updateJitterBuffer(event.data.config)
     return
