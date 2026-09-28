@@ -1203,8 +1203,9 @@ impl MOQTClient {
         let control_writer = control_stream.writable().get_writer()?;
         *self.control_stream_writer.borrow_mut() = Some(control_writer);
 
-        let datagram_writer = transport.datagrams().writable().get_writer()?;
-        *self.datagram_writer.borrow_mut() = Some(datagram_writer);
+        *self.datagram_writer.borrow_mut() = datagram_writable(&transport.datagrams())
+            .map(|writable| writable.get_writer())
+            .transpose()?;
 
         let callbacks = self.callbacks.clone();
         let state = self.state.clone();
@@ -2001,6 +2002,28 @@ fn normalize_stream_chunk(stream_snapshot: &mut Vec<u8>, chunk: Vec<u8>) -> Vec<
 
     stream_snapshot.extend_from_slice(&chunk);
     chunk
+}
+
+/// The WebTransport spec replaced `datagrams.writable` with
+/// `datagrams.createWritable()`; Safari only has the new form, Chrome has
+/// both. Without either, datagrams cannot be sent but the session still works.
+#[cfg(web_sys_unstable_apis)]
+fn datagram_writable(
+    datagrams: &web_sys::WebTransportDatagramDuplexStream,
+) -> Option<web_sys::WritableStream> {
+    let create_writable =
+        js_sys::Reflect::get(datagrams, &JsValue::from_str("createWritable")).ok()?;
+    if let Ok(create_writable) = create_writable.dyn_into::<js_sys::Function>() {
+        return create_writable
+            .call0(datagrams)
+            .ok()?
+            .dyn_into::<web_sys::WritableStream>()
+            .ok();
+    }
+    js_sys::Reflect::get(datagrams, &JsValue::from_str("writable"))
+        .ok()?
+        .dyn_into::<web_sys::WritableStream>()
+        .ok()
 }
 
 #[cfg(web_sys_unstable_apis)]
