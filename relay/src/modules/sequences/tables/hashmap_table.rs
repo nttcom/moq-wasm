@@ -16,7 +16,6 @@ use crate::modules::{
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
-#[derive(Debug)]
 pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     _runner_stop_sender: oneshot::Sender<()>,
@@ -68,7 +67,6 @@ fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespa
     no_clients_remain
 }
 
-#[derive(Debug)]
 pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, PeerKind>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashMap<SessionId, PeerKind>>,
