@@ -50,18 +50,6 @@ impl InMemoryLocalPubSubDirectory {
         }
     }
 
-    /// Returns true when no client publisher remains for the namespace,
-    /// i.e. the caller may clean up the Redis route.
-    /// Returns true when this registration adds the first client subscriber
-    /// for the prefix, i.e. the caller should register the Redis route.
-    /// Drops relay-origin publisher namespaces under the prefix once no
-    /// client subscriber covers them anymore. Relay-learned namespaces are
-    /// only withdrawn by a best-effort PUBLISH_NAMESPACE_DONE, which can be
-    /// missed when the remote publisher and the local subscriber leave at the
-    /// same time; purging here lets the next subscriber re-learn them from
-    /// the route registry instead of a stale local copy.
-    /// Returns true when no client subscriber remains for the prefix,
-    /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.remove_session",
@@ -218,6 +206,8 @@ impl InMemoryLocalPubSubDirectory {
         true
     }
 
+    /// Returns true when no client publisher remains for the namespace,
+    /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.unregister_publish_namespace",
@@ -247,6 +237,12 @@ impl InMemoryLocalPubSubDirectory {
         no_clients_remain
     }
 
+    /// Drops relay-origin publisher namespaces under the prefix once no
+    /// client subscriber covers them anymore. Relay-learned namespaces are
+    /// only withdrawn by a best-effort PUBLISH_NAMESPACE_DONE, which can be
+    /// missed when the remote publisher and the local subscriber leave at the
+    /// same time; purging here lets the next subscriber re-learn them from
+    /// the route registry instead of a stale local copy.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.purge_relay_publish_namespaces",
@@ -294,6 +290,8 @@ impl InMemoryLocalPubSubDirectory {
         }
     }
 
+    /// Returns true when this registration adds the first client subscriber
+    /// for the prefix, i.e. the caller should register the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
@@ -326,6 +324,8 @@ impl InMemoryLocalPubSubDirectory {
         }
     }
 
+    /// Returns true when no client subscriber remains for the prefix,
+    /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
