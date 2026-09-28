@@ -409,33 +409,19 @@ export class MediaPublisher {
     const settings = this.buildVideoEncodingFromTrack(track, fallback)
     const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
 
+    if (!this.videoTrackContexts.has(trackName)) {
+      this.syncVideoTrackContexts(source)
+    }
     const context = this.videoTrackContexts.get(trackName)
-    if (context) {
-      if (!this.isSameVideoEncoding(context.config, settings)) {
-        context.config = settings
-        context.worker.postMessage({ type: 'encoderConfig', config: settings })
-      }
-      context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
-      if (!context.encodingStarted) {
-        // A suspended context may hold a stale cloned track/worker after the last subscriber left.
-        // Refresh it on subscribe while retaining transport counters for monotonic groups.
-        this.restartVideoTrackContext(trackName)
-        return
-      }
-      this.restartVideoTrackContext(trackName)
+    if (!context) {
       return
     }
-
-    this.syncVideoTrackContexts(source)
-    const created = this.videoTrackContexts.get(trackName)
-    if (!created) {
-      return
+    if (!this.isSameVideoEncoding(context.config, settings)) {
+      context.config = settings
+      context.worker.postMessage({ type: 'encoderConfig', config: settings })
     }
-    if (!created.encodingStarted) {
-      this.startVideoTrackEncoding(created)
-      return
-    }
-    this.restartVideoTrackContext(trackName)
+    context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
+    this.startVideoTrackEncoding(context)
   }
 
   isVideoTrackEncodingStarted(trackName: string): boolean {
