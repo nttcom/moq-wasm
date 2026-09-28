@@ -30,10 +30,10 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
     let mut egress = harness.start_egress(None).await;
 
     // Act: a second stream re-delivers object 0 with a different payload
-    let first_stream = harness.open_upstream_stream().await;
+    let first_stream = harness.open_upstream_stream();
     first_stream.header(0);
     first_stream.object(0);
-    let second_stream = harness.open_upstream_stream().await;
+    let second_stream = harness.open_upstream_stream();
     second_stream.header(0);
     second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
 
@@ -53,10 +53,10 @@ async fn identical_duplicate_from_second_stream_is_not_malformed() {
     let mut egress = harness.start_egress(None).await;
 
     // Act: a second stream re-delivers object 0 with an identical payload
-    let first_stream = harness.open_upstream_stream().await;
+    let first_stream = harness.open_upstream_stream();
     first_stream.header(0);
     first_stream.object(0);
-    let second_stream = harness.open_upstream_stream().await;
+    let second_stream = harness.open_upstream_stream();
     second_stream.header(0);
     second_stream.object(0);
     first_stream.object(1);
@@ -83,10 +83,10 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
     // Arrange: latch the track before any downstream subscriber attaches
     let harness = RelayHarness::new();
 
-    let first_stream = harness.open_upstream_stream().await;
+    let first_stream = harness.open_upstream_stream();
     first_stream.header(0);
     first_stream.object(0);
-    let second_stream = harness.open_upstream_stream().await;
+    let second_stream = harness.open_upstream_stream();
     second_stream.header(0);
     second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
     harness.wait_track_malformed().await;
@@ -108,10 +108,10 @@ async fn detection_reports_the_publisher_session_and_track() {
     let mut harness = RelayHarness::new();
 
     // Act: a second stream re-delivers object 0 with a different payload.
-    let first_stream = harness.open_upstream_stream().await;
+    let first_stream = harness.open_upstream_stream();
     first_stream.header(0);
     first_stream.object(0);
-    let second_stream = harness.open_upstream_stream().await;
+    let second_stream = harness.open_upstream_stream();
     second_stream.header(0);
     second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
 

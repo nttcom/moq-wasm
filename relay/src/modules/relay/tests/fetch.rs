@@ -18,18 +18,18 @@ fn location(group_id: u64, object_id: u64) -> moqt::Location {
 async fn closed_groups_are_delivered_before_a_later_open_group_closes() {
     // Arrange: group 0 closed, group 1 still open, group 2 closed
     let harness = RelayHarness::new();
-    let group0 = harness.open_upstream_stream().await;
+    let group0 = harness.open_upstream_stream();
     group0.header(0);
     group0.object(0);
     group0.object(1);
     group0.fin();
     harness.wait_group_closed(0).await;
-    let group1 = harness.open_upstream_stream().await;
+    let group1 = harness.open_upstream_stream();
     group1.header(1);
     group1.object(0);
     group1.object(1);
     harness.wait_largest_location(location(1, 1)).await;
-    let group2 = harness.open_upstream_stream().await;
+    let group2 = harness.open_upstream_stream();
     group2.header(2);
     group2.object(0);
     group2.fin();
@@ -55,7 +55,7 @@ async fn closed_groups_are_delivered_before_a_later_open_group_closes() {
 async fn malformed_track_resets_the_fetch_stream() {
     // Arrange: the fetch waits on the open group's tail
     let harness = RelayHarness::new();
-    let first_stream = harness.open_upstream_stream().await;
+    let first_stream = harness.open_upstream_stream();
     first_stream.header(0);
     first_stream.object(0);
     harness.wait_largest_location(location(0, 0)).await;
@@ -63,7 +63,7 @@ async fn malformed_track_resets_the_fetch_stream() {
     fetch.expect_objects(&[(0, 0)]).await;
 
     // Act: a second stream re-delivers object 0 with a different payload
-    let second_stream = harness.open_upstream_stream().await;
+    let second_stream = harness.open_upstream_stream();
     second_stream.header(0);
     second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
 
@@ -78,7 +78,7 @@ async fn malformed_track_resets_the_fetch_stream() {
 async fn aborted_upstream_stream_resets_the_fetch_stream() {
     // Arrange: the fetch waits on the open group's tail
     let harness = RelayHarness::new();
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(0);
     upstream_stream.object(0);
     harness.wait_largest_location(location(0, 0)).await;

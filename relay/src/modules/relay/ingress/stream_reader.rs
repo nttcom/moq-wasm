@@ -1,34 +1,22 @@
-use std::sync::Arc;
-
 use moqt::ObjectStatus;
-use tokio::{
-    sync::{mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    core::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
-    relay::cache::{
-        cached_object::{CachedObject, SubgroupHeaderFields},
-        store::TrackCacheStore,
-        track_cache::{OpenSubgroupGuard, TrackCache},
+    core::{
+        data_object::DataObject,
+        data_receiver::stream_receiver::{StreamReceiver, StreamReceiverFactory},
+    },
+    relay::{
+        cache::{
+            cached_object::{CachedObject, SubgroupHeaderFields},
+            track_cache::{OpenSubgroupGuard, TrackCache},
+        },
+        ingress::track_ingest_task::TrackIngest,
     },
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
 };
-
-pub(crate) struct StreamOpened {
-    pub(crate) track_key: TrackKey,
-    pub(crate) publisher_session_id: SessionId,
-    pub(crate) receiver: Box<dyn StreamReceiver>,
-    pub(crate) parent_span: Span,
-    pub(crate) stop_receiver: watch::Receiver<bool>,
-}
-
-pub(crate) struct StreamReader {
-    join_handle: JoinHandle<()>,
-}
 
 /// What the SUBGROUP_HEADER told us; the subgroup id of Type 0x12/0x13/0x1A/0x1B
 /// headers is only known once the first object arrives.
@@ -44,121 +32,113 @@ struct SubgroupIngest<'a> {
     open: OpenSubgroupGuard<'a>,
 }
 
-impl StreamReader {
-    pub(crate) fn run(
-        mut receiver: mpsc::Receiver<StreamOpened>,
-        cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
-    ) -> Self {
-        let join_handle = tokio::spawn(async move {
-            let mut joinset = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    Some(cmd) = receiver.recv() => {
-                        let span = tracing::info_span!(
-                            parent: &cmd.parent_span,
-                            "relay.dataplane.ingress.stream",
-                            track_key = %cmd.track_key,
-                            group_id = tracing::field::Empty,
-                            subgroup_id = tracing::field::Empty,
-                            end_reason = tracing::field::Empty,
-                        );
-                        joinset.spawn(Self::read_loop(
-                            cmd.track_key,
-                            cmd.publisher_session_id,
-                            cmd.receiver,
-                            cmd.stop_receiver,
-                            cache_store.clone(),
-                            session_event_sender.clone(),
-                        ).instrument(span));
-                    }
-                    Some(result) = joinset.join_next() => {
-                        if let Err(e) = result {
-                            tracing::error!("stream read task panicked: {:?}", e);
-                        }
-                    }
-                    else => break,
+pub(super) async fn accept_streams(
+    mut ingest: TrackIngest,
+    mut factory: Box<dyn StreamReceiverFactory>,
+    track_span: Span,
+) {
+    let mut readers = JoinSet::new();
+    loop {
+        tokio::select! {
+            _ = ingest.stop_receiver.changed() => {
+                tracing::info!(track_key = %ingest.track_key, "stream ingress factory stopped");
+                break;
+            }
+            receiver = factory.next() => {
+                let Ok(receiver) = receiver else {
+                    break;
+                };
+                let span = tracing::info_span!(
+                    parent: &track_span,
+                    "relay.dataplane.ingress.stream",
+                    track_key = %ingest.track_key,
+                    group_id = tracing::field::Empty,
+                    subgroup_id = tracing::field::Empty,
+                    end_reason = tracing::field::Empty,
+                );
+                readers.spawn(read_stream(ingest.clone(), receiver).instrument(span));
+            }
+            Some(result) = readers.join_next() => {
+                if let Err(e) = result {
+                    tracing::error!("stream read task panicked: {:?}", e);
                 }
             }
-        });
-        Self { join_handle }
+        }
     }
+    readers.detach_all();
+}
 
-    async fn read_loop(
-        track_key: TrackKey,
-        publisher_session_id: SessionId,
-        mut receiver: Box<dyn StreamReceiver>,
-        mut stop_receiver: watch::Receiver<bool>,
-        cache_store: Arc<TrackCacheStore>,
-        session_event_sender: mpsc::UnboundedSender<SessionEvent>,
-    ) {
-        let span = Span::current();
-        let cache = cache_store.get_or_create(&track_key);
-        let mut header: Option<ReceivedHeader> = None;
-        let mut ingest: Option<SubgroupIngest<'_>> = None;
-        loop {
-            let receive_result = tokio::select! {
-                _ = stop_receiver.changed() => {
-                    span.record("end_reason", "stopped");
-                    tracing::info!(%track_key, "stream reader stopped");
+pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn StreamReceiver>) {
+    let TrackIngest {
+        track_key,
+        publisher_session_id,
+        cache,
+        session_event_sender,
+        mut stop_receiver,
+    } = ingest;
+    let span = Span::current();
+    let mut header: Option<ReceivedHeader> = None;
+    let mut ingest: Option<SubgroupIngest<'_>> = None;
+    loop {
+        let receive_result = tokio::select! {
+            _ = stop_receiver.changed() => {
+                span.record("end_reason", "stopped");
+                tracing::info!(%track_key, "stream reader stopped");
+                return;
+            }
+            result = receiver.receive_object() => result,
+        };
+
+        match receive_result {
+            Ok(Some(DataObject::SubgroupHeader(received))) => {
+                ingest = None;
+                span.record("group_id", received.group_id);
+                let subgroup_id = match received.subgroup_id {
+                    moqt::SubgroupId::None => Some(0),
+                    moqt::SubgroupId::Value(subgroup_id) => Some(subgroup_id),
+                    moqt::SubgroupId::FirstObjectIdDelta => None,
+                };
+                let received = ReceivedHeader {
+                    group_id: received.group_id,
+                    publisher_priority: received.publisher_priority,
+                    ends_group_on_fin: received.message_type.has_end_of_group(),
+                    prev_object_id: None,
+                };
+                if let Some(subgroup_id) = subgroup_id {
+                    ingest = Some(open_subgroup(
+                        &cache,
+                        &span,
+                        received.with_subgroup_id(subgroup_id),
+                    ));
+                }
+                header = Some(received);
+            }
+            Ok(Some(DataObject::SubgroupObject(field))) => {
+                let Some(header) = header.as_mut() else {
+                    span.record("end_reason", "object_before_header");
+                    tracing::error!(%track_key, "subgroup object received before its header");
                     return;
-                }
-                result = receiver.receive_object() => result,
-            };
-
-            match receive_result {
-                Ok(Some(DataObject::SubgroupHeader(received))) => {
-                    ingest = None;
-                    span.record("group_id", received.group_id);
-                    let subgroup_id = match received.subgroup_id {
-                        moqt::SubgroupId::None => Some(0),
-                        moqt::SubgroupId::Value(subgroup_id) => Some(subgroup_id),
-                        moqt::SubgroupId::FirstObjectIdDelta => None,
-                    };
-                    let received = ReceivedHeader {
-                        group_id: received.group_id,
-                        publisher_priority: received.publisher_priority,
-                        ends_group_on_fin: received.message_type.has_end_of_group(),
-                        prev_object_id: None,
-                    };
-                    if let Some(subgroup_id) = subgroup_id {
-                        ingest = Some(Self::open_subgroup(
-                            &cache,
-                            &span,
-                            received.with_subgroup_id(subgroup_id),
-                        ));
+                };
+                let object_id = field.resolve_object_id(header.prev_object_id);
+                header.prev_object_id = Some(object_id);
+                let current = ingest.get_or_insert_with(|| {
+                    open_subgroup(&cache, &span, header.with_subgroup_id(object_id))
+                });
+                let end_reason = match &field.subgroup_object {
+                    moqt::SubgroupObject::Status { code, .. }
+                        if *code == ObjectStatus::EndOfGroup as u64 =>
+                    {
+                        Some("end_of_group")
                     }
-                    header = Some(received);
-                }
-                Ok(Some(DataObject::SubgroupObject(field))) => {
-                    let Some(header) = header.as_mut() else {
-                        span.record("end_reason", "object_before_header");
-                        tracing::error!(%track_key, "subgroup object received before its header");
-                        return;
-                    };
-                    let object_id = field.resolve_object_id(header.prev_object_id);
-                    header.prev_object_id = Some(object_id);
-                    let current = ingest.get_or_insert_with(|| {
-                        Self::open_subgroup(&cache, &span, header.with_subgroup_id(object_id))
-                    });
-                    let end_reason = match &field.subgroup_object {
-                        moqt::SubgroupObject::Status { code, .. }
-                            if *code == ObjectStatus::EndOfGroup as u64 =>
-                        {
-                            Some("end_of_group")
-                        }
-                        moqt::SubgroupObject::Status { code, .. }
-                            if *code == ObjectStatus::EndOfTrack as u64 =>
-                        {
-                            Some("end_of_track")
-                        }
-                        _ => None,
-                    };
-                    let object = match CachedObject::from_subgroup_object(
-                        &current.header,
-                        object_id,
-                        field,
-                    ) {
+                    moqt::SubgroupObject::Status { code, .. }
+                        if *code == ObjectStatus::EndOfTrack as u64 =>
+                    {
+                        Some("end_of_track")
+                    }
+                    _ => None,
+                };
+                let object =
+                    match CachedObject::from_subgroup_object(&current.header, object_id, field) {
                         Ok(object) => object,
                         Err(error) => {
                             // draft-14 §10.2.1.1: an unknown Object Status is a
@@ -174,8 +154,42 @@ impl StreamReader {
                             return;
                         }
                     };
-                    if current.open.insert(object).is_err() {
-                        Self::report_malformed_track(
+                if current.open.insert(object).is_err() {
+                    report_malformed_track(
+                        &span,
+                        &session_event_sender,
+                        publisher_session_id,
+                        &track_key,
+                    );
+                    return;
+                }
+                if let Some(end_reason) = end_reason {
+                    span.record("end_reason", end_reason);
+                    if let Some(ingest) = ingest.take() {
+                        ingest.open.finish();
+                    }
+                    return;
+                }
+            }
+            Ok(Some(DataObject::ObjectDatagram(_))) => {
+                span.record("end_reason", "unexpected_datagram");
+                tracing::error!(%track_key, "datagram received on a subgroup stream");
+                return;
+            }
+            Ok(None) => {
+                // FIN: the routine end of a subgroup stream that carries
+                // no explicit end-of-group status object.
+                span.record("end_reason", "fin");
+                if let (Some(header), Some(ingest)) = (&header, &ingest)
+                    && header.ends_group_on_fin
+                {
+                    let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
+                    if ingest
+                        .open
+                        .insert(CachedObject::end_of_group(&ingest.header, end_of_group_id))
+                        .is_err()
+                    {
+                        report_malformed_track(
                             &span,
                             &session_event_sender,
                             publisher_session_id,
@@ -183,88 +197,53 @@ impl StreamReader {
                         );
                         return;
                     }
-                    if let Some(end_reason) = end_reason {
-                        span.record("end_reason", end_reason);
-                        if let Some(ingest) = ingest.take() {
-                            ingest.open.finish();
-                        }
-                        return;
-                    }
                 }
-                Ok(Some(DataObject::ObjectDatagram(_))) => {
-                    span.record("end_reason", "unexpected_datagram");
-                    tracing::error!(%track_key, "datagram received on a subgroup stream");
-                    return;
+                if let Some(ingest) = ingest.take() {
+                    ingest.open.finish();
                 }
-                Ok(None) => {
-                    // FIN: the routine end of a subgroup stream that carries
-                    // no explicit end-of-group status object.
-                    span.record("end_reason", "fin");
-                    if let (Some(header), Some(ingest)) = (&header, &ingest)
-                        && header.ends_group_on_fin
-                    {
-                        let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
-                        if ingest
-                            .open
-                            .insert(CachedObject::end_of_group(&ingest.header, end_of_group_id))
-                            .is_err()
-                        {
-                            Self::report_malformed_track(
-                                &span,
-                                &session_event_sender,
-                                publisher_session_id,
-                                &track_key,
-                            );
-                            return;
-                        }
-                    }
-                    if let Some(ingest) = ingest.take() {
-                        ingest.open.finish();
-                    }
-                    tracing::debug!(%track_key, "stream finished");
-                    return;
-                }
-                Err(moqt::StreamReceiveError::Closed(error)) => {
-                    // Transport-level interruption: RESET_STREAM or the
-                    // publisher connection was lost mid-subgroup.
-                    span.record("end_reason", "transport_closed");
-                    tracing::info!(%track_key, %error, "stream transport closed");
-                    return;
-                }
-                Err(moqt::StreamReceiveError::Decode(error)) => {
-                    // Malformed data on the wire: a peer bug or protocol
-                    // violation, unlike the two endings above.
-                    span.record("end_reason", "decode_error");
-                    tracing::error!(%track_key, %error, "failed to decode stream data");
-                    return;
-                }
+                tracing::debug!(%track_key, "stream finished");
+                return;
+            }
+            Err(moqt::StreamReceiveError::Closed(error)) => {
+                // Transport-level interruption: RESET_STREAM or the
+                // publisher connection was lost mid-subgroup.
+                span.record("end_reason", "transport_closed");
+                tracing::info!(%track_key, %error, "stream transport closed");
+                return;
+            }
+            Err(moqt::StreamReceiveError::Decode(error)) => {
+                // Malformed data on the wire: a peer bug or protocol
+                // violation, unlike the two endings above.
+                span.record("end_reason", "decode_error");
+                tracing::error!(%track_key, %error, "failed to decode stream data");
+                return;
             }
         }
     }
+}
 
-    fn report_malformed_track(
-        span: &Span,
-        session_event_sender: &mpsc::UnboundedSender<SessionEvent>,
-        publisher_session_id: SessionId,
-        track_key: &TrackKey,
-    ) {
-        span.record("end_reason", "malformed_track");
-        tracing::warn!(%track_key, "malformed track detected; stopping stream ingest");
-        let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
-            publisher_session_id,
-            track_key.clone(),
-        ));
-    }
+fn report_malformed_track(
+    span: &Span,
+    session_event_sender: &mpsc::UnboundedSender<SessionEvent>,
+    publisher_session_id: SessionId,
+    track_key: &TrackKey,
+) {
+    span.record("end_reason", "malformed_track");
+    tracing::warn!(%track_key, "malformed track detected; stopping stream ingest");
+    let _ = session_event_sender.send(SessionEvent::malformed_track_detected(
+        publisher_session_id,
+        track_key.clone(),
+    ));
+}
 
-    fn open_subgroup<'a>(
-        cache: &'a TrackCache,
-        span: &Span,
-        header: SubgroupHeaderFields,
-    ) -> SubgroupIngest<'a> {
-        span.record("subgroup_id", header.subgroup_id);
-        let open = cache.open_subgroup(header.key());
-        SubgroupIngest { header, open }
-    }
+fn open_subgroup<'a>(
+    cache: &'a TrackCache,
+    span: &Span,
+    header: SubgroupHeaderFields,
+) -> SubgroupIngest<'a> {
+    span.record("subgroup_id", header.subgroup_id);
+    let open = cache.open_subgroup(header.key());
+    SubgroupIngest { header, open }
 }
 
 impl ReceivedHeader {
@@ -277,20 +256,15 @@ impl ReceivedHeader {
     }
 }
 
-impl Drop for StreamReader {
-    fn drop(&mut self) {
-        self.join_handle.abort();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use bytes::Bytes;
     use moqt::{ObjectStatus, SubgroupId};
-    use tokio::sync::oneshot;
+    use tokio::sync::{oneshot, watch};
 
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::{
@@ -300,7 +274,10 @@ mod tests {
             make_status_object,
         },
     };
-    use crate::modules::relay::{cache::track_cache::NextObject, types::SubgroupKey};
+    use crate::modules::relay::{
+        cache::{store::TrackCacheStore, track_cache::NextObject},
+        types::SubgroupKey,
+    };
 
     // How the scripted stream ends once all objects were consumed.
     enum TerminalOutcome {
@@ -383,13 +360,15 @@ mod tests {
             &self,
             receiver: ScriptedStreamReceiver,
         ) -> impl Future<Output = ()> + Send + 'static {
-            StreamReader::read_loop(
-                self.track_key.clone(),
-                PUBLISHER_SESSION,
+            read_stream(
+                TrackIngest {
+                    track_key: self.track_key.clone(),
+                    publisher_session_id: PUBLISHER_SESSION,
+                    cache: self.cache(),
+                    session_event_sender: self.session_event_sender.clone(),
+                    stop_receiver: self.stop_receiver.clone(),
+                },
                 Box::new(receiver),
-                self.stop_receiver.clone(),
-                self.cache_store.clone(),
-                self.session_event_sender.clone(),
             )
         }
 

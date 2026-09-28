@@ -277,11 +277,18 @@ per-request authorization gate under "Event pipeline".
 
 - On `Start`, it obtains the upstream session's `Subscriber`, creates the data
   receiver (cancellable via a per-track `watch` stop channel), and hands it to
-  `StreamIngressTask` (subgroup streams) or `DatagramReader` (datagrams).
-- `StreamIngressTask` runs a per-track factory loop accepting subgroup
-  streams. **First-publisher-wins**: a second publisher on an active track is
-  ignored (draft-14 §8.2 multiple-publisher dedup is a known TODO), and only
-  the owning publisher's `Stop` tears the reader down.
+  `TrackIngestTask` as an `IngestSource` (subgroup-stream factory or datagram
+  receiver).
+- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track and
+  source kind: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
+  per accepted subgroup stream, `read_datagrams` (`datagram_reader.rs`) reads
+  the datagram receiver. Every reader of a track shares one `TrackIngest`
+  (track key, publisher, cache, session-event sender, stop receiver).
+  **First-publisher-wins** per track and kind: a second publisher on an
+  active track is ignored (draft-14 §8.2 multiple-publisher dedup is a known
+  TODO), and only the owning publisher's `Stop` tears the readers down.
+  Stream readers outlive their accept loop until the track's stop sender is
+  signalled or dropped.
 - Readers convert every wire object into a canonical `CachedObject` and insert
   it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
   group id, subgroup id and priority as the per-stream context, opens the
