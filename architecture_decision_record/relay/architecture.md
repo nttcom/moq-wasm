@@ -105,7 +105,7 @@ moqt session ──receive_event()──► Session Event Forwarder (one task pe
       │  MoqtSessionEvent → SessionEvent { session_id, kind: EventKind::FromSession }
       ▼
 EventHandler reader (single task, never awaits handlers)
-      │  per-session unbounded channel (lazily created)
+      │  per-session unbounded channel (created on SessionRegistered)
       ▼
 session worker (one task per session, FIFO)
       │
@@ -113,9 +113,17 @@ session worker (one task per session, FIFO)
 sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 ```
 
-- `SessionRepository::start_session_event_forwarding` spawns a forwarder task
-  per session that pumps `moqt` events into the relay-wide unbounded channel,
-  stopping after `Disconnected` / `ProtocolViolation`.
+- `SessionRepository::add` sends `EventKind::SessionRegistered` on the
+  relay-wide channel before `start_session_event_forwarding` spawns the
+  session's forwarder task, which pumps `moqt` events into the same channel,
+  stopping after `Disconnected` / `ProtocolViolation`. The reader spawns a
+  session's worker only on `SessionRegistered` and drops events for a session
+  that has no worker: every other event for a session (from its forwarder or
+  from ingress, which only starts for registered sessions) is sent after the
+  registration, so it can only lack a worker once the worker has exited on its
+  terminal event. A late relay-internal event for a departed session (e.g. a
+  reader reporting `MalformedTrackDetected` after the publisher disconnected)
+  therefore never resurrects a worker.
 - Before dispatching, each session worker runs
   `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
@@ -395,6 +403,9 @@ keeps one runner per `(subscriber_session_id, downstream_subscribe_id)`
 - **Reader never awaits**: the `EventHandler` reader only routes; all awaiting
   happens in per-session workers. Cross-session deadlock is structurally
   impossible; per-session ordering is FIFO.
+- **Worker lifetime is the session's**: a session worker exists from the
+  session's registration until its terminal event; events arriving outside
+  that window are dropped by the reader.
 - **One upstream subscription per track**: enforced by the
   `UpstreamCreationSerializer` per-track lock with a double-check.
 - **SUBSCRIBE_OK matches egress**: the largest location advertised downstream

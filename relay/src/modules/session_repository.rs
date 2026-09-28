@@ -259,6 +259,15 @@ impl SessionRepository {
         self.session_spans.insert(session_id, session_span.clone());
         self.session_peers.insert(session_id, peer);
         self.store_verified_token(session_id, &arc_session, verified_token);
+        if relay_session_event_sender
+            .send(SessionEvent::session_registered(session_id))
+            .is_err()
+        {
+            tracing::error!(
+                session_id,
+                "relay event channel closed; session is not handled"
+            );
+        }
         self.start_session_event_forwarding(
             session_id,
             Arc::downgrade(&arc_session),

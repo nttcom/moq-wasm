@@ -154,9 +154,7 @@ impl EventHandler {
 
                             let session_id = event.session_id;
 
-                            // Locate or lazily create the per-session channel.
-                            // Single-threaded reader: creation is race-free.
-                            let sender = sender_map.entry(session_id).or_insert_with(|| {
+                            if matches!(event.kind, EventKind::SessionRegistered) {
                                 let (tx, rx) = mpsc::unbounded_channel::<SessionEvent>();
                                 let deps = WorkerDeps {
                                     repo: repo.clone(),
@@ -173,9 +171,14 @@ impl EventHandler {
                                     token_verifier: token_verifier.clone(),
                                 };
                                 workers.spawn(Self::session_worker(session_id, rx, deps));
-                                tx
-                            });
+                                sender_map.insert(session_id, tx);
+                                continue;
+                            }
 
+                            let Some(sender) = sender_map.get(&session_id) else {
+                                tracing::debug!(session_id, "session has no worker; event dropped");
+                                continue;
+                            };
                             // Unbounded send never blocks, so the reader never
                             // stalls on a slow or blocked worker.
                             if sender.send(event).is_err() {
@@ -265,6 +268,8 @@ impl EventHandler {
                 continue;
             };
             let event = match event.kind {
+                // The reader consumes registrations to spawn this worker and never forwards them.
+                EventKind::SessionRegistered => unreachable!("registration forwarded to a worker"),
                 EventKind::FromSession(event) => event,
                 EventKind::MalformedTrackDetected(track_key) => {
                     let event_span = tracing::info_span!(
@@ -861,6 +866,175 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::mpsc;
+
+    use super::EventHandler;
+    use crate::modules::{
+        auth::{
+            test_support::{StubOutcome, StubVerifier},
+            verified_token::VerifiedToken,
+        },
+        core::{
+            mocks::{RecordedControlMessages, mock_new_session},
+            session_event::MoqtSessionEvent,
+        },
+        inter_relay::InterRelayConnectionManager,
+        relay::{
+            cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
+            ingress::ingress_coordinator::IngressCommand,
+        },
+        route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
+        session_event::{EventKind, SessionEvent},
+        session_repository::SessionRepository,
+        types::{SessionId, TrackKey},
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    };
+
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(3);
+
+    struct RunningEventHandler {
+        _event_handler: EventHandler,
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        event_sender: mpsc::UnboundedSender<SessionEvent>,
+        _ingress_receiver: mpsc::Receiver<IngressCommand>,
+        _egress_receiver: mpsc::Receiver<EgressCommand>,
+        cache_store: Arc<TrackCacheStore>,
+        cache_store_references_without_workers: usize,
+    }
+
+    impl RunningEventHandler {
+        fn start() -> Self {
+            let repo = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+            let (event_sender, event_receiver) = mpsc::unbounded_channel();
+            let (ingress_sender, ingress_receiver) = mpsc::channel(64);
+            let (egress_sender, egress_receiver) = mpsc::channel(64);
+            let route_registry: Arc<dyn RelayRouteRegistry> = Arc::new(NoopRelayRouteRegistry);
+            let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
+                repo.clone(),
+                event_sender.clone(),
+                String::new(),
+            ));
+            let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
+                route_registry.clone(),
+                inter_relay_connection_manager.clone(),
+            ));
+            let cache_store = Arc::new(TrackCacheStore::new());
+            let event_handler = EventHandler::run(
+                repo.clone(),
+                event_receiver,
+                event_sender.clone(),
+                ingress_sender,
+                egress_sender,
+                route_registry,
+                inter_relay_connection_manager,
+                upstream_publisher_resolver,
+                cache_store.clone(),
+                Arc::new(StubVerifier(StubOutcome::Unauthorized)),
+            );
+            let cache_store_references_without_workers = Arc::strong_count(&cache_store);
+            Self {
+                _event_handler: event_handler,
+                repo,
+                event_sender,
+                _ingress_receiver: ingress_receiver,
+                _egress_receiver: egress_receiver,
+                cache_store,
+                cache_store_references_without_workers,
+            }
+        }
+
+        async fn register_session(&self, session_id: SessionId) -> RecordedControlMessages {
+            let (new_session, recorded) =
+                mock_new_session(session_id, VerifiedToken::full_access());
+            self.repo
+                .lock()
+                .await
+                .add(new_session, self.event_sender.clone())
+                .await;
+            recorded
+        }
+
+        fn send(&self, event: SessionEvent) {
+            self.event_sender
+                .send(event)
+                .expect("event handler should accept events");
+        }
+
+        fn disconnect(&self, session_id: SessionId) {
+            self.send(SessionEvent {
+                session_id,
+                kind: EventKind::FromSession(MoqtSessionEvent::Disconnected()),
+            });
+        }
+
+        fn live_worker_count(&self) -> usize {
+            Arc::strong_count(&self.cache_store) - self.cache_store_references_without_workers
+        }
+
+        async fn wait_for_live_workers(&self, expected: usize) {
+            tokio::time::timeout(WAIT_TIMEOUT, async {
+                while self.live_worker_count() != expected {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "expected {expected} live session workers, found {}",
+                    self.live_worker_count()
+                )
+            });
+        }
+    }
+
+    impl RunningEventHandler {
+        async fn wait_until_reader_dispatched_earlier_events(
+            &self,
+            bystander_session_id: SessionId,
+            bystander: &RecordedControlMessages,
+        ) {
+            self.send(SessionEvent::protocol_violation_detected(
+                bystander_session_id,
+                "barrier".to_string(),
+            ));
+            tokio::time::timeout(WAIT_TIMEOUT, async {
+                while bystander.closes().is_empty() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .expect("bystander session should be closed");
+        }
+    }
+
+    #[tokio::test]
+    async fn late_events_for_departed_or_unknown_sessions_start_no_worker() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        handler.register_session(5).await;
+        let bystander = handler.register_session(7).await;
+        handler.disconnect(5);
+        handler.wait_for_live_workers(1).await;
+
+        // Act
+        handler.send(SessionEvent::malformed_track_detected(
+            5,
+            TrackKey::new("ns", "track"),
+        ));
+        handler.send(SessionEvent::protocol_violation_detected(
+            5,
+            "late".to_string(),
+        ));
+        handler.send(SessionEvent::malformed_track_detected(
+            6,
+            TrackKey::new("ns", "track"),
+        ));
+        handler
+            .wait_until_reader_dispatched_earlier_events(7, &bystander)
+            .await;
+
+        // Assert
+        assert_eq!(handler.live_worker_count(), 1);
+    }
 
     /// Verifies that per-session serialisation does NOT block other sessions.
     ///

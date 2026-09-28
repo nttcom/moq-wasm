@@ -51,6 +51,23 @@ pub(crate) async fn session_repository_with_upstream_session(
     session_repository_with_upstream_session_token(session_id, VerifiedToken::full_access()).await
 }
 
+pub(crate) fn mock_new_session(
+    session_id: SessionId,
+    verified_token: VerifiedToken,
+) -> (NewSession, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let new_session = NewSession {
+        session_id,
+        session: Box::new(MockUpstreamSession {
+            recorded: recorded.clone(),
+        }),
+        session_span: tracing::Span::none(),
+        peer: SessionPeer::Client,
+        verified_token,
+    };
+    (new_session, recorded)
+}
+
 pub(crate) async fn session_repository_with_upstream_session_token(
     session_id: SessionId,
     verified_token: VerifiedToken,
@@ -58,23 +75,10 @@ pub(crate) async fn session_repository_with_upstream_session_token(
     Arc<tokio::sync::Mutex<SessionRepository>>,
     RecordedControlMessages,
 ) {
-    let recorded = RecordedControlMessages::default();
+    let (new_session, recorded) = mock_new_session(session_id, verified_token);
     let mut repository = SessionRepository::new();
     let (session_event_sender, _session_event_receiver) = tokio::sync::mpsc::unbounded_channel();
-    repository
-        .add(
-            NewSession {
-                session_id,
-                session: Box::new(MockUpstreamSession {
-                    recorded: recorded.clone(),
-                }),
-                session_span: tracing::Span::none(),
-                peer: SessionPeer::Client,
-                verified_token,
-            },
-            session_event_sender,
-        )
-        .await;
+    repository.add(new_session, session_event_sender).await;
     (Arc::new(tokio::sync::Mutex::new(repository)), recorded)
 }
 
