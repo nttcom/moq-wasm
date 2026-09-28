@@ -214,8 +214,9 @@ impl EgressScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        insert_closed_group, stream_key,
+    use crate::modules::relay::tests::harness::fixtures::{
+        cached_object::{insert_closed_group, stream_key},
+        location,
     };
 
     struct RunningScheduler {
@@ -252,13 +253,6 @@ mod tests {
         RunningScheduler {
             task_receiver,
             handle,
-        }
-    }
-
-    fn location(group_id: u64, object_id: u64) -> moqt::Location {
-        moqt::Location {
-            group_id,
-            object_id,
         }
     }
 

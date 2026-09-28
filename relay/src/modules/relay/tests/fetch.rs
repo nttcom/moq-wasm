@@ -4,15 +4,8 @@ use bytes::Bytes;
 
 use crate::modules::{
     enums::FetchErrorCode,
-    relay::tests::harness::{FetchSent, RelayHarness},
+    relay::tests::harness::{FetchSent, RelayHarness, fixtures::location},
 };
-
-fn location(group_id: u64, object_id: u64) -> moqt::Location {
-    moqt::Location {
-        group_id,
-        object_id,
-    }
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn closed_groups_are_delivered_before_a_later_open_group_closes() {

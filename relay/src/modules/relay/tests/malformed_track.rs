@@ -5,7 +5,8 @@ use moqt::wire::publish_done_status_code;
 use crate::modules::{
     core::data_object::DataObject,
     relay::tests::harness::{
-        PUBLISHER_SESSION_ID, RelayHarness, ordered_payload, receive_objects_until_close,
+        PUBLISHER_SESSION_ID, RelayHarness, fixtures::location, ordered_payload,
+        receive_objects_until_close,
     },
     session_event::EventKind,
 };
@@ -60,12 +61,7 @@ async fn identical_duplicate_from_second_stream_is_not_malformed() {
     second_stream.header(0);
     second_stream.object(0);
     first_stream.object(1);
-    harness
-        .wait_largest_location(moqt::Location {
-            group_id: 0,
-            object_id: 1,
-        })
-        .await;
+    harness.wait_largest_location(location(0, 1)).await;
     first_stream.fin();
     second_stream.fin();
 

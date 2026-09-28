@@ -2,6 +2,7 @@ use bytes::Bytes;
 use moqt::{ExtensionHeaders, ObjectStatus};
 use tokio::time::Instant;
 
+use super::location;
 use crate::modules::relay::{
     cache::{
         cached_object::{CachedObject, ForwardingPreference, SubgroupHeaderFields},
@@ -45,10 +46,7 @@ pub(crate) fn stream_object_with_payload(
     payload: Bytes,
 ) -> CachedObject {
     CachedObject {
-        location: moqt::Location {
-            group_id,
-            object_id,
-        },
+        location: location(group_id, object_id),
         forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
         publisher_priority: FIXTURE_PRIORITY,
         status: ObjectStatus::Normal,

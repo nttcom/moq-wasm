@@ -27,7 +27,7 @@ pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObserver
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
-    fixtures::subscription::make_subscription,
+    fixtures::{location, subscription::make_subscription},
     mocks::{
         downstream_client::{
             MockDownstreamSession, MockFetchSender, MockPublisher, SentPublishDone,
@@ -224,10 +224,7 @@ impl RelayHarness {
 
     pub(crate) async fn wait_group_closed(&self, group_id: u64) {
         let cache = &self.ingest.cache;
-        let whole_group = moqt::Location {
-            group_id,
-            object_id: 0,
-        };
+        let whole_group = location(group_id, 0);
         let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
         while !cache.covers(whole_group, whole_group) {
             assert!(

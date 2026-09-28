@@ -4,8 +4,8 @@ use crate::modules::core::data_object::DataObject;
 
 use super::harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery,
-    fixtures::cached_object::FIXTURE_PRIORITY, receive_objects_until_close,
-    receive_objects_until_end, resolve_downstream_object_ids,
+    fixtures::{cached_object::FIXTURE_PRIORITY, location},
+    receive_objects_until_close, receive_objects_until_end, resolve_downstream_object_ids,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -57,10 +57,7 @@ async fn next_group_start_delivers_a_first_group_with_nonzero_id_cached_before_e
     upstream_stream.object(0);
     upstream_stream.fin();
     harness
-        .wait_largest_location(moqt::Location {
-            group_id: FIRST_GROUP_ID,
-            object_id: 0,
-        })
+        .wait_largest_location(location(FIRST_GROUP_ID, 0))
         .await;
 
     let mut egress = harness
@@ -94,10 +91,7 @@ async fn egress_started_with_pre_subscribe_snapshot_delivers_head_objects_cached
         upstream_stream.object(index);
     }
     harness
-        .wait_largest_location(moqt::Location {
-            group_id: 0,
-            object_id: (IN_FLIGHT_BEFORE_EGRESS_START - 1) as u64,
-        })
+        .wait_largest_location(location(0, (IN_FLIGHT_BEFORE_EGRESS_START - 1) as u64))
         .await;
 
     let mut egress = harness.start_egress(snapshot_before_subscribe).await;
@@ -122,10 +116,7 @@ async fn egress_started_mid_subgroup_delivers_absolute_object_ids() {
         upstream_stream.object(index);
     }
     let largest = harness
-        .wait_largest_location(moqt::Location {
-            group_id: 0,
-            object_id: LARGEST_OBJECT_ID_AT_SUBSCRIBE as u64,
-        })
+        .wait_largest_location(location(0, LARGEST_OBJECT_ID_AT_SUBSCRIBE as u64))
         .await;
 
     let mut egress = harness.start_egress(Some(largest)).await;
