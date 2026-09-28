@@ -19,8 +19,7 @@ use crate::modules::{
 pub(crate) struct IngressStartRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) publisher_session_id: SessionId,
-    pub(crate) track_namespace: String,
-    pub(crate) track_name: String,
+    pub(crate) track_key: TrackKey,
     pub(crate) subscription: UpstreamSubscription,
     pub(crate) parent_span: Span,
 }
@@ -49,7 +48,6 @@ impl IngressCoordinator {
         let track_ingest = TrackIngestTask::run(ingest_rx, cache_store, session_event_sender);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
-        let session_repo_for_runner = session_repo;
 
         let command_runner = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
@@ -59,21 +57,18 @@ impl IngressCoordinator {
                     Some(command) = command_receiver.recv() => {
                         match command {
                         IngressCommand::Start(command) => {
-                        let track_key = TrackKey::new(
-                            &command.track_namespace,
-                            &command.track_name,
-                        );
+                        let track_key = command.track_key.clone();
                         tracing::info!(
                             track_key = %track_key,
                             subscriber_session_id = %command.subscriber_session_id,
                             publisher_session_id = %command.publisher_session_id,
                             track_alias = command.subscription.track_alias(),
-                            track_namespace = %command.track_namespace,
-                            track_name = %command.track_name,
+                            track_namespace = %track_key.track_namespace,
+                            track_name = %track_key.track_name,
                             "ingress start command received"
                         );
                         let (subscriber, publisher_session_span) = {
-                            let session_repo = session_repo_for_runner.lock().await;
+                            let session_repo = session_repo.lock().await;
                             let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
                                 tracing::info!(%track_key, "publisher session not found for subscription");
                                 continue;
@@ -97,8 +92,8 @@ impl IngressCoordinator {
                             publisher_session_id = command.publisher_session_id,
                             track_key = %track_key,
                             track_alias = command.subscription.track_alias(),
-                            track_namespace = %command.track_namespace,
-                            track_name = %command.track_name,
+                            track_namespace = %track_key.track_namespace,
+                            track_name = %track_key.track_name,
                         );
                         create_receiver_span.add_link(
                             publisher_session_span
@@ -132,8 +127,8 @@ impl IngressCoordinator {
                                         publisher_session_id = command.publisher_session_id,
                                         track_key = %track_key,
                                         track_alias = subscription.track_alias(),
-                                        track_namespace = %command.track_namespace,
-                                        track_name = %command.track_name,
+                                        track_namespace = %track_key.track_namespace,
+                                        track_name = %track_key.track_name,
                                     );
                                     dataplane_track_span.add_link(
                                         command

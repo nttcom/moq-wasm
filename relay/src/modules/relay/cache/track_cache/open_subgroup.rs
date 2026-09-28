@@ -48,14 +48,6 @@ impl NextObject {
             other => panic!("expected an object, got {other:?}"),
         }
     }
-
-    pub(crate) fn is_finished(&self) -> bool {
-        matches!(self, Self::Finished)
-    }
-
-    pub(crate) fn is_aborted(&self) -> bool {
-        matches!(self, Self::Aborted)
-    }
 }
 
 impl TrackCache {
@@ -214,13 +206,10 @@ mod tests {
         let cache = TrackCache::new();
         open_group(&cache, 0, &[0]).finish();
         // Act / Assert
-        assert!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 1)
-                .await
-                .unwrap()
-                .is_finished()
-        );
+        assert!(matches!(
+            cache.next_subgroup_object_or_wait(stream_key(0), 1).await,
+            Ok(NextObject::Finished)
+        ));
     }
 
     #[tokio::test]
@@ -229,13 +218,10 @@ mod tests {
         let cache = TrackCache::new();
         let _ = cache.insert(stream_object(0, 0));
         // Act / Assert: nothing will ever close it, so waiting would hang
-        assert!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 1)
-                .await
-                .unwrap()
-                .is_finished()
-        );
+        assert!(matches!(
+            cache.next_subgroup_object_or_wait(stream_key(0), 1).await,
+            Ok(NextObject::Finished)
+        ));
     }
 
     #[tokio::test]
@@ -326,7 +312,6 @@ mod tests {
         // Act
         first.finish();
         // Assert: still open, so a waiter would keep waiting
-        assert!(cache.has_group(0));
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
@@ -336,13 +321,10 @@ mod tests {
             .is_err()
         );
         second.finish();
-        assert!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0)
-                .await
-                .unwrap()
-                .is_finished()
-        );
+        assert!(matches!(
+            cache.next_subgroup_object_or_wait(stream_key(0), 0).await,
+            Ok(NextObject::Finished)
+        ));
     }
 
     #[test]

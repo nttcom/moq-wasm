@@ -177,8 +177,6 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 return;
             }
             Ok(None) => {
-                // FIN: the routine end of a subgroup stream that carries
-                // no explicit end-of-group status object.
                 span.record("end_reason", "fin");
                 if let (Some(header), Some(ingest)) = (&header, &ingest)
                     && header.ends_group_on_fin
@@ -205,15 +203,11 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 return;
             }
             Err(moqt::StreamReceiveError::Closed(error)) => {
-                // Transport-level interruption: RESET_STREAM or the
-                // publisher connection was lost mid-subgroup.
                 span.record("end_reason", "transport_closed");
                 tracing::info!(%track_key, %error, "stream transport closed");
                 return;
             }
             Err(moqt::StreamReceiveError::Decode(error)) => {
-                // Malformed data on the wire: a peer bug or protocol
-                // violation, unlike the two endings above.
                 span.record("end_reason", "decode_error");
                 tracing::error!(%track_key, %error, "failed to decode stream data");
                 return;
@@ -264,6 +258,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         relay::{
+            cache::track_cache::NextObject,
             tests::harness::{
                 PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
                 fixtures::{
@@ -312,12 +307,10 @@ mod tests {
             harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal), (1, ObjectStatus::EndOfGroup)]
         );
-        assert!(
-            harness
-                .subgroup_end_after(stream_key(0), 1)
-                .await
-                .is_finished()
-        );
+        assert!(matches!(
+            harness.subgroup_end_after(stream_key(0), 1).await,
+            NextObject::Finished
+        ));
     }
 
     async fn assert_open_subgroup_ends_on(
@@ -335,7 +328,11 @@ mod tests {
         // Assert
         assert_eq!(subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
         let end = harness.subgroup_end_after(stream_key(0), 0).await;
-        assert_eq!(end.is_finished(), finished, "unexpected end: {end:?}");
+        assert_eq!(
+            matches!(end, NextObject::Finished),
+            finished,
+            "unexpected end: {end:?}"
+        );
     }
 
     #[tokio::test]
@@ -364,12 +361,10 @@ mod tests {
         harness.stop_ingest();
         upstream_stream.wait_reader_end().await;
         // Assert: a stopped reader cannot vouch for the subgroup's tail
-        assert!(
-            harness
-                .subgroup_end_after(stream_key(0), 0)
-                .await
-                .is_aborted()
-        );
+        assert!(matches!(
+            harness.subgroup_end_after(stream_key(0), 0).await,
+            NextObject::Aborted
+        ));
     }
 
     #[tokio::test]

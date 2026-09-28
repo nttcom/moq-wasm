@@ -235,8 +235,7 @@ impl Publish {
             .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
-                track_namespace: track_namespace.clone(),
-                track_name: track_name.clone(),
+                track_key: active_upstream.track_key.clone(),
                 subscription: subscription.clone(),
                 parent_span: Span::current(),
             })))

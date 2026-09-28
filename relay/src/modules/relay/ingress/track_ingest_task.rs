@@ -93,9 +93,8 @@ impl TrackIngestTask {
                     Some(command) = receiver.recv() => match command {
                         IngestCommand::Start(start) => {
                             let ingest_key = (start.track_key.clone(), start.source.kind());
-                            // draft-14 §8.2 Multiple Publishers: for now keep the first publisher and
-                            // ignore later ones. FIXME: GOAWAY migration needs ingesting from multiple
-                            // publishers with per-object dedup (SHOULD); first-writer-wins is a stopgap.
+                            // draft-14 §8.2 Multiple Publishers: the first publisher wins and later
+                            // ones are ignored, instead of the per-object dedup the SHOULD asks for.
                             if stop_senders.contains_key(&ingest_key) {
                                 tracing::warn!(track_key = %start.track_key, "ignoring additional publisher for active track");
                                 continue;

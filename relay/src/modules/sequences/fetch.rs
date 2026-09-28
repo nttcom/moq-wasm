@@ -219,11 +219,10 @@ impl Fetch {
                     return;
                 }
 
-                let cache = cache_store.get_or_create(&target.track_key);
                 let egress_start = EgressFetchRequest {
                     subscriber_session_id: session_id,
                     request_id,
-                    cache: cache.clone(),
+                    cache: cache_store.get_or_create(&target.track_key),
                     start_location,
                     end_location: prepared.handle.end_location,
                     group_order: handler.group_order(),
@@ -235,12 +234,7 @@ impl Fetch {
                     FetchIngestStart {
                         track_key: target.track_key.clone(),
                         upstream_publisher_session_id: prepared.upstream_publisher_session_id,
-                        downstream_subscriber_session_id: session_id,
-                        request_id,
                         fetch_handle: prepared.handle,
-                        cache,
-                        requested_start: start_location,
-                        requested_end: egress_start.end_location,
                         egress_start,
                     },
                 );

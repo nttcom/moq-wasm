@@ -4,8 +4,6 @@ use crate::modules::relay::cache::{cached_object::CachedObject, track_cache::Nex
 
 use super::{FetchInterrupted, TrackCache, location};
 
-/// Walks a FETCH range in delivery order, one object per `next` call, so the
-/// caller can send each object as soon as the cache can prove its position.
 pub(crate) struct FetchCursor<'a> {
     cache: &'a TrackCache,
     groups: std::vec::IntoIter<u64>,
@@ -34,7 +32,7 @@ impl GroupCursor {
 }
 
 impl<'a> FetchCursor<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         cache: &'a TrackCache,
         start: moqt::Location,
         end: moqt::Location,

@@ -1,12 +1,8 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct KnownRange {
-    start: moqt::Location,
-    end: moqt::Location,
-}
+use std::ops::Range;
 
 #[derive(Debug, Default)]
 pub(crate) struct KnownRanges {
-    ranges: Vec<KnownRange>,
+    ranges: Vec<Range<moqt::Location>>,
 }
 
 impl KnownRanges {
@@ -26,7 +22,7 @@ impl KnownRanges {
             return;
         }
 
-        let mut merged = KnownRange { start, end };
+        let mut merged = start..end;
         let mut next_ranges = Vec::with_capacity(self.ranges.len() + 1);
         let mut inserted = false;
 
@@ -35,7 +31,7 @@ impl KnownRanges {
                 next_ranges.push(range);
             } else if merged.end < range.start {
                 if !inserted {
-                    next_ranges.push(merged);
+                    next_ranges.push(merged.clone());
                     inserted = true;
                 }
                 next_ranges.push(range);
@@ -65,16 +61,10 @@ impl KnownRanges {
             }
 
             if range.start < start {
-                ranges.push(KnownRange {
-                    start: range.start,
-                    end: start,
-                });
+                ranges.push(range.start..start);
             }
             if end < range.end {
-                ranges.push(KnownRange {
-                    start: end,
-                    end: range.end,
-                });
+                ranges.push(end..range.end);
             }
         }
         self.ranges = ranges;
@@ -90,7 +80,6 @@ impl KnownRanges {
             .any(|range| range.start <= start && end <= range.end)
     }
 
-    /// Returns the exclusive end of the range containing `location`, if any.
     /// Positions below that end are fully decided: an absent object there is
     /// known-nonexistent, so readers never need to wait on them.
     pub(crate) fn end_of_range_containing(
@@ -99,7 +88,7 @@ impl KnownRanges {
     ) -> Option<moqt::Location> {
         self.ranges
             .iter()
-            .find(|range| range.start <= location && location < range.end)
+            .find(|range| range.contains(&location))
             .map(|range| range.end)
     }
 
