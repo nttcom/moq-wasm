@@ -478,6 +478,7 @@ mod tests {
 
     #[test]
     fn largest_location_is_none_when_empty() {
+        // Arrange / Act / Assert
         assert!(TrackCache::new().largest_location().is_none());
     }
 

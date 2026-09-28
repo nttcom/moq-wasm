@@ -125,9 +125,11 @@ mod tests {
 
     #[test]
     fn contains_inserted_range() {
+        // Arrange
         let mut ranges = KnownRanges::default();
+        // Act
         ranges.insert(location(0, 0), location(3, 0));
-
+        // Assert
         assert!(ranges.contains_range(location(0, 0), location(3, 0)));
         assert!(ranges.contains_range(location(3, 0), location(3, 5)));
         assert!(ranges.contains_range(location(1, 0), location(2, 0)));
@@ -136,28 +138,33 @@ mod tests {
 
     #[test]
     fn whole_group_end_requires_full_group_knowledge() {
+        // Arrange
         let mut ranges = KnownRanges::default();
+        // Act
         ranges.insert(location(0, 0), location(2, 7));
-
+        // Assert
         assert!(!ranges.contains_range(location(0, 0), location(2, 0)));
     }
 
     #[test]
     fn merges_overlapping_ranges() {
+        // Arrange
         let mut ranges = KnownRanges::default();
         ranges.insert(location(0, 0), location(2, 0));
+        // Act
         ranges.insert(location(1, 0), location(3, 0));
-
+        // Assert
         assert!(ranges.contains_range(location(0, 0), location(3, 0)));
     }
 
     #[test]
     fn remove_range_can_split_existing_range() {
+        // Arrange
         let mut ranges = KnownRanges::default();
         ranges.insert(location(0, 0), location(5, 0));
-
+        // Act
         ranges.remove_range(location(2, 0), location(3, 0));
-
+        // Assert
         assert!(ranges.contains_range(location(0, 0), location(1, 0)));
         assert!(!ranges.contains_range(location(2, 0), location(3, 0)));
         assert!(ranges.contains_range(location(4, 0), location(5, 0)));
