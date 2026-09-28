@@ -388,23 +388,26 @@ impl InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.local_pub_sub_directory.find_active_upstream_subscriptions",
+        name = "relay.local_pub_sub_directory.find_active_upstream_subscription",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    pub(crate) fn find_active_upstream_subscriptions(
+    pub(crate) fn find_active_upstream_subscription(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Vec<UpstreamSubscriptionKey> {
-        self.active_upstream_subscriptions
+    ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
+        let upstream_key = self
+            .active_upstream_subscriptions
             .iter()
             .filter(|entry| {
                 entry.key().track_namespace == track_namespace
                     && entry.key().track_name == track_name
             })
             .map(|entry| entry.key().clone())
-            .collect()
+            .min_by_key(|key| key.publisher_session_id)?;
+        let active_upstream = self.get_active_upstream_subscription(&upstream_key)?;
+        Some((upstream_key, active_upstream))
     }
 
     #[tracing::instrument(
@@ -445,16 +448,10 @@ impl InMemoryLocalPubSubDirectory {
 
     pub(crate) fn get_active_upstream_subscription(
         &self,
-        publisher_session_id: SessionId,
-        track_namespace: &str,
-        track_name: &str,
+        key: &UpstreamSubscriptionKey,
     ) -> Option<ActiveUpstreamSubscription> {
         self.active_upstream_subscriptions
-            .get(&UpstreamSubscriptionKey {
-                publisher_session_id,
-                track_namespace: track_namespace.to_string(),
-                track_name: track_name.to_string(),
-            })
+            .get(key)
             .map(|entry| entry.value().clone())
     }
 
@@ -1144,11 +1141,14 @@ mod tests {
         );
 
         // Act: Fetch the active upstream subscription and upstream publishers separately.
-        let active_subscriptions = table.find_active_upstream_subscriptions("room/member", "video");
+        let active_subscription = table.find_active_upstream_subscription("room/member", "video");
         let publisher_subscriptions = table.find_upstream_publishers("room/member", "video").await;
 
         // Assert: Active subscriptions and upstream publishers are both discoverable.
-        assert_eq!(active_subscriptions, vec![upstream_key.clone()]);
+        assert_eq!(
+            active_subscription.map(|(key, _)| key),
+            Some(upstream_key.clone())
+        );
         assert_eq!(publisher_subscriptions, vec![upstream_key]);
     }
 }

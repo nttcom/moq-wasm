@@ -131,11 +131,7 @@ mod tests {
         run_cleanup(&ctx).await;
 
         // Assert
-        assert!(
-            ctx.table
-                .get_active_upstream_subscription(PUBLISHER_SESSION, "ns", "track")
-                .is_none()
-        );
+        assert!(ctx.table.active_upstream_subscriptions.is_empty());
         assert_eq!(
             *ctx.recorded.unsubscribed_request_ids.lock().unwrap(),
             vec![UPSTREAM_REQUEST_ID]

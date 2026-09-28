@@ -462,11 +462,9 @@ impl Fetch {
             return Err(FetchError::UnknownJoiningRequestId);
         };
 
-        let Some(active_upstream) = table.get_active_upstream_subscription(
-            downstream_sub.upstream_key.publisher_session_id,
-            &downstream_sub.upstream_key.track_namespace,
-            &downstream_sub.upstream_key.track_name,
-        ) else {
+        let Some(active_upstream) =
+            table.get_active_upstream_subscription(&downstream_sub.upstream_key)
+        else {
             tracing::warn!("Joined subscription has no active upstream subscription");
             return Err(FetchError::TrackNotFound);
         };
