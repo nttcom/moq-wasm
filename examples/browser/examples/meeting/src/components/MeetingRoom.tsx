@@ -78,6 +78,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [catalogSubscribedMemberIds, setCatalogSubscribedMemberIds] = useState<Set<string>>(new Set())
   const [catalogUnsubscribingTrackKeys, setCatalogUnsubscribingTrackKeys] = useState<Set<string>>(new Set())
   const { backoff: chatSubscribeBackoff, retryTick: chatSubscribeRetryTick } = useRetryBackoff('chat-auto-subscribe')
+  const { backoff: catalogSubscribeBackoff, retryTick: catalogSubscribeRetryTick } =
+    useRetryBackoff('catalog-auto-subscribe')
   const {
     cameraEnabled,
     screenShareEnabled,
@@ -372,8 +374,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         next.add(memberId)
         return next
       })
-    } catch (error) {
-      console.error(`Failed to load catalog tracks for ${memberId}:`, error)
     } finally {
       setCatalogLoadingMemberIds((prev) => {
         const next = new Set(prev)
@@ -384,13 +384,32 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }
 
   useEffect(() => {
+    catalogSubscribeBackoff.retain(new Set(room.remoteMembers.keys()))
+  }, [catalogSubscribeBackoff, room.remoteMembers])
+
+  useEffect(() => {
     for (const memberId of room.remoteMembers.keys()) {
       if (catalogLoadingMemberIds.has(memberId) || catalogSubscribedMemberIds.has(memberId)) {
         continue
       }
-      void handleLoadCatalogTracks(memberId)
+      const attempt = catalogSubscribeBackoff.begin(memberId)
+      if (!attempt) {
+        continue
+      }
+      handleLoadCatalogTracks(memberId)
+        .then(() => catalogSubscribeBackoff.succeed(attempt))
+        .catch((error) => {
+          console.error(`Failed to load catalog tracks for ${memberId}:`, error)
+          catalogSubscribeBackoff.fail(attempt)
+        })
     }
-  }, [catalogLoadingMemberIds, catalogSubscribedMemberIds, room.remoteMembers])
+  }, [
+    catalogLoadingMemberIds,
+    catalogSubscribeBackoff,
+    catalogSubscribeRetryTick,
+    catalogSubscribedMemberIds,
+    room.remoteMembers
+  ])
 
   const handleSelectCatalogTrack = (memberId: string, role: CatalogSubscribeRole, trackName: string) => {
     setRemoteCatalogSelections((prev) => {
