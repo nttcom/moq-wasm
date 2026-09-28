@@ -642,3 +642,8 @@
   stroke: #d97706;
   fill: #d97706;
 }
+
+.stream-monitor-review {
+  margin-top: 8px;
+  border-top: 2px solid #d97706;
+}

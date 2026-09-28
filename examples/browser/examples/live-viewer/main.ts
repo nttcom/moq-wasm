@@ -29,6 +29,7 @@ import {
   DEFAULT_WINDOW_SECONDS,
   type Playhead,
   StreamMonitor,
+  type StreamRecord,
   renderDeliveryGrid,
   renderIdleStreamMonitor,
   renderStreamMonitor,
@@ -799,27 +800,42 @@ function monitored(
 
 function renderStreams(): void {
   const reviewGrid = element<SVGSVGElement>('delivery-grid-review')
+  const reviewTimeline = element<SVGSVGElement>('stream-monitor-review')
   if (!watching) {
     renderIdleStreamMonitor(element<SVGSVGElement>('stream-monitor'))
     renderIdleStreamMonitor(element<SVGSVGElement>('delivery-grid'))
     reviewGrid.style.display = 'none'
+    reviewTimeline.style.display = 'none'
     element<HTMLSpanElement>('stream-stats').textContent = '-'
     return
   }
   const now = Date.now()
   const records = streamMonitor.snapshot()
+  const liveRecords = records.filter((record) => record.kind === 'subscribe')
+  const fetchRecords = records.filter((record) => record.kind === 'fetch')
   const playheads = streamMonitor.currentPlayheads()
   const livePlayhead = playheads.find((playhead) => playhead.kind === 'subscribe')
   const reviewPlayhead = playheads.find((playhead) => playhead.kind === 'fetch')
   renderStreamMonitor(
     element<SVGSVGElement>('stream-monitor'),
-    records,
+    liveRecords,
     streamMonitor.slotsPerTrack(),
     streamWindowSeconds,
-    playheads,
+    livePlayhead ? [livePlayhead] : [],
     now
   )
   element<HTMLSpanElement>('stream-stats').textContent = summarizeStreams(records, playheads, now)
+  reviewTimeline.style.display = reviewing && fetchRecords.length > 0 ? '' : 'none'
+  if (reviewing && fetchRecords.length > 0) {
+    renderStreamMonitor(
+      reviewTimeline,
+      fetchRecords,
+      streamMonitor.slotsPerTrack(),
+      streamWindowSeconds,
+      reviewPlayhead ? [reviewPlayhead] : [],
+      latestFetchActivity(fetchRecords, now)
+    )
+  }
   renderDeliveryGrid(
     element<SVGSVGElement>('delivery-grid'),
     records,
@@ -854,6 +870,12 @@ function renderStreams(): void {
       reviewPlayhead
     )
   }
+}
+
+/// A FETCH arrives in a burst well before it is played, so the review
+/// timeline ends at the newest FETCH activity rather than at the wall clock.
+function latestFetchActivity(records: StreamRecord[], now: number): number {
+  return Math.max(...records.map((record) => record.finishedAt ?? now))
 }
 
 function trackNamespace(): string[] {
