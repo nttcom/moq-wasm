@@ -19,6 +19,52 @@ pub(crate) struct RegisteredDownstreamSubscription {
     _runner_stop_sender: oneshot::Sender<()>,
 }
 
+type PeersByNamespace = DashMap<String, DashMap<SessionId, PeerKind>>;
+
+fn has_client(peers: &DashMap<SessionId, PeerKind>) -> bool {
+    peers.iter().any(|peer| *peer.value() == PeerKind::Client)
+}
+
+/// Returns the namespaces whose last client was the removed session; relay
+/// peers don't own Redis routes, so only those need route cleanup.
+fn remove_peer_from_namespaces(
+    namespaces: &PeersByNamespace,
+    session_id: SessionId,
+) -> Vec<String> {
+    let mut last_client_left = Vec::new();
+    let mut empty_namespaces = Vec::new();
+    for entry in namespaces.iter() {
+        let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
+        if removed_kind == Some(PeerKind::Client) && !has_client(entry.value()) {
+            last_client_left.push(entry.key().clone());
+        }
+        if entry.value().is_empty() {
+            empty_namespaces.push(entry.key().clone());
+        }
+    }
+    for namespace in empty_namespaces {
+        namespaces.remove(&namespace);
+    }
+    last_client_left
+}
+
+fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespace: &str) -> bool {
+    let Some(peers) = namespaces.get(namespace) else {
+        return true;
+    };
+
+    peers.remove(&session_id);
+    let no_clients_remain = !has_client(&peers);
+    let is_empty = peers.is_empty();
+    drop(peers);
+
+    if is_empty {
+        namespaces.remove(namespace);
+    }
+
+    no_clients_remain
+}
+
 #[derive(Debug)]
 pub(crate) struct InMemoryLocalPubSubDirectory {
     /**
@@ -58,51 +104,17 @@ impl InMemoryLocalPubSubDirectory {
         &self,
         session_id: SessionId,
     ) -> RemovedSessionSubscriptions {
-        let mut removed = RemovedSessionSubscriptions::default();
-
-        let mut empty_namespaces = Vec::new();
-        for entry in self.publisher_namespaces.iter() {
-            let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
-            // Report the namespace for Redis cleanup only when the removed session
-            // was the last client publisher; relay publishers don't own routes.
-            let no_clients_remain = !entry
-                .value()
-                .iter()
-                .any(|session| *session.value() == PeerKind::Client);
-            if removed_kind == Some(PeerKind::Client) && no_clients_remain {
-                removed
-                    .publish_namespace_track_namespaces
-                    .push(entry.key().clone());
-            }
-            if entry.value().is_empty() {
-                empty_namespaces.push(entry.key().clone());
-            }
-        }
-        for track_namespace in empty_namespaces {
-            self.publisher_namespaces.remove(&track_namespace);
-        }
-
-        let mut empty_prefixes = Vec::new();
-        for entry in self.subscriber_namespaces.iter() {
-            let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
-            // Report the prefix for Redis cleanup only when the removed session
-            // was the last client subscriber; relay subscribers don't own routes.
-            let no_clients_remain = !entry
-                .value()
-                .iter()
-                .any(|session| *session.value() == PeerKind::Client);
-            if removed_kind == Some(PeerKind::Client) && no_clients_remain {
-                removed
-                    .subscribe_namespace_prefixes
-                    .push(entry.key().clone());
-            }
-            if entry.value().is_empty() {
-                empty_prefixes.push(entry.key().clone());
-            }
-        }
-        for track_namespace_prefix in empty_prefixes {
-            self.subscriber_namespaces.remove(&track_namespace_prefix);
-        }
+        let mut removed = RemovedSessionSubscriptions {
+            publish_namespace_track_namespaces: remove_peer_from_namespaces(
+                &self.publisher_namespaces,
+                session_id,
+            ),
+            subscribe_namespace_prefixes: remove_peer_from_namespaces(
+                &self.subscriber_namespaces,
+                session_id,
+            ),
+            ..Default::default()
+        };
 
         self.published_handlers
             .write()
@@ -197,22 +209,7 @@ impl InMemoryLocalPubSubDirectory {
         session_id: SessionId,
         track_namespace: &str,
     ) -> bool {
-        let Some(sessions) = self.publisher_namespaces.get(track_namespace) else {
-            return true;
-        };
-
-        sessions.remove(&session_id);
-        let no_clients_remain = !sessions
-            .iter()
-            .any(|session| *session.value() == PeerKind::Client);
-        let is_empty = sessions.is_empty();
-        drop(sessions);
-
-        if is_empty {
-            self.publisher_namespaces.remove(track_namespace);
-        }
-
-        no_clients_remain
+        unregister_peer(&self.publisher_namespaces, session_id, track_namespace)
     }
 
     /// Drops relay-origin publisher namespaces under the prefix once no
@@ -235,11 +232,7 @@ impl InMemoryLocalPubSubDirectory {
             }
             // Keep namespaces that another client-subscribed prefix still covers.
             let covered = self.subscriber_namespaces.iter().any(|prefix_entry| {
-                entry.key().starts_with(prefix_entry.key())
-                    && prefix_entry
-                        .value()
-                        .iter()
-                        .any(|session| *session.value() == PeerKind::Client)
+                entry.key().starts_with(prefix_entry.key()) && has_client(prefix_entry.value())
             });
             if covered {
                 continue;
@@ -283,9 +276,7 @@ impl InMemoryLocalPubSubDirectory {
         peer_kind: PeerKind,
     ) -> bool {
         if let Some(sessions) = self.subscriber_namespaces.get_mut(&track_namespace_prefix) {
-            let had_client = sessions
-                .iter()
-                .any(|session| *session.value() == PeerKind::Client);
+            let had_client = has_client(&sessions);
             sessions.insert(session_id, peer_kind);
             peer_kind == PeerKind::Client && !had_client
         } else {
@@ -315,22 +306,11 @@ impl InMemoryLocalPubSubDirectory {
         session_id: SessionId,
         track_namespace_prefix: &str,
     ) -> bool {
-        let Some(sessions) = self.subscriber_namespaces.get(track_namespace_prefix) else {
-            return true;
-        };
-
-        sessions.remove(&session_id);
-        let no_clients_remain = !sessions
-            .iter()
-            .any(|session| *session.value() == PeerKind::Client);
-        let is_empty = sessions.is_empty();
-        drop(sessions);
-
-        if is_empty {
-            self.subscriber_namespaces.remove(track_namespace_prefix);
-        }
-
-        no_clients_remain
+        unregister_peer(
+            &self.subscriber_namespaces,
+            session_id,
+            track_namespace_prefix,
+        )
     }
 
     #[tracing::instrument(
