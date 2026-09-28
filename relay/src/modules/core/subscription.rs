@@ -1,7 +1,7 @@
 use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
 
 #[derive(Clone)]
-pub struct UpstreamSubscription {
+pub(crate) struct UpstreamSubscription {
     inner: moqt::Subscription,
 }
 
