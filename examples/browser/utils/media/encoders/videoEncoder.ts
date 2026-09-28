@@ -64,8 +64,8 @@ function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoC
 async function initializeVideoEncoder() {
   const init: VideoEncoderInit = {
     output: sendVideoChunkMessage,
-    error: (e: any) => {
-      console.log(e.message)
+    error: (e: DOMException) => {
+      self.postMessage({ type: 'encoderError', message: e.message })
     }
   }
   const config = encoderConfig ?? buildDefaultConfig()

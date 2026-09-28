@@ -587,6 +587,7 @@ export class MediaPublisher {
           }
         | { type: 'bitrate'; kbps: number }
         | { type: 'configError'; reason: string; config: any }
+        | { type: 'encoderError'; message: string }
         | {
             chunk: EncodedVideoChunk
             metadata: EncodedVideoChunkMetadata | undefined
@@ -608,6 +609,10 @@ export class MediaPublisher {
         this.handlers.onVideoEncodeError?.(
           `[${trackName}] Encoder configuration unsupported (${codecText}, ${resText}). Please lower resolution/bitrate or choose another codec.`
         )
+        return
+      }
+      if ('type' in data && data.type === 'encoderError') {
+        console.warn(`${VIDEO_PUBLISHER_LOG_PREFIX} encoder error`, { trackName, message: data.message })
         return
       }
 
