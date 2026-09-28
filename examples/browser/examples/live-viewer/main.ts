@@ -824,8 +824,8 @@ function renderStreams(): void {
     element<SVGSVGElement>('delivery-grid'),
     records,
     [
-      { label: 'audio', trackAlias: subscriptions.get('audio')?.trackAlias },
-      { label: 'video', trackAlias: subscriptions.get('video')?.trackAlias }
+      { label: 'audio', kind: 'subscribe', trackAlias: subscriptions.get('audio')?.trackAlias },
+      { label: 'video', kind: 'subscribe', trackAlias: subscriptions.get('video')?.trackAlias }
     ],
     streamMonitor.slotsPerTrack(),
     livePlayhead,
@@ -839,10 +839,16 @@ function renderStreams(): void {
       [
         {
           label: 'fetch audio',
+          kind: 'fetch',
           trackAlias: reviewFetchIds.audio,
           cadenceAlias: subscriptions.get('audio')?.trackAlias
         },
-        { label: 'fetch video', trackAlias: reviewFetchIds.video, cadenceAlias: subscriptions.get('video')?.trackAlias }
+        {
+          label: 'fetch video',
+          kind: 'fetch',
+          trackAlias: reviewFetchIds.video,
+          cadenceAlias: subscriptions.get('video')?.trackAlias
+        }
       ],
       streamMonitor.slotsPerTrack(),
       reviewPlayhead

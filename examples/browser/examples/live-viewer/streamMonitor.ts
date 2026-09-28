@@ -380,9 +380,11 @@ function escapeXml(text: string): string {
   return text.replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[char] ?? char)
 }
 
-/// `cadenceAlias` names the live subscription whose arrival spacing gives the
-/// object interval; a FETCH row needs it because a FETCH arrives in a burst.
-export type DeliveryRow = { label: string; trackAlias?: bigint; cadenceAlias?: bigint }
+/// Subscribe track aliases and FETCH request ids are separate number spaces
+/// that can collide, so a row names its kind. `cadenceAlias` names the live
+/// subscription whose object spacing gives the interval; a FETCH row needs it
+/// because a FETCH arrives in a burst.
+export type DeliveryRow = { label: string; kind: StreamKind; trackAlias?: bigint; cadenceAlias?: bigint }
 
 /// Cells from the playing object rightwards, sized so that `GOPS_ACROSS`
 /// groups of the track's usual length fill the width: filled once the object
@@ -410,18 +412,19 @@ export function renderDeliveryGrid(
   const parts: string[] = []
   rows.forEach((row, index) => {
     const y = CELL_GAP + index * CELL_ROW_HEIGHT
-    parts.push(
-      `<text x="${GRID_LABEL_WIDTH - 6}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(row.label)}</text>`
-    )
-    const ofTrack = gridGroups(records, row.trackAlias)
+    const ofTrack = gridGroups(records, row.kind, row.trackAlias)
     const groupLength = expectedGroupLength(ofTrack) || DEFAULT_GROUP_LENGTH
     const cellSize = Math.max(
       2,
       Math.floor((plotRight - plotLeft - (GOPS_ACROSS - 1) * GROUP_GAP) / (GOPS_ACROSS * groupLength))
     )
     const shown = ofTrack.filter((group) => from === undefined || group.groupId >= from.groupId).slice(-groupsToShow)
-    const cadence = row.cadenceAlias === undefined ? ofTrack : gridGroups(records, row.cadenceAlias)
-    const bufferCells = bufferMs > 0 ? Math.round(bufferMs / objectIntervalMs(cadence)) : 0
+    const cadence = row.cadenceAlias === undefined ? ofTrack : gridGroups(records, 'subscribe', row.cadenceAlias)
+    const intervalMs = objectIntervalMs(cadence)
+    const bufferCells = bufferMs > 0 ? Math.round(bufferMs / intervalMs) : 0
+    parts.push(
+      `<text x="${GRID_LABEL_WIDTH - 6}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label"><title>${escapeXml(`${row.label}: ${ofTrack.length} groups, ${groupLength} objects per group, ${intervalMs.toFixed(1)} ms per object, cell ${cellSize} px`)}</title>${escapeXml(row.label)}</text>`
+    )
     if (bufferCells > 0) {
       const bufferWidth = Math.min(
         plotRight - plotLeft,
@@ -482,10 +485,10 @@ type GridGroup = {
 /// One grid group per subscribe stream of the alias, or per group inside the
 /// FETCH stream whose request id is the alias; a fetched group is complete
 /// once a later group of the same FETCH has started.
-function gridGroups(records: StreamRecord[], trackAlias?: bigint): GridGroup[] {
+function gridGroups(records: StreamRecord[], kind: StreamKind, trackAlias?: bigint): GridGroup[] {
   const groups: GridGroup[] = []
   for (const record of records) {
-    if (record.trackAlias !== trackAlias) {
+    if (record.kind !== kind || record.trackAlias !== trackAlias) {
       continue
     }
     if (record.kind === 'subscribe') {
