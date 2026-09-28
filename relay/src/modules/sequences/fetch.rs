@@ -37,13 +37,6 @@ struct FetchTarget {
     end_location: moqt::Location,
 }
 
-struct JoinedSubscriptionTarget {
-    track_key: TrackKey,
-    track_namespace: String,
-    track_name: String,
-    largest_location: moqt::Location,
-}
-
 struct LocationRange {
     start_location: moqt::Location,
     end_location: moqt::Location,
@@ -389,78 +382,15 @@ impl Fetch {
             FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
-            } => {
-                self.resolve_relative_joining_target(
-                    session_id,
-                    joining_request_id,
-                    joining_start,
-                    table,
-                )
-                .await
-            }
+            } => self.resolve_joining_target(session_id, joining_request_id, table, |largest| {
+                largest.group_id.saturating_sub(joining_start)
+            }),
             FetchParams::AbsoluteJoining {
                 joining_request_id,
                 joining_start,
-            } => {
-                self.resolve_absolute_joining_target(
-                    session_id,
-                    joining_request_id,
-                    joining_start,
-                    table,
-                )
-                .await
-            }
+            } => self
+                .resolve_joining_target(session_id, joining_request_id, table, |_| joining_start),
         }
-    }
-
-    async fn resolve_relative_joining_target(
-        &self,
-        session_id: SessionId,
-        joining_request_id: u64,
-        joining_start: u64,
-        table: &InMemoryLocalPubSubDirectory,
-    ) -> Result<FetchTarget, FetchError> {
-        let joined_target = self
-            .resolve_joined_subscription(session_id, joining_request_id, table)
-            .await?;
-        let largest_location = joined_target.largest_location;
-        Ok(FetchTarget {
-            track_key: joined_target.track_key,
-            track_namespace: joined_target.track_namespace,
-            track_name: joined_target.track_name,
-            start_location: moqt::Location {
-                group_id: largest_location.group_id.saturating_sub(joining_start),
-                object_id: 0,
-            },
-            end_location: Self::location_after_largest(largest_location),
-        })
-    }
-
-    async fn resolve_absolute_joining_target(
-        &self,
-        session_id: SessionId,
-        joining_request_id: u64,
-        joining_start: u64,
-        table: &InMemoryLocalPubSubDirectory,
-    ) -> Result<FetchTarget, FetchError> {
-        let joined_target = self
-            .resolve_joined_subscription(session_id, joining_request_id, table)
-            .await?;
-        let largest_location = joined_target.largest_location;
-        let start_location = moqt::Location {
-            group_id: joining_start,
-            object_id: 0,
-        };
-        if Self::location_is_after_largest(start_location, largest_location) {
-            return Err(FetchError::InvalidRange);
-        }
-        Ok(FetchTarget {
-            track_key: joined_target.track_key,
-            track_namespace: joined_target.track_namespace,
-            track_name: joined_target.track_name,
-            start_location,
-            end_location: Self::location_after_largest(largest_location),
-        })
     }
 
     async fn resolve_fetch_source(
@@ -508,17 +438,18 @@ impl Fetch {
         Ok(source)
     }
 
-    /// Resolves the joined subscription's track and its Largest Location at subscribe time,
-    /// shared by Relative and Absolute Joining Fetch.
+    /// Resolves a Joining Fetch against the joined subscription's Largest Location at
+    /// subscribe time; `start_group` picks the start group from that location.
     ///
     /// When no objects existed at subscribe time (`start_location` is `None`), §9.16.2
     /// requires rejecting the Joining Fetch with INVALID_RANGE.
-    async fn resolve_joined_subscription(
+    fn resolve_joining_target(
         &self,
         session_id: SessionId,
         joining_request_id: u64,
         table: &InMemoryLocalPubSubDirectory,
-    ) -> Result<JoinedSubscriptionTarget, FetchError> {
+        start_group: impl FnOnce(moqt::Location) -> u64,
+    ) -> Result<FetchTarget, FetchError> {
         // TODO: validate the joined Subscribe has Filter Type Largest Object;
         // otherwise close the session with PROTOCOL_VIOLATION (§9.16.2).
 
@@ -546,11 +477,19 @@ impl Fetch {
             return Err(FetchError::NoObjectsPublished);
         };
 
-        Ok(JoinedSubscriptionTarget {
+        let start_location = moqt::Location {
+            group_id: start_group(largest),
+            object_id: 0,
+        };
+        if Self::location_is_after_largest(start_location, largest) {
+            return Err(FetchError::InvalidRange);
+        }
+        Ok(FetchTarget {
             track_key: active_upstream.track_key,
             track_namespace: downstream_sub.upstream_key.track_namespace,
             track_name: downstream_sub.upstream_key.track_name,
-            largest_location: largest,
+            start_location,
+            end_location: Self::location_after_largest(largest),
         })
     }
 
@@ -884,25 +823,36 @@ mod tests {
         }
     }
 
+    fn relative_joining_fetch_params(joining_request_id: u64) -> FetchParams {
+        FetchParams::RelativeJoining {
+            joining_request_id,
+            joining_start: 0,
+        }
+    }
+
     #[tokio::test]
-    async fn resolve_joined_subscription_unknown_request_id() {
+    async fn resolve_joining_target_unknown_request_id() {
         let table = InMemoryLocalPubSubDirectory::new();
-        let result = Fetch.resolve_joined_subscription(1, 999, &table).await;
+        let result = Fetch
+            .resolve_fetch_target(1, relative_joining_fetch_params(999), &table)
+            .await;
         assert!(matches!(result, Err(FetchError::UnknownJoiningRequestId)));
     }
 
     #[tokio::test]
-    async fn resolve_joined_subscription_no_objects_published() {
+    async fn resolve_joining_target_no_objects_published() {
         let table = InMemoryLocalPubSubDirectory::new();
         let key = setup_upstream(&table, TrackKey::new("ns", "track"));
         table.register_downstream_subscription(2, 100, key, None);
         // No objects in cache either, so NoObjectsPublished.
-        let result = Fetch.resolve_joined_subscription(2, 100, &table).await;
+        let result = Fetch
+            .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
+            .await;
         assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
     }
 
     #[tokio::test]
-    async fn resolve_joined_subscription_returns_stored_largest() {
+    async fn resolve_joining_target_ends_after_stored_largest() {
         let table = InMemoryLocalPubSubDirectory::new();
         let largest = moqt::Location {
             group_id: 10,
@@ -910,18 +860,18 @@ mod tests {
         };
         let key = setup_upstream(&table, TrackKey::new("ns", "track"));
         table.register_downstream_subscription(2, 100, key, Some(largest));
-        let context = Fetch
-            .resolve_joined_subscription(2, 100, &table)
+        let target = Fetch
+            .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
             .await
             .unwrap();
-        assert_eq!(context.track_key, TrackKey::new("ns", "track"));
-        assert_eq!(context.track_namespace, "ns");
-        assert_eq!(context.track_name, "track");
+        assert_eq!(target.track_key, TrackKey::new("ns", "track"));
+        assert_eq!(target.track_namespace, "ns");
+        assert_eq!(target.track_name, "track");
         assert_eq!(
-            context.largest_location,
+            target.end_location,
             moqt::Location {
                 group_id: 10,
-                object_id: 5
+                object_id: 6
             }
         );
     }
