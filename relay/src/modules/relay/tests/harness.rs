@@ -8,11 +8,11 @@ use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{data_object::DataObject, mocks::session_repository_with_session},
     relay::{
-        cache::store::TrackCacheStore,
+        cache::track_cache::TrackCache,
         egress::{
             coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
         },
-        ingress::stream_reader::{StreamOpened, StreamReader},
+        ingress::{stream_reader::read_stream, track_ingest_task::TrackIngest},
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -41,13 +41,9 @@ pub(crate) const PUBLISHER_SESSION_ID: SessionId = 1;
 const RECV_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct RelayHarness {
-    track_key: TrackKey,
-    cache_store: Arc<TrackCacheStore>,
-    opened_sender: mpsc::Sender<StreamOpened>,
+    ingest: TrackIngest,
     session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
-    _stream_reader: StreamReader,
     _stop_sender: watch::Sender<bool>,
-    stop_receiver: watch::Receiver<bool>,
 }
 
 pub(crate) struct EgressRunnerHandle {
@@ -137,26 +133,23 @@ impl Drop for FetchDeliveryHandle {
 
 impl RelayHarness {
     pub(crate) fn new() -> Self {
-        let track_key = TrackKey::new("ns", "track");
-        let cache_store = Arc::new(TrackCacheStore::new());
-        let (opened_sender, opened_receiver) = mpsc::channel(16);
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
-        let stream_reader =
-            StreamReader::run(opened_receiver, cache_store.clone(), session_event_sender);
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
-            track_key,
-            cache_store,
-            opened_sender,
+            ingest: TrackIngest {
+                track_key: TrackKey::new("ns", "track"),
+                publisher_session_id: PUBLISHER_SESSION_ID,
+                cache: Arc::new(TrackCache::new()),
+                session_event_sender,
+                stop_receiver,
+            },
             session_event_receiver,
-            _stream_reader: stream_reader,
             _stop_sender: stop_sender,
-            stop_receiver,
         }
     }
 
     pub(crate) fn track_key(&self) -> &TrackKey {
-        &self.track_key
+        &self.ingest.track_key
     }
 
     pub(crate) async fn expect_malformed_track_detected(&mut self) -> SessionEvent {
@@ -166,18 +159,9 @@ impl RelayHarness {
             .expect("session event channel should stay open")
     }
 
-    pub(crate) async fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
+    pub(crate) fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
         let (upstream_stream, receiver) = UpstreamSubgroupStream::open();
-        self.opened_sender
-            .send(StreamOpened {
-                track_key: self.track_key.clone(),
-                publisher_session_id: PUBLISHER_SESSION_ID,
-                receiver,
-                parent_span: tracing::Span::none(),
-                stop_receiver: self.stop_receiver.clone(),
-            })
-            .await
-            .expect("stream reader should accept new streams");
+        tokio::spawn(read_stream(self.ingest.clone(), receiver));
         upstream_stream
     }
 
@@ -197,8 +181,8 @@ impl RelayHarness {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
         let runner = EgressRunner::new(
-            self.track_key.clone(),
-            self.cache_store.get_or_create(&self.track_key),
+            self.ingest.track_key.clone(),
+            self.ingest.cache.clone(),
             Box::new(publisher),
             make_subscription(filter_type),
             ready_sender,
@@ -229,7 +213,7 @@ impl RelayHarness {
         let request = EgressFetchRequest {
             subscriber_session_id: 2,
             request_id: 0,
-            cache: self.cache_store.get_or_create(&self.track_key),
+            cache: self.ingest.cache.clone(),
             start_location,
             end_location,
             group_order: moqt::GroupOrder::Ascending,
@@ -239,7 +223,7 @@ impl RelayHarness {
     }
 
     pub(crate) async fn wait_group_closed(&self, group_id: u64) {
-        let cache = self.cache_store.get_or_create(&self.track_key);
+        let cache = &self.ingest.cache;
         let whole_group = moqt::Location {
             group_id,
             object_id: 0,
@@ -255,14 +239,14 @@ impl RelayHarness {
     }
 
     pub(crate) async fn wait_track_malformed(&self) {
-        let cache = self.cache_store.get_or_create(&self.track_key);
+        let cache = &self.ingest.cache;
         tokio::time::timeout(RECV_TIMEOUT, cache.malformed_track_detected())
             .await
             .expect("track should be marked malformed");
     }
 
     pub(crate) async fn wait_largest_location(&self, expected: moqt::Location) -> moqt::Location {
-        let cache = self.cache_store.get_or_create(&self.track_key);
+        let cache = &self.ingest.cache;
         let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
         loop {
             if let Some(largest) = cache.largest_location()

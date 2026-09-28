@@ -14,7 +14,7 @@ async fn burst_publish_with_immediate_fin_delivers_all_objects() {
         let harness = RelayHarness::new();
         let mut egress = harness.start_egress(None).await;
 
-        let upstream_stream = harness.open_upstream_stream().await;
+        let upstream_stream = harness.open_upstream_stream();
         upstream_stream.header(0);
         for index in 0..OBJECT_COUNT {
             upstream_stream.object(index);
@@ -31,7 +31,7 @@ async fn egress_start_racing_ingest_burst_delivers_all_objects() {
     for _ in 0..100 {
         let harness = RelayHarness::new();
 
-        let upstream_stream = harness.open_upstream_stream().await;
+        let upstream_stream = harness.open_upstream_stream();
         upstream_stream.header(0);
         for index in 0..OBJECT_COUNT {
             upstream_stream.object(index);
@@ -52,7 +52,7 @@ async fn next_group_start_delivers_a_first_group_with_nonzero_id_cached_before_e
     let harness = RelayHarness::new();
     let no_content_before_subscribe = None;
 
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(FIRST_GROUP_ID);
     upstream_stream.object(0);
     upstream_stream.fin();
@@ -88,7 +88,7 @@ async fn egress_started_with_pre_subscribe_snapshot_delivers_head_objects_cached
     let harness = RelayHarness::new();
     let snapshot_before_subscribe = None;
 
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(0);
     for index in 0..IN_FLIGHT_BEFORE_EGRESS_START {
         upstream_stream.object(index);
@@ -116,7 +116,7 @@ async fn egress_started_mid_subgroup_delivers_absolute_object_ids() {
     const LARGEST_OBJECT_ID_AT_SUBSCRIBE: usize = 9;
 
     let harness = RelayHarness::new();
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(0);
     for index in 0..=LARGEST_OBJECT_ID_AT_SUBSCRIBE {
         upstream_stream.object(index);
@@ -145,7 +145,7 @@ async fn subgroup_closed_without_objects_opens_no_downstream_stream() {
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
 
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(0);
     upstream_stream.fin();
 
@@ -159,7 +159,7 @@ async fn downstream_header_is_regenerated_from_the_cached_objects() {
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
 
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(0);
     upstream_stream.object(0);
     upstream_stream.fin();
@@ -179,11 +179,11 @@ async fn later_group_stream_opens_with_a_lower_transport_priority() {
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
     // Act
-    let first_group = harness.open_upstream_stream().await;
+    let first_group = harness.open_upstream_stream();
     first_group.header(0);
     first_group.object(0);
     let first_priority = egress.expect_stream_priority().await;
-    let second_group = harness.open_upstream_stream().await;
+    let second_group = harness.open_upstream_stream();
     second_group.header(1);
     second_group.object(0);
     let second_priority = egress.expect_stream_priority().await;
@@ -207,7 +207,7 @@ async fn upstream_reset_is_relayed_as_a_downstream_reset() {
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
 
-    let upstream_stream = harness.open_upstream_stream().await;
+    let upstream_stream = harness.open_upstream_stream();
     upstream_stream.header(0);
     for index in 0..3 {
         upstream_stream.object(index);
