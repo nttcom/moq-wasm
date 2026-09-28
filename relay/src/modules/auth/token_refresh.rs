@@ -83,8 +83,8 @@ mod tests {
     use crate::modules::{
         auth::{
             test_support::{
-                StubOutcome, StubVerifier, app_token, connect_client_with_token, relay_token,
-                request_error_code, spawn_relay_with_verifier,
+                StubOutcome, StubVerifier, app_token, relay_token, request_error_code,
+                spawn_relay_and_connect_client,
             },
             verified_token::VerifiedToken,
         },
@@ -252,8 +252,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn track_status_carrying_a_token_is_answered_with_ok() {
         // Arrange
-        let relay = spawn_relay_with_verifier(app_token(Some(""), None)).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(app_token(Some(""), None)).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -274,8 +273,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn track_status_without_a_token_is_answered_with_not_supported() {
         // Arrange
-        let relay = spawn_relay_with_verifier(app_token(Some(""), None)).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(app_token(Some(""), None)).await;
 
         // Act
         let result = tokio::time::timeout(

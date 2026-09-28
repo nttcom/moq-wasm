@@ -96,9 +96,7 @@ mod tests {
     use moqt::{FetchOption, Location, PublishOption, SubscribeOption};
 
     use crate::modules::auth::{
-        test_support::{
-            app_token, connect_client_with_token, request_error_code, spawn_relay_with_verifier,
-        },
+        test_support::{app_token, request_error_code, spawn_relay_and_connect_client},
         verified_token::VerifiedToken,
     };
 
@@ -111,8 +109,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_namespace_inside_the_granted_path_is_accepted() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -131,8 +128,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_namespace_outside_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -151,8 +147,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn subscribe_namespace_inside_the_granted_path_is_accepted() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -171,8 +166,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn subscribe_namespace_of_another_app_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -191,8 +185,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_inside_the_granted_path_is_accepted() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -213,8 +206,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_above_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -235,8 +227,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn subscribe_outside_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
         let mut subscriber = client.subscriber();
 
         // Act
@@ -258,8 +249,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn standalone_fetch_outside_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
         let mut subscriber = client.subscriber();
 
         // Act

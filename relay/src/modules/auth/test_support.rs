@@ -153,15 +153,19 @@ pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<Q
     .unwrap()
 }
 
-pub(crate) async fn connect_client_with_token(port: u16, token: &str) -> Session<QUIC> {
-    let endpoint = client_endpoint(Some(token.to_string()));
-    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+pub(crate) async fn spawn_relay_and_connect_client(
+    token: VerifiedToken,
+) -> (RunningRelay, Session<QUIC>) {
+    let relay = spawn_relay_with_verifier(token).await;
+    let endpoint = client_endpoint(Some("jwt".to_string()));
+    let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         endpoint
-            .connect(&format!("moqt://127.0.0.1:{port}"))
+            .connect(&format!("moqt://127.0.0.1:{}", relay.port))
             .await?
             .await
     })
     .await
     .expect("handshake timed out")
-    .expect("handshake failed")
+    .expect("handshake failed");
+    (relay, client)
 }
