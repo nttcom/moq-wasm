@@ -1,12 +1,8 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct KnownRange {
-    start: moqt::Location,
-    end: moqt::Location,
-}
+use std::ops::Range;
 
 #[derive(Debug, Default)]
 pub(crate) struct KnownRanges {
-    ranges: Vec<KnownRange>,
+    ranges: Vec<Range<moqt::Location>>,
 }
 
 impl KnownRanges {
@@ -26,7 +22,7 @@ impl KnownRanges {
             return;
         }
 
-        let mut merged = KnownRange { start, end };
+        let mut merged = start..end;
         let mut next_ranges = Vec::with_capacity(self.ranges.len() + 1);
         let mut inserted = false;
 
@@ -35,7 +31,7 @@ impl KnownRanges {
                 next_ranges.push(range);
             } else if merged.end < range.start {
                 if !inserted {
-                    next_ranges.push(merged);
+                    next_ranges.push(merged.clone());
                     inserted = true;
                 }
                 next_ranges.push(range);
@@ -65,16 +61,10 @@ impl KnownRanges {
             }
 
             if range.start < start {
-                ranges.push(KnownRange {
-                    start: range.start,
-                    end: start,
-                });
+                ranges.push(range.start..start);
             }
             if end < range.end {
-                ranges.push(KnownRange {
-                    start: end,
-                    end: range.end,
-                });
+                ranges.push(end..range.end);
             }
         }
         self.ranges = ranges;
@@ -99,7 +89,7 @@ impl KnownRanges {
     ) -> Option<moqt::Location> {
         self.ranges
             .iter()
-            .find(|range| range.start <= location && location < range.end)
+            .find(|range| range.contains(&location))
             .map(|range| range.end)
     }
 
