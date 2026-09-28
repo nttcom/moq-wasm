@@ -31,13 +31,12 @@ impl std::error::Error for StreamReceiveError {}
 
 #[derive(Debug)]
 pub struct StreamReceiver<T: TransportProtocol, const U: usize, D: Decoder> {
-    framed_read: FramedRead<Reader<T, U>, D>,
+    framed_read: FramedRead<Reader<T::ReceiveStream>, D>,
 }
 
 impl<T: TransportProtocol, const U: usize, D: Decoder> StreamReceiver<T, U, D> {
     pub(crate) fn new(receive_stream: T::ReceiveStream, decoder: D) -> Self {
-        let inner = Reader::<T, U>::new(receive_stream);
-        // let framed_read = FramedRead::new(inner, decoder);
+        let inner = Reader::new(receive_stream);
         let framed_read = FramedRead::with_capacity(inner, decoder, U);
         Self { framed_read }
     }

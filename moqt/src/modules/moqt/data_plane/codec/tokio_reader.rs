@@ -1,40 +1,78 @@
-use std::pin::Pin;
-
-use bytes::BytesMut;
-use tokio::io::AsyncRead;
-
-use crate::{
-    TransportProtocol, modules::transport::transport_receive_stream::TransportReceiveStream,
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
 };
 
+use tokio::io::{AsyncRead, ReadBuf};
+
+use crate::modules::transport::transport_receive_stream::TransportReceiveStream;
+
 #[derive(Debug)]
-pub(crate) struct Reader<T: TransportProtocol, const N: usize> {
-    receive_stream: T::ReceiveStream,
+pub(crate) struct Reader<S: TransportReceiveStream> {
+    receive_stream: S,
 }
 
-impl<T: TransportProtocol, const N: usize> Reader<T, N> {
-    pub(crate) fn new(receive_stream: T::ReceiveStream) -> Self {
+impl<S: TransportReceiveStream> Reader<S> {
+    pub(crate) fn new(receive_stream: S) -> Self {
         Self { receive_stream }
     }
 }
 
-impl<T: TransportProtocol, const N: usize> AsyncRead for Reader<T, N> {
+impl<S: TransportReceiveStream> AsyncRead for Reader<S> {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let mut bytes_mut = BytesMut::with_capacity(N);
-        let capacity = buf.remaining().min(N);
-        bytes_mut.resize(capacity, 0);
-        // TODO: handle the case where the received message is larger than the buffer size.
-        Pin::new(&mut self.receive_stream)
-            .poll_read(cx, &mut bytes_mut)
-            .map(|result| {
-                result.map(|size| {
-                    buf.put_slice(&bytes_mut[..size]);
-                })
-            })
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.receive_stream
+            .poll_read(cx, buf)
             .map_err(|e| std::io::Error::other(format!("read error: {:?}", e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::task::Poll;
+
+    use tokio::io::AsyncReadExt;
+
+    use super::Reader;
+    use crate::modules::transport::{
+        read_error::ReadError, transport_receive_stream::MockTransportReceiveStream,
+    };
+
+    #[tokio::test]
+    async fn read_writes_received_bytes_into_caller_buffer() {
+        // Arrange
+        let mut receive_stream = MockTransportReceiveStream::new();
+        receive_stream.expect_poll_read().returning(|_, buf| {
+            buf.put_slice(b"abc");
+            Poll::Ready(Ok(()))
+        });
+        let mut reader = Reader::new(receive_stream);
+        let mut out = [0u8; 8];
+
+        // Act
+        let size = reader.read(&mut out).await.unwrap();
+
+        // Assert
+        assert_eq!(&out[..size], b"abc");
+    }
+
+    #[tokio::test]
+    async fn read_wraps_transport_error_in_io_error() {
+        // Arrange
+        let mut receive_stream = MockTransportReceiveStream::new();
+        receive_stream
+            .expect_poll_read()
+            .returning(|_, _| Poll::Ready(Err(ReadError::Closed)));
+        let mut reader = Reader::new(receive_stream);
+        let mut out = [0u8; 8];
+
+        // Act
+        let error = reader.read(&mut out).await.unwrap_err();
+
+        // Assert
+        assert_eq!(error.to_string(), "read error: Closed");
     }
 }
