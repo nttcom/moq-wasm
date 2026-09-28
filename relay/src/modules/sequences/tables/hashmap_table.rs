@@ -382,17 +382,14 @@ impl InMemoryLocalPubSubDirectory {
         track_namespace: &str,
         track_name: &str,
     ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
-        let upstream_key = self
-            .active_upstream_subscriptions
+        self.active_upstream_subscriptions
             .iter()
             .filter(|entry| {
                 entry.key().track_namespace == track_namespace
                     && entry.key().track_name == track_name
             })
-            .map(|entry| entry.key().clone())
-            .min_by_key(|key| key.publisher_session_id)?;
-        let active_upstream = self.get_active_upstream_subscription(&upstream_key)?;
-        Some((upstream_key, active_upstream))
+            .min_by_key(|entry| entry.key().publisher_session_id)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
     #[tracing::instrument(
