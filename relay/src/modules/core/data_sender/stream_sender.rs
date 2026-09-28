@@ -19,8 +19,11 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
             subscriber_track_alias,
         }
     }
+}
 
-    pub(crate) async fn send(&mut self, object: DataObject) -> anyhow::Result<()> {
+#[async_trait::async_trait]
+impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
+    async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         match object {
             DataObject::SubgroupObject(field) => match self.inner.as_mut() {
                 Some(SenderInner::HeaderSent(sender)) => sender.send(field).await,
@@ -43,7 +46,7 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
         }
     }
 
-    pub(crate) async fn close(&mut self) -> anyhow::Result<()> {
+    async fn close(&mut self) -> anyhow::Result<()> {
         match self.inner.as_mut() {
             Some(SenderInner::Uninitialized(sender)) => sender.close().await,
             Some(SenderInner::HeaderSent(sender)) => sender.close().await,
@@ -51,26 +54,11 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
         }
     }
 
-    pub(crate) async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
         match self.inner.as_mut() {
             Some(SenderInner::Uninitialized(sender)) => sender.reset(error_code).await,
             Some(SenderInner::HeaderSent(sender)) => sender.reset(error_code).await,
             None => Ok(()),
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
-    async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
-        self.send(object).await
-    }
-
-    async fn close(&mut self) -> anyhow::Result<()> {
-        StreamSender::close(self).await
-    }
-
-    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
-        StreamSender::reset(self, error_code).await
     }
 }
