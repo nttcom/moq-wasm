@@ -387,14 +387,6 @@ export class MediaPublisher {
     this.syncAudioTrackContexts()
   }
 
-  async restartCameraForNewSubscriber(): Promise<void> {
-    this.restartVideoTrackContextsBySource('camera')
-  }
-
-  async restartScreenShareForNewSubscriber(): Promise<void> {
-    this.restartVideoTrackContextsBySource('screenshare')
-  }
-
   async restartAudioForNewSubscriber(): Promise<void> {
     this.restartAllAudioTrackContexts()
   }
@@ -409,23 +401,17 @@ export class MediaPublisher {
     const settings = this.buildVideoEncodingFromTrack(track, fallback)
     const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
 
-    if (!this.videoTrackContexts.has(trackName)) {
-      this.syncVideoTrackContexts(source)
-    }
-    const context = this.videoTrackContexts.get(trackName)
-    if (!context) {
+    const existing = this.videoTrackContexts.get(trackName)
+    if (existing) {
+      this.applyVideoTrackSettings(existing, settings, keyframeInterval)
+      this.startVideoTrackEncoding(existing)
       return
     }
-    if (!this.isSameVideoEncoding(context.config, settings)) {
-      context.config = settings
-      context.worker.postMessage({ type: 'encoderConfig', config: settings })
+    this.syncVideoTrackContexts(source)
+    const created = this.videoTrackContexts.get(trackName)
+    if (created) {
+      this.startVideoTrackEncoding(created)
     }
-    context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
-    this.startVideoTrackEncoding(context)
-  }
-
-  isVideoTrackEncodingStarted(trackName: string): boolean {
-    return this.videoTrackContexts.get(trackName)?.encodingStarted === true
   }
 
   forceVideoKeyframeForTrack(trackName: string): void {
@@ -503,11 +489,7 @@ export class MediaPublisher {
       const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
       const existing = this.videoTrackContexts.get(track.name)
       if (existing) {
-        if (!this.isSameVideoEncoding(existing.config, config)) {
-          existing.config = config
-          existing.worker.postMessage({ type: 'encoderConfig', config })
-        }
-        existing.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
+        this.applyVideoTrackSettings(existing, config, keyframeInterval)
         if (!existing.encodingStarted && this.hasAnySubscriberAliasForTrack(track.name)) {
           this.startVideoTrackEncoding(existing)
         }
@@ -515,6 +497,18 @@ export class MediaPublisher {
       }
       this.createVideoTrackContext(source, track.name, sourceTrack, config, keyframeInterval)
     }
+  }
+
+  private applyVideoTrackSettings(
+    context: VideoTrackEncoderContext,
+    config: VideoEncodingSettings,
+    keyframeInterval: number
+  ): void {
+    if (!this.isSameVideoEncoding(context.config, config)) {
+      context.config = config
+      context.worker.postMessage({ type: 'encoderConfig', config })
+    }
+    context.worker.postMessage({ type: 'keyframeInterval', keyframeInterval })
   }
 
   private syncAudioTrackContexts(): void {
@@ -758,15 +752,6 @@ export class MediaPublisher {
   private stopAllAudioTrackContexts(): void {
     for (const trackName of Array.from(this.audioTrackContexts.keys())) {
       this.stopAudioTrackContext(trackName)
-    }
-  }
-
-  private restartVideoTrackContextsBySource(source: VideoSource): void {
-    const names = Array.from(this.videoTrackContexts.entries())
-      .filter(([, context]) => context.source === source)
-      .map(([trackName]) => trackName)
-    for (const trackName of names) {
-      this.restartVideoTrackContext(trackName)
     }
   }
 
