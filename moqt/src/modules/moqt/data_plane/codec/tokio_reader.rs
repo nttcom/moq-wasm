@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_reports_transport_error_as_read_error() {
+    async fn read_wraps_transport_error_in_io_error() {
         // Arrange
         let mut receive_stream = MockTransportReceiveStream::new();
         receive_stream
