@@ -1,10 +1,8 @@
-// moqt
-pub(crate) type TrackNamespace = String;
-pub(crate) type TrackNamespacePrefix = String;
-
-// id
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub(crate) type TrackNamespace = String;
+pub(crate) type TrackNamespacePrefix = String;
 
 pub(crate) type SessionId = u64;
 

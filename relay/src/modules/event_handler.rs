@@ -68,19 +68,14 @@ impl EventHandler {
         let relay_session_event_handler = tokio::task::Builder::new()
             .name("Relay Session Event Handler")
             .spawn(async move {
-                // sender_map: session_id -> per-session channel sender.
-                // Only the reader touches this map; no locking needed.
                 let mut sender_map: HashMap<SessionId, mpsc::UnboundedSender<SessionEvent>> =
                     HashMap::new();
 
-                // Workers are tracked in a JoinSet that yields the session_id
-                // of the exiting worker, so the reader can remove stale entries.
                 let mut workers: tokio::task::JoinSet<SessionId> =
                     tokio::task::JoinSet::new();
 
                 loop {
                     tokio::select! {
-                        // Reap finished workers and remove their sender map entries.
                         result = workers.join_next(), if !workers.is_empty() => {
                             match result {
                                 Some(Ok(session_id)) => {
@@ -134,12 +129,8 @@ impl EventHandler {
         }
     }
 
-    /// Per-session worker.  Processes events STRICTLY IN ORDER, fully awaiting
-    /// each handler (including peer responses) before pulling the next event.
-    /// A single session's events are FIFO; different sessions' workers run
-    /// concurrently in independent tasks.
-    ///
-    /// Returns the session_id so the reader can remove the sender map entry.
+    /// Handles one session's events strictly in order: each handler, including
+    /// its peer round-trips, completes before the next event is pulled.
     async fn session_worker(
         session_id: SessionId,
         mut rx: mpsc::UnboundedReceiver<SessionEvent>,
@@ -448,8 +439,6 @@ impl EventHandler {
                 }
             }
 
-            // Exit after processing a terminal event: the session is cleaned
-            // up and no further events for it are meaningful.
             if is_terminal {
                 break;
             }
@@ -619,10 +608,7 @@ impl EventHandler {
         }
     }
 
-    /// Idempotent session cleanup: remove the session from the pub/sub
-    /// directory, run subscription teardown, then drop the session from the
-    /// repository.  Safe to call when the session is already absent; all
-    /// operations degrade gracefully.
+    /// Idempotent: safe to call when the session is already absent.
     async fn cleanup_session(
         session_id: SessionId,
         local_pub_sub_directory: &dyn LocalPubSubDirectory,
@@ -691,7 +677,6 @@ impl EventHandler {
             Self::stop_ingress_track(ingress_sender, track_key, removed_session_id).await;
         }
 
-        // TODO(deadlock-core): iteration 4 — make upstream join/remove atomic across sessions
         if control_message_forwarder
             .repository
             .lock()

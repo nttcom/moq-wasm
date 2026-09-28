@@ -196,8 +196,11 @@ Each sequence owns the relay-side protocol logic for one message
    and register the upstream subscription — so concurrent subscribers to the
    same track produce exactly one upstream subscription.
 2. **Publisher resolution** (`UpstreamPublisherResolver`): local directory
-   first (lowest publisher session id wins), then the route registry for a
-   remote relay, dialled via `InterRelayConnectionManager`.
+   first (lowest publisher session id wins; session ids grow with time, so
+   the oldest publisher wins), then the route registry for a remote relay,
+   dialled via `InterRelayConnectionManager`. draft-14 §8.4.2 graceful
+   publisher switchover, where the newer session should take new
+   subscriptions during the overlap, is not implemented.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
    and the local cache's largest location (`resolve_subscribe_largest`). The
    cache is consulted even for a fresh upstream: a publisher that rejoined
