@@ -329,7 +329,7 @@ impl EventHandler {
                                 inter_relay_connection_manager: inter_relay_connection_manager
                                     .as_ref(),
                             },
-                            handler.as_ref(),
+                            &handler,
                         )
                         .instrument(event_span)
                         .await;
@@ -359,7 +359,7 @@ impl EventHandler {
                                 inter_relay_connection_manager: inter_relay_connection_manager
                                     .as_ref(),
                             },
-                            handler.as_ref(),
+                            &handler,
                         )
                         .instrument(event_span)
                         .await;

@@ -2,7 +2,6 @@ use std::collections::HashSet;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::publish_namespace_done::PublishNamespaceDoneHandler,
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
     sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
@@ -27,7 +26,7 @@ impl PublishNamespaceDone {
         table: &dyn LocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
-        handler: &dyn PublishNamespaceDoneHandler,
+        handler: &moqt::PublishNamespaceDoneHandler,
     ) {
         let track_namespace = handler.track_namespace();
         tracing::info!(

@@ -93,37 +93,23 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
 mod tests {
     use std::time::Duration;
 
-    use moqt::{FetchOption, Location, PublishOption, SubscribeOption, wire::RequestError};
+    use moqt::{FetchOption, Location, PublishOption, SubscribeOption};
 
     use crate::modules::auth::{
-        test_support::{connect_client_with_token, spawn_relay_with_verifier},
-        verified_token::{VerifiedToken, parse_namespace_path},
+        test_support::{app_token, request_error_code, spawn_relay_and_connect_client},
+        verified_token::VerifiedToken,
     };
 
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     fn site1_token() -> VerifiedToken {
-        VerifiedToken {
-            app_id: "APP".to_string(),
-            publish: Some(parse_namespace_path("site1")),
-            subscribe: Some(parse_namespace_path("site1")),
-            is_relay: false,
-            expires_at: None,
-        }
-    }
-
-    fn error_code(error: anyhow::Error) -> u64 {
-        error
-            .downcast_ref::<RequestError>()
-            .unwrap_or_else(|| panic!("expected a request error, got {error:?}"))
-            .error_code
+        app_token(Some("site1"), Some("site1"))
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_namespace_inside_the_granted_path_is_accepted() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -142,8 +128,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_namespace_outside_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -156,14 +141,13 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(error_code(result.unwrap_err()), 0x1);
+        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn subscribe_namespace_inside_the_granted_path_is_accepted() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -182,8 +166,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn subscribe_namespace_of_another_app_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -196,14 +179,13 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(error_code(result.unwrap_err()), 0x1);
+        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_inside_the_granted_path_is_accepted() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -224,8 +206,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn publish_above_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
 
         // Act
         let result = tokio::time::timeout(
@@ -240,14 +221,13 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(error_code(result.unwrap_err()), 0x1);
+        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn subscribe_outside_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
         let mut subscriber = client.subscriber();
 
         // Act
@@ -263,14 +243,13 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(error_code(result.unwrap_err()), 0x1);
+        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn standalone_fetch_outside_the_granted_path_is_unauthorized() {
         // Arrange
-        let relay = spawn_relay_with_verifier(site1_token()).await;
-        let client = connect_client_with_token(relay.port, "jwt").await;
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
         let mut subscriber = client.subscriber();
 
         // Act
@@ -294,6 +273,6 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(error_code(result.unwrap_err()), 0x1);
+        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
     }
 }

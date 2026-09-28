@@ -92,10 +92,12 @@ TOKEN parameters on any other message are still ignored.
 
 ### `modules/core` — transport-erased `moqt` facade
 The relay never handles `moqt::Session<T>` generically beyond intake. `core`
-defines object-safe traits (`Session`, `Publisher`, `Subscriber`, one
-`handler::*` trait per control message, `subscription`, `data_receiver`,
-`data_sender`) implemented for every `T: TransportProtocol`. Everything past
-the repository works with `Box<dyn …>`.
+defines object-safe traits (`Session`, `Publisher`, `Subscriber`, a
+`handler::*` trait per control message whose `moqt` handler is generic over
+the transport, `subscription`, `data_receiver`, `data_sender`) implemented for
+every `T: TransportProtocol`. Everything past the repository works with
+`Box<dyn …>`; `MoqtSessionEvent` carries the non-generic `moqt` handlers
+(GOAWAY, MAX_REQUEST_ID, PUBLISH_DONE, …) as they are.
 
 ### Event pipeline
 

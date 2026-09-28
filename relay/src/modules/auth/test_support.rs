@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
-    wire::{AuthorizationToken, ClientSetup, SetupParameter},
+    wire::{AuthorizationToken, ClientSetup, RequestError, SetupParameter},
 };
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
@@ -18,7 +18,7 @@ use crate::{
         auth::{
             session_authenticator::SessionAuthenticator,
             token_verifier::{TokenVerifier, VerifyError},
-            verified_token::VerifiedToken,
+            verified_token::{VerifiedToken, parse_namespace_path},
         },
         route_registry::NoopRelayRouteRegistry,
         session_handler::SessionHandler,
@@ -44,6 +44,30 @@ pub(crate) fn client_setup(authorization_token: Vec<AuthorizationToken>) -> Clie
             moq_implementation: None,
         },
     )
+}
+
+pub(crate) fn app_token(publish: Option<&str>, subscribe: Option<&str>) -> VerifiedToken {
+    VerifiedToken {
+        app_id: "APP".to_string(),
+        publish: publish.map(parse_namespace_path),
+        subscribe: subscribe.map(parse_namespace_path),
+        is_relay: false,
+        expires_at: None,
+    }
+}
+
+pub(crate) fn relay_token() -> VerifiedToken {
+    VerifiedToken {
+        is_relay: true,
+        ..app_token(Some(""), Some(""))
+    }
+}
+
+pub(crate) fn request_error_code(error: anyhow::Error) -> u64 {
+    error
+        .downcast_ref::<RequestError>()
+        .unwrap_or_else(|| panic!("expected a request error, got {error:?}"))
+        .error_code
 }
 
 pub(crate) enum StubOutcome {
@@ -129,15 +153,19 @@ pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<Q
     .unwrap()
 }
 
-pub(crate) async fn connect_client_with_token(port: u16, token: &str) -> Session<QUIC> {
-    let endpoint = client_endpoint(Some(token.to_string()));
-    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+pub(crate) async fn spawn_relay_and_connect_client(
+    token: VerifiedToken,
+) -> (RunningRelay, Session<QUIC>) {
+    let relay = spawn_relay_with_verifier(token).await;
+    let endpoint = client_endpoint(Some("jwt".to_string()));
+    let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         endpoint
-            .connect(&format!("moqt://127.0.0.1:{port}"))
+            .connect(&format!("moqt://127.0.0.1:{}", relay.port))
             .await?
             .await
     })
     .await
     .expect("handshake timed out")
-    .expect("handshake failed")
+    .expect("handshake failed");
+    (relay, client)
 }

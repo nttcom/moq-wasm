@@ -33,13 +33,13 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
                 MoqtSessionEvent::PublishNamespace(Box::new(publish_namespace_handler))
             }
             moqt::SessionEvent::PublishNamespaceDone(publish_namespace_done_handler) => {
-                MoqtSessionEvent::PublishNamespaceDone(Box::new(publish_namespace_done_handler))
+                MoqtSessionEvent::PublishNamespaceDone(publish_namespace_done_handler)
             }
             moqt::SessionEvent::SubscribeNameSpace(subscribe_namespace_handler) => {
                 MoqtSessionEvent::SubscribeNamespace(Box::new(subscribe_namespace_handler))
             }
             moqt::SessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler) => {
-                MoqtSessionEvent::UnsubscribeNamespace(Box::new(unsubscribe_namespace_handler))
+                MoqtSessionEvent::UnsubscribeNamespace(unsubscribe_namespace_handler)
             }
             moqt::SessionEvent::Publish(publish_handler) => {
                 MoqtSessionEvent::Publish(Box::new(publish_handler))
@@ -56,25 +56,25 @@ impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
                 MoqtSessionEvent::Fetch(Box::new(fetch_handler))
             }
             moqt::SessionEvent::FetchCancel(fetch_cancel_handler) => {
-                MoqtSessionEvent::FetchCancel(Box::new(fetch_cancel_handler))
+                MoqtSessionEvent::FetchCancel(fetch_cancel_handler)
             }
             moqt::SessionEvent::GoAway(go_away_handler) => {
-                MoqtSessionEvent::GoAway(Box::new(go_away_handler))
+                MoqtSessionEvent::GoAway(go_away_handler)
             }
             moqt::SessionEvent::MaxRequestId(max_request_id_handler) => {
-                MoqtSessionEvent::MaxRequestId(Box::new(max_request_id_handler))
+                MoqtSessionEvent::MaxRequestId(max_request_id_handler)
             }
             moqt::SessionEvent::RequestsBlocked(requests_blocked_handler) => {
-                MoqtSessionEvent::RequestsBlocked(Box::new(requests_blocked_handler))
+                MoqtSessionEvent::RequestsBlocked(requests_blocked_handler)
             }
             moqt::SessionEvent::PublishDone(publish_done_handler) => {
-                MoqtSessionEvent::PublishDone(Box::new(publish_done_handler))
+                MoqtSessionEvent::PublishDone(publish_done_handler)
             }
             moqt::SessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler) => {
-                MoqtSessionEvent::PublishNamespaceCancel(Box::new(publish_namespace_cancel_handler))
+                MoqtSessionEvent::PublishNamespaceCancel(publish_namespace_cancel_handler)
             }
             moqt::SessionEvent::SubscribeUpdate(subscribe_update_handler) => {
-                MoqtSessionEvent::SubscribeUpdate(Box::new(subscribe_update_handler))
+                MoqtSessionEvent::SubscribeUpdate(subscribe_update_handler)
             }
             moqt::SessionEvent::TrackStatus(track_status_handler) => {
                 MoqtSessionEvent::TrackStatus(Box::new(track_status_handler))
