@@ -18,6 +18,7 @@ use crate::modules::transport::{
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
     quic::quic_connection::QUICConnection,
+    server_transport_config::server_transport_config,
     transport_connection_creator::TransportConnectionCreator,
     webtransport::wt_connection::WtConnection,
 };
@@ -107,14 +108,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)?,
         ));
-        let mut transport_config = quinn::TransportConfig::default();
-        let keep_alive_sec = std::time::Duration::from_secs(keep_alive_sec);
-        transport_config.keep_alive_interval(Some(keep_alive_sec));
-        transport_config.max_concurrent_uni_streams(100000u32.into());
-        transport_config.packet_threshold(5);
-        transport_config.stream_receive_window(quinn::VarInt::from_u32(1024 * 1024));
-
-        let transport_arc = Arc::new(transport_config);
+        let transport_arc = Arc::new(server_transport_config(keep_alive_sec));
         server_config.transport_config(transport_arc);
 
         let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
