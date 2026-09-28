@@ -380,7 +380,12 @@ jobs:
         run: node scripts/setup-media-e2e.mjs
 
       - name: Build relay and live ingest
-        run: cargo build -p relay -p moqt-bridge-live-ingest
+        # One invocation per package: run-live-viewer-e2e.mjs starts each with
+        # its own `cargo run -p`, and a combined build unifies features
+        # differently, which would recompile the dependencies at run time.
+        run: |
+          cargo build -p relay
+          cargo build -p moqt-bridge-live-ingest
 
       - name: Install Playwright Linux dependencies
         working-directory: examples/browser
