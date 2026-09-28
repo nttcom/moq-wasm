@@ -486,25 +486,36 @@ mod tests {
 
     #[test]
     fn upstream_timeout_maps_to_fetch_error_timeout() {
+        // Arrange
         let error = anyhow::Error::new(moqt::RequestTimeoutError);
+
+        // Act
         let (code, _reason) = Fetch::upstream_fetch_error_response(&error);
+
+        // Assert
         assert_eq!(code, FetchErrorCode::Timeout as u64);
     }
 
     #[test]
     fn upstream_request_error_code_is_relayed_verbatim() {
+        // Arrange
         let error = anyhow::Error::new(moqt::wire::RequestError {
             request_id: 7,
             error_code: 0x3,
             reason_phrase: "not supported".to_string(),
         });
+
+        // Act
         let (code, reason) = Fetch::upstream_fetch_error_response(&error);
+
+        // Assert
         assert_eq!(code, 0x3);
         assert_eq!(reason, "not supported");
     }
 
     #[test]
     fn fetch_source_is_upstream_when_track_entry_missing() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let start = moqt::Location {
             group_id: 0,
@@ -514,6 +525,8 @@ mod tests {
             group_id: 0,
             object_id: 1,
         };
+
+        // Act
         let (target, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -522,6 +535,8 @@ mod tests {
                 &cache_store,
             )
             .unwrap();
+
+        // Assert
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(target.track_namespace, "ns");
@@ -535,6 +550,7 @@ mod tests {
 
     #[test]
     fn fetch_source_is_upstream_when_cache_entry_is_empty() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         cache_store.get_or_create(&TrackKey::new("ns", "track"));
         let start = moqt::Location {
@@ -545,6 +561,8 @@ mod tests {
             group_id: 0,
             object_id: 1,
         };
+
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -553,11 +571,14 @@ mod tests {
                 &cache_store,
             )
             .unwrap();
+
+        // Assert
         assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
     #[test]
     fn fetch_source_is_upstream_across_a_skipped_object_id() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -570,6 +591,8 @@ mod tests {
             group_id: 0,
             object_id: 3,
         };
+
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -578,11 +601,14 @@ mod tests {
                 &cache_store,
             )
             .unwrap();
+
+        // Assert
         assert!(matches!(source, FetchSource::Upstream(_)));
     }
 
     #[test]
     fn fetch_source_is_upstream_when_request_starts_before_cache_coverage() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -595,6 +621,8 @@ mod tests {
             group_id: 1,
             object_id: 2,
         };
+
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -603,6 +631,8 @@ mod tests {
                 &cache_store,
             )
             .unwrap();
+
+        // Assert
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(missing_range.start_location, start);
@@ -616,6 +646,7 @@ mod tests {
 
     #[test]
     fn fetch_source_clamps_standalone_end_when_request_exceeds_largest() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -628,6 +659,8 @@ mod tests {
             group_id: 2,
             object_id: 0,
         };
+
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -636,6 +669,8 @@ mod tests {
                 &cache_store,
             )
             .unwrap();
+
+        // Assert
         match source {
             FetchSource::Cache(resolved) => {
                 assert_eq!(
@@ -654,11 +689,14 @@ mod tests {
 
     #[test]
     fn fetch_source_rejects_standalone_start_after_largest_as_invalid_range() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0]);
         cache.begin_live_ingest();
+
+        // Act
         let result = Fetch.resolve_target_and_source(
             2,
             standalone_fetch_params(
@@ -674,11 +712,14 @@ mod tests {
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         );
+
+        // Assert
         assert!(matches!(result, Err(FetchError::InvalidRange)));
     }
 
     #[test]
     fn fetch_source_rejects_standalone_covered_empty_range_as_no_objects() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -686,6 +727,7 @@ mod tests {
         insert_closed_group(&cache, 1, &[]);
         let _open_g2 = open_group(&cache, 2, &[0]);
 
+        // Act
         let result = Fetch.resolve_target_and_source(
             2,
             standalone_fetch_params(
@@ -701,11 +743,14 @@ mod tests {
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         );
+
+        // Assert
         assert!(matches!(result, Err(FetchError::NoObjects)));
     }
 
     #[test]
     fn fetch_source_is_cache_when_standalone_cache_covers_range() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -718,6 +763,8 @@ mod tests {
             group_id: 1,
             object_id: 4,
         };
+
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -726,6 +773,8 @@ mod tests {
                 &cache_store,
             )
             .unwrap();
+
+        // Assert
         match source {
             FetchSource::Cache(resolved) => {
                 assert_eq!(resolved.start_location, start);
@@ -746,31 +795,45 @@ mod tests {
 
     #[test]
     fn resolve_joining_target_unknown_request_id() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
+
+        // Act
         let result = Fetch.resolve_fetch_target(1, relative_joining_fetch_params(999), &table);
+
+        // Assert
         assert!(matches!(result, Err(FetchError::UnknownJoiningRequestId)));
     }
 
     #[test]
     fn resolve_joining_target_no_objects_published() {
+        // Arrange
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(2, 100, key, None);
-        // No objects in cache either, so NoObjectsPublished.
+
+        // Act
         let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
+
+        // Assert
         assert!(matches!(result, Err(FetchError::NoObjectsPublished)));
     }
 
     #[test]
     fn resolve_joining_target_ends_after_stored_largest() {
+        // Arrange
         let largest = moqt::Location {
             group_id: 10,
             object_id: 5,
         };
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(2, 100, key, Some(largest));
+
+        // Act
         let target = Fetch
             .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
             .unwrap();
+
+        // Assert
         assert_eq!(target.track_key, TrackKey::new("ns", "track"));
         assert_eq!(target.track_namespace, "ns");
         assert_eq!(target.track_name, "track");
@@ -785,6 +848,7 @@ mod tests {
 
     #[test]
     fn fetch_source_is_upstream_when_relative_joining_cache_does_not_cover_range() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
@@ -800,6 +864,7 @@ mod tests {
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
 
+        // Act
         let (target, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -812,6 +877,7 @@ mod tests {
             )
             .unwrap();
 
+        // Assert
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(target.track_namespace, "ns");
@@ -839,6 +905,7 @@ mod tests {
 
     #[test]
     fn absolute_joining_forwards_resolved_range_upstream() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
@@ -851,6 +918,7 @@ mod tests {
             }),
         );
 
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
@@ -863,8 +931,7 @@ mod tests {
             )
             .unwrap();
 
-        // Upstream range: start = {joining_start, 0}, end = largest + 1
-        // (the equivalent Standalone Fetch encoding, §9.16.2.1).
+        // Assert: start = {joining_start, 0}, end = largest + 1 (Standalone encoding, §9.16.2.1)
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(
@@ -888,6 +955,7 @@ mod tests {
 
     #[test]
     fn relative_joining_start_saturates_at_group_zero() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
@@ -900,12 +968,12 @@ mod tests {
             }),
         );
 
+        // Act
         let (_, source) = Fetch
             .resolve_target_and_source(
                 2,
                 FetchParams::RelativeJoining {
                     joining_request_id: 100,
-                    // Further back than the track head: the start group saturates to 0.
                     joining_start: 5,
                 },
                 &table,
@@ -913,6 +981,7 @@ mod tests {
             )
             .unwrap();
 
+        // Assert
         match source {
             FetchSource::Upstream(missing_range) => {
                 assert_eq!(
@@ -936,6 +1005,7 @@ mod tests {
 
     #[test]
     fn fetch_source_rejects_absolute_joining_start_after_largest_without_cache() {
+        // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.register_downstream_subscription(
@@ -948,6 +1018,7 @@ mod tests {
             }),
         );
 
+        // Act
         let result = Fetch.resolve_target_and_source(
             2,
             FetchParams::AbsoluteJoining {
@@ -958,6 +1029,7 @@ mod tests {
             &cache_store,
         );
 
+        // Assert
         assert!(matches!(result, Err(FetchError::InvalidRange)));
     }
 }
