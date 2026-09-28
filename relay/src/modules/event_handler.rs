@@ -255,7 +255,6 @@ impl EventHandler {
                         local_pub_sub_directory.as_ref(),
                         &control_message_forwarder,
                         &ingress_sender,
-                        &egress_sender,
                         route_registry.as_ref(),
                         inter_relay_connection_manager.as_ref(),
                     )
@@ -423,7 +422,6 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             &ingress_sender,
-                            &egress_sender,
                             handler,
                         )
                         .instrument(event_span)
@@ -514,7 +512,6 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             &ingress_sender,
-                            &egress_sender,
                             route_registry.as_ref(),
                             inter_relay_connection_manager.as_ref(),
                         )
@@ -536,7 +533,6 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             &ingress_sender,
-                            &egress_sender,
                             route_registry.as_ref(),
                             inter_relay_connection_manager.as_ref(),
                         )
@@ -712,7 +708,6 @@ impl EventHandler {
         local_pub_sub_directory: &dyn LocalPubSubDirectory,
         control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
-        egress_sender: &mpsc::Sender<EgressCommand>,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
@@ -723,7 +718,6 @@ impl EventHandler {
             local_pub_sub_directory,
             control_message_forwarder,
             ingress_sender,
-            egress_sender,
             route_registry,
             inter_relay_connection_manager,
         )
@@ -742,26 +736,10 @@ impl EventHandler {
         table: &dyn LocalPubSubDirectory,
         control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
-        egress_sender: &mpsc::Sender<EgressCommand>,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
         for removed_downstream in removed.downstream_subscriptions {
-            if egress_sender
-                .send(EgressCommand::StopReader {
-                    subscriber_session_id: removed_downstream.downstream_session_id,
-                    downstream_subscribe_id: removed_downstream.downstream_subscribe_id,
-                })
-                .await
-                .is_err()
-            {
-                tracing::debug!(
-                    session_id = removed_downstream.downstream_session_id,
-                    subscribe_id = removed_downstream.downstream_subscribe_id,
-                    "failed to send egress stop request"
-                );
-            }
-
             if removed_downstream.remaining_downstream_subscriber_count == 0
                 && removed_downstream.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
             {

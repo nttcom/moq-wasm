@@ -475,12 +475,12 @@ impl Subscribe {
             None => active_upstream.content_exists.clone(),
         };
 
-        if !table.register_downstream_subscription(
+        let Some(runner_stop_receiver) = table.register_downstream_subscription(
             session_id,
             handler.subscribe_id(),
             upstream_key.clone(),
             largest_location,
-        ) {
+        ) else {
             tracing::error!(
                 subscribe_id = handler.subscribe_id(),
                 track_namespace = %upstream_key.track_namespace,
@@ -488,7 +488,7 @@ impl Subscribe {
                 "failed to register downstream subscription"
             );
             return;
-        }
+        };
 
         let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
         if egress_sender
@@ -501,6 +501,7 @@ impl Subscribe {
                 downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
                 ready_sender,
+                runner_stop_receiver,
                 largest_location,
             })))
             .await

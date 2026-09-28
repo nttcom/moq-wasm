@@ -5,6 +5,7 @@ use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
+    auth::verified_token::VerifiedToken,
     core::data_object::DataObject,
     relay::{
         cache::store::TrackCacheStore,
@@ -15,20 +16,23 @@ use crate::modules::{
         notifications::subgroup_opened_notifier_map::SubgroupOpenedNotifierMap,
     },
     session_event::SessionEvent,
+    session_repository::{NewSession, SessionPeer, SessionRepository},
     types::{SessionId, TrackKey},
 };
 
 pub(crate) mod fixtures;
 mod mocks;
 
-pub(crate) use self::mocks::downstream_client::{FetchSent, Sent};
+pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
     fixtures::subscription::make_subscription,
     mocks::{
-        downstream_client::{MockFetchSender, MockPublisher, SentPublishDone},
+        downstream_client::{
+            MockDownstreamSession, MockFetchSender, MockPublisher, SentPublishDone,
+        },
         upstream_client::UpstreamSubgroupStream,
     },
 };
@@ -284,6 +288,30 @@ impl RelayHarness {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
+}
+
+pub(crate) async fn session_repository_with_downstream_session(
+    session_id: SessionId,
+) -> (
+    Arc<tokio::sync::Mutex<SessionRepository>>,
+    MockPublisherObservers,
+) {
+    let (publisher, observers) = MockPublisher::channel();
+    let mut repository = SessionRepository::new();
+    let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
+    repository
+        .add(
+            NewSession {
+                session_id,
+                session: Box::new(MockDownstreamSession { publisher }),
+                session_span: tracing::Span::none(),
+                peer: SessionPeer::Client,
+                verified_token: VerifiedToken::full_access(),
+            },
+            session_event_sender,
+        )
+        .await;
+    (Arc::new(tokio::sync::Mutex::new(repository)), observers)
 }
 
 pub(crate) async fn receive_objects_until_close(

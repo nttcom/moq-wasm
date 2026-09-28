@@ -1,6 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use dashmap::DashSet;
+use tokio::sync::oneshot;
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
@@ -49,8 +50,6 @@ pub(crate) struct DownstreamSubscription {
 
 #[derive(Clone, Debug)]
 pub(crate) struct RemovedDownstreamSubscription {
-    pub(crate) downstream_session_id: SessionId,
-    pub(crate) downstream_subscribe_id: u64,
     pub(crate) upstream_key: UpstreamSubscriptionKey,
     pub(crate) upstream_request_id: u64,
     pub(crate) track_key: TrackKey,
@@ -155,13 +154,16 @@ pub(crate) trait LocalPubSubDirectory: Send + Sync + 'static + Debug {
         &self,
         key: &UpstreamSubscriptionKey,
     ) -> Option<ActiveUpstreamSubscription>;
+    /// Returns `None` when the upstream subscription is gone. The returned
+    /// receiver resolves once the row is removed, however that happens; the
+    /// subscription's egress runner lives exactly until then.
     fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         upstream_key: UpstreamSubscriptionKey,
         start_location: Option<moqt::Location>,
-    ) -> bool;
+    ) -> Option<oneshot::Receiver<()>>;
     fn remove_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
