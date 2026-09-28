@@ -6,12 +6,6 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 type TrackLockKey = (String, String);
 type TrackLockMap = DashMap<TrackLockKey, Arc<Mutex<()>>>;
 
-/// Per-`(track_namespace, track_name)` async mutex map.
-///
-/// Callers acquire a guard for a given track key before calling
-/// `create_upstream_subscription`. While the guard is held, any other
-/// concurrent task trying to acquire the same key will wait. Different
-/// track keys use independent locks and do not block each other.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UpstreamCreationSerializer {
     locks: Arc<TrackLockMap>,
