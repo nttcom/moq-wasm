@@ -34,42 +34,15 @@ impl UpstreamPublisherResolver {
         track_namespace: &str,
         track_name: &str,
     ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
-        if let Some(local_publisher) = self
-            .find_local_publisher(table, track_namespace, track_name)
-            .await
-        {
-            return Ok(Some(local_publisher));
-        }
-
-        self.find_remote_publisher(track_namespace, track_name)
-            .await
-    }
-
-    // TODO(draft-14 8.4.2 Graceful Publisher Relay Switchover): min session_id
-    // implements first-writer-wins, which conflicts with GOAWAY migration —
-    // during the switchover overlap the NEWER session is the correct target
-    // for new subscriptions, while the old one keeps serving established
-    // ones. Introduce a per-session Active/Draining status and prefer Active
-    // publishers here, keeping min session_id only as the deterministic
-    // tie-break.
-    async fn find_local_publisher(
-        &self,
-        table: &dyn LocalPubSubDirectory,
-        track_namespace: &str,
-        track_name: &str,
-    ) -> Option<UpstreamSubscriptionKey> {
-        table
+        if let Some(local_publisher) = table
             .find_upstream_publishers(track_namespace, track_name)
             .await
             .into_iter()
             .min_by_key(|publisher| publisher.publisher_session_id)
-    }
+        {
+            return Ok(Some(local_publisher));
+        }
 
-    async fn find_remote_publisher(
-        &self,
-        track_namespace: &str,
-        track_name: &str,
-    ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
         let Some(relay) = self
             .route_registry
             .find_active_namespace_publisher(track_namespace)
@@ -202,23 +175,22 @@ mod tests {
         )
     }
 
-    // Pins the current first-writer-wins policy (min session_id = oldest).
-    // Expected to change to "Active first, min session_id as tie-break" once
-    // GOAWAY migration adds per-session Active/Draining status (see the
-    // find_local_publisher TODO).
     #[tokio::test]
     async fn prefers_local_publisher_and_picks_min_session_id() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(5, "ns".to_string(), PeerKind::Client);
         table.register_publish_namespace(3, "ns".to_string(), PeerKind::Client);
         let resolver = make_resolver(PublisherLookup::MustNotBeCalled);
 
+        // Act
         let resolved = resolver
             .resolve(&table, "ns", "track")
             .await
             .expect("resolve should succeed")
             .expect("local publisher should be found");
 
+        // Assert
         assert_eq!(resolved.publisher_session_id, 3);
         assert_eq!(resolved.track_namespace, "ns");
         assert_eq!(resolved.track_name, "track");
@@ -226,24 +198,30 @@ mod tests {
 
     #[tokio::test]
     async fn returns_none_when_no_publisher_anywhere() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let resolver = make_resolver(PublisherLookup::NotFound);
 
+        // Act
         let resolved = resolver
             .resolve(&table, "ns", "track")
             .await
             .expect("resolve should succeed");
 
+        // Assert
         assert!(resolved.is_none());
     }
 
     #[tokio::test]
     async fn propagates_route_registry_error() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let resolver = make_resolver(PublisherLookup::Fails);
 
+        // Act
         let result = resolver.resolve(&table, "ns", "track").await;
 
+        // Assert
         assert!(result.is_err());
     }
 }

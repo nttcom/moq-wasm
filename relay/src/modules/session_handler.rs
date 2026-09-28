@@ -3,18 +3,15 @@ use std::sync::Arc;
 use moqt::{Accepting, Endpoint, TransportProtocol};
 use tracing::{Instrument, Span};
 
-use crate::modules::{
-    auth::session_authenticator::SessionAuthenticator,
-    session_event::SessionEvent,
-    session_repository::{NewSession, SessionPeer, SessionRepository},
-    types::{SessionId, generate_session_id},
+use crate::{
+    logging::relay_hostname,
+    modules::{
+        auth::session_authenticator::SessionAuthenticator,
+        session_event::SessionEvent,
+        session_repository::{NewSession, SessionPeer, SessionRepository},
+        types::{SessionId, generate_session_id},
+    },
 };
-
-fn relay_hostname() -> String {
-    std::env::var("RELAY_HOSTNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
-}
 
 #[derive(Clone)]
 pub(crate) struct SessionIntake {
@@ -97,18 +94,10 @@ impl SessionHandler {
         config: moqt::ServerConfig,
         intake: SessionIntake,
     ) -> Self {
-        let endpoint = Endpoint::<T>::create_server(&config)
+        let mut endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
-        let join_handle = Self::create_joinhandle::<T>(endpoint, intake);
-        Self { join_handle }
-    }
-
-    fn create_joinhandle<T: TransportProtocol>(
-        mut endpoint: Endpoint<T>,
-        intake: SessionIntake,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
+        let join_handle = tokio::task::Builder::new()
             .spawn(async move {
                 let relay_hostname = relay_hostname();
                 loop {
@@ -145,7 +134,6 @@ impl SessionHandler {
                         }
                     };
 
-                    // Spawn per connection so a slow ClientSetup cannot block the accept loop.
                     let intake = intake.clone();
                     tokio::spawn(async move {
                         intake
@@ -155,7 +143,8 @@ impl SessionHandler {
                     });
                 }
             })
-            .unwrap()
+            .unwrap();
+        Self { join_handle }
     }
 
     fn is_endpoint_closing(error: &anyhow::Error) -> bool {

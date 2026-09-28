@@ -2,19 +2,16 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use crate::modules::{
-    auth::verified_token::VerifiedToken,
-    route_registry::RelayInfo,
-    session_event::SessionEvent,
-    session_repository::{NewSession, SessionPeer, SessionRepository},
-    types::{SessionId, generate_session_id},
+use crate::{
+    logging::relay_hostname,
+    modules::{
+        auth::verified_token::VerifiedToken,
+        route_registry::RelayInfo,
+        session_event::SessionEvent,
+        session_repository::{NewSession, SessionPeer, SessionRepository},
+        types::{SessionId, generate_session_id},
+    },
 };
-
-fn relay_hostname() -> String {
-    std::env::var("RELAY_HOSTNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
-}
 
 pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,

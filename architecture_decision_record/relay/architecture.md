@@ -31,7 +31,9 @@ optionally cascades across relays via a Redis-backed route registry.
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
-- `SessionRepository` (shared `Arc<Mutex<_>>`).
+- `SessionRepository` (shared `Arc<Mutex<_>>`) — one `SessionEntry` per
+  session: the session, its span, `SessionPeer`, `VerifiedToken`, expiry task
+  and event forwarder task.
 - `RelayRuntime` — constructs the shared data-plane state (`TrackCacheStore`),
   `InterRelayConnectionManager`, `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
   `EventHandler` (with the `WorkerDeps` every session worker clones), and the
@@ -114,8 +116,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 ```
 
 - `SessionRepository::add` sends `EventKind::SessionRegistered` on the
-  relay-wide channel before `start_session_event_forwarding` spawns the
-  session's forwarder task, which pumps `moqt` events into the same channel,
+  relay-wide channel before `SessionEventForwardTask::run` spawns the
+  session's forwarder task (aborted when the session's entry leaves the
+  repository), which pumps `moqt` events into the same channel,
   stopping after `Disconnected` / `ProtocolViolation`. The reader spawns a
   session's worker only on `SessionRegistered` and drops events for a session
   that has no worker: every other event for a session (from its forwarder or
@@ -192,8 +195,11 @@ Each sequence owns the relay-side protocol logic for one message
    and register the upstream subscription — so concurrent subscribers to the
    same track produce exactly one upstream subscription.
 2. **Publisher resolution** (`UpstreamPublisherResolver`): local directory
-   first (lowest publisher session id wins), then the route registry for a
-   remote relay, dialled via `InterRelayConnectionManager`.
+   first (lowest publisher session id wins; session ids grow with time, so
+   the oldest publisher wins), then the route registry for a remote relay,
+   dialled via `InterRelayConnectionManager`. draft-14 §8.4.2 graceful
+   publisher switchover, where the newer session should take new
+   subscriptions during the overlap, is not implemented.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
    and the local cache's largest location (`resolve_subscribe_largest`). The
    cache is consulted even for a fresh upstream: a publisher that rejoined

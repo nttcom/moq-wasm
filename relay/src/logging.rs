@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
-use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::logs::{BatchLogProcessor, SdkLoggerProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
@@ -69,51 +68,11 @@ fn otel_protocol_name(protocol: OtlpProtocol) -> &'static str {
     }
 }
 
-fn append_http_signal_path(endpoint: String, path: &str) -> String {
-    if endpoint.ends_with('/') && path.starts_with('/') {
-        format!("{}{}", endpoint, &path[1..])
-    } else {
-        format!("{endpoint}{path}")
-    }
-}
-
-fn otel_endpoint(protocol: OtlpProtocol) -> String {
-    if let Ok(endpoint) = std::env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
-        return endpoint;
-    }
-
-    std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .map(|endpoint| match protocol {
-            OtlpProtocol::Grpc => endpoint,
-            OtlpProtocol::HttpProtobuf => append_http_signal_path(endpoint, "/v1/traces"),
-        })
-        .unwrap_or_else(|_| match protocol {
-            OtlpProtocol::Grpc => "http://localhost:4317".to_string(),
-            OtlpProtocol::HttpProtobuf => "http://localhost:4318/v1/traces".to_string(),
-        })
-}
-
-fn otel_logs_endpoint(protocol: OtlpProtocol) -> String {
-    if let Ok(endpoint) = std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") {
-        return endpoint;
-    }
-
-    std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-        .map(|endpoint| match protocol {
-            OtlpProtocol::Grpc => endpoint,
-            OtlpProtocol::HttpProtobuf => append_http_signal_path(endpoint, "/v1/logs"),
-        })
-        .unwrap_or_else(|_| match protocol {
-            OtlpProtocol::Grpc => "http://localhost:4317".to_string(),
-            OtlpProtocol::HttpProtobuf => "http://localhost:4318/v1/logs".to_string(),
-        })
-}
-
 fn otel_service_name(default_service_name: &str) -> String {
     std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| default_service_name.to_string())
 }
 
-fn relay_hostname() -> String {
+pub(crate) fn relay_hostname() -> String {
     std::env::var("RELAY_HOSTNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
@@ -179,7 +138,6 @@ fn build_tracer_provider(
     let exporter = match protocol {
         OtlpProtocol::Grpc => opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
-            .with_endpoint(otel_endpoint(protocol))
             .build(),
         OtlpProtocol::HttpProtobuf => opentelemetry_otlp::SpanExporter::builder()
             .with_http()
@@ -206,7 +164,6 @@ fn build_logger_provider(
     let exporter = match protocol {
         OtlpProtocol::Grpc => opentelemetry_otlp::LogExporter::builder()
             .with_tonic()
-            .with_endpoint(otel_logs_endpoint(protocol))
             .build(),
         OtlpProtocol::HttpProtobuf => opentelemetry_otlp::LogExporter::builder()
             .with_http()
@@ -276,8 +233,6 @@ pub fn init_logging(default_service_name: &str) -> Result<LoggingGuards> {
         relay_id = %relay_id(),
         otel_enabled = tracer_provider.is_some(),
         otlp_protocol = %otel_protocol_name(protocol),
-        otlp_endpoint = %otel_endpoint(protocol),
-        otlp_logs_endpoint = %otel_logs_endpoint(protocol),
         "logging initialized"
     );
 
