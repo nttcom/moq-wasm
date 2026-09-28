@@ -8,7 +8,7 @@ Shared by all agents (Claude Code, Codex).
 - Before fixing a bug, investigate the cause first: reproduce it and explain the mechanism. A retry, sleep, widened timeout, defensive check, or call-site special case without a stated mechanism is a symptom patch, not a fix.
 - If the cause lies in a lower layer (typically the `moqt` crate), fix it there instead of working around it in the caller. The workaround becomes load-bearing and hides the bug from the next caller.
 - Refactor, as part of the same task rather than leaving a TODO, when any of the following applies:
-  - A function takes 4+ arguments, a call site passes the same 3+ values into multiple functions, or the same tuple is returned across modules — introduce a struct.
+  - A call site passes the same 3+ values into multiple functions, or the same tuple is returned across modules — introduce a struct.
   - A fix needs the same edit in N places — reshape so it is one place first, then fix. Prefer extending an existing primitive over adding a parallel one-off, and generalizing a helper over copying it.
   - The task can be solved either by patching around an awkward internal shape or by fixing the shape — fix the shape. Do not preserve an awkward shape just to avoid churn; this applies to internal code as well as public APIs.
 - When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
