@@ -888,6 +888,49 @@ impl FetchObjectMessage {
     }
 }
 
+/// How the relay ended a fetch stream: a FIN means every object up to the
+/// FETCH_OK End Location has been delivered; a RESET_STREAM means objects may
+/// be missing.
+#[wasm_bindgen]
+pub struct FetchStreamEndMessage {
+    request_id: u64,
+    reset_error_code: Option<u64>,
+}
+
+#[wasm_bindgen]
+impl FetchStreamEndMessage {
+    #[wasm_bindgen(getter, js_name = requestId)]
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter, js_name = isReset)]
+    pub fn is_reset(&self) -> bool {
+        self.reset_error_code.is_some()
+    }
+
+    #[wasm_bindgen(getter, js_name = resetErrorCode)]
+    pub fn reset_error_code(&self) -> Option<u64> {
+        self.reset_error_code
+    }
+}
+
+impl FetchStreamEndMessage {
+    pub(crate) fn finished(request_id: u64) -> Self {
+        Self {
+            request_id,
+            reset_error_code: None,
+        }
+    }
+
+    pub(crate) fn reset(request_id: u64, error_code: u64) -> Self {
+        Self {
+            request_id,
+            reset_error_code: Some(error_code),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

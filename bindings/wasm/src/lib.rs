@@ -418,6 +418,11 @@ impl MOQTClient {
         self.callbacks.borrow_mut().fetch_object_callback = Some(callback);
     }
 
+    #[wasm_bindgen(js_name = onFetchStreamEnd)]
+    pub fn set_fetch_stream_end_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().fetch_stream_end_callback = Some(callback);
+    }
+
     #[wasm_bindgen(js_name = onTrackStatusResponse)]
     pub fn set_track_status_response_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().track_status_response_callback = Some(callback);
@@ -1364,10 +1369,37 @@ async fn uni_directional_stream_read_thread(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
+    let mut fetch_request_id: Option<u64> = None;
+    let outcome =
+        read_uni_directional_stream(callbacks.clone(), reader, &mut fetch_request_id).await;
+    if let Some(request_id) = fetch_request_id {
+        let message = match &outcome {
+            Ok(()) => FetchStreamEndMessage::finished(request_id),
+            Err(error) => FetchStreamEndMessage::reset(request_id, stream_error_code(error)),
+        };
+        emit_fetch_stream_end(callbacks, message);
+    }
+    outcome
+}
+
+/// `WebTransportError` carries the peer's RESET_STREAM code as
+/// `streamErrorCode`; any other read failure is reported as code 0.
+#[cfg(web_sys_unstable_apis)]
+fn stream_error_code(error: &JsValue) -> u64 {
+    js_sys::Reflect::get(error, &JsValue::from_str("streamErrorCode"))
+        .ok()
+        .and_then(|code| code.as_f64())
+        .map_or(0, |code| code as u64)
+}
+
+#[cfg(web_sys_unstable_apis)]
+async fn read_uni_directional_stream(
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    reader: &ReadableStreamDefaultReader,
+    fetch_request_id: &mut Option<u64>,
+) -> Result<(), JsValue> {
     let mut buf = BytesMut::new();
     let mut stream_snapshot = Vec::new();
-    // fetch stream state
-    let mut fetch_request_id: Option<u64> = None;
     // subgroup stream state
     let mut subgroup_header: Option<SubgroupHeader> = None;
     let mut last_object_id: Option<u64> = None;
@@ -1402,7 +1434,7 @@ async fn uni_directional_stream_read_thread(
                     Ok(header) => {
                         let consumed = cursor.position() as usize;
                         buf.advance(consumed);
-                        fetch_request_id = Some(header.request_id);
+                        *fetch_request_id = Some(header.request_id);
                     }
                     Err(moqt::wire::DecodeError::NeedMoreData) => continue,
                     Err(moqt::wire::DecodeError::Fatal(error)) => return Err(js_error(error)),
@@ -1838,6 +1870,13 @@ fn emit_fetch_object(
 }
 
 #[cfg(web_sys_unstable_apis)]
+fn emit_fetch_stream_end(callbacks: Rc<RefCell<MOQTCallbacks>>, message: FetchStreamEndMessage) {
+    if let Some(callback) = callbacks.borrow().fetch_stream_end_callback.clone() {
+        let _ = callback.call1(&JsValue::NULL, &JsValue::from(message));
+    }
+}
+
+#[cfg(web_sys_unstable_apis)]
 fn emit_subgroup_object(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     header: &SubgroupHeader,
@@ -2057,6 +2096,7 @@ struct MOQTCallbacks {
     subgroup_object_callback: Option<js_sys::Function>,
     fetch_response_callback: Option<js_sys::Function>,
     fetch_object_callback: Option<js_sys::Function>,
+    fetch_stream_end_callback: Option<js_sys::Function>,
     track_status_response_callback: Option<js_sys::Function>,
     connection_closed_callback: Option<js_sys::Function>,
 }
