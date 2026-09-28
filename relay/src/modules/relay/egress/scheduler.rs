@@ -76,7 +76,6 @@ pub(crate) struct EgressScheduler {
     filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
-    ready_sender: Option<oneshot::Sender<anyhow::Result<()>>>,
     /// Largest Object at SUBSCRIBE processing time; `None` when no content
     /// has been delivered yet.
     largest_location: Option<moqt::Location>,
@@ -88,7 +87,6 @@ impl EgressScheduler {
         filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
-        ready_sender: oneshot::Sender<anyhow::Result<()>>,
         largest_location: Option<moqt::Location>,
     ) -> Self {
         Self {
@@ -96,12 +94,11 @@ impl EgressScheduler {
             filter_type,
             group_order,
             sender,
-            ready_sender: Some(ready_sender),
             largest_location,
         }
     }
 
-    pub(crate) async fn run(mut self) {
+    pub(crate) async fn run(self, ready_sender: oneshot::Sender<anyhow::Result<()>>) {
         let mut receiver = self.cache.subscribe_subgroup_opened();
         let mut scheduled = HashSet::<SubgroupKey>::new();
 
@@ -111,7 +108,7 @@ impl EgressScheduler {
             start_group_id: start.group_id,
             start_object_id: Some(start.object_id),
         };
-        self.notify_ready(Ok(()));
+        let _ = ready_sender.send(Ok(()));
 
         loop {
             match receiver.recv().await {
@@ -131,12 +128,6 @@ impl EgressScheduler {
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
-        }
-    }
-
-    fn notify_ready(&mut self, result: anyhow::Result<()>) {
-        if let Some(sender) = self.ready_sender.take() {
-            let _ = sender.send(result);
         }
     }
 
@@ -238,10 +229,9 @@ mod tests {
             filter_type,
             GroupOrder::Ascending,
             task_sender,
-            ready_sender,
             largest_location,
         );
-        let handle = tokio::spawn(scheduler.run());
+        let handle = tokio::spawn(scheduler.run(ready_sender));
         ready_receiver
             .await
             .expect("scheduler should signal readiness")

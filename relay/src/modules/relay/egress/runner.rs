@@ -63,7 +63,6 @@ impl EgressRunner {
             filter_type,
             group_order,
             sender,
-            self.ready_sender,
             self.largest_location,
         );
         let group_sender = GroupSender::new(
@@ -76,7 +75,7 @@ impl EgressRunner {
         );
 
         tokio::select! {
-            _ = async { tokio::join!(scheduler.run(), group_sender.run()) } => {}
+            _ = async { tokio::join!(scheduler.run(self.ready_sender), group_sender.run()) } => {}
             _ = self.cache.malformed_track_detected() => {
                 let stream_count = opened_stream_count.load(Ordering::Acquire);
                 Self::send_malformed_publish_done(
