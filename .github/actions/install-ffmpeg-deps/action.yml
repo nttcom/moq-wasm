@@ -4,7 +4,57 @@ description: Install FFmpeg and GStreamer build and runtime dependencies on Debi
 runs:
   using: composite
   steps:
-    - shell: bash
+    - name: Resolve apt package cache
+      id: apt
+      shell: bash
+      run: |
+        set -euo pipefail
+        packages=(
+          ffmpeg
+          pkg-config
+          libavutil-dev
+          libavfilter-dev
+          libavcodec-dev
+          libavformat-dev
+          libavdevice-dev
+          libswscale-dev
+          libswresample-dev
+          libgstreamer1.0-dev
+          libgstreamer-plugins-base1.0-dev
+          gstreamer1.0-tools
+          gstreamer1.0-plugins-base
+          gstreamer1.0-plugins-good
+          gstreamer1.0-plugins-bad
+          gstreamer1.0-plugins-ugly
+          gstreamer1.0-libav
+          clang
+          libclang-dev
+          llvm-dev
+        )
+        archives="${HOME}/.cache/apt-media-archives"
+        mkdir -p "${archives}/partial"
+        . /etc/os-release
+        # The month rotates the key so the cached packages follow distribution updates.
+        packages_hash="$(printf '%s\n' "${packages[@]}" | sha256sum | cut -c1-16)"
+        {
+          echo "packages=${packages[*]}"
+          echo "archives=${archives}"
+          echo "key=apt-media-${ID}-${VERSION_ID}-$(uname -m)-$(date -u +%Y-%m)-${packages_hash}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore apt package cache
+      id: restore
+      # actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ steps.apt.outputs.archives }}/*.deb
+        key: ${{ steps.apt.outputs.key }}
+
+    - name: Install apt packages
+      shell: bash
+      env:
+        APT_ARCHIVES: ${{ steps.apt.outputs.archives }}
+        APT_PACKAGES: ${{ steps.apt.outputs.packages }}
       run: |
         set -euo pipefail
         # Container jobs run as root; jobs on the runner host need sudo.
@@ -13,26 +63,20 @@ runs:
           privileged="sudo"
         fi
         $privileged apt-get update
+        # The archive directory belongs to the runner user, which the _apt
+        # download sandbox user cannot write to.
+        # shellcheck disable=SC2086
         $privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          ffmpeg \
-          pkg-config \
-          libavutil-dev \
-          libavfilter-dev \
-          libavcodec-dev \
-          libavformat-dev \
-          libavdevice-dev \
-          libswscale-dev \
-          libswresample-dev \
-          libgstreamer1.0-dev \
-          libgstreamer-plugins-base1.0-dev \
-          gstreamer1.0-tools \
-          gstreamer1.0-plugins-base \
-          gstreamer1.0-plugins-good \
-          gstreamer1.0-plugins-bad \
-          gstreamer1.0-plugins-ugly \
-          gstreamer1.0-libav \
-          clang \
-          libclang-dev \
-          llvm-dev
+          -o Dir::Cache::Archives="${APT_ARCHIVES}" \
+          -o APT::Sandbox::User=root \
+          ${APT_PACKAGES}
         echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
         echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
+
+    - name: Save apt package cache
+      if: ${{ steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/master' }}
+      # actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ${{ steps.apt.outputs.archives }}/*.deb
+        key: ${{ steps.apt.outputs.key }}
