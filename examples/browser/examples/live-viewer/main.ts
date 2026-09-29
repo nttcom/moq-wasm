@@ -57,7 +57,6 @@ const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
-const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
 const PRESENTATION_MARGIN_MS = 200
 
 type Packaging = 'loc' | 'cmaf'
@@ -327,13 +326,11 @@ async function publishMp4(): Promise<void> {
 
 /// A SUBSCRIBE delivers objects published after the largest one and the bridge
 /// publishes the catalog once per upstream subscription, so a viewer joining a
-/// subscription the relay already holds would never see it. The current
-/// catalog is fetched instead: the group SUBSCRIBE_OK names when the relay
-/// still knows it, otherwise the whole track, which the relay completes from
-/// the bridge.
-/// The FETCH and the SUBSCRIBE race, and the relay keeps the catalog of a
-/// publisher that has since been replaced, so the catalog of the newest group
-/// wins whatever order they arrive in.
+/// subscription the relay already holds would never see it; the group
+/// SUBSCRIBE_OK names as the largest is fetched as well. The FETCH and the
+/// SUBSCRIBE race, and the relay keeps the catalog of a publisher that has
+/// since been replaced, so the catalog of the newest group wins whatever order
+/// they arrive in.
 async function subscribeCatalog(): Promise<void> {
   const onText = (text: string, groupId: bigint) => {
     if (catalogGroupId !== undefined && groupId < catalogGroupId) {
@@ -364,13 +361,18 @@ async function subscribeTextTrack(name: string, onText: TextTrackHandler): Promi
   return subscribeOk
 }
 
+/// draft-ietf-moq-transport-14 §9.8: Content Exists 0 means nothing has been
+/// published on the track yet, so there is nothing to fetch and the first
+/// object arrives on the SUBSCRIBE.
 async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: TextTrackHandler): Promise<void> {
   const largestGroup = subscribeOk.largestGroupId
-  const startGroup = largestGroup ?? 0n
-  const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
-  const endObject = largestGroup === undefined ? 0n : (subscribeOk.largestObjectId ?? 0n) + 1n
+  if (!subscribeOk.contentExists || largestGroup === undefined) {
+    appendLog('info', `${name} has no published object yet; waiting for it on the subscription`)
+    return
+  }
+  const endObject = (subscribeOk.largestObjectId ?? 0n) + 1n
   try {
-    const { requestId } = await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
+    const { requestId } = await moqtClient.fetch(trackNamespace(), name, largestGroup, 0n, largestGroup, endObject, {
       onObject: (message) => {
         streamMonitor.fetchObject(
           message.requestId,

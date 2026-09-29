@@ -283,8 +283,11 @@ The catalog is subscribed to for updates and fetched for its current object:
 a SUBSCRIBE delivers objects published after the largest one, and the bridge
 publishes the catalog once per upstream subscription, so a viewer joining a
 subscription the relay already holds would otherwise never see it. The FETCH
-names the group SUBSCRIBE_OK reports when the relay still knows it and the
-whole track otherwise, which the relay completes from the bridge.
+names the group SUBSCRIBE_OK reports as the largest. When SUBSCRIBE_OK says
+no content exists yet, as the MP4 publisher does because it sends the catalog
+right after answering, nothing is fetched and the catalog arrives on the
+SUBSCRIBE; a FETCH would only be forwarded to a publisher that does not
+answer it.
 
 The two may deliver different catalogs: the relay keeps the catalog of a
 publisher that has since been replaced, so the FETCH can return the old one

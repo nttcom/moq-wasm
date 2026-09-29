@@ -11,6 +11,8 @@ import {
 } from './live-viewer-e2e-arrange'
 
 const resolution = `${MP4_FIXTURE.width}x${MP4_FIXTURE.height}`
+/// Well under the 10 s the relay waits for a FETCH response the browser publisher never sends.
+const FIRST_VIDEO_TIMEOUT_MS = 5_000
 
 test('live viewer publishes an uploaded MP4 from the browser and plays it back', async ({ browser }) => {
   // Arrange
@@ -33,7 +35,9 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     // Assert
     await expect(viewer.connectionStatus).toContainText('Connected:')
     await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio')
-    await expect(viewer.playbackStatus).toContainText('Playing video')
+    // Assert: the catalog comes on the subscription, and no FETCH to the browser publisher holds up the video
+    await expect(viewer.logPanel).toContainText('catalog has no published object yet')
+    await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: FIRST_VIDEO_TIMEOUT_MS })
     await expectVideoDecoded(viewer.video)
     await expect(viewer.videoStats).toContainText(resolution)
 
