@@ -152,7 +152,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   without a token goes to `sequences::track_status`.
 - Events for control messages without relay-side logic yet (GOAWAY,
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
-  SUBSCRIBE_UPDATE, FETCH_CANCEL) are logged in the event span and dropped by
+  FETCH_CANCEL) are logged in the event span and dropped by
   the worker; they have no `sequences` entry.
 - Two relay-internal events exist, both reported by the ingest path (not by
   a peer) and routed to the upstream publisher session's worker:
@@ -177,9 +177,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 
 ### `modules/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message
-(`publish`, `subscribe`, `fetch`, `track_status`, `publish_namespace`,
-`publish_namespace_done`, `subscribe_namespace`, `unsubscribe`,
-`unsubscribe_namespace`). Shared collaborators:
+(`publish`, `subscribe`, `subscribe_update`, `fetch`, `track_status`,
+`publish_namespace`, `publish_namespace_done`, `subscribe_namespace`,
+`unsubscribe`, `unsubscribe_namespace`). Shared collaborators:
 
 - `ControlMessageForwarder` — sends control messages on *other* sessions via
   the repository (e.g. forwarding SUBSCRIBE upstream, PUBLISH_NAMESPACE to
@@ -222,6 +222,15 @@ Each sequence owns the relay-side protocol logic for one message
    If a concurrent cleanup removed the upstream before registration, or the
    registration before the runner reported readiness, reply SUBSCRIBE_ERROR
    TRACK_DOES_NOT_EXIST instead.
+
+### SUBSCRIBE_UPDATE sequence
+Only the Forward State is applied. Every downstream registration owns a
+`watch::Sender<bool>` next to its runner stop sender, starting at Forward 1
+whatever the SUBSCRIBE asked for (clients that leave Forward at 0 expect
+delivery). SUBSCRIBE_UPDATE sets it for the (session, Subscription Request ID)
+registration; an update for no registered subscription is logged and dropped.
+Start Location, End Group and Subscriber Priority are not applied, and the
+upstream subscription keeps Forward 1 so the cache keeps filling for FETCH.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Relative
@@ -405,7 +414,10 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   below Largest is clamped to Largest+1), and emits one `GroupSendTask` per
   `SubgroupKey`. It subscribes to open events first and then schedules every
   cached group at or after the start, so a group that ingress opened and
-  closed before the scheduler existed is still delivered. The start is a
+  closed before the scheduler existed is still delivered. While the
+  registration's Forward State is 0 it drops open events, so no subgroup opened
+  meanwhile is ever sent; streams already scheduled run to their end, and
+  after Forward returns to 1 delivery resumes with the next subgroup opened. The start is a
   lower bound in both paths: group ids may begin anywhere and skip values
   (§2.3.1), so the first delivered group is the first one at or above the
   start, not the start group itself.

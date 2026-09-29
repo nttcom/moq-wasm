@@ -392,7 +392,7 @@ impl Subscribe {
             None => active_upstream.content_exists,
         };
 
-        let Some(runner_stop_receiver) = table.register_downstream_subscription(
+        let Some(runner_signals) = table.register_downstream_subscription(
             session_id,
             handler.subscribe_id(),
             upstream_key.clone(),
@@ -417,7 +417,8 @@ impl Subscribe {
                 downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
                 ready_sender,
-                runner_stop_receiver,
+                runner_stop_receiver: runner_signals.stop_receiver,
+                forward_receiver: runner_signals.forward_receiver,
                 largest_location,
             })))
             .await
