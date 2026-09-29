@@ -1,13 +1,27 @@
 # live-viewer
 
-`bridges/live-ingest` が RTMP / SRT から MoQT へ流した配信を視聴します。catalog に載っている映像
+`bridges/live-ingest` が RTMP / SRT から MoQT へ流した配信や、このページから配信した MP4 を視聴します。catalog に載っている映像
 track を切り替えられるので、`--transcode` で生成した下位画質（`video_480p` / `video_360p`）の確認にも
 使えます。
 
 ## 配信の開始方法
 
-次の3経路から選び、各コマンドを別々のターミナルで実行します。
+次の4経路から選びます。コマンドを使う経路では、各コマンドを別々のターミナルで実行します。
 OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下の ffmpeg コマンドは Big Buck Bunny を繰り返し配信します。
+
+<details>
+<summary>MP4 ファイル（ブラウザ）→ クラウド Relay</summary>
+
+1. **MP4 を配信する**
+
+   MP4 Publish で映像が H.264、音声が AAC または MP3 の MP4 を選び、Publish を押します。Relay URL と namespace は Stream のものを使い、
+   ブラウザが MP4 を demux して LOC で配信します。Loop を外すとファイルの終わりで配信を終えます。
+
+2. **Live Viewer で視聴する**
+
+   同じ Relay URL と namespace のまま Watch を押します。別のブラウザから同じ namespace を視聴することもできます。
+
+</details>
 
 <details>
 <summary>OBS / ffmpeg → クラウド SRT / RTMP Ingestion (live-ingest) → クラウド Relay</summary>
@@ -125,20 +139,6 @@ OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下�
    視聴先の Relay URL： `https://127.0.0.1:4433`
 
    namespace に `anon/live/test` を指定し、Watch を押します。
-
-</details>
-
-<details>
-<summary>MP4 ファイル（ブラウザ）→ クラウド Relay</summary>
-
-1. **MP4 を配信する**
-
-   MP4 Publish で H.264 / AAC の MP4 を選び、Publish を押します。Relay URL と namespace は Stream のものを使い、
-   ブラウザが MP4 を demux して LOC で配信します。Loop を外すとファイルの終わりで配信を終えます。
-
-2. **Live Viewer で視聴する**
-
-   同じ Relay URL と namespace のまま Watch を押します。別のブラウザから同じ namespace を視聴することもできます。
 
 </details>
 

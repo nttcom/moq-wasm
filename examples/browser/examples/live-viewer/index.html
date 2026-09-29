@@ -75,6 +75,34 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
+                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>MP4 ファイル<small
+                      >ブラウザ</small
+                    ></span
+                  >
+                  <span class="setup-arrow" aria-hidden="true">→</span>
+                  <span class="setup-node setup-node-cloud"
+                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                  >
+                </h3>
+              </summary>
+              <ol class="setup-steps">
+                <li>
+                  <h4>MP4 を配信する</h4>
+                  <p class="hint">
+                    MP4 Publish で H.264 と AAC / MP3 の MP4 を選び、Publish を押します。Relay URL と namespace は
+                    Stream のものを使います。
+                  </p>
+                </li>
+                <li>
+                  <h4>Live Viewer で視聴する</h4>
+                  <p class="hint">同じ Relay URL と namespace のまま Watch を押します。</p>
+                </li>
+              </ol>
+            </details>
+            <details class="setup-panel setup-toggle">
+              <summary>
+                <h3 class="setup-flow">
+                  <span class="setup-node setup-node-local"
                     ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small
                       >SRT / RTMP</small
                     ></span
@@ -213,34 +241,6 @@ make chrome</code></pre>
                 </li>
               </ol>
             </details>
-            <details class="setup-panel setup-toggle">
-              <summary>
-                <h3 class="setup-flow">
-                  <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>MP4 ファイル<small
-                      >ブラウザ</small
-                    ></span
-                  >
-                  <span class="setup-arrow" aria-hidden="true">→</span>
-                  <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
-                  >
-                </h3>
-              </summary>
-              <ol class="setup-steps">
-                <li>
-                  <h4>MP4 を配信する</h4>
-                  <p class="hint">
-                    MP4 Publish で H.264 / AAC の MP4 を選び、Publish を押します。Relay URL と namespace は Stream
-                    のものを使います。
-                  </p>
-                </li>
-                <li>
-                  <h4>Live Viewer で視聴する</h4>
-                  <p class="hint">同じ Relay URL と namespace のまま Watch を押します。</p>
-                </li>
-              </ol>
-            </details>
           </div>
         </details>
         <div class="control-grid subscriber-grid">
@@ -314,7 +314,7 @@ make chrome</code></pre>
               </div>
             </div>
             <p class="hint">
-              H.264 / AAC の MP4 を、上の Relay URL と namespace へブラウザから配信します。配信中に Watch
+              H.264 と AAC / MP3 の MP4 を、上の Relay URL と namespace へブラウザから配信します。配信中に Watch
               を押すと視聴できます。
             </p>
             <div id="publish-preview-panel" class="publish-preview" style="display: none">
