@@ -54,6 +54,9 @@ export interface SubscribeNamespaceOptions {
   requestId?: bigint
 }
 
+export const GroupOrder = { Publisher: 0, Ascending: 1, Descending: 2 } as const
+export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
+
 export interface SubscribeOptions {
   /**
    * Override the request id. When omitted, a session-unique id is issued
@@ -63,7 +66,7 @@ export interface SubscribeOptions {
    */
   requestId?: bigint
   subscriberPriority?: number
-  groupOrder?: number
+  groupOrder?: GroupOrder
   filterType?: number
   startGroup?: bigint
   startObject?: bigint
@@ -345,7 +348,7 @@ export class MoqtClientWrapper {
       trackNamespace,
       trackName,
       options.subscriberPriority ?? 0,
-      options.groupOrder ?? 0,
+      options.groupOrder ?? GroupOrder.Publisher,
       options.filterType ?? 1,
       options.startGroup,
       options.startObject,
