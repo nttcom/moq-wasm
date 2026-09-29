@@ -4,7 +4,7 @@ use bytes::Bytes;
 use crate::{
     aac::AudioSpecificConfig,
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
-    mp4::atom::{Atom, find, full_atom, read_u32},
+    mp4::atom::{Atom, FullAtom, find, full_atom, read_u32},
 };
 
 const VIDEO_SAMPLE_ENTRIES: [&[u8]; 2] = [b"avc1", b"avc3"];
@@ -34,6 +34,12 @@ pub(super) struct Track {
     pub timescale: u32,
 }
 
+/// ISO/IEC 14496-12 §8.2.2 and §8.4.2: mvhd and mdhd both put the timescale
+/// after a creation and a modification time of 32 bits, or 64 bits in version 1.
+pub(super) fn read_timescale(header: &FullAtom) -> Result<u32> {
+    read_u32(header.body, if header.is_version_one() { 16 } else { 8 })
+}
+
 pub(super) fn find_path<'a>(payload: &'a [u8], path: &[&[u8]]) -> Option<Atom<'a>> {
     let (first, rest) = path.split_first()?;
     let atom = find(payload, first)?;
@@ -44,8 +50,6 @@ pub(super) fn find_path<'a>(payload: &'a [u8], path: &[&[u8]]) -> Option<Atom<'a
     }
 }
 
-/// Tracks whose sample entry is neither H.264 nor MPEG audio are reported as
-/// `None` so that callers can leave them out.
 pub(super) fn read_track(trak: &Atom) -> Result<Option<(u32, Track)>> {
     let tkhd = find(trak.payload, b"tkhd").context("trak has no tkhd")?;
     let header = full_atom(tkhd.payload, "tkhd")?;
@@ -53,12 +57,7 @@ pub(super) fn read_track(trak: &Atom) -> Result<Option<(u32, Track)>> {
     let track_id = read_u32(header.body, track_id_offset)?;
 
     let mdhd = find_path(trak.payload, &[b"mdia", b"mdhd"]).context("trak has no mdhd")?;
-    let header = full_atom(mdhd.payload, "mdhd")?;
-    let timescale = if header.is_version_one() {
-        read_u32(header.body, 16)?
-    } else {
-        read_u32(header.body, 8)?
-    };
+    let timescale = read_timescale(&full_atom(mdhd.payload, "mdhd")?)?;
 
     let stsd = find_path(trak.payload, &[b"mdia", b"minf", b"stbl", b"stsd"])
         .context("trak has no stsd")?;

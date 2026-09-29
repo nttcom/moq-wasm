@@ -7,7 +7,7 @@ use crate::{
         atom::{
             HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, full_atom, peek, read_u32, read_u64,
         },
-        track::{AudioCodec, Media, annexb_access_unit, find_path, read_track},
+        track::{AudioCodec, Media, annexb_access_unit, find_path, read_timescale, read_track},
     },
     sample::Timestamp,
 };
@@ -242,12 +242,7 @@ fn rebase(mut samples: Vec<RawSample>) -> (Vec<IndexedSample>, Timestamp) {
 
 fn read_movie_timescale(moov: &[u8]) -> Result<u32> {
     let mvhd = find(moov, b"mvhd").context("moov has no mvhd")?;
-    let header = full_atom(mvhd.payload, "mvhd")?;
-    let timescale = if header.is_version_one() {
-        read_u32(header.body, 16)?
-    } else {
-        read_u32(header.body, 8)?
-    };
+    let timescale = read_timescale(&full_atom(mvhd.payload, "mvhd")?)?;
     ensure!(timescale != 0, "mvhd declares a zero timescale");
     Ok(timescale)
 }
