@@ -46,8 +46,8 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     // Assert
     await expect(viewer.connectionStatus).toContainText('Connected:')
     await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio')
-    // Assert: the catalog comes on the subscription, and no FETCH to the browser publisher holds up the video
-    await expect(viewer.logPanel).toContainText('catalog has no published object yet')
+    // Assert: the relay has cached the catalog since the publisher's PUBLISH, so the FETCH never reaches the browser
+    await expect(viewer.logPanel).toContainText('fetched catalog')
     await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: FIRST_VIDEO_TIMEOUT_MS })
     await expectVideoDecoded(viewer.video)
     await expect(viewer.videoStats).toContainText(resolution)

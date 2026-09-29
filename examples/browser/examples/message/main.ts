@@ -313,7 +313,7 @@ function setSendStatus(message: string): void {
   }
 }
 
-async function sendControlMessage(label: string, send: () => Promise<void>): Promise<void> {
+async function sendControlMessage(label: string, send: () => Promise<unknown>): Promise<void> {
   try {
     await send()
     setSendStatus(`Sent ${label}`)
