@@ -6,7 +6,7 @@ use media_streaming_format::MediaTimelineRecord;
 /// longer FETCH.
 ///
 /// Locations name groups of the primary video track only: every track gets its
-/// own writer, seeded when it is subscribed, so renditions number their groups
+/// own writer, seeded when it is published, so renditions number their groups
 /// independently.
 const RETENTION_US: u64 = 60_000_000;
 const MICROS_PER_MILLI: u64 = 1_000;

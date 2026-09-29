@@ -50,8 +50,10 @@ Properties:
 
 The sink connects and publishes the namespace when the pipeline goes to
 PAUSED, so a wrong relay URL fails the pipeline start instead of the first
-buffer. Objects are numbered and cached from the first buffer on; a subscriber
-that arrives while a group is open starts receiving at the next group.
+buffer. Every track the catalog lists except the CMAF tracks is published with
+PUBLISH before the catalog is sent, without waiting for a subscriber, so the
+relay ingests and caches each of them from its first object; the CMAF tracks
+are sent only while the relay subscribes to them.
 
 Buffers go through a bounded queue (about three seconds of media) that a
 background task publishes, so the streaming thread never waits for the relay
