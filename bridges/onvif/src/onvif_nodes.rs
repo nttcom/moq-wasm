@@ -16,33 +16,6 @@ pub struct PtzNodeInfo {
     pub spaces: Vec<PtzSupportedSpace>,
 }
 
-impl PtzNodeInfo {
-    pub fn supports_uri(&self, uri: &str) -> bool {
-        if self.spaces.is_empty() {
-            return true;
-        }
-        self.spaces.iter().any(|space| space.uri == uri)
-    }
-
-    pub fn summary_lines(&self) -> Vec<String> {
-        let mut lines = vec![
-            format!("Node token: {}", self.token),
-            format!("Home supported: {:?}", self.home_supported),
-        ];
-        if let Some(max) = self.max_presets {
-            lines.push(format!("Max presets: {max}"));
-        }
-        if self.spaces.is_empty() {
-            lines.push("Supported spaces: (not reported)".to_string());
-            return lines;
-        }
-        lines.push("Supported spaces:".to_string());
-        for space in &self.spaces {
-            lines.push(format!("  {}={}", space.name, space.uri));
-        }
-        lines
-    }
-}
 pub struct NodesFetch {
     pub response: soap_client::SoapResponse,
     pub tokens: Vec<String>,

@@ -2,7 +2,6 @@ use crate::app_config::Target;
 use crate::onvif_client::OnvifClient;
 use crate::onvif_requests;
 use crate::ptz_config::PtzRange;
-use crate::ptz_state::PtzState;
 use crate::soap_client;
 use anyhow::{anyhow, Result};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -35,41 +34,23 @@ pub enum Command {
 pub struct Controller {
     tx: Sender<Command>,
     err_rx: Receiver<String>,
-    state_rx: Receiver<PtzState>,
 }
 impl Controller {
     pub fn new(target: Target) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let (err_tx, err_rx) = mpsc::channel();
-        let (state_tx, state_rx) = mpsc::channel();
-        thread::spawn(move || run_worker(target, rx, err_tx, state_tx));
-        Ok(Self {
-            tx,
-            err_rx,
-            state_rx,
-        })
+        thread::spawn(move || run_worker(target, rx, err_tx));
+        Ok(Self { tx, err_rx })
     }
 
     pub fn command_sender(&self) -> Sender<Command> {
         self.tx.clone()
     }
-    pub fn send(&self, command: Command) {
-        let _ = self.tx.send(command);
-    }
     pub fn try_recv_error(&self) -> Option<String> {
         self.err_rx.try_recv().ok()
     }
-
-    pub fn try_recv_state(&self) -> Option<PtzState> {
-        self.state_rx.try_recv().ok()
-    }
 }
-fn run_worker(
-    target: Target,
-    rx: Receiver<Command>,
-    err_tx: Sender<String>,
-    state_tx: Sender<PtzState>,
-) {
+fn run_worker(target: Target, rx: Receiver<Command>, err_tx: Sender<String>) {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
         Err(err) => return send_init_error(&err_tx, format!("tokio runtime init failed: {err}")),
@@ -82,12 +63,10 @@ fn run_worker(
         Ok(onvif) => onvif,
         Err(err) => return send_init_error(&err_tx, format!("ptz init error: {err}")),
     };
-    let state = onvif.ptz_state();
-    let _ = state_tx.send(state.clone());
-    for message in onvif.take_gui_messages() {
+    for message in onvif.take_init_errors() {
         let _ = err_tx.send(message);
     }
-    let range = state.range.clone();
+    let range = onvif.ptz_state().range;
     let mut position = Position::new(&range);
     let speed_range = range.speed_range();
     for command in rx {

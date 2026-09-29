@@ -9,7 +9,7 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats gst-plugin gst-srt-publish onvif onvif-controller ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats gst-plugin gst-srt-publish onvif ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= services/vts/apps.example.json
@@ -130,16 +130,6 @@ onvif:
 		--dump-keyframe \
 		--payload-format annexb \
 		--insecure-skip-tls-verify
-
-onvif-controller:
-	@if [ -z "$(ONVIF_IP)" ] || [ -z "$(ONVIF_USERNAME)" ] || [ -z "$(ONVIF_PASSWORD)" ]; then \
-		echo "ONVIF_IP/ONVIF_USERNAME/ONVIF_PASSWORD are required (set in .env or environment)"; \
-		exit 1; \
-	fi
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-onvif --bin moqt-bridge-onvif -- \
-		--ip $(ONVIF_IP) \
-		--username $(ONVIF_USERNAME) \
-		--password $(ONVIF_PASSWORD)
 
 
 # Maintenance

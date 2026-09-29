@@ -17,14 +17,6 @@ cp .env.example .env
 
 ## Run
 
-Run the GUI controller:
-
-```shell
-make onvif-controller
-```
-
-Run the MoQ bridge:
-
 ```shell
 make onvif
 ```
@@ -53,17 +45,6 @@ All names are configurable via CLI flags (`--publish-namespace`, `--subscribe-na
 ## Direct CLI Options
 
 Use `cargo run` directly when you need options that are not exposed by the Makefile helpers.
-
-GUI controller:
-
-```shell
-cargo run -p moqt-bridge-onvif --bin moqt-bridge-onvif -- \
-  --ip 192.168.11.45 \
-  --username admin \
-  --password secret
-```
-
-MoQ bridge:
 
 ```shell
 cargo run -p moqt-bridge-onvif --bin moqt-onvif-client -- \

@@ -18,7 +18,7 @@ pub struct OnvifClient {
     ptz_endpoint: String,
     profile_token: String,
     ptz_state: PtzState,
-    gui_messages: Vec<String>,
+    init_errors: Vec<String>,
 }
 
 struct PtzRangeInfo {
@@ -37,7 +37,7 @@ impl OnvifClient {
             device_endpoint,
             profile_token: String::new(),
             ptz_state: PtzState::new(ptz_config::PtzRange::default(), None),
-            gui_messages: Vec::new(),
+            init_errors: Vec::new(),
         }
     }
 
@@ -85,8 +85,8 @@ impl OnvifClient {
         self.ptz_state.clone()
     }
 
-    pub fn take_gui_messages(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.gui_messages)
+    pub fn take_init_errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.init_errors)
     }
 
     async fn init_endpoints(&mut self) {
@@ -179,7 +179,7 @@ impl OnvifClient {
     }
 
     fn push_ptz_init_error(&mut self, err: impl fmt::Display) {
-        self.gui_messages.push(format!("ptz init error: {err}"));
+        self.init_errors.push(format!("ptz init error: {err}"));
     }
 
     async fn fetch_ptz_node(&self) -> Result<Option<onvif_nodes::PtzNodeInfo>> {

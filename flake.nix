@@ -35,19 +35,6 @@
           with pkgs;
           [ libiconv ]
         );
-
-        linuxPackages = pkgs.lib.optionals pkgs.stdenv.isLinux (
-          with pkgs;
-          [
-            libGL
-            libxkbcommon
-            wayland
-            xorg.libX11
-            xorg.libXcursor
-            xorg.libXi
-            xorg.libXrandr
-          ]
-        );
       in
       {
         devShells.default = pkgs.mkShell {
@@ -64,8 +51,7 @@
               pkg-config
               wasm-pack
             ]
-            ++ darwinPackages
-            ++ linuxPackages;
+            ++ darwinPackages;
 
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
 
