@@ -6,6 +6,7 @@ import {
   expectVideoDecoded,
   liveViewerE2EConfig,
   mp4FixtureFileName,
+  receivedCellsAhead,
   rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
@@ -13,6 +14,11 @@ import {
 const resolution = `${MP4_FIXTURE.width}x${MP4_FIXTURE.height}`
 /// Well under the 10 s the relay waits for a FETCH response the browser publisher never sends.
 const FIRST_VIDEO_TIMEOUT_MS = 5_000
+/// Two seconds of samples cover two 1 s audio groups of the fixture; an AAC frame
+/// is 21 ms, so the 200 ms playout buffer is about 10 cells and a whole group 47.
+const AUDIO_AHEAD_SAMPLES = 20
+const AUDIO_AHEAD_SAMPLE_INTERVAL_MS = 100
+const AUDIO_CELLS_AHEAD_LIMIT = 30
 
 test('live viewer publishes an uploaded MP4 from the browser and plays it back', async ({ browser }) => {
   // Arrange
@@ -60,6 +66,15 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
 
     // Assert: the audio of the file plays on the same clock as its picture
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
+
+    // Assert: the audio row of the delivery overlay starts at the audio being heard, so only the
+    // playout buffer is ahead of it rather than the whole group played so far
+    const audioCellsAhead: number[] = []
+    for (let sample = 0; sample < AUDIO_AHEAD_SAMPLES; sample++) {
+      audioCellsAhead.push(await receivedCellsAhead(viewer, 'audio'))
+      await viewer.page.waitForTimeout(AUDIO_AHEAD_SAMPLE_INTERVAL_MS)
+    }
+    expect(Math.max(...audioCellsAhead)).toBeLessThan(AUDIO_CELLS_AHEAD_LIMIT)
 
     // Act: rewind into the groups the relay has cached from the browser publisher
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
