@@ -159,8 +159,8 @@ namespace `anon/live/test` を選んで Watch を押します。GStreamer 用コ
 - 目標位置を含む閉じた keyframe group から FETCH し、目標より前のフレームはペースをかけずにデコード
   だけして、目標以降のフレームから描画します。MSE では同じ分だけ `currentTime` を進めて再生を始めます。
 - 取得範囲は publisher が書き込みを終えた group までに制限します。開いている group に伸ばすと
-  relay のキャッシュを外れて上流へ転送され、publisher 側キャッシュ（30 秒）から返されます。
-- relay のキャッシュ保持は既定 30 分（`RELAY_CACHE_TTL_SECS`）、publisher 側は 30 秒です。
+  relay のキャッシュを外れて上流へ転送され、publisher 側キャッシュ（60 秒）から返されます。
+- relay のキャッシュ保持は既定 60 秒（`RELAY_CACHE_TTL_SECS`）、publisher 側も 60 秒です。
   それより前へは戻れません。
 
 ## MP4 の配信
@@ -184,7 +184,7 @@ live-ingest と同じく配信するので、シークバーの経過時間も�
   track として扱います）。
 - media timeline（`timeline` track）は video の keyframe ごとに、それまでの record（presentation time、
   `[group id, 0]`、encode wallclock）を 1 つの object として新しい group に載せます。record は relay のキャッシュ
-  保持（30 秒）より古いものを捨て、presentation time は配信を始めた時点からの経過です。
+  保持（60 秒）より古いものを捨て、presentation time は配信を始めた時点からの経過です。
 - 各サンプルは B フレームを含むライブエンコーダと同じく decode 順に、decode time にファイルの reorder delay
   （presentation time が decode time より進む最大量。B フレームがなければ 0）を足した壁時計で送り、presentation
   time の壁時計を capture timestamp として LOC 拡張ヘッダに載せます。Loop のときは、次の周回をファイルの長さぶん

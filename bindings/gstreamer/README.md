@@ -82,7 +82,7 @@ Override `GST_MOQT_URL`, `GST_SRT_ADDR` and `GST_NAMESPACE` to change the
 relay, the SRT listen address and the namespace. Watch the stream in the
 browser with `make browser` and `make chrome`, then open
 `examples/live-viewer/index.html` with the namespace `anon/live/test`; the
-rewind controls FETCH the last 30 seconds from the relay or, for groups the
+rewind controls FETCH the last 60 seconds from the relay or, for groups the
 relay never cached, from the sink itself.
 
 Logs go through `tracing` at `info` by default; set `RUST_LOG` to change the

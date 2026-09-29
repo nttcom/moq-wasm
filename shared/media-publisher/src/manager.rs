@@ -41,7 +41,7 @@ const FETCH_INVALID_RANGE: u64 = 0x5;
 const FETCH_NO_OBJECTS: u64 = 0x6;
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for an evicted or never-cached range can still be answered here.
-const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(30);
+const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
 const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
 
