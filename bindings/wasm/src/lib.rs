@@ -21,11 +21,11 @@ use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
     DatagramField, ExtensionHeaders, Fetch, FetchCancel, FetchHeader, FetchObjectField, FetchOk,
     FetchParams, FilterType, GoAway, GroupOrder, Location, MaxRequestId, NamespaceOk,
-    ObjectDatagram, ObjectStatus, Publish, PublishDone, PublishNamespace, PublishNamespaceCancel,
-    PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked, ServerSetup, SetupParameter,
-    SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace,
-    SubscribeOk, SubscribeUpdate, TrackStatus, TrackStatusError, TrackStatusOk,
-    UnsubscribeNamespace, encode_control_message, take_control_message,
+    ObjectDatagram, ObjectDatagramPayload, ObjectStatus, Publish, PublishDone, PublishNamespace,
+    PublishNamespaceCancel, PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked,
+    ServerSetup, SetupParameter, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField,
+    Subscribe, SubscribeNamespace, SubscribeOk, SubscribeUpdate, TrackStatus, TrackStatusError,
+    TrackStatusOk, UnsubscribeNamespace, encode_control_message, take_control_message,
 };
 #[cfg(web_sys_unstable_apis)]
 use std::{
@@ -992,22 +992,18 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let extension_headers = crate::loc::parse_loc_header(loc_header)?;
 
-        let field = if extension_headers == empty_extension_headers() {
-            DatagramField::Payload0x00 {
-                object_id,
-                publisher_priority,
-                payload: Bytes::from(object_payload),
-            }
-        } else {
-            DatagramField::Payload0x01 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                payload: Bytes::from(object_payload),
-            }
+        let field = DatagramField {
+            object_id: Some(object_id),
+            publisher_priority,
+            extension_headers: (extension_headers != empty_extension_headers())
+                .then_some(extension_headers),
+            end_of_group: false,
+            payload: ObjectDatagramPayload::Payload(Bytes::from(object_payload)),
         };
 
-        let payload = ObjectDatagram::new(track_alias, group_id, field).encode();
+        let payload = ObjectDatagram::new(track_alias, group_id, field)
+            .encode()
+            .map_err(|error| js_error(error.to_string()))?;
         self.send_datagram_bytes(&payload).await
     }
 
@@ -1025,22 +1021,18 @@ impl MOQTClient {
             ObjectStatus::try_from(object_status).map_err(|_| js_error("invalid object status"))?;
         let extension_headers = crate::loc::parse_loc_header(loc_header)?;
 
-        let field = if extension_headers == empty_extension_headers() {
-            DatagramField::Status0x20 {
-                object_id,
-                publisher_priority,
-                status: object_status,
-            }
-        } else {
-            DatagramField::Status0x21 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                status: object_status,
-            }
+        let field = DatagramField {
+            object_id: Some(object_id),
+            publisher_priority,
+            extension_headers: (extension_headers != empty_extension_headers())
+                .then_some(extension_headers),
+            end_of_group: false,
+            payload: ObjectDatagramPayload::Status(object_status),
         };
 
-        let payload = ObjectDatagram::new(track_alias, group_id, field).encode();
+        let payload = ObjectDatagram::new(track_alias, group_id, field)
+            .encode()
+            .map_err(|error| js_error(error.to_string()))?;
         self.send_datagram_bytes(&payload).await
     }
 
@@ -1706,126 +1698,35 @@ fn emit_object_datagram(
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     datagram: ObjectDatagram,
 ) -> Result<(), JsValue> {
-    match datagram.field {
-        DatagramField::Payload0x00 {
-            object_id,
-            publisher_priority,
-            payload,
-        }
-        | DatagramField::Payload0x02WithEndOfGroup {
-            object_id,
-            publisher_priority,
-            payload,
-        } => {
+    let field = datagram.field;
+    let loc_header = field
+        .extension_headers
+        .as_ref()
+        .map(from_extension_headers)
+        .unwrap_or_default();
+    match field.payload {
+        ObjectDatagramPayload::Payload(payload) => {
             if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
                 let wrapper = ObjectDatagramMessage::new(
                     datagram.track_alias,
                     datagram.group_id,
-                    Some(object_id),
-                    publisher_priority,
+                    field.object_id,
+                    field.publisher_priority,
                     payload.to_vec(),
-                    Vec::new(),
+                    loc_header,
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }
         }
-        DatagramField::Payload0x01 {
-            object_id,
-            publisher_priority,
-            extension_headers,
-            payload,
-        }
-        | DatagramField::Payload0x03WithEndOfGroup {
-            object_id,
-            publisher_priority,
-            extension_headers,
-            payload,
-        } => {
-            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
-                let wrapper = ObjectDatagramMessage::new(
-                    datagram.track_alias,
-                    datagram.group_id,
-                    Some(object_id),
-                    publisher_priority,
-                    payload.to_vec(),
-                    from_extension_headers(&extension_headers),
-                );
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        DatagramField::Payload0x05 {
-            publisher_priority,
-            extension_headers,
-            payload,
-        }
-        | DatagramField::Payload0x07WithEndOfGroup {
-            publisher_priority,
-            extension_headers,
-            payload,
-        } => {
-            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
-                let wrapper = ObjectDatagramMessage::new(
-                    datagram.track_alias,
-                    datagram.group_id,
-                    None,
-                    publisher_priority,
-                    payload.to_vec(),
-                    from_extension_headers(&extension_headers),
-                );
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        DatagramField::Payload0x04 {
-            publisher_priority,
-            payload,
-        }
-        | DatagramField::Payload0x06WithEndOfGroup {
-            publisher_priority,
-            payload,
-        } => {
-            if let Some(callback) = callbacks.borrow().object_datagram_callback.clone() {
-                let wrapper = ObjectDatagramMessage::new(
-                    datagram.track_alias,
-                    datagram.group_id,
-                    None,
-                    publisher_priority,
-                    payload.to_vec(),
-                    Vec::new(),
-                );
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        DatagramField::Status0x20 {
-            object_id,
-            publisher_priority,
-            status,
-        } => {
+        ObjectDatagramPayload::Status(status) => {
             if let Some(callback) = callbacks.borrow().object_datagram_status_callback.clone() {
                 let wrapper = ObjectDatagramStatusMessage::new(
                     datagram.track_alias,
                     datagram.group_id,
-                    Some(object_id),
-                    publisher_priority,
+                    field.object_id,
+                    field.publisher_priority,
                     status,
-                    Vec::new(),
-                );
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        DatagramField::Status0x21 {
-            object_id,
-            publisher_priority,
-            extension_headers,
-            status,
-        } => {
-            if let Some(callback) = callbacks.borrow().object_datagram_status_callback.clone() {
-                let wrapper = ObjectDatagramStatusMessage::new(
-                    datagram.track_alias,
-                    datagram.group_id,
-                    Some(object_id),
-                    publisher_priority,
-                    status,
-                    from_extension_headers(&extension_headers),
+                    loc_header,
                 );
                 let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
             }

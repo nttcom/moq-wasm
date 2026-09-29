@@ -1,29 +1,3 @@
-// +======+==============+============+===========+==================+
-// | Type | End Of Group | Extensions | Object ID | Status / Payload |
-// +======+==============+============+===========+==================+
-// |      |              | Present    | Present   |                  |
-// +------+--------------+------------+-----------+------------------+
-// | 0x00 | No           | No         | Yes       | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x01 | No           | Yes        | Yes       | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x02 | Yes          | No         | Yes       | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x03 | Yes          | Yes        | Yes       | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x04 | No           | No         | No        | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x05 | No           | Yes        | No        | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x06 | Yes          | No         | No        | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x07 | Yes          | Yes        | No        | Payload          |
-// +------+--------------+------------+-----------+------------------+
-// | 0x20 | No           | No         | Yes       | Status           |
-// +------+--------------+------------+-----------+------------------+
-// | 0x21 | No           | Yes        | Yes       | Status           |
-// +------+--------------+------------+-----------+------------------+
-
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::{
@@ -31,804 +5,272 @@ use crate::modules::{
     moqt::data_plane::object::{extension_headers::ExtensionHeaders, object_status::ObjectStatus},
 };
 
+const EXTENSIONS_PRESENT: u64 = 0x01;
+const END_OF_GROUP: u64 = 0x02;
+const OBJECT_ID_ABSENT: u64 = 0x04;
+const STATUS: u64 = 0x20;
+
+// Deviation from draft-14 §10.3.1: End of Group types carry this byte before the
+// Object ID. Kept so the wire format stays compatible with existing peers.
+const END_OF_GROUP_PREFIX: &[u8] = &[0x01];
+
+// draft-14 §10.3.1 Table 6: status types never omit the Object ID and never end the group.
+fn is_defined_type(message_type: u64) -> bool {
+    matches!(message_type, 0x00..=0x07 | 0x20 | 0x21)
+}
+
+fn flag_if(condition: bool, flag: u64) -> u64 {
+    if condition { flag } else { 0 }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectDatagramPayload {
     Payload(Bytes),
     Status(ObjectStatus),
 }
 
-#[repr(u64)]
-pub(crate) enum DatagramTypeValue {
-    Payload0x00 = 0x00,
-    Payload0x01 = 0x01,
-    Payload0x02WithEndOfGroup = 0x02,
-    Payload0x03WithEndOfGroup = 0x03,
-    Payload0x04 = 0x04,
-    Payload0x05 = 0x05,
-    Payload0x06WithEndOfGroup = 0x06,
-    Payload0x07WithEndOfGroup = 0x07,
-    Status0x20 = 0x20,
-    Status0x21 = 0x21,
-}
-
-impl DatagramTypeValue {
-    pub(crate) fn from_datagram_field(val: &DatagramField) -> Self {
-        match val {
-            DatagramField::Payload0x00 { .. } => Self::Payload0x00,
-            DatagramField::Payload0x01 { .. } => Self::Payload0x01,
-            DatagramField::Payload0x02WithEndOfGroup { .. } => Self::Payload0x02WithEndOfGroup,
-            DatagramField::Payload0x03WithEndOfGroup { .. } => Self::Payload0x03WithEndOfGroup,
-            DatagramField::Payload0x04 { .. } => Self::Payload0x04,
-            DatagramField::Payload0x05 { .. } => Self::Payload0x05,
-            DatagramField::Payload0x06WithEndOfGroup { .. } => Self::Payload0x06WithEndOfGroup,
-            DatagramField::Payload0x07WithEndOfGroup { .. } => Self::Payload0x07WithEndOfGroup,
-            DatagramField::Status0x20 { .. } => Self::Status0x20,
-            DatagramField::Status0x21 { .. } => Self::Status0x21,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum DatagramField {
-    Payload0x00 {
-        object_id: u64,
-        publisher_priority: u8,
-        payload: Bytes,
-    },
-    Payload0x01 {
-        object_id: u64,
-        publisher_priority: u8,
-        extension_headers: ExtensionHeaders,
-        payload: Bytes,
-    },
-    Payload0x02WithEndOfGroup {
-        object_id: u64,
-        publisher_priority: u8,
-        payload: Bytes,
-    },
-    Payload0x03WithEndOfGroup {
-        object_id: u64,
-        publisher_priority: u8,
-        extension_headers: ExtensionHeaders,
-        payload: Bytes,
-    },
-    Payload0x04 {
-        publisher_priority: u8,
-        payload: Bytes,
-    },
-    Payload0x05 {
-        publisher_priority: u8,
-        extension_headers: ExtensionHeaders,
-        payload: Bytes,
-    },
-    Payload0x06WithEndOfGroup {
-        publisher_priority: u8,
-        payload: Bytes,
-    },
-    Payload0x07WithEndOfGroup {
-        publisher_priority: u8,
-        extension_headers: ExtensionHeaders,
-        payload: Bytes,
-    },
-    Status0x20 {
-        object_id: u64,
-        publisher_priority: u8,
-        status: ObjectStatus,
-    },
-    Status0x21 {
-        object_id: u64,
-        publisher_priority: u8,
-        extension_headers: ExtensionHeaders,
-        status: ObjectStatus,
-    },
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatagramField {
+    pub object_id: Option<u64>,
+    pub publisher_priority: u8,
+    pub extension_headers: Option<ExtensionHeaders>,
+    pub end_of_group: bool,
+    pub payload: ObjectDatagramPayload,
 }
 
 impl DatagramField {
-    pub fn to_bytes(data: impl Into<Bytes>) -> Bytes {
-        data.into()
-    }
-
-    pub fn object_id(&self) -> Option<u64> {
-        match self {
-            Self::Payload0x00 { object_id, .. }
-            | Self::Payload0x01 { object_id, .. }
-            | Self::Payload0x02WithEndOfGroup { object_id, .. }
-            | Self::Payload0x03WithEndOfGroup { object_id, .. }
-            | Self::Status0x20 { object_id, .. }
-            | Self::Status0x21 { object_id, .. } => Some(*object_id),
-            _ => None,
-        }
-    }
-
     /// draft-14 §10.3.1: when the Object ID field is omitted, the Object ID is 0.
     pub fn resolve_object_id(&self) -> u64 {
-        match self {
-            Self::Payload0x00 { object_id, .. }
-            | Self::Payload0x01 { object_id, .. }
-            | Self::Payload0x02WithEndOfGroup { object_id, .. }
-            | Self::Payload0x03WithEndOfGroup { object_id, .. }
-            | Self::Status0x20 { object_id, .. }
-            | Self::Status0x21 { object_id, .. } => *object_id,
-            Self::Payload0x04 { .. }
-            | Self::Payload0x05 { .. }
-            | Self::Payload0x06WithEndOfGroup { .. }
-            | Self::Payload0x07WithEndOfGroup { .. } => 0,
-        }
+        self.object_id.unwrap_or(0)
     }
 
-    pub fn publisher_priority(&self) -> u8 {
-        match self {
-            Self::Payload0x00 {
-                publisher_priority, ..
-            }
-            | Self::Payload0x01 {
-                publisher_priority, ..
-            }
-            | Self::Payload0x02WithEndOfGroup {
-                publisher_priority, ..
-            }
-            | Self::Payload0x03WithEndOfGroup {
-                publisher_priority, ..
-            }
-            | Self::Payload0x04 {
-                publisher_priority, ..
-            }
-            | Self::Payload0x05 {
-                publisher_priority, ..
-            }
-            | Self::Payload0x06WithEndOfGroup {
-                publisher_priority, ..
-            }
-            | Self::Payload0x07WithEndOfGroup {
-                publisher_priority, ..
-            }
-            | Self::Status0x20 {
-                publisher_priority, ..
-            }
-            | Self::Status0x21 {
-                publisher_priority, ..
-            } => *publisher_priority,
-        }
-    }
-
-    pub fn extension_headers(&self) -> Option<&ExtensionHeaders> {
-        match self {
-            Self::Payload0x01 {
-                extension_headers, ..
-            }
-            | Self::Payload0x03WithEndOfGroup {
-                extension_headers, ..
-            }
-            | Self::Payload0x05 {
-                extension_headers, ..
-            }
-            | Self::Payload0x07WithEndOfGroup {
-                extension_headers, ..
-            }
-            | Self::Status0x21 {
-                extension_headers, ..
-            } => Some(extension_headers),
-            _ => None,
-        }
-    }
-
-    pub fn payload(&self) -> ObjectDatagramPayload {
-        match self {
-            Self::Payload0x00 { payload, .. }
-            | Self::Payload0x01 { payload, .. }
-            | Self::Payload0x02WithEndOfGroup { payload, .. }
-            | Self::Payload0x03WithEndOfGroup { payload, .. }
-            | Self::Payload0x04 { payload, .. }
-            | Self::Payload0x05 { payload, .. }
-            | Self::Payload0x06WithEndOfGroup { payload, .. }
-            | Self::Payload0x07WithEndOfGroup { payload, .. } => {
-                ObjectDatagramPayload::Payload(payload.clone())
-            }
-            Self::Status0x20 { status, .. } | Self::Status0x21 { status, .. } => {
-                ObjectDatagramPayload::Status(*status)
-            }
-        }
+    fn message_type(&self) -> u64 {
+        flag_if(self.extension_headers.is_some(), EXTENSIONS_PRESENT)
+            | flag_if(self.end_of_group, END_OF_GROUP)
+            | flag_if(self.object_id.is_none(), OBJECT_ID_ABSENT)
+            | flag_if(
+                matches!(self.payload, ObjectDatagramPayload::Status(_)),
+                STATUS,
+            )
     }
 
     pub(crate) fn decode(message_type: u64, data: &mut BytesMut) -> Option<Self> {
-        match message_type {
-            val if val == DatagramTypeValue::Payload0x00 as u64 => {
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x00 {
-                    object_id,
-                    publisher_priority,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x01 as u64 => {
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeaders::decode(data)?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x01 {
-                    object_id,
-                    publisher_priority,
-                    extension_headers,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x02WithEndOfGroup as u64 => {
-                Self::validate_end_of_group(data)?;
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x02WithEndOfGroup {
-                    object_id,
-                    publisher_priority,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x03WithEndOfGroup as u64 => {
-                Self::validate_end_of_group(data)?;
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeaders::decode(data)?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x03WithEndOfGroup {
-                    object_id,
-                    publisher_priority,
-                    extension_headers,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x04 as u64 => {
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x04 {
-                    publisher_priority,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x05 as u64 => {
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeaders::decode(data)?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x05 {
-                    publisher_priority,
-                    extension_headers,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x06WithEndOfGroup as u64 => {
-                Self::validate_end_of_group(data)?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x06WithEndOfGroup {
-                    publisher_priority,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Payload0x07WithEndOfGroup as u64 => {
-                Self::validate_end_of_group(data)?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeaders::decode(data)?;
-                let payload = data.clone().freeze();
-                data.advance(payload.len());
-                Some(Self::Payload0x07WithEndOfGroup {
-                    publisher_priority,
-                    extension_headers,
-                    payload,
-                })
-            }
-            val if val == DatagramTypeValue::Status0x20 as u64 => {
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let status = data.try_get_u8().log_context("status").ok()?;
-                Some(Self::Status0x20 {
-                    object_id,
-                    publisher_priority,
-                    status: ObjectStatus::try_from(status).ok()?,
-                })
-            }
-            val if val == DatagramTypeValue::Status0x21 as u64 => {
-                let object_id = data.try_get_varint().log_context("object id").ok()?;
-                let publisher_priority =
-                    data.try_get_u8().log_context("publisher priority").ok()?;
-                let extension_headers = ExtensionHeaders::decode(data)?;
-                let status = data.try_get_u8().log_context("status").ok()?;
-                Some(Self::Status0x21 {
-                    object_id,
-                    publisher_priority,
-                    extension_headers,
-                    status: ObjectStatus::try_from(status).ok()?,
-                })
-            }
-            _ => {
-                tracing::error!("Invalid message type: {}", message_type);
-                None
-            }
+        if !is_defined_type(message_type) {
+            tracing::error!("Invalid message type: {}", message_type);
+            return None;
         }
-    }
-    pub(crate) fn encode(&self) -> (u64, BytesMut) {
-        let mut buf = BytesMut::new();
-        match self {
-            Self::Payload0x00 {
-                object_id,
-                publisher_priority,
-                payload,
-            } => {
-                buf.put_varint(*object_id);
-                buf.put_u8(*publisher_priority);
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x00 as u64, buf)
+        let has = |flag: u64| message_type & flag != 0;
+        let end_of_group = has(END_OF_GROUP);
+        if end_of_group {
+            if !data.starts_with(END_OF_GROUP_PREFIX) {
+                return None;
             }
-            Self::Payload0x01 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                payload,
-            } => {
-                buf.put_varint(*object_id);
-                buf.put_u8(*publisher_priority);
-                buf.unsplit(extension_headers.encode());
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x01 as u64, buf)
-            }
-            Self::Payload0x02WithEndOfGroup {
-                object_id,
-                publisher_priority,
-                payload,
-            } => {
-                buf.put_u8(1);
-                buf.put_varint(*object_id);
-                buf.put_u8(*publisher_priority);
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x02WithEndOfGroup as u64, buf)
-            }
-            Self::Payload0x03WithEndOfGroup {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                payload,
-            } => {
-                buf.put_u8(1);
-                buf.put_varint(*object_id);
-                buf.put_u8(*publisher_priority);
-                buf.unsplit(extension_headers.encode());
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x03WithEndOfGroup as u64, buf)
-            }
-            Self::Payload0x04 {
-                publisher_priority,
-                payload,
-            } => {
-                buf.put_u8(*publisher_priority);
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x04 as u64, buf)
-            }
-            Self::Payload0x05 {
-                publisher_priority,
-                extension_headers,
-                payload,
-            } => {
-                buf.put_u8(*publisher_priority);
-                buf.unsplit(extension_headers.encode());
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x05 as u64, buf)
-            }
-            Self::Payload0x06WithEndOfGroup {
-                publisher_priority,
-                payload,
-            } => {
-                buf.put_u8(1);
-                buf.put_u8(*publisher_priority);
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x06WithEndOfGroup as u64, buf)
-            }
-            Self::Payload0x07WithEndOfGroup {
-                publisher_priority,
-                extension_headers,
-                payload,
-            } => {
-                buf.put_u8(1);
-                buf.put_u8(*publisher_priority);
-                buf.unsplit(extension_headers.encode());
-                buf.extend_from_slice(payload);
-                (DatagramTypeValue::Payload0x07WithEndOfGroup as u64, buf)
-            }
-            Self::Status0x20 {
-                object_id,
-                publisher_priority,
-                status,
-            } => {
-                buf.put_varint(*object_id);
-                buf.put_u8(*publisher_priority);
-                buf.put_u8(*status as u8);
-                (DatagramTypeValue::Status0x20 as u64, buf)
-            }
-            Self::Status0x21 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                status,
-            } => {
-                buf.put_varint(*object_id);
-                buf.put_u8(*publisher_priority);
-                buf.unsplit(extension_headers.encode());
-                buf.put_u8(*status as u8);
-                (DatagramTypeValue::Status0x21 as u64, buf)
-            }
+            data.advance(END_OF_GROUP_PREFIX.len());
         }
+        let object_id = if has(OBJECT_ID_ABSENT) {
+            None
+        } else {
+            Some(data.try_get_varint().log_context("object id").ok()?)
+        };
+        let publisher_priority = data.try_get_u8().log_context("publisher priority").ok()?;
+        let extension_headers = if has(EXTENSIONS_PRESENT) {
+            Some(ExtensionHeaders::decode(data)?)
+        } else {
+            None
+        };
+        let payload = if has(STATUS) {
+            let status = data.try_get_u8().log_context("status").ok()?;
+            ObjectDatagramPayload::Status(ObjectStatus::try_from(status).ok()?)
+        } else {
+            ObjectDatagramPayload::Payload(data.split().freeze())
+        };
+        Some(Self {
+            object_id,
+            publisher_priority,
+            extension_headers,
+            end_of_group,
+            payload,
+        })
     }
 
-    fn validate_end_of_group(data: &mut BytesMut) -> Option<()> {
-        match data.try_get_u8().log_context("end of group") {
-            Ok(val) => {
-                if val != 1 {
-                    return None;
-                }
-                Some(())
-            }
-            Err(_) => None,
+    pub(crate) fn encode(&self) -> anyhow::Result<(u64, BytesMut)> {
+        let message_type = self.message_type();
+        if !is_defined_type(message_type) {
+            anyhow::bail!(
+                "undefined OBJECT_DATAGRAM type {message_type:#x}: a status needs an Object ID and cannot end the group"
+            );
         }
+        let mut buf = BytesMut::new();
+        if self.end_of_group {
+            buf.put_slice(END_OF_GROUP_PREFIX);
+        }
+        if let Some(object_id) = self.object_id {
+            buf.put_varint(object_id);
+        }
+        buf.put_u8(self.publisher_priority);
+        if let Some(extension_headers) = &self.extension_headers {
+            buf.unsplit(extension_headers.encode());
+        }
+        match &self.payload {
+            ObjectDatagramPayload::Payload(payload) => buf.extend_from_slice(payload),
+            ObjectDatagramPayload::Status(status) => buf.put_u8(*status as u8),
+        }
+        Ok((message_type, buf))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    mod success {
+    use bytes::{Bytes, BytesMut};
 
-        use std::vec;
+    use super::{DatagramField, ObjectDatagramPayload};
+    use crate::modules::moqt::data_plane::object::{
+        extension_headers::ExtensionHeaders, object_status::ObjectStatus,
+    };
 
-        use super::super::*;
+    const PAYLOAD: &[u8] = &[0xAA, 0xBB];
+    const ENCODED_EXTENSIONS: &[u8] = &[0x02, 0x3C, 0x03];
+    const ENCODED_STATUS: &[u8] = &[0x01];
 
-        use bytes::{Buf, Bytes};
-
-        #[test]
-        fn present_object_id_is_returned_as_is() {
-            let field = DatagramField::Payload0x00 {
-                object_id: 7,
-                publisher_priority: 0,
-                payload: Bytes::new(),
-            };
-            assert_eq!(field.resolve_object_id(), 7);
+    fn payload(object_id: Option<u64>) -> DatagramField {
+        DatagramField {
+            object_id,
+            publisher_priority: 0x80,
+            extension_headers: None,
+            end_of_group: false,
+            payload: ObjectDatagramPayload::Payload(Bytes::from_static(PAYLOAD)),
         }
+    }
 
-        #[test]
-        fn omitted_object_id_resolves_to_zero() {
-            let field = DatagramField::Payload0x06WithEndOfGroup {
-                publisher_priority: 0,
-                payload: Bytes::new(),
-            };
-            assert_eq!(field.resolve_object_id(), 0);
+    fn status(object_id: Option<u64>) -> DatagramField {
+        DatagramField {
+            payload: ObjectDatagramPayload::Status(ObjectStatus::DoesNotExist),
+            ..payload(object_id)
         }
+    }
 
-        #[test]
-        fn payload0x00_encode_decode() {
-            // setup
-            let field = DatagramField::Payload0x00 {
-                object_id: 123,
-                publisher_priority: 10,
-                payload: Bytes::from(vec![1, 2, 3, 4, 5]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x00);
-            if let DatagramField::Payload0x00 {
-                object_id,
-                publisher_priority,
-                payload,
-            } = decoded
-            {
-                assert_eq!(object_id, 123);
-                assert_eq!(publisher_priority, 10);
-                assert_eq!(*payload, vec![1, 2, 3, 4, 5]);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
+    fn with_extensions(field: DatagramField) -> DatagramField {
+        let mut extension_headers = ExtensionHeaders::default();
+        extension_headers.push_prior_group_id_gap(3);
+        DatagramField {
+            extension_headers: Some(extension_headers),
+            ..field
         }
+    }
 
-        #[test]
-        fn payload0x01_encode_decode() {
-            // setup
-            let extension_header =
-                ExtensionHeaders::from_immutable_extensions(vec![Bytes::from(vec![10, 20])]);
-            let field = DatagramField::Payload0x01 {
-                object_id: 456,
-                publisher_priority: 20,
-                extension_headers: extension_header,
-                payload: Bytes::from(vec![6, 7, 8, 9, 10]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x01);
-            if let DatagramField::Payload0x01 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                payload,
-            } = decoded
-            {
-                assert_eq!(object_id, 456);
-                assert_eq!(publisher_priority, 20);
-                assert_eq!(
-                    extension_headers.immutable_extensions(),
-                    vec![Bytes::from(vec![10, 20])]
-                );
-                assert_eq!(*payload, Bytes::from(vec![6, 7, 8, 9, 10]));
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
+    fn ending_group(field: DatagramField) -> DatagramField {
+        DatagramField {
+            end_of_group: true,
+            ..field
         }
+    }
 
-        #[test]
-        fn payload0x02_with_end_of_group_encode_decode() {
-            // setup
-            let field = DatagramField::Payload0x02WithEndOfGroup {
-                object_id: 789,
-                publisher_priority: 30,
-                payload: Bytes::from(vec![11, 12, 13, 14, 15]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x02);
-            if let DatagramField::Payload0x02WithEndOfGroup {
-                object_id,
-                publisher_priority,
-                payload,
-            } = decoded
-            {
-                assert_eq!(object_id, 789);
-                assert_eq!(publisher_priority, 30);
-                assert_eq!(*payload, vec![11, 12, 13, 14, 15]);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
+    #[test]
+    fn every_defined_type_round_trips_with_its_wire_bytes() {
+        // Arrange
+        let id: &[u8] = &[0x05];
+        let priority: &[u8] = &[0x80];
+        let eog_prefix: &[u8] = &[0x01];
+        let ext = ENCODED_EXTENSIONS;
+        let cases = [
+            (payload(Some(5)), 0x00, [id, priority, PAYLOAD].concat()),
+            (
+                with_extensions(payload(Some(5))),
+                0x01,
+                [id, priority, ext, PAYLOAD].concat(),
+            ),
+            (
+                ending_group(payload(Some(5))),
+                0x02,
+                [eog_prefix, id, priority, PAYLOAD].concat(),
+            ),
+            (
+                ending_group(with_extensions(payload(Some(5)))),
+                0x03,
+                [eog_prefix, id, priority, ext, PAYLOAD].concat(),
+            ),
+            (payload(None), 0x04, [priority, PAYLOAD].concat()),
+            (
+                with_extensions(payload(None)),
+                0x05,
+                [priority, ext, PAYLOAD].concat(),
+            ),
+            (
+                ending_group(payload(None)),
+                0x06,
+                [eog_prefix, priority, PAYLOAD].concat(),
+            ),
+            (
+                ending_group(with_extensions(payload(None))),
+                0x07,
+                [eog_prefix, priority, ext, PAYLOAD].concat(),
+            ),
+            (
+                status(Some(5)),
+                0x20,
+                [id, priority, ENCODED_STATUS].concat(),
+            ),
+            (
+                with_extensions(status(Some(5))),
+                0x21,
+                [id, priority, ext, ENCODED_STATUS].concat(),
+            ),
+        ];
+        for (field, expected_type, expected_bytes) in cases {
+            // Act
+            let (message_type, encoded) = field.encode().unwrap();
+            let mut received = BytesMut::from(&expected_bytes[..]);
+            let decoded = DatagramField::decode(expected_type, &mut received).unwrap();
+            // Assert
+            assert_eq!(message_type, expected_type);
+            assert_eq!(encoded.to_vec(), expected_bytes, "type {expected_type:#x}");
+            assert_eq!(decoded, field, "type {expected_type:#x}");
+            assert!(received.is_empty(), "type {expected_type:#x}");
         }
+    }
 
-        #[test]
-        fn payload0x03_with_end_of_group_encode_decode() {
-            // setup
-            let extension_header = ExtensionHeaders::default();
-            let field = DatagramField::Payload0x03WithEndOfGroup {
-                object_id: 101,
-                publisher_priority: 40,
-                extension_headers: extension_header,
-                payload: Bytes::from(vec![16, 17, 18, 19, 20]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x03);
-            if let DatagramField::Payload0x03WithEndOfGroup {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                payload,
-            } = decoded
-            {
-                assert_eq!(object_id, 101);
-                assert_eq!(publisher_priority, 40);
-                assert_eq!(extension_headers, ExtensionHeaders::default());
-                assert_eq!(*payload, Bytes::from(vec![16, 17, 18, 19, 20]));
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
+    #[test]
+    fn undefined_types_are_rejected_on_decode() {
+        for message_type in [0x08, 0x22, 0x23, 0x24, 0x26, 0x40] {
+            // Arrange
+            let mut received = BytesMut::from(&[0x01, 0x05, 0x80, 0x01][..]);
+            // Act / Assert
+            assert!(
+                DatagramField::decode(message_type, &mut received).is_none(),
+                "type {message_type:#x}"
+            );
         }
+    }
 
-        #[test]
-        fn payload0x04_encode_decode() {
-            // setup
-            let field = DatagramField::Payload0x04 {
-                publisher_priority: 50,
-                payload: Bytes::from(vec![21, 22, 23, 24, 25]),
-            };
+    #[test]
+    fn status_ending_the_group_is_rejected_on_encode() {
+        // Arrange
+        let field = ending_group(status(Some(5)));
+        // Act / Assert
+        assert!(field.encode().is_err());
+    }
 
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
+    #[test]
+    fn status_without_object_id_is_rejected_on_encode() {
+        // Arrange
+        let field = status(None);
+        // Act / Assert
+        assert!(field.encode().is_err());
+    }
 
-            // validation
-            assert_eq!(message_type, 0x04);
-            if let DatagramField::Payload0x04 {
-                publisher_priority,
-                payload,
-            } = decoded
-            {
-                assert_eq!(field.resolve_object_id(), 0);
-                assert_eq!(publisher_priority, 50);
-                assert_eq!(*payload, vec![21, 22, 23, 24, 25]);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
-        }
+    #[test]
+    fn present_object_id_is_returned_as_is() {
+        // Arrange
+        let field = payload(Some(7));
+        // Act / Assert
+        assert_eq!(field.resolve_object_id(), 7);
+    }
 
-        #[test]
-        fn payload0x05_encode_decode() {
-            // setup
-            let mut extension_header = ExtensionHeaders::default();
-            extension_header.push_prior_group_id_gap(3);
-            let field = DatagramField::Payload0x05 {
-                publisher_priority: 60,
-                extension_headers: extension_header.clone(),
-                payload: Bytes::from(vec![26, 27, 28, 29, 30]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x05);
-            if let DatagramField::Payload0x05 {
-                publisher_priority,
-                extension_headers,
-                payload,
-            } = decoded
-            {
-                assert_eq!(publisher_priority, 60);
-                assert_eq!(extension_headers, extension_header);
-                assert_eq!(*payload, vec![26, 27, 28, 29, 30]);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
-        }
-
-        #[test]
-        fn payload0x06_with_end_of_group_encode_decode() {
-            // setup
-            let field = DatagramField::Payload0x06WithEndOfGroup {
-                publisher_priority: 70,
-                payload: Bytes::from(vec![31, 32, 33, 34, 35]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x06);
-            if let DatagramField::Payload0x06WithEndOfGroup {
-                publisher_priority,
-                payload,
-            } = decoded
-            {
-                assert_eq!(publisher_priority, 70);
-                assert_eq!(*payload, vec![31, 32, 33, 34, 35]);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
-        }
-
-        #[test]
-        fn payload0x07_with_end_of_group_encode_decode() {
-            // setup
-            let mut extension_header = ExtensionHeaders::default();
-            extension_header.push_prior_object_id_gap(3);
-            let field = DatagramField::Payload0x07WithEndOfGroup {
-                publisher_priority: 80,
-                extension_headers: extension_header.clone(),
-                payload: Bytes::from(vec![36, 37, 38, 39, 40]),
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x07);
-            if let DatagramField::Payload0x07WithEndOfGroup {
-                publisher_priority,
-                extension_headers,
-                payload,
-            } = decoded
-            {
-                assert_eq!(publisher_priority, 80);
-                assert_eq!(extension_headers, extension_header);
-                assert_eq!(*payload, vec![36, 37, 38, 39, 40]);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
-        }
-
-        #[test]
-        fn status0x20_encode_decode() {
-            // setup
-            let field = DatagramField::Status0x20 {
-                object_id: 131,
-                publisher_priority: 90,
-                status: ObjectStatus::DoesNotExist,
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x20);
-            if let DatagramField::Status0x20 {
-                object_id,
-                publisher_priority,
-                status,
-            } = decoded
-            {
-                assert_eq!(object_id, 131);
-                assert_eq!(publisher_priority, 90);
-                assert_eq!(status, ObjectStatus::DoesNotExist);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
-        }
-
-        #[test]
-        fn status0x21_encode_decode() {
-            // setup
-            let extension_header = ExtensionHeaders::default();
-            let field = DatagramField::Status0x21 {
-                object_id: 141,
-                publisher_priority: 100,
-                extension_headers: extension_header,
-                status: ObjectStatus::EndOfGroup,
-            };
-
-            // execution
-            let (message_type, mut encoded) = field.encode();
-            let decoded = DatagramField::decode(message_type, &mut encoded).unwrap();
-
-            // validation
-            assert_eq!(message_type, 0x21);
-            if let DatagramField::Status0x21 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                status,
-            } = decoded
-            {
-                assert_eq!(object_id, 141);
-                assert_eq!(publisher_priority, 100);
-                assert_eq!(extension_headers, ExtensionHeaders::default());
-                assert_eq!(status, ObjectStatus::EndOfGroup);
-            } else {
-                panic!("Decoded into wrong variant");
-            }
-            assert_eq!(encoded.remaining(), 0);
-        }
+    #[test]
+    fn omitted_object_id_resolves_to_zero() {
+        // Arrange
+        let field = ending_group(payload(None));
+        // Act / Assert
+        assert_eq!(field.resolve_object_id(), 0);
     }
 }

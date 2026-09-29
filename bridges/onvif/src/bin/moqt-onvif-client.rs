@@ -1687,7 +1687,7 @@ fn spawn_command_receiver(
                     return;
                 }
             };
-            match object.field.payload() {
+            match object.field.payload {
                 ObjectDatagramPayload::Payload(payload) => {
                     if let Err(err) = handle_command_payload(payload.as_ref(), &command_sender) {
                         log::warn!("command payload error: {err}");
