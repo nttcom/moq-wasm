@@ -26,6 +26,7 @@ use crate::modules::{
         publish_namespace_done::PublishNamespaceDone,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
+        subscribe_update::SubscribeUpdate,
         tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
@@ -412,12 +413,22 @@ impl EventHandler {
                     .instrument(event_span)
                     .await;
                 }
+                MoqtSessionEvent::SubscribeUpdate(handler) => {
+                    event_span.in_scope(|| {
+                        SubscribeUpdate {}.handle(
+                            session_id,
+                            &session_span,
+                            local_pub_sub_directory.as_ref(),
+                            handler.subscription_request_id(),
+                            handler.forward(),
+                        )
+                    });
+                }
                 MoqtSessionEvent::GoAway(..)
                 | MoqtSessionEvent::MaxRequestId(..)
                 | MoqtSessionEvent::RequestsBlocked(..)
                 | MoqtSessionEvent::PublishNamespaceCancel(..)
                 | MoqtSessionEvent::PublishDone(..)
-                | MoqtSessionEvent::SubscribeUpdate(..)
                 | MoqtSessionEvent::FetchCancel(..) => {
                     event_span.in_scope(|| {
                         tracing::warn!("Relay handling for this event is not implemented");

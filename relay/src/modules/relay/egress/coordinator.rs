@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
     task::JoinSet,
 };
 use tracing::{Instrument, Span};
@@ -24,6 +24,7 @@ pub(crate) struct EgressStartRequest {
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
     pub(crate) runner_stop_receiver: oneshot::Receiver<()>,
+    pub(crate) forward_receiver: watch::Receiver<bool>,
     /// From LargestLocation of SUBSCRIBE_OK
     /// None means that no content has been delivered yet.
     pub(crate) largest_location: Option<moqt::Location>,
@@ -156,6 +157,7 @@ impl EgressCoordinator {
             request.downstream_subscription.clone(),
             request.ready_sender,
             request.largest_location,
+            request.forward_receiver,
         );
 
         let runner_stop_receiver = request.runner_stop_receiver;
@@ -238,6 +240,7 @@ mod tests {
                 parent_span: Span::none(),
                 ready_sender,
                 runner_stop_receiver,
+                forward_receiver: watch::channel(true).1,
                 largest_location: None,
             })))
             .await

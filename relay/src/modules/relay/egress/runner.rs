@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use moqt::wire::publish_done_status_code;
 
@@ -22,6 +22,7 @@ pub(crate) struct EgressRunner {
     downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
     largest_location: Option<moqt::Location>,
+    forward_receiver: watch::Receiver<bool>,
 }
 
 impl EgressRunner {
@@ -32,6 +33,7 @@ impl EgressRunner {
         downstream_subscription: DownstreamSubscription,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
         largest_location: Option<moqt::Location>,
+        forward_receiver: watch::Receiver<bool>,
     ) -> Self {
         Self {
             track_key,
@@ -40,6 +42,7 @@ impl EgressRunner {
             downstream_subscription,
             ready_sender,
             largest_location,
+            forward_receiver,
         }
     }
 
@@ -64,6 +67,7 @@ impl EgressRunner {
             group_order,
             sender,
             self.largest_location,
+            self.forward_receiver,
         );
         let group_sender = GroupSender::new(
             self.track_key.clone(),

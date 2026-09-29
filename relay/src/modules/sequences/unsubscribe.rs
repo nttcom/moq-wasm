@@ -115,6 +115,7 @@ mod tests {
                         None,
                     )
                     .unwrap()
+                    .stop_receiver
             })
             .collect();
         TestContext {

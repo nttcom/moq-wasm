@@ -4,7 +4,7 @@ use std::{
 };
 
 use dashmap::{DashMap, DashSet, Entry};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
@@ -19,6 +19,12 @@ use crate::modules::{
 pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     _runner_stop_sender: oneshot::Sender<()>,
+    forward_sender: watch::Sender<bool>,
+}
+
+pub(crate) struct DownstreamRunnerSignals {
+    pub(crate) stop_receiver: oneshot::Receiver<()>,
+    pub(crate) forward_receiver: watch::Receiver<bool>,
 }
 
 type PeersByNamespace = DashMap<String, DashMap<SessionId, PeerKind>>;
@@ -468,21 +474,23 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Returns `None` when the upstream subscription is gone. The returned
-    /// receiver resolves once the registration is removed, however that happens; the
-    /// subscription's egress runner lives exactly until then.
+    /// stop receiver resolves once the registration is removed, however that happens; the
+    /// subscription's egress runner lives exactly until then. The forward receiver
+    /// starts at Forward State 1 whatever the SUBSCRIBE asked for.
     pub(crate) fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
         upstream_key: UpstreamSubscriptionKey,
         start_location: Option<moqt::Location>,
-    ) -> Option<oneshot::Receiver<()>> {
+    ) -> Option<DownstreamRunnerSignals> {
         // The upstream entry stays locked until the registration is inserted: a concurrent removal
         // of the upstream either finds it or makes this registration fail. Lock order is always
         // upstream before downstream.
         let mut upstream = self.active_upstream_subscriptions.get_mut(&upstream_key)?;
         upstream.downstream_subscriber_count += 1;
-        let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
+        let (runner_stop_sender, stop_receiver) = oneshot::channel();
+        let (forward_sender, forward_receiver) = watch::channel(true);
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
             RegisteredDownstreamSubscription {
@@ -491,9 +499,30 @@ impl InMemoryLocalPubSubDirectory {
                     start_location,
                 },
                 _runner_stop_sender: runner_stop_sender,
+                forward_sender,
             },
         );
-        Some(runner_stop_receiver)
+        Some(DownstreamRunnerSignals {
+            stop_receiver,
+            forward_receiver,
+        })
+    }
+
+    /// Returns false when no such downstream subscription is registered.
+    pub(crate) fn update_downstream_forward(
+        &self,
+        downstream_session_id: SessionId,
+        downstream_subscribe_id: u64,
+        forward: bool,
+    ) -> bool {
+        let Some(registered) = self
+            .downstream_subscriptions
+            .get(&(downstream_session_id, downstream_subscribe_id))
+        else {
+            return false;
+        };
+        registered.forward_sender.send_replace(forward);
+        true
     }
 
     pub(crate) fn remove_downstream_subscription(
@@ -909,11 +938,11 @@ mod tests {
         };
 
         // Act
-        let runner_stop_receiver =
+        let runner_signals =
             table.register_downstream_subscription(2, 100, upstream_key.clone(), Some(largest));
 
         // Assert
-        assert!(runner_stop_receiver.is_some());
+        assert!(runner_signals.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.upstream_key, upstream_key);
         assert_eq!(
@@ -931,14 +960,57 @@ mod tests {
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
 
         // Act
-        let runner_stop_receiver =
+        let runner_signals =
             table.register_downstream_subscription(2, 100, upstream_key.clone(), None);
 
         // Assert
-        assert!(runner_stop_receiver.is_some());
+        assert!(runner_signals.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
         assert_eq!(sub.upstream_key, upstream_key);
         assert!(sub.start_location.is_none());
+    }
+
+    #[test]
+    fn registered_subscription_starts_forwarding() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+
+        // Act
+        let signals = table
+            .register_downstream_subscription(2, 100, upstream_key, None)
+            .unwrap();
+
+        // Assert
+        assert!(*signals.forward_receiver.borrow());
+    }
+
+    #[test]
+    fn forward_update_reaches_the_registered_runner() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let signals = table
+            .register_downstream_subscription(2, 100, upstream_key, None)
+            .unwrap();
+
+        // Act
+        let updated = table.update_downstream_forward(2, 100, false);
+
+        // Assert
+        assert!(updated);
+        assert!(!*signals.forward_receiver.borrow());
+    }
+
+    #[test]
+    fn forward_update_for_an_unknown_subscription_is_reported() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let _signals = table.register_downstream_subscription(2, 100, upstream_key, None);
+
+        // Act
+        let updated = table.update_downstream_forward(2, 101, false);
+
+        // Assert
+        assert!(!updated);
     }
 
     #[test]
@@ -947,7 +1019,8 @@ mod tests {
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
             .register_downstream_subscription(2, 100, upstream_key, None)
-            .unwrap();
+            .unwrap()
+            .stop_receiver;
 
         // Act
         table.remove_session(1);
@@ -962,7 +1035,8 @@ mod tests {
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
             .register_downstream_subscription(2, 100, upstream_key.clone(), None)
-            .unwrap();
+            .unwrap()
+            .stop_receiver;
         table.remove_upstream_subscription(&upstream_key).unwrap();
 
         // Act
@@ -980,11 +1054,10 @@ mod tests {
         table.remove_session(1);
 
         // Act
-        let runner_stop_receiver =
-            table.register_downstream_subscription(2, 100, upstream_key, None);
+        let runner_signals = table.register_downstream_subscription(2, 100, upstream_key, None);
 
         // Assert
-        assert!(runner_stop_receiver.is_none());
+        assert!(runner_signals.is_none());
         assert!(table.downstream_subscriptions.is_empty());
     }
 

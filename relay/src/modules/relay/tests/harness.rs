@@ -49,10 +49,15 @@ pub(crate) struct EgressRunnerHandle {
     sent: mpsc::UnboundedReceiver<Sent>,
     priorities: mpsc::UnboundedReceiver<moqt::StreamPriority>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
+    forward_sender: watch::Sender<bool>,
     join_handle: tokio::task::JoinHandle<()>,
 }
 
 impl EgressRunnerHandle {
+    pub(crate) fn set_forward(&self, forward: bool) {
+        self.forward_sender.send_replace(forward);
+    }
+
     pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {
         tokio::time::timeout(RECV_TIMEOUT, self.publish_done.recv())
             .await
@@ -234,6 +239,7 @@ impl RelayHarness {
     ) -> EgressRunnerHandle {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
+        let (forward_sender, forward_receiver) = watch::channel(true);
         let runner = EgressRunner::new(
             self.ingest.track_key.clone(),
             self.ingest.cache.clone(),
@@ -241,6 +247,7 @@ impl RelayHarness {
             make_subscription(filter_type),
             ready_sender,
             largest_location,
+            forward_receiver,
         );
         let join_handle = tokio::spawn(async move {
             let _ = runner.run().await;
@@ -254,6 +261,7 @@ impl RelayHarness {
             sent: observers.sent,
             priorities: observers.priorities,
             publish_done: observers.publish_done,
+            forward_sender,
             join_handle,
         }
     }

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use moqt::{FilterType, GroupOrder};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::modules::relay::{cache::track_cache::TrackCache, types::SubgroupKey};
 
@@ -71,6 +71,7 @@ pub(crate) struct EgressScheduler {
     /// Largest Object at SUBSCRIBE processing time; `None` when no content
     /// has been delivered yet.
     largest_location: Option<moqt::Location>,
+    forward_receiver: watch::Receiver<bool>,
 }
 
 impl EgressScheduler {
@@ -80,6 +81,7 @@ impl EgressScheduler {
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
         largest_location: Option<moqt::Location>,
+        forward_receiver: watch::Receiver<bool>,
     ) -> Self {
         Self {
             cache,
@@ -87,6 +89,7 @@ impl EgressScheduler {
             group_order,
             sender,
             largest_location,
+            forward_receiver,
         }
     }
 
@@ -104,6 +107,7 @@ impl EgressScheduler {
 
         loop {
             match receiver.recv().await {
+                Ok(_) if !*self.forward_receiver.borrow() => {}
                 Ok(key) => {
                     if let Some(object_id) = progress.accept(key.group_id())
                         && self
@@ -220,6 +224,7 @@ mod tests {
             GroupOrder::Ascending,
             task_sender,
             largest_location,
+            watch::channel(true).1,
         );
         let handle = tokio::spawn(scheduler.run(ready_sender));
         ready_receiver

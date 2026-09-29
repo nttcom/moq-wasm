@@ -236,3 +236,52 @@ async fn upstream_reset_is_relayed_as_a_downstream_reset() {
         "a partial subgroup must be reset downstream with INTERNAL_ERROR, got {end:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn subscription_with_forward_off_opens_no_stream_for_a_new_group() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    egress.set_forward(false);
+
+    // Act
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.object(0);
+    upstream_stream.fin();
+
+    // Assert
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(200))
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn subscription_with_forward_back_on_resumes_from_the_next_group() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    egress.set_forward(false);
+    let skipped_group = harness.open_upstream_stream();
+    skipped_group.header(0);
+    skipped_group.object(0);
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(200))
+        .await;
+
+    // Act
+    egress.set_forward(true);
+    skipped_group.object(1);
+    skipped_group.fin();
+    let next_group = harness.open_upstream_stream();
+    next_group.header(1);
+    next_group.object(0);
+    next_group.fin();
+
+    // Assert
+    let objects = receive_objects_until_close(&mut egress).await;
+    let Some(DataObject::SubgroupHeader(header)) = objects.first() else {
+        panic!("downstream stream should start with a subgroup header");
+    };
+    assert_eq!(header.group_id, 1);
+}
