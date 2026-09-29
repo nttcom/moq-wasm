@@ -94,6 +94,7 @@ export type MediaCatalogTrack = {
   width?: number
   height?: number
   initData?: string
+  depends?: string[]
 }
 
 export function getResolvedMediaVideoCodec(): string {
@@ -173,7 +174,8 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       channelConfig: asString(track.channelConfig),
       width: asNumber(track.width),
       height: asNumber(track.height),
-      initData: asString(track.initData)
+      initData: asString(track.initData),
+      depends: asStrings(track.depends)
     })
     return acc
   }, [])
@@ -201,6 +203,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+function asStrings(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined
 }
 
 function asNumber(value: unknown): number | undefined {

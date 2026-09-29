@@ -164,8 +164,9 @@ namespace `anon/live/test` を選んで Watch を押します。GStreamer 用コ
   それより前へは戻れません。
 - 巻き戻し中は video と audio の SUBSCRIBE を SUBSCRIBE_UPDATE で Forward 0 にし、ライブの object を
   受け取りません。その間に publisher が開いた group は 500 ms ごとの TRACK_STATUS の Largest Location で
-  知り、次に FETCH する範囲とシークバーの右端を進めます。LOC では位置を、最後に受け取ったライブ object の
-  遅れから推定します。`LIVE` で Forward 1 に戻すと relay は次に開いた group から配信を再開するので、
+  知り、次に FETCH する範囲とシークバーの右端を進めます。group の位置は media timeline が記録する encode
+  時刻から取ります。media timeline が対象にしない rendition では、最後に受け取ったライブ object の遅れから
+  推定するので、main thread が忙しいと先へずれます。`LIVE` で Forward 1 に戻すと relay は次に開いた group から配信を再開するので、
   ライブの絵が動き出すまで最大で 1 GOP ほどかかります。TRACK_STATUS に応えない relay では、巻き戻し中も
   Forward 1 に戻して従来どおりライブを受け取ります。
 

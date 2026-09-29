@@ -266,13 +266,15 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     // Act
     await viewer.liveButton.click()
 
-    // Assert: the live element was playing all along, so it is shown as is
+    // Assert: the live element received nothing while reviewing and moves past where it stopped once delivery resumes
     await expect(viewer.rewindStatus).toContainText('Live')
     await expect(viewer.liveButton).not.toHaveClass(/reviewing/)
     await expect(viewer.speedSelect).toBeDisabled()
     await expect(liveVideo).toBeVisible()
     await expect(viewer.visibleVideo).toHaveCount(1)
-    expect(await mediaProp(liveVideo, 'currentTime')).toBeGreaterThan(liveTimeWhileReviewing)
+    await expect
+      .poll(async () => mediaProp(liveVideo, 'currentTime'), { timeout: 15_000 })
+      .toBeGreaterThan(liveTimeWhileReviewing)
   } finally {
     await context.close()
   }

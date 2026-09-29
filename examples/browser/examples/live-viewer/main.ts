@@ -134,7 +134,7 @@ showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
-const unstampedCmafGroups = new Set<bigint>()
+const unstampedGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
@@ -150,6 +150,7 @@ let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
 let mediaTimelineTrackName: string | undefined
+let mediaTimelineDepends: string[] = []
 let reviewing = false
 let liveForwardPaused = false
 let liveForwardUpdate = Promise.resolve()
@@ -284,6 +285,7 @@ async function stopStream(): Promise<void> {
   decodedFrameIds.clear()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
+  mediaTimelineDepends = []
   newestAudioGroupId = undefined
   backToLive()
   closeMse()
@@ -428,6 +430,7 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
   }
 
   mediaTimelineTrackName = track.name
+  mediaTimelineDepends = track.depends ?? []
   await subscribeTextTrack(track.name, (text) => {
     try {
       mediaTimeline.replace(text)
@@ -435,7 +438,7 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
       appendLog('error', `media timeline: ${getErrorMessage(error)}`)
       return
     }
-    stampObservedCmafGroups()
+    stampObservedGroups()
     renderSeekbar()
   })
 }
@@ -474,21 +477,22 @@ async function switchPackaging(): Promise<void> {
   appendLog('info', `packaging switched to ${packaging}`)
 }
 
-/// CMAF objects carry no LOC header, so a group observed on the CMAF track is
-/// stamped with the encode wallclock the media timeline records for it. Only
-/// observed groups enter the timeline: the relay caches a track from its first
-/// subscriber on, so earlier groups the media timeline lists cannot be fetched.
-function observeCmafGroup(groupId: bigint): void {
-  unstampedCmafGroups.add(groupId)
-  stampObservedCmafGroups()
+/// A group observed on a CMAF track, whose objects carry no LOC header, or
+/// reported by TRACK_STATUS is stamped with the encode wallclock the media
+/// timeline records for it. Only observed groups enter the timeline: the relay
+/// caches a track from its first subscriber on, so earlier groups the media
+/// timeline lists cannot be fetched.
+function observeTimelineGroup(groupId: bigint): void {
+  unstampedGroups.add(groupId)
+  stampObservedGroups()
 }
 
-function stampObservedCmafGroups(): void {
-  for (const groupId of unstampedCmafGroups) {
+function stampObservedGroups(): void {
+  for (const groupId of unstampedGroups) {
     const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
     if (encodedAtMs !== undefined) {
       timeline.recordCapture(groupId, encodedAtMs * 1_000)
-      unstampedCmafGroups.delete(groupId)
+      unstampedGroups.delete(groupId)
     }
   }
 }
@@ -579,7 +583,7 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
   if (kind === 'video') {
     videoObjectCount += 1
     if (object.objectId === 0n) {
-      observeCmafGroup(groupId)
+      observeTimelineGroup(groupId)
       renderSeekbar()
     }
     if (!reviewing) {
@@ -651,7 +655,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
 
   if (kind === 'video') {
     timeline.reset()
-    unstampedCmafGroups.clear()
+    unstampedGroups.clear()
     backToLive()
   } else {
     newestAudioGroupId = undefined
@@ -1156,9 +1160,14 @@ async function largestLiveGroup(kind: MediaKind): Promise<bigint | undefined> {
   return status.contentExists ? status.largestGroupId : undefined
 }
 
+/// The media timeline records the groups of the tracks it depends on. A group
+/// of any other rendition is placed from the arrival lag of the last live
+/// object, which runs late by however long the main thread took to handle the
+/// TRACK_STATUS answer.
 function observeLiveVideoGroup(groupId: bigint): void {
-  if (packaging === 'cmaf') {
-    observeCmafGroup(groupId)
+  const name = subscriptions.get('video')?.name
+  if (packaging === 'cmaf' || (name !== undefined && mediaTimelineDepends.includes(name))) {
+    observeTimelineGroup(groupId)
   } else {
     timeline.recordLiveGroup(groupId, monotonicUnixMicros())
   }
