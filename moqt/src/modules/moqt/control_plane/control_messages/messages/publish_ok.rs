@@ -3,12 +3,15 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
+        key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{filter_type::FilterType, group_order::GroupOrder},
         util,
     },
 };
 
-#[derive(Debug, Clone)]
+const DELIVERY_TIMEOUT: u64 = 0x02;
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct PublishOk {
     pub request_id: u64,
     pub forward: bool,
@@ -29,7 +32,22 @@ impl PublishOk {
             .log_context("group order")
             .ok()?;
         let filter_type = FilterType::decode(buf)?;
-        let delivery_timeout = buf.try_get_varint().log_context("delivery timeout").ok();
+
+        let number_of_parameters = buf
+            .try_get_varint()
+            .log_context("number of parameters")
+            .ok()?;
+        let mut parameters = vec![];
+        for _ in 0..number_of_parameters {
+            parameters.push(KeyValuePair::decode(buf)?);
+        }
+        let delivery_timeout = parameters.iter().find_map(|kv_pair| match kv_pair {
+            KeyValuePair {
+                key: DELIVERY_TIMEOUT,
+                value: VariantType::Even(value),
+            } => Some(*value),
+            _ => None,
+        });
 
         Some(Self {
             request_id,
@@ -48,9 +66,19 @@ impl PublishOk {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.filter_type.encode());
+        let mut number_of_parameters = 0;
+        let mut parameters_payload = BytesMut::new();
         if let Some(delivery_timeout) = self.delivery_timeout {
-            payload.put_varint(delivery_timeout);
+            let delivery_timeout_payload = KeyValuePair {
+                key: DELIVERY_TIMEOUT,
+                value: VariantType::Even(delivery_timeout),
+            }
+            .encode();
+            parameters_payload.unsplit(delivery_timeout_payload);
+            number_of_parameters += 1;
         }
+        payload.put_varint(number_of_parameters);
+        payload.unsplit(parameters_payload);
 
         tracing::trace!("Packetized Publish_OK message.");
         payload
@@ -60,19 +88,28 @@ impl PublishOk {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
-        use crate::modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk;
-
-        use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
-            filter_type::FilterType, group_order::GroupOrder,
+        use crate::modules::moqt::control_plane::control_messages::messages::{
+            parameters::{filter_type::FilterType, group_order::GroupOrder, location::Location},
+            publish_ok::PublishOk,
         };
+        use bytes::Buf;
+
+        fn round_trip(message: &PublishOk) -> PublishOk {
+            let buf = message.encode();
+            let mut cursor = std::io::Cursor::new(&buf[..]);
+            let decoded = PublishOk::decode(&mut cursor).unwrap();
+            assert_eq!(cursor.remaining(), 0);
+            decoded
+        }
+
         #[test]
         fn packetize_and_depacketize_absolute_start() {
+            // Arrange
             let publish_ok_message = PublishOk {
                 request_id: 1,
                 forward: true,
                 subscriber_priority: 128,
-                group_order: GroupOrder::Ascending, // Ascending
+                group_order: GroupOrder::Ascending,
                 filter_type: FilterType::AbsoluteStart {
                     location: Location {
                         group_id: 10,
@@ -82,36 +119,21 @@ mod tests {
                 delivery_timeout: Some(1000),
             };
 
-            let buf = publish_ok_message.encode();
-            let mut buf = std::io::Cursor::new(&buf[..]);
-            let depacketized_message = PublishOk::decode(&mut buf).unwrap();
+            // Act
+            let depacketized_message = round_trip(&publish_ok_message);
 
-            assert_eq!(
-                publish_ok_message.request_id,
-                depacketized_message.request_id
-            );
-            assert_eq!(publish_ok_message.forward, depacketized_message.forward);
-            assert_eq!(
-                publish_ok_message.subscriber_priority,
-                depacketized_message.subscriber_priority
-            );
-            assert_eq!(
-                publish_ok_message.group_order,
-                depacketized_message.group_order
-            );
-            assert_eq!(
-                publish_ok_message.filter_type,
-                depacketized_message.filter_type
-            );
+            // Assert
+            assert_eq!(depacketized_message, publish_ok_message);
         }
 
         #[test]
         fn packetize_and_depacketize_absolute_range() {
+            // Arrange
             let publish_ok_message = PublishOk {
                 request_id: 2,
                 forward: false,
                 subscriber_priority: 64,
-                group_order: GroupOrder::Descending, // Descending
+                group_order: GroupOrder::Descending,
                 filter_type: FilterType::AbsoluteRange {
                     location: Location {
                         group_id: 20,
@@ -122,60 +144,111 @@ mod tests {
                 delivery_timeout: Some(1000),
             };
 
-            let buf = publish_ok_message.encode();
-            let mut buf = std::io::Cursor::new(&buf[..]);
-            let depacketized_message = PublishOk::decode(&mut buf).unwrap();
+            // Act
+            let depacketized_message = round_trip(&publish_ok_message);
 
-            assert_eq!(
-                publish_ok_message.request_id,
-                depacketized_message.request_id
-            );
-            assert_eq!(publish_ok_message.forward, depacketized_message.forward);
-            assert_eq!(
-                publish_ok_message.subscriber_priority,
-                depacketized_message.subscriber_priority
-            );
-            assert_eq!(
-                publish_ok_message.group_order,
-                depacketized_message.group_order
-            );
-            assert_eq!(
-                publish_ok_message.filter_type,
-                depacketized_message.filter_type
-            );
-            assert_eq!(
-                publish_ok_message.delivery_timeout,
-                depacketized_message.delivery_timeout
-            );
+            // Assert
+            assert_eq!(depacketized_message, publish_ok_message);
         }
 
         #[test]
-        fn packetize_and_depacketize_latest_group() {
+        fn packetize_and_depacketize_without_delivery_timeout() {
+            // Arrange
             let publish_ok_message = PublishOk {
                 request_id: 3,
                 forward: true,
                 subscriber_priority: 0,
-                group_order: GroupOrder::Ascending, // Ascending
+                group_order: GroupOrder::Ascending,
                 filter_type: FilterType::NextGroupStart,
-                delivery_timeout: Some(1000),
+                delivery_timeout: None,
             };
 
-            let buf = publish_ok_message.encode();
-            let mut buf = std::io::Cursor::new(&buf[..]);
-            let depacketized_message = PublishOk::decode(&mut buf).unwrap();
+            // Act
+            let depacketized_message = round_trip(&publish_ok_message);
 
-            assert_eq!(
-                publish_ok_message.request_id,
-                depacketized_message.request_id
-            );
-            assert_eq!(
-                publish_ok_message.filter_type,
-                depacketized_message.filter_type
-            );
-            assert_eq!(
-                publish_ok_message.delivery_timeout,
-                depacketized_message.delivery_timeout
-            );
+            // Assert
+            assert_eq!(depacketized_message, publish_ok_message);
+        }
+
+        #[test]
+        fn packetize_with_delivery_timeout_parameter() {
+            // Arrange
+            let publish_ok_message = PublishOk {
+                request_id: 4,
+                forward: true,
+                subscriber_priority: 5,
+                group_order: GroupOrder::Descending,
+                filter_type: FilterType::NextGroupStart,
+                delivery_timeout: Some(10),
+            };
+
+            // Act
+            let buf = publish_ok_message.encode();
+
+            // Assert
+            let expected_bytes_array = [
+                4,  // Request ID (i)
+                1,  // Forward (8)
+                5,  // Subscriber Priority (8)
+                2,  // Group Order (8)
+                1,  // Filter Type (i)
+                1,  // Number of Parameters (i)
+                2,  // Parameter Type (i): DELIVERY_TIMEOUT
+                10, // Parameter Value (i)
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
+
+        #[test]
+        fn packetize_without_delivery_timeout_writes_zero_parameters() {
+            // Arrange
+            let publish_ok_message = PublishOk {
+                request_id: 5,
+                forward: false,
+                subscriber_priority: 5,
+                group_order: GroupOrder::Ascending,
+                filter_type: FilterType::NextGroupStart,
+                delivery_timeout: None,
+            };
+
+            // Act
+            let buf = publish_ok_message.encode();
+
+            // Assert
+            let expected_bytes_array = [
+                5, // Request ID (i)
+                0, // Forward (8)
+                5, // Subscriber Priority (8)
+                1, // Group Order (8)
+                1, // Filter Type (i)
+                0, // Number of Parameters (i)
+            ];
+            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
+        }
+
+        #[test]
+        fn depacketize_skips_unknown_parameters() {
+            // Arrange
+            let bytes_array = [
+                6,  // Request ID (i)
+                1,  // Forward (8)
+                5,  // Subscriber Priority (8)
+                1,  // Group Order (8)
+                1,  // Filter Type (i)
+                2,  // Number of Parameters (i)
+                4,  // Parameter Type (i): MAX_CACHE_DURATION
+                7,  // Parameter Value (i)
+                2,  // Parameter Type (i): DELIVERY_TIMEOUT
+                30, // Parameter Value (i)
+            ];
+            let mut cursor = std::io::Cursor::new(&bytes_array[..]);
+
+            // Act
+            let depacketized_message = PublishOk::decode(&mut cursor).unwrap();
+
+            // Assert
+            assert_eq!(depacketized_message.delivery_timeout, Some(30));
+            assert_eq!(cursor.remaining(), 0);
         }
     }
 }
