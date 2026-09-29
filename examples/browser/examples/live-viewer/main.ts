@@ -167,12 +167,12 @@ showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
-const unstampedGroupObservedAt = new Map<bigint, number>()
+const unstampedGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
-const timeline = new GroupTimeline(RELAY_CACHE_TTL_MICROS, monotonicUnixMicros)
+const timeline = new GroupTimeline(RELAY_CACHE_TTL_MICROS)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
@@ -517,18 +517,16 @@ async function switchPackaging(): Promise<void> {
 /// caches a track from its first subscriber on, so earlier groups the media
 /// timeline lists cannot be fetched.
 function observeTimelineGroup(groupId: bigint): void {
-  if (!unstampedGroupObservedAt.has(groupId)) {
-    unstampedGroupObservedAt.set(groupId, monotonicUnixMicros())
-  }
+  unstampedGroups.add(groupId)
   stampObservedGroups()
 }
 
 function stampObservedGroups(): void {
-  for (const [groupId, observedAtMicros] of unstampedGroupObservedAt) {
+  for (const groupId of unstampedGroups) {
     const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
     if (encodedAtMs !== undefined) {
-      timeline.recordCapture(groupId, encodedAtMs * 1_000, observedAtMicros)
-      unstampedGroupObservedAt.delete(groupId)
+      timeline.recordCapture(groupId, encodedAtMs * 1_000)
+      unstampedGroups.delete(groupId)
     }
   }
 }
@@ -691,7 +689,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
 
   if (kind === 'video') {
     timeline.reset()
-    unstampedGroupObservedAt.clear()
+    unstampedGroups.clear()
     backToLive()
   } else {
     newestAudioGroupId = undefined
@@ -1252,8 +1250,6 @@ function observeLiveVideoGroup(groupId: bigint): void {
   renderSeekbar()
 }
 
-/// A window whose range has aged out of the relay cache resumes from the
-/// oldest group the timeline still holds; any other failure holds the position.
 function recoverFromFailedWindow(failure: ReviewWindowFailure): void {
   const reason = `fetch from group ${failure.start}: ${failure.description}`
   if (failure.code === undefined || !EVICTED_RANGE_CODES.includes(failure.code)) {
@@ -1263,7 +1259,7 @@ function recoverFromFailedWindow(failure: ReviewWindowFailure): void {
     return
   }
   timeline.forgetThrough(failure.start)
-  const next = timeline.oldestClosed
+  const next = timeline.resolveSeekTarget(0)
   if (!next) {
     appendLog('warn', `${reason}; no later group is cached, going live`)
     backToLive()

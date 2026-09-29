@@ -71,12 +71,10 @@ export const RequestErrorCode = {
 
 export class RequestError extends Error {
   readonly errorCode: bigint
-  readonly reasonPhrase: string
 
   constructor(messageType: string, response: RequestErrorMessage) {
     super(`${messageType} ${response.errorCode}: ${response.reasonPhrase}`)
     this.errorCode = response.errorCode
-    this.reasonPhrase = response.reasonPhrase
   }
 }
 
