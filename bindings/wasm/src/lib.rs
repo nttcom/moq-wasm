@@ -302,12 +302,68 @@ impl ClientState {
 }
 
 #[cfg(web_sys_unstable_apis)]
+#[derive(Clone, Default)]
+struct ControlStreamSender {
+    writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl ControlStreamSender {
+    fn open(&self, writer: WritableStreamDefaultWriter) {
+        *self.writer.borrow_mut() = Some(writer);
+    }
+
+    fn close(&self) {
+        self.writer.borrow_mut().take();
+    }
+
+    async fn send(
+        &self,
+        message_type: ControlMessageType,
+        payload: BytesMut,
+    ) -> Result<(), JsValue> {
+        let writer = self
+            .writer
+            .borrow()
+            .clone()
+            .ok_or_else(|| js_error("control_stream_writer is None"))?;
+        let bytes = encode_control_message(message_type, payload);
+        write_to_writer(&writer, &bytes).await
+    }
+
+    async fn send_request_error(
+        &self,
+        message_type: ControlMessageType,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.send(
+            message_type,
+            RequestError {
+                request_id,
+                error_code,
+                reason_phrase,
+            }
+            .encode(),
+        )
+        .await
+    }
+}
+
+#[cfg(web_sys_unstable_apis)]
+struct ControlMessageHandler {
+    callbacks: Rc<RefCell<MOQTCallbacks>>,
+    state: Rc<RefCell<ClientState>>,
+}
+
+#[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen]
 pub struct MOQTClient {
     url: String,
     state: Rc<RefCell<ClientState>>,
     transport: Rc<RefCell<Option<WebTransport>>>,
-    control_stream_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
+    control_stream: ControlStreamSender,
     datagram_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
     stream_writers: Rc<RefCell<HashMap<WriterKey, WritableStreamDefaultWriter>>>,
     stream_object_numbers: Rc<RefCell<HashMap<WriterKey, u64>>>,
@@ -323,7 +379,7 @@ impl MOQTClient {
             url,
             state: Rc::new(RefCell::new(ClientState::default())),
             transport: Rc::new(RefCell::new(None)),
-            control_stream_writer: Rc::new(RefCell::new(None)),
+            control_stream: ControlStreamSender::default(),
             datagram_writer: Rc::new(RefCell::new(None)),
             stream_writers: Rc::new(RefCell::new(HashMap::new())),
             stream_object_numbers: Rc::new(RefCell::new(HashMap::new())),
@@ -453,7 +509,8 @@ impl MOQTClient {
         )
         .encode();
         self.state.borrow_mut().configure(max_request_id);
-        self.send_control_message(ControlMessageType::ClientSetup, payload)
+        self.control_stream
+            .send(ControlMessageType::ClientSetup, payload)
             .await
     }
 
@@ -481,17 +538,19 @@ impl MOQTClient {
         self.state
             .borrow_mut()
             .register_publish_namespace_request(request_id, track_namespace);
-        self.send_control_message(ControlMessageType::PublishNamespace, payload)
+        self.control_stream
+            .send(ControlMessageType::PublishNamespace, payload)
             .await
     }
 
     #[wasm_bindgen(js_name = sendPublishNamespaceOk)]
     pub async fn send_publish_namespace_ok(&self, request_id: u64) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::PublishNamespaceOk,
-            NamespaceOk { request_id }.encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::PublishNamespaceOk,
+                NamespaceOk { request_id }.encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendPublishNamespaceError)]
@@ -501,13 +560,14 @@ impl MOQTClient {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<(), JsValue> {
-        self.send_request_error(
-            ControlMessageType::PublishNamespaceError,
-            request_id,
-            error_code,
-            reason_phrase,
-        )
-        .await
+        self.control_stream
+            .send_request_error(
+                ControlMessageType::PublishNamespaceError,
+                request_id,
+                error_code,
+                reason_phrase,
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendSubscribeNamespace)]
@@ -535,7 +595,8 @@ impl MOQTClient {
         self.state
             .borrow_mut()
             .register_subscribe_namespace_request(request_id, track_namespace_prefix);
-        self.send_control_message(ControlMessageType::SubscribeNamespace, payload)
+        self.control_stream
+            .send(ControlMessageType::SubscribeNamespace, payload)
             .await
     }
 
@@ -573,7 +634,8 @@ impl MOQTClient {
         self.state
             .borrow_mut()
             .register_publish_request(request_id, TrackKey::new(track_namespace, track_name));
-        self.send_control_message(ControlMessageType::Publish, payload)
+        self.control_stream
+            .send(ControlMessageType::Publish, payload)
             .await
     }
 
@@ -603,7 +665,8 @@ impl MOQTClient {
             delivery_timeout,
         }
         .encode();
-        self.send_control_message(ControlMessageType::PublishOk, payload)
+        self.control_stream
+            .send(ControlMessageType::PublishOk, payload)
             .await
     }
 
@@ -614,13 +677,14 @@ impl MOQTClient {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<(), JsValue> {
-        self.send_request_error(
-            ControlMessageType::PublishError,
-            request_id,
-            error_code,
-            reason_phrase,
-        )
-        .await
+        self.control_stream
+            .send_request_error(
+                ControlMessageType::PublishError,
+                request_id,
+                error_code,
+                reason_phrase,
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendSubscribe)]
@@ -658,7 +722,8 @@ impl MOQTClient {
         self.state
             .borrow_mut()
             .start_outgoing_subscription(request_id, TrackKey::new(track_namespace, track_name));
-        self.send_control_message(ControlMessageType::Subscribe, payload)
+        self.control_stream
+            .send(ControlMessageType::Subscribe, payload)
             .await
     }
 
@@ -694,7 +759,8 @@ impl MOQTClient {
             authorization_tokens: vec![],
         }
         .encode();
-        self.send_control_message(ControlMessageType::Fetch, payload)
+        self.control_stream
+            .send(ControlMessageType::Fetch, payload)
             .await
     }
 
@@ -717,7 +783,8 @@ impl MOQTClient {
             authorization_tokens: vec![],
         }
         .encode();
-        self.send_control_message(ControlMessageType::Fetch, payload)
+        self.control_stream
+            .send(ControlMessageType::Fetch, payload)
             .await
     }
 
@@ -802,7 +869,8 @@ impl MOQTClient {
             max_duration,
         }
         .encode();
-        self.send_control_message(ControlMessageType::SubscribeOk, payload)
+        self.control_stream
+            .send(ControlMessageType::SubscribeOk, payload)
             .await?;
         Ok(track_alias)
     }
@@ -814,20 +882,22 @@ impl MOQTClient {
         error_code: u64,
         reason_phrase: String,
     ) -> Result<(), JsValue> {
-        self.send_request_error(
-            ControlMessageType::SubscribeError,
-            request_id,
-            error_code,
-            reason_phrase,
-        )
-        .await
+        self.control_stream
+            .send_request_error(
+                ControlMessageType::SubscribeError,
+                request_id,
+                error_code,
+                reason_phrase,
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendUnsubscribe)]
     pub async fn send_unsubscribe(&self, request_id: u64) -> Result<(), JsValue> {
         let mut payload = BytesMut::new();
         payload.put_varint(request_id);
-        self.send_control_message(ControlMessageType::UnSubscribe, payload)
+        self.control_stream
+            .send(ControlMessageType::UnSubscribe, payload)
             .await?;
         self.state
             .borrow_mut()
@@ -840,11 +910,12 @@ impl MOQTClient {
         &self,
         track_namespace: Vec<String>,
     ) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::PublishNamespaceDone,
-            PublishNamespaceDone::new(track_namespace).encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::PublishNamespaceDone,
+                PublishNamespaceDone::new(track_namespace).encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendUnsubscribeNamespace)]
@@ -852,38 +923,42 @@ impl MOQTClient {
         &self,
         track_namespace_prefix: Vec<String>,
     ) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::UnSubscribeNamespace,
-            UnsubscribeNamespace::new(track_namespace_prefix).encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::UnSubscribeNamespace,
+                UnsubscribeNamespace::new(track_namespace_prefix).encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendGoAway)]
     pub async fn send_go_away(&self, new_session_uri: String) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::GoAway,
-            GoAway::new(new_session_uri).encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::GoAway,
+                GoAway::new(new_session_uri).encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendMaxRequestId)]
     pub async fn send_max_request_id(&self, request_id: u64) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::MaxRequestId,
-            MaxRequestId::new(request_id).encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::MaxRequestId,
+                MaxRequestId::new(request_id).encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendRequestsBlocked)]
     pub async fn send_requests_blocked(&self, maximum_request_id: u64) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::RequestsBlocked,
-            RequestsBlocked::new(maximum_request_id).encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::RequestsBlocked,
+                RequestsBlocked::new(maximum_request_id).encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendSubscribeUpdate)]
@@ -912,7 +987,8 @@ impl MOQTClient {
             delivery_timeout: None,
         }
         .encode();
-        self.send_control_message(ControlMessageType::SubscribeUpdate, payload)
+        self.control_stream
+            .send(ControlMessageType::SubscribeUpdate, payload)
             .await
     }
 
@@ -926,17 +1002,19 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let payload =
             PublishDone::new(request_id, status_code, stream_count, error_reason).encode();
-        self.send_control_message(ControlMessageType::PublishDone, payload)
+        self.control_stream
+            .send(ControlMessageType::PublishDone, payload)
             .await
     }
 
     #[wasm_bindgen(js_name = sendFetchCancel)]
     pub async fn send_fetch_cancel(&self, request_id: u64) -> Result<(), JsValue> {
-        self.send_control_message(
-            ControlMessageType::FetchCancel,
-            FetchCancel::new(request_id).encode(),
-        )
-        .await
+        self.control_stream
+            .send(
+                ControlMessageType::FetchCancel,
+                FetchCancel::new(request_id).encode(),
+            )
+            .await
     }
 
     #[wasm_bindgen(js_name = sendPublishNamespaceCancel)]
@@ -948,7 +1026,8 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         let payload =
             PublishNamespaceCancel::new(track_namespace, error_code, error_reason).encode();
-        self.send_control_message(ControlMessageType::PublishNamespaceCancel, payload)
+        self.control_stream
+            .send(ControlMessageType::PublishNamespaceCancel, payload)
             .await
     }
 
@@ -972,7 +1051,8 @@ impl MOQTClient {
             delivery_timeout: None,
         }
         .encode();
-        self.send_control_message(ControlMessageType::TrackStatus, payload)
+        self.control_stream
+            .send(ControlMessageType::TrackStatus, payload)
             .await
     }
 
@@ -1162,7 +1242,7 @@ impl MOQTClient {
             }
         }
         self.transport.borrow_mut().take();
-        self.control_stream_writer.borrow_mut().take();
+        self.control_stream.close();
         self.datagram_writer.borrow_mut().take();
         self.stream_writers.borrow_mut().clear();
         self.stream_object_numbers.borrow_mut().clear();
@@ -1194,16 +1274,18 @@ impl MOQTClient {
         let control_stream = JsFuture::from(transport.create_bidirectional_stream()).await?;
         let control_reader = ReadableStreamDefaultReader::new(&control_stream.readable().into())?;
         let control_writer = control_stream.writable().get_writer()?;
-        *self.control_stream_writer.borrow_mut() = Some(control_writer);
+        self.control_stream.open(control_writer);
 
         *self.datagram_writer.borrow_mut() = datagram_writable(&transport.datagrams())
             .map(|writable| writable.get_writer())
             .transpose()?;
 
-        let callbacks = self.callbacks.clone();
-        let state = self.state.clone();
+        let handler = ControlMessageHandler {
+            callbacks: self.callbacks.clone(),
+            state: self.state.clone(),
+        };
         wasm_bindgen_futures::spawn_local(async move {
-            let _ = control_stream_read_thread(callbacks, state, &control_reader).await;
+            let _ = control_stream_read_thread(handler, &control_reader).await;
         });
 
         let datagram_reader = ReadableStreamDefaultReader::new(&transport.datagrams().readable())?;
@@ -1221,39 +1303,6 @@ impl MOQTClient {
         });
 
         Ok(())
-    }
-
-    async fn send_control_message(
-        &self,
-        message_type: ControlMessageType,
-        payload: BytesMut,
-    ) -> Result<(), JsValue> {
-        let writer = self
-            .control_stream_writer
-            .borrow()
-            .clone()
-            .ok_or_else(|| js_error("control_stream_writer is None"))?;
-        let bytes = encode_control_message(message_type, payload);
-        write_to_writer(&writer, &bytes).await
-    }
-
-    async fn send_request_error(
-        &self,
-        message_type: ControlMessageType,
-        request_id: u64,
-        error_code: u64,
-        reason_phrase: String,
-    ) -> Result<(), JsValue> {
-        self.send_control_message(
-            message_type,
-            RequestError {
-                request_id,
-                error_code,
-                reason_phrase,
-            }
-            .encode(),
-        )
-        .await
     }
 
     async fn send_datagram_bytes(&self, payload: &[u8]) -> Result<(), JsValue> {
@@ -1315,8 +1364,7 @@ async fn receive_unidirectional_thread(
 
 #[cfg(web_sys_unstable_apis)]
 async fn control_stream_read_thread(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    state: Rc<RefCell<ClientState>>,
+    handler: ControlMessageHandler,
     reader: &ReadableStreamDefaultReader,
 ) -> Result<(), JsValue> {
     let mut buf = BytesMut::new();
@@ -1331,7 +1379,7 @@ async fn control_stream_read_thread(
         while let Some((message_type, payload)) =
             take_control_message(&mut buf).map_err(|error| js_error(error.to_string()))?
         {
-            handle_control_message(callbacks.clone(), state.clone(), message_type, payload).await?;
+            handler.handle(message_type, payload).await?;
         }
     }
 
@@ -1473,220 +1521,223 @@ async fn read_uni_directional_stream(
 }
 
 #[cfg(web_sys_unstable_apis)]
-async fn handle_control_message(
-    callbacks: Rc<RefCell<MOQTCallbacks>>,
-    state: Rc<RefCell<ClientState>>,
-    message_type: ControlMessageType,
-    payload: BytesMut,
-) -> Result<(), JsValue> {
-    let mut cursor = Cursor::new(payload.as_ref());
+impl ControlMessageHandler {
+    async fn handle(
+        &self,
+        message_type: ControlMessageType,
+        payload: BytesMut,
+    ) -> Result<(), JsValue> {
+        let callbacks = &self.callbacks;
+        let state = &self.state;
+        let mut cursor = Cursor::new(payload.as_ref());
 
-    match message_type {
-        ControlMessageType::ServerSetup => {
-            let message = ServerSetup::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode SERVER_SETUP"))?;
-            state
-                .borrow_mut()
-                .configure(message.setup_parameters.max_request_id);
-            if let Some(callback) = callbacks.borrow().server_setup_callback.clone() {
-                let wrapper = ServerSetupMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+        match message_type {
+            ControlMessageType::ServerSetup => {
+                let message = ServerSetup::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode SERVER_SETUP"))?;
+                state
+                    .borrow_mut()
+                    .configure(message.setup_parameters.max_request_id);
+                if let Some(callback) = callbacks.borrow().server_setup_callback.clone() {
+                    let wrapper = ServerSetupMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::PublishNamespace => {
+                let message = PublishNamespace::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE"))?;
+                if let Some(callback) = callbacks.borrow().publish_namespace_callback.clone() {
+                    let wrapper = PublishNamespaceMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::PublishNamespaceDone => {
+                let message = PublishNamespaceDone::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_DONE"))?;
+                if let Some(callback) = callbacks.borrow().publish_namespace_done_callback.clone() {
+                    let wrapper = PublishNamespaceDoneMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::PublishNamespaceOk => {
+                let message = NamespaceOk::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_OK"))?;
+                state
+                    .borrow_mut()
+                    .finish_publish_namespace_request(message.request_id, true);
+                if let Some(callback) = callbacks
+                    .borrow()
+                    .publish_namespace_response_callback
+                    .clone()
+                {
+                    let wrapper = NamespaceOkMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::PublishNamespaceError => {
+                let message = RequestError::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_ERROR"))?;
+                state
+                    .borrow_mut()
+                    .finish_publish_namespace_request(message.request_id, false);
+                if let Some(callback) = callbacks
+                    .borrow()
+                    .publish_namespace_response_callback
+                    .clone()
+                {
+                    let wrapper = RequestErrorMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::SubscribeNamespaceOk => {
+                let message = NamespaceOk::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode SUBSCRIBE_NAMESPACE_OK"))?;
+                state
+                    .borrow_mut()
+                    .finish_subscribe_namespace_request(message.request_id, true);
+                if let Some(callback) = callbacks
+                    .borrow()
+                    .subscribe_namespace_response_callback
+                    .clone()
+                {
+                    let wrapper = NamespaceOkMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::SubscribeNamespaceError => {
+                let message = RequestError::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode SUBSCRIBE_NAMESPACE_ERROR"))?;
+                state
+                    .borrow_mut()
+                    .finish_subscribe_namespace_request(message.request_id, false);
+                if let Some(callback) = callbacks
+                    .borrow()
+                    .subscribe_namespace_response_callback
+                    .clone()
+                {
+                    let wrapper = RequestErrorMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::Publish => {
+                let message = Publish::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH"))?;
+                if let Some(callback) = callbacks.borrow().publish_callback.clone() {
+                    let wrapper = PublishMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::PublishOk => {
+                let message = PublishOk::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_OK"))?;
+                state
+                    .borrow_mut()
+                    .finish_publish_request(message.request_id);
+                if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
+                    let wrapper = PublishOkMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::PublishError => {
+                let message = RequestError::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_ERROR"))?;
+                state
+                    .borrow_mut()
+                    .finish_publish_request(message.request_id);
+                if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
+                    let wrapper = RequestErrorMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::Subscribe => {
+                let message = Subscribe::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode SUBSCRIBE"))?;
+                let validation_code = state.borrow().validate_incoming_subscribe(&message);
+                if validation_code == 0 {
+                    state.borrow_mut().register_incoming_subscribe(&message);
+                }
+                if let Some(callback) = callbacks.borrow().subscribe_callback.clone() {
+                    let wrapper = SubscribeMessage::from(&message);
+                    let _ = callback.call3(
+                        &JsValue::NULL,
+                        &JsValue::from(wrapper),
+                        &JsValue::from_bool(validation_code == 0),
+                        &JsValue::from_f64(validation_code as f64),
+                    );
+                }
+            }
+            ControlMessageType::SubscribeOk => {
+                let message = SubscribeOk::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode SUBSCRIBE_OK"))?;
+                state
+                    .borrow_mut()
+                    .activate_outgoing_subscription(message.request_id, message.track_alias);
+                if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
+                    let wrapper = SubscribeOkMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::SubscribeError => {
+                let message = RequestError::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode SUBSCRIBE_ERROR"))?;
+                state
+                    .borrow_mut()
+                    .remove_outgoing_subscription(message.request_id);
+                if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
+                    let wrapper = RequestErrorMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::UnSubscribe => {
+                let request_id =
+                    decode_request_id(&mut cursor).map_err(|error| js_error(error.to_string()))?;
+                state.borrow_mut().remove_incoming_subscribe(request_id);
+                if let Some(callback) = callbacks.borrow().incoming_unsubscribe_callback.clone() {
+                    let _ = callback.call1(
+                        &JsValue::NULL,
+                        &JsValue::from(js_sys::BigInt::from(request_id)),
+                    );
+                }
+            }
+            ControlMessageType::FetchOk => {
+                let message = FetchOk::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode FETCH_OK"))?;
+                if let Some(callback) = callbacks.borrow().fetch_response_callback.clone() {
+                    let wrapper = FetchOkMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::FetchError => {
+                let message = RequestError::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode FETCH_ERROR"))?;
+                if let Some(callback) = callbacks.borrow().fetch_response_callback.clone() {
+                    let wrapper = RequestErrorMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::TrackStatusOk => {
+                let message = TrackStatusOk::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode TRACK_STATUS_OK"))?;
+                if let Some(callback) = callbacks.borrow().track_status_response_callback.clone() {
+                    let wrapper = SubscribeOkMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            ControlMessageType::TrackStatusError => {
+                let message = TrackStatusError::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode TRACK_STATUS_ERROR"))?;
+                if let Some(callback) = callbacks.borrow().track_status_response_callback.clone() {
+                    let wrapper = RequestErrorMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
+            _ => {
+                console_log!("Unhandled control message: {:?}", message_type);
             }
         }
-        ControlMessageType::PublishNamespace => {
-            let message = PublishNamespace::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE"))?;
-            if let Some(callback) = callbacks.borrow().publish_namespace_callback.clone() {
-                let wrapper = PublishNamespaceMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::PublishNamespaceDone => {
-            let message = PublishNamespaceDone::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_DONE"))?;
-            if let Some(callback) = callbacks.borrow().publish_namespace_done_callback.clone() {
-                let wrapper = PublishNamespaceDoneMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::PublishNamespaceOk => {
-            let message = NamespaceOk::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_OK"))?;
-            state
-                .borrow_mut()
-                .finish_publish_namespace_request(message.request_id, true);
-            if let Some(callback) = callbacks
-                .borrow()
-                .publish_namespace_response_callback
-                .clone()
-            {
-                let wrapper = NamespaceOkMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::PublishNamespaceError => {
-            let message = RequestError::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode PUBLISH_NAMESPACE_ERROR"))?;
-            state
-                .borrow_mut()
-                .finish_publish_namespace_request(message.request_id, false);
-            if let Some(callback) = callbacks
-                .borrow()
-                .publish_namespace_response_callback
-                .clone()
-            {
-                let wrapper = RequestErrorMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::SubscribeNamespaceOk => {
-            let message = NamespaceOk::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_NAMESPACE_OK"))?;
-            state
-                .borrow_mut()
-                .finish_subscribe_namespace_request(message.request_id, true);
-            if let Some(callback) = callbacks
-                .borrow()
-                .subscribe_namespace_response_callback
-                .clone()
-            {
-                let wrapper = NamespaceOkMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::SubscribeNamespaceError => {
-            let message = RequestError::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_NAMESPACE_ERROR"))?;
-            state
-                .borrow_mut()
-                .finish_subscribe_namespace_request(message.request_id, false);
-            if let Some(callback) = callbacks
-                .borrow()
-                .subscribe_namespace_response_callback
-                .clone()
-            {
-                let wrapper = RequestErrorMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::Publish => {
-            let message =
-                Publish::decode(&mut cursor).ok_or_else(|| js_error("failed to decode PUBLISH"))?;
-            if let Some(callback) = callbacks.borrow().publish_callback.clone() {
-                let wrapper = PublishMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::PublishOk => {
-            let message = PublishOk::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode PUBLISH_OK"))?;
-            state
-                .borrow_mut()
-                .finish_publish_request(message.request_id);
-            if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
-                let wrapper = PublishOkMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::PublishError => {
-            let message = RequestError::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode PUBLISH_ERROR"))?;
-            state
-                .borrow_mut()
-                .finish_publish_request(message.request_id);
-            if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
-                let wrapper = RequestErrorMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::Subscribe => {
-            let message = Subscribe::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode SUBSCRIBE"))?;
-            let validation_code = state.borrow().validate_incoming_subscribe(&message);
-            if validation_code == 0 {
-                state.borrow_mut().register_incoming_subscribe(&message);
-            }
-            if let Some(callback) = callbacks.borrow().subscribe_callback.clone() {
-                let wrapper = SubscribeMessage::from(&message);
-                let _ = callback.call3(
-                    &JsValue::NULL,
-                    &JsValue::from(wrapper),
-                    &JsValue::from_bool(validation_code == 0),
-                    &JsValue::from_f64(validation_code as f64),
-                );
-            }
-        }
-        ControlMessageType::SubscribeOk => {
-            let message = SubscribeOk::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_OK"))?;
-            state
-                .borrow_mut()
-                .activate_outgoing_subscription(message.request_id, message.track_alias);
-            if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
-                let wrapper = SubscribeOkMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::SubscribeError => {
-            let message = RequestError::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode SUBSCRIBE_ERROR"))?;
-            state
-                .borrow_mut()
-                .remove_outgoing_subscription(message.request_id);
-            if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
-                let wrapper = RequestErrorMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::UnSubscribe => {
-            let request_id =
-                decode_request_id(&mut cursor).map_err(|error| js_error(error.to_string()))?;
-            state.borrow_mut().remove_incoming_subscribe(request_id);
-            if let Some(callback) = callbacks.borrow().incoming_unsubscribe_callback.clone() {
-                let _ = callback.call1(
-                    &JsValue::NULL,
-                    &JsValue::from(js_sys::BigInt::from(request_id)),
-                );
-            }
-        }
-        ControlMessageType::FetchOk => {
-            let message = FetchOk::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode FETCH_OK"))?;
-            if let Some(callback) = callbacks.borrow().fetch_response_callback.clone() {
-                let wrapper = FetchOkMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::FetchError => {
-            let message = RequestError::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode FETCH_ERROR"))?;
-            if let Some(callback) = callbacks.borrow().fetch_response_callback.clone() {
-                let wrapper = RequestErrorMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::TrackStatusOk => {
-            let message = TrackStatusOk::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode TRACK_STATUS_OK"))?;
-            if let Some(callback) = callbacks.borrow().track_status_response_callback.clone() {
-                let wrapper = SubscribeOkMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        ControlMessageType::TrackStatusError => {
-            let message = TrackStatusError::decode(&mut cursor)
-                .ok_or_else(|| js_error("failed to decode TRACK_STATUS_ERROR"))?;
-            if let Some(callback) = callbacks.borrow().track_status_response_callback.clone() {
-                let wrapper = RequestErrorMessage::from(&message);
-                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
-            }
-        }
-        _ => {
-            console_log!("Unhandled control message: {:?}", message_type);
-        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 #[cfg(web_sys_unstable_apis)]
