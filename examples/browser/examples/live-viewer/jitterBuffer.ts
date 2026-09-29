@@ -9,7 +9,8 @@ type Arrival = { atMs: number; delayMs: number }
 /// sample of the last `WINDOW_MS` is kept; each delay carries the offset
 /// between the capture clock and the local one, which only the differences
 /// between them cancel. The buffer covers the spread between the fastest and
-/// the slowest of them, clamped to the policy; equal bounds fix it.
+/// the slowest of them plus the time a sample takes from being handed over to
+/// being heard, and the policy clamps that sum; equal bounds fix it.
 export class JitterBuffer {
   private readonly arrivals: Arrival[] = []
   private observingSinceMs: number | undefined
@@ -50,14 +51,22 @@ export class JitterBuffer {
     return this.arrivals.length === 0 ? undefined : Math.min(...this.arrivals.map((arrival) => arrival.delayMs))
   }
 
-  targetMs(): number {
-    return this.targetFor(this.spreadMs())
+  targetMs(outputLatencyMs: number): number {
+    return this.clamp((this.spreadMs() ?? 0) + outputLatencyMs)
   }
 
   /// The target to open playback with, when the burst a subscription starts
   /// with says nothing about the spread and `observedSpreadMs` stands in for it.
-  openingTargetMs(observedSpreadMs: number): number {
-    return this.targetFor(observedSpreadMs)
+  openingTargetMs(observedSpreadMs: number, outputLatencyMs: number): number {
+    return this.clamp(observedSpreadMs + outputLatencyMs)
+  }
+
+  spreadMs(): number | undefined {
+    const fastest = this.fastestDelayMs()
+    if (fastest === undefined) {
+      return undefined
+    }
+    return Math.max(...this.arrivals.map((arrival) => arrival.delayMs)) - fastest
   }
 
   reset(): void {
@@ -65,15 +74,7 @@ export class JitterBuffer {
     this.observingSinceMs = undefined
   }
 
-  private targetFor(spreadMs: number): number {
-    return Math.max(this.policy.minimumMs, Math.min(this.policy.maximumMs, spreadMs))
-  }
-
-  private spreadMs(): number {
-    const fastest = this.fastestDelayMs()
-    if (fastest === undefined) {
-      return 0
-    }
-    return Math.max(...this.arrivals.map((arrival) => arrival.delayMs)) - fastest
+  private clamp(neededMs: number): number {
+    return Math.max(this.policy.minimumMs, Math.min(this.policy.maximumMs, neededMs))
   }
 }

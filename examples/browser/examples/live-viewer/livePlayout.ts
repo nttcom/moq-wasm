@@ -130,10 +130,18 @@ export class LivePlayout {
     this.catchUp = catchUp
   }
 
-  /// The sound has to reach the audio device before it is due, so the
-  /// buffer covers the output latency on top of the arrival spread.
   targetBufferMs(): number {
-    return this.jitterBuffer.targetMs() + (this.audioActive() ? this.audio.outputLatencyMs() : 0)
+    return this.jitterBuffer.targetMs(this.outputLatencyMs())
+  }
+
+  arrivalSpreadMs(): number | undefined {
+    return this.jitterBuffer.spreadMs()
+  }
+
+  /// The sound has to reach the audio device before it is due, so the buffer
+  /// covers how long the device takes to play what it is handed.
+  outputLatencyMs(): number {
+    return this.audioActive() ? this.audio.outputLatencyMs() : 0
   }
 
   /// How long the fastest arrival of the window waits before it is presented.
@@ -265,7 +273,10 @@ export class LivePlayout {
     }
     const nowMs = performance.now()
     const newest = Math.max(...held.map((sample) => sample.captureMicros))
-    this.clock.anchor(newest, nowMs + this.jitterBuffer.openingTargetMs(longestArrivalGapMs(held)))
+    this.clock.anchor(
+      newest,
+      nowMs + this.jitterBuffer.openingTargetMs(longestArrivalGapMs(held), this.audio.outputLatencyMs())
+    )
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
       if (due < nowMs) {
