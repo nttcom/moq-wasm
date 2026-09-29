@@ -24,6 +24,29 @@ pub enum FilterType {
 }
 
 impl FilterType {
+    /// draft-14 §9.7: the Start Location of a subscription with this filter,
+    /// given the Largest Location of its SUBSCRIBE_OK (`None` when no content
+    /// has been delivered yet).
+    pub fn start_location(&self, largest: Option<Location>) -> Location {
+        match (self, largest) {
+            (Self::AbsoluteStart { location } | Self::AbsoluteRange { location, .. }, _) => {
+                *location
+            }
+            (Self::LargestObject, Some(largest)) => Location {
+                group_id: largest.group_id,
+                object_id: largest.object_id + 1,
+            },
+            (Self::NextGroupStart, Some(largest)) => Location {
+                group_id: largest.group_id + 1,
+                object_id: 0,
+            },
+            (Self::LargestObject | Self::NextGroupStart, None) => Location {
+                group_id: 0,
+                object_id: 0,
+            },
+        }
+    }
+
     pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
         let value = FilterTypeValue::try_from(bytes.get_u8()).ok()?;
         match value {
@@ -74,5 +97,59 @@ impl FilterType {
                 payload
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FilterType;
+    use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
+
+    fn location(group_id: u64, object_id: u64) -> Location {
+        Location {
+            group_id,
+            object_id,
+        }
+    }
+
+    #[test]
+    fn largest_object_starts_after_the_largest_location() {
+        // Act
+        let start = FilterType::LargestObject.start_location(Some(location(5, 3)));
+
+        // Assert
+        assert_eq!(start, location(5, 4));
+    }
+
+    #[test]
+    fn next_group_start_starts_at_the_next_group() {
+        // Act
+        let start = FilterType::NextGroupStart.start_location(Some(location(5, 3)));
+
+        // Assert
+        assert_eq!(start, location(6, 0));
+    }
+
+    #[test]
+    fn filter_without_delivered_content_starts_at_the_beginning() {
+        // Act
+        let start = FilterType::NextGroupStart.start_location(None);
+
+        // Assert
+        assert_eq!(start, location(0, 0));
+    }
+
+    #[test]
+    fn absolute_start_keeps_the_requested_location_below_the_largest() {
+        // Arrange
+        let filter_type = FilterType::AbsoluteStart {
+            location: location(2, 0),
+        };
+
+        // Act
+        let start = filter_type.start_location(Some(location(5, 3)));
+
+        // Assert
+        assert_eq!(start, location(2, 0));
     }
 }
