@@ -48,7 +48,9 @@ import {
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
-const TIMELINE_CAPACITY = 64
+/// The relay's default RELAY_CACHE_TTL_SECS: draft-ietf-moq-transport-14 gives
+/// a subscriber no way to ask which groups the relay still caches.
+const RELAY_CACHE_TTL_MICROS = 60_000_000
 const REWIND_GROUP_COUNT = 4n
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
@@ -134,12 +136,12 @@ showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
-const unstampedGroups = new Set<bigint>()
+const unstampedGroupObservedAt = new Map<bigint, number>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
-const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+const timeline = new GroupTimeline(RELAY_CACHE_TTL_MICROS, monotonicUnixMicros)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
@@ -483,16 +485,18 @@ async function switchPackaging(): Promise<void> {
 /// caches a track from its first subscriber on, so earlier groups the media
 /// timeline lists cannot be fetched.
 function observeTimelineGroup(groupId: bigint): void {
-  unstampedGroups.add(groupId)
+  if (!unstampedGroupObservedAt.has(groupId)) {
+    unstampedGroupObservedAt.set(groupId, monotonicUnixMicros())
+  }
   stampObservedGroups()
 }
 
 function stampObservedGroups(): void {
-  for (const groupId of unstampedGroups) {
+  for (const [groupId, observedAtMicros] of unstampedGroupObservedAt) {
     const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
     if (encodedAtMs !== undefined) {
-      timeline.recordCapture(groupId, encodedAtMs * 1_000)
-      unstampedGroups.delete(groupId)
+      timeline.recordCapture(groupId, encodedAtMs * 1_000, observedAtMicros)
+      unstampedGroupObservedAt.delete(groupId)
     }
   }
 }
@@ -655,7 +659,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
 
   if (kind === 'video') {
     timeline.reset()
-    unstampedGroups.clear()
+    unstampedGroupObservedAt.clear()
     backToLive()
   } else {
     newestAudioGroupId = undefined
@@ -691,7 +695,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     monitored(subscribeOk.trackAlias, wire.name, (groupId, object) => {
       if (kind === 'video') {
         videoObjectCount += 1
-        timeline.record(groupId, object.locHeader, monotonicUnixMicros())
+        timeline.record(groupId, object.locHeader)
         renderSeekbar()
         if (!reviewing) {
           setStatus('playback-status', `Playing ${trackName}`, 'ok')
@@ -1169,7 +1173,7 @@ function observeLiveVideoGroup(groupId: bigint): void {
   if (packaging === 'cmaf' || (name !== undefined && mediaTimelineDepends.includes(name))) {
     observeTimelineGroup(groupId)
   } else {
-    timeline.recordLiveGroup(groupId, monotonicUnixMicros())
+    timeline.recordLiveGroup(groupId)
   }
   renderSeekbar()
 }

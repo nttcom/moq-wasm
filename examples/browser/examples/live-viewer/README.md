@@ -412,7 +412,9 @@ a few seconds and come back when it moves.
 The slider below the video spans the whole broadcast: its left end is the start,
 placed by the MSF media timeline, and its right end is the live edge. The thin bar
 underneath marks the part of that range the relay still caches and can therefore
-replay, which is the only part a seek resolves. Home jumps to the oldest
+replay, which is the only part a seek resolves. The relay cannot be asked which
+groups it still holds, so the bar covers the groups the viewer observed within the
+relay's default cache TTL (60 s) and shrinks as they age out. Home jumps to the oldest
 replayable position rather than to the start of the broadcast, and End returns to
 live.
 
