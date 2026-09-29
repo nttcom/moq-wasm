@@ -480,7 +480,7 @@ async fn handle_session_event(
                 handler.track_namespace_prefix
             );
             let _ = handler
-                .error(405, "unsupported subscribe namespace".to_string())
+                .error(0x3, "unsupported subscribe namespace".to_string())
                 .await;
             Ok(None)
         }
@@ -525,7 +525,7 @@ async fn handle_media_subscribe_event(
             handler.track_namespace,
             track_name
         );
-        let _ = handler.error(404, "unsupported track".to_string()).await;
+        let _ = handler.error(0x4, "unsupported track".to_string()).await;
         return Ok(None);
     }
 
@@ -586,7 +586,7 @@ async fn handle_media_subscribe_event(
                 profile_tracks[*selected_index].profile_token
             );
             let _ = handler
-                .error(409, "another profile is already active".to_string())
+                .error(0x4, "another profile is already active".to_string())
                 .await;
             return Ok(None);
         }
@@ -670,7 +670,7 @@ async fn handle_command_publish_event(
             handler.track_name
         );
         let _ = handler
-            .error(404, "unsupported publish track".to_string())
+            .error(0x4, "unsupported publish track".to_string())
             .await;
         return Ok(());
     }
@@ -681,7 +681,7 @@ async fn handle_command_publish_event(
             handler.track_name
         );
         let _ = handler
-            .error(409, "command track already active".to_string())
+            .error(0x4, "command track already active".to_string())
             .await;
         return Ok(());
     }
