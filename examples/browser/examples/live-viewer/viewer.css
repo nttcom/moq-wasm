@@ -626,12 +626,6 @@
   stroke-width: 2;
 }
 
-.delivery-buffer {
-  fill: rgba(56, 189, 248, 0.18);
-  stroke: #38bdf8;
-  stroke-width: 1;
-}
-
 .viewer-delivery-grid-review {
   margin-top: 4px;
   border-top: 1px solid rgba(255, 255, 255, 0.25);

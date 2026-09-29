@@ -163,7 +163,7 @@ let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
 const decodedFrameIds = new Map<number, Omit<Playhead, 'kind' | 'trackAlias' | 'captureMicros'>>()
 const reviewFrameIds = new Map<number, Omit<Playhead, 'captureMicros'>>()
-let reviewFetchIds: { video?: bigint; audio?: bigint } = {}
+let reviewFetchWindows: { video?: bigint; audio?: bigint }[] = []
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
@@ -733,6 +733,7 @@ async function unsubscribeTrack(kind: MediaKind): Promise<void> {
 
   subscriptions.delete(kind)
   moqtClient.clearSubgroupObjectHandler(subscription.trackAlias)
+  streamMonitor.forget(subscription.trackAlias)
   if (moqtClient.getConnectionStatus()) {
     await moqtClient.unsubscribe(subscription.requestId)
   }
@@ -948,7 +949,11 @@ function renderStreams(): void {
   }
   const now = Date.now()
   const records = streamMonitor.snapshot()
-  const liveRecords = records.filter((record) => record.kind === 'subscribe')
+  const liveRecords = records.filter(
+    (record) =>
+      record.kind === 'subscribe' &&
+      (!reviewing || record.track === MEDIA_CATALOG_TRACK_NAME || record.track === mediaTimelineTrackName)
+  )
   const fetchRecords = records.filter((record) => record.kind === 'fetch')
   const playheads = streamMonitor.currentPlayheads()
   const livePlayhead = playheads.find((playhead) => playhead.kind === 'subscribe')
@@ -973,19 +978,24 @@ function renderStreams(): void {
       latestFetchActivity(fetchRecords, now)
     )
   }
-  renderDeliveryGrid(
-    element<SVGSVGElement>('delivery-grid'),
-    records,
-    [
-      { label: 'audio', kind: 'subscribe', trackAlias: subscriptions.get('audio')?.trackAlias },
-      { label: 'video', kind: 'subscribe', trackAlias: subscriptions.get('video')?.trackAlias }
-    ],
-    streamMonitor.slotsPerTrack(),
-    livePlayhead,
-    livePlayout.playoutDelayMs()
-  )
+  const liveGrid = element<SVGSVGElement>('delivery-grid')
+  liveGrid.style.display = reviewing ? 'none' : ''
+  if (!reviewing) {
+    renderDeliveryGrid(
+      liveGrid,
+      records,
+      [
+        { label: 'audio', kind: 'subscribe', trackAlias: subscriptions.get('audio')?.trackAlias },
+        { label: 'video', kind: 'subscribe', trackAlias: subscriptions.get('video')?.trackAlias }
+      ],
+      streamMonitor.slotsPerTrack(),
+      livePlayhead
+    )
+  }
   reviewGrid.style.display = reviewing ? '' : 'none'
   if (reviewing) {
+    const fetchIds =
+      reviewFetchWindows.find((window) => window.video === reviewPlayhead?.trackAlias) ?? reviewFetchWindows[0] ?? {}
     renderDeliveryGrid(
       reviewGrid,
       records,
@@ -993,13 +1003,13 @@ function renderStreams(): void {
         {
           label: 'fetch audio',
           kind: 'fetch',
-          trackAlias: reviewFetchIds.audio,
+          trackAlias: fetchIds.audio,
           cadenceAlias: subscriptions.get('audio')?.trackAlias
         },
         {
           label: 'fetch video',
           kind: 'fetch',
-          trackAlias: reviewFetchIds.video,
+          trackAlias: fetchIds.video,
           cadenceAlias: subscriptions.get('video')?.trackAlias
         }
       ],
@@ -1250,7 +1260,7 @@ async function fetchReviewWindow(
   }
   const audioFrames = isFetchFailure(audio) ? [] : audio
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
-  reviewFetchIds = { video: frames[0]?.requestId, audio: audioFrames[0]?.requestId }
+  reviewFetchWindows.push({ video: frames[0]?.requestId, audio: audioFrames[0]?.requestId })
   return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audioFrames) }
 }
 
@@ -1524,7 +1534,7 @@ function backToLive(): void {
   reviewing = false
   resumeLiveForward()
   reviewFrameIds.clear()
-  reviewFetchIds = {}
+  reviewFetchWindows = []
   streamMonitor.clearPlayhead('fetch')
   seeking = false
   setPaused(false)
