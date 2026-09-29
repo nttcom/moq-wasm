@@ -170,6 +170,14 @@ export class StreamMonitor {
     }
   }
 
+  forget(trackAlias: bigint): void {
+    for (const [key, record] of this.records) {
+      if (record.kind === 'subscribe' && record.trackAlias === trackAlias) {
+        this.records.delete(key)
+      }
+    }
+  }
+
   reset(): void {
     this.records.clear()
     this.labels.clear()
@@ -403,8 +411,7 @@ export function renderDeliveryGrid(
   records: StreamRecord[],
   rows: DeliveryRow[],
   groupsToShow: number,
-  from?: Playhead,
-  bufferMs = 0
+  from?: Playhead
 ): void {
   const measured = Math.round(svg.getBoundingClientRect().width)
   if (measured === 0) {
@@ -430,19 +437,9 @@ export function renderDeliveryGrid(
     const shown = ofTrack.filter((group) => start === undefined || group.groupId >= start.groupId).slice(-groupsToShow)
     const cadence = row.cadenceAlias === undefined ? ofTrack : gridGroups(records, 'subscribe', row.cadenceAlias)
     const intervalMs = objectIntervalMs(cadence)
-    const bufferCells = bufferMs > 0 ? Math.round(bufferMs / intervalMs) : 0
     parts.push(
       `<text x="${GRID_LABEL_WIDTH - 6}" y="${y + CELL_ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label"><title>${escapeXml(`${row.label}: ${ofTrack.length} groups, ${groupLength} objects per group, ${intervalMs.toFixed(1)} ms per object, cell ${cellSize} px`)}</title>${escapeXml(row.label)}</text>`
     )
-    if (bufferCells > 0) {
-      const bufferWidth = Math.min(
-        plotRight - plotLeft,
-        bufferCells * cellSize + Math.floor(bufferCells / groupLength) * GROUP_GAP
-      )
-      parts.push(
-        `<rect x="${plotLeft - 1}" y="${y + 1}" width="${bufferWidth + 1}" height="${CELL_ROW_HEIGHT - 2}" rx="2" class="delivery-buffer"><title>${escapeXml(`${row.label}: ${bufferMs} ms playout buffer ≈ ${bufferCells} objects`)}</title></rect>`
-      )
-    }
     let x = plotLeft
     let groupIndex = 0
     const cellsOf = (group?: GridGroup) =>
