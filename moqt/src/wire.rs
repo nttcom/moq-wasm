@@ -62,7 +62,7 @@ pub type TrackStatusError = RequestError;
 
 pub fn encode_control_message(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
     let mut buf = BytesMut::new();
-    buf.put_varint(u8::from(message_type) as u64);
+    buf.put_varint(message_type.into());
     // draft-14: Message Length is 16-bit fixed
     buf.put_u16(payload.len() as u16);
     buf.unsplit(payload);
@@ -87,7 +87,7 @@ pub fn take_control_message(
         return Ok(None);
     }
 
-    let message_type = ControlMessageType::try_from(message_type as u8)
+    let message_type = ControlMessageType::try_from(message_type)
         .map_err(|_| anyhow!("invalid control message type: {message_type}"))?;
     buf.advance(header_length);
     let payload = buf.split_to(payload_length);
@@ -97,10 +97,10 @@ pub fn take_control_message(
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientSetup, ControlMessageType, SetupParameter, encode_control_message,
+        BufPutExt, ClientSetup, ControlMessageType, SetupParameter, encode_control_message,
         take_control_message,
     };
-    use bytes::BytesMut;
+    use bytes::{BufMut, BytesMut};
 
     #[test]
     fn control_message_frame_round_trip() {
@@ -135,5 +135,19 @@ mod tests {
 
         let result = take_control_message(&mut partial).expect("partial decode should not fail");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn control_message_type_above_one_byte_is_rejected_instead_of_truncated() {
+        // Arrange: 0x103 truncated to a byte would read as SUBSCRIBE (0x03)
+        let mut framed = BytesMut::new();
+        framed.put_varint(0x103);
+        framed.put_u16(0);
+
+        // Act
+        let result = take_control_message(&mut framed);
+
+        // Assert
+        assert!(result.is_err());
     }
 }

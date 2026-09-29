@@ -1,7 +1,7 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[derive(Debug, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy, Clone)]
-#[repr(u8)]
+#[repr(u64)]
 pub enum ControlMessageType {
     // setup and dispose
     // less version than 10.
