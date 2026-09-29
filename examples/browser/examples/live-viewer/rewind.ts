@@ -74,6 +74,15 @@ export class GroupTimeline {
     return this.cached().at(-2)
   }
 
+  get oldestClosed(): GroupMark | undefined {
+    const marks = this.cached()
+    return marks.length > 1 ? marks[0] : undefined
+  }
+
+  forgetThrough(groupId: bigint): void {
+    this.marks = this.marks.filter((mark) => mark.groupId > groupId)
+  }
+
   get span(): number {
     const oldest = this.cached()[0]
     const latest = this.latest

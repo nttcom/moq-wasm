@@ -437,8 +437,12 @@ newest closed group it waits for the publisher to close another one.
 The slider is disabled until a closed group is available. Stop and video quality
 changes clear the timeline and cancel pending review playback. The observed
 range is not a guarantee of relay cache retention: an evicted group can no longer
-be replayed. A failed seek reports the FETCH error and holds the requested
-position, so pick another position or press Live to resume.
+be replayed. A FETCH that fails, or whose stream is reset, with INTERNAL_ERROR,
+TIMEOUT, INVALID_RANGE, NO_OBJECTS or UNKNOWN_STATUS_IN_RANGE, or that returns no
+objects, is taken as eviction: the groups up to the failed one leave the
+timeline and review resumes from the oldest group left, or goes live when none
+is. Any other failure reports the FETCH error and holds the requested position,
+so pick another position or press Live to resume.
 
 ## Broadcast elapsed time
 
