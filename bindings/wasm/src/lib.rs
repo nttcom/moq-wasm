@@ -90,6 +90,13 @@ impl TrackKey {
 
 #[cfg(web_sys_unstable_apis)]
 #[derive(Debug, Clone)]
+struct OutgoingPublishRequest {
+    track_key: TrackKey,
+    track_alias: u64,
+}
+
+#[cfg(web_sys_unstable_apis)]
+#[derive(Debug, Clone)]
 struct OutgoingSubscribeRequest {
     track_key: TrackKey,
     subscriber_priority: u8,
@@ -122,7 +129,7 @@ struct ClientState {
     subscribed_namespace_prefixes: HashSet<Vec<String>>,
     publish_namespace_requests: HashMap<u64, Vec<String>>,
     subscribe_namespace_requests: HashMap<u64, Vec<String>>,
-    publish_requests: HashMap<u64, TrackKey>,
+    publish_requests: HashMap<u64, OutgoingPublishRequest>,
     outgoing_subscriptions: HashMap<u64, OutgoingSubscribeRequest>,
     incoming_subscriptions: HashMap<u64, IncomingSubscribeRequest>,
     publishing_track_aliases: HashMap<TrackKey, BTreeSet<u64>>,
@@ -177,12 +184,43 @@ impl ClientState {
         }
     }
 
-    fn register_publish_request(&mut self, request_id: u64, track_key: TrackKey) {
-        self.publish_requests.insert(request_id, track_key);
+    fn register_publish_request(&mut self, request_id: u64, track_key: TrackKey, track_alias: u64) {
+        self.add_publishing_alias(track_key.clone(), track_alias);
+        self.publish_requests.insert(
+            request_id,
+            OutgoingPublishRequest {
+                track_key,
+                track_alias,
+            },
+        );
     }
 
-    fn finish_publish_request(&mut self, request_id: u64) {
-        self.publish_requests.remove(&request_id);
+    fn finish_publish_request(&mut self, request_id: u64, accepted: bool) {
+        if let Some(request) = self.publish_requests.remove(&request_id)
+            && !accepted
+        {
+            self.remove_publishing_alias(&request.track_key, request.track_alias);
+        }
+    }
+
+    fn add_publishing_alias(&mut self, track_key: TrackKey, track_alias: u64) {
+        self.alias_to_track_key
+            .insert(track_alias, track_key.clone());
+        self.publishing_track_aliases
+            .entry(track_key)
+            .or_default()
+            .insert(track_alias);
+    }
+
+    fn remove_publishing_alias(&mut self, track_key: &TrackKey, track_alias: u64) {
+        self.alias_to_track_key.remove(&track_alias);
+        self.subgroup_states.remove(&track_alias);
+        if let Some(aliases) = self.publishing_track_aliases.get_mut(track_key) {
+            aliases.remove(&track_alias);
+            if aliases.is_empty() {
+                self.publishing_track_aliases.remove(track_key);
+            }
+        }
     }
 
     fn start_outgoing_subscription(
@@ -313,14 +351,7 @@ impl ClientState {
             (track_alias, entry.track_key.clone())
         };
         let content_exists = self.published_content(&track_key);
-
-        self.alias_to_track_key
-            .insert(track_alias, track_key.clone());
-        self.publishing_track_aliases
-            .entry(track_key)
-            .or_default()
-            .insert(track_alias);
-
+        self.add_publishing_alias(track_key, track_alias);
         Ok((track_alias, content_exists))
     }
 
@@ -333,18 +364,9 @@ impl ClientState {
 
     fn remove_incoming_subscribe(&mut self, request_id: u64) -> Option<u64> {
         let removed = self.incoming_subscriptions.remove(&request_id)?;
-        if let Some(track_alias) = removed.track_alias {
-            self.alias_to_track_key.remove(&track_alias);
-            self.subgroup_states.remove(&track_alias);
-            if let Some(aliases) = self.publishing_track_aliases.get_mut(&removed.track_key) {
-                aliases.remove(&track_alias);
-                if aliases.is_empty() {
-                    self.publishing_track_aliases.remove(&removed.track_key);
-                }
-            }
-            return Some(track_alias);
-        }
-        None
+        let track_alias = removed.track_alias?;
+        self.remove_publishing_alias(&removed.track_key, track_alias);
+        Some(track_alias)
     }
 
     fn get_track_subscribers(&self, namespace: Vec<String>, track_name: String) -> Vec<u64> {
@@ -926,9 +948,11 @@ impl MOQTClient {
             max_duration: None,
         }
         .encode();
-        self.state
-            .borrow_mut()
-            .register_publish_request(request_id, TrackKey::new(track_namespace, track_name));
+        self.state.borrow_mut().register_publish_request(
+            request_id,
+            TrackKey::new(track_namespace, track_name),
+            track_alias,
+        );
         self.control_stream
             .send(ControlMessageType::Publish, payload)
             .await?;
@@ -2101,7 +2125,7 @@ impl ControlMessageHandler {
                     .ok_or_else(|| js_error("failed to decode PUBLISH_OK"))?;
                 state
                     .borrow_mut()
-                    .finish_publish_request(message.request_id);
+                    .finish_publish_request(message.request_id, true);
                 if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
                     let wrapper = PublishOkMessage::from(&message);
                     let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
@@ -2112,7 +2136,7 @@ impl ControlMessageHandler {
                     .ok_or_else(|| js_error("failed to decode PUBLISH_ERROR"))?;
                 state
                     .borrow_mut()
-                    .finish_publish_request(message.request_id);
+                    .finish_publish_request(message.request_id, false);
                 if let Some(callback) = callbacks.borrow().publish_response_callback.clone() {
                     let wrapper = RequestErrorMessage::from(&message);
                     let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
@@ -2702,6 +2726,45 @@ mod tests {
         state
             .answer_incoming_track_status(request.request_id)
             .unwrap()
+    }
+
+    fn track_key() -> TrackKey {
+        TrackKey::new(vec![NAMESPACE.to_string()], TRACK.to_string())
+    }
+
+    #[test]
+    fn objects_sent_on_a_publish_alias_are_the_published_content_of_its_track() {
+        // Arrange
+        let mut state = publishing_state();
+        state.register_publish_request(2, track_key(), 7);
+
+        // Act
+        state.record_published_object(7, location(3, 1));
+
+        // Assert
+        assert_eq!(
+            state.published_content(&track_key()),
+            ContentExists::True {
+                location: location(3, 1)
+            }
+        );
+    }
+
+    #[test]
+    fn a_rejected_publish_releases_its_track_alias() {
+        // Arrange
+        let mut state = publishing_state();
+        state.register_publish_request(2, track_key(), 7);
+
+        // Act
+        state.finish_publish_request(2, false);
+
+        // Assert
+        assert!(
+            state
+                .get_track_subscribers(vec![NAMESPACE.to_string()], TRACK.to_string())
+                .is_empty()
+        );
     }
 
     #[test]
