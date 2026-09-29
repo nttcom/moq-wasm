@@ -57,6 +57,8 @@ export interface SubscribeNamespaceOptions {
 export const GroupOrder = { Publisher: 0, Ascending: 1, Descending: 2 } as const
 export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
 
+export const RequestErrorCode = { NotSupported: 0x3n, TrackDoesNotExist: 0x4n } as const
+
 export interface SubscribeOptions {
   /**
    * Override the request id. When omitted, a session-unique id is issued
@@ -121,9 +123,16 @@ export interface IncomingSubscribeContext {
   respondError(code: bigint, reasonPhrase: string): Promise<void>
 }
 
+export interface IncomingTrackStatusContext {
+  trackStatus: SubscribeMessage
+  respondOk(): Promise<void>
+  respondError(code: bigint, reasonPhrase: string): Promise<void>
+}
+
 type IncomingPublishNamespaceHandler = (ctx: IncomingPublishNamespaceContext) => Promise<void> | void
 type IncomingPublishNamespaceDoneHandler = (message: PublishNamespaceDoneMessage) => void
 type IncomingSubscribeHandler = (ctx: IncomingSubscribeContext) => Promise<void> | void
+type IncomingTrackStatusHandler = (ctx: IncomingTrackStatusContext) => Promise<void> | void
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
@@ -138,6 +147,7 @@ export class MoqtClientWrapper {
   private onConnectionClosedHandler: ConnectionClosedHandler = null
   private incomingSubscribeHandler: IncomingSubscribeHandler | null = null
   private incomingUnsubscribeHandler: IncomingUnsubscribeHandler = null
+  private incomingTrackStatusHandler: IncomingTrackStatusHandler | null = null
   private onServerSetupHandler: ((setup: ServerSetupMessage) => void) | null = null
   private onObjectDatagramHandler: ObjectDatagramHandler = null
   private onObjectDatagramStatusHandler: ObjectDatagramStatusHandler = null
@@ -271,6 +281,10 @@ export class MoqtClientWrapper {
 
   setOnIncomingUnsubscribeHandler(handler: IncomingUnsubscribeHandler | null): void {
     this.incomingUnsubscribeHandler = handler
+  }
+
+  setOnIncomingTrackStatusHandler(handler: IncomingTrackStatusHandler | null): void {
+    this.incomingTrackStatusHandler = handler
   }
 
   setOnObjectDatagramHandler(handler: ObjectDatagramHandler): void {
@@ -626,6 +640,15 @@ export class MoqtClientWrapper {
       }
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
     })
+    this.client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
+      const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
+      await handler({
+        trackStatus,
+        respondOk: () => this.requireConnectedClient().sendTrackStatusOk(trackStatus.requestId),
+        respondError: (errorCode, reasonPhrase) =>
+          this.requireConnectedClient().sendTrackStatusError(trackStatus.requestId, errorCode, reasonPhrase)
+      })
+    })
     this.client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
       this.onTrackStatusResponseHandler?.(response)
       const pending = this.pendingTrackStatus.get(response.requestId)
@@ -721,6 +744,7 @@ export class MoqtClientWrapper {
     this.onConnectionClosedHandler = null
     this.incomingSubscribeHandler = null
     this.incomingUnsubscribeHandler = null
+    this.incomingTrackStatusHandler = null
     this.onServerSetupHandler = null
     this.onObjectDatagramHandler = null
     this.onObjectDatagramStatusHandler = null
@@ -748,6 +772,10 @@ const defaultIncomingPublishNamespaceHandler: IncomingPublishNamespaceHandler = 
 
 const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ code, respondError }) => {
   await respondError(BigInt(code || 500), 'subscribe rejected')
+}
+
+const defaultIncomingTrackStatusHandler: IncomingTrackStatusHandler = async ({ respondError }) => {
+  await respondError(RequestErrorCode.NotSupported, 'track status not supported')
 }
 
 function describeConnectionClose(info: ConnectionCloseInfo): string {

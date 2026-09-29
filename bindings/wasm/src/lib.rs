@@ -6,10 +6,14 @@ mod media_streaming_format;
 #[cfg(web_sys_unstable_apis)]
 mod messages;
 mod mp4;
+#[cfg(web_sys_unstable_apis)]
+mod request_rejection;
 
 pub use media_streaming_format::*;
 #[cfg(web_sys_unstable_apis)]
 pub use messages::*;
+#[cfg(web_sys_unstable_apis)]
+use request_rejection::RequestRejection;
 
 #[cfg(web_sys_unstable_apis)]
 use anyhow::{Result, anyhow};
@@ -96,6 +100,13 @@ struct IncomingSubscribeRequest {
 }
 
 #[cfg(web_sys_unstable_apis)]
+#[derive(Debug, Clone)]
+struct IncomingTrackStatusRequest {
+    track_key: TrackKey,
+    group_order: GroupOrder,
+}
+
+#[cfg(web_sys_unstable_apis)]
 #[derive(Debug, Default)]
 struct ClientState {
     max_request_id: u64,
@@ -110,6 +121,8 @@ struct ClientState {
     alias_to_track_key: HashMap<u64, TrackKey>,
     subgroup_states: HashMap<u64, SubgroupState>,
     next_track_alias: u64,
+    largest_published_locations: HashMap<TrackKey, Location>,
+    incoming_track_statuses: HashMap<u64, IncomingTrackStatusRequest>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -278,6 +291,74 @@ impl ClientState {
             .unwrap_or_default()
     }
 
+    fn record_published_object(&mut self, track_alias: u64, location: Location) {
+        let Some(track_key) = self
+            .publishing_track_aliases
+            .iter()
+            .find(|(_, aliases)| aliases.contains(&track_alias))
+            .map(|(track_key, _)| track_key.clone())
+        else {
+            return;
+        };
+        let largest = self
+            .largest_published_locations
+            .entry(track_key)
+            .or_insert(location);
+        *largest = (*largest).max(location);
+    }
+
+    fn published_content(&self, track_key: &TrackKey) -> ContentExists {
+        match self.largest_published_locations.get(track_key) {
+            Some(location) => ContentExists::True {
+                location: *location,
+            },
+            None => ContentExists::False,
+        }
+    }
+
+    fn accept_incoming_track_status(
+        &mut self,
+        message: &TrackStatus,
+    ) -> Result<(), RequestRejection> {
+        if !self.contains_published_namespace(&message.track_namespace) {
+            return Err(RequestRejection::TrackDoesNotExist);
+        }
+        self.incoming_track_statuses.insert(
+            message.request_id,
+            IncomingTrackStatusRequest {
+                track_key: TrackKey::new(
+                    message.track_namespace.clone(),
+                    message.track_name.clone(),
+                ),
+                group_order: message.group_order,
+            },
+        );
+        Ok(())
+    }
+
+    fn answer_incoming_track_status(&mut self, request_id: u64) -> Result<TrackStatusOk> {
+        let request = self
+            .incoming_track_statuses
+            .remove(&request_id)
+            .ok_or_else(|| anyhow!("unknown track status request: {request_id}"))?;
+        Ok(TrackStatusOk {
+            request_id,
+            track_alias: 0,
+            expires: 0,
+            group_order: request.group_order.delivered(),
+            content_exists: self.published_content(&request.track_key),
+            delivery_timeout: None,
+            max_duration: None,
+        })
+    }
+
+    fn reject_incoming_track_status(&mut self, request_id: u64) -> Result<()> {
+        self.incoming_track_statuses
+            .remove(&request_id)
+            .map(|_| ())
+            .ok_or_else(|| anyhow!("unknown track status request: {request_id}"))
+    }
+
     fn subgroup_state_entry(&mut self, track_alias: u64) -> &mut SubgroupState {
         self.subgroup_states
             .entry(track_alias)
@@ -355,6 +436,7 @@ impl ControlStreamSender {
 struct ControlMessageHandler {
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     state: Rc<RefCell<ClientState>>,
+    control_stream: ControlStreamSender,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -478,6 +560,11 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = onFetchStreamEnd)]
     pub fn set_fetch_stream_end_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().fetch_stream_end_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onTrackStatus)]
+    pub fn set_track_status_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().track_status_callback = Some(callback);
     }
 
     #[wasm_bindgen(js_name = onTrackStatusResponse)]
@@ -1056,6 +1143,39 @@ impl MOQTClient {
             .await
     }
 
+    #[wasm_bindgen(js_name = sendTrackStatusOk)]
+    pub async fn send_track_status_ok(&self, request_id: u64) -> Result<(), JsValue> {
+        let track_status_ok = self
+            .state
+            .borrow_mut()
+            .answer_incoming_track_status(request_id)
+            .map_err(|error| js_error(error.to_string()))?;
+        self.control_stream
+            .send(ControlMessageType::TrackStatusOk, track_status_ok.encode())
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendTrackStatusError)]
+    pub async fn send_track_status_error(
+        &self,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.state
+            .borrow_mut()
+            .reject_incoming_track_status(request_id)
+            .map_err(|error| js_error(error.to_string()))?;
+        self.control_stream
+            .send_request_error(
+                ControlMessageType::TrackStatusError,
+                request_id,
+                error_code,
+                reason_phrase,
+            )
+            .await
+    }
+
     #[wasm_bindgen(js_name = sendObjectDatagram)]
     pub async fn send_object_datagram(
         &self,
@@ -1080,7 +1200,9 @@ impl MOQTClient {
         let payload = ObjectDatagram::new(track_alias, group_id, field)
             .encode()
             .map_err(|error| js_error(error.to_string()))?;
-        self.send_datagram_bytes(&payload).await
+        self.send_datagram_bytes(&payload).await?;
+        self.record_published_object(track_alias, group_id, object_id);
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = sendObjectDatagramStatus)]
@@ -1109,7 +1231,9 @@ impl MOQTClient {
         let payload = ObjectDatagram::new(track_alias, group_id, field)
             .encode()
             .map_err(|error| js_error(error.to_string()))?;
-        self.send_datagram_bytes(&payload).await
+        self.send_datagram_bytes(&payload).await?;
+        self.record_published_object(track_alias, group_id, object_id);
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = sendSubgroupHeader)]
@@ -1195,6 +1319,7 @@ impl MOQTClient {
         .encode();
 
         write_to_writer(&writer, &bytes).await?;
+        self.record_published_object(track_alias, group_id, object_number);
         self.stream_object_numbers
             .borrow_mut()
             .insert(writer_key, object_number);
@@ -1283,6 +1408,7 @@ impl MOQTClient {
         let handler = ControlMessageHandler {
             callbacks: self.callbacks.clone(),
             state: self.state.clone(),
+            control_stream: self.control_stream.clone(),
         };
         wasm_bindgen_futures::spawn_local(async move {
             let _ = control_stream_read_thread(handler, &control_reader).await;
@@ -1303,6 +1429,16 @@ impl MOQTClient {
         });
 
         Ok(())
+    }
+
+    fn record_published_object(&self, track_alias: u64, group_id: u64, object_id: u64) {
+        self.state.borrow_mut().record_published_object(
+            track_alias,
+            Location {
+                group_id,
+                object_id,
+            },
+        );
     }
 
     async fn send_datagram_bytes(&self, payload: &[u8]) -> Result<(), JsValue> {
@@ -1715,6 +1851,11 @@ impl ControlMessageHandler {
                     let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
                 }
             }
+            ControlMessageType::TrackStatus => {
+                let message = TrackStatus::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode TRACK_STATUS"))?;
+                self.receive_track_status(message).await?;
+            }
             ControlMessageType::TrackStatusOk => {
                 let message = TrackStatusOk::decode(&mut cursor)
                     .ok_or_else(|| js_error("failed to decode TRACK_STATUS_OK"))?;
@@ -1737,6 +1878,47 @@ impl ControlMessageHandler {
         }
 
         Ok(())
+    }
+
+    async fn receive_track_status(&self, message: TrackStatus) -> Result<(), JsValue> {
+        let request_id = message.request_id;
+        let Some(callback) = self.callbacks.borrow().track_status_callback.clone() else {
+            return self
+                .reject(
+                    ControlMessageType::TrackStatusError,
+                    request_id,
+                    RequestRejection::NotSupported,
+                )
+                .await;
+        };
+        let accepted = self
+            .state
+            .borrow_mut()
+            .accept_incoming_track_status(&message);
+        if let Err(rejection) = accepted {
+            return self
+                .reject(ControlMessageType::TrackStatusError, request_id, rejection)
+                .await;
+        }
+        let wrapper = SubscribeMessage::from(&message);
+        let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+        Ok(())
+    }
+
+    async fn reject(
+        &self,
+        message_type: ControlMessageType,
+        request_id: u64,
+        rejection: RequestRejection,
+    ) -> Result<(), JsValue> {
+        self.control_stream
+            .send_request_error(
+                message_type,
+                request_id,
+                rejection.code(),
+                rejection.reason().to_string(),
+            )
+            .await
     }
 }
 
@@ -2045,6 +2227,7 @@ struct MOQTCallbacks {
     fetch_response_callback: Option<js_sys::Function>,
     fetch_object_callback: Option<js_sys::Function>,
     fetch_stream_end_callback: Option<js_sys::Function>,
+    track_status_callback: Option<js_sys::Function>,
     track_status_response_callback: Option<js_sys::Function>,
     connection_closed_callback: Option<js_sys::Function>,
 }
@@ -2052,3 +2235,141 @@ struct MOQTCallbacks {
 #[cfg(not(web_sys_unstable_apis))]
 #[wasm_bindgen]
 pub struct MOQTClient;
+
+#[cfg(all(test, web_sys_unstable_apis))]
+mod tests {
+    use super::*;
+
+    const NAMESPACE: &str = "live";
+    const TRACK: &str = "video";
+
+    fn subscribe(request_id: u64, group_order: GroupOrder) -> Subscribe {
+        Subscribe {
+            request_id,
+            track_namespace: vec![NAMESPACE.to_string()],
+            track_name: TRACK.to_string(),
+            subscriber_priority: 0,
+            group_order,
+            forward: true,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        }
+    }
+
+    fn location(group_id: u64, object_id: u64) -> Location {
+        Location {
+            group_id,
+            object_id,
+        }
+    }
+
+    fn publishing_state() -> ClientState {
+        let mut state = ClientState::default();
+        state.register_publish_namespace_request(0, vec![NAMESPACE.to_string()]);
+        state
+    }
+
+    fn subscribed_track_alias(state: &mut ClientState, request_id: u64) -> u64 {
+        state.register_incoming_subscribe(&subscribe(request_id, GroupOrder::Ascending));
+        state.activate_incoming_subscribe(request_id).unwrap()
+    }
+
+    fn answer_track_status(state: &mut ClientState, request: &TrackStatus) -> TrackStatusOk {
+        state.accept_incoming_track_status(request).unwrap();
+        state
+            .answer_incoming_track_status(request.request_id)
+            .unwrap()
+    }
+
+    #[test]
+    fn track_status_ok_reports_the_largest_object_sent_on_the_track() {
+        // Arrange
+        let mut state = publishing_state();
+        let track_alias = subscribed_track_alias(&mut state, 2);
+        state.record_published_object(track_alias, location(3, 1));
+        state.record_published_object(track_alias, location(2, 9));
+
+        // Act
+        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+
+        // Assert
+        assert_eq!(track_status_ok.track_alias, 0);
+        assert_eq!(
+            track_status_ok.content_exists,
+            ContentExists::True {
+                location: location(3, 1)
+            }
+        );
+    }
+
+    #[test]
+    fn track_status_ok_reports_no_content_before_an_object_is_sent() {
+        // Arrange
+        let mut state = publishing_state();
+        subscribed_track_alias(&mut state, 2);
+
+        // Act
+        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+
+        // Assert
+        assert_eq!(track_status_ok.content_exists, ContentExists::False);
+    }
+
+    #[test]
+    fn largest_location_outlives_the_subscription_it_was_sent_on() {
+        // Arrange
+        let mut state = publishing_state();
+        let track_alias = subscribed_track_alias(&mut state, 2);
+        state.record_published_object(track_alias, location(7, 0));
+        state.remove_incoming_subscribe(2);
+
+        // Act
+        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+
+        // Assert
+        assert_eq!(
+            track_status_ok.content_exists,
+            ContentExists::True {
+                location: location(7, 0)
+            }
+        );
+    }
+
+    #[test]
+    fn track_status_ok_states_ascending_when_the_order_is_left_to_the_publisher() {
+        // Arrange
+        let mut state = publishing_state();
+
+        // Act
+        let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Publisher));
+
+        // Assert
+        assert_eq!(track_status_ok.group_order, GroupOrder::Ascending);
+    }
+
+    #[test]
+    fn track_status_for_an_unpublished_namespace_is_rejected() {
+        // Arrange
+        let mut state = ClientState::default();
+
+        // Act
+        let accepted = state.accept_incoming_track_status(&subscribe(4, GroupOrder::Ascending));
+
+        // Assert
+        assert_eq!(accepted, Err(RequestRejection::TrackDoesNotExist));
+    }
+
+    #[test]
+    fn a_track_status_request_is_answered_only_once() {
+        // Arrange
+        let mut state = publishing_state();
+        answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
+
+        // Act
+        let answered_again = state.answer_incoming_track_status(4);
+
+        // Assert
+        assert!(answered_again.is_err());
+    }
+}
