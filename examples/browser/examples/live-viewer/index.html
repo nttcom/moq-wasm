@@ -527,7 +527,7 @@ make chrome</code></pre>
                             </select>
                           </label>
                           <label for="playout-buffer"
-                            >Buffer (ms)
+                            >Min buffer (ms)
                             <input
                               id="playout-buffer"
                               type="number"
@@ -537,6 +537,27 @@ make chrome</code></pre>
                               value="200"
                               data-testid="live-viewer-playout-buffer-input"
                             />
+                          </label>
+                          <label for="max-buffer"
+                            >Max buffer (ms)
+                            <input
+                              id="max-buffer"
+                              type="number"
+                              min="0"
+                              max="5000"
+                              step="50"
+                              placeholder="∞"
+                              data-testid="live-viewer-max-buffer-input"
+                            />
+                          </label>
+                          <output id="buffer-current" data-testid="live-viewer-buffer-current">Current: -</output>
+                          <label for="catch-up"
+                            >Catch up
+                            <select id="catch-up" data-testid="live-viewer-catch-up-select">
+                              <option value="skip">Skip (trim + crossfade)</option>
+                              <option value="speed-up">Speed up (WSOLA)</option>
+                              <option value="off">Off</option>
+                            </select>
                           </label>
                         </div>
                       </div>
@@ -611,6 +632,7 @@ make chrome</code></pre>
                 </p>
               </div>
             </div>
+            <div id="playback-charts" class="playback-charts" data-testid="live-viewer-playback-charts"></div>
           </section>
 
           <section class="card stack full">

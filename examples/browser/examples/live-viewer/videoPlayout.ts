@@ -13,9 +13,11 @@ type Presented = {
 }
 
 /// Holds decoded frames until the clock says they are due and then hands them
-/// to the sink that shows them, which also closes them. When several frames
-/// fall due together only the newest is shown. While paused nothing is shown
-/// and the frames keep waiting; `shift` moves their due times by the pause.
+/// to the sink that shows them, which also closes them. A frame is never due
+/// before one captured earlier, and when several frames fall due together
+/// only the newest is shown. While paused nothing is shown and the frames keep
+/// waiting; `shift` moves their due times by the pause, or by a move of the
+/// clock from a capture on.
 export class VideoPlayout {
   private pending: PendingFrame[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -35,8 +37,8 @@ export class VideoPlayout {
       this.dropped += 1
       return
     }
-    const index = this.pending.findIndex((pending) => pending.atMs > atMs)
-    this.pending.splice(index === -1 ? this.pending.length : index, 0, { frame, atMs })
+    this.pending.push({ frame, atMs })
+    this.keepCaptureOrder()
     this.schedule()
   }
 
@@ -58,13 +60,16 @@ export class VideoPlayout {
     this.schedule()
   }
 
-  shift(deltaMs: number): void {
+  shift(deltaMs: number, fromCaptureMicros = Number.NEGATIVE_INFINITY): void {
     for (const pending of this.pending) {
-      pending.atMs += deltaMs
+      if (pending.frame.timestamp >= fromCaptureMicros) {
+        pending.atMs += deltaMs
+      }
     }
-    if (this.last) {
+    if (this.last && this.last.captureMicros >= fromCaptureMicros) {
       this.last = { ...this.last, atMs: this.last.atMs + deltaMs }
     }
+    this.keepCaptureOrder()
     this.schedule()
   }
 
@@ -73,6 +78,15 @@ export class VideoPlayout {
       return undefined
     }
     return this.last.captureMicros + (nowMs - this.last.atMs) * MICROS_PER_MILLI
+  }
+
+  private keepCaptureOrder(): void {
+    this.pending.sort((left, right) => left.frame.timestamp - right.frame.timestamp)
+    let earliestMs = Number.NEGATIVE_INFINITY
+    for (const pending of this.pending) {
+      pending.atMs = Math.max(pending.atMs, earliestMs)
+      earliestMs = pending.atMs
+    }
   }
 
   private schedule(): void {

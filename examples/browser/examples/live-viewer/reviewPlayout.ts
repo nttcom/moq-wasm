@@ -13,7 +13,7 @@ const WAIT_POLL_MS = 200
 /// keeps step with the sound. Pausing freezes both, and resuming moves the
 /// clock by the pause so playback carries on where it stopped.
 export class ReviewPlayout {
-  private readonly clock = new PlayoutClock(REVIEW_LEAD_MS, Number.POSITIVE_INFINITY)
+  private readonly clock = new PlayoutClock()
   private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
   private readonly video: VideoPlayout
   private audioDecoder: AudioDecoder | undefined
@@ -34,7 +34,7 @@ export class ReviewPlayout {
   start(shownFromMicros: number): void {
     this.stop()
     this.shownFromMicros = shownFromMicros
-    this.clock.anchor(shownFromMicros, performance.now())
+    this.clock.anchor(shownFromMicros, performance.now() + REVIEW_LEAD_MS)
   }
 
   stop(): void {
