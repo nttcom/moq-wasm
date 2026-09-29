@@ -246,11 +246,7 @@ impl ClientState {
         track_alias
     }
 
-    fn activate_incoming_subscribe(
-        &mut self,
-        request_id: u64,
-        content_exists: ContentExists,
-    ) -> Result<u64> {
+    fn activate_incoming_subscribe(&mut self, request_id: u64) -> Result<(u64, ContentExists)> {
         let new_track_alias = self.allocate_track_alias();
         let (track_alias, track_key) = {
             let entry = self
@@ -259,12 +255,13 @@ impl ClientState {
                 .ok_or_else(|| anyhow!("unknown subscribe request: {request_id}"))?;
             let track_alias = entry.track_alias.unwrap_or(new_track_alias);
             entry.track_alias = Some(track_alias);
-            entry.largest_location = match content_exists {
-                ContentExists::True { location } => Some(location),
-                ContentExists::False => None,
-            };
+            entry.largest_location = self
+                .largest_published_locations
+                .get(&entry.track_key)
+                .copied();
             (track_alias, entry.track_key.clone())
         };
+        let content_exists = self.published_content(&track_key);
 
         self.alias_to_track_key
             .insert(track_alias, track_key.clone());
@@ -273,7 +270,7 @@ impl ClientState {
             .or_default()
             .insert(track_alias);
 
-        Ok(track_alias)
+        Ok((track_alias, content_exists))
     }
 
     fn incoming_subscribe_group_order(&self, request_id: u64) -> Result<GroupOrder> {
@@ -1076,30 +1073,24 @@ impl MOQTClient {
         self.state.borrow_mut().reset_subgroup_state(track_alias);
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(js_name = sendSubscribeOk)]
     pub async fn send_subscribe_ok(
         &self,
         request_id: u64,
         expires: u64,
-        content_exists: bool,
-        largest_group_id: Option<u64>,
-        largest_object_id: Option<u64>,
         delivery_timeout: Option<u64>,
         max_duration: Option<u64>,
     ) -> Result<u64, JsValue> {
-        let content_exists =
-            content_exists_from_fields(content_exists, largest_group_id, largest_object_id);
-        let (track_alias, group_order) = {
+        let (track_alias, content_exists, group_order) = {
             let mut state = self.state.borrow_mut();
             let group_order = state
                 .incoming_subscribe_group_order(request_id)
                 .map_err(|error| js_error(error.to_string()))?
                 .delivered();
-            let track_alias = state
-                .activate_incoming_subscribe(request_id, content_exists)
+            let (track_alias, content_exists) = state
+                .activate_incoming_subscribe(request_id)
                 .map_err(|error| js_error(error.to_string()))?;
-            (track_alias, group_order)
+            (track_alias, content_exists, group_order)
         };
 
         let payload = SubscribeOk {
@@ -2583,15 +2574,9 @@ mod tests {
         state
     }
 
-    fn answered_subscription(
-        state: &mut ClientState,
-        request_id: u64,
-        content_exists: ContentExists,
-    ) -> u64 {
+    fn answered_subscription(state: &mut ClientState, request_id: u64) -> (u64, ContentExists) {
         state.register_incoming_subscribe(&subscribe(request_id, GroupOrder::Ascending));
-        state
-            .activate_incoming_subscribe(request_id, content_exists)
-            .unwrap()
+        state.activate_incoming_subscribe(request_id).unwrap()
     }
 
     fn fetch(request_id: u64, group_order: GroupOrder, fetch_params: FetchParams) -> Fetch {
@@ -2634,7 +2619,7 @@ mod tests {
 
     fn state_with_largest(largest: Location) -> ClientState {
         let mut state = publishing_state();
-        let track_alias = answered_subscription(&mut state, 2, ContentExists::False);
+        let (track_alias, _) = answered_subscription(&mut state, 2);
         state.record_published_object(track_alias, largest);
         state
     }
@@ -2650,7 +2635,7 @@ mod tests {
     fn track_status_ok_reports_the_largest_object_sent_on_the_track() {
         // Arrange
         let mut state = publishing_state();
-        let track_alias = answered_subscription(&mut state, 2, ContentExists::False);
+        let (track_alias, _) = answered_subscription(&mut state, 2);
         state.record_published_object(track_alias, location(3, 1));
         state.record_published_object(track_alias, location(2, 9));
 
@@ -2671,7 +2656,7 @@ mod tests {
     fn track_status_ok_reports_no_content_before_an_object_is_sent() {
         // Arrange
         let mut state = publishing_state();
-        answered_subscription(&mut state, 2, ContentExists::False);
+        answered_subscription(&mut state, 2);
 
         // Act
         let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
@@ -2684,7 +2669,7 @@ mod tests {
     fn largest_location_outlives_the_subscription_it_was_sent_on() {
         // Arrange
         let mut state = publishing_state();
-        let track_alias = answered_subscription(&mut state, 2, ContentExists::False);
+        let (track_alias, _) = answered_subscription(&mut state, 2);
         state.record_published_object(track_alias, location(7, 0));
         state.remove_incoming_subscribe(2);
 
@@ -2725,6 +2710,35 @@ mod tests {
     }
 
     #[test]
+    fn subscribe_ok_reports_the_largest_object_already_sent_on_the_track() {
+        // Arrange
+        let mut state = state_with_largest(location(7, 3));
+
+        // Act
+        let (_, content_exists) = answered_subscription(&mut state, 4);
+
+        // Assert
+        assert_eq!(
+            content_exists,
+            ContentExists::True {
+                location: location(7, 3)
+            }
+        );
+    }
+
+    #[test]
+    fn subscribe_ok_reports_no_content_before_an_object_is_sent() {
+        // Arrange
+        let mut state = publishing_state();
+
+        // Act
+        let (_, content_exists) = answered_subscription(&mut state, 2);
+
+        // Assert
+        assert_eq!(content_exists, ContentExists::False);
+    }
+
+    #[test]
     fn fetch_ok_ends_after_the_largest_object_when_the_range_reaches_past_it() {
         // Arrange
         let mut state = state_with_largest(location(5, 3));
@@ -2756,19 +2770,13 @@ mod tests {
     #[test]
     fn a_relative_joining_fetch_covers_the_groups_before_the_joined_largest_location() {
         // Arrange
-        let mut state = publishing_state();
-        let track_alias = answered_subscription(
-            &mut state,
-            2,
-            ContentExists::True {
-                location: location(7, 3),
-            },
-        );
+        let mut state = state_with_largest(location(7, 3));
+        let (track_alias, _) = answered_subscription(&mut state, 4);
         state.record_published_object(track_alias, location(8, 0));
 
         // Act
         let request = state
-            .accept_incoming_fetch(&relative_joining_fetch(6, 2, 2))
+            .accept_incoming_fetch(&relative_joining_fetch(6, 4, 2))
             .unwrap();
 
         // Assert

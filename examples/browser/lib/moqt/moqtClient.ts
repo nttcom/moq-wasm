@@ -113,14 +113,7 @@ export interface IncomingSubscribeContext {
   subscribe: SubscribeMessage
   isSuccess: boolean
   code: number
-  respondOk(
-    expires?: bigint,
-    contentExists?: boolean,
-    largestGroupId?: bigint,
-    largestObjectId?: bigint,
-    deliveryTimeout?: bigint,
-    maxDuration?: bigint
-  ): Promise<bigint>
+  respondOk(expires?: bigint, deliveryTimeout?: bigint, maxDuration?: bigint): Promise<bigint>
   respondError(code: bigint, reasonPhrase: string): Promise<void>
 }
 
@@ -599,23 +592,8 @@ export class MoqtClientWrapper {
         subscribe,
         isSuccess,
         code,
-        respondOk: async (
-          expires = 0n,
-          contentExists = false,
-          largestGroupId,
-          largestObjectId,
-          deliveryTimeout,
-          maxDuration
-        ) =>
-          this.requireConnectedClient().sendSubscribeOk(
-            subscribe.requestId,
-            expires,
-            contentExists,
-            largestGroupId,
-            largestObjectId,
-            deliveryTimeout,
-            maxDuration
-          ),
+        respondOk: async (expires = 0n, deliveryTimeout, maxDuration) =>
+          this.requireConnectedClient().sendSubscribeOk(subscribe.requestId, expires, deliveryTimeout, maxDuration),
         respondError: (errorCode, reasonPhrase) =>
           this.requireConnectedClient().sendSubscribeError(subscribe.requestId, errorCode, reasonPhrase)
       })
