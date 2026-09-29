@@ -142,8 +142,8 @@ const timeline = new GroupTimeline(TIMELINE_CAPACITY)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
-const decodedFrameIds = new Map<number, Omit<Playhead, 'kind' | 'trackAlias'>>()
-const reviewFrameIds = new Map<number, Playhead>()
+const decodedFrameIds = new Map<number, Omit<Playhead, 'kind' | 'trackAlias' | 'captureMicros'>>()
+const reviewFrameIds = new Map<number, Omit<Playhead, 'captureMicros'>>()
 let reviewFetchIds: { video?: bigint; audio?: bigint } = {}
 let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
@@ -772,7 +772,7 @@ function showReviewFrame(frame: VideoFrame): void {
   const ids = reviewFrameIds.get(frame.timestamp)
   reviewFrameIds.delete(frame.timestamp)
   if (ids) {
-    streamMonitor.setPlayhead(ids)
+    streamMonitor.setPlayhead({ ...ids, captureMicros: frame.timestamp })
   }
   const canvas = element<HTMLCanvasElement>('review')
   const context = canvas.getContext('2d')
@@ -856,7 +856,7 @@ function markPlayhead(frame: VideoFrame): void {
   decodedFrameIds.delete(frame.timestamp)
   const trackAlias = subscriptions.get('video')?.trackAlias
   if (ids && trackAlias !== undefined) {
-    streamMonitor.setPlayhead({ kind: 'subscribe', trackAlias, ...ids })
+    streamMonitor.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros: frame.timestamp })
   }
 }
 
@@ -1136,17 +1136,18 @@ async function fetchFrames(
   try {
     ;({ requestId } = await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
       onObject: (message) => {
+        const frame = toReviewFrame(message)
         streamMonitor.fetchObject(
           message.requestId,
           trackName,
           message.groupId,
           message.objectId,
-          message.objectPayload.byteLength
+          message.objectPayload.byteLength,
+          frame?.captureMicros
         )
         if (generation !== reviewGeneration) {
           return
         }
-        const frame = toReviewFrame(message)
         if (frame) {
           frame.requestId = message.requestId
           frames.push(frame)

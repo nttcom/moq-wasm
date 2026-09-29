@@ -190,6 +190,17 @@ export async function expectVideoDecoded(video: Locator): Promise<void> {
     .toBeGreaterThan(0)
 }
 
+/// Cells of a delivery-overlay row that are already received, counted from the
+/// row's first cell up to the first one still missing.
+export async function receivedCellsAhead(viewer: LiveViewerPageModel, label: string): Promise<number> {
+  return viewer.page.getByTestId('live-viewer-delivery-grid').evaluate((svg, rowLabel) => {
+    const titles = Array.from(svg.querySelectorAll('rect.delivery-cell title'), (title) => title.textContent ?? '')
+    const ofRow = titles.filter((title) => title.startsWith(`${rowLabel} `))
+    const firstMissing = ofRow.findIndex((title) => !title.endsWith(': received'))
+    return firstMissing === -1 ? ofRow.length : firstMissing
+  }, label)
+}
+
 /// The stats line reads `A/V +12 ms` once both media have been presented and
 /// `A/V --` until then.
 export async function syncOffsetMs(viewer: LiveViewerPageModel): Promise<number> {

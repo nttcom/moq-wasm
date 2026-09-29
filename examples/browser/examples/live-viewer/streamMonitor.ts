@@ -27,11 +27,10 @@ export type StreamRecord = {
   bytes: number
   objects: number
   receivedAtByObjectId: Map<bigint, number>
+  captureAtByObjectId: Map<bigint, number>
   /// FETCH streams span groups, so their arrivals are kept per group.
   receivedAtByGroup: Map<bigint, Map<bigint, number>>
-  /// Capture-time span of the objects seen, for the media cadence: arrival
-  /// times are bursty and stretch over stalls, capture times are not.
-  captureSpanMicros?: { first: number; last: number }
+  captureAtByGroup: Map<bigint, Map<bigint, number>>
 }
 
 /// Live playback follows a subscribe stream, review playback a FETCH stream;
@@ -41,6 +40,7 @@ export type Playhead = {
   trackAlias: bigint
   groupId: bigint
   objectId: bigint
+  captureMicros: number
 }
 
 /// Subgroup streams the viewer has received, keyed by track alias and group;
@@ -91,7 +91,9 @@ export class StreamMonitor {
         bytes: 0,
         objects: 0,
         receivedAtByObjectId: new Map(),
-        receivedAtByGroup: new Map()
+        captureAtByObjectId: new Map(),
+        receivedAtByGroup: new Map(),
+        captureAtByGroup: new Map()
       }
       this.records.set(key, record)
     }
@@ -116,10 +118,7 @@ export class StreamMonitor {
     record.objects += 1
     record.receivedAtByObjectId.set(objectId, now)
     if (captureMicros !== undefined) {
-      record.captureSpanMicros = {
-        first: Math.min(record.captureSpanMicros?.first ?? captureMicros, captureMicros),
-        last: Math.max(record.captureSpanMicros?.last ?? captureMicros, captureMicros)
-      }
+      record.captureAtByObjectId.set(objectId, captureMicros)
     }
   }
 
@@ -131,6 +130,7 @@ export class StreamMonitor {
     groupId: bigint,
     objectId: bigint,
     payloadLength: number,
+    captureMicros?: number,
     now = Date.now()
   ): void {
     const key = `fetch:${requestId}`
@@ -146,19 +146,21 @@ export class StreamMonitor {
         bytes: 0,
         objects: 0,
         receivedAtByObjectId: new Map(),
-        receivedAtByGroup: new Map()
+        captureAtByObjectId: new Map(),
+        receivedAtByGroup: new Map(),
+        captureAtByGroup: new Map()
       }
       this.records.set(key, record)
     }
     record.lastGroupId = groupId
     record.bytes += payloadLength
     record.objects += 1
-    let ofGroup = record.receivedAtByGroup.get(groupId)
-    if (!ofGroup) {
-      ofGroup = new Map()
-      record.receivedAtByGroup.set(groupId, ofGroup)
+    const ofGroup = record.receivedAtByGroup.get(groupId) ?? new Map()
+    record.receivedAtByGroup.set(groupId, ofGroup.set(objectId, now))
+    if (captureMicros !== undefined) {
+      const captureOfGroup = record.captureAtByGroup.get(groupId) ?? new Map()
+      record.captureAtByGroup.set(groupId, captureOfGroup.set(objectId, captureMicros))
     }
-    ofGroup.set(objectId, now)
   }
 
   fetchFinished(requestId: bigint, now = Date.now()): void {
@@ -424,7 +426,8 @@ export function renderDeliveryGrid(
       2,
       Math.floor((plotRight - plotLeft - (GOPS_ACROSS - 1) * GROUP_GAP) / (GOPS_ACROSS * groupLength))
     )
-    const shown = ofTrack.filter((group) => from === undefined || group.groupId >= from.groupId).slice(-groupsToShow)
+    const start = rowStart(ofTrack, row, from)
+    const shown = ofTrack.filter((group) => start === undefined || group.groupId >= start.groupId).slice(-groupsToShow)
     const cadence = row.cadenceAlias === undefined ? ofTrack : gridGroups(records, 'subscribe', row.cadenceAlias)
     const intervalMs = objectIntervalMs(cadence)
     const bufferCells = bufferMs > 0 ? Math.round(bufferMs / intervalMs) : 0
@@ -456,13 +459,7 @@ export function renderDeliveryGrid(
           `<line x1="${dividerX}" x2="${dividerX}" y1="${y + 1}" y2="${y + CELL_ROW_HEIGHT - 1}" class="delivery-divider" />`
         )
       }
-      const firstObjectId =
-        record !== undefined &&
-        from !== undefined &&
-        row.trackAlias === from.trackAlias &&
-        record.groupId === from.groupId
-          ? Number(from.objectId)
-          : 0
+      const firstObjectId = record !== undefined && record.groupId === start?.groupId ? start.objectId : 0
       const cells = cellsOf(record)
       for (let objectId = firstObjectId; objectId < cells && x + cellSize <= plotRight; objectId++) {
         const received = record?.receivedAt.has(BigInt(objectId)) ?? false
@@ -484,8 +481,8 @@ export function renderDeliveryGrid(
 type GridGroup = {
   groupId: bigint
   receivedAt: Map<bigint, number>
+  captureAt: Map<bigint, number>
   finished: boolean
-  captureSpanMicros?: { first: number; last: number }
 }
 
 /// One grid group per subscribe stream of the alias, or per group inside the
@@ -501,16 +498,42 @@ function gridGroups(records: StreamRecord[], kind: StreamKind, trackAlias?: bigi
       groups.push({
         groupId: record.groupId,
         receivedAt: record.receivedAtByObjectId,
-        finished: record.finishedAt !== undefined,
-        captureSpanMicros: record.captureSpanMicros
+        captureAt: record.captureAtByObjectId,
+        finished: record.finishedAt !== undefined
       })
       continue
     }
     for (const [groupId, receivedAt] of record.receivedAtByGroup) {
-      groups.push({ groupId, receivedAt, finished: record.finishedAt !== undefined || groupId < record.lastGroupId })
+      groups.push({
+        groupId,
+        receivedAt,
+        captureAt: record.captureAtByGroup.get(groupId) ?? new Map(),
+        finished: record.finishedAt !== undefined || groupId < record.lastGroupId
+      })
     }
   }
   return groups.sort((a, b) => Number(a.groupId - b.groupId))
+}
+
+/// Rows of other tracks start where the shared playout clock is: at the frame on screen.
+function rowStart(
+  groups: GridGroup[],
+  row: DeliveryRow,
+  from?: Playhead
+): { groupId: bigint; objectId: number } | undefined {
+  if (from === undefined) {
+    return undefined
+  }
+  if (row.trackAlias === from.trackAlias) {
+    return { groupId: from.groupId, objectId: Number(from.objectId) }
+  }
+  for (const group of groups) {
+    const heard = [...group.captureAt].find(([, capture]) => capture >= from.captureMicros)
+    if (heard) {
+      return { groupId: group.groupId, objectId: Number(heard[0]) }
+    }
+  }
+  return { groupId: from.groupId, objectId: 0 }
 }
 
 function receivedCellCount(group: GridGroup): number {
@@ -535,9 +558,10 @@ function objectIntervalMs(groups: GridGroup[]): number {
   if (!lastFinished || count < 2) {
     return DEFAULT_OBJECT_INTERVAL_MS
   }
-  const span = lastFinished.captureSpanMicros
-  if (span && span.last > span.first) {
-    return Math.max(1, (span.last - span.first) / 1000 / (count - 1))
+  const captures = [...lastFinished.captureAt.values()]
+  const span = Math.max(...captures) - Math.min(...captures)
+  if (span > 0) {
+    return Math.max(1, span / 1000 / (count - 1))
   }
   const arrivals = [...lastFinished.receivedAt.values()]
   return Math.max(1, (Math.max(...arrivals) - Math.min(...arrivals)) / count)
