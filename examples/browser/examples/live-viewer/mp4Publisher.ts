@@ -8,32 +8,28 @@ import init, {
 } from '../../pkg/moqt_client_wasm'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
+import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
 import { getErrorMessage } from '../media/common'
+import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
 
 const VIDEO_TRACK_NAME = 'video'
 const AUDIO_TRACK_NAME = 'audio'
 const SUBGROUP_ID = 0n
 const PUBLISHER_PRIORITY = 0
-/// draft-ietf-moq-transport-14 §10.4.1: 0x3 marks the end of the group.
-const END_OF_GROUP_STATUS = 3
 const MAX_REQUEST_ID = 1_000_000n
 const MILLIS_PER_MICRO = 1 / 1_000
 const ATOM_HEADER_LENGTH = 8
 const LARGE_ATOM_HEADER_LENGTH = 16
 const MOOV = 'moov'
 const AUDIO_SAMPLE_KIND = 1
-const MP3_CODEC = 'mp3'
 
 type LogLevel = 'info' | 'warn' | 'error'
 
 export type Mp4PublisherCallbacks = {
   onStatus(text: string): void
   onLog(level: LogLevel, message: string): void
-  onVideoStarted(codec: string, reorderDelayMicros: number): void
-  onVideoSample(annexB: Uint8Array, keyframe: boolean, captureMicros: number): void
-  onStopped(): void
 }
 
 export type Mp4PublishOptions = {
@@ -66,8 +62,6 @@ type Mp4Media = {
   durationMicros: number
 }
 
-/// `sentStreams` records the subgroup streams sent to each subscriber the
-/// way the viewer's Subscribe Streams card records the ones it receives.
 export class Mp4Publisher {
   readonly sentStreams = new StreamMonitor()
   private readonly session = new MoqtClientWrapper()
@@ -76,7 +70,10 @@ export class Mp4Publisher {
   private stopRequested = false
   private nextCatalogGroupId = 0n
 
-  constructor(private readonly callbacks: Mp4PublisherCallbacks) {}
+  constructor(
+    private readonly callbacks: Mp4PublisherCallbacks,
+    private readonly preview: PublishPreview
+  ) {}
 
   async start(options: Mp4PublishOptions): Promise<void> {
     await this.stop()
@@ -98,7 +95,7 @@ export class Mp4Publisher {
     this.stopRequested = false
     this.sentStreams.reset()
     this.active = true
-    this.callbacks.onVideoStarted(media.video.codec, media.reorderDelayMicros)
+    this.preview.start(media.video.codec, media.reorderDelayMicros)
     this.running = this.publish(media, options)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`
@@ -125,7 +122,7 @@ export class Mp4Publisher {
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
     } finally {
       this.active = false
-      this.callbacks.onStopped()
+      this.preview.stop()
       media.index.free()
       if (this.session.getConnectionStatus()) {
         await this.session.disconnect()
@@ -159,7 +156,8 @@ export class Mp4Publisher {
             passOriginMicros +
             (media.samples.dtsMicros[index] - media.firstPresentationMicros) +
             media.reorderDelayMicros
-          const data = await readSample(media.file, media.samples.offset[index], media.samples.size[index])
+          const offset = media.samples.offset[index]
+          const data = new Uint8Array(await media.file.slice(offset, offset + media.samples.size[index]).arrayBuffer())
           await sleepUntilUnixMicros(sendMicros)
           if (isVideo && isSync) {
             groupId = nextGroupId
@@ -170,7 +168,7 @@ export class Mp4Publisher {
           }
           if (isVideo) {
             const annexB = media.index.annexBVideoSample(data, isSync)
-            this.callbacks.onVideoSample(annexB, isSync, presentationMicros)
+            this.preview.decode(annexB, isSync, presentationMicros)
             await video.send(groupId, annexB, presentationMicros)
           } else if (audio) {
             await audio.send(groupId, data, presentationMicros)
@@ -230,16 +228,7 @@ export class Mp4Publisher {
     this.sentStreams.opened(trackAlias, groupId)
     await client.sendSubgroupObject(trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
     this.sentStreams.object(trackAlias, groupId, 0n, payload.byteLength, false)
-    await client.sendSubgroupObject(
-      trackAlias,
-      groupId,
-      SUBGROUP_ID,
-      1n,
-      END_OF_GROUP_STATUS,
-      new Uint8Array(0),
-      undefined
-    )
-    this.sentStreams.object(trackAlias, groupId, 1n, 0, true)
+    await sendEndOfGroup(client, this.sentStreams, trackAlias, groupId, 1n)
   }
 
   private requireClient(): MOQTClient {
@@ -258,7 +247,7 @@ export class Mp4Publisher {
 class LocTrackSender {
   private groupId: bigint | undefined
   private nextObjectId = 0n
-  private readonly openSubgroups = new Map<string, bigint>()
+  private readonly openSubgroups = new Map<bigint, bigint>()
 
   constructor(
     private readonly client: MOQTClient,
@@ -277,15 +266,14 @@ class LocTrackSender {
     const startsGroup = this.nextObjectId === 0n
     const locHeader = buildLocHeader({ captureTimestampMicros: captureMicros })
     for (const trackAlias of this.subscribers()) {
-      const key = trackAlias.toString()
-      if (this.openSubgroups.get(key) !== groupId) {
+      if (this.openSubgroups.get(trackAlias) !== groupId) {
         if (!startsGroup && !this.joinsMidGroup) {
           continue
         }
         this.sentStreams.label(trackAlias, this.name)
         await this.client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
         this.sentStreams.opened(trackAlias, groupId)
-        this.openSubgroups.set(key, groupId)
+        this.openSubgroups.set(trackAlias, groupId)
       }
       await this.client.sendSubgroupObject(
         trackAlias,
@@ -314,19 +302,10 @@ class LocTrackSender {
     if (groupId === undefined) {
       return
     }
-    const subscribed = new Set(this.subscribers().map((trackAlias) => trackAlias.toString()))
-    for (const [key, openGroupId] of this.openSubgroups) {
-      if (openGroupId === groupId && subscribed.has(key)) {
-        await this.client.sendSubgroupObject(
-          BigInt(key),
-          groupId,
-          SUBGROUP_ID,
-          this.nextObjectId,
-          END_OF_GROUP_STATUS,
-          new Uint8Array(0),
-          undefined
-        )
-        this.sentStreams.object(BigInt(key), groupId, this.nextObjectId, 0, true)
+    const subscribed = new Set(this.subscribers())
+    for (const [trackAlias, openGroupId] of this.openSubgroups) {
+      if (openGroupId === groupId && subscribed.has(trackAlias)) {
+        await sendEndOfGroup(this.client, this.sentStreams, trackAlias, groupId, this.nextObjectId)
       }
     }
     this.openSubgroups.clear()
@@ -335,6 +314,25 @@ class LocTrackSender {
   private subscribers(): bigint[] {
     return Array.from(this.client.getTrackSubscribers(this.namespace, this.name))
   }
+}
+
+async function sendEndOfGroup(
+  client: MOQTClient,
+  sentStreams: StreamMonitor,
+  trackAlias: bigint,
+  groupId: bigint,
+  objectId: bigint
+): Promise<void> {
+  await client.sendSubgroupObject(
+    trackAlias,
+    groupId,
+    SUBGROUP_ID,
+    objectId,
+    OBJECT_STATUS_END_OF_GROUP,
+    new Uint8Array(0),
+    undefined
+  )
+  sentStreams.object(trackAlias, groupId, objectId, 0, true)
 }
 
 async function sleepUntilUnixMicros(dueMicros: number): Promise<void> {
@@ -409,10 +407,6 @@ function readSampleColumns(table: Mp4SampleTable): SampleColumns {
   }
 }
 
-async function readSample(file: File, offset: number, size: number): Promise<Uint8Array> {
-  return new Uint8Array(await file.slice(offset, offset + size).arrayBuffer())
-}
-
 function buildCatalogJson(namespace: string[], media: Mp4Media): string {
   const namespacePath = namespace.join('/')
   const tracks: MsfTrack[] = [
@@ -424,7 +418,6 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       isLive: true,
       label: `${media.video.height}p`,
       codec: media.video.codec,
-      mimeType: 'video/h264',
       width: media.video.width,
       height: media.video.height
     }
@@ -438,7 +431,6 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       isLive: true,
       label: 'Audio',
       codec: media.audio.codec,
-      mimeType: media.audio.codec === MP3_CODEC ? 'audio/mpeg' : 'audio/aac',
       samplerate: media.audio.sampleRate,
       channelConfig: channelConfigLabel(media.audio.channels),
       initData: media.audio.audioSpecificConfig && bytesToBase64(media.audio.audioSpecificConfig)
@@ -448,14 +440,7 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
 }
 
 function channelConfigLabel(channels: number): string {
-  switch (channels) {
-    case 1:
-      return 'mono'
-    case 2:
-      return 'stereo'
-    default:
-      return `${channels}ch`
-  }
+  return channels === 1 ? 'mono' : channels === 2 ? 'stereo' : `${channels}ch`
 }
 
 function describeMedia(media: Mp4Media): string {

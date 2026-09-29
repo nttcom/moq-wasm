@@ -71,6 +71,7 @@ type TrackSubscription = {
   requestId: bigint
   trackAlias: bigint
   name: string
+  track: MediaCatalogTrack
 }
 
 type ReviewWindow = {
@@ -105,14 +106,10 @@ const livePlayout = new LivePlayout(
     })
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
-const publishPreview = new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
-const mp4Publisher = new Mp4Publisher({
-  onStatus: (text) => setStatusText('publish-status', text),
-  onLog: appendLog,
-  onVideoStarted: (codec, reorderDelayMicros) => publishPreview.start(codec, reorderDelayMicros),
-  onVideoSample: (annexB, keyframe, captureMicros) => publishPreview.decode(annexB, keyframe, captureMicros),
-  onStopped: () => publishPreview.stop()
-})
+const mp4Publisher = new Mp4Publisher(
+  { onStatus: (text) => setStatusText('publish-status', text), onLog: appendLog },
+  new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
+)
 /// Live LOC frames carry their capture timestamp, so the moment one is shown
 /// says how far the viewer runs behind the publisher on the same wall clock.
 let viewerDelayMs: number | undefined
@@ -132,7 +129,6 @@ showPicture(livePictureSink.element)
 let cmafAwaitingKeyframe = true
 const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
-const decoderTracks = new Map<MediaKind, MediaCatalogTrack>()
 let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
@@ -288,7 +284,6 @@ async function stopStream(): Promise<void> {
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
-  decoderTracks.clear()
   catalogGroupId = undefined
   videoTracks = []
   audioTracks = []
@@ -361,12 +356,12 @@ async function subscribeTextTrack(name: string, onText: TextTrackHandler): Promi
   return subscribeOk
 }
 
-/// draft-ietf-moq-transport-14 §9.8: Content Exists 0 means nothing has been
-/// published on the track yet, so there is nothing to fetch and the first
-/// object arrives on the SUBSCRIBE.
+/// draft-ietf-moq-transport-14 §9.8: SUBSCRIBE_OK names a Largest Location
+/// only when content exists; without one nothing has been published yet, so
+/// there is nothing to fetch and the first object arrives on the SUBSCRIBE.
 async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: TextTrackHandler): Promise<void> {
   const largestGroup = subscribeOk.largestGroupId
-  if (!subscribeOk.contentExists || largestGroup === undefined) {
+  if (largestGroup === undefined) {
     appendLog('info', `${name} has no published object yet; waiting for it on the subscription`)
     return
   }
@@ -660,11 +655,10 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   if (packaging === 'loc') {
     postCatalogToDecoder(kind, track)
   }
-  decoderTracks.set(kind, track)
   const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), wire.name, AUTH_INFO, {
     forward: true
   })
-  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name })
+  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name, track })
   if (packaging === 'cmaf') {
     moqtClient.setOnSubgroupObjectHandler(
       subscribeOk.trackAlias,
@@ -716,13 +710,15 @@ function reconfigureDecoders(): void {
   if (packaging !== 'loc') {
     return
   }
-  for (const [kind, previous] of decoderTracks) {
-    const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === previous.name)
-    if (!track || JSON.stringify(track) === JSON.stringify(previous)) {
+  for (const [kind, subscription] of subscriptions) {
+    const track = (kind === 'video' ? videoTracks : audioTracks).find(
+      (candidate) => candidate.name === subscription.track.name
+    )
+    if (!track || JSON.stringify(track) === JSON.stringify(subscription.track)) {
       continue
     }
     postCatalogToDecoder(kind, track)
-    decoderTracks.set(kind, track)
+    subscriptions.set(kind, { ...subscription, track })
     appendLog('info', `${kind} track ${track.name} redefined by the catalog`)
   }
 }

@@ -384,9 +384,6 @@ function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
   return { codec, sampleRate, channels, descriptionBase64 }
 }
 
-/// Only AAC needs its AudioSpecificConfig as the decoder description; the
-/// frames of every other codec the catalog may name, Opus and MP3 among
-/// them, are self-describing.
 function buildDecoderConfig(resolved: CachedAudioConfig): AudioDecoderConfig {
   const description =
     resolved.codec.startsWith('mp4a') && resolved.descriptionBase64
