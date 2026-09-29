@@ -12,25 +12,20 @@ pub(crate) struct FetchRange {
 }
 
 impl FetchRange {
-    /// `end` is the End Location of FETCH_OK (draft-14 §9.17).
     pub(crate) fn resolve(
         start: Location,
         requested_end: Location,
         largest: Option<Location>,
     ) -> Result<Self, RequestRejection> {
-        if ends_at_or_before(start, requested_end) {
-            return Err(RequestRejection::InvalidRange);
+        match largest {
+            Some(largest) if start <= largest && !ends_at_or_before(start, requested_end) => {
+                Ok(Self {
+                    start,
+                    end: end_location(requested_end, largest),
+                })
+            }
+            _ => Err(RequestRejection::InvalidRange),
         }
-        let Some(largest) = largest else {
-            return Err(RequestRejection::InvalidRange);
-        };
-        if start > largest {
-            return Err(RequestRejection::InvalidRange);
-        }
-        Ok(Self {
-            start,
-            end: end_location(requested_end, largest),
-        })
     }
 }
 
@@ -39,22 +34,6 @@ pub(crate) struct FetchTarget {
     pub(crate) track_key: TrackKey,
     pub(crate) start: Location,
     pub(crate) requested_end: Location,
-}
-
-impl FetchTarget {
-    /// draft-14 §9.16.2.1: a Joining Fetch ends right after the Largest
-    /// Location of the joined subscription and starts at Object 0 of
-    /// `start_group`.
-    pub(crate) fn joining(track_key: TrackKey, largest: Location, start_group: u64) -> Self {
-        Self {
-            track_key,
-            start: Location {
-                group_id: start_group,
-                object_id: 0,
-            },
-            requested_end: location_after(largest),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -73,19 +52,18 @@ fn ends_at_or_before(start: Location, end: Location) -> bool {
 
 fn end_location(requested_end: Location, largest: Location) -> Location {
     let after_largest = location_after(largest);
-    let covers_largest = if requested_end.object_id == 0 {
-        requested_end.group_id >= largest.group_id
-    } else {
-        requested_end > after_largest
+    let whole_largest_group = Location {
+        group_id: largest.group_id,
+        object_id: 0,
     };
-    if covers_largest {
+    if requested_end == whole_largest_group {
         after_largest
     } else {
-        requested_end
+        requested_end.min(after_largest)
     }
 }
 
-fn location_after(location: Location) -> Location {
+pub(crate) fn location_after(location: Location) -> Location {
     Location {
         group_id: location.group_id,
         object_id: location.object_id + 1,
@@ -93,15 +71,16 @@ fn location_after(location: Location) -> Location {
 }
 
 #[cfg(test)]
+pub(crate) fn location(group_id: u64, object_id: u64) -> Location {
+    Location {
+        group_id,
+        object_id,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
-    }
 
     #[test]
     fn a_range_ending_before_the_largest_object_keeps_its_end() {
@@ -182,19 +161,5 @@ mod tests {
 
         // Assert
         assert_eq!(range, Err(RequestRejection::InvalidRange));
-    }
-
-    #[test]
-    fn a_joining_target_ends_right_after_the_joined_largest_location() {
-        // Act
-        let target = FetchTarget::joining(
-            TrackKey::new(vec!["live".to_string()], "video".to_string()),
-            location(7, 3),
-            5,
-        );
-
-        // Assert
-        assert_eq!(target.start, location(5, 0));
-        assert_eq!(target.requested_end, location(7, 4));
     }
 }

@@ -794,63 +794,28 @@ impl SubgroupObjectMessage {
     }
 }
 
-#[wasm_bindgen]
-pub struct FetchMessage {
-    request_id: u64,
-    track_namespace: Vec<String>,
-    track_name: String,
-    group_order: u8,
-    start_group_id: u64,
-    start_object_id: u64,
-    end_group_id: u64,
-    end_object_id: u64,
-}
-
 /// The range is already resolved against the Largest Location this client
 /// has sent: the end is the End Location its FETCH_OK carries (draft-14
 /// §9.17), i.e. the Location after the last Object to send, where Object 0
 /// covers the whole Group.
-#[wasm_bindgen]
-impl FetchMessage {
-    #[wasm_bindgen(getter, js_name = requestId)]
-    pub fn request_id(&self) -> u64 {
-        self.request_id
-    }
-
-    #[wasm_bindgen(getter, js_name = trackNamespace)]
-    pub fn track_namespace(&self) -> Vec<String> {
-        self.track_namespace.clone()
-    }
-
-    #[wasm_bindgen(getter, js_name = trackName)]
-    pub fn track_name(&self) -> String {
-        self.track_name.clone()
-    }
-
-    #[wasm_bindgen(getter, js_name = groupOrder)]
-    pub fn group_order(&self) -> u8 {
-        self.group_order
-    }
-
-    #[wasm_bindgen(getter, js_name = startGroupId)]
-    pub fn start_group_id(&self) -> u64 {
-        self.start_group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = startObjectId)]
-    pub fn start_object_id(&self) -> u64 {
-        self.start_object_id
-    }
-
-    #[wasm_bindgen(getter, js_name = endGroupId)]
-    pub fn end_group_id(&self) -> u64 {
-        self.end_group_id
-    }
-
-    #[wasm_bindgen(getter, js_name = endObjectId)]
-    pub fn end_object_id(&self) -> u64 {
-        self.end_object_id
-    }
+#[wasm_bindgen(getter_with_clone)]
+pub struct FetchMessage {
+    #[wasm_bindgen(js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(js_name = trackNamespace)]
+    pub track_namespace: Vec<String>,
+    #[wasm_bindgen(js_name = trackName)]
+    pub track_name: String,
+    #[wasm_bindgen(js_name = groupOrder)]
+    pub group_order: u8,
+    #[wasm_bindgen(js_name = startGroupId)]
+    pub start_group_id: u64,
+    #[wasm_bindgen(js_name = startObjectId)]
+    pub start_object_id: u64,
+    #[wasm_bindgen(js_name = endGroupId)]
+    pub end_group_id: u64,
+    #[wasm_bindgen(js_name = endObjectId)]
+    pub end_object_id: u64,
 }
 
 impl FetchMessage {

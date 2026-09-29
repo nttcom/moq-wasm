@@ -10,21 +10,12 @@ pub(crate) enum RequestRejection {
 }
 
 impl RequestRejection {
-    pub(crate) fn code(self) -> u64 {
+    pub(crate) fn code_and_reason(self) -> (u64, &'static str) {
         match self {
-            Self::NotSupported => 0x3,
-            Self::TrackDoesNotExist => 0x4,
-            Self::InvalidRange => 0x5,
-            Self::InvalidJoiningRequestId => 0x7,
-        }
-    }
-
-    pub(crate) fn reason(self) -> &'static str {
-        match self {
-            Self::NotSupported => "not supported",
-            Self::TrackDoesNotExist => "track does not exist",
-            Self::InvalidRange => "invalid range",
-            Self::InvalidJoiningRequestId => "invalid joining request id",
+            Self::NotSupported => (0x3, "not supported"),
+            Self::TrackDoesNotExist => (0x4, "track does not exist"),
+            Self::InvalidRange => (0x5, "invalid range"),
+            Self::InvalidJoiningRequestId => (0x7, "invalid joining request id"),
         }
     }
 }

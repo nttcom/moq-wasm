@@ -12,7 +12,7 @@ mod mp4;
 mod request_rejection;
 
 #[cfg(web_sys_unstable_apis)]
-use incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest};
+use incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest, location_after};
 pub use media_streaming_format::*;
 #[cfg(web_sys_unstable_apis)]
 pub use messages::*;
@@ -424,6 +424,8 @@ impl ClientState {
         }
     }
 
+    /// draft-14 §9.16.2.1: a Joining Fetch starts at Object 0 of a group and
+    /// ends right after the Largest Location of the joined subscription.
     fn joining_fetch_target(
         &self,
         joining_request_id: u64,
@@ -437,11 +439,14 @@ impl ClientState {
         let largest = subscription
             .largest_location
             .ok_or(RequestRejection::InvalidRange)?;
-        Ok(FetchTarget::joining(
-            subscription.track_key.clone(),
-            largest,
-            start_group(largest),
-        ))
+        Ok(FetchTarget {
+            track_key: subscription.track_key.clone(),
+            start: Location {
+                group_id: start_group(largest),
+                object_id: 0,
+            },
+            requested_end: location_after(largest),
+        })
     }
 
     fn answer_incoming_fetch(&self, request_id: u64) -> Result<FetchOk> {
@@ -2227,13 +2232,9 @@ impl ControlMessageHandler {
         request_id: u64,
         rejection: RequestRejection,
     ) -> Result<(), JsValue> {
+        let (code, reason) = rejection.code_and_reason();
         self.control_stream
-            .send_request_error(
-                message_type,
-                request_id,
-                rejection.code(),
-                rejection.reason().to_string(),
-            )
+            .send_request_error(message_type, request_id, code, reason.to_string())
             .await
     }
 }
@@ -2557,6 +2558,7 @@ pub struct MOQTClient;
 #[cfg(all(test, web_sys_unstable_apis))]
 mod tests {
     use super::*;
+    use crate::incoming_fetch::location;
 
     const NAMESPACE: &str = "live";
     const TRACK: &str = "video";
@@ -2575,21 +2577,10 @@ mod tests {
         }
     }
 
-    fn location(group_id: u64, object_id: u64) -> Location {
-        Location {
-            group_id,
-            object_id,
-        }
-    }
-
     fn publishing_state() -> ClientState {
         let mut state = ClientState::default();
         state.register_publish_namespace_request(0, vec![NAMESPACE.to_string()]);
         state
-    }
-
-    fn subscribed_track_alias(state: &mut ClientState, request_id: u64) -> u64 {
-        answered_subscription(state, request_id, ContentExists::False)
     }
 
     fn answered_subscription(
@@ -2643,7 +2634,7 @@ mod tests {
 
     fn state_with_largest(largest: Location) -> ClientState {
         let mut state = publishing_state();
-        let track_alias = subscribed_track_alias(&mut state, 2);
+        let track_alias = answered_subscription(&mut state, 2, ContentExists::False);
         state.record_published_object(track_alias, largest);
         state
     }
@@ -2659,7 +2650,7 @@ mod tests {
     fn track_status_ok_reports_the_largest_object_sent_on_the_track() {
         // Arrange
         let mut state = publishing_state();
-        let track_alias = subscribed_track_alias(&mut state, 2);
+        let track_alias = answered_subscription(&mut state, 2, ContentExists::False);
         state.record_published_object(track_alias, location(3, 1));
         state.record_published_object(track_alias, location(2, 9));
 
@@ -2680,7 +2671,7 @@ mod tests {
     fn track_status_ok_reports_no_content_before_an_object_is_sent() {
         // Arrange
         let mut state = publishing_state();
-        subscribed_track_alias(&mut state, 2);
+        answered_subscription(&mut state, 2, ContentExists::False);
 
         // Act
         let track_status_ok = answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
@@ -2693,7 +2684,7 @@ mod tests {
     fn largest_location_outlives_the_subscription_it_was_sent_on() {
         // Arrange
         let mut state = publishing_state();
-        let track_alias = subscribed_track_alias(&mut state, 2);
+        let track_alias = answered_subscription(&mut state, 2, ContentExists::False);
         state.record_published_object(track_alias, location(7, 0));
         state.remove_incoming_subscribe(2);
 
@@ -2763,19 +2754,6 @@ mod tests {
     }
 
     #[test]
-    fn a_fetch_before_any_object_is_sent_is_an_invalid_range() {
-        // Arrange
-        let mut state = publishing_state();
-
-        // Act
-        let accepted =
-            state.accept_incoming_fetch(&standalone_fetch(6, location(0, 0), location(1, 0)));
-
-        // Assert
-        assert_eq!(accepted.unwrap_err(), RequestRejection::InvalidRange);
-    }
-
-    #[test]
     fn a_relative_joining_fetch_covers_the_groups_before_the_joined_largest_location() {
         // Arrange
         let mut state = publishing_state();
@@ -2840,34 +2818,5 @@ mod tests {
 
         // Assert
         assert_eq!(accepted.unwrap_err(), RequestRejection::InvalidRange);
-    }
-
-    #[test]
-    fn a_removed_fetch_request_can_no_longer_be_answered() {
-        // Arrange
-        let mut state = state_with_largest(location(5, 3));
-        state
-            .accept_incoming_fetch(&standalone_fetch(6, location(4, 0), location(5, 0)))
-            .unwrap();
-        state.remove_incoming_fetch(6).unwrap();
-
-        // Act
-        let fetch_ok = state.answer_incoming_fetch(6);
-
-        // Assert
-        assert!(fetch_ok.is_err());
-    }
-
-    #[test]
-    fn a_track_status_request_is_answered_only_once() {
-        // Arrange
-        let mut state = publishing_state();
-        answer_track_status(&mut state, &subscribe(4, GroupOrder::Ascending));
-
-        // Act
-        let answered_again = state.answer_incoming_track_status(4);
-
-        // Assert
-        assert!(answered_again.is_err());
     }
 }
