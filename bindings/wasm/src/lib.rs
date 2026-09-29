@@ -900,17 +900,19 @@ impl MOQTClient {
         request_id: u64,
         track_namespace: Vec<String>,
         track_name: String,
-        track_alias: u64,
+        track_alias: Option<u64>,
         group_order: u8,
         content_exists: bool,
         largest_group_id: Option<u64>,
         largest_object_id: Option<u64>,
         forward: bool,
         auth_info: String,
-    ) -> Result<(), JsValue> {
+    ) -> Result<u64, JsValue> {
         let group_order = group_order_from(group_order)?;
         let content_exists =
             content_exists_from_fields(content_exists, largest_group_id, largest_object_id);
+        let track_alias =
+            track_alias.unwrap_or_else(|| self.state.borrow_mut().allocate_track_alias());
         let payload = Publish {
             request_id,
             track_namespace_tuple: track_namespace.clone(),
@@ -929,7 +931,8 @@ impl MOQTClient {
             .register_publish_request(request_id, TrackKey::new(track_namespace, track_name));
         self.control_stream
             .send(ControlMessageType::Publish, payload)
-            .await
+            .await?;
+        Ok(track_alias)
     }
 
     #[wasm_bindgen(js_name = sendPublishOk)]
