@@ -114,10 +114,14 @@ const livePlayout = new LivePlayout(showLiveFrame, (origin) =>
 const playbackCharts = new PlaybackCharts(element<HTMLElement>('playback-charts'))
 setInterval(() => {
   if (watching) {
+    const bufferMs = livePlayout.bufferMs()
+    const buffering = bufferMs !== undefined
     playbackCharts.push({
       delayMs: viewerDelayMs,
-      bufferMs: livePlayout.bufferMs(),
-      targetMs: livePlayout.bufferMs() === undefined ? undefined : livePlayout.targetBufferMs(),
+      bufferMs,
+      targetMs: buffering ? livePlayout.targetBufferMs() : undefined,
+      outputLatencyMs: buffering ? livePlayout.outputLatencyMs() : undefined,
+      spreadMs: buffering ? livePlayout.arrivalSpreadMs() : undefined,
       kbps: receivedKbps,
       syncMs: livePlayout.syncOffsetMs()
     })

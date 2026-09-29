@@ -764,6 +764,8 @@
 .playback-charts {
   --series-1: #2a78d6;
   --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
   --chart-surface: #ffffff;
   --chart-grid: #e3ebe8;
   display: grid;
@@ -777,6 +779,10 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--chart-surface);
+}
+
+.playback-chart.wide {
+  grid-column: 1 / -1;
 }
 
 .playback-chart figcaption {
@@ -834,6 +840,21 @@
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+.playback-chart-band {
+  fill-opacity: 0.35;
+}
+
+.playback-chart-band-gap {
+  fill: none;
+  stroke: var(--chart-surface);
+  stroke-width: 2;
+}
+
+.playback-chart-label {
+  fill: var(--muted);
+  font-size: 11px;
 }
 
 .playback-chart-dot {
