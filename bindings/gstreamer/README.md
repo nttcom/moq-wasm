@@ -89,3 +89,12 @@ relay never cached, from the sink itself.
 
 Logs go through `tracing` at `info` by default; set `RUST_LOG` to change the
 filter (for example `RUST_LOG=media_publisher=debug`).
+
+## E2E
+
+```shell
+./scripts/moqtsink-e2e.sh
+```
+
+It publishes a test pattern and tone through `moqtsink` into a Docker Compose
+relay and checks the tracks from a subscriber.

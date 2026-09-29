@@ -21,11 +21,14 @@ on:
       - "scripts/cascading-relay-e2e.sh"
       - "scripts/fetch-e2e.sh"
       - "scripts/multiple-publishers-e2e.sh"
+      - "scripts/moqtsink-e2e.sh"
       - "scripts/object-dedup-e2e.sh"
       - "docker-compose.yml"
       - "examples/browser/**"
       - "bindings/wasm/**"
       - "bridges/live-ingest/**"
+      - "bindings/gstreamer/**"
+      - ".github/actions/install-ffmpeg-deps/**"
       - "relay/**"
       - "moqt/**"
       - "shared/**"
@@ -33,6 +36,7 @@ on:
       - "tests/cascading-relay-e2e/**"
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
+      - "tests/moqtsink-e2e/**"
       - "tests/object-dedup-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -61,11 +65,14 @@ on:
       - "scripts/cascading-relay-e2e.sh"
       - "scripts/fetch-e2e.sh"
       - "scripts/multiple-publishers-e2e.sh"
+      - "scripts/moqtsink-e2e.sh"
       - "scripts/object-dedup-e2e.sh"
       - "docker-compose.yml"
       - "examples/browser/**"
       - "bindings/wasm/**"
       - "bridges/live-ingest/**"
+      - "bindings/gstreamer/**"
+      - ".github/actions/install-ffmpeg-deps/**"
       - "relay/**"
       - "moqt/**"
       - "shared/**"
@@ -73,6 +80,7 @@ on:
       - "tests/cascading-relay-e2e/**"
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
+      - "tests/moqtsink-e2e/**"
       - "tests/object-dedup-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -117,7 +125,7 @@ jobs:
             message=true
             live_viewer=true
             meeting=true
-            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers object-dedup)
+            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup)
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -179,6 +187,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(multiple-publishers)
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|scripts/moqtsink-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|bindings/gstreamer/*|tests/moqtsink-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  compose_suites+=(moqtsink)
                   ;;
               esac
 
@@ -614,6 +628,10 @@ jobs:
       - name: Log out from GHCR
         if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: docker logout ghcr.io
+
+      - name: Install GStreamer
+        if: ${{ matrix.suite == 'moqtsink' }}
+        uses: ./.github/actions/install-ffmpeg-deps
 
       - name: Run ${{ matrix.suite }} E2E
         env:

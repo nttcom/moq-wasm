@@ -1984,6 +1984,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqtsink-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "media-streaming-format",
+ "moqt",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "muldiv"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

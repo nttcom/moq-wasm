@@ -286,14 +286,14 @@ impl MoqtSink {
         pad: &gst::Pad,
         buffer: gst::Buffer,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
-        let Some(pts) = buffer.pts() else {
-            tracing::warn!(pad = %pad.name(), "buffer without pts dropped");
+        let Some(pts) = buffer.pts().and_then(|pts| running_time(pad, pts)) else {
+            tracing::warn!(pad = %pad.name(), "buffer without a running time dropped");
             return Ok(gst::FlowSuccess::Ok);
         };
-        let pts = Timestamp::from_micros(pts.useconds());
         let dts = buffer
             .dts()
-            .map_or(pts, |dts| Timestamp::from_micros(dts.useconds()));
+            .and_then(|dts| running_time(pad, dts))
+            .unwrap_or(pts);
         let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
         let mut started = self.started.lock().expect("started lock");
         let Some(started) = started.as_mut() else {
@@ -372,4 +372,16 @@ impl MoqtSink {
     fn report_stream_error(&self, err: anyhow::Error) {
         gst::element_imp_error!(self, gst::StreamError::Failed, ["{err:#}"]);
     }
+}
+
+/// Encoders such as x264enc shift their output timestamps and move the segment
+/// start by the same amount, so only the running time puts the video and audio
+/// pads on one clock.
+fn running_time(pad: &gst::Pad, timestamp: gst::ClockTime) -> Option<Timestamp> {
+    let segment = pad.sticky_event::<gst::event::Segment>(0)?;
+    let running_time = segment
+        .segment()
+        .downcast_ref::<gst::ClockTime>()?
+        .to_running_time(timestamp)?;
+    Some(Timestamp::from_micros(running_time.useconds()))
 }
