@@ -5,37 +5,19 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::modules::relay::{cache::track_cache::TrackCache, types::SubgroupKey};
 
-fn after(largest: &moqt::Location) -> moqt::Location {
-    moqt::Location {
-        group_id: largest.group_id,
-        object_id: largest.object_id + 1,
-    }
-}
-
+/// Subscriptions only deliver objects newer than the subscribe-time Largest
+/// Object (§9.7), so an absolute start at or below it is raised past it.
 fn resolve_start_location(
     filter_type: &FilterType,
     largest: &Option<moqt::Location>,
 ) -> moqt::Location {
-    match (filter_type, largest) {
-        (
-            FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. },
-            largest,
-        ) => match largest {
-            Some(largest) if location <= largest => after(largest),
-            _ => *location,
+    let start = filter_type.start_location(*largest);
+    match largest {
+        Some(largest) if start <= *largest => moqt::Location {
+            group_id: largest.group_id,
+            object_id: largest.object_id + 1,
         },
-        // Largest Object (0x2): Start = {Largest.Group, Largest.Object + 1}.
-        (FilterType::LargestObject, Some(largest)) => after(largest),
-        // Next Group Start (0x1): Start = {Largest.Group + 1, 0}.
-        (FilterType::NextGroupStart, Some(largest)) => moqt::Location {
-            group_id: largest.group_id + 1,
-            object_id: 0,
-        },
-        // No content delivered yet: Start = {0, 0}.
-        (FilterType::LargestObject | FilterType::NextGroupStart, None) => moqt::Location {
-            group_id: 0,
-            object_id: 0,
-        },
+        _ => start,
     }
 }
 
