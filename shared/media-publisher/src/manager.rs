@@ -20,7 +20,7 @@ use moqt::{
     TrackWriter, TransportProtocol, TransportSendError, TransportStats, WEBTRANSPORT,
     wire::FetchParams,
 };
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 
 use crate::stream_ledger::{StreamLedger, StreamRecord};
 use crate::{
@@ -47,6 +47,10 @@ const FETCH_NO_OBJECTS: u64 = 0x6;
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
 const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
+/// Half the relay's default RELAY_CACHE_TTL_SECS: draft-ietf-moq-msf-01 §5
+/// republishes the catalog before it can fall out of a relay cache, so a
+/// viewer arriving long after the last change still finds one.
+const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct MoqtTarget {
@@ -74,6 +78,7 @@ struct BackendState<T: TransportProtocol> {
     subscribed_tracks: HashMap<u64, TrackKey>,
     fetches: HashMap<u64, JoinHandle<()>>,
     catalogs: HashMap<String, CatalogMetadata>,
+    catalog_sent_at: HashMap<String, Instant>,
     disconnected: bool,
 }
 
@@ -85,6 +90,7 @@ impl<T: TransportProtocol> Default for BackendState<T> {
             subscribed_tracks: HashMap::new(),
             fetches: HashMap::new(),
             catalogs: HashMap::new(),
+            catalog_sent_at: HashMap::new(),
             disconnected: false,
         }
     }
@@ -103,6 +109,12 @@ impl<T: TransportProtocol> BackendState<T> {
             };
             TrackState::new(now_unix().as_micros() as u64, cache)
         })
+    }
+
+    fn catalog_refresh_due(&self, namespace_path: &str) -> bool {
+        self.catalog_sent_at
+            .get(namespace_path)
+            .is_some_and(|sent_at| sent_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
     }
 }
 
@@ -544,6 +556,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         object: OutgoingObject,
     ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
+        if self.state.lock().await.catalog_refresh_due(&key.0) {
+            self.send_catalog(&key.0).await?;
+        }
         let (placement, writer) = {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
@@ -791,6 +806,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         }
         let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
         tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
+        guard
+            .catalog_sent_at
+            .insert(namespace_path.to_string(), Instant::now());
         let key = (namespace_path.to_string(), CATALOG_TRACK_NAME.to_string());
         let track = guard.track_mut(&key);
         let placement = track
@@ -1115,6 +1133,22 @@ mod tests {
 
         // Act / Assert
         assert_eq!(manager.transport_stats(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
+        // Arrange
+        let mut state = BackendState::<QUIC>::default();
+        state
+            .catalog_sent_at
+            .insert("live/test".to_string(), Instant::now());
+
+        // Act / Assert
+        tokio::time::advance(CATALOG_REFRESH_INTERVAL - Duration::from_secs(1)).await;
+        assert!(!state.catalog_refresh_due("live/test"));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(state.catalog_refresh_due("live/test"));
+        assert!(!state.catalog_refresh_due("live/other"));
     }
 
     #[test]

@@ -96,10 +96,11 @@ is open starts sending at the next group so the live and cached object ids
 agree.
 
 The catalog is the exception to the 60 seconds: its newest object is kept for
-as long as the publisher runs. A viewer that joins a subscription the relay
-already holds never receives the catalog live, because a SUBSCRIBE starts
-after the largest object and the catalog is sent only when it changes, so it
-fetches the current catalog instead, and the relay
+as long as the publisher runs. It is sent when it changes and again every 30
+seconds, half the relay's default cache retention, so the relay always holds
+one (draft-ietf-moq-msf-01 §5). A viewer that joins a subscription the relay
+already holds does not wait for the next one on the SUBSCRIBE, which starts
+after the largest object: it fetches the current catalog, and the relay
 completes that FETCH from here when its own cache has dropped it.
 
 ## Group Alignment
