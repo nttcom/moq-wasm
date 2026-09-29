@@ -72,7 +72,7 @@ type Mp4Media = {
 }
 
 /// `sentStreams` records the subgroup streams sent to each subscriber the
-/// way the viewer's Streams panel records the ones it receives.
+/// way the viewer's Subscribe Streams card records the ones it receives.
 export class Mp4Publisher {
   readonly sentStreams = new StreamMonitor()
   private readonly session = new MoqtClientWrapper()
