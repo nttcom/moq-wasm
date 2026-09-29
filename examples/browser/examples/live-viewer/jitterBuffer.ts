@@ -15,15 +15,7 @@ export class JitterBuffer {
   private readonly arrivals: Arrival[] = []
   private observingSinceMs: number | undefined
 
-  constructor(private policy: BufferPolicy) {}
-
-  get currentPolicy(): BufferPolicy {
-    return this.policy
-  }
-
-  setPolicy(policy: BufferPolicy): void {
-    this.policy = policy
-  }
+  constructor(public policy: BufferPolicy) {}
 
   get fixed(): boolean {
     return this.policy.minimumMs >= this.policy.maximumMs
@@ -51,14 +43,11 @@ export class JitterBuffer {
     return this.arrivals.length === 0 ? undefined : Math.min(...this.arrivals.map((arrival) => arrival.delayMs))
   }
 
-  targetMs(outputLatencyMs: number): number {
-    return this.clamp((this.spreadMs() ?? 0) + outputLatencyMs)
-  }
-
-  /// The target to open playback with, when the burst a subscription starts
-  /// with says nothing about the spread and `observedSpreadMs` stands in for it.
-  openingTargetMs(observedSpreadMs: number, outputLatencyMs: number): number {
-    return this.clamp(observedSpreadMs + outputLatencyMs)
+  /// Playback opens on a burst that says nothing about the spread, so the
+  /// caller passes a stand-in for it then.
+  targetMs(outputLatencyMs: number, spreadMs = this.spreadMs() ?? 0): number {
+    const { minimumMs, maximumMs } = this.policy
+    return Math.max(minimumMs, Math.min(maximumMs, spreadMs + outputLatencyMs))
   }
 
   spreadMs(): number | undefined {
@@ -72,9 +61,5 @@ export class JitterBuffer {
   reset(): void {
     this.arrivals.length = 0
     this.observingSinceMs = undefined
-  }
-
-  private clamp(neededMs: number): number {
-    return Math.max(this.policy.minimumMs, Math.min(this.policy.maximumMs, neededMs))
   }
 }

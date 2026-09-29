@@ -76,7 +76,7 @@ export class LivePlayout {
     const master = !this.audioActive()
     if (master) {
       this.jitterBuffer.observe(captureMicros, nowMs)
-      const excessMs = this.catchUp === 'off' ? undefined : this.excessMs()
+      const excessMs = this.excessMs()
       if (excessMs !== undefined && excessMs > MAX_CATCH_UP_MS) {
         this.shiftClock(-excessMs, captureMicros)
         this.videoShedMs += excessMs
@@ -113,13 +113,13 @@ export class LivePlayout {
   /// Warms up again so a larger buffer applies to what arrives from now on;
   /// what was already scheduled plays out on the old timeline.
   setBufferPolicy(policy: BufferPolicy): void {
-    this.jitterBuffer.setPolicy(policy)
+    this.jitterBuffer.policy = policy
     this.clock.reset()
     this.newestAudioCaptureMicros = undefined
   }
 
   bufferPolicy(): BufferPolicy {
-    return this.jitterBuffer.currentPolicy
+    return this.jitterBuffer.policy
   }
 
   fixedBuffer(): boolean {
@@ -214,7 +214,7 @@ export class LivePlayout {
       return false
     }
     this.newestAudioCaptureMicros = captureMicros
-    const excessMs = this.catchUp === 'off' ? 0 : (this.excessMs() ?? 0)
+    const excessMs = this.excessMs() ?? 0
     const durationMs = audioData.duration / MICROS_PER_MILLI
     if (excessMs > durationMs && (this.catchUp === 'skip' || excessMs > MAX_CATCH_UP_MS)) {
       this.audio.skip(audioData)
@@ -232,7 +232,10 @@ export class LivePlayout {
 
   private excessMs(): number | undefined {
     const bufferMs = this.bufferMs()
-    return bufferMs === undefined || !this.jitterBuffer.settled ? undefined : bufferMs - this.targetBufferMs()
+    if (this.catchUp === 'off' || bufferMs === undefined || !this.jitterBuffer.settled) {
+      return undefined
+    }
+    return bufferMs - this.targetBufferMs()
   }
 
   private audioActive(): boolean {
@@ -275,7 +278,7 @@ export class LivePlayout {
     const newest = Math.max(...held.map((sample) => sample.captureMicros))
     this.clock.anchor(
       newest,
-      nowMs + this.jitterBuffer.openingTargetMs(longestArrivalGapMs(held), this.audio.outputLatencyMs())
+      nowMs + this.jitterBuffer.targetMs(this.audio.outputLatencyMs(), longestArrivalGapMs(held))
     )
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs

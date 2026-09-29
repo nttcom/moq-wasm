@@ -178,8 +178,8 @@ export class AudioPlayout {
       this.compressionDebtSamples += channels[0].length * (1 - 1 / this.compressionRate)
       const trimmed = trimRepetition(channels, chunk.sampleRate, Math.floor(this.compressionDebtSamples))
       if (trimmed) {
-        channels = trimmed.channels
-        this.compressionDebtSamples -= trimmed.removedSamples
+        this.compressionDebtSamples -= channels[0].length - trimmed[0].length
+        channels = trimmed
       }
     }
     this.shedMs += ((originalSamples - channels[0].length) * MILLIS_PER_SECOND) / chunk.sampleRate

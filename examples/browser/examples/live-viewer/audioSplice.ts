@@ -32,11 +32,7 @@ export function joinAfterSkip(skippedHead: Channels, next: Channels, sampleRate:
 /// Removes up to `maxSamples` from the start of a chunk, one repetition of its
 /// waveform overlapped onto the next, or nothing when the waveform does not
 /// repeat.
-export function trimRepetition(
-  channels: Channels,
-  sampleRate: number,
-  maxSamples: number
-): { channels: Channels; removedSamples: number } | undefined {
+export function trimRepetition(channels: Channels, sampleRate: number, maxSamples: number): Channels | undefined {
   const length = crossfadeSamples(sampleRate)
   const earliest = samplesFor(MIN_PERIOD_MS, sampleRate)
   const latest = Math.min(samplesFor(MAX_PERIOD_MS, sampleRate), maxSamples, channels[0].length - length)
@@ -48,7 +44,7 @@ export function trimRepetition(
   if (similarity < MIN_SIMILARITY) {
     return undefined
   }
-  return { channels: crossfade(channels, channels, offset, length), removedSamples: offset }
+  return crossfade(channels, channels, offset, length)
 }
 
 /// Fades from the start of `from` into `to` at `toOffset`, then carries on
@@ -56,7 +52,7 @@ export function trimRepetition(
 function crossfade(from: Channels, to: Channels, toOffset: number, length: number): Channels {
   return to.map((toChannel, channel) => {
     const out = new Float32Array(toChannel.length - toOffset)
-    const fromChannel = from[channel] ?? from[0]
+    const fromChannel = from[channel]
     for (let i = 0; i < length; i += 1) {
       const weight = 0.5 - 0.5 * Math.cos((Math.PI * (i + 0.5)) / length)
       out[i] = fromChannel[i] * (1 - weight) + toChannel[toOffset + i] * weight

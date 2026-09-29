@@ -1,6 +1,7 @@
 export const SAMPLE_INTERVAL_MS = 500
 const WINDOW_SAMPLES = 120
 const HEIGHT = 84
+const WIDE_HEIGHT = 132
 const TOP = 8
 const BOTTOM = 8
 const LEFT = 44
@@ -35,9 +36,7 @@ type ChartSpec = {
   headline: Key
   series: SeriesSpec[]
   signed?: boolean
-  height?: number
   wide?: boolean
-  directLabels?: boolean
 }
 
 type Chart = { spec: ChartSpec; svg: SVGSVGElement; value: HTMLElement; hovered?: number }
@@ -61,9 +60,7 @@ const CHARTS: ChartSpec[] = [
       { key: 'targetMs', label: 'target', color: 'var(--series-2)' },
       { key: 'bufferMs', label: 'buffer', color: 'var(--series-1)' }
     ],
-    height: 132,
-    wide: true,
-    directLabels: true
+    wide: true
   },
   {
     title: 'Delay',
@@ -131,7 +128,7 @@ export class PlaybackCharts {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('role', 'img')
     svg.setAttribute('aria-label', `${spec.title} over the last minute`)
-    svg.style.height = `${spec.height ?? HEIGHT}px`
+    svg.style.height = `${spec.wide ? WIDE_HEIGHT : HEIGHT}px`
     figure.append(header, svg)
     container.append(figure)
     const chart: Chart = { spec, svg, value }
@@ -160,8 +157,8 @@ export class PlaybackCharts {
     if (width === 0) {
       return
     }
-    const height = spec.height ?? HEIGHT
-    const right = spec.directLabels ? LABEL_GUTTER : RIGHT
+    const height = spec.wide ? WIDE_HEIGHT : HEIGHT
+    const right = spec.wide ? LABEL_GUTTER : RIGHT
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
     const top = scaleTop(this.samples, spec)
     const bottom = spec.signed ? -top : 0
@@ -174,7 +171,7 @@ export class PlaybackCharts {
       x: (index) => LEFT + ((index + WINDOW_SAMPLES - this.samples.length) / (WINDOW_SAMPLES - 1)) * plotWidth,
       y: (value) => TOP + ((top - value) / (top - bottom)) * plotHeight
     }
-    const parts = gridAndTicks(frame, top, bottom, spec.signed ?? false)
+    const parts = gridAndTicks(frame, top, bottom)
     const stacks = stackBands(this.samples, spec.series)
     for (const series of spec.series.filter((series) => series.band)) {
       parts.push(bandPath(stacks.get(series.key)!, frame, series.color))
@@ -188,7 +185,7 @@ export class PlaybackCharts {
         parts.push(dot(frame.x(end.index), frame.y(end.value), series.color))
       }
     }
-    if (spec.directLabels) {
+    if (spec.wide) {
       parts.push(directLabels(this.samples, spec.series, stacks, frame))
     }
     if (chart.hovered !== undefined && this.samples[chart.hovered]) {
@@ -224,7 +221,7 @@ export class PlaybackCharts {
 
   private indexAt(chart: Chart, clientX: number): number | undefined {
     const bounds = chart.svg.getBoundingClientRect()
-    const plotWidth = bounds.width - LEFT - (chart.spec.directLabels ? LABEL_GUTTER : RIGHT)
+    const plotWidth = bounds.width - LEFT - (chart.spec.wide ? LABEL_GUTTER : RIGHT)
     const slot = Math.round(((clientX - bounds.left - LEFT) / plotWidth) * (WINDOW_SAMPLES - 1))
     const index = slot - (WINDOW_SAMPLES - this.samples.length)
     return index >= 0 && index < this.samples.length ? index : undefined
@@ -253,17 +250,17 @@ function stackBands(samples: PlaybackSample[], series: SeriesSpec[]): Map<Key, S
   return stacks
 }
 
-function gridAndTicks(frame: Frame, top: number, bottom: number, signed: boolean): string[] {
+function gridAndTicks(frame: Frame, top: number, bottom: number): string[] {
   const line = (value: number) =>
     `<line class="playback-chart-grid" x1="${LEFT}" x2="${frame.width - frame.right}" y1="${frame.y(value)}" y2="${frame.y(value)}"/>`
   const tick = (value: number) =>
-    `<text class="playback-chart-tick" x="${LEFT - 6}" y="${frame.y(value) + 4}">${formatTick(value)}</text>`
-  const values = signed ? [top, 0, bottom] : [top, 0]
+    `<text class="playback-chart-tick" x="${LEFT - 6}" y="${frame.y(value) + 4}">${Math.round(value).toLocaleString()}</text>`
+  const values = bottom < 0 ? [top, 0, bottom] : [top, 0]
   return values.flatMap((value) => [line(value), tick(value)])
 }
 
-/// Each contiguous run becomes one closed shape; its upper edge is traced in
-/// the surface colour so the band above it stays apart.
+/// Each contiguous run becomes one closed shape, outlined in the surface
+/// colour so the band above it stays apart.
 function bandPath(stack: Stack, frame: Frame, color: string): string {
   const runs: { index: number; base: number; top: number }[][] = [[]]
   stack.forEach((point, index) => {
@@ -280,10 +277,7 @@ function bandPath(stack: Stack, frame: Frame, color: string): string {
       const lower = [...run]
         .reverse()
         .map((point) => `${frame.x(point.index).toFixed(1)},${frame.y(point.base).toFixed(1)}`)
-      return [
-        `<path class="playback-chart-band" fill="${color}" d="M${[...upper, ...lower].join('L')}Z"/>`,
-        `<path class="playback-chart-band-gap" d="M${upper.join('L')}"/>`
-      ].join('')
+      return `<path class="playback-chart-band" fill="${color}" d="M${[...upper, ...lower].join('L')}Z"/>`
     })
     .join('')
 }
@@ -377,13 +371,8 @@ function linePath(samples: PlaybackSample[], key: Key, frame: Frame): string {
 }
 
 function lastDefined(samples: PlaybackSample[], key: Key): { index: number; value: number } | undefined {
-  for (let index = samples.length - 1; index >= 0; index -= 1) {
-    const value = samples[index][key]
-    if (value !== undefined) {
-      return { index, value }
-    }
-  }
-  return undefined
+  const index = samples.findLastIndex((sample) => sample[key] !== undefined)
+  return index < 0 ? undefined : { index, value: samples[index][key]! }
 }
 
 function dot(cx: number, cy: number, color: string): string {
@@ -393,8 +382,4 @@ function dot(cx: number, cy: number, color: string): string {
 function formatValue(value: number, spec: ChartSpec): string {
   const rounded = Math.round(value)
   return `${spec.signed && rounded > 0 ? '+' : ''}${rounded.toLocaleString()} ${spec.unit}`
-}
-
-function formatTick(value: number): string {
-  return Math.round(value).toLocaleString()
 }
