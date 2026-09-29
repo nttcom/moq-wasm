@@ -7,7 +7,10 @@ use crate::{
     ClientConfig, DUAL, DataReceiver, Endpoint, FilterType, Handshake, ServerConfig, Session,
     SessionEvent, Subscription, TrackReader,
     modules::moqt::{
-        data_plane::object::{datagram_field::DatagramField, object_datagram::ObjectDatagram},
+        data_plane::object::{
+            datagram_field::{DatagramField, ObjectDatagramPayload},
+            object_datagram::ObjectDatagram,
+        },
         domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
@@ -125,10 +128,12 @@ fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
     IncomingObject::Datagram(ObjectDatagram::new(
         track_alias,
         0,
-        DatagramField::Payload0x00 {
-            object_id: 0,
+        DatagramField {
+            object_id: Some(0),
             publisher_priority: 128,
-            payload: Bytes::from_static(b"object"),
+            extension_headers: None,
+            end_of_group: false,
+            payload: ObjectDatagramPayload::Payload(Bytes::from_static(b"object")),
         },
     ))
 }

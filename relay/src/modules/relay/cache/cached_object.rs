@@ -84,15 +84,9 @@ impl CachedObject {
     }
 
     pub(crate) fn from_datagram(object_id: u64, datagram: ObjectDatagram) -> Self {
-        let ends_group = matches!(
-            datagram.field,
-            DatagramField::Payload0x02WithEndOfGroup { .. }
-                | DatagramField::Payload0x03WithEndOfGroup { .. }
-                | DatagramField::Payload0x06WithEndOfGroup { .. }
-                | DatagramField::Payload0x07WithEndOfGroup { .. }
-        );
-        let (status, payload) = match datagram.field.payload() {
-            ObjectDatagramPayload::Payload(payload) if ends_group => {
+        let field = datagram.field;
+        let (status, payload) = match field.payload {
+            ObjectDatagramPayload::Payload(payload) if field.end_of_group => {
                 (ObjectStatus::EndOfGroup, payload)
             }
             ObjectDatagramPayload::Payload(payload) => (ObjectStatus::Normal, payload),
@@ -104,13 +98,9 @@ impl CachedObject {
                 object_id,
             },
             forwarding: ForwardingPreference::Datagram,
-            publisher_priority: datagram.field.publisher_priority(),
+            publisher_priority: field.publisher_priority,
             status,
-            extension_headers: datagram
-                .field
-                .extension_headers()
-                .cloned()
-                .unwrap_or_default(),
+            extension_headers: field.extension_headers.unwrap_or_default(),
             payload,
             received_at: Instant::now(),
         }
@@ -230,47 +220,19 @@ impl CachedObject {
     }
 
     pub(crate) fn to_object_datagram(&self, track_alias: u64) -> ObjectDatagram {
-        let object_id = self.location.object_id;
-        let publisher_priority = self.publisher_priority;
-        let extension_headers = (!self.extension_headers.key_value_pairs.is_empty())
-            .then(|| self.extension_headers.clone());
         // draft-14 §10.2.1.1: zero-length objects encode their status explicitly.
-        let field = match (self.status, self.payload.is_empty(), extension_headers) {
-            (status, true, None) => DatagramField::Status0x20 {
-                object_id,
-                publisher_priority,
-                status,
-            },
-            (status, true, Some(extension_headers)) => DatagramField::Status0x21 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                status,
-            },
-            (ObjectStatus::EndOfGroup, false, None) => DatagramField::Payload0x02WithEndOfGroup {
-                object_id,
-                publisher_priority,
-                payload: self.payload.clone(),
-            },
-            (ObjectStatus::EndOfGroup, false, Some(extension_headers)) => {
-                DatagramField::Payload0x03WithEndOfGroup {
-                    object_id,
-                    publisher_priority,
-                    extension_headers,
-                    payload: self.payload.clone(),
-                }
-            }
-            (_, false, None) => DatagramField::Payload0x00 {
-                object_id,
-                publisher_priority,
-                payload: self.payload.clone(),
-            },
-            (_, false, Some(extension_headers)) => DatagramField::Payload0x01 {
-                object_id,
-                publisher_priority,
-                extension_headers,
-                payload: self.payload.clone(),
-            },
+        let payload = if self.payload.is_empty() {
+            ObjectDatagramPayload::Status(self.status)
+        } else {
+            ObjectDatagramPayload::Payload(self.payload.clone())
+        };
+        let field = DatagramField {
+            object_id: Some(self.location.object_id),
+            publisher_priority: self.publisher_priority,
+            extension_headers: (!self.extension_headers.key_value_pairs.is_empty())
+                .then(|| self.extension_headers.clone()),
+            end_of_group: !self.payload.is_empty() && self.status == ObjectStatus::EndOfGroup,
+            payload,
         };
         ObjectDatagram::new(track_alias, self.location.group_id, field)
     }
@@ -287,7 +249,7 @@ impl CachedObject {
 mod tests {
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        datagram_object, status_object, stream_object, stream_object_in_subgroup,
+        FIXTURE_PRIORITY, datagram_object, status_object, stream_object, stream_object_in_subgroup,
         stream_object_with_payload, subgroup_header_fields,
     };
     use moqt::{KeyValuePair, SubgroupHeader, VariantType};
@@ -406,9 +368,12 @@ mod tests {
         let datagram = ObjectDatagram::new(
             9,
             4,
-            DatagramField::Payload0x06WithEndOfGroup {
+            DatagramField {
+                object_id: None,
                 publisher_priority: 3,
-                payload: Bytes::from_static(b"last"),
+                extension_headers: None,
+                end_of_group: true,
+                payload: ObjectDatagramPayload::Payload(Bytes::from_static(b"last")),
             },
         );
         // Act
@@ -419,14 +384,16 @@ mod tests {
         assert_eq!(cached.payload, Bytes::from_static(b"last"));
         assert_eq!(regenerated.track_alias, 11);
         assert_eq!(regenerated.group_id, 4);
-        assert!(matches!(
+        assert_eq!(
             regenerated.field,
-            DatagramField::Payload0x02WithEndOfGroup {
-                object_id: 2,
+            DatagramField {
+                object_id: Some(2),
                 publisher_priority: 3,
-                ..
+                extension_headers: None,
+                end_of_group: true,
+                payload: ObjectDatagramPayload::Payload(Bytes::from_static(b"last")),
             }
-        ));
+        );
     }
 
     #[test]
@@ -437,15 +404,19 @@ mod tests {
             forwarding: ForwardingPreference::Datagram,
             ..cached
         };
-        // Act / Assert
-        assert!(matches!(
-            cached.to_object_datagram(0).field,
-            DatagramField::Status0x20 {
-                object_id: 5,
-                status: ObjectStatus::DoesNotExist,
-                ..
+        // Act
+        let field = cached.to_object_datagram(0).field;
+        // Assert
+        assert_eq!(
+            field,
+            DatagramField {
+                object_id: Some(5),
+                publisher_priority: FIXTURE_PRIORITY,
+                extension_headers: None,
+                end_of_group: false,
+                payload: ObjectDatagramPayload::Status(ObjectStatus::DoesNotExist),
             }
-        ));
+        );
     }
 
     #[test]
@@ -455,15 +426,19 @@ mod tests {
             forwarding: ForwardingPreference::Datagram,
             ..stream_object_with_payload(0, 4, Bytes::new())
         };
-        // Act / Assert: §10.2.1.1
-        assert!(matches!(
-            cached.to_object_datagram(0).field,
-            DatagramField::Status0x20 {
-                object_id: 4,
-                status: ObjectStatus::Normal,
-                ..
+        // Act
+        let field = cached.to_object_datagram(0).field;
+        // Assert: §10.2.1.1
+        assert_eq!(
+            field,
+            DatagramField {
+                object_id: Some(4),
+                publisher_priority: FIXTURE_PRIORITY,
+                extension_headers: None,
+                end_of_group: false,
+                payload: ObjectDatagramPayload::Status(ObjectStatus::Normal),
             }
-        ));
+        );
     }
 
     #[test]
