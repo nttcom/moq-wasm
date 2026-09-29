@@ -36,6 +36,9 @@ const MAX_REQUEST_ID = 1_000_000n
 const MILLIS_PER_MICRO = 1 / 1_000
 /// The relay's default cache TTL: an older record names a group that can no longer be fetched.
 const TIMELINE_RETENTION_MS = 60_000
+/// Half the relay's default cache TTL: draft-ietf-moq-msf-01 §5 republishes the
+/// catalog before it can fall out of the relay cache.
+const CATALOG_REFRESH_MICROS = 30_000_000
 const ATOM_HEADER_LENGTH = 8
 const LARGE_ATOM_HEADER_LENGTH = 16
 const MOOV = 'moov'
@@ -74,6 +77,7 @@ type TrackAliases = {
   video: bigint
   audio?: bigint
   timeline: bigint
+  catalog: bigint
 }
 
 type Mp4Media = {
@@ -165,10 +169,10 @@ export class Mp4Publisher {
     const trackAliases = {
       video: await publishTrack(VIDEO_TRACK_NAME),
       audio: media.audio && (await publishTrack(AUDIO_TRACK_NAME)),
-      timeline: await publishTrack(TIMELINE_TRACK_NAME)
+      timeline: await publishTrack(TIMELINE_TRACK_NAME),
+      catalog: await publishTrack(MEDIA_CATALOG_TRACK_NAME)
     }
-    const catalogAlias = await publishTrack(MEDIA_CATALOG_TRACK_NAME)
-    await this.sendCatalog(catalogAlias, buildCatalogJson(options.namespace, media))
+    await this.sendCatalog(trackAliases.catalog, buildCatalogJson(options.namespace, media))
     return trackAliases
   }
 
@@ -203,6 +207,8 @@ export class Mp4Publisher {
         ? undefined
         : new TrackSender(client, trackAliases.audio, AUDIO_TRACK_NAME, this.sentStreams)
     const timeline = new TrackSender(client, trackAliases.timeline, TIMELINE_TRACK_NAME, this.sentStreams)
+    const catalog = buildCatalogJson(options.namespace, media)
+    let catalogRefreshMicros = monotonicUnixMicros() + CATALOG_REFRESH_MICROS
     const records: MediaTimelineRecord[] = []
     let nextTimelineGroupId = BigInt(monotonicUnixMicros())
     let nextGroupId = BigInt(monotonicUnixMicros())
@@ -224,6 +230,10 @@ export class Mp4Publisher {
             media.reorderDelayMicros
           const payload = await readSamplePayload(media, index)
           await sleepUntilUnixMicros(sendMicros)
+          if (monotonicUnixMicros() >= catalogRefreshMicros) {
+            await this.sendCatalog(trackAliases.catalog, catalog)
+            catalogRefreshMicros = monotonicUnixMicros() + CATALOG_REFRESH_MICROS
+          }
           if (isVideo && isSync) {
             groupId = nextGroupId
             nextGroupId += 1n
@@ -331,6 +341,8 @@ export class Mp4Publisher {
     const groupId = this.nextCatalogGroupId
     this.nextCatalogGroupId += 1n
     const payload = new TextEncoder().encode(catalog)
+    // A viewer fetches the group the relay reports as the largest, which is the newest one.
+    this.catalogGroups.clear()
     this.catalogGroups.set(groupId, payload)
     this.sentStreams.label(trackAlias, MEDIA_CATALOG_TRACK_NAME)
     await client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)

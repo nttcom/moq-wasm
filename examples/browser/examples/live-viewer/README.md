@@ -180,7 +180,8 @@ live-ingest と同じく配信するので、シークバーの経過時間も�
   ほかのコーデックの音声は飛ばして映像だけを配信します。
 - 視聴者の SUBSCRIBE は待ちません。配信を始めると `video` / `audio` / `timeline` / `catalog` を PUBLISH し、catalog は
   それが載せる track をすべて PUBLISH してから送るので、relay は各 track を最初の object からキャッシュします。
-  publisher に届いた SUBSCRIBE は NOT_SUPPORTED で断ります。
+  catalog は relay のキャッシュから落ちないよう 30 秒ごとに送り直します。publisher に届いた SUBSCRIBE は
+  NOT_SUPPORTED で断ります。
 - group は video の keyframe ごとに切り替え、audio の object は直前の keyframe の group に入れます。
   group id は catalog も含めて開始時刻（unix マイクロ秒）から採番するので、配信し直しても同じ location を
   再利用しません（relay は publisher が替わっても track のキャッシュを保持し、既知の location を malformed
@@ -290,10 +291,10 @@ by `tfdt`. The rewind status shows the review's own `A/V` offset.
 
 The catalog is subscribed to for updates and fetched for its current object:
 a SUBSCRIBE delivers objects published after the largest one, and the
-publishers send the catalog only when it changes, so a viewer joining after it
-was sent would otherwise never see it. The FETCH names the group SUBSCRIBE_OK
-reports as the largest, which the relay has cached since the publisher's
-PUBLISH. When SUBSCRIBE_OK says no content exists yet, nothing is fetched and
+publishers send the catalog when it changes and every 30 seconds, so a viewer
+joining in between would otherwise wait for the next one. The FETCH names the
+group SUBSCRIBE_OK reports as the largest, which the publishers republish
+before the relay cache drops it. When SUBSCRIBE_OK says no content exists yet, nothing is fetched and
 the catalog arrives on the SUBSCRIBE; a FETCH the relay cannot cover would be
 forwarded to the publisher, and the MP4 publisher does not answer it.
 
