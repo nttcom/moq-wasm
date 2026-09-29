@@ -117,12 +117,7 @@ jobs:
             message=true
             live_viewer=true
             meeting=true
-            cascading=true
-            cache_eviction=true
-            fetch=true
-            multipub=true
-            dedup=true
-            auth=true
+            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers object-dedup)
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -136,12 +131,7 @@ jobs:
             message=false
             live_viewer=false
             meeting=false
-            cascading=false
-            cache_eviction=false
-            fetch=false
-            multipub=false
-            dedup=false
-            auth=false
+            compose_suites=()
 
             while IFS= read -r path; do
               case "$path" in
@@ -170,55 +160,44 @@ jobs:
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  cascading=true
+                  compose_suites+=(cascading-relay)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  cache_eviction=true
+                  compose_suites+=(cache-eviction)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  fetch=true
+                  compose_suites+=(fetch)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  multipub=true
+                  compose_suites+=(multiple-publishers)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/object-dedup-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/object-dedup-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  dedup=true
+                  compose_suites+=(object-dedup)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/auth-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|services/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  auth=true
+                  compose_suites+=(auth)
                   ;;
               esac
             done < changed-files.txt
           fi
 
-          compose_suites=()
-          [[ "$cascading" == "true" ]] && compose_suites+=(cascading-relay)
-          [[ "$auth" == "true" ]] && compose_suites+=(auth)
-          [[ "$cache_eviction" == "true" ]] && compose_suites+=(cache-eviction)
-          [[ "$fetch" == "true" ]] && compose_suites+=(fetch)
-          [[ "$multipub" == "true" ]] && compose_suites+=(multiple-publishers)
-          [[ "$dedup" == "true" ]] && compose_suites+=(object-dedup)
-
-          if [[ "$meeting" == "true" || ${#compose_suites[@]} -gt 0 ]]; then
-            relay=true
-          else
-            relay=false
-          fi
+          relay=false
+          [[ "$meeting" == "true" || ${#compose_suites[@]} -gt 0 ]] && relay=true
 
           if [[ "$relay" == "true" ]]; then
             if [[ "${{ github.event_name }}" == "pull_request" || ( "${{ github.event_name }}" == "push" && "${{ github.ref }}" != "refs/heads/master" ) ]]; then
@@ -235,7 +214,7 @@ jobs:
             echo "message=$message"
             echo "live_viewer=$live_viewer"
             echo "meeting=$meeting"
-            echo "compose_suites=$(jq -cn '$ARGS.positional' --args "${compose_suites[@]}")"
+            echo "compose_suites=$(jq -cn '$ARGS.positional | unique' --args "${compose_suites[@]}")"
             echo "relay=$relay"
             echo "relay_image_source=$relay_image_source"
           } >> "$GITHUB_OUTPUT"
