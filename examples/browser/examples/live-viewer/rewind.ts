@@ -16,15 +16,26 @@ export class GroupTimeline {
   /// the relay starts caching a track only once it has a subscriber, so this
   /// group holds no keyframe for a FETCH replay to start from.
   private joinGroupId: bigint | undefined
+  private arrivalLagMicros: number | undefined
 
   constructor(private readonly capacity: number) {}
 
-  record(groupId: bigint, locHeader?: LocHeader): void {
+  record(groupId: bigint, locHeader: LocHeader | undefined, receivedAtMicros: number): void {
     const captureMicros = readLocHeader(locHeader).captureTimestampMicros
     if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
       return
     }
+    this.arrivalLagMicros = receivedAtMicros - captureMicros
     this.recordCapture(groupId, captureMicros)
+  }
+
+  /// A group known only by its id, as reported by TRACK_STATUS, is placed at
+  /// the capture time of the objects live delivery was bringing in last.
+  recordLiveGroup(groupId: bigint, nowMicros: number): void {
+    if (this.arrivalLagMicros === undefined) {
+      return
+    }
+    this.recordCapture(groupId, nowMicros - this.arrivalLagMicros)
   }
 
   recordCapture(groupId: bigint, captureMicros: number): void {
@@ -43,6 +54,7 @@ export class GroupTimeline {
   reset(): void {
     this.marks.length = 0
     this.joinGroupId = undefined
+    this.arrivalLagMicros = undefined
   }
 
   get latest(): GroupMark | undefined {

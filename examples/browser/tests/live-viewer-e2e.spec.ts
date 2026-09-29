@@ -230,7 +230,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
-    // Assert: review plays from its own MediaSource while the live one keeps running hidden
+    // Assert: review plays from its own MediaSource while the live one stays hidden
     await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.reviewCanvas).toBeHidden()

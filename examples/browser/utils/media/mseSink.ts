@@ -38,6 +38,7 @@ export class MseSink {
   private video: Buffered | undefined
   private audio: Buffered | undefined
   private startedAtSeconds: number | undefined
+  private seekingToNewestRange = false
 
   private constructor(
     readonly element: HTMLVideoElement,
@@ -74,6 +75,13 @@ export class MseSink {
     this.enqueue(this.audio, data)
   }
 
+  /// Media appended after a gap in delivery lands in a buffered range of its
+  /// own, which playback stalled at the gap never reaches; it continues there
+  /// once that range holds a second of video.
+  resumeAtNewestRange(): void {
+    this.seekingToNewestRange = true
+  }
+
   bufferedEnd(): number | undefined {
     const buffered = this.video?.sourceBuffer.buffered
     return buffered && buffered.length > 0 ? buffered.end(buffered.length - 1) : undefined
@@ -97,6 +105,7 @@ export class MseSink {
     const buffered: Buffered = { sourceBuffer, queue: [] }
     sourceBuffer.addEventListener('updateend', () => {
       this.startWhenBuffered()
+      this.seekToNewestRangeWhenBuffered()
       this.evictBehindPlayhead(buffered)
       this.flush(buffered)
     })
@@ -145,6 +154,24 @@ export class MseSink {
     this.startedAtSeconds = bufferStart
     this.element.currentTime = start
     void this.element.play().catch(() => undefined)
+  }
+
+  private seekToNewestRangeWhenBuffered(): void {
+    const ranges = this.video?.sourceBuffer.buffered
+    if (!this.seekingToNewestRange || !ranges || ranges.length < 2) {
+      return
+    }
+    const newest = ranges.length - 1
+    const audioRanges = this.audio?.sourceBuffer.buffered
+    const start = Math.max(
+      ranges.start(newest),
+      audioRanges && audioRanges.length > 0 ? audioRanges.start(audioRanges.length - 1) : 0
+    )
+    if (ranges.end(newest) - start < PLAYBACK_BUFFER_THRESHOLD_SECONDS) {
+      return
+    }
+    this.seekingToNewestRange = false
+    this.element.currentTime = start
   }
 
   private evictBehindPlayhead(buffered: Buffered): void {
