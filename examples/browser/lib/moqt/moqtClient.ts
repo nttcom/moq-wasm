@@ -9,6 +9,7 @@ import init, {
   ObjectDatagramStatusMessage,
   PublishNamespaceDoneMessage,
   PublishNamespaceMessage,
+  PublishOkMessage,
   RequestErrorMessage,
   ServerSetupMessage,
   SubgroupHeaderMessage,
@@ -173,6 +174,7 @@ export class MoqtClientWrapper {
   private readonly subscriptionState: SubscriptionStateStore
   private readonly pendingPublishNamespace = new Map<bigint, PendingVoidResolver>()
   private readonly pendingSubscribeNamespace = new Map<bigint, PendingVoidResolver>()
+  private readonly pendingPublish = new Map<bigint, PendingVoidResolver>()
   private readonly pendingSubscribe = new Map<bigint, PendingSubscribeResolver>()
   private readonly pendingFetch = new Map<bigint, PendingFetchResolver>()
   private readonly subscriptionTrackAliases = new Map<bigint, bigint>()
@@ -357,6 +359,33 @@ export class MoqtClientWrapper {
     })
     await client.sendSubscribeNamespace(requestId, trackNamespacePrefix, authInfo)
     await response
+  }
+
+  async publish(trackNamespace: string[], trackName: string, authInfo: string): Promise<bigint> {
+    const client = this.requireConnectedClient()
+    const requestId = this.issueRequestId()
+    const response = new Promise<void>((resolve, reject) => {
+      this.pendingPublish.set(requestId, { resolve, reject })
+    })
+    try {
+      const trackAlias = await client.sendPublish(
+        requestId,
+        trackNamespace,
+        trackName,
+        undefined,
+        GroupOrder.Ascending,
+        false,
+        undefined,
+        undefined,
+        true,
+        authInfo
+      )
+      await response
+      return trackAlias
+    } catch (error) {
+      this.pendingPublish.delete(requestId)
+      throw error
+    }
   }
 
   async subscribe(
@@ -591,6 +620,19 @@ export class MoqtClientWrapper {
       }
     })
 
+    this.client.onPublishResponse((response: PublishOkMessage | RequestErrorMessage) => {
+      const pending = this.pendingPublish.get(response.requestId)
+      if (!pending) {
+        return
+      }
+      this.pendingPublish.delete(response.requestId)
+      if (isRequestError(response)) {
+        pending.reject(new Error(`PUBLISH_ERROR ${response.errorCode}: ${response.reasonPhrase}`))
+      } else {
+        pending.resolve()
+      }
+    })
+
     this.client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
       const handler = this.incomingSubscribeHandler ?? defaultIncomingSubscribeHandler
       await handler({
@@ -754,7 +796,7 @@ export class MoqtClientWrapper {
 
   // MOQ-T draft-14 §9.1: client-initiated Request IDs start at 0 and increase by
   // 2 (clients use even ids, servers odd). One counter covers every request type
-  // (PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE / SUBSCRIBE / FETCH) so ids stay
+  // (PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE / PUBLISH / SUBSCRIBE / FETCH) so ids stay
   // unique within the session.
   private issueRequestId(): bigint {
     const requestId = this.nextRequestId
@@ -773,6 +815,7 @@ export class MoqtClientWrapper {
     this.pendingServerSetup = null
     this.pendingPublishNamespace.clear()
     this.pendingSubscribeNamespace.clear()
+    this.pendingPublish.clear()
     this.pendingSubscribe.clear()
     this.pendingFetch.clear()
     this.fetchStreamEndHandlers.clear()
@@ -808,7 +851,7 @@ export class MoqtClientWrapper {
 }
 
 function isRequestError(
-  message: NamespaceOkMessage | RequestErrorMessage | SubscribeOkMessage
+  message: NamespaceOkMessage | RequestErrorMessage | SubscribeOkMessage | PublishOkMessage
 ): message is RequestErrorMessage {
   return 'errorCode' in message
 }
