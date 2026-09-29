@@ -1,51 +1,88 @@
-use std::sync::Arc;
+use std::{
+    collections::HashSet,
+    sync::{Arc, PoisonError, RwLock},
+};
 
 use dashmap::{DashMap, DashSet, Entry};
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::oneshot;
 
 use crate::modules::{
     core::handler::publish::PublishHandler,
     sequences::tables::table::{
-        ActiveUpstreamSubscription, DownstreamSubscription, LocalPubSubDirectory, PeerKind,
+        ActiveUpstreamSubscription, DownstreamSubscription, PeerKind,
         RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
         UpstreamSubscriptionOrigin,
     },
     types::{SessionId, TrackNamespace, TrackNamespacePrefix},
 };
 
-#[derive(Debug)]
 pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     _runner_stop_sender: oneshot::Sender<()>,
 }
 
-#[derive(Debug)]
+type PeersByNamespace = DashMap<String, DashMap<SessionId, PeerKind>>;
+
+fn has_client(peers: &DashMap<SessionId, PeerKind>) -> bool {
+    peers.iter().any(|peer| *peer.value() == PeerKind::Client)
+}
+
+/// Returns the namespaces whose last client was the removed session; relay
+/// peers don't own Redis routes, so only those need route cleanup.
+fn remove_peer_from_namespaces(
+    namespaces: &PeersByNamespace,
+    session_id: SessionId,
+) -> Vec<String> {
+    let mut last_client_left = Vec::new();
+    let mut empty_namespaces = Vec::new();
+    for entry in namespaces.iter() {
+        let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
+        if removed_kind == Some(PeerKind::Client) && !has_client(entry.value()) {
+            last_client_left.push(entry.key().clone());
+        }
+        if entry.value().is_empty() {
+            empty_namespaces.push(entry.key().clone());
+        }
+    }
+    for namespace in empty_namespaces {
+        namespaces.remove(&namespace);
+    }
+    last_client_left
+}
+
+fn unregister_peer(namespaces: &PeersByNamespace, session_id: SessionId, namespace: &str) -> bool {
+    let Some(peers) = namespaces.get(namespace) else {
+        return true;
+    };
+
+    peers.remove(&session_id);
+    let no_clients_remain = !has_client(&peers);
+    let is_empty = peers.is_empty();
+    drop(peers);
+
+    if is_empty {
+        namespaces.remove(namespace);
+    }
+
+    no_clients_remain
+}
+
 pub(crate) struct InMemoryLocalPubSubDirectory {
-    /**
-     * namespace mechanism
-     * publish_namespace: room/member
-     * subscriber_namespace: room/
-     * publish: room/member + video
-     * subscribe: room/member/video
-     */
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, PeerKind>>,
     pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, DashMap<SessionId, PeerKind>>,
     pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
-    pub(crate) track_alias_links: DashMap<(SessionId, u64, SessionId), u64>,
     pub(crate) active_upstream_subscriptions:
         DashMap<UpstreamSubscriptionKey, ActiveUpstreamSubscription>,
     pub(crate) downstream_subscriptions:
         DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
 }
 
-#[async_trait::async_trait]
-impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
-    fn new() -> Self {
+impl InMemoryLocalPubSubDirectory {
+    pub(crate) fn new() -> Self {
         Self {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
             published_handlers: RwLock::new(Vec::new()),
-            track_alias_links: DashMap::new(),
             active_upstream_subscriptions: DashMap::new(),
             downstream_subscriptions: DashMap::new(),
         }
@@ -57,77 +94,23 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id)
     )]
-    async fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions {
-        let mut removed = RemovedSessionSubscriptions::default();
-
-        let mut empty_namespaces = Vec::new();
-        for entry in self.publisher_namespaces.iter() {
-            let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
-            // Report the namespace for Redis cleanup only when the removed session
-            // was the last client publisher; relay publishers don't own routes.
-            let no_clients_remain = !entry
-                .value()
-                .iter()
-                .any(|session| *session.value() == PeerKind::Client);
-            if removed_kind == Some(PeerKind::Client) && no_clients_remain {
-                removed
-                    .publish_namespace_track_namespaces
-                    .push(entry.key().clone());
-            }
-            if entry.value().is_empty() {
-                empty_namespaces.push(entry.key().clone());
-            }
-        }
-        for track_namespace in empty_namespaces {
-            self.publisher_namespaces.remove(&track_namespace);
-        }
-
-        let mut empty_prefixes = Vec::new();
-        for entry in self.subscriber_namespaces.iter() {
-            let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
-            // Report the prefix for Redis cleanup only when the removed session
-            // was the last client subscriber; relay subscribers don't own routes.
-            let no_clients_remain = !entry
-                .value()
-                .iter()
-                .any(|session| *session.value() == PeerKind::Client);
-            if removed_kind == Some(PeerKind::Client) && no_clients_remain {
-                removed
-                    .subscribe_namespace_prefixes
-                    .push(entry.key().clone());
-            }
-            if entry.value().is_empty() {
-                empty_prefixes.push(entry.key().clone());
-            }
-        }
-        for track_namespace_prefix in empty_prefixes {
-            self.subscriber_namespaces.remove(&track_namespace_prefix);
-        }
+    pub(crate) fn remove_session(&self, session_id: SessionId) -> RemovedSessionSubscriptions {
+        let mut removed = RemovedSessionSubscriptions {
+            publish_namespace_track_namespaces: remove_peer_from_namespaces(
+                &self.publisher_namespaces,
+                session_id,
+            ),
+            subscribe_namespace_prefixes: remove_peer_from_namespaces(
+                &self.subscriber_namespaces,
+                session_id,
+            ),
+            ..Default::default()
+        };
 
         self.published_handlers
             .write()
-            .await
+            .unwrap_or_else(PoisonError::into_inner)
             .retain(|(registered_session_id, _)| *registered_session_id != session_id);
-
-        let aliases_to_remove: Vec<_> = self
-            .track_alias_links
-            .iter()
-            .filter_map(|entry| {
-                let (publisher_session_id, publisher_track_alias, subscriber_session_id) =
-                    *entry.key();
-                (publisher_session_id == session_id || subscriber_session_id == session_id)
-                    .then_some({
-                        (
-                            publisher_session_id,
-                            publisher_track_alias,
-                            subscriber_session_id,
-                        )
-                    })
-            })
-            .collect();
-        for key in aliases_to_remove {
-            self.track_alias_links.remove(&key);
-        }
 
         let downstream_keys: Vec<_> = self
             .downstream_subscriptions
@@ -188,12 +171,12 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace, peer_kind = ?peer_kind)
     )]
-    fn register_publish_namespace(
+    pub(crate) fn register_publish_namespace(
         &self,
         session_id: SessionId,
         track_namespace: String,
         peer_kind: PeerKind,
-    ) -> bool {
+    ) {
         if let Some(sessions) = self.publisher_namespaces.get_mut(&track_namespace) {
             sessions.insert(session_id, peer_kind);
         } else {
@@ -201,41 +184,37 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             sessions.insert(session_id, peer_kind);
             self.publisher_namespaces.insert(track_namespace, sessions);
         }
-        true
     }
 
+    /// Returns true when no client publisher remains for the namespace,
+    /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.unregister_publish_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace = %track_namespace)
     )]
-    fn unregister_publish_namespace(&self, session_id: SessionId, track_namespace: &str) -> bool {
-        let Some(sessions) = self.publisher_namespaces.get(track_namespace) else {
-            return true;
-        };
-
-        sessions.remove(&session_id);
-        let no_clients_remain = !sessions
-            .iter()
-            .any(|session| *session.value() == PeerKind::Client);
-        let is_empty = sessions.is_empty();
-        drop(sessions);
-
-        if is_empty {
-            self.publisher_namespaces.remove(track_namespace);
-        }
-
-        no_clients_remain
+    pub(crate) fn unregister_publish_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace: &str,
+    ) -> bool {
+        unregister_peer(&self.publisher_namespaces, session_id, track_namespace)
     }
 
+    /// Drops relay-origin publisher namespaces under the prefix once no
+    /// client subscriber covers them anymore. Relay-learned namespaces are
+    /// only withdrawn by a best-effort PUBLISH_NAMESPACE_DONE, which can be
+    /// missed when the remote publisher and the local subscriber leave at the
+    /// same time; purging here lets the next subscriber re-learn them from
+    /// the route registry instead of a stale local copy.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.purge_relay_publish_namespaces",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    fn purge_relay_publish_namespaces(&self, track_namespace_prefix: &str) {
+    pub(crate) fn purge_relay_publish_namespaces(&self, track_namespace_prefix: &str) {
         let mut empty_namespaces = Vec::new();
         for entry in self.publisher_namespaces.iter() {
             if !entry.key().starts_with(track_namespace_prefix) {
@@ -243,11 +222,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             }
             // Keep namespaces that another client-subscribed prefix still covers.
             let covered = self.subscriber_namespaces.iter().any(|prefix_entry| {
-                entry.key().starts_with(prefix_entry.key())
-                    && prefix_entry
-                        .value()
-                        .iter()
-                        .any(|session| *session.value() == PeerKind::Client)
+                entry.key().starts_with(prefix_entry.key()) && has_client(prefix_entry.value())
             });
             if covered {
                 continue;
@@ -276,22 +251,22 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         }
     }
 
+    /// Returns true when this registration adds the first client subscriber
+    /// for the prefix, i.e. the caller should register the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, peer_kind = ?peer_kind)
     )]
-    fn register_subscribe_namespace(
+    pub(crate) fn register_subscribe_namespace(
         &self,
         session_id: SessionId,
         track_namespace_prefix: String,
         peer_kind: PeerKind,
     ) -> bool {
         if let Some(sessions) = self.subscriber_namespaces.get_mut(&track_namespace_prefix) {
-            let had_client = sessions
-                .iter()
-                .any(|session| *session.value() == PeerKind::Client);
+            let had_client = has_client(&sessions);
             sessions.insert(session_id, peer_kind);
             peer_kind == PeerKind::Client && !had_client
         } else {
@@ -308,33 +283,24 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         }
     }
 
+    /// Returns true when no client subscriber remains for the prefix,
+    /// i.e. the caller may clean up the Redis route.
     #[tracing::instrument(
         level = "info",
         name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
-    fn unregister_subscribe_namespace(
+    pub(crate) fn unregister_subscribe_namespace(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
     ) -> bool {
-        let Some(sessions) = self.subscriber_namespaces.get(track_namespace_prefix) else {
-            return true;
-        };
-
-        sessions.remove(&session_id);
-        let no_clients_remain = !sessions
-            .iter()
-            .any(|session| *session.value() == PeerKind::Client);
-        let is_empty = sessions.is_empty();
-        drop(sessions);
-
-        if is_empty {
-            self.subscriber_namespaces.remove(track_namespace_prefix);
-        }
-
-        no_clients_remain
+        unregister_peer(
+            &self.subscriber_namespaces,
+            session_id,
+            track_namespace_prefix,
+        )
     }
 
     #[tracing::instrument(
@@ -343,10 +309,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id)
     )]
-    async fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
+    pub(crate) fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
         self.published_handlers
             .write()
-            .await
+            .unwrap_or_else(PoisonError::into_inner)
             .push((session_id, handler));
     }
 
@@ -356,12 +322,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace)
     )]
-    fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
+    pub(crate) fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
         let combined = DashSet::new();
         self.subscriber_namespaces
             .iter()
-            // Check if the published namespace (track_namespace) falls under the subscribed prefix (entry.key())
-            // Example: Published "room/member" starts with Subscribed "room" -> Match
             .filter(|entry| track_namespace.starts_with(entry.key()))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session| {
@@ -377,28 +341,30 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    async fn get_subscribers(
+    pub(crate) fn get_subscribers(
         &self,
         track_namespace_prefix: &str,
-    ) -> DashSet<(String, (Option<String>, Option<u64>))> {
-        let filtered = DashSet::new();
+    ) -> HashSet<(String, Option<(String, u64)>)> {
+        let mut filtered = HashSet::new();
         for entry in self.publisher_namespaces.iter() {
             if entry.key().starts_with(track_namespace_prefix) {
-                filtered.insert((entry.key().clone(), (None, None)));
+                filtered.insert((entry.key().clone(), None));
             }
         }
 
-        for (_, handler) in self.published_handlers.read().await.iter() {
+        for (_, handler) in self
+            .published_handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+        {
             if handler
                 .track_namespace()
                 .starts_with(track_namespace_prefix)
             {
                 filtered.insert((
                     handler.track_namespace().to_string(),
-                    (
-                        Some(handler.track_name().to_string()),
-                        Some(handler.track_alias()),
-                    ),
+                    Some((handler.track_name().to_string(), handler.track_alias())),
                 ));
             }
         }
@@ -407,23 +373,23 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.local_pub_sub_directory.find_active_upstream_subscriptions",
+        name = "relay.local_pub_sub_directory.find_active_upstream_subscription",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    fn find_active_upstream_subscriptions(
+    pub(crate) fn find_active_upstream_subscription(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Vec<UpstreamSubscriptionKey> {
+    ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
         self.active_upstream_subscriptions
             .iter()
             .filter(|entry| {
                 entry.key().track_namespace == track_namespace
                     && entry.key().track_name == track_name
             })
-            .map(|entry| entry.key().clone())
-            .collect()
+            .min_by_key(|entry| entry.key().publisher_session_id)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
     }
 
     #[tracing::instrument(
@@ -432,7 +398,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    async fn find_upstream_publishers(
+    pub(crate) fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
@@ -444,7 +410,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             }
         }
 
-        let handlers = self.published_handlers.read().await;
+        let handlers = self
+            .published_handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
         for session_id in handlers
             .iter()
             .filter(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
@@ -462,75 +431,16 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .collect()
     }
 
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.local_pub_sub_directory.register_track_alias_link",
-        skip_all,
-        fields(
-            publisher_session_id = %publisher_session_id,
-            publisher_track_alias = %publisher_track_alias,
-            subscriber_session_id = %subscriber_session_id,
-            subscriber_track_alias = %subscriber_track_alias
-        )
-    )]
-    fn register_track_alias_link(
+    pub(crate) fn get_active_upstream_subscription(
         &self,
-        publisher_session_id: SessionId,
-        publisher_track_alias: u64,
-        subscriber_session_id: SessionId,
-        subscriber_track_alias: u64,
-    ) {
-        self.track_alias_links.insert(
-            (
-                publisher_session_id,
-                publisher_track_alias,
-                subscriber_session_id,
-            ),
-            subscriber_track_alias,
-        );
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.local_pub_sub_directory.find_subscriber_track_alias",
-        skip_all,
-        fields(
-            publisher_session_id = %publisher_session_id,
-            publisher_track_alias = %publisher_track_alias,
-            subscriber_session_id = %subscriber_session_id
-        )
-    )]
-    fn _find_subscriber_track_alias(
-        &self,
-        publisher_session_id: SessionId,
-        publisher_track_alias: u64,
-        subscriber_session_id: SessionId,
-    ) -> Option<u64> {
-        self.track_alias_links
-            .get(&(
-                publisher_session_id,
-                publisher_track_alias,
-                subscriber_session_id,
-            ))
-            .map(|value| *value)
-    }
-
-    fn get_active_upstream_subscription(
-        &self,
-        publisher_session_id: SessionId,
-        track_namespace: &str,
-        track_name: &str,
+        key: &UpstreamSubscriptionKey,
     ) -> Option<ActiveUpstreamSubscription> {
         self.active_upstream_subscriptions
-            .get(&UpstreamSubscriptionKey {
-                publisher_session_id,
-                track_namespace: track_namespace.to_string(),
-                track_name: track_name.to_string(),
-            })
+            .get(key)
             .map(|entry| entry.value().clone())
     }
 
-    fn get_downstream_subscription(
+    pub(crate) fn get_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
@@ -540,7 +450,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|entry| entry.value().subscription.clone())
     }
 
-    fn register_upstream_subscription(
+    pub(crate) fn register_upstream_subscription(
         &self,
         key: UpstreamSubscriptionKey,
         subscription: ActiveUpstreamSubscription,
@@ -548,7 +458,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         self.active_upstream_subscriptions.insert(key, subscription);
     }
 
-    fn remove_upstream_subscription(
+    pub(crate) fn remove_upstream_subscription(
         &self,
         key: &UpstreamSubscriptionKey,
     ) -> Option<ActiveUpstreamSubscription> {
@@ -557,7 +467,10 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
             .map(|(_, subscription)| subscription)
     }
 
-    fn register_downstream_subscription(
+    /// Returns `None` when the upstream subscription is gone. The returned
+    /// receiver resolves once the registration is removed, however that happens; the
+    /// subscription's egress runner lives exactly until then.
+    pub(crate) fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
@@ -583,7 +496,7 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
         Some(runner_stop_receiver)
     }
 
-    fn remove_downstream_subscription(
+    pub(crate) fn remove_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
@@ -622,8 +535,9 @@ impl LocalPubSubDirectory for InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::core::mocks::runner_stopped;
-    use crate::modules::enums::{ContentExists, FilterType, GroupOrder};
+    use crate::modules::sequences::test_fixtures::table_with_upstream;
     use crate::modules::types::TrackKey;
+    use moqt::{ContentExists, FilterType, GroupOrder};
 
     #[derive(Debug)]
     struct StubPublishHandler {
@@ -682,11 +596,11 @@ mod tests {
                     track_namespace: self.track_namespace.clone(),
                     track_name: self.track_name.clone(),
                     track_alias: self.track_alias,
-                    group_order: moqt::GroupOrder::Ascending,
-                    content_exists: moqt::ContentExists::False,
+                    group_order: GroupOrder::Ascending,
+                    content_exists: ContentExists::False,
                     subscriber_priority,
                     forward: true,
-                    filter_type: filter_type.as_moqt(),
+                    filter_type,
                     delivery_timeout: None,
                 },
             )
@@ -710,42 +624,36 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn remove_session_cleans_up_all_session_scoped_entries() {
-        // Arrange: Register namespace, track, and alias state for the session.
+    #[test]
+    fn remove_session_cleans_up_all_session_scoped_entries() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
 
-        assert!(table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client));
-        assert!(table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client));
+        table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
+        table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client);
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(1, "solo/".to_string(), PeerKind::Client);
-        table
-            .register_publish(
-                1,
-                Arc::new(StubPublishHandler {
-                    track_namespace: "room/member".to_string(),
-                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                    track_name: "video".to_string(),
-                    track_alias: 10,
-                }),
-            )
-            .await;
-        table.register_track_alias_link(1, 10, 2, 20);
-        table.register_track_alias_link(2, 30, 1, 40);
+        table.register_publish(
+            1,
+            Arc::new(StubPublishHandler {
+                track_namespace: "room/member".to_string(),
+                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 10,
+            }),
+        );
 
         // Act: Remove all state associated with session 1.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
-        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video").await;
+        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = upstream_subscriptions
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
             .collect();
         assert_eq!(publisher_session_ids, vec![2]);
-        assert!(table._find_subscriber_track_alias(1, 10, 2).is_none());
-        assert!(table._find_subscriber_track_alias(2, 30, 1).is_none());
 
         let room_subscribers = table.get_namespace_subscribers("room/member");
         assert!(room_subscribers.contains(&2));
@@ -760,8 +668,8 @@ mod tests {
         assert!(removed.publish_namespace_track_namespaces.is_empty());
     }
 
-    #[tokio::test]
-    async fn register_subscribe_namespace_reports_only_the_first_client() {
+    #[test]
+    fn register_subscribe_namespace_reports_only_the_first_client() {
         // Arrange: Start with a relay subscriber, which never owns the route.
         let table = InMemoryLocalPubSubDirectory::new();
 
@@ -779,8 +687,8 @@ mod tests {
         assert!(!second_client);
     }
 
-    #[tokio::test]
-    async fn unregister_subscribe_namespace_reports_when_last_client_leaves() {
+    #[test]
+    fn unregister_subscribe_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client subscribers for the same namespace prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Client);
@@ -796,8 +704,8 @@ mod tests {
         assert!(table.subscriber_namespaces.get("room/").is_none());
     }
 
-    #[tokio::test]
-    async fn unregister_subscribe_namespace_ignores_remaining_relay_subscribers() {
+    #[test]
+    fn unregister_subscribe_namespace_ignores_remaining_relay_subscribers() {
         // Arrange: Register a client subscriber alongside a relay subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Client);
@@ -813,15 +721,15 @@ mod tests {
         assert!(!room_subscribers.contains(&1));
     }
 
-    #[tokio::test]
-    async fn remove_session_reports_empty_client_prefix_even_when_relay_subscriber_remains() {
+    #[test]
+    fn remove_session_reports_empty_client_prefix_even_when_relay_subscriber_remains() {
         // Arrange: Register one client-origin subscriber and one relay-origin subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Client);
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
 
         // Act: Disconnect the client-origin subscriber.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: Redis cleanup is requested while the relay subscriber stays registered locally.
         assert_eq!(
@@ -833,15 +741,15 @@ mod tests {
         assert!(!room_subscribers.contains(&1));
     }
 
-    #[tokio::test]
-    async fn remove_session_does_not_report_relay_only_prefixes() {
+    #[test]
+    fn remove_session_does_not_report_relay_only_prefixes() {
         // Arrange: Register only relay-origin subscribers for the prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_subscribe_namespace(1, "room/".to_string(), PeerKind::Relay);
         table.register_subscribe_namespace(2, "room/".to_string(), PeerKind::Relay);
 
         // Act: Disconnect one relay subscriber.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.subscribe_namespace_prefixes.is_empty());
@@ -849,22 +757,22 @@ mod tests {
         assert!(room_subscribers.contains(&2));
     }
 
-    #[tokio::test]
-    async fn remove_session_reports_publish_namespace_when_last_client_publisher_leaves() {
+    #[test]
+    fn remove_session_reports_publish_namespace_when_last_client_publisher_leaves() {
         // Arrange: Register one client-origin publisher and one relay-origin publisher.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
         table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Relay);
 
         // Act: Disconnect the client-origin publisher.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: Redis cleanup is requested while the relay publisher stays registered locally.
         assert_eq!(
             removed.publish_namespace_track_namespaces,
             vec!["room/member".to_string()]
         );
-        let publishers = table.find_upstream_publishers("room/member", "video").await;
+        let publishers = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = publishers
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -872,22 +780,22 @@ mod tests {
         assert_eq!(publisher_session_ids, vec![2]);
     }
 
-    #[tokio::test]
-    async fn remove_session_does_not_report_relay_only_publish_namespaces() {
+    #[test]
+    fn remove_session_does_not_report_relay_only_publish_namespaces() {
         // Arrange: Register only relay-origin publishers for the namespace.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Relay);
         table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Relay);
 
         // Act: Disconnect one relay publisher.
-        let removed = table.remove_session(1).await;
+        let removed = table.remove_session(1);
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.publish_namespace_track_namespaces.is_empty());
     }
 
-    #[tokio::test]
-    async fn purge_relay_publish_namespaces_drops_uncovered_relay_entries() {
+    #[test]
+    fn purge_relay_publish_namespaces_drops_uncovered_relay_entries() {
         // Arrange: A relay-origin namespace learned over an inter-relay session,
         // alongside a local client publisher in another namespace.
         let table = InMemoryLocalPubSubDirectory::new();
@@ -902,8 +810,8 @@ mod tests {
         assert!(table.publisher_namespaces.get("research/local").is_some());
     }
 
-    #[tokio::test]
-    async fn purge_relay_publish_namespaces_keeps_entries_covered_by_client_prefix() {
+    #[test]
+    fn purge_relay_publish_namespaces_keeps_entries_covered_by_client_prefix() {
         // Arrange: A relay-origin namespace still watched via another client prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(10, "research/ghost".to_string(), PeerKind::Relay);
@@ -916,8 +824,8 @@ mod tests {
         assert!(table.publisher_namespaces.get("research/ghost").is_some());
     }
 
-    #[tokio::test]
-    async fn unregister_publish_namespace_reports_when_last_client_leaves() {
+    #[test]
+    fn unregister_publish_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client publishers for the same namespace.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
@@ -933,8 +841,8 @@ mod tests {
         assert!(table.publisher_namespaces.get("room/member").is_none());
     }
 
-    #[tokio::test]
-    async fn unregister_publish_namespace_ignores_remaining_relay_publishers() {
+    #[test]
+    fn unregister_publish_namespace_ignores_remaining_relay_publishers() {
         // Arrange: Register a client publisher alongside a relay publisher.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
@@ -945,7 +853,7 @@ mod tests {
 
         // Assert: Route cleanup is allowed while the relay publisher stays registered.
         assert!(clients_became_empty);
-        let publishers = table.find_upstream_publishers("room/member", "video").await;
+        let publishers = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = publishers
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -953,40 +861,35 @@ mod tests {
         assert_eq!(publisher_session_ids, vec![2]);
     }
 
-    #[tokio::test]
-    async fn allows_multiple_publishers_for_the_same_namespace_and_track() {
+    #[test]
+    fn allows_multiple_publishers_for_the_same_namespace_and_track() {
         // Arrange: Register multiple publishers for the same namespace and track.
         let table = InMemoryLocalPubSubDirectory::new();
 
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
         table.register_publish_namespace(2, "room/member".to_string(), PeerKind::Client);
-        table
-            .register_publish(
-                1,
-                Arc::new(StubPublishHandler {
-                    track_namespace: "room/member".to_string(),
-                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                    track_name: "video".to_string(),
-                    track_alias: 10,
-                }),
-            )
-            .await;
-        table
-            .register_publish(
-                2,
-                Arc::new(StubPublishHandler {
-                    track_namespace: "room/member".to_string(),
-                    track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                    track_name: "video".to_string(),
-                    track_alias: 20,
-                }),
-            )
-            .await;
+        table.register_publish(
+            1,
+            Arc::new(StubPublishHandler {
+                track_namespace: "room/member".to_string(),
+                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 10,
+            }),
+        );
+        table.register_publish(
+            2,
+            Arc::new(StubPublishHandler {
+                track_namespace: "room/member".to_string(),
+                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 20,
+            }),
+        );
 
         // Act: Find upstream publishers available for subscribe.
         let mut upstream_publishers: Vec<_> = table
             .find_upstream_publishers("room/member", "video")
-            .await
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
             .collect();
@@ -996,31 +899,10 @@ mod tests {
         assert_eq!(upstream_publishers, vec![1, 2]);
     }
 
-    fn subscribed_track_table() -> (InMemoryLocalPubSubDirectory, UpstreamSubscriptionKey) {
-        let table = InMemoryLocalPubSubDirectory::new();
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "ns".to_string(),
-            track_name: "track".to_string(),
-        };
-        table.register_upstream_subscription(
-            upstream_key.clone(),
-            ActiveUpstreamSubscription {
-                upstream_request_id: 1,
-                track_key: TrackKey::new("ns", "track"),
-                expires: None,
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 0,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-            },
-        );
-        (table, upstream_key)
-    }
-
-    #[tokio::test]
-    async fn register_downstream_subscription_stores_start_location() {
+    #[test]
+    fn register_downstream_subscription_stores_start_location() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let largest = moqt::Location {
             group_id: 5,
             object_id: 3,
@@ -1043,10 +925,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn register_downstream_subscription_none_start_location() {
+    #[test]
+    fn register_downstream_subscription_none_start_location() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
 
         // Act
         let runner_stop_receiver =
@@ -1059,43 +941,43 @@ mod tests {
         assert!(sub.start_location.is_none());
     }
 
-    #[tokio::test]
-    async fn publisher_disconnect_stops_the_runners_of_its_downstream_subscriptions() {
+    #[test]
+    fn publisher_disconnect_stops_the_runners_of_its_downstream_subscriptions() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
             .register_downstream_subscription(2, 100, upstream_key, None)
             .unwrap();
 
         // Act
-        table.remove_session(1).await;
+        table.remove_session(1);
 
         // Assert
         assert!(runner_stopped(&mut runner_stop_receiver));
     }
 
-    #[tokio::test]
-    async fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
+    #[test]
+    fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
             .register_downstream_subscription(2, 100, upstream_key.clone(), None)
             .unwrap();
         table.remove_upstream_subscription(&upstream_key).unwrap();
 
         // Act
-        table.remove_session(2).await;
+        table.remove_session(2);
 
         // Assert
         assert!(runner_stopped(&mut runner_stop_receiver));
         assert!(table.downstream_subscriptions.is_empty());
     }
 
-    #[tokio::test]
-    async fn registration_for_a_removed_upstream_yields_no_runner() {
+    #[test]
+    fn registration_for_a_removed_upstream_yields_no_runner() {
         // Arrange
-        let (table, upstream_key) = subscribed_track_table();
-        table.remove_session(1).await;
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        table.remove_session(1);
 
         // Act
         let runner_stop_receiver =
@@ -1110,7 +992,7 @@ mod tests {
     async fn registration_racing_publisher_removal_leaves_no_orphan() {
         for _ in 0..2000 {
             // Arrange
-            let (table, upstream_key) = subscribed_track_table();
+            let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
             let table = Arc::new(table);
             let barrier = Arc::new(tokio::sync::Barrier::new(2));
 
@@ -1129,7 +1011,7 @@ mod tests {
                 let table = table.clone();
                 async move {
                     barrier.wait().await;
-                    table.remove_session(1).await
+                    table.remove_session(1)
                 }
             });
             let registered = register.await.unwrap();
@@ -1146,7 +1028,7 @@ mod tests {
     async fn registration_racing_last_subscriber_removal_leaves_no_orphan() {
         for _ in 0..20000 {
             // Arrange
-            let (table, upstream_key) = subscribed_track_table();
+            let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
             table
                 .register_downstream_subscription(2, 100, upstream_key.clone(), None)
                 .unwrap();
@@ -1191,8 +1073,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn finds_active_upstream_subscriptions_separately_from_publishers() {
+    #[test]
+    fn finds_active_upstream_subscriptions_separately_from_publishers() {
         // Arrange: Register an active upstream subscription separately from publishers.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), PeerKind::Client);
@@ -1214,11 +1096,14 @@ mod tests {
         );
 
         // Act: Fetch the active upstream subscription and upstream publishers separately.
-        let active_subscriptions = table.find_active_upstream_subscriptions("room/member", "video");
-        let publisher_subscriptions = table.find_upstream_publishers("room/member", "video").await;
+        let active_subscription = table.find_active_upstream_subscription("room/member", "video");
+        let publisher_subscriptions = table.find_upstream_publishers("room/member", "video");
 
         // Assert: Active subscriptions and upstream publishers are both discoverable.
-        assert_eq!(active_subscriptions, vec![upstream_key.clone()]);
+        assert_eq!(
+            active_subscription.map(|(key, _)| key),
+            Some(upstream_key.clone())
+        );
         assert_eq!(publisher_subscriptions, vec![upstream_key]);
     }
 }

@@ -64,8 +64,9 @@ function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoC
 async function initializeVideoEncoder() {
   const init: VideoEncoderInit = {
     output: sendVideoChunkMessage,
-    error: (e: any) => {
-      console.log(e.message)
+    error: (e: DOMException) => {
+      console.error('[videoEncoder] encoder error', e)
+      self.postMessage({ type: 'encoderError', message: e.message })
     }
   }
   const config = encoderConfig ?? buildDefaultConfig()
@@ -103,8 +104,17 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
   }
   const videoReader = videoReadableStream.getReader()
   while (true) {
-    const videoResult = await videoReader.read()
-    if (videoResult.done) break
+    let videoResult: ReadableStreamReadResult<VideoFrame>
+    try {
+      videoResult = await videoReader.read()
+    } catch (e) {
+      self.postMessage({ type: 'streamEnded', error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+    if (videoResult.done) {
+      self.postMessage({ type: 'streamEnded' })
+      return
+    }
     const videoFrame = videoResult.value
 
     // Check if encoder needs re-initialization

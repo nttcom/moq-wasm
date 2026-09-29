@@ -3,7 +3,9 @@ use std::sync::Arc;
 use crate::modules::{
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::tables::table::{LocalPubSubDirectory, UpstreamSubscriptionKey},
+    sequences::tables::{
+        hashmap_table::InMemoryLocalPubSubDirectory, table::UpstreamSubscriptionKey,
+    },
 };
 
 pub(crate) struct UpstreamPublisherResolver {
@@ -30,13 +32,12 @@ impl UpstreamPublisherResolver {
     )]
     pub(crate) async fn resolve(
         &self,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         track_namespace: &str,
         track_name: &str,
     ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
         if let Some(local_publisher) = table
             .find_upstream_publishers(track_namespace, track_name)
-            .await
             .into_iter()
             .min_by_key(|publisher| publisher.publisher_session_id)
         {

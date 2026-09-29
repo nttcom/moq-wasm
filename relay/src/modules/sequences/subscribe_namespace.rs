@@ -3,7 +3,7 @@ use crate::modules::{
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
     enums::SubscribeNamespaceErrorCode,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
-    sequences::tables::table::{LocalPubSubDirectory, PeerKind},
+    sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
     types::SessionId,
 };
 use tracing::Span;
@@ -22,7 +22,7 @@ impl SubscribeNameSpace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
         handler: &dyn SubscribeNamespaceHandler,
@@ -38,48 +38,31 @@ impl SubscribeNameSpace {
         } else {
             PeerKind::Relay
         };
-        let (track_namespace_prefix, is_first_client) =
-            self.register(session_id, table, peer_kind, handler).await;
-        if is_first_client
-            && !self
-                .register_route(route_registry, &track_namespace_prefix, handler)
-                .await
-        {
-            table.unregister_subscribe_namespace(session_id, &track_namespace_prefix);
-            return;
-        }
-        self.broadcast_to_subscribers(session_id, &track_namespace_prefix, forwarder, table)
-            .await;
-        self.notify_remote_publish_namespaces(
-            session_id,
-            &track_namespace_prefix,
-            forwarder,
-            route_registry,
-        )
-        .await;
-        self.response(handler).await;
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_namespace.register",
-        skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %handler.track_namespace_prefix())
-    )]
-    async fn register(
-        &self,
-        session_id: SessionId,
-        table: &dyn LocalPubSubDirectory,
-        peer_kind: PeerKind,
-        handler: &dyn SubscribeNamespaceHandler,
-    ) -> (String, bool) {
-        let track_namespace_prefix = handler.track_namespace_prefix();
         let is_first_client = table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),
             peer_kind,
         );
-        (track_namespace_prefix.to_string(), is_first_client)
+        if is_first_client
+            && !self
+                .register_route(route_registry, track_namespace_prefix, handler)
+                .await
+        {
+            table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
+            return;
+        }
+        self.broadcast_to_subscribers(session_id, track_namespace_prefix, forwarder, table)
+            .await;
+        self.notify_remote_publish_namespaces(
+            session_id,
+            track_namespace_prefix,
+            forwarder,
+            route_registry,
+        )
+        .await;
+        if let Err(e) = handler.ok().await {
+            tracing::error!("Subscribe Namespace Error: {:?}", e);
+        }
     }
 
     #[tracing::instrument(
@@ -131,18 +114,14 @@ impl SubscribeNameSpace {
         session_id: SessionId,
         track_namespace_prefix: &str,
         forwarder: &ControlMessageForwarder,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
     ) {
-        let filtered = table.get_subscribers(track_namespace_prefix).await;
-        for (track_namespace, publish_values) in filtered {
-            if let (Some(track_name), track_alias) = publish_values {
-                if track_alias.is_none() {
-                    continue;
-                }
+        let filtered = table.get_subscribers(track_namespace_prefix);
+        for (track_namespace, published_track) in filtered {
+            if let Some((track_name, _)) = published_track {
                 if forwarder
-                    .publish(session_id, track_namespace.clone(), track_name.clone())
+                    .publish(session_id, track_namespace.clone(), track_name)
                     .await
-                    .is_some()
                 {
                     tracing::info!(
                         "Forwarded PUBLISH '{}' to session:{}",
@@ -212,20 +191,6 @@ impl SubscribeNameSpace {
                     track_namespace = %route.track_namespace,
                     "failed to forward remote PUBLISH_NAMESPACE"
                 );
-            }
-        }
-    }
-
-    #[tracing::instrument(
-        level = "info",
-        name = "relay.sequence.subscribe_namespace.response",
-        skip_all
-    )]
-    async fn response(&self, handler: &dyn SubscribeNamespaceHandler) {
-        match handler.ok().await {
-            Ok(_) => (),
-            Err(e) => {
-                tracing::error!("Subscribe Namespace Error: {:?}", e);
             }
         }
     }

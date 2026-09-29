@@ -11,6 +11,9 @@ APPS_FILE="services/vts/apps.example.json"
 APP_ID="ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e"
 OTHER_APP_ID="9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b"
 RELAY_APP_ID="11111111-2222-3333-4444-555555555555"
+# Short enough to keep the expiry scenarios brief, long enough for moq-cli's
+# 10 s token-file poll to pick up a rewrite before the token expires.
+SHORT_TOKEN_TTL="15s"
 LOGS_PID=""
 RESULT_LOG="$(mktemp)"
 
@@ -73,7 +76,7 @@ RELAY_B_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4434)"
 echo "Using relay URLs: $RELAY_A_URL, $RELAY_B_URL"
 
 # Minted last so that its short lifetime starts as close to the run as possible.
-SHORT_TOKEN="$(mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl 30s)"
+SHORT_TOKEN="$(mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl "$SHORT_TOKEN_TTL")"
 
 if ! AUTH_E2E_APP_ID="$APP_ID" \
   AUTH_E2E_APP_TOKEN="$APP_TOKEN" \
@@ -87,12 +90,12 @@ if ! AUTH_E2E_APP_ID="$APP_ID" \
 fi
 expect_passed
 
-# moq-cli: a publisher whose token file is rewritten before the 30 s token
+# moq-cli: a publisher whose token file is rewritten before the short token
 # expires stays connected; one whose file is left alone is closed by the relay.
 MOQ_CLI_DIR="$(mktemp -d)"
 REFRESHED_TOKEN_FILE="$MOQ_CLI_DIR/refreshed-token"
 EXPIRING_TOKEN_FILE="$MOQ_CLI_DIR/expiring-token"
-mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl 30s > "$REFRESHED_TOKEN_FILE"
+mint --app-id "$APP_ID" --publish site1 --subscribe site1 --ttl "$SHORT_TOKEN_TTL" > "$REFRESHED_TOKEN_FILE"
 cp "$REFRESHED_TOKEN_FILE" "$EXPIRING_TOKEN_FILE"
 # stdin for moq-cli is a FIFO whose only write end this script holds on fd 3:
 # it delivers no data and no EOF, so moq-cli stays idle until fd 3 is closed.
@@ -112,9 +115,9 @@ moq_cli_publish() {
 moq_cli_publish refreshed "$REFRESHED_TOKEN_FILE" 3<&- &
 REFRESHED_PID=$!
 moq_cli_publish expiring "$EXPIRING_TOKEN_FILE" 3<&- &
-sleep 10
+sleep 2
 echo "$APP_TOKEN" > "$REFRESHED_TOKEN_FILE"
-sleep 35
+sleep 18
 if [[ -f "$MOQ_CLI_DIR/refreshed.exit" ]]; then
   echo "moq-cli with a refreshed token file exited before the short token expired" >&2
   cat "$MOQ_CLI_DIR/refreshed.log" >&2

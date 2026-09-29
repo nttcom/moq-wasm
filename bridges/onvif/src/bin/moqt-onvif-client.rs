@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
@@ -109,9 +109,7 @@ async fn main() -> Result<()> {
         bail!("subscribe namespace is required");
     }
 
-    let controller = ptz_worker::Controller::new(target.clone())?;
-    let command_sender = controller.command_sender();
-    spawn_ptz_error_logger(controller);
+    let command_sender = ptz_worker::spawn(target.clone());
 
     let profile_tracks =
         fetch_profile_tracks(&target, &args.video_track, &args.audio_track).await?;
@@ -1687,7 +1685,7 @@ fn spawn_command_receiver(
                     return;
                 }
             };
-            match object.field.payload() {
+            match object.field.payload {
                 ObjectDatagramPayload::Payload(payload) => {
                     if let Err(err) = handle_command_payload(payload.as_ref(), &command_sender) {
                         log::warn!("command payload error: {err}");
@@ -1745,17 +1743,6 @@ fn spawn_rtsp_error_logger(err_rx: std_mpsc::Receiver<String>) {
     std::thread::spawn(move || {
         for err in err_rx {
             log::warn!("RTSP error: {err}");
-        }
-    });
-}
-
-fn spawn_ptz_error_logger(controller: ptz_worker::Controller) {
-    tokio::spawn(async move {
-        loop {
-            if let Some(err) = controller.try_recv_error() {
-                log::warn!("PTZ error: {err}");
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
         }
     });
 }

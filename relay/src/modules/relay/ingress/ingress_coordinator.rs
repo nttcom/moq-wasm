@@ -9,10 +9,7 @@ use crate::modules::{
     core::{data_receiver::receiver::DataReceiver, subscription::UpstreamSubscription},
     relay::{
         cache::store::TrackCacheStore,
-        ingress::{
-            datagram_reader::{DatagramReader, DatagramReceiveCommand, DatagramReceiveStart},
-            stream_ingress_task::{StreamIngressCommand, StreamIngressTask, StreamReceiveStart},
-        },
+        ingress::track_ingest_task::{IngestCommand, IngestSource, IngestStart, TrackIngestTask},
     },
     session_event::SessionEvent,
     session_repository::SessionRepository,
@@ -22,8 +19,7 @@ use crate::modules::{
 pub(crate) struct IngressStartRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) publisher_session_id: SessionId,
-    pub(crate) track_namespace: String,
-    pub(crate) track_name: String,
+    pub(crate) track_key: TrackKey,
     pub(crate) subscription: UpstreamSubscription,
     pub(crate) parent_span: Span,
 }
@@ -39,8 +35,7 @@ pub(crate) enum IngressCommand {
 pub(crate) struct IngressCoordinator {
     command_sender: mpsc::Sender<IngressCommand>,
     command_runner: tokio::task::JoinHandle<()>,
-    _stream_task: StreamIngressTask,
-    _datagram_reader: DatagramReader,
+    _track_ingest: TrackIngestTask,
 }
 
 impl IngressCoordinator {
@@ -49,14 +44,10 @@ impl IngressCoordinator {
         cache_store: Arc<TrackCacheStore>,
         session_event_sender: mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
-        let (stream_tx, stream_rx) = mpsc::channel::<StreamIngressCommand>(64);
-        let (datagram_tx, datagram_rx) = mpsc::channel::<DatagramReceiveCommand>(64);
-        let stream_task =
-            StreamIngressTask::new(stream_rx, cache_store.clone(), session_event_sender.clone());
-        let datagram_reader = DatagramReader::run(datagram_rx, cache_store, session_event_sender);
+        let (ingest_tx, ingest_rx) = mpsc::channel::<IngestCommand>(64);
+        let track_ingest = TrackIngestTask::run(ingest_rx, cache_store, session_event_sender);
 
         let (command_sender, mut command_receiver) = mpsc::channel::<IngressCommand>(512);
-        let session_repo_for_runner = session_repo;
 
         let command_runner = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
@@ -66,21 +57,18 @@ impl IngressCoordinator {
                     Some(command) = command_receiver.recv() => {
                         match command {
                         IngressCommand::Start(command) => {
-                        let track_key = TrackKey::new(
-                            &command.track_namespace,
-                            &command.track_name,
-                        );
+                        let track_key = command.track_key.clone();
                         tracing::info!(
                             track_key = %track_key,
                             subscriber_session_id = %command.subscriber_session_id,
                             publisher_session_id = %command.publisher_session_id,
                             track_alias = command.subscription.track_alias(),
-                            track_namespace = %command.track_namespace,
-                            track_name = %command.track_name,
+                            track_namespace = %track_key.track_namespace,
+                            track_name = %track_key.track_name,
                             "ingress start command received"
                         );
                         let (subscriber, publisher_session_span) = {
-                            let session_repo = session_repo_for_runner.lock().await;
+                            let session_repo = session_repo.lock().await;
                             let Some(subscriber) = session_repo.subscriber(command.publisher_session_id) else {
                                 tracing::info!(%track_key, "publisher session not found for subscription");
                                 continue;
@@ -91,8 +79,7 @@ impl IngressCoordinator {
                             (subscriber, publisher_session_span)
                         };
                         tracing::info!(%track_key, "upstream subscriber found; spawning data receiver task");
-                        let stream_tx = stream_tx.clone();
-                        let datagram_tx = datagram_tx.clone();
+                        let ingest_tx = ingest_tx.clone();
                         if let Some(stop_sender) = create_stop_senders.remove(&track_key) {
                             let _ = stop_sender.send(true);
                         }
@@ -105,8 +92,8 @@ impl IngressCoordinator {
                             publisher_session_id = command.publisher_session_id,
                             track_key = %track_key,
                             track_alias = command.subscription.track_alias(),
-                            track_namespace = %command.track_namespace,
-                            track_name = %command.track_name,
+                            track_namespace = %track_key.track_namespace,
+                            track_name = %track_key.track_name,
                         );
                         create_receiver_span.add_link(
                             publisher_session_span
@@ -131,7 +118,7 @@ impl IngressCoordinator {
                                 return track_key;
                             };
                             tracing::info!(%track_key, "upstream data receiver created");
-                            match receiver {
+                            let source = match receiver {
                                 DataReceiver::Stream(factory) => {
                                     let dataplane_track_span = tracing::info_span!(
                                         parent: &publisher_session_span,
@@ -140,8 +127,8 @@ impl IngressCoordinator {
                                         publisher_session_id = command.publisher_session_id,
                                         track_key = %track_key,
                                         track_alias = subscription.track_alias(),
-                                        track_namespace = %command.track_namespace,
-                                        track_name = %command.track_name,
+                                        track_namespace = %track_key.track_namespace,
+                                        track_name = %track_key.track_name,
                                     );
                                     dataplane_track_span.add_link(
                                         command
@@ -151,36 +138,23 @@ impl IngressCoordinator {
                                             .span_context()
                                             .clone(),
                                     );
-                                    if stream_tx
-                                        .send(StreamIngressCommand::Start(StreamReceiveStart {
-                                            track_key: track_key.clone(),
-                                            publisher_session_id: command.publisher_session_id,
-                                            factory,
-                                            track_span: dataplane_track_span,
-                                        }))
-                                        .await
-                                        .is_ok()
-                                    {
-                                        tracing::info!(%track_key, "stream ingress start command sent");
-                                    } else {
-                                        tracing::info!(%track_key, "failed to send stream ingress start command");
-                                    }
+                                    IngestSource::Stream { factory, track_span: dataplane_track_span }
                                 }
-                                DataReceiver::Datagram(datagram_receiver) => {
-                                    if datagram_tx
-                                        .send(DatagramReceiveCommand::Start(DatagramReceiveStart {
-                                            track_key: track_key.clone(),
-                                            publisher_session_id: command.publisher_session_id,
-                                            receiver: datagram_receiver,
-                                        }))
-                                        .await
-                                        .is_ok()
-                                    {
-                                        tracing::info!(%track_key, "datagram ingress start command sent");
-                                    } else {
-                                        tracing::info!(%track_key, "failed to send datagram ingress start command");
-                                    }
-                                }
+                                DataReceiver::Datagram(datagram_receiver) => IngestSource::Datagram(datagram_receiver),
+                            };
+                            let kind = source.kind().label();
+                            if ingest_tx
+                                .send(IngestCommand::Start(IngestStart {
+                                    track_key: track_key.clone(),
+                                    publisher_session_id: command.publisher_session_id,
+                                    source,
+                                }))
+                                .await
+                                .is_ok()
+                            {
+                                tracing::info!(%track_key, "{kind} ingress start command sent");
+                            } else {
+                                tracing::info!(%track_key, "failed to send {kind} ingress start command");
                             }
                             track_key
                         }.instrument(create_receiver_span));
@@ -190,19 +164,14 @@ impl IngressCoordinator {
                                 let _ = stop_sender.send(true);
                                 tracing::info!(%track_key, "upstream ingress stop requested");
                             }
-                            let stream_result = stream_tx
-                                .send(StreamIngressCommand::Stop {
+                            if ingest_tx
+                                .send(IngestCommand::Stop {
                                     track_key: track_key.clone(),
                                     publisher_session_id,
                                 })
-                                .await;
-                            let datagram_result = datagram_tx
-                                .send(DatagramReceiveCommand::Stop {
-                                    track_key: track_key.clone(),
-                                    publisher_session_id,
-                                })
-                                .await;
-                            if stream_result.is_err() || datagram_result.is_err() {
+                                .await
+                                .is_err()
+                            {
                                 tracing::debug!(%track_key, "failed to send ingress stop request");
                             }
                         }
@@ -226,8 +195,7 @@ impl IngressCoordinator {
         Self {
             command_sender,
             command_runner,
-            _stream_task: stream_task,
-            _datagram_reader: datagram_reader,
+            _track_ingest: track_ingest,
         }
     }
 

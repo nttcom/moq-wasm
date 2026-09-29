@@ -1,11 +1,15 @@
 use crate::modules::{
     core::data_sender::fetch_sender::FetchSender,
     enums::FetchErrorCode,
-    relay::{cache::track_cache::FetchInterrupted, egress::coordinator::EgressFetchRequest},
+    relay::{
+        cache::track_cache::{FetchCursor, FetchInterrupted},
+        egress::coordinator::EgressFetchRequest,
+    },
 };
 
 pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn FetchSender) {
-    let mut objects = request.cache.fetch_objects(
+    let mut objects = FetchCursor::new(
+        &request.cache,
         request.start_location,
         request.end_location,
         request.group_order,

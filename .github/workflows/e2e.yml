@@ -85,6 +85,7 @@ permissions:
 env:
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   changes:
@@ -94,12 +95,7 @@ jobs:
       message: ${{ steps.filter.outputs.message }}
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
       meeting: ${{ steps.filter.outputs.meeting }}
-      cascading: ${{ steps.filter.outputs.cascading }}
-      cache_eviction: ${{ steps.filter.outputs.cache_eviction }}
-      fetch: ${{ steps.filter.outputs.fetch }}
-      multipub: ${{ steps.filter.outputs.multipub }}
-      dedup: ${{ steps.filter.outputs.dedup }}
-      auth: ${{ steps.filter.outputs.auth }}
+      compose_suites: ${{ steps.filter.outputs.compose_suites }}
       relay: ${{ steps.filter.outputs.relay }}
       relay_image_source: ${{ steps.filter.outputs.relay_image_source }}
     steps:
@@ -121,12 +117,7 @@ jobs:
             message=true
             live_viewer=true
             meeting=true
-            cascading=true
-            cache_eviction=true
-            fetch=true
-            multipub=true
-            dedup=true
-            auth=true
+            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers object-dedup)
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -140,12 +131,7 @@ jobs:
             message=false
             live_viewer=false
             meeting=false
-            cascading=false
-            cache_eviction=false
-            fetch=false
-            multipub=false
-            dedup=false
-            auth=false
+            compose_suites=()
 
             while IFS= read -r path; do
               case "$path" in
@@ -174,47 +160,44 @@ jobs:
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cascading-relay-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cascading-relay-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  cascading=true
+                  compose_suites+=(cascading-relay)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/cache-eviction-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/cache-eviction-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  cache_eviction=true
+                  compose_suites+=(cache-eviction)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/fetch-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/fetch-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  fetch=true
+                  compose_suites+=(fetch)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/multiple-publishers-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/multiple-publishers-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  multipub=true
+                  compose_suites+=(multiple-publishers)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/object-dedup-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|tests/object-dedup-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  dedup=true
+                  compose_suites+=(object-dedup)
                   ;;
               esac
 
               case "$path" in
                 .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/auth-e2e.sh|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|relay/*|moqt/*|shared/*|services/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
-                  auth=true
+                  compose_suites+=(auth)
                   ;;
               esac
             done < changed-files.txt
           fi
 
-          if [[ "$meeting" == "true" || "$cascading" == "true" || "$cache_eviction" == "true" || "$fetch" == "true" || "$multipub" == "true" || "$dedup" == "true" || "$auth" == "true" ]]; then
-            relay=true
-          else
-            relay=false
-          fi
+          relay=false
+          [[ "$meeting" == "true" || ${#compose_suites[@]} -gt 0 ]] && relay=true
 
           if [[ "$relay" == "true" ]]; then
             if [[ "${{ github.event_name }}" == "pull_request" || ( "${{ github.event_name }}" == "push" && "${{ github.ref }}" != "refs/heads/master" ) ]]; then
@@ -231,13 +214,7 @@ jobs:
             echo "message=$message"
             echo "live_viewer=$live_viewer"
             echo "meeting=$meeting"
-            echo "cascading=$cascading"
-            echo "cache_eviction=$cache_eviction"
-            echo "fetch=$fetch"
-            echo "multipub=$multipub"
-            echo "dedup=$dedup"
-
-            echo "auth=$auth"
+            echo "compose_suites=$(jq -cn '$ARGS.positional | unique' --args "${compose_suites[@]}")"
             echo "relay=$relay"
             echo "relay_image_source=$relay_image_source"
           } >> "$GITHUB_OUTPUT"
@@ -256,8 +233,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c = v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
       - name: Build local relay image for E2E
-        run: docker build -t moqt-relay:local-source -f relay/Dockerfile .
+        # Reads the dependency layers relay-image.yml caches on master; pull
+        # requests do not write to the cache to stay within the repository quota.
+        # docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a = v7.3.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: relay/Dockerfile
+          load: true
+          tags: moqt-relay:local-source
+          cache-from: type=gha,scope=relay
 
       - name: Save relay image
         run: docker save moqt-relay:local-source | gzip > "${RUNNER_TEMP}/relay-image.tar.gz"
@@ -308,6 +298,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -365,6 +357,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -376,7 +370,12 @@ jobs:
         run: node scripts/setup-media-e2e.mjs
 
       - name: Build relay and live ingest
-        run: cargo build -p relay -p moqt-bridge-live-ingest
+        # One invocation per package: run-live-viewer-e2e.mjs starts each with
+        # its own `cargo run -p`, and a combined build unifies features
+        # differently, which would recompile the dependencies at run time.
+        run: |
+          cargo build -p relay
+          cargo build -p moqt-bridge-live-ingest
 
       - name: Install Playwright Linux dependencies
         working-directory: examples/browser
@@ -428,6 +427,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -488,6 +489,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -548,9 +551,13 @@ jobs:
             examples/browser/playwright-report
           if-no-files-found: ignore
 
-  cascading_relay_e2e:
+  compose_e2e:
     needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.cascading == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    if: ${{ always() && needs.changes.outputs.compose_suites != '[]' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.changes.outputs.compose_suites) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -572,6 +579,8 @@ jobs:
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
@@ -606,322 +615,7 @@ jobs:
         if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
         run: docker logout ghcr.io
 
-      - name: Run cascading relay E2E
+      - name: Run ${{ matrix.suite }} E2E
         env:
           CI: "true"
-        run: ./scripts/cascading-relay-e2e.sh
-
-  auth_e2e:
-    needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.auth == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust toolchain
-        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
-        with:
-          toolchain: 1.96.0
-
-      - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-
-      - name: Download local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: relay-image-local
-          path: ${{ runner.temp }}/relay-image
-
-      - name: Load local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        run: |
-          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:local-source moqt-relay:local
-
-      - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
-
-      - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: docker logout ghcr.io
-
-      - name: Run auth E2E
-        env:
-          CI: "true"
-        run: ./scripts/auth-e2e.sh
-
-  cache_eviction_e2e:
-    needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.cache_eviction == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust toolchain
-        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
-        with:
-          toolchain: 1.96.0
-
-      - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-
-      - name: Download local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: relay-image-local
-          path: ${{ runner.temp }}/relay-image
-
-      - name: Load local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        run: |
-          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:local-source moqt-relay:local
-
-      - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
-
-      - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: docker logout ghcr.io
-
-      - name: Run cache-eviction E2E
-        env:
-          CI: "true"
-        run: ./scripts/cache-eviction-e2e.sh
-
-  fetch_e2e:
-    needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.fetch == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust toolchain
-        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
-        with:
-          toolchain: 1.96.0
-
-      - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-
-      - name: Download local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: relay-image-local
-          path: ${{ runner.temp }}/relay-image
-
-      - name: Load local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        run: |
-          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:local-source moqt-relay:local
-
-      - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
-
-      - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: docker logout ghcr.io
-
-      - name: Run fetch E2E
-        env:
-          CI: "true"
-        run: ./scripts/fetch-e2e.sh
-
-  multiple_publishers_e2e:
-    needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.multipub == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust toolchain
-        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
-        with:
-          toolchain: 1.96.0
-
-      - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-
-      - name: Download local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: relay-image-local
-          path: ${{ runner.temp }}/relay-image
-
-      - name: Load local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        run: |
-          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:local-source moqt-relay:local
-
-      - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
-
-      - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: docker logout ghcr.io
-
-      - name: Run multiple publishers E2E
-        env:
-          CI: "true"
-        run: ./scripts/multiple-publishers-e2e.sh
-
-  object_dedup_e2e:
-    needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.dedup == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: read
-    steps:
-      - name: Checkout repository
-        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          persist-credentials: false
-
-      - name: Setup Rust toolchain
-        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
-        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
-        with:
-          toolchain: 1.96.0
-
-      - name: Cache Rust build artifacts
-        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
-
-      - name: Download local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: relay-image-local
-          path: ${{ runner.temp }}/relay-image
-
-      - name: Load local relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
-        run: |
-          gunzip -c "${RUNNER_TEMP}/relay-image/relay-image.tar.gz" | docker load
-          docker tag moqt-relay:local-source moqt-relay:local
-
-      - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
-
-      - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
-        run: docker logout ghcr.io
-
-      - name: Run object dedup E2E
-        env:
-          CI: "true"
-        run: ./scripts/object-dedup-e2e.sh
+        run: ./scripts/${{ matrix.suite }}-e2e.sh

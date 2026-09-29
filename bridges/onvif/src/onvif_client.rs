@@ -1,14 +1,11 @@
 use crate::{
     app_config::Target,
-    onvif_nodes, onvif_profiles,
+    onvif_profiles,
     onvif_requests::{self, OnvifRequest},
-    onvif_services, ptz_config,
-    ptz_state::PtzState,
-    soap_client,
+    onvif_services, ptz_config, soap_client,
 };
 use anyhow::{anyhow, Result};
 use reqwest::Client;
-use std::fmt;
 
 pub struct OnvifClient {
     client: Client,
@@ -17,13 +14,7 @@ pub struct OnvifClient {
     media_endpoint: String,
     ptz_endpoint: String,
     profile_token: String,
-    ptz_state: PtzState,
-    gui_messages: Vec<String>,
-}
-
-struct PtzRangeInfo {
-    config_token: String,
-    range: ptz_config::PtzRange,
+    ptz_range: ptz_config::PtzRange,
 }
 
 impl OnvifClient {
@@ -36,8 +27,7 @@ impl OnvifClient {
             ptz_endpoint: device_endpoint.clone(),
             device_endpoint,
             profile_token: String::new(),
-            ptz_state: PtzState::new(ptz_config::PtzRange::default(), None),
-            gui_messages: Vec::new(),
+            ptz_range: ptz_config::PtzRange::default(),
         }
     }
 
@@ -81,12 +71,8 @@ impl OnvifClient {
         &self.profile_token
     }
 
-    pub fn ptz_state(&self) -> PtzState {
-        self.ptz_state.clone()
-    }
-
-    pub fn take_gui_messages(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.gui_messages)
+    pub fn ptz_range(&self) -> ptz_config::PtzRange {
+        self.ptz_range.clone()
     }
 
     async fn init_endpoints(&mut self) {
@@ -104,21 +90,10 @@ impl OnvifClient {
     }
 
     async fn init_ptz(&mut self, token_hint: Option<&str>) {
-        let ptz = match self.fetch_ptz_range(token_hint).await {
-            Ok(ptz) => ptz,
-            Err(err) => {
-                self.push_ptz_init_error(err);
-                return;
-            }
-        };
-        let node = match self.resolve_ptz_node_capabilities(&ptz.config_token).await {
-            Ok(node) => node,
-            Err(err) => {
-                self.push_ptz_init_error(err);
-                None
-            }
-        };
-        self.ptz_state = PtzState::new(ptz.range, node);
+        match self.fetch_ptz_range(token_hint).await {
+            Ok(range) => self.ptz_range = range,
+            Err(err) => log::warn!("PTZ error: ptz init error: {err}"),
+        }
     }
 
     async fn fetch_endpoints(&self) -> onvif_services::ServiceEndpoints {
@@ -129,15 +104,11 @@ impl OnvifClient {
         onvif_profiles::fetch(self).await
     }
 
-    async fn fetch_ptz_range(&self, token_hint: Option<&str>) -> Result<PtzRangeInfo> {
+    async fn fetch_ptz_range(&self, token_hint: Option<&str>) -> Result<ptz_config::PtzRange> {
         let (token, body) = self.fetch_ptz_config_token(token_hint).await?;
         let range = ptz_config::extract_range_from_config(&body, &token);
         let options_body = self.fetch_ptz_config_options(&token).await?;
-        let range = ptz_config::update_range_from_options(range, &options_body);
-        Ok(PtzRangeInfo {
-            config_token: token,
-            range,
-        })
+        Ok(ptz_config::update_range_from_options(range, &options_body))
     }
 
     async fn fetch_ptz_config_token(&self, token_hint: Option<&str>) -> Result<(String, String)> {
@@ -178,61 +149,6 @@ impl OnvifClient {
         Ok(response.body)
     }
 
-    fn push_ptz_init_error(&mut self, err: impl fmt::Display) {
-        self.gui_messages.push(format!("ptz init error: {err}"));
-    }
-
-    async fn fetch_ptz_node(&self) -> Result<Option<onvif_nodes::PtzNodeInfo>> {
-        let nodes = onvif_nodes::fetch_nodes(self).await?;
-        onvif_nodes::log_nodes(self.ptz_endpoint(), &nodes);
-        if nodes.response.status >= 400 {
-            return Err(anyhow!(
-                "get nodes failed with HTTP {}",
-                nodes.response.status
-            ));
-        }
-        let token = nodes
-            .tokens
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("PTZ node token not found in response"))?;
-        let node = onvif_nodes::fetch_node(self, &token).await?;
-        onvif_nodes::log_node(self.ptz_endpoint(), &node);
-        if node.response.status >= 400 {
-            return Err(anyhow!(
-                "get node failed with HTTP {}",
-                node.response.status
-            ));
-        }
-        Ok(node.info)
-    }
-
-    async fn resolve_ptz_node_capabilities(
-        &self,
-        token: &str,
-    ) -> Result<Option<onvif_nodes::PtzNodeInfo>> {
-        log::info!("[GetConfiguration]");
-        let cmd = onvif_requests::get_configuration(token);
-        let response = self.send_ptz(&cmd).await?;
-        soap_client::log_response("GetConfiguration", self.ptz_endpoint(), &response);
-        if response.status >= 400 {
-            if is_no_entity_fault(&response.body) {
-                return self.fetch_ptz_node().await;
-            }
-            return Err(anyhow!(
-                "get configuration failed with HTTP {}",
-                response.status
-            ));
-        }
-        match self.fetch_ptz_node().await {
-            Ok(node) => Ok(node),
-            Err(err) => {
-                log::warn!("PTZ node query failed: {err}");
-                Ok(None)
-            }
-        }
-    }
-
     pub async fn send_device(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.device_endpoint, command).await
     }
@@ -269,8 +185,4 @@ fn select_ptz_config_token(tokens: &[String], hint: Option<&str>) -> Option<Stri
     }
     hint.and_then(|hint| tokens.iter().find(|token| token.as_str() == hint).cloned())
         .or_else(|| tokens.first().cloned())
-}
-
-fn is_no_entity_fault(body: &str) -> bool {
-    body.contains("No such PTZNode") || body.contains("ter:NoEntity")
 }

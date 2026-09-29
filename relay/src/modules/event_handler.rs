@@ -26,8 +26,9 @@ use crate::modules::{
         publish_namespace_done::PublishNamespaceDone,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
-        tables::table::{
-            LocalPubSubDirectory, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin,
+        tables::{
+            hashmap_table::InMemoryLocalPubSubDirectory,
+            table::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
         },
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
@@ -49,7 +50,7 @@ pub(crate) struct WorkerDeps {
     pub(crate) repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     pub(crate) relay_event_sender: mpsc::UnboundedSender<SessionEvent>,
     pub(crate) control_message_forwarder: ControlMessageForwarder,
-    pub(crate) local_pub_sub_directory: Arc<dyn LocalPubSubDirectory>,
+    pub(crate) local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) ingress_sender: mpsc::Sender<IngressCommand>,
     pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
@@ -611,13 +612,13 @@ impl EventHandler {
     /// Idempotent: safe to call when the session is already absent.
     async fn cleanup_session(
         session_id: SessionId,
-        local_pub_sub_directory: &dyn LocalPubSubDirectory,
+        local_pub_sub_directory: &InMemoryLocalPubSubDirectory,
         control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
-        let removed = local_pub_sub_directory.remove_session(session_id).await;
+        let removed = local_pub_sub_directory.remove_session(session_id);
         Self::cleanup_removed_session(
             session_id,
             removed,
@@ -638,7 +639,7 @@ impl EventHandler {
     async fn cleanup_removed_session(
         removed_session_id: SessionId,
         removed: RemovedSessionSubscriptions,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         control_message_forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
         route_registry: &dyn RelayRouteRegistry,
@@ -762,7 +763,7 @@ mod tests {
         },
         route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         sequences::{
-            tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::LocalPubSubDirectory},
+            tables::hashmap_table::InMemoryLocalPubSubDirectory,
             upstream_serializer::UpstreamCreationSerializer,
         },
         session_event::{EventKind, SessionEvent},
@@ -815,7 +816,7 @@ mod tests {
                     inter_relay_connection_manager,
                     upstream_publisher_resolver,
                     cache_store: cache_store.clone(),
-                    upstream_serializer: UpstreamCreationSerializer::new(),
+                    upstream_serializer: UpstreamCreationSerializer::default(),
                     token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
                 },
             );

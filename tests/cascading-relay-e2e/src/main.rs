@@ -9,9 +9,9 @@ use std::{
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, ContentExists, DatagramField, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject, SubscribeOption,
-    Subscription,
+    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
+    ObjectDatagramPayload, QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject,
+    SubscribeOption, Subscription,
 };
 use redis::AsyncCommands;
 
@@ -910,22 +910,12 @@ where
         }
         moqt::DataReceiver::Datagram(mut datagram) => loop {
             let object = datagram.receive().await?;
-            match object.field {
-                DatagramField::Payload0x00 { payload, .. }
-                | DatagramField::Payload0x01 { payload, .. }
-                | DatagramField::Payload0x02WithEndOfGroup { payload, .. }
-                | DatagramField::Payload0x03WithEndOfGroup { payload, .. }
-                | DatagramField::Payload0x04 { payload, .. }
-                | DatagramField::Payload0x05 { payload, .. }
-                | DatagramField::Payload0x06WithEndOfGroup { payload, .. }
-                | DatagramField::Payload0x07WithEndOfGroup { payload, .. } => {
-                    tracing::info!(
-                        payload_len = payload.len(),
-                        "subscriber received datagram object"
-                    );
-                    return Ok(payload.to_vec());
-                }
-                DatagramField::Status0x20 { .. } | DatagramField::Status0x21 { .. } => {}
+            if let ObjectDatagramPayload::Payload(payload) = object.field.payload {
+                tracing::info!(
+                    payload_len = payload.len(),
+                    "subscriber received datagram object"
+                );
+                return Ok(payload.to_vec());
             }
         },
     }

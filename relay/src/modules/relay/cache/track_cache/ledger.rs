@@ -10,7 +10,6 @@ use crate::modules::relay::{
 
 use super::{after, location};
 
-/// What live ingest has told us about a group whose subgroups are still open.
 #[derive(Default)]
 pub(super) struct LiveGroup {
     pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
@@ -40,7 +39,6 @@ impl Ledger {
             .any(|key| key.group_id() == group_id)
     }
 
-    /// Drops abort markers of groups the ledger no longer knows anything about.
     pub(super) fn forget_aborts_of_vanished_groups(&mut self) {
         let (objects, live_groups) = (&self.objects, &self.live_groups);
         self.aborted_subgroups.retain(|key| {
@@ -108,16 +106,6 @@ impl Ledger {
 
     pub(super) fn has_open_subgroup_in_group(&self, group_id: u64) -> bool {
         self.live_groups.contains_key(&group_id)
-    }
-
-    #[cfg(test)]
-    pub(super) fn has_group(&self, group_id: u64) -> bool {
-        self.next_group_object(group_id, 0).is_some()
-            || self.has_open_subgroup_in_group(group_id)
-            || self
-                .known_ranges
-                .end_of_range_containing(location(group_id, 0))
-                .is_some()
     }
 
     pub(super) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {

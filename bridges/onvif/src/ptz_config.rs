@@ -30,13 +30,7 @@ pub struct ZoomRange {
     pub x: AxisRange,
 }
 
-#[derive(Clone, Debug)]
-pub struct TimeoutRange {
-    pub min: String,
-    pub max: String,
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct PtzRange {
     pub abs_pan_tilt: Option<PanTiltRange>,
     pub abs_zoom: Option<ZoomRange>,
@@ -46,25 +40,6 @@ pub struct PtzRange {
     pub cont_zoom: Option<ZoomRange>,
     pub speed_pan_tilt: Option<PanTiltRange>,
     pub speed_zoom: Option<ZoomRange>,
-    pub timeout: Option<TimeoutRange>,
-    pub speed_default: f32,
-}
-
-impl Default for PtzRange {
-    fn default() -> Self {
-        Self {
-            abs_pan_tilt: None,
-            abs_zoom: None,
-            rel_pan_tilt: None,
-            rel_zoom: None,
-            cont_pan_tilt: None,
-            cont_zoom: None,
-            speed_pan_tilt: None,
-            speed_zoom: None,
-            timeout: None,
-            speed_default: 1.0,
-        }
-    }
 }
 
 impl PtzRange {
@@ -135,52 +110,6 @@ impl PtzRange {
     pub fn speed_zoom_space(&self) -> Option<&str> {
         zoom_space(self.speed_zoom.as_ref(), None)
     }
-
-    pub fn summary_lines(&self) -> Vec<String> {
-        let mut lines = Vec::new();
-        let (pan, tilt) = self.absolute_pan_tilt_range();
-        let abs_suffix = uri_suffix(self.abs_pan_tilt.as_ref().and_then(|r| r.uri.as_ref()));
-        lines.push(format!(
-            "Absolute pan/tilt: x=[{:.3}..{:.3}] y=[{:.3}..{:.3}]{}",
-            pan.min, pan.max, tilt.min, tilt.max, abs_suffix
-        ));
-        if let Some(range) = &self.abs_zoom {
-            lines.push(format!("Absolute zoom: {}", format_zoom_range(range)));
-        }
-        if let Some(range) = &self.rel_pan_tilt {
-            lines.push(format!(
-                "Relative pan/tilt: {}",
-                format_pan_tilt_range(range)
-            ));
-        }
-        if let Some(range) = &self.rel_zoom {
-            lines.push(format!("Relative zoom: {}", format_zoom_range(range)));
-        }
-        if let Some(range) = &self.cont_pan_tilt {
-            lines.push(format!(
-                "Continuous pan/tilt: {}",
-                format_pan_tilt_range(range)
-            ));
-        }
-        if let Some(range) = &self.cont_zoom {
-            lines.push(format!("Continuous zoom: {}", format_zoom_range(range)));
-        }
-        if let Some(range) = &self.speed_pan_tilt {
-            lines.push(format!("Speed pan/tilt: {}", format_pan_tilt_range(range)));
-        }
-        if let Some(range) = &self.speed_zoom {
-            lines.push(format!("Speed zoom: {}", format_zoom_range(range)));
-        }
-        let speed = self.speed_range();
-        lines.push(format!(
-            "Speed range: [{:.3}..{:.3}] default={:.3}",
-            speed.min, speed.max, self.speed_default
-        ));
-        if let Some(timeout) = &self.timeout {
-            lines.push(format!("Timeout range: {}..{}", timeout.min, timeout.max));
-        }
-        lines
-    }
 }
 
 pub fn extract_tokens(body: &str) -> Vec<String> {
@@ -246,7 +175,6 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
             y,
             space.as_deref().unwrap_or("-")
         );
-        range.speed_default = x.min(y).clamp(0.0, 1.0);
     }
     if let Some(timeout) = find_text(config, "DefaultPTZTimeout") {
         log::info!("timeout: {timeout}");
@@ -314,27 +242,7 @@ pub fn update_range_from_options(mut range: PtzRange, body: &str) -> PtzRange {
             }
         }
     }
-    range.timeout = parse_timeout_range(options);
-    let speed = range.speed_range();
-    range.speed_default = range.speed_default.clamp(speed.min, speed.max);
     range
-}
-
-fn format_pan_tilt_range(range: &PanTiltRange) -> String {
-    let suffix = uri_suffix(range.uri.as_ref());
-    format!(
-        "x=[{:.3}..{:.3}] y=[{:.3}..{:.3}]{}",
-        range.x.min, range.x.max, range.y.min, range.y.max, suffix
-    )
-}
-
-fn format_zoom_range(range: &ZoomRange) -> String {
-    let suffix = uri_suffix(range.uri.as_ref());
-    format!("x=[{:.3}..{:.3}]{}", range.x.min, range.x.max, suffix)
-}
-
-fn uri_suffix(uri: Option<&String>) -> String {
-    uri.map(|value| format!(" uri={value}")).unwrap_or_default()
 }
 
 fn pan_tilt_or_default(
@@ -417,15 +325,6 @@ fn parse_zoom_space(space: Node) -> Option<ZoomRange> {
     let x_range = space.descendants().find(|node| has_tag(*node, "XRange"))?;
     let x = parse_axis_range(x_range)?;
     Some(ZoomRange { uri, x })
-}
-
-fn parse_timeout_range(options: Node) -> Option<TimeoutRange> {
-    let timeout = options
-        .descendants()
-        .find(|node| has_tag(*node, "PTZTimeout"))?;
-    let min = find_text(timeout, "Min")?;
-    let max = find_text(timeout, "Max")?;
-    Some(TimeoutRange { min, max })
 }
 
 fn parse_axis_range(range: Node) -> Option<AxisRange> {

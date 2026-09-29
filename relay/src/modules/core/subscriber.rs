@@ -51,9 +51,9 @@ impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
     ) -> anyhow::Result<UpstreamSubscription> {
         let option = moqt::SubscribeOption {
             subscriber_priority: option.subscriber_priority,
-            group_order: option.group_order.as_moqt(),
+            group_order: option.group_order,
             forward: option.forward,
-            filter_type: option.filter_type.as_moqt(),
+            filter_type: option.filter_type,
         };
         let moqt_sub = self.subscribe(track_namespace, track_name, option).await?;
         Ok(UpstreamSubscription::from(moqt_sub))

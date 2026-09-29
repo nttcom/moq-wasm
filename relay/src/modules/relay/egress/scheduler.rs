@@ -1,11 +1,16 @@
 use std::{collections::HashSet, sync::Arc};
 
+use moqt::{FilterType, GroupOrder};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::modules::{
-    enums::{FilterType, GroupOrder},
-    relay::{cache::track_cache::TrackCache, types::SubgroupKey},
-};
+use crate::modules::relay::{cache::track_cache::TrackCache, types::SubgroupKey};
+
+fn after(largest: &moqt::Location) -> moqt::Location {
+    moqt::Location {
+        group_id: largest.group_id,
+        object_id: largest.object_id + 1,
+    }
+}
 
 fn resolve_start_location(
     filter_type: &FilterType,
@@ -15,26 +20,12 @@ fn resolve_start_location(
         (
             FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. },
             largest,
-        ) => {
-            let requested = location.as_moqt();
-            match largest {
-                Some(largest)
-                    if (requested.group_id, requested.object_id)
-                        <= (largest.group_id, largest.object_id) =>
-                {
-                    moqt::Location {
-                        group_id: largest.group_id,
-                        object_id: largest.object_id + 1,
-                    }
-                }
-                _ => requested,
-            }
-        }
-        // Largest Object (0x2): Start = {Largest.Group, Largest.Object + 1}.
-        (FilterType::LargestObject, Some(largest)) => moqt::Location {
-            group_id: largest.group_id,
-            object_id: largest.object_id + 1,
+        ) => match largest {
+            Some(largest) if location <= largest => after(largest),
+            _ => *location,
         },
+        // Largest Object (0x2): Start = {Largest.Group, Largest.Object + 1}.
+        (FilterType::LargestObject, Some(largest)) => after(largest),
         // Next Group Start (0x1): Start = {Largest.Group + 1, 0}.
         (FilterType::NextGroupStart, Some(largest)) => moqt::Location {
             group_id: largest.group_id + 1,
@@ -48,8 +39,6 @@ fn resolve_start_location(
     }
 }
 
-/// Instruction for `GroupSender` to transmit one subgroup (or datagram group)
-/// from `object_id` on.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct GroupSendTask {
     pub(crate) key: SubgroupKey,
@@ -74,13 +63,11 @@ impl StartLocationProgress {
     }
 }
 
-/// Watches track events and decides which egress units to schedule and when.
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
     filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
-    ready_sender: Option<oneshot::Sender<anyhow::Result<()>>>,
     /// Largest Object at SUBSCRIBE processing time; `None` when no content
     /// has been delivered yet.
     largest_location: Option<moqt::Location>,
@@ -92,7 +79,6 @@ impl EgressScheduler {
         filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
-        ready_sender: oneshot::Sender<anyhow::Result<()>>,
         largest_location: Option<moqt::Location>,
     ) -> Self {
         Self {
@@ -100,12 +86,11 @@ impl EgressScheduler {
             filter_type,
             group_order,
             sender,
-            ready_sender: Some(ready_sender),
             largest_location,
         }
     }
 
-    pub(crate) async fn run(mut self) {
+    pub(crate) async fn run(self, ready_sender: oneshot::Sender<anyhow::Result<()>>) {
         let mut receiver = self.cache.subscribe_subgroup_opened();
         let mut scheduled = HashSet::<SubgroupKey>::new();
 
@@ -115,7 +100,7 @@ impl EgressScheduler {
             start_group_id: start.group_id,
             start_object_id: Some(start.object_id),
         };
-        self.notify_ready(Ok(()));
+        let _ = ready_sender.send(Ok(()));
 
         loop {
             match receiver.recv().await {
@@ -135,12 +120,6 @@ impl EgressScheduler {
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
-        }
-    }
-
-    fn notify_ready(&mut self, result: anyhow::Result<()>) {
-        if let Some(sender) = self.ready_sender.take() {
-            let _ = sender.send(result);
         }
     }
 
@@ -192,8 +171,6 @@ impl EgressScheduler {
         }
     }
 
-    /// Schedules delivery of one subgroup starting at `object_id`.
-    /// Returns `None` when the task channel is closed.
     async fn schedule(
         &self,
         key: SubgroupKey,
@@ -214,8 +191,9 @@ impl EgressScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        insert_closed_group, stream_key,
+    use crate::modules::relay::tests::harness::fixtures::{
+        cached_object::{insert_closed_group, stream_key},
+        location,
     };
 
     struct RunningScheduler {
@@ -241,10 +219,9 @@ mod tests {
             filter_type,
             GroupOrder::Ascending,
             task_sender,
-            ready_sender,
             largest_location,
         );
-        let handle = tokio::spawn(scheduler.run());
+        let handle = tokio::spawn(scheduler.run(ready_sender));
         ready_receiver
             .await
             .expect("scheduler should signal readiness")
@@ -252,13 +229,6 @@ mod tests {
         RunningScheduler {
             task_receiver,
             handle,
-        }
-    }
-
-    fn location(group_id: u64, object_id: u64) -> moqt::Location {
-        moqt::Location {
-            group_id,
-            object_id,
         }
     }
 
@@ -302,7 +272,7 @@ mod tests {
         let mut scheduler = start_scheduler(
             cache,
             FilterType::AbsoluteStart {
-                location: crate::modules::enums::Location {
+                location: moqt::Location {
                     group_id: 0,
                     object_id: 0,
                 },

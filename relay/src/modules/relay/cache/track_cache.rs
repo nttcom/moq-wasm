@@ -101,8 +101,6 @@ impl TrackCache {
         self.insert_with_knowledge(object, false)
     }
 
-    /// Live ingest: a subgroup stream delivers ids in order, so the object
-    /// also proves every lower position of its group known.
     fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
         let registers_knowledge =
             matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
@@ -118,49 +116,36 @@ impl TrackCache {
             return Err(TrackMalformed);
         }
         let at = object.location;
-        let result = {
-            let mut ledger = self.write();
-            let result = match ledger.objects.entry(at) {
-                Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
-                    Err(TrackMalformed)
-                }
-                Entry::Occupied(mut existing) => {
-                    if object.is_datagram() && !existing.get().is_datagram() {
-                        // A fetched copy arrived first; the live datagram fixes the
-                        // forwarding preference so datagram egress can find it.
-                        let mut upgraded = (**existing.get()).clone();
-                        upgraded.forwarding = ForwardingPreference::Datagram;
-                        *existing.get_mut() = Arc::new(upgraded);
-                    }
-                    Ok(false)
-                }
-                Entry::Vacant(slot) => {
-                    slot.insert(Arc::new(object));
-                    Ok(true)
-                }
-            };
-            if result.is_ok() && registers_knowledge {
-                ledger.register_live_object(at);
-            }
-            result
-        };
-        match result {
-            Ok(inserted) => {
-                if inserted {
-                    self.notify.notify_waiters();
-                }
-                Ok(())
-            }
-            Err(TrackMalformed) => {
+        let mut ledger = self.write();
+        let inserted = match ledger.objects.entry(at) {
+            Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
+                drop(ledger);
                 self.mark_malformed();
-                Err(TrackMalformed)
+                return Err(TrackMalformed);
             }
+            Entry::Occupied(mut existing) => {
+                if object.is_datagram() && !existing.get().is_datagram() {
+                    // A fetched copy arrived first; the live datagram fixes the
+                    // forwarding preference so datagram egress can find it.
+                    let mut upgraded = (**existing.get()).clone();
+                    upgraded.forwarding = ForwardingPreference::Datagram;
+                    *existing.get_mut() = Arc::new(upgraded);
+                }
+                false
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(Arc::new(object));
+                true
+            }
+        };
+        if registers_knowledge {
+            ledger.register_live_object(at);
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn has_group(&self, group_id: u64) -> bool {
-        self.read().has_group(group_id)
+        drop(ledger);
+        if inserted {
+            self.notify.notify_waiters();
+        }
+        Ok(())
     }
 
     pub(crate) fn groups_at_or_after(&self, group_id: u64) -> Vec<u64> {
@@ -220,11 +205,7 @@ impl TrackCache {
     }
 
     pub(crate) fn end_live_ingest(&self) {
-        let _ = self.live_ingest_count.fetch_update(
-            AtomicOrdering::Relaxed,
-            AtomicOrdering::Relaxed,
-            |count| Some(count.saturating_sub(1)),
-        );
+        self.live_ingest_count.fetch_sub(1, AtomicOrdering::Relaxed);
     }
 }
 
@@ -334,15 +315,6 @@ impl TrackCache {
         }
 
         requested_end
-    }
-
-    pub(crate) fn fetch_objects(
-        &self,
-        start: moqt::Location,
-        end: moqt::Location,
-        group_order: moqt::GroupOrder,
-    ) -> FetchCursor<'_> {
-        FetchCursor::new(self, start, end, group_order)
     }
 }
 
@@ -478,6 +450,7 @@ mod tests {
 
     #[test]
     fn largest_location_is_none_when_empty() {
+        // Arrange / Act / Assert
         assert!(TrackCache::new().largest_location().is_none());
     }
 
@@ -509,7 +482,7 @@ mod tests {
                 SubgroupKey::Datagram { group_id: 0 }
             ])
         );
-        assert!(!cache.has_group(1));
+        assert!(cache.subgroups_in_group(1).is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -600,7 +573,6 @@ mod tests {
         cache.evict(ttl);
         // Assert
         assert!(cache.is_empty());
-        assert!(cache.has_group(0));
         assert_eq!(cache.subgroups_in_group(0), BTreeSet::from([stream_key(0)]));
     }
 
@@ -667,17 +639,13 @@ mod tests {
 
 #[cfg(test)]
 mod fetch_tests {
-    use std::{sync::Arc, time::Duration};
-
     use moqt::ObjectStatus;
+    use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::modules::relay::{
-        tests::harness::fixtures::cached_object::{
-            datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
-            stream_object, stream_object_in_subgroup,
-        },
-        types::SubgroupKey,
+    use crate::modules::relay::tests::harness::fixtures::cached_object::{
+        datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
+        stream_object, stream_object_in_subgroup,
     };
 
     fn object_ids(objects: &[moqt::FetchObjectField]) -> Vec<(u64, u64)> {
@@ -685,6 +653,17 @@ mod fetch_tests {
             .iter()
             .map(|object| (object.group_id, object.object_id))
             .collect()
+    }
+
+    fn spawn_fetch(
+        cache: &Arc<TrackCache>,
+        start: moqt::Location,
+        end: moqt::Location,
+    ) -> JoinHandle<Result<Vec<moqt::FetchObjectField>, FetchInterrupted>> {
+        let cache = cache.clone();
+        tokio::spawn(
+            async move { fetch_all(&cache, start, end, moqt::GroupOrder::Ascending).await },
+        )
     }
 
     async fn fetch(
@@ -1031,18 +1010,7 @@ mod fetch_tests {
         let open_g0 = cache.open_subgroup(stream_key(0));
         insert_closed_group(&cache, 1, &[0, 1, 2, 3, 4]);
         // Act: fetch [{0,0}, {1,3}) while group 0's objects have not arrived yet
-        let fetch = tokio::spawn({
-            let cache = cache.clone();
-            async move {
-                fetch_all(
-                    &cache,
-                    location(0, 0),
-                    location(1, 3),
-                    moqt::GroupOrder::Ascending,
-                )
-                .await
-            }
-        });
+        let fetch = spawn_fetch(&cache, location(0, 0), location(1, 3));
         tokio::task::yield_now().await;
         for object_id in 0..3 {
             let _ = open_g0.insert(stream_object(0, object_id));
@@ -1065,18 +1033,7 @@ mod fetch_tests {
         // Arrange: a live group whose tail the fetch will wait for
         let cache = Arc::new(TrackCache::new());
         let open = open_group(&cache, 0, &[0]);
-        let fetch = tokio::spawn({
-            let cache = cache.clone();
-            async move {
-                fetch_all(
-                    &cache,
-                    location(0, 0),
-                    location(0, 3),
-                    moqt::GroupOrder::Ascending,
-                )
-                .await
-            }
-        });
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
         tokio::task::yield_now().await;
         // Act: a conflicting duplicate latches the track mid-wait
         let outcome = open.insert(stream_object_in_subgroup(0, 1, 0));
@@ -1094,18 +1051,7 @@ mod fetch_tests {
         // Arrange: the fetch waits on an open group whose stream is then reset upstream
         let cache = Arc::new(TrackCache::new());
         let open = open_group(&cache, 0, &[0]);
-        let fetch = tokio::spawn({
-            let cache = cache.clone();
-            async move {
-                fetch_all(
-                    &cache,
-                    location(0, 0),
-                    location(0, 3),
-                    moqt::GroupOrder::Ascending,
-                )
-                .await
-            }
-        });
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
         tokio::task::yield_now().await;
         // Act
         drop(open);

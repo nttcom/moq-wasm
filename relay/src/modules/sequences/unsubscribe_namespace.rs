@@ -4,7 +4,7 @@ use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     inter_relay::InterRelayConnectionManager,
     route_registry::{RelayInfo, RelayRouteRegistry},
-    sequences::{CascadingRelayContext, tables::table::LocalPubSubDirectory},
+    sequences::{CascadingRelayContext, tables::hashmap_table::InMemoryLocalPubSubDirectory},
     types::SessionId,
 };
 use tracing::Span;
@@ -23,7 +23,7 @@ impl UnsubscribeNamespace {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &moqt::UnsubscribeNamespaceHandler,
@@ -62,7 +62,7 @@ impl UnsubscribeNamespace {
     )]
     pub(crate) async fn cleanup_empty_namespace_subscription(
         track_namespace_prefix: &str,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
@@ -82,17 +82,10 @@ impl UnsubscribeNamespace {
 
         let routes = Self::find_publisher_relays(track_namespace_prefix, route_registry).await;
         for route in routes {
-            let session_id = match inter_relay_connection_manager.get_or_connect(&route).await {
-                Ok(session_id) => session_id,
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        relay_id = %route.relay_id,
-                        track_namespace_prefix = %track_namespace_prefix,
-                        "failed to connect upstream relay for UNSUBSCRIBE_NAMESPACE"
-                    );
-                    continue;
-                }
+            let Some(session_id) =
+                super::connect_relay(inter_relay_connection_manager, &route).await
+            else {
+                continue;
             };
 
             if let Err(err) = forwarder

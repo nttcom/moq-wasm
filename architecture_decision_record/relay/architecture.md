@@ -178,11 +178,10 @@ Each sequence owns the relay-side protocol logic for one message
 - `ControlMessageForwarder` — sends control messages on *other* sessions via
   the repository (e.g. forwarding SUBSCRIBE upstream, PUBLISH_NAMESPACE to
   interested subscribers).
-- `LocalPubSubDirectory` (trait; `InMemoryLocalPubSubDirectory` impl in
-  `tables/`) — the relay's in-memory registry of publish/subscribe namespaces
-  (with `PeerKind` so client-owned Redis routes are cleaned up when the last
-  *client* leaves), active upstream subscriptions, and downstream
-  subscriptions. `remove_session` returns everything cleanup needs.
+- `InMemoryLocalPubSubDirectory` (in `tables/`) — the relay's in-memory
+  registry of publish/subscribe namespaces (with `PeerKind` so client-owned
+  Redis routes are cleaned up when the last *client* leaves), active upstream
+  subscriptions, and downstream subscriptions. `remove_session` returns everything cleanup needs.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
   guard removes the track's entry on release unless a waiter still holds the
   mutex, so the map only holds tracks whose upstream creation is in progress.
@@ -201,9 +200,10 @@ Each sequence owns the relay-side protocol logic for one message
    publisher switchover, where the newer session should take new
    subscriptions during the overlap, is not implemented.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
-   and the local cache's largest location (`resolve_subscribe_largest`). The
-   cache is consulted even for a fresh upstream: a publisher that rejoined
-   under the same track must not make the relay advertise
+   and the local cache's largest location, resolved together with the upstream
+   subscription (`get_or_create_upstream_subscription`). The cache is
+   consulted even for a fresh upstream: a publisher that rejoined under the
+   same track must not make the relay advertise
    `contentExists=false` and replay stale cache from {0,0}.
 4. **Downstream registration + egress start**: register the downstream
    subscription — atomically with the upstream subscription's existence, so a
@@ -277,11 +277,18 @@ per-request authorization gate under "Event pipeline".
 
 - On `Start`, it obtains the upstream session's `Subscriber`, creates the data
   receiver (cancellable via a per-track `watch` stop channel), and hands it to
-  `StreamIngressTask` (subgroup streams) or `DatagramReader` (datagrams).
-- `StreamIngressTask` runs a per-track factory loop accepting subgroup
-  streams. **First-publisher-wins**: a second publisher on an active track is
-  ignored (draft-14 §8.2 multiple-publisher dedup is a known TODO), and only
-  the owning publisher's `Stop` tears the reader down.
+  `TrackIngestTask` as an `IngestSource` (subgroup-stream factory or datagram
+  receiver).
+- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track and
+  source kind: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
+  per accepted subgroup stream, `read_datagrams` (`datagram_reader.rs`) reads
+  the datagram receiver. Every reader of a track shares one `TrackIngest`
+  (track key, publisher, cache, session-event sender, stop receiver).
+  **First-publisher-wins** per track and kind: a second publisher on an
+  active track is ignored (draft-14 §8.2 multiple-publisher dedup is a known
+  TODO), and only the owning publisher's `Stop` tears the readers down.
+  Stream readers outlive their accept loop until the track's stop sender is
+  signalled or dropped.
 - Readers convert every wire object into a canonical `CachedObject` and insert
   it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
   group id, subgroup id and priority as the per-stream context, opens the
@@ -342,12 +349,9 @@ per-request authorization gate under "Event pipeline".
   generation counter); datagram objects register nothing.
 - `next_subgroup_object_or_wait(key, from)` (live egress) returns the next object of that
   subgroup, `Finished` once it closed cleanly, or `Aborted` once it closed without
-  a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks. `fetch_objects` walks
-  `[start, end)` in location order, reading positions inside knowledge without
-  waiting and waiting past the frontier only while some subgroup of the group
-  is open.
-- `fetch_objects(start, end, group_order)` returns a `FetchCursor` (`track_cache/fetch_cursor.rs`)
-  that walks `[start, end)` in delivery order (Descending reverses the group
+  a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks.
+- `FetchCursor::new(cache, start, end, group_order)` (`track_cache/fetch_cursor.rs`)
+  walks `[start, end)` in delivery order (Descending reverses the group
   list) and yields one object per `next`, reading positions inside knowledge
   without waiting and waiting past the frontier only while some subgroup of
   the group is open. `Aborted` from such a wait surfaces as

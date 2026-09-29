@@ -8,6 +8,7 @@ import { MemberGrid } from './MemberGrid'
 import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
+import { useRetryBackoff } from '../hooks/useRetryBackoff'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import type { RemoteMediaStreams } from '../types/media'
 import type { SidebarStatsSample } from '../types/stats'
@@ -76,6 +77,9 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
   const [catalogSubscribedMemberIds, setCatalogSubscribedMemberIds] = useState<Set<string>>(new Set())
   const [catalogUnsubscribingTrackKeys, setCatalogUnsubscribingTrackKeys] = useState<Set<string>>(new Set())
+  const { backoff: chatSubscribeBackoff, retryTick: chatSubscribeRetryTick } = useRetryBackoff('chat-auto-subscribe')
+  const { backoff: catalogSubscribeBackoff, retryTick: catalogSubscribeRetryTick } =
+    useRetryBackoff('catalog-auto-subscribe')
   const {
     cameraEnabled,
     screenShareEnabled,
@@ -370,8 +374,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         next.add(memberId)
         return next
       })
-    } catch (error) {
-      console.error(`Failed to load catalog tracks for ${memberId}:`, error)
     } finally {
       setCatalogLoadingMemberIds((prev) => {
         const next = new Set(prev)
@@ -382,13 +384,20 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }
 
   useEffect(() => {
+    catalogSubscribeBackoff.retain(room.remoteMembers)
     for (const memberId of room.remoteMembers.keys()) {
       if (catalogLoadingMemberIds.has(memberId) || catalogSubscribedMemberIds.has(memberId)) {
         continue
       }
-      void handleLoadCatalogTracks(memberId)
+      catalogSubscribeBackoff.run(memberId, () => handleLoadCatalogTracks(memberId))
     }
-  }, [catalogLoadingMemberIds, catalogSubscribedMemberIds, room.remoteMembers])
+  }, [
+    catalogLoadingMemberIds,
+    catalogSubscribeBackoff,
+    catalogSubscribeRetryTick,
+    catalogSubscribedMemberIds,
+    room.remoteMembers
+  ])
 
   const handleSelectCatalogTrack = (memberId: string, role: CatalogSubscribeRole, trackName: string) => {
     setRemoteCatalogSelections((prev) => {
@@ -470,13 +479,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         }))
       )
     } catch (error) {
-      console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
           isSubscribing: false
         }))
       )
+      throw error
     }
   }
 
@@ -541,6 +550,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }
 
   useEffect(() => {
+    chatSubscribeBackoff.retain(room.remoteMembers)
     for (const member of room.remoteMembers.values()) {
       const chatState = member.subscribedTracks.chat
       const chatTrackKey = buildTrackActionKey(member.id, 'chat')
@@ -554,11 +564,18 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       const selected = remoteCatalogSelections.get(member.id)
       const catalogChatTrackName = remoteCatalogTracks.get(member.id)?.find((track) => track.role === 'chat')?.name
       const chatTrackName = selected?.chat ?? catalogChatTrackName ?? 'chat'
-      void subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName).catch((error) => {
-        console.error(`Failed to auto-subscribe chat track for ${member.id}:`, error)
-      })
+      chatSubscribeBackoff.run(member.id, () =>
+        subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName)
+      )
     }
-  }, [catalogUnsubscribingTrackKeys, remoteCatalogSelections, remoteCatalogTracks, room.remoteMembers])
+  }, [
+    catalogUnsubscribingTrackKeys,
+    chatSubscribeBackoff,
+    chatSubscribeRetryTick,
+    remoteCatalogSelections,
+    remoteCatalogTracks,
+    room.remoteMembers
+  ])
 
   const handleToggleCamera = async () => {
     const enabled = await toggleCamera()

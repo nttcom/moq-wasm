@@ -1,7 +1,23 @@
-FROM rust:1.96.0-slim-bookworm@sha256:c8a94a78f67ec8c4d474ec7f71e0720f21eb7e584e158daec0874cafa7c30e4d AS builder
+FROM lukemathwalker/cargo-chef:0.1.77-rust-1.96.0-slim-bookworm@sha256:4a51277f4e3e8e4643dd6384f6f6b2b3c8de9f074299cd0c19a80f3c29e8dd15 AS chef
+WORKDIR /workspace
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
 ARG RELAY_BUILD_PROFILE=debug
 
-WORKDIR /workspace
+# Dependencies are cooked from the recipe alone so this layer is reused
+# until a manifest or Cargo.lock changes; only the workspace crates are
+# compiled after the source is copied in.
+COPY --from=planner /workspace/recipe.json recipe.json
+RUN case "$RELAY_BUILD_PROFILE" in \
+      debug) cargo chef cook -p relay --recipe-path recipe.json ;; \
+      release) cargo chef cook --release -p relay --recipe-path recipe.json ;; \
+      *) echo "unsupported RELAY_BUILD_PROFILE: $RELAY_BUILD_PROFILE" >&2; exit 1 ;; \
+    esac
+
 COPY . .
 RUN case "$RELAY_BUILD_PROFILE" in \
       debug) cargo build -p relay ;; \

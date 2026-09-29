@@ -3,41 +3,26 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
-    enums::{FilterType, PublishErrorCode},
+    enums::PublishErrorCode,
     inter_relay::InterRelayConnectionManager,
     relay::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     route_registry::RelayRouteRegistry,
     sequences::{
         CascadingRelayContext,
-        tables::table::{
-            ActiveUpstreamSubscription, LocalPubSubDirectory, UpstreamSubscriptionKey,
-            UpstreamSubscriptionOrigin,
+        tables::{
+            hashmap_table::InMemoryLocalPubSubDirectory,
+            table::{
+                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+            },
         },
     },
     types::{SessionId, TrackKey},
 };
+
+use moqt::FilterType;
 use tracing::Span;
 
 pub(crate) struct Publish;
-
-#[derive(Debug)]
-enum RegisterUpstreamSubscriptionError {
-    IngressStartFailed,
-}
-
-impl RegisterUpstreamSubscriptionError {
-    fn code(&self) -> u64 {
-        match self {
-            Self::IngressStartFailed => PublishErrorCode::InternalError as u64,
-        }
-    }
-
-    fn reason_phrase(&self) -> String {
-        match self {
-            Self::IngressStartFailed => "Failed to start ingress for published track".to_string(),
-        }
-    }
-}
 
 impl Publish {
     #[tracing::instrument(
@@ -52,7 +37,7 @@ impl Publish {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         cascading_relay_context: CascadingRelayContext<'_>,
@@ -87,7 +72,10 @@ impl Publish {
                 "failed to register upstream subscription"
             );
             if handler
-                .error(error.code(), error.reason_phrase())
+                .error(
+                    PublishErrorCode::InternalError as u64,
+                    "Failed to start ingress for published track".to_string(),
+                )
                 .await
                 .is_err()
             {
@@ -129,18 +117,13 @@ impl Publish {
         &self,
         publisher_session_id: SessionId,
         forwarder: &ControlMessageForwarder,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         cascading_relay_context: CascadingRelayContext<'_>,
         subscription: &UpstreamSubscription,
         is_origin_client: bool,
     ) {
-        self.notify_local_namespace_subscribers(
-            publisher_session_id,
-            forwarder,
-            table,
-            subscription,
-        )
-        .await;
+        self.notify_local_namespace_subscribers(forwarder, table, subscription)
+            .await;
 
         if is_origin_client {
             self.notify_remote_subscribers(
@@ -158,22 +141,20 @@ impl Publish {
         level = "info",
         name = "relay.sequence.publish.notify_local_namespace_subscribers",
         skip_all,
-        fields(publisher_session_id = %publisher_session_id, track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
+        fields(track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
     )]
     async fn notify_local_namespace_subscribers(
         &self,
-        publisher_session_id: SessionId,
         forwarder: &ControlMessageForwarder,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         subscription: &UpstreamSubscription,
     ) {
         let track_namespace = subscription.track_namespace().to_string();
         let track_name = subscription.track_name().to_string();
-        let track_alias = subscription.track_alias();
 
         let combined = table.get_namespace_subscribers(&track_namespace);
         for subscriber_session_id in combined {
-            if let Some(subscriber_track_alias) = forwarder
+            if forwarder
                 .publish(
                     subscriber_session_id,
                     track_namespace.clone(),
@@ -181,12 +162,6 @@ impl Publish {
                 )
                 .await
             {
-                table.register_track_alias_link(
-                    publisher_session_id,
-                    track_alias,
-                    subscriber_session_id,
-                    subscriber_track_alias,
-                );
                 tracing::info!(
                     "Sent publish '{}' to {}",
                     track_namespace,
@@ -207,18 +182,18 @@ impl Publish {
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
-        table: &dyn LocalPubSubDirectory,
+        table: &InMemoryLocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
-    ) -> Result<(), RegisterUpstreamSubscriptionError> {
+    ) -> anyhow::Result<()> {
         let track_namespace = subscription.track_namespace().to_string();
         let track_name = subscription.track_name().to_string();
         let track_key = TrackKey::new(&track_namespace, &track_name);
         let upstream_key = UpstreamSubscriptionKey {
             publisher_session_id: session_id,
-            track_namespace: track_namespace.clone(),
-            track_name: track_name.clone(),
+            track_namespace,
+            track_name,
         };
         let active_upstream = ActiveUpstreamSubscription {
             upstream_request_id: subscription.request_id(),
@@ -235,25 +210,18 @@ impl Publish {
             .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
-                track_namespace: track_namespace.clone(),
-                track_name: track_name.clone(),
+                track_key: active_upstream.track_key.clone(),
                 subscription: subscription.clone(),
                 parent_span: Span::current(),
             })))
             .await
             .is_err()
         {
-            tracing::error!(
-                session_id = %session_id,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "failed to send ingress start request for published track"
-            );
-            return Err(RegisterUpstreamSubscriptionError::IngressStartFailed);
+            anyhow::bail!("failed to send ingress start request");
         }
 
         table.register_upstream_subscription(upstream_key, active_upstream);
-        table.register_publish(session_id, handler).await;
+        table.register_publish(session_id, handler);
         Ok(())
     }
 
@@ -288,18 +256,10 @@ impl Publish {
         };
 
         for relay in routes {
-            let session_id = match inter_relay_connection_manager.get_or_connect(&relay).await {
-                Ok(session_id) => session_id,
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        relay_id = %relay.relay_id,
-                        track_namespace = %track_namespace,
-                        track_name = %track_name,
-                        "failed to connect remote publish subscriber"
-                    );
-                    continue;
-                }
+            let Some(session_id) =
+                super::connect_relay(inter_relay_connection_manager, &relay).await
+            else {
+                continue;
             };
 
             if forwarder
@@ -309,7 +269,6 @@ impl Publish {
                     track_name.to_string(),
                 )
                 .await
-                .is_some()
             {
                 tracing::info!(
                     relay_id = %relay.relay_id,

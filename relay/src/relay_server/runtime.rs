@@ -14,7 +14,7 @@ use crate::modules::{
     },
     route_registry::RelayRouteRegistry,
     sequences::{
-        tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::LocalPubSubDirectory},
+        tables::hashmap_table::InMemoryLocalPubSubDirectory,
         upstream_serializer::UpstreamCreationSerializer,
     },
     session_event::SessionEvent,
@@ -64,7 +64,7 @@ impl RelayRuntime {
                 inter_relay_connection_manager,
                 upstream_publisher_resolver,
                 cache_store: cache_store.clone(),
-                upstream_serializer: UpstreamCreationSerializer::new(),
+                upstream_serializer: UpstreamCreationSerializer::default(),
                 token_verifier,
             },
         );

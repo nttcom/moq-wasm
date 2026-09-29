@@ -20,8 +20,6 @@ pub(crate) struct EgressStartRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) downstream_subscribe_id: u64,
     pub(crate) track_key: TrackKey,
-    pub(crate) track_namespace: String,
-    pub(crate) track_name: String,
     pub(crate) downstream_subscription: DownstreamSubscription,
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
@@ -99,12 +97,11 @@ impl EgressCoordinator {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         request: EgressFetchRequest,
     ) {
-        // publisher = relay's outbound handle to the session that issued FETCH
-        let publisher = session_repo
+        let fetching_session_publisher = session_repo
             .lock()
             .await
             .publisher(request.subscriber_session_id);
-        let Some(publisher) = publisher else {
+        let Some(publisher) = fetching_session_publisher else {
             tracing::error!("session not found for fetch");
             return;
         };
@@ -148,8 +145,8 @@ impl EgressCoordinator {
             downstream_subscribe_id = request.downstream_subscribe_id,
             track_key = %request.track_key,
             track_alias = track_alias,
-            track_namespace = %request.track_namespace,
-            track_name = %request.track_name,
+            track_namespace = %request.track_key.track_namespace,
+            track_name = %request.track_key.track_name,
         );
 
         let runner = EgressRunner::new(
@@ -237,8 +234,6 @@ mod tests {
                 subscriber_session_id: SUBSCRIBER_SESSION_ID,
                 downstream_subscribe_id: DOWNSTREAM_SUBSCRIBE_ID,
                 track_key: ctx.track_key.clone(),
-                track_namespace: "ns".to_string(),
-                track_name: "track".to_string(),
                 downstream_subscription: make_subscription(moqt::FilterType::LargestObject),
                 parent_span: Span::none(),
                 ready_sender,

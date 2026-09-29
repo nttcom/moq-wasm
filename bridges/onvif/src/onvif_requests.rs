@@ -104,42 +104,12 @@ pub fn get_configurations() -> OnvifRequest {
     )
 }
 
-pub fn get_configuration(token: &str) -> OnvifRequest {
-    build(
-        PTZ_ACTION_NS,
-        "GetConfiguration",
-        format!(
-            r#"<GetConfiguration xmlns="{0}"><ConfigurationToken>{1}</ConfigurationToken></GetConfiguration>"#,
-            PTZ_ACTION_NS, token
-        ),
-    )
-}
-
 pub fn get_configuration_options(token: &str) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfigurationOptions",
         format!(
             r#"<GetConfigurationOptions xmlns="{0}"><ConfigurationToken>{1}</ConfigurationToken></GetConfigurationOptions>"#,
-            PTZ_ACTION_NS, token
-        ),
-    )
-}
-
-pub fn get_nodes() -> OnvifRequest {
-    build(
-        PTZ_ACTION_NS,
-        "GetNodes",
-        format!(r#"<GetNodes xmlns="{}"/>"#, PTZ_ACTION_NS),
-    )
-}
-
-pub fn get_node(token: &str) -> OnvifRequest {
-    build(
-        PTZ_ACTION_NS,
-        "GetNode",
-        format!(
-            r#"<GetNode xmlns="{0}"><NodeToken>{1}</NodeToken></GetNode>"#,
             PTZ_ACTION_NS, token
         ),
     )
