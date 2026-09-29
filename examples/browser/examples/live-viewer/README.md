@@ -347,14 +347,14 @@ which makes the audio device the master the picture follows; a late chunk is
 not trimmed but starts at once and moves the clock the same way, so the chunks
 behind it stay contiguous; that is how the buffer grows. Once the buffer has
 settled (10 s for an adaptive one), `Catch up` decides how a buffer above its
-target shrinks. `Skip`, the default, drops each audio chunk that fits in the
+target shrinks. `Skip (trim + crossfade)`, the default, drops each audio chunk that fits in the
 excess and fades the next one in from the head of the first dropped chunk, at
 the offset within 10 ms where the two waveforms look most alike, so the sound
-jumps without a click. `Speed up` shortens the audio by 10 % while the buffer
+jumps without a click. `Speed up (WSOLA)` shortens the audio by 10 % while the buffer
 is more than 20 ms over, without changing its pitch: where the waveform
 repeats, one period of 2.5–10 ms is overlapped onto the next with a 5 ms
 crossfade (the time-scale modification WebRTC's NetEq calls accelerate), and
-it skips like `Skip` once the buffer is more than 400 ms over. `Off` never
+it skips like `Skip (trim + crossfade)` once the buffer is more than 400 ms over. `Off` never
 shrinks it. The stats line shows the buffer and its target as
 `buffer N ms (target M)` and how much latency the catch-up has taken out as
 `shed N ms`.
