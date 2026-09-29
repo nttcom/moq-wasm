@@ -11,9 +11,9 @@ media-streaming-format = { path = "../media-streaming-format" }
 mediapack = { path = "../mediapack", features = ["moqt"] }
 moqt = { path = "../../moqt" }
 serde_json = "1.0"
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 tracing = "0.1"
 url = "2.5.8"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }
