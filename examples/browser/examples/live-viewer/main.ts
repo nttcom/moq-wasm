@@ -19,7 +19,13 @@ import {
   postVideoCatalogToWorker
 } from '../../utils/media/decoderCatalog'
 import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
-import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../media/common'
+import {
+  getErrorMessage,
+  initializeMediaExamplePage,
+  parseTrackNamespace,
+  setStatus,
+  setStatusText
+} from '../media/common'
 import { BufferingSpinner } from './bufferingSpinner'
 import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
 import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
@@ -107,7 +113,7 @@ const livePlayout = new LivePlayout(
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const mp4Publisher = new Mp4Publisher(
-  { onStatus: (text) => setStatusText('publish-status', text), onLog: appendLog },
+  { onStatus: (text, state) => setStatus('publish-status', text, state), onLog: appendLog },
   new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
 )
 /// Live LOC frames carry their capture timestamp, so the moment one is shown
@@ -257,11 +263,11 @@ async function watchStream(): Promise<void> {
     const url = element<HTMLInputElement>('url').value.trim()
     await moqtClient.connect(url)
     watching = true
-    setStatusText('connection-status', `Connected: ${url}`)
+    setStatus('connection-status', `Connected: ${url}`, 'ok')
     appendLog('info', `connected to ${url}`)
     await subscribeCatalog()
   } catch (error) {
-    setStatusText('connection-status', `Failed: ${getErrorMessage(error)}`)
+    setStatus('connection-status', `Failed: ${getErrorMessage(error)}`, 'error')
     appendLog('error', getErrorMessage(error))
   }
 }
@@ -293,18 +299,18 @@ async function stopStream(): Promise<void> {
   if (moqtClient.getConnectionStatus()) {
     await moqtClient.disconnect()
   }
-  setStatusText('connection-status', 'Not connected')
-  setStatusText('catalog-status', 'Catalog not loaded yet')
-  setStatusText('playback-status', 'Playback idle')
+  setStatus('connection-status', 'Not connected', 'idle')
+  setStatus('catalog-status', 'Catalog not loaded yet', 'idle')
+  setStatus('playback-status', 'Playback idle', 'idle')
 }
 
 async function publishMp4(): Promise<void> {
   const file = element<HTMLInputElement>('mp4-file').files?.[0]
   if (!file) {
-    setStatusText('publish-status', 'Choose an MP4 file first')
+    setStatus('publish-status', 'Choose an MP4 file first', 'error')
     return
   }
-  setStatusText('publish-status', `Opening ${file.name}`)
+  setStatus('publish-status', `Opening ${file.name}`, 'idle')
   try {
     await mp4Publisher.start({
       file,
@@ -314,7 +320,7 @@ async function publishMp4(): Promise<void> {
       loop: element<HTMLInputElement>('mp4-loop').checked
     })
   } catch (error) {
-    setStatusText('publish-status', `Publish failed: ${getErrorMessage(error)}`)
+    setStatus('publish-status', `Publish failed: ${getErrorMessage(error)}`, 'error')
     appendLog('error', `publish: ${getErrorMessage(error)}`)
   }
 }
@@ -395,7 +401,7 @@ async function applyCatalog(payload: string): Promise<void> {
     videoTracks = extractCatalogVideoTracks(catalog).filter(isLocTrack)
     audioTracks = extractCatalogAudioTracks(catalog).filter(isLocTrack)
     cmafTracks = extractCatalogCmafTracks(catalog)
-    setStatusText('catalog-status', `Catalog loaded: ${videoTracks.length} video / ${audioTracks.length} audio`)
+    setStatus('catalog-status', `Catalog loaded: ${videoTracks.length} video / ${audioTracks.length} audio`, 'ok')
     const changed = renderTrackOptions()
     renderPackagingOptions()
     await subscribeMediaTimeline(catalog)
@@ -407,7 +413,7 @@ async function applyCatalog(payload: string): Promise<void> {
       reconfigureDecoders()
     }
   } catch (error) {
-    setStatusText('catalog-status', `Catalog error: ${getErrorMessage(error)}`)
+    setStatus('catalog-status', `Catalog error: ${getErrorMessage(error)}`, 'error')
     appendLog('error', `catalog: ${getErrorMessage(error)}`)
   }
 }
@@ -574,7 +580,7 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
       renderSeekbar()
     }
     if (!reviewing) {
-      setStatusText('playback-status', `Playing ${trackName}`)
+      setStatus('playback-status', `Playing ${trackName}`, 'ok')
     }
   } else {
     newestAudioGroupId = groupId
@@ -678,7 +684,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
         timeline.record(groupId, object.locHeader)
         renderSeekbar()
         if (!reviewing) {
-          setStatusText('playback-status', `Playing ${trackName}`)
+          setStatus('playback-status', `Playing ${trackName}`, 'ok')
         }
       } else {
         newestAudioGroupId = groupId
@@ -1031,7 +1037,7 @@ function seekToCapture(captureMicros: number): void {
   }
   const target = timeline.resolveSeekTarget(captureMicros)
   if (!target) {
-    setStatusText('rewind-status', 'Rewind unavailable: nothing buffered yet')
+    setStatus('rewind-status', 'Rewind unavailable: nothing buffered yet', 'error')
     return
   }
 
@@ -1045,7 +1051,7 @@ function seekToCapture(captureMicros: number): void {
   reviewPlayout.start(reviewAnchorMicros)
   applyVolume()
   renderSeekbar()
-  setStatusText('playback-status', 'Reviewing')
+  setStatus('playback-status', 'Reviewing', 'review')
   void review(target.groupId, generation)
 }
 
@@ -1086,7 +1092,7 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
     return undefined
   }
   if (frames.length === 0) {
-    setStatusText('rewind-status', 'Rewind unavailable: no cached objects')
+    setStatus('rewind-status', 'Rewind unavailable: no cached objects', 'error')
     return undefined
   }
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
@@ -1151,7 +1157,7 @@ async function fetchFrames(
     }))
   } catch (error) {
     if (generation === reviewGeneration) {
-      setStatusText('rewind-status', `Rewind failed: ${getErrorMessage(error)}`)
+      setStatus('rewind-status', `Rewind failed: ${getErrorMessage(error)}`, 'error')
       appendLog('error', `fetch ${trackName}: ${getErrorMessage(error)}`)
     }
     return undefined
@@ -1165,7 +1171,7 @@ async function fetchFrames(
     return undefined
   }
   if (outcome.kind === 'reset') {
-    setStatusText('rewind-status', `Rewind failed: fetch stream reset (code ${outcome.code ?? 'unknown'})`)
+    setStatus('rewind-status', `Rewind failed: fetch stream reset (code ${outcome.code ?? 'unknown'})`, 'error')
     appendLog('error', `fetch ${trackName}: stream reset (code ${outcome.code ?? 'unknown'})`)
     return undefined
   }
@@ -1223,7 +1229,7 @@ async function waitForFetchStreamEnd(streamEnd: Promise<FetchStreamEnd>): Promis
 async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
   const config = pendingReviewConfig()
   if (!config) {
-    setStatusText('rewind-status', 'Rewind unavailable: the video track has no codec')
+    setStatus('rewind-status', 'Rewind unavailable: the video track has no codec', 'error')
     return false
   }
   const audioConfig = reviewAudioConfig()
@@ -1288,7 +1294,7 @@ async function playReviewMse(frames: ReviewFrame[], audio: ReviewFrame[], genera
   if (!reviewMseOpened) {
     const source = subscribedCmafSource('video')
     if (!source) {
-      setStatusText('rewind-status', 'Rewind unavailable: the CMAF track has no init segment')
+      setStatus('rewind-status', 'Rewind unavailable: the CMAF track has no init segment', 'error')
       return false
     }
     const origin = reviewOriginMicros ?? 0
@@ -1374,7 +1380,7 @@ function backToLive(): void {
   renderSeekbar()
   showPicture(livePicture())
   closeReviewMse()
-  setStatusText('rewind-status', 'Live')
+  setStatus('rewind-status', 'Live', 'ok')
 }
 
 /// Pausing holds whatever is on screen; every other transition (seek, skip,
@@ -1494,7 +1500,7 @@ function applyPlaybackSpeed(): void {
 /// places, so the bar keeps its meaning as cache retention grows. Until the
 /// first timeline object arrives it falls back to the replayable window.
 function renderSeekbar(): void {
-  setStatusText('rewind-buffer', `${timeline.span.toFixed(1)}s`)
+  element<HTMLDivElement>('seek-available-window').dataset.seconds = timeline.span.toFixed(1)
   element<HTMLButtonElement>('liveBtn').classList.toggle('reviewing', reviewing)
   applyPlaybackSpeed()
   if (seeking) {
@@ -1534,7 +1540,7 @@ function renderReviewStatus(): void {
   }
   const offset = reviewPlayout.syncOffsetMs()
   const sync = offset === undefined ? '' : ` · A/V ${formatSyncOffset(offset)}`
-  setStatusText('rewind-status', `Rewound ${reviewBehindSeconds.toFixed(1)}s${sync}`)
+  setStatus('rewind-status', `Rewound ${reviewBehindSeconds.toFixed(1)}s${sync}`, 'review')
 }
 
 function renderReviewProgress(anchor: number, playhead: number, latest: number): void {

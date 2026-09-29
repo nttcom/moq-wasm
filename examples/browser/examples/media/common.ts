@@ -31,6 +31,16 @@ export function setStatusText(id: string, text: string): void {
   element.style.display = normalized.length > 0 ? '' : 'none'
 }
 
+export type StatusState = 'idle' | 'ok' | 'review' | 'error'
+
+export function setStatus(id: string, text: string, state: StatusState): void {
+  const element = document.getElementById(id)
+  if (element) {
+    element.textContent = text
+    element.dataset.state = state
+  }
+}
+
 export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message

@@ -10,7 +10,7 @@ import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
-import { getErrorMessage } from '../media/common'
+import { type StatusState, getErrorMessage } from '../media/common'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
 
@@ -28,7 +28,7 @@ const AUDIO_SAMPLE_KIND = 1
 type LogLevel = 'info' | 'warn' | 'error'
 
 export type Mp4PublisherCallbacks = {
-  onStatus(text: string): void
+  onStatus(text: string, state: StatusState): void
   onLog(level: LogLevel, message: string): void
 }
 
@@ -98,7 +98,8 @@ export class Mp4Publisher {
     this.preview.start(media.video.codec, media.reorderDelayMicros)
     this.running = this.publish(media, options)
     this.callbacks.onStatus(
-      `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`
+      `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`,
+      'ok'
     )
     this.callbacks.onLog('info', `publishing ${options.file.name} to ${options.url} ${options.namespace.join('/')}`)
   }
@@ -116,9 +117,9 @@ export class Mp4Publisher {
   private async publish(media: Mp4Media, options: Mp4PublishOptions): Promise<void> {
     try {
       const completed = await this.pace(media, options)
-      this.callbacks.onStatus(completed ? 'Publish finished' : 'Publish stopped')
+      this.callbacks.onStatus(completed ? 'Publish finished' : 'Publish stopped', 'idle')
     } catch (error) {
-      this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`)
+      this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`, 'error')
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
     } finally {
       this.active = false

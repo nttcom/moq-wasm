@@ -244,7 +244,7 @@ make chrome</code></pre>
           </div>
         </details>
         <div class="control-grid subscriber-grid">
-          <section class="card stack">
+          <section class="card stack full">
             <h2>Stream</h2>
             <label for="url">Relay URL:</label>
             <input type="url" id="url" data-testid="live-viewer-url-input" />
@@ -258,44 +258,13 @@ make chrome</code></pre>
               <button type="button" id="watchBtn" data-testid="live-viewer-watch-button">Watch</button>
               <button type="button" id="stopBtn" data-testid="live-viewer-stop-button">Stop</button>
             </div>
-          </section>
-
-          <section class="card stack">
-            <h2>Status</h2>
-            <div class="status-list">
-              <div class="status-item">
-                <span class="status-label">Connection</span>
-                <span id="connection-status" class="status-value" data-testid="live-viewer-connection-status">
-                  Not connected
-                </span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Catalog</span>
-                <span id="catalog-status" class="status-value" data-testid="live-viewer-catalog-status">
-                  Catalog not loaded yet
-                </span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Playback</span>
-                <span id="playback-status" class="status-value" data-testid="live-viewer-playback-status">
-                  Playback idle
-                </span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Mode</span>
-                <span id="rewind-status" class="status-value" data-testid="live-viewer-rewind-status">Live</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Buffered</span>
-                <span id="rewind-buffer" class="status-value" data-testid="live-viewer-rewind-buffer">0.0s</span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Publish</span>
-                <span id="publish-status" class="status-value" data-testid="live-viewer-publish-status">
-                  Publish idle
-                </span>
-              </div>
-            </div>
+            <span
+              id="connection-status"
+              class="status-dot"
+              data-state="idle"
+              data-testid="live-viewer-connection-status"
+              >Not connected</span
+            >
           </section>
 
           <section class="card stack full">
@@ -313,6 +282,9 @@ make chrome</code></pre>
                 <button type="button" id="stopPublishBtn" data-testid="live-viewer-stop-publish-button">Stop</button>
               </div>
             </div>
+            <span id="publish-status" class="status-dot" data-state="idle" data-testid="live-viewer-publish-status"
+              >Publish idle</span
+            >
             <p class="hint">
               H.264 と AAC / MP3 の MP4 を、上の Relay URL と namespace へブラウザから配信します。配信中に Watch
               を押すと視聴できます。
@@ -346,6 +318,17 @@ make chrome</code></pre>
               <div class="playback-meta">
                 <span id="video-stats" data-testid="live-viewer-video-stats">-</span>
               </div>
+            </div>
+            <div class="viewer-status">
+              <span id="playback-status" class="status-dot" data-state="idle" data-testid="live-viewer-playback-status"
+                >Playback idle</span
+              >
+              <span id="rewind-status" class="status-dot" data-state="ok" data-testid="live-viewer-rewind-status"
+                >Live</span
+              >
+              <span id="catalog-status" class="status-dot" data-state="idle" data-testid="live-viewer-catalog-status"
+                >Catalog not loaded yet</span
+              >
             </div>
             <div class="media-grid">
               <div class="playback-panel">

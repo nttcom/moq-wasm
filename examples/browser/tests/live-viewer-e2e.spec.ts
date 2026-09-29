@@ -3,7 +3,7 @@ import {
   arrangeLiveViewerE2ESession,
   expectVideoDecoded,
   type LiveViewerPageModel,
-  parseSeconds,
+  rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
 
@@ -30,7 +30,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
     // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
-    await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
@@ -178,7 +178,7 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await viewer.stopButton.click()
 
     // Assert
-    await expect(viewer.rewindBuffer).toHaveText('0.0s')
+    await expect(viewer.seekAvailableWindow).toHaveAttribute('data-seconds', '0.0')
     await expect(viewer.seekbar).toBeDisabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.seekElapsed).toHaveText('--:-- / --:--')
@@ -225,7 +225,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     const liveVideo = viewer.page.locator(`.viewer-stage video[src="${liveSource}"]`)
 
     // Act: relay のキャッシュがたまるのを待って MSE 経由で巻き戻す
-    await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 60_000 }).toBeGreaterThan(10)
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await viewer.page.keyboard.press('Escape')
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
