@@ -19,9 +19,9 @@ use mediapack::loc::from_extension_headers;
 #[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
-    DatagramField, ExtensionHeaders, Fetch, FetchCancel, FetchHeader, FetchObjectField, FetchOk,
-    FetchParams, FilterType, GoAway, GroupOrder, Location, MaxRequestId, NamespaceOk,
-    ObjectDatagram, ObjectDatagramPayload, ObjectStatus, Publish, PublishDone, PublishNamespace,
+    DatagramField, Fetch, FetchCancel, FetchHeader, FetchObjectField, FetchOk, FetchParams,
+    FilterType, GoAway, GroupOrder, Location, MaxRequestId, NamespaceOk, ObjectDatagram,
+    ObjectDatagramPayload, ObjectStatus, Publish, PublishDone, PublishNamespace,
     PublishNamespaceCancel, PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked,
     ServerSetup, SetupParameter, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField,
     Subscribe, SubscribeNamespace, SubscribeOk, SubscribeUpdate, TrackStatus, TrackStatusError,
@@ -995,7 +995,7 @@ impl MOQTClient {
         let field = DatagramField {
             object_id: Some(object_id),
             publisher_priority,
-            extension_headers: (extension_headers != empty_extension_headers())
+            extension_headers: (!extension_headers.key_value_pairs.is_empty())
                 .then_some(extension_headers),
             end_of_group: false,
             payload: ObjectDatagramPayload::Payload(Bytes::from(object_payload)),
@@ -1024,7 +1024,7 @@ impl MOQTClient {
         let field = DatagramField {
             object_id: Some(object_id),
             publisher_priority,
-            extension_headers: (extension_headers != empty_extension_headers())
+            extension_headers: (!extension_headers.key_value_pairs.is_empty())
                 .then_some(extension_headers),
             end_of_group: false,
             payload: ObjectDatagramPayload::Status(object_status),
@@ -1820,11 +1820,6 @@ fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {
     }
 
     vec![AuthorizationToken::use_value_utf8(auth_info)]
-}
-
-#[cfg(web_sys_unstable_apis)]
-fn empty_extension_headers() -> ExtensionHeaders {
-    ExtensionHeaders::default()
 }
 
 #[cfg(web_sys_unstable_apis)]

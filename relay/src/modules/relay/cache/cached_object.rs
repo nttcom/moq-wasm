@@ -221,20 +221,17 @@ impl CachedObject {
 
     pub(crate) fn to_object_datagram(&self, track_alias: u64) -> ObjectDatagram {
         // draft-14 §10.2.1.1: zero-length objects encode their status explicitly.
-        let (payload, end_of_group) = if self.payload.is_empty() {
-            (ObjectDatagramPayload::Status(self.status), false)
+        let payload = if self.payload.is_empty() {
+            ObjectDatagramPayload::Status(self.status)
         } else {
-            (
-                ObjectDatagramPayload::Payload(self.payload.clone()),
-                self.status == ObjectStatus::EndOfGroup,
-            )
+            ObjectDatagramPayload::Payload(self.payload.clone())
         };
         let field = DatagramField {
             object_id: Some(self.location.object_id),
             publisher_priority: self.publisher_priority,
             extension_headers: (!self.extension_headers.key_value_pairs.is_empty())
                 .then(|| self.extension_headers.clone()),
-            end_of_group,
+            end_of_group: !self.payload.is_empty() && self.status == ObjectStatus::EndOfGroup,
             payload,
         };
         ObjectDatagram::new(track_alias, self.location.group_id, field)

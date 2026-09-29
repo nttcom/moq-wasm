@@ -19,10 +19,6 @@ fn is_defined_type(message_type: u64) -> bool {
     matches!(message_type, 0x00..=0x07 | 0x20 | 0x21)
 }
 
-fn flag_if(condition: bool, flag: u64) -> u64 {
-    if condition { flag } else { 0 }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectDatagramPayload {
     Payload(Bytes),
@@ -42,16 +38,6 @@ impl DatagramField {
     /// draft-14 §10.3.1: when the Object ID field is omitted, the Object ID is 0.
     pub fn resolve_object_id(&self) -> u64 {
         self.object_id.unwrap_or(0)
-    }
-
-    fn message_type(&self) -> u64 {
-        flag_if(self.extension_headers.is_some(), EXTENSIONS_PRESENT)
-            | flag_if(self.end_of_group, END_OF_GROUP)
-            | flag_if(self.object_id.is_none(), OBJECT_ID_ABSENT)
-            | flag_if(
-                matches!(self.payload, ObjectDatagramPayload::Status(_)),
-                STATUS,
-            )
     }
 
     pub(crate) fn decode(message_type: u64, data: &mut BytesMut) -> Option<Self> {
@@ -94,7 +80,10 @@ impl DatagramField {
     }
 
     pub(crate) fn encode(&self) -> anyhow::Result<(u64, BytesMut)> {
-        let message_type = self.message_type();
+        let message_type = (u64::from(self.extension_headers.is_some()) * EXTENSIONS_PRESENT)
+            | (u64::from(self.end_of_group) * END_OF_GROUP)
+            | (u64::from(self.object_id.is_none()) * OBJECT_ID_ABSENT)
+            | (u64::from(matches!(self.payload, ObjectDatagramPayload::Status(_))) * STATUS);
         if !is_defined_type(message_type) {
             anyhow::bail!(
                 "undefined OBJECT_DATAGRAM type {message_type:#x}: a status needs an Object ID and cannot end the group"
@@ -129,7 +118,6 @@ mod tests {
     };
 
     const PAYLOAD: &[u8] = &[0xAA, 0xBB];
-    const ENCODED_EXTENSIONS: &[u8] = &[0x02, 0x3C, 0x03];
     const ENCODED_STATUS: &[u8] = &[0x01];
 
     fn payload(object_id: Option<u64>) -> DatagramField {
@@ -171,7 +159,7 @@ mod tests {
         let id: &[u8] = &[0x05];
         let priority: &[u8] = &[0x80];
         let eog_prefix: &[u8] = &[0x01];
-        let ext = ENCODED_EXTENSIONS;
+        let ext: &[u8] = &[0x02, 0x3C, 0x03];
         let cases = [
             (payload(Some(5)), 0x00, [id, priority, PAYLOAD].concat()),
             (
@@ -243,19 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn status_ending_the_group_is_rejected_on_encode() {
+    fn status_that_ends_the_group_or_omits_the_object_id_is_rejected_on_encode() {
         // Arrange
-        let field = ending_group(status(Some(5)));
-        // Act / Assert
-        assert!(field.encode().is_err());
-    }
-
-    #[test]
-    fn status_without_object_id_is_rejected_on_encode() {
-        // Arrange
-        let field = status(None);
-        // Act / Assert
-        assert!(field.encode().is_err());
+        let fields = [ending_group(status(Some(5))), status(None)];
+        for field in fields {
+            // Act / Assert
+            assert!(field.encode().is_err(), "{field:?}");
+        }
     }
 
     #[test]
