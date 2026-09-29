@@ -10,16 +10,19 @@ import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
-import { getErrorMessage } from '../media/common'
+import { type StatusState, getErrorMessage } from '../media/common'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
 
 const VIDEO_TRACK_NAME = 'video'
 const AUDIO_TRACK_NAME = 'audio'
+const TIMELINE_TRACK_NAME = 'timeline'
 const SUBGROUP_ID = 0n
 const PUBLISHER_PRIORITY = 0
 const MAX_REQUEST_ID = 1_000_000n
 const MILLIS_PER_MICRO = 1 / 1_000
+/// The relay's default cache TTL: an older record names a group that can no longer be fetched.
+const TIMELINE_RETENTION_MS = 30_000
 const ATOM_HEADER_LENGTH = 8
 const LARGE_ATOM_HEADER_LENGTH = 16
 const MOOV = 'moov'
@@ -27,8 +30,11 @@ const AUDIO_SAMPLE_KIND = 1
 
 type LogLevel = 'info' | 'warn' | 'error'
 
+/// draft-ietf-moq-msf-01 §7.1.1: [presentation time ms, [group id, object id], encode wallclock ms].
+type MediaTimelineRecord = [number, [number, number], number]
+
 export type Mp4PublisherCallbacks = {
-  onStatus(text: string): void
+  onStatus(text: string, state: StatusState): void
   onLog(level: LogLevel, message: string): void
 }
 
@@ -98,7 +104,8 @@ export class Mp4Publisher {
     this.preview.start(media.video.codec, media.reorderDelayMicros)
     this.running = this.publish(media, options)
     this.callbacks.onStatus(
-      `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`
+      `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`,
+      'ok'
     )
     this.callbacks.onLog('info', `publishing ${options.file.name} to ${options.url} ${options.namespace.join('/')}`)
   }
@@ -116,9 +123,9 @@ export class Mp4Publisher {
   private async publish(media: Mp4Media, options: Mp4PublishOptions): Promise<void> {
     try {
       const completed = await this.pace(media, options)
-      this.callbacks.onStatus(completed ? 'Publish finished' : 'Publish stopped')
+      this.callbacks.onStatus(completed ? 'Publish finished' : 'Publish stopped', 'idle')
     } catch (error) {
-      this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`)
+      this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`, 'error')
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
     } finally {
       this.active = false
@@ -138,11 +145,15 @@ export class Mp4Publisher {
   /// until it is shown and deliver the B-frames that precede it late.
   private async pace(media: Mp4Media, options: Mp4PublishOptions): Promise<boolean> {
     const client = this.requireClient()
-    const video = new LocTrackSender(client, options.namespace, VIDEO_TRACK_NAME, false, this.sentStreams)
-    const audio = media.audio && new LocTrackSender(client, options.namespace, AUDIO_TRACK_NAME, true, this.sentStreams)
+    const video = new TrackSender(client, options.namespace, VIDEO_TRACK_NAME, false, this.sentStreams)
+    const audio = media.audio && new TrackSender(client, options.namespace, AUDIO_TRACK_NAME, true, this.sentStreams)
+    const timeline = new TrackSender(client, options.namespace, TIMELINE_TRACK_NAME, false, this.sentStreams)
+    const records: MediaTimelineRecord[] = []
+    let nextTimelineGroupId = BigInt(monotonicUnixMicros())
     let nextGroupId = BigInt(monotonicUnixMicros())
     let groupId: bigint | undefined
-    let passOriginMicros = monotonicUnixMicros()
+    const originMicros = monotonicUnixMicros()
+    let passOriginMicros = originMicros
     try {
       do {
         for (let index = 0; index < media.samples.size.length; index++) {
@@ -170,6 +181,18 @@ export class Mp4Publisher {
             const annexB = media.index.annexBVideoSample(data, isSync)
             this.preview.decode(annexB, isSync, presentationMicros)
             await video.send(groupId, annexB, presentationMicros)
+            if (isSync) {
+              records.push([
+                Math.floor((presentationMicros - originMicros) * MILLIS_PER_MICRO),
+                [Number(groupId), 0],
+                Math.floor(presentationMicros * MILLIS_PER_MICRO)
+              ])
+              while (records[0][0] < records[records.length - 1][0] - TIMELINE_RETENTION_MS) {
+                records.shift()
+              }
+              const document = new TextEncoder().encode(JSON.stringify(records))
+              await timeline.send(nextTimelineGroupId++, document)
+            }
           } else if (audio) {
             await audio.send(groupId, data, presentationMicros)
           }
@@ -181,6 +204,7 @@ export class Mp4Publisher {
       if (this.session.getConnectionStatus()) {
         await video.closeGroup()
         await audio?.closeGroup()
+        await timeline.closeGroup()
       }
     }
   }
@@ -207,7 +231,7 @@ export class Mp4Publisher {
       this.callbacks.onLog('info', `served ${MEDIA_CATALOG_TRACK_NAME} to a subscriber`)
       return
     }
-    if (trackName === VIDEO_TRACK_NAME || trackName === AUDIO_TRACK_NAME) {
+    if (trackName === VIDEO_TRACK_NAME || trackName === AUDIO_TRACK_NAME || trackName === TIMELINE_TRACK_NAME) {
       await respondOk(0n)
       this.callbacks.onLog('info', `subscriber joined ${trackName}`)
       return
@@ -244,7 +268,7 @@ export class Mp4Publisher {
 /// that arrives while a group is open only gets a subgroup from the next
 /// group unless the track can be joined mid-group, which holds for audio but
 /// not for video, whose groups start with the keyframe the rest depends on.
-class LocTrackSender {
+class TrackSender {
   private groupId: bigint | undefined
   private nextObjectId = 0n
   private readonly openSubgroups = new Map<bigint, bigint>()
@@ -257,14 +281,15 @@ class LocTrackSender {
     private readonly sentStreams: StreamMonitor
   ) {}
 
-  async send(groupId: bigint, payload: Uint8Array, captureMicros: number): Promise<void> {
+  async send(groupId: bigint, payload: Uint8Array, captureMicros?: number): Promise<void> {
     if (groupId !== this.groupId) {
       await this.closeGroup()
       this.groupId = groupId
       this.nextObjectId = 0n
     }
     const startsGroup = this.nextObjectId === 0n
-    const locHeader = buildLocHeader({ captureTimestampMicros: captureMicros })
+    const locHeader =
+      captureMicros === undefined ? undefined : buildLocHeader({ captureTimestampMicros: captureMicros })
     for (const trackAlias of this.subscribers()) {
       if (this.openSubgroups.get(trackAlias) !== groupId) {
         if (!startsGroup && !this.joinsMidGroup) {
@@ -420,6 +445,16 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       codec: media.video.codec,
       width: media.video.width,
       height: media.video.height
+    },
+    {
+      namespace: namespacePath,
+      name: TIMELINE_TRACK_NAME,
+      packaging: 'mediatimeline',
+      role: 'mediatimeline',
+      isLive: true,
+      label: 'Media timeline',
+      mimeType: 'application/json',
+      depends: [VIDEO_TRACK_NAME]
     }
   ]
   if (media.audio) {

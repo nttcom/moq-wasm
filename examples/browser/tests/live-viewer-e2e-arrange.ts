@@ -88,7 +88,6 @@ export interface LiveViewerPageModel {
   videoStats: Locator
   liveButton: Locator
   rewindStatus: Locator
-  rewindBuffer: Locator
   seekbar: Locator
   seekPosition: Locator
   seekElapsed: Locator
@@ -143,7 +142,6 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     videoStats: page.getByTestId('live-viewer-video-stats'),
     liveButton: page.getByTestId('live-viewer-live-button'),
     rewindStatus: page.getByTestId('live-viewer-rewind-status'),
-    rewindBuffer: page.getByTestId('live-viewer-rewind-buffer'),
     seekbar: page.getByTestId('live-viewer-seekbar'),
     seekPosition: page.getByTestId('live-viewer-seek-position'),
     seekElapsed: page.getByTestId('live-viewer-seek-elapsed'),
@@ -199,6 +197,6 @@ export async function syncOffsetMs(viewer: LiveViewerPageModel): Promise<number>
   return match ? Math.abs(Number(match[1])) : Number.POSITIVE_INFINITY
 }
 
-export async function parseSeconds(locator: Locator): Promise<number> {
-  return Number.parseFloat((await locator.innerText()).replace('s', ''))
+export async function rewindableSeconds(viewer: LiveViewerPageModel): Promise<number> {
+  return Number.parseFloat((await viewer.seekAvailableWindow.getAttribute('data-seconds')) ?? '0')
 }
