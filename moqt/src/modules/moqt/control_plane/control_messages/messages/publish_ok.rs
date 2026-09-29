@@ -3,13 +3,11 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        message_parameters::MessageParameters,
         messages::parameters::{filter_type::FilterType, group_order::GroupOrder},
         util,
     },
 };
-
-const DELIVERY_TIMEOUT: u64 = 0x02;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct PublishOk {
@@ -33,20 +31,9 @@ impl PublishOk {
             .ok()?;
         let filter_type = FilterType::decode(buf)?;
 
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        let mut delivery_timeout = None;
-        for _ in 0..number_of_parameters {
-            if let KeyValuePair {
-                key: DELIVERY_TIMEOUT,
-                value: VariantType::Even(value),
-            } = KeyValuePair::decode(buf)?
-            {
-                delivery_timeout = Some(value);
-            }
-        }
+        let MessageParameters {
+            delivery_timeout, ..
+        } = MessageParameters::decode(buf)?;
 
         Some(Self {
             request_id,
@@ -65,16 +52,13 @@ impl PublishOk {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.filter_type.encode());
-        payload.put_varint(self.delivery_timeout.is_some() as u64);
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            payload.unsplit(
-                KeyValuePair {
-                    key: DELIVERY_TIMEOUT,
-                    value: VariantType::Even(delivery_timeout),
-                }
-                .encode(),
-            );
-        }
+        payload.unsplit(
+            MessageParameters {
+                delivery_timeout: self.delivery_timeout,
+                ..Default::default()
+            }
+            .encode(),
+        );
 
         tracing::trace!("Packetized Publish_OK message.");
         payload

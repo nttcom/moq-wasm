@@ -168,7 +168,10 @@ One struct owns all cross-task state:
 
 - `control_messages/messages/*` — one struct per draft-14 control message with
   `encode`/`decode`. Framing (varint type + **16-bit fixed length**, a draft-14
-  change) lives in `wire.rs`.
+  change) lives in `wire.rs`. Every message's parameter list goes through
+  `control_messages/message_parameters.rs` (`MessageParameters`: AUTHORIZATION
+  TOKEN, DELIVERY TIMEOUT, MAX CACHE DURATION); messages bind the fields they
+  carry and never parse Key-Value-Pairs themselves.
 - `handler/*` — received-message facades handed to the application inside
   `SessionEvent` (e.g. `SubscribeHandler::ok(...)`, `::error(...)`). They keep
   an `Arc<SessionContext>` so responding does not require the `Session`.

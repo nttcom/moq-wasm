@@ -4,7 +4,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        message_parameters::MessageParameters,
         messages::parameters::{
             authorization_token::AuthorizationToken, group_order::GroupOrder, location::Location,
         },
@@ -176,26 +176,10 @@ impl Fetch {
             .log_context("group order")
             .ok()?;
         let fetch_params = FetchParams::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let kv = KeyValuePair::decode(buf)?;
-            parameters.push(kv);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv| kv.key == 0x03)
-            .filter_map(|kv| match &kv.value {
-                VariantType::Odd(value) => {
-                    let mut cursor = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut cursor)
-                }
-                VariantType::Even(_) => unreachable!(),
-            })
-            .collect();
+        let MessageParameters {
+            authorization_tokens,
+            ..
+        } = MessageParameters::decode(buf)?;
         Some(Fetch {
             request_id,
             subscriber_priority,
@@ -211,19 +195,13 @@ impl Fetch {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.fetch_params.encode());
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
+        payload.unsplit(
+            MessageParameters {
+                authorization_tokens: self.authorization_tokens.clone(),
+                ..Default::default()
             }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+            .encode(),
+        );
         payload
     }
 }

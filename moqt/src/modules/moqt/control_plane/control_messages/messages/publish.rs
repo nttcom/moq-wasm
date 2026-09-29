@@ -3,7 +3,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        message_parameters::MessageParameters,
         messages::parameters::{
             authorization_token::AuthorizationToken, content_exists::ContentExists,
             group_order::GroupOrder,
@@ -48,41 +48,12 @@ impl Publish {
 
         let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
         let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let params = KeyValuePair::decode(buf)?;
-            parameters.push(params);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv_pair| kv_pair.key == 0x03)
-            .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => {
-                    let mut value = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut value)
-                }
-                VariantType::Even(_) => unreachable!(),
-            })
-            .collect();
-        let delivery_timeout =
-            parameters
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x02)
-                .map(|kv_pair| match kv_pair.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
-        let max_duration = parameters
-            .iter()
-            .find(|kv_pair| kv_pair.key == 0x04)
-            .map(|kv_pair| match kv_pair.value {
-                VariantType::Odd(_) => unreachable!(),
-                VariantType::Even(value) => value,
-            });
+        let MessageParameters {
+            authorization_tokens,
+            delivery_timeout,
+            max_cache_duration: max_duration,
+            ..
+        } = MessageParameters::decode(buf)?;
         Some(Self {
             request_id,
             track_namespace_tuple,
@@ -114,37 +85,14 @@ impl Publish {
         payload.unsplit(self.content_exists.encode());
         payload.put_u8(self.forward as u8);
 
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
+        payload.unsplit(
+            MessageParameters {
+                authorization_tokens: self.authorization_tokens.clone(),
+                delivery_timeout: self.delivery_timeout,
+                max_cache_duration: self.max_duration,
             }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: 0x02,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(max_duration) = self.max_duration {
-            let max_duration_payload = KeyValuePair {
-                key: 0x04,
-                value: VariantType::Even(max_duration),
-            }
-            .encode();
-            parameters_payload.unsplit(max_duration_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+            .encode(),
+        );
 
         tracing::trace!("Packetized Publish message.");
         payload

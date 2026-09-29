@@ -3,7 +3,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        message_parameters::MessageParameters,
         messages::parameters::{group_order::GroupOrder, location::Location},
         util,
     },
@@ -42,23 +42,9 @@ impl FetchOk {
             .log_context("end of track")
             .ok()?;
         let end_location = Location::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let kv = KeyValuePair::decode(buf)?;
-            parameters.push(kv);
-        }
-        let max_cache_duration =
-            parameters
-                .iter()
-                .find(|kv| kv.key == 0x04)
-                .map(|kv| match kv.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
+        let MessageParameters {
+            max_cache_duration, ..
+        } = MessageParameters::decode(buf)?;
         Some(FetchOk {
             request_id,
             group_order,
@@ -74,19 +60,13 @@ impl FetchOk {
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.end_of_track as u8);
         payload.unsplit(self.end_location.encode());
-        let mut number_of_parameters = 0u64;
-        let mut parameters_payload = BytesMut::new();
-        if let Some(max_cache_duration) = self.max_cache_duration {
-            let kv = KeyValuePair {
-                key: 0x04,
-                value: VariantType::Even(max_cache_duration),
+        payload.unsplit(
+            MessageParameters {
+                max_cache_duration: self.max_cache_duration,
+                ..Default::default()
             }
-            .encode();
-            parameters_payload.unsplit(kv);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+            .encode(),
+        );
         payload
     }
 }

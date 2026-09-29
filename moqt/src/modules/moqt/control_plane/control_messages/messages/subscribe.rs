@@ -1,7 +1,7 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
     moqt::control_plane::control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
+        message_parameters::MessageParameters,
         messages::parameters::{
             authorization_token::AuthorizationToken, filter_type::FilterType,
             group_order::GroupOrder,
@@ -46,34 +46,11 @@ impl Subscribe {
         let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
         let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
         let filter_type = FilterType::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-        let mut parameters = vec![];
-        for _ in 0..number_of_parameters {
-            let params = KeyValuePair::decode(buf)?;
-            parameters.push(params);
-        }
-        let authorization_tokens = parameters
-            .iter()
-            .filter(|kv_pair| kv_pair.key == 0x03)
-            .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => {
-                    let mut value = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut value)
-                }
-                VariantType::Even(_) => unreachable!(),
-            })
-            .collect();
-        let delivery_timeout =
-            parameters
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x02)
-                .map(|kv_pair| match kv_pair.value {
-                    VariantType::Odd(_) => unreachable!(),
-                    VariantType::Even(value) => value,
-                });
+        let MessageParameters {
+            authorization_tokens,
+            delivery_timeout,
+            ..
+        } = MessageParameters::decode(buf)?;
         tracing::trace!("Depacketized Subscribe message.");
 
         Some(Subscribe {
@@ -103,28 +80,14 @@ impl Subscribe {
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.forward as u8);
         payload.unsplit(self.filter_type.encode());
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
-        for token in &self.authorization_tokens {
-            let token_payload = KeyValuePair {
-                key: 0x03,
-                value: VariantType::Odd(token.encode().freeze()),
+        payload.unsplit(
+            MessageParameters {
+                authorization_tokens: self.authorization_tokens.clone(),
+                delivery_timeout: self.delivery_timeout,
+                ..Default::default()
             }
-            .encode();
-            parameters_payload.unsplit(token_payload);
-            number_of_parameters += 1;
-        }
-        if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: 0x02,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
-        }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
+            .encode(),
+        );
 
         tracing::trace!("Packetized Subscribe message.");
         payload
