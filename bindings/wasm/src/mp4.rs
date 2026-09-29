@@ -113,6 +113,11 @@ impl Mp4Index {
         }
     }
 
+    #[wasm_bindgen(js_name = reorderDelayMicros)]
+    pub fn reorder_delay_micros(&self) -> f64 {
+        self.inner.reorder_delay().micros() as f64
+    }
+
     #[wasm_bindgen(js_name = durationMicros)]
     pub fn duration_micros(&self) -> f64 {
         self.inner.duration().micros() as f64
