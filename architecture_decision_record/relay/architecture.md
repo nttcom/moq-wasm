@@ -141,7 +141,11 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   only dispatches to per-session unbounded channels, so a slow or blocked
   session can never head-of-line-block another. Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
-  session are strictly ordered.
+  session are strictly ordered. The one exception is the upstream round-trip of
+  a FETCH the cache cannot serve: it runs in an `UpstreamFetchTask` (see "FETCH
+  sequence"), so a publisher that answers FETCH late or never — a browser
+  publisher has no FETCH handler — does not hold the session's later requests
+  for the control-message response timeout.
 - TRACK_STATUS is handled by the worker itself as a token refresh (see
   "Token refresh" under "Session intake"); it has no `sequences` entry.
 - Events for control messages without relay-side logic yet (GOAWAY,
@@ -222,6 +226,14 @@ Resolve the track and object range (Standalone from the message; Relative
 Joining from the downstream subscription's start location), reply FETCH_OK,
 then delegate to `EgressCommand::StartFetch`, which serves the range from
 `TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
+
+A range the cache cannot serve goes upstream. The worker hands it to
+`UpstreamFetchTask` (`sequences/fetch/upstream_fetch_task.rs`) and moves on to
+the session's next event; the task resolves the publisher, forwards the FETCH,
+waits for its FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
+`FetchIngest`, which fills the cache and hands the range to egress. A
+downstream session that disconnects meanwhile only makes the FETCH_OK send
+fail; egress drops a `StartFetch` for a departed session.
 
 ## Authentication and authorization (`modules/auth`)
 
@@ -433,7 +445,8 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 
 - **Reader never awaits**: the `EventHandler` reader only routes; all awaiting
   happens in per-session workers. Cross-session deadlock is structurally
-  impossible; per-session ordering is FIFO.
+  impossible; per-session ordering is FIFO, except that an upstream FETCH
+  completes in its own task after the events that followed it.
 - **Worker lifetime is the session's**: a session worker exists from the
   session's registration until its terminal event; events arriving outside
   that window are dropped by the reader.

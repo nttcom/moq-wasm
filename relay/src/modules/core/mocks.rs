@@ -7,7 +7,7 @@ use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
-        handler::{publish::SubscribeOption, subscribe::SubscribeHandler},
+        handler::{fetch::FetchHandler, publish::SubscribeOption, subscribe::SubscribeHandler},
         publisher::Publisher,
         session::Session,
         session_event::MoqtSessionEvent,
@@ -219,7 +219,7 @@ impl Subscriber for MockUpstreamSubscriber {
         _end_location: moqt::Location,
         _option: moqt::FetchOption,
     ) -> anyhow::Result<moqt::FetchHandle> {
-        unimplemented!("not used by MockUpstreamSession tests")
+        std::future::pending().await
     }
 
     async fn create_fetch_receiver(
@@ -321,5 +321,45 @@ impl SubscribeHandler for MockSubscribeHandler {
 
     fn to_downstream_subscription(&self, _track_alias: u64) -> DownstreamSubscription {
         make_subscription(FilterType::LargestObject)
+    }
+}
+
+pub(crate) struct MockFetchHandler;
+
+#[async_trait::async_trait]
+impl FetchHandler for MockFetchHandler {
+    fn request_id(&self) -> u64 {
+        0
+    }
+
+    fn group_order(&self) -> GroupOrder {
+        GroupOrder::Ascending
+    }
+
+    fn fetch_params(&self) -> moqt::wire::FetchParams {
+        moqt::wire::FetchParams::Standalone {
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            start_location: moqt::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_location: moqt::Location {
+                group_id: 1,
+                object_id: 0,
+            },
+        }
+    }
+
+    async fn ok(
+        &self,
+        _end_of_track: bool,
+        _end_location: moqt::Location,
+    ) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+
+    async fn error(&self, _code: u64, _reason: String) -> Result<(), moqt::TransportSendError> {
+        Ok(())
     }
 }

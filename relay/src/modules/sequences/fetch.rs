@@ -1,3 +1,7 @@
+mod upstream_fetch_task;
+
+use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
+
 use std::sync::Arc;
 
 use moqt::wire::FetchParams;
@@ -13,7 +17,6 @@ use crate::modules::{
             track_cache::{FetchRangeResolution, TrackCache},
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
-        ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
     sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
     session_event::SessionEvent,
@@ -94,12 +97,12 @@ impl Fetch {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &InMemoryLocalPubSubDirectory,
+        table: &Arc<InMemoryLocalPubSubDirectory>,
         cache_store: &Arc<TrackCacheStore>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         session_event_sender: &tokio::sync::mpsc::UnboundedSender<SessionEvent>,
         forwarder: &ControlMessageForwarder,
-        upstream_publisher_resolver: &UpstreamPublisherResolver,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         handler: Box<dyn FetchHandler>,
     ) {
         let fetch_params = handler.fetch_params();
@@ -148,54 +151,22 @@ impl Fetch {
                 // Joining Fetches forward as Standalone: the target is already
                 // resolved to the absolute range whose end is the equivalent
                 // Standalone Fetch encoding (§9.16.2.1, largest + 1).
-                // This awaits the upstream FETCH_OK before returning to the session
-                // worker; object ingestion continues in a background task afterwards.
-                let Some(prepared) = self
-                    .create_upstream_fetch(
-                        table,
-                        forwarder,
-                        upstream_publisher_resolver,
-                        handler.as_ref(),
-                        &target,
-                    )
-                    .await
-                else {
-                    return;
-                };
-
-                if let Err(e) = handler
-                    .ok(prepared.handle.end_of_track, prepared.handle.end_location)
-                    .await
-                {
-                    tracing::error!(?e, "Failed to send FETCH_OK to downstream");
-                    return;
-                }
-
-                let egress_start = EgressFetchRequest {
-                    subscriber_session_id: session_id,
-                    request_id,
-                    cache: cache_store.get_or_create(&target.track_key),
-                    start_location: target.start_location,
-                    end_location: prepared.handle.end_location,
-                    group_order: handler.group_order(),
-                };
-                let _fetch_ingest = FetchIngest::run(
-                    forwarder.repository.clone(),
-                    egress_sender.clone(),
-                    session_event_sender.clone(),
-                    FetchIngestStart {
-                        track_key: target.track_key.clone(),
-                        upstream_publisher_session_id: prepared.upstream_publisher_session_id,
-                        fetch_handle: prepared.handle,
-                        egress_start,
-                    },
-                );
+                let _upstream_fetch = UpstreamFetchTask::run(UpstreamFetchStart {
+                    session_id,
+                    handler,
+                    target,
+                    table: table.clone(),
+                    forwarder: forwarder.clone(),
+                    upstream_publisher_resolver: upstream_publisher_resolver.clone(),
+                    cache_store: cache_store.clone(),
+                    egress_sender: egress_sender.clone(),
+                    session_event_sender: session_event_sender.clone(),
+                });
             }
         }
     }
 
     async fn create_upstream_fetch(
-        &self,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
