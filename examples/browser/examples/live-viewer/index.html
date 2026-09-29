@@ -317,9 +317,26 @@ make chrome</code></pre>
               H.264 と AAC / MP3 の MP4 を、上の Relay URL と namespace へブラウザから配信します。配信中に Watch
               を押すと視聴できます。
             </p>
-            <div id="publish-preview-panel" class="publish-preview" style="display: none">
-              <canvas id="publish-preview" data-testid="live-viewer-publish-preview"></canvas>
-              <span id="publish-latency" data-testid="live-viewer-publish-latency">-</span>
+            <div id="publish-live" class="publish-live" style="display: none">
+              <div class="publish-preview">
+                <canvas id="publish-preview" data-testid="live-viewer-publish-preview"></canvas>
+                <span id="publish-latency" data-testid="live-viewer-publish-latency">-</span>
+              </div>
+              <div class="publish-streams" data-testid="live-viewer-publish-streams">
+                <div class="card-title-row">
+                  <h3>Publish Streams</h3>
+                  <span id="publish-stream-stats" class="stream-meta" data-testid="live-viewer-publish-stream-stats"
+                    >-</span
+                  >
+                </div>
+                <svg
+                  id="publish-stream-monitor"
+                  class="stream-monitor"
+                  role="img"
+                  aria-label="Subgroup streams the MP4 publisher sends per track"
+                  data-testid="live-viewer-publish-stream-monitor"
+                ></svg>
+              </div>
             </div>
           </section>
 
@@ -553,6 +570,56 @@ make chrome</code></pre>
                     </div>
                   </div>
                 </div>
+                <div class="subscribe-streams">
+                  <div class="card-title-row">
+                    <h3>Subscribe Streams</h3>
+                    <span id="stream-stats" class="stream-meta" data-testid="live-viewer-stream-stats">-</span>
+                  </div>
+                  <div class="stream-graph">
+                    <div class="stream-controls">
+                      <label for="stream-window"
+                        >Window (s)
+                        <input
+                          id="stream-window"
+                          type="number"
+                          min="1"
+                          max="120"
+                          value="10"
+                          data-testid="live-viewer-stream-window-input"
+                        />
+                      </label>
+                      <label for="stream-gops"
+                        >GOPs
+                        <input
+                          id="stream-gops"
+                          type="number"
+                          min="1"
+                          max="30"
+                          value="5"
+                          data-testid="live-viewer-stream-gops-input"
+                        />
+                      </label>
+                    </div>
+                    <svg
+                      id="stream-monitor"
+                      class="stream-monitor"
+                      role="img"
+                      aria-label="Subgroup streams per track"
+                      data-testid="live-viewer-stream-monitor"
+                    ></svg>
+                  </div>
+                  <svg
+                    id="stream-monitor-review"
+                    class="stream-monitor stream-monitor-review"
+                    role="img"
+                    aria-label="FETCH streams of the review, on their own time axis"
+                    style="display: none"
+                    data-testid="live-viewer-stream-monitor-review"
+                  ></svg>
+                  <p class="hint">
+                    track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
+                  </p>
+                </div>
                 <p class="hint" id="seek-hint">
                   配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
                   映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が
@@ -561,80 +628,6 @@ make chrome</code></pre>
                 </p>
               </div>
             </div>
-          </section>
-
-          <section
-            id="publish-streams-card"
-            class="card stack full"
-            style="display: none"
-            data-testid="live-viewer-publish-streams"
-          >
-            <div class="card-title-row">
-              <h2>Publish Streams</h2>
-              <div class="playback-meta stream-meta">
-                <span id="publish-stream-stats" data-testid="live-viewer-publish-stream-stats">-</span>
-              </div>
-            </div>
-            <svg
-              id="publish-stream-monitor"
-              class="stream-monitor"
-              role="img"
-              aria-label="Subgroup streams the MP4 publisher sends per track"
-              data-testid="live-viewer-publish-stream-monitor"
-            ></svg>
-            <p class="hint">
-              MP4 Publish が relay へ送った group(subgroup stream)を track
-              ごとに横棒で示します。右端が開いている棒は送信中です
-            </p>
-          </section>
-
-          <section class="card stack full">
-            <div class="card-title-row">
-              <h2>Subscribe Streams</h2>
-              <div class="playback-meta stream-meta">
-                <label for="stream-window"
-                  >Window (s)
-                  <input
-                    id="stream-window"
-                    type="number"
-                    min="1"
-                    max="120"
-                    value="10"
-                    data-testid="live-viewer-stream-window-input"
-                  />
-                </label>
-                <label for="stream-gops"
-                  >GOPs
-                  <input
-                    id="stream-gops"
-                    type="number"
-                    min="1"
-                    max="30"
-                    value="5"
-                    data-testid="live-viewer-stream-gops-input"
-                  />
-                </label>
-                <span id="stream-stats" data-testid="live-viewer-stream-stats">-</span>
-              </div>
-            </div>
-            <svg
-              id="stream-monitor"
-              class="stream-monitor"
-              role="img"
-              aria-label="Subgroup streams per track"
-              data-testid="live-viewer-stream-monitor"
-            ></svg>
-            <svg
-              id="stream-monitor-review"
-              class="stream-monitor stream-monitor-review"
-              role="img"
-              aria-label="FETCH streams of the review, on their own time axis"
-              style="display: none"
-              data-testid="live-viewer-stream-monitor-review"
-            ></svg>
-            <p class="hint">
-              track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
-            </p>
           </section>
 
           <section class="card stack full">

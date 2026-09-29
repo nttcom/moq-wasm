@@ -875,8 +875,7 @@ function monitored(
 }
 
 function renderPublishStreams(): void {
-  element<HTMLElement>('publish-streams-card').style.display = mp4Publisher.publishing ? '' : 'none'
-  element<HTMLElement>('publish-preview-panel').style.display = mp4Publisher.publishing ? '' : 'none'
+  element<HTMLElement>('publish-live').style.display = mp4Publisher.publishing ? '' : 'none'
   element<HTMLSpanElement>('publish-latency').textContent =
     watching && packaging === 'loc' && !reviewing && viewerDelayMs !== undefined
       ? `viewer delay ${Math.round(viewerDelayMs)} ms`

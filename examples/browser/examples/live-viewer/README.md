@@ -186,15 +186,15 @@ MP4 Publish は、選んだファイルをブラウザの中で demux し、live
   （presentation time が decode time より進む最大量。B フレームがなければ 0）を足した壁時計で送り、presentation
   time の壁時計を capture timestamp として LOC 拡張ヘッダに載せます。Loop のときは、次の周回をファイルの長さぶん
   後ろにずらして続けます。
-- 配信中は Publish Streams に、relay へ送った group(subgroup stream)を Subscribe Streams と同じ横棒で track ごとに
-  表示します。2 つのカードは上下に並び、Window と GOPs は Subscribe Streams の設定を共有します。見出しの横に送信中 /
-  送信済みの stream 数と、窓内に開いた stream の送信ビットレートを出します。relay がまだ購読していない track は送らないので
-  表示されません。
-- 配信中は MP4 Publish に送信中の映像を小さく表示します。送るサンプルをそのまま WebCodecs でデコードし、各フレームを
-  capture timestamp に reorder delay を足した時刻（そのフレームまでがすべて送られた時刻）に描くので、ネットワークと
-  バッファの遅延がない受信側の絵になります。viewer の LOC フレームも同じ capture
-  timestamp を持つため、表示した時刻との差を `viewer delay` として横に、`delay` として Playback の統計に出します。
-  別のブラウザで視聴するときは、両者の壁時計のずれがそのまま差に乗ります。
+- 配信中は MP4 Publish の中に、左に送信中の映像の小さなプレビュー、右に Publish Streams を出します。Publish Streams は
+  relay へ送った group(subgroup stream)を、Playback の映像のすぐ下にある Subscribe Streams と同じ横棒で track ごとに
+  示し、Window と GOPs は Subscribe Streams の設定を共有します。見出しの横には送信中 / 送信済みの stream 数と、窓内に
+  開いた stream の送信ビットレートを出します。relay がまだ購読していない track は送らないので表示されません。
+- プレビューは、送るサンプルをそのまま WebCodecs でデコードし、各フレームを capture timestamp に reorder delay を
+  足した時刻（そのフレームまでがすべて送られた時刻）に描くので、ネットワークとバッファの遅延がない受信側の絵に
+  なります。viewer の LOC フレームも同じ capture timestamp を持つため、表示した時刻との差を `viewer delay` として
+  プレビューの下に、`delay` として Playback の統計に出します。別のブラウザで視聴するときは、両者の壁時計のずれが
+  そのまま差に乗ります。
 - 配信は視聴とは別の MoQT セッションで行うので、同じページで Watch / Stop を押しても配信は続きます。
   ブラウザは FETCH に応えないため、巻き戻しは relay のキャッシュにある閉じた group の範囲になります。
 
