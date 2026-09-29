@@ -583,16 +583,17 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let Some(track) = guard.tracks.get_mut(&key) else {
             return result;
         };
-        if let Err(error) = &result
-            && is_stopped_by_peer(error)
-        {
+        let stopped = matches!(&result, Err(error) if is_stopped_by_peer(error));
+        let replaced_meanwhile = track.writer.is_some();
+        if stopped && !replaced_meanwhile {
             tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
             track.release();
             self.ledger.finish(&key.1);
-            return Ok(false);
-        }
-        if track.publication == Publication::Published {
+        } else if !replaced_meanwhile && track.publication == Publication::Published {
             track.writer = Some(writer);
+        }
+        if stopped {
+            return Ok(false);
         }
         result
     }
