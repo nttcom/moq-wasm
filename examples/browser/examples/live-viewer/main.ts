@@ -74,6 +74,9 @@ const EVICTED_RANGE_CODES: bigint[] = [
   RequestErrorCode.NoObjects,
   RequestErrorCode.UnknownStatusInRange
 ]
+/// draft-ietf-moq-transport-14 §10.4.3 INTERNAL_ERROR: the relay resets a
+/// FETCH stream with it when the range it is serving loses cached objects.
+const STREAM_RESET_INTERNAL_ERROR = 0x0n
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
@@ -102,7 +105,7 @@ type ReviewWindow = {
 }
 
 type FetchFailure = {
-  code: bigint | undefined
+  evicted: boolean
   description: string
 }
 
@@ -1252,7 +1255,7 @@ function observeLiveVideoGroup(groupId: bigint): void {
 
 function recoverFromFailedWindow(failure: ReviewWindowFailure): void {
   const reason = `fetch from group ${failure.start}: ${failure.description}`
-  if (failure.code === undefined || !EVICTED_RANGE_CODES.includes(failure.code)) {
+  if (!failure.evicted) {
     bufferingSpinner.hide()
     setStatus('rewind-status', `Rewind failed: ${failure.description}`, 'error')
     appendLog('error', reason)
@@ -1293,7 +1296,7 @@ async function fetchReviewWindow(
     return { start, ...frames }
   }
   if (frames.length === 0) {
-    return { start, code: RequestErrorCode.NoObjects, description: 'no cached objects' }
+    return { start, evicted: true, description: 'no cached objects' }
   }
   if (isFetchFailure(audio)) {
     appendLog('error', `fetch ${audioName}: ${audio.description}`)
@@ -1364,7 +1367,10 @@ async function fetchFrames(
     if (generation !== reviewGeneration) {
       return undefined
     }
-    return { code: error instanceof RequestError ? error.errorCode : undefined, description: getErrorMessage(error) }
+    return {
+      evicted: error instanceof RequestError && EVICTED_RANGE_CODES.includes(error.errorCode),
+      description: getErrorMessage(error)
+    }
   }
 
   const outcome = await waitForFetchStreamEnd(streamEnd)
@@ -1375,7 +1381,10 @@ async function fetchFrames(
     return undefined
   }
   if (outcome.kind === 'reset') {
-    return { code: outcome.code, description: `fetch stream reset (code ${outcome.code ?? 'unknown'})` }
+    return {
+      evicted: outcome.code === STREAM_RESET_INTERNAL_ERROR,
+      description: `fetch stream reset (code ${outcome.code ?? 'unknown'})`
+    }
   }
   if (outcome.kind === 'deadline') {
     appendLog(
