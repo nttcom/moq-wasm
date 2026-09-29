@@ -27,6 +27,7 @@ pub struct TrackStatusHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,
     track_namespace: String,
+    track_namespace_tuple: Vec<String>,
     track_name: String,
     subscriber_priority: u8,
     group_order: GroupOrder,
@@ -47,6 +48,7 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
             session_context,
             request_id: track_status.request_id,
             track_namespace: track_status.track_namespace.join("/"),
+            track_namespace_tuple: track_status.track_namespace,
             track_name: track_status.track_name,
             subscriber_priority: track_status.subscriber_priority,
             group_order: track_status.group_order,
@@ -106,6 +108,10 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
 
     pub fn track_namespace(&self) -> &str {
         &self.track_namespace
+    }
+
+    pub fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
     }
 
     pub fn track_name(&self) -> &str {
@@ -224,6 +230,18 @@ mod tests {
 
         // Assert
         assert_eq!(tokens, vec![AuthorizationToken::use_value_utf8("jwt")]);
+    }
+
+    #[tokio::test]
+    async fn exposes_the_namespace_as_sent() {
+        // Arrange
+        let exchange = track_status_exchange("track-status-namespace").await;
+
+        // Act
+        let namespace = exchange.handler.track_namespace_tuple().to_vec();
+
+        // Assert
+        assert_eq!(namespace, vec!["app".to_string()]);
     }
 
     #[tokio::test]
