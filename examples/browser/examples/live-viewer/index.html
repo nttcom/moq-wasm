@@ -526,15 +526,8 @@ make chrome</code></pre>
                               <option value="cmaf">CMAF (MSE)</option>
                             </select>
                           </label>
-                          <label for="buffer-mode"
-                            >Buffer
-                            <select id="buffer-mode" data-testid="live-viewer-buffer-mode-select">
-                              <option value="adaptive">Adaptive</option>
-                              <option value="fixed">Fixed</option>
-                            </select>
-                          </label>
                           <label for="playout-buffer"
-                            ><span id="playout-buffer-label">Min buffer (ms)</span>
+                            >Min buffer (ms)
                             <input
                               id="playout-buffer"
                               type="number"
@@ -545,18 +538,19 @@ make chrome</code></pre>
                               data-testid="live-viewer-playout-buffer-input"
                             />
                           </label>
-                          <label for="extra-delay" id="extra-delay-field"
-                            >Extra delay (ms)
+                          <label for="max-buffer"
+                            >Max buffer (ms)
                             <input
-                              id="extra-delay"
+                              id="max-buffer"
                               type="number"
                               min="0"
                               max="5000"
-                              step="100"
-                              value="0"
-                              data-testid="live-viewer-extra-delay-input"
+                              step="50"
+                              placeholder="∞"
+                              data-testid="live-viewer-max-buffer-input"
                             />
                           </label>
+                          <output id="buffer-current" data-testid="live-viewer-buffer-current">Current: -</output>
                           <label for="catch-up"
                             >Catch up
                             <select id="catch-up" data-testid="live-viewer-catch-up-select">

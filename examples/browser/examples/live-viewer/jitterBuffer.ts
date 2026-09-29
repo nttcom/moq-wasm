@@ -1,19 +1,15 @@
 const WINDOW_MS = 10_000
 const MICROS_PER_MILLI = 1_000
 
-export type BufferPolicy =
-  | { mode: 'adaptive'; minimumMs: number; extraMs: number }
-  | { mode: 'fixed'; bufferMs: number }
+export type BufferPolicy = { minimumMs: number; maximumMs: number }
 
 type Arrival = { atMs: number; delayMs: number }
 
 /// Sizes the live playout buffer. The delay from capture to arrival of every
 /// sample of the last `WINDOW_MS` is kept; each delay carries the offset
 /// between the capture clock and the local one, which only the differences
-/// between them cancel. An adaptive buffer covers the spread between the
-/// fastest and the slowest of them, never less than its minimum, plus a fixed
-/// extra delay for swings wider than the window has seen. A fixed buffer
-/// ignores the spread.
+/// between them cancel. The buffer covers the spread between the fastest and
+/// the slowest of them, clamped to the policy; equal bounds fix it.
 export class JitterBuffer {
   private readonly arrivals: Arrival[] = []
   private observingSinceMs: number | undefined
@@ -26,6 +22,10 @@ export class JitterBuffer {
 
   setPolicy(policy: BufferPolicy): void {
     this.policy = policy
+  }
+
+  get fixed(): boolean {
+    return this.policy.minimumMs >= this.policy.maximumMs
   }
 
   observe(captureMicros: number, arrivedAtMs: number): void {
@@ -43,7 +43,7 @@ export class JitterBuffer {
     if (newest === undefined || this.observingSinceMs === undefined) {
       return false
     }
-    return this.policy.mode === 'fixed' || newest.atMs - this.observingSinceMs >= WINDOW_MS
+    return this.fixed || newest.atMs - this.observingSinceMs >= WINDOW_MS
   }
 
   fastestDelayMs(): number | undefined {
@@ -66,8 +66,7 @@ export class JitterBuffer {
   }
 
   private targetFor(spreadMs: number): number {
-    const policy = this.policy
-    return policy.mode === 'fixed' ? policy.bufferMs : Math.max(policy.minimumMs, spreadMs) + policy.extraMs
+    return Math.max(this.policy.minimumMs, Math.min(this.policy.maximumMs, spreadMs))
   }
 
   private spreadMs(): number {

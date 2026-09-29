@@ -3,7 +3,7 @@ import { type BufferPolicy, JitterBuffer } from './jitterBuffer'
 import { PlayoutClock, type PlayoutOrigin } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
 
-export const DEFAULT_BUFFER_POLICY: BufferPolicy = { mode: 'adaptive', minimumMs: 200, extraMs: 0 }
+export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 200, maximumMs: Number.POSITIVE_INFINITY }
 export type CatchUp = 'speed-up' | 'skip' | 'off'
 const WARMUP_MS = 400
 const CATCH_UP_COMPRESSION_RATE = 1.1
@@ -29,8 +29,8 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// Playback opens with a warm-up: a subscription starts with a burst of what
 /// the relay had cached of the current groups, so the samples of the first
 /// `WARMUP_MS` are held and the clock is anchored on the newest of them. The
-/// burst is not observed; an adaptive buffer opens on the longest wait
-/// between two audio arrivals during the warm-up instead, because sources
+/// burst is not observed; the buffer opens on the longest wait between two
+/// audio arrivals during the warm-up instead, because sources
 /// such as MPEG-TS over SRT deliver audio in bursts of a few hundred
 /// milliseconds. A buffer below its target grows by the misses it takes. Once
 /// the buffer has settled, one above its target is shed as the catch-up
@@ -120,6 +120,10 @@ export class LivePlayout {
 
   bufferPolicy(): BufferPolicy {
     return this.jitterBuffer.currentPolicy
+  }
+
+  fixedBuffer(): boolean {
+    return this.jitterBuffer.fixed
   }
 
   setCatchUp(catchUp: CatchUp): void {

@@ -245,7 +245,7 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
   streamMonitor.setKeptGroups(keptGroups)
   mp4Publisher.sentStreams.setKeptGroups(keptGroups)
 })
-for (const id of ['buffer-mode', 'playout-buffer', 'extra-delay']) {
+for (const id of ['playout-buffer', 'max-buffer']) {
   element(id).addEventListener('change', applyBufferPolicy)
 }
 element<HTMLSelectElement>('catch-up').addEventListener('change', (event) => {
@@ -750,44 +750,29 @@ function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
   postAudioCatalogToWorker(audioDecoderWorker, track)
 }
 
-/// The live playout paces decoded samples on one clock so that audio and
-/// video stay together. All but the last `PRESENTATION_MARGIN_MS` of the
-/// buffer every target includes is spent before decoding, in the video worker's jitter buffer, so
-/// objects are decoded in order however they arrived and only a few decoded
-/// frames are ever held.
 function applyBufferPolicy(): void {
-  const policy = readBufferPolicy()
-  element('playout-buffer-label').textContent = policy.mode === 'fixed' ? 'Buffer (ms)' : 'Min buffer (ms)'
-  element<HTMLElement>('extra-delay-field').hidden = policy.mode === 'fixed'
+  const policy: BufferPolicy = {
+    minimumMs: nonNegativeNumber('playout-buffer', DEFAULT_BUFFER_POLICY.minimumMs),
+    maximumMs: nonNegativeNumber('max-buffer', DEFAULT_BUFFER_POLICY.maximumMs)
+  }
   livePlayout.setBufferPolicy(policy)
   applyDecoderConfig()
-  appendLog(
-    'info',
-    policy.mode === 'fixed'
-      ? `fixed playout buffer ${policy.bufferMs} ms`
-      : `adaptive playout buffer, min ${policy.minimumMs} ms + ${policy.extraMs} ms`
-  )
-}
-
-function readBufferPolicy(): BufferPolicy {
-  const bufferMs = nonNegativeNumber('playout-buffer', guaranteedBufferMs(DEFAULT_BUFFER_POLICY))
-  if (element<HTMLSelectElement>('buffer-mode').value === 'fixed') {
-    return { mode: 'fixed', bufferMs }
-  }
-  return { mode: 'adaptive', minimumMs: bufferMs, extraMs: nonNegativeNumber('extra-delay', 0) }
+  appendLog('info', `playout buffer ${policy.minimumMs}–${policy.maximumMs} ms`)
 }
 
 function nonNegativeNumber(id: string, fallback: number): number {
-  const value = Number(element<HTMLInputElement>(id).value)
-  return Number.isFinite(value) && value >= 0 ? value : fallback
+  const text = element<HTMLInputElement>(id).value
+  const value = Number(text)
+  return text !== '' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
-function guaranteedBufferMs(policy: BufferPolicy): number {
-  return policy.mode === 'fixed' ? policy.bufferMs : policy.minimumMs + policy.extraMs
-}
-
+/// The live playout paces decoded samples on one clock so that audio and
+/// video stay together. All but the last `PRESENTATION_MARGIN_MS` of the
+/// minimum buffer is spent before decoding, in the video worker's jitter
+/// buffer, so objects are decoded in order however they arrived and only a
+/// few decoded frames are ever held.
 function applyDecoderConfig(): void {
-  const holdMs = Math.max(0, guaranteedBufferMs(livePlayout.bufferPolicy()) - PRESENTATION_MARGIN_MS)
+  const holdMs = Math.max(0, livePlayout.bufferPolicy().minimumMs - PRESENTATION_MARGIN_MS)
   videoDecoderWorker.postMessage({
     type: 'config',
     config: {
@@ -885,6 +870,10 @@ function updateVideoStats(frame: VideoFrame): void {
     bufferMs === undefined
       ? ''
       : ` · buffer ${Math.round(bufferMs)} ms (target ${Math.round(livePlayout.targetBufferMs())})`
+  element('buffer-current').textContent =
+    bufferMs === undefined
+      ? 'Current: -'
+      : `Current: ${Math.round(bufferMs)} ms (${livePlayout.fixedBuffer() ? 'fixed' : `target ${Math.round(livePlayout.targetBufferMs())}`})`
   stats.textContent = `${frame.displayWidth}x${frame.displayHeight}${delay}${buffer} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · shed ${Math.round(livePlayout.shedMs())} ms`
 }
 
