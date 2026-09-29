@@ -1,9 +1,10 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { type IncomingFetchContext, MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
 import type { LocHeader } from '../../../../utils/media/loc'
+import { answerFetch, documentReplayTrack } from '../../../../utils/media/fetchReplay'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
@@ -135,6 +136,7 @@ export class MediaPublisher {
     autoGainControl: true
   }
   private nextCatalogGroupId = BigInt(Date.now())
+  private readonly catalogGroups = new Map<bigint, Uint8Array>()
 
   constructor(
     private readonly client: MoqtClientWrapper,
@@ -194,6 +196,13 @@ export class MediaPublisher {
       return
     }
     await this.sendCatalogObject(client, trackAlias)
+  }
+
+  async answerCatalogFetch(context: IncomingFetchContext): Promise<void> {
+    await answerFetch(
+      context,
+      documentReplayTrack(this.catalogGroups, () => false)
+    )
   }
 
   handleIncomingUnsubscribe(subscribeId: bigint): void {
@@ -1458,6 +1467,7 @@ export class MediaPublisher {
       tracks: this.catalogTracks.map((t) => t.role)
     })
     const payload = new TextEncoder().encode(buildMeetingCatalogJson(this.trackNamespace, this.catalogTracks))
+    this.catalogGroups.set(groupId, payload)
     await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
     await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   }

@@ -159,6 +159,7 @@ export class LocalSession {
       this.client.setOnSubscribeResponseHandler(null)
       this.client.setOnIncomingSubscribeHandler(null)
       this.client.setOnIncomingUnsubscribeHandler(null)
+      this.client.setOnIncomingFetchHandler(null)
       this.client.setOnPublishNamespaceResponseHandler(null)
       this.client.setOnSubscribeNamespaceResponseHandler(null)
       this.client.setOnServerSetupHandler(null)

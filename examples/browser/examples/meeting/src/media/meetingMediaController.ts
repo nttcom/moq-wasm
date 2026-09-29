@@ -1,4 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { MediaPublisher, type SubscribedCatalogTrack } from './mediaPublisher'
 import { MediaSubscriber } from './mediaSubscriber'
 import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
@@ -157,7 +157,7 @@ export class MeetingMediaController {
 
     client.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
       const trackName = subscribe.trackName ?? ''
-      const isLocalTrack = this.isLocalTrack(subscribe)
+      const isLocalTrack = this.isLocalNamespace(subscribe.trackNamespace)
       const isCatalogTrack = this.publisher.isCatalogTrack(trackName)
       const debugVideoPipeline = isMeetingVideoPipelineDebugEnabled()
       if (debugVideoPipeline) {
@@ -205,6 +205,15 @@ export class MeetingMediaController {
       } catch (err) {
         console.error('Failed to kick media pipeline for new subscriber', err)
       }
+    })
+
+    client.setOnIncomingFetchHandler(async (context) => {
+      const { fetch } = context
+      if (this.isLocalNamespace(fetch.trackNamespace) && this.publisher.isCatalogTrack(fetch.trackName)) {
+        await this.publisher.answerCatalogFetch(context)
+        return
+      }
+      await context.respondError(RequestErrorCode.NotSupported, 'fetch is served for the catalog only')
     })
 
     client.setOnIncomingUnsubscribeHandler((subscribeId) => {
@@ -342,11 +351,11 @@ export class MeetingMediaController {
     )
   }
 
-  private isLocalTrack(subscribe: SubscribeMessage): boolean {
-    if (subscribe.trackNamespace.length !== this.trackNamespace.length) {
+  private isLocalNamespace(trackNamespace: string[]): boolean {
+    if (trackNamespace.length !== this.trackNamespace.length) {
       return false
     }
-    return subscribe.trackNamespace.every((value, index) => value === this.trackNamespace[index])
+    return trackNamespace.every((value, index) => value === this.trackNamespace[index])
   }
 
   private resolveSubscribeRole(trackName: string, role?: CatalogSubscribeRole): CatalogSubscribeRole | null {
