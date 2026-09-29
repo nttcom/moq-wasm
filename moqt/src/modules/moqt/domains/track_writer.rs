@@ -33,7 +33,7 @@ impl<T: TransportProtocol> TrackWriter<T> {
     }
 
     pub async fn start_group(&mut self) -> anyhow::Result<()> {
-        self.finish_current_group().await?;
+        self.finish_current_group().await;
         self.group = Some(self.open_group().await?);
         Ok(())
     }
@@ -80,15 +80,20 @@ impl<T: TransportProtocol> TrackWriter<T> {
         if let Some(gap) = self.pending_group_gap.take() {
             extension_headers.push_prior_group_id_gap(gap);
         }
-        self.group
+        let result = self
+            .group
             .as_mut()
             .context("write before start_group")?
             .write_object(payload, extension_headers)
-            .await
+            .await;
+        if result.is_err() {
+            self.group = None;
+        }
+        result
     }
 
     pub async fn write_group(&mut self, payload: Bytes) -> anyhow::Result<()> {
-        self.finish_current_group().await?;
+        self.finish_current_group().await;
         let mut group = self.open_group().await?;
         group
             .write_object(payload, ExtensionHeaders::default())
@@ -97,7 +102,10 @@ impl<T: TransportProtocol> TrackWriter<T> {
     }
 
     pub async fn finish(mut self) -> anyhow::Result<()> {
-        self.finish_current_group().await
+        match self.group.take() {
+            Some(group) => group.finish().await,
+            None => Ok(()),
+        }
     }
 
     pub fn groups(&self) -> u64 {
@@ -112,10 +120,14 @@ impl<T: TransportProtocol> TrackWriter<T> {
         self.group.as_ref().map(|_| self.next_group_id - 1)
     }
 
-    async fn finish_current_group(&mut self) -> anyhow::Result<()> {
-        match self.group.take() {
-            Some(group) => group.finish().await,
-            None => Ok(()),
+    /// A group the subscriber stopped or the transport reset cannot be
+    /// finished, and its stream is gone either way, so the next group opens
+    /// on a new stream regardless.
+    async fn finish_current_group(&mut self) {
+        if let Some(group) = self.group.take()
+            && let Err(error) = group.finish().await
+        {
+            tracing::debug!(?error, "previous group could not be finished");
         }
     }
 
@@ -168,7 +180,8 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        ExtensionHeaders, KeyValuePair, PublishOption, TrackWriter, VariantType,
+        DataReceiver, ExtensionHeaders, KeyValuePair, PublishOption, Subgroup, SubgroupObject,
+        TrackWriter, VariantType,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
             subscribed_track_reader,
@@ -292,5 +305,72 @@ mod tests {
         assert_eq!(second.extension_headers.prior_group_id_gap(), vec![2]);
         assert_eq!((third.group_id, third.object_id), (6, 1));
         assert!(third.extension_headers.prior_group_id_gap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_group_the_subscriber_stopped_does_not_keep_the_next_group_from_opening() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("track-writer-stopped-group");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let publisher = client.publisher();
+        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                accept_publish(&server)
+            )
+        })
+        .await
+        .unwrap();
+        let mut writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), 7);
+        writer.start_group().await.unwrap();
+        writer
+            .write(Bytes::from_static(b"a"), vec![])
+            .await
+            .unwrap();
+        let DataReceiver::Stream(mut streams) = server
+            .subscriber()
+            .accept_data_receiver(&accepted)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a subgroup stream receiver");
+        };
+        drop(streams.next().await.unwrap());
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while writer
+                .write(Bytes::from_static(b"after stop"), vec![])
+                .await
+                .is_ok()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        // Act
+        writer.start_group().await.unwrap();
+        writer
+            .write(Bytes::from_static(b"b"), vec![])
+            .await
+            .unwrap();
+        let mut next_stream = streams.next().await.unwrap();
+        let header = next_stream.receive().await.unwrap();
+        let object = next_stream.receive().await.unwrap();
+
+        // Assert
+        let Some(Subgroup::Header(header)) = header else {
+            panic!("expected the next group's subgroup header");
+        };
+        assert_eq!(header.group_id, 8);
+        let Some(Subgroup::Object(object)) = object else {
+            panic!("expected the next group's first object");
+        };
+        assert!(matches!(
+            object.subgroup_object,
+            SubgroupObject::Payload { data, .. } if data == Bytes::from_static(b"b")
+        ));
     }
 }
