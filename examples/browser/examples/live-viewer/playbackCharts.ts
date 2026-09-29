@@ -5,7 +5,7 @@ const TOP = 8
 const BOTTOM = 8
 const LEFT = 44
 const RIGHT = 10
-const LABEL_GUTTER = 108
+const LABEL_GUTTER = 124
 const LABEL_GAP = 14
 const END_DOT_RADIUS = 4
 const TOOLTIP_HEIGHT = 18
@@ -57,7 +57,7 @@ const CHARTS: ChartSpec[] = [
     headline: 'bufferMs',
     series: [
       { key: 'outputLatencyMs', label: 'output latency', color: 'var(--series-3)', band: true },
-      { key: 'spreadMs', label: 'arrival spread', color: 'var(--series-4)', band: true },
+      { key: 'spreadMs', label: 'audio jitter (p-p)', color: 'var(--series-4)', band: true },
       { key: 'targetMs', label: 'target', color: 'var(--series-2)' },
       { key: 'bufferMs', label: 'buffer', color: 'var(--series-1)' }
     ],
@@ -88,7 +88,7 @@ const CHARTS: ChartSpec[] = [
 
 /// Small multiples of the playback measurements over the last minute, one
 /// scale each, sampled every `SAMPLE_INTERVAL_MS`. The buffer chart stacks
-/// what its target is made of, output latency and arrival spread, under the
+/// what its target is made of, output latency and peak-to-peak audio jitter, under the
 /// target the bounds clamp it to and the buffer actually held. A missing
 /// measurement leaves a gap.
 export class PlaybackCharts {

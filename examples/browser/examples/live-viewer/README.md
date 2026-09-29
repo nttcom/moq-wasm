@@ -321,20 +321,20 @@ decoded, and one playout clock decides when each is presented. The clock maps
 the LOC capture timestamps, which the bridge stamps on the same wall clock for
 every track, onto the local clock behind a jitter buffer. The buffer tracks
 the delay from capture to arrival of the audio chunks of the last 10 s and
-covers the spread between the fastest and the slowest of them plus the audio
+covers their peak-to-peak jitter (the slowest minus the fastest) plus the audio
 device's output latency (the time from handing a chunk to the device to
 hearing it, some 25 ms on built-in speakers and far more over Bluetooth). That
 sum is clamped to `Min buffer (ms)` (200 ms by default) and `Max buffer (ms)`
 (unlimited when empty), so the bounds are the buffer as displayed; equal
 bounds fix it, and a maximum below the output latency makes every chunk late.
 `Current` next to the bounds shows the buffer and its target, and the Buffer
-chart below the player stacks the output latency and the arrival spread under
+chart below the player stacks the output latency and `audio jitter (p-p)` under
 the target and the buffer held, with delay, bitrate and A/V charted beside it
 over the last minute. A subscription opens
 with a burst of what the relay had cached of the current groups, so the
 samples of the first 400 ms are held and the clock is anchored on the newest
 of them; older ones are dropped rather than played late. That burst says
-nothing about the spread, so the buffer opens on the longest wait
+nothing about the jitter, so the buffer opens on the longest wait
 between two audio arrivals seen during the warm-up instead: sources such as
 MPEG-TS over SRT deliver audio in bursts. The audio is the clock's master: it
 alone moves the clock, so the sound never skips for the picture, and the
