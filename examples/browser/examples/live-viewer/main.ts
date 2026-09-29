@@ -29,6 +29,7 @@ import {
 import { BufferingSpinner } from './bufferingSpinner'
 import type { BufferPolicy } from './jitterBuffer'
 import { type CatchUp, DEFAULT_BUFFER_POLICY, LivePlayout } from './livePlayout'
+import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
 import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { Mp4Publisher } from './mp4Publisher'
@@ -110,6 +111,18 @@ const livePlayout = new LivePlayout(showLiveFrame, (origin) =>
     dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
   })
 )
+const playbackCharts = new PlaybackCharts(element<HTMLElement>('playback-charts'))
+setInterval(() => {
+  if (watching) {
+    playbackCharts.push({
+      delayMs: viewerDelayMs,
+      bufferMs: livePlayout.bufferMs(),
+      targetMs: livePlayout.bufferMs() === undefined ? undefined : livePlayout.targetBufferMs(),
+      kbps: receivedKbps,
+      syncMs: livePlayout.syncOffsetMs()
+    })
+  }
+}, SAMPLE_INTERVAL_MS)
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const mp4Publisher = new Mp4Publisher(
   { onStatus: (text, state) => setStatus('publish-status', text, state), onLog: appendLog },
@@ -277,6 +290,7 @@ async function watchStream(): Promise<void> {
 async function stopStream(): Promise<void> {
   watching = false
   viewerDelayMs = undefined
+  playbackCharts.reset()
   livePictureSink.detach()
   timeline.reset()
   streamMonitor.reset()
