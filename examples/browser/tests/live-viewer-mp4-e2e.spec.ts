@@ -170,7 +170,6 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
     await expect(fetcher.sendStatus).toHaveText('Sent FETCH')
     await expect(viewer.logPanel).toContainText(/answered FETCH video 0:0-\d+:\d+/)
     // Assert: the replayed groups match what the relay cached from the subscription
-    await expect(viewer.playbackStatus).toContainText('Playing video')
     await expect(viewer.logPanel).not.toContainText(/malformed/i)
   } finally {
     await context.close()

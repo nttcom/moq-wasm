@@ -210,11 +210,8 @@ export class Mp4Publisher {
               const document = new TextEncoder().encode(JSON.stringify(records))
               const timelineGroupId = nextTimelineGroupId++
               this.timelineGroups.set(timelineGroupId, document)
-              for (const retainedGroupId of this.timelineGroups.keys()) {
-                if (this.timelineGroups.size <= records.length) {
-                  break
-                }
-                this.timelineGroups.delete(retainedGroupId)
+              while (this.timelineGroups.size > records.length) {
+                this.timelineGroups.delete(this.timelineGroups.keys().next().value!)
               }
               await timeline.send(timelineGroupId, document)
             }
@@ -310,7 +307,7 @@ export class Mp4Publisher {
       [VIDEO_TRACK_NAME, mediaReplayTrack(media, this.mediaGroups, false)],
       [
         TIMELINE_TRACK_NAME,
-        documentReplayTrack(this.timelineGroups, (groupId) => groupId !== lastKey(this.timelineGroups))
+        documentReplayTrack(this.timelineGroups, (groupId) => groupId !== Array.from(this.timelineGroups.keys()).at(-1))
       ]
     ])
     if (media.audio) {
@@ -369,7 +366,8 @@ class TrackSender {
       this.nextObjectId = 0n
     }
     const startsGroup = this.nextObjectId === 0n
-    const locHeader = captureMicros === undefined ? undefined : captureLocHeader(captureMicros)
+    const locHeader =
+      captureMicros === undefined ? undefined : buildLocHeader({ captureTimestampMicros: captureMicros })
     for (const trackAlias of this.subscribers()) {
       if (this.openSubgroups.get(trackAlias) !== groupId) {
         if (!startsGroup && !this.joinsMidGroup) {
@@ -449,8 +447,6 @@ function findReplayTrack(
   return requestedNamespace.join('/') === namespace.join('/') ? replayTracks.get(trackName) : undefined
 }
 
-/// A catalog or media timeline group holds one document; the group is
-/// closed with End of Group once no later document can land in it.
 function documentReplayTrack(documents: Map<bigint, Uint8Array>, isClosed: (groupId: bigint) => boolean): ReplayTrack {
   return {
     groupIds: () => Array.from(documents.keys()),
@@ -467,14 +463,6 @@ function documentReplayTrack(documents: Map<bigint, Uint8Array>, isClosed: (grou
   }
 }
 
-function lastKey<K, V>(map: Map<K, V>): K | undefined {
-  let last: K | undefined
-  for (const key of map.keys()) {
-    last = key
-  }
-  return last
-}
-
 /// Replays a group exactly as `Mp4Publisher.pace` sent it: the relay keeps
 /// the first copy of an object and treats different bytes at the same
 /// location as a malformed track.
@@ -489,7 +477,11 @@ function mediaReplayTrack(media: Mp4Media, groups: PublishedGroupLog, audio: boo
             continue
           }
           const captureMicros = samplePresentationMicros(media, span.passOriginMicros, index)
-          yield replayObject(objectId, await readSamplePayload(media, index), captureLocHeader(captureMicros))
+          yield replayObject(
+            objectId,
+            await readSamplePayload(media, index),
+            buildLocHeader({ captureTimestampMicros: captureMicros })
+          )
           objectId += 1n
         }
       }
@@ -514,10 +506,6 @@ function isAudioSample(media: Mp4Media, index: number): boolean {
 
 function samplePresentationMicros(media: Mp4Media, passOriginMicros: number, index: number): number {
   return passOriginMicros + (media.samples.ptsMicros[index] - media.firstPresentationMicros)
-}
-
-function captureLocHeader(captureMicros: number) {
-  return buildLocHeader({ captureTimestampMicros: captureMicros })
 }
 
 async function readSamplePayload(media: Mp4Media, index: number): Promise<Uint8Array> {

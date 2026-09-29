@@ -8,9 +8,7 @@ export interface ReplayTrack {
 }
 
 /// draft-ietf-moq-transport-14 §9.16.3: groups go out in the delivered group
-/// order, objects in Object ID order within a group. The End Location has
-/// already been clamped by the client: it is the Location after the last
-/// object to send, where Object 0 covers the whole group.
+/// order, objects in Object ID order within a group.
 export async function answerFetch(context: IncomingFetchContext, track: ReplayTrack): Promise<void> {
   const { fetch, cancelSignal, respondOk, respondError, sendObject, finish } = context
   const groupIds = track.groupIds().filter((groupId) => groupId >= fetch.startGroupId && groupId <= fetch.endGroupId)
