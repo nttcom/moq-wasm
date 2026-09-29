@@ -1,9 +1,3 @@
-pub struct Frame {
-    pub width: usize,
-    pub height: usize,
-    pub data: Vec<u8>,
-}
-
 pub enum RtspPacket {
     Video(EncodedPacket),
     Audio(EncodedAudioPacket),
