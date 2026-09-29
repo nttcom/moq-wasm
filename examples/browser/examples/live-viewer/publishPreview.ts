@@ -2,18 +2,20 @@ import { monotonicUnixMicros } from '../../utils/media/clock'
 
 const MICROS_PER_MILLI = 1_000
 
-/// Decodes the video samples the publisher sends and draws each frame when
-/// the wall clock reaches its capture timestamp, which is the moment the
-/// publisher sent it, so the picture shows what the viewer should be showing
-/// with no delay at all.
+/// Decodes the video samples the publisher sends and draws each frame the
+/// reorder delay after its capture timestamp, the earliest moment every frame
+/// has been sent: the picture a viewer with no network or buffering delay
+/// would show.
 export class PublishPreview {
   private decoder: VideoDecoder | undefined
+  private reorderDelayMicros = 0
   private readonly scheduled = new Map<ReturnType<typeof setTimeout>, VideoFrame>()
 
   constructor(private readonly canvas: HTMLCanvasElement) {}
 
-  start(codec: string): void {
+  start(codec: string, reorderDelayMicros: number): void {
     this.stop()
+    this.reorderDelayMicros = reorderDelayMicros
     const decoder = new VideoDecoder({
       output: (frame) => this.schedule(frame),
       error: (error) => console.warn('[publishPreview] decoder error', error)
@@ -44,7 +46,7 @@ export class PublishPreview {
   }
 
   private schedule(frame: VideoFrame): void {
-    const delayMs = (frame.timestamp - monotonicUnixMicros()) / MICROS_PER_MILLI
+    const delayMs = (frame.timestamp + this.reorderDelayMicros - monotonicUnixMicros()) / MICROS_PER_MILLI
     if (delayMs <= 0) {
       this.draw(frame)
       return

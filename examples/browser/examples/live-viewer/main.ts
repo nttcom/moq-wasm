@@ -109,7 +109,7 @@ const publishPreview = new PublishPreview(element<HTMLCanvasElement>('publish-pr
 const mp4Publisher = new Mp4Publisher({
   onStatus: (text) => setStatusText('publish-status', text),
   onLog: appendLog,
-  onVideoStarted: (codec) => publishPreview.start(codec),
+  onVideoStarted: (codec, reorderDelayMicros) => publishPreview.start(codec, reorderDelayMicros),
   onVideoSample: (annexB, keyframe, captureMicros) => publishPreview.decode(annexB, keyframe, captureMicros),
   onStopped: () => publishPreview.stop()
 })

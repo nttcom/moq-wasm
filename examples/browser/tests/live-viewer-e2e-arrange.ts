@@ -19,10 +19,14 @@ export type Mp4FixtureAudio = 'aac' | 'mp3'
 
 export const MP4_FIXTURE = { width: 320, height: 180, fps: 15, seconds: 6 }
 
-const FFMPEG_AUDIO_ENCODERS: Record<Mp4FixtureAudio, string> = { aac: 'aac', mp3: 'libmp3lame' }
+/// The AAC file carries B-frames so that the publisher's decode-order pacing is exercised.
+const FIXTURE_ENCODINGS: Record<Mp4FixtureAudio, { audioEncoder: string; videoProfile: string; bFrames: number }> = {
+  aac: { audioEncoder: 'aac', videoProfile: 'main', bFrames: 2 },
+  mp3: { audioEncoder: 'libmp3lame', videoProfile: 'baseline', bFrames: 0 }
+}
 
 export function mp4FixtureFileName(audio: Mp4FixtureAudio): string {
-  return `moqt-live-viewer-mp4-e2e-${audio}.mp4`
+  return `moqt-live-viewer-mp4-e2e-${audio}-${FIXTURE_ENCODINGS[audio].videoProfile}.mp4`
 }
 
 export function ensureMp4Fixture(audio: Mp4FixtureAudio): string {
@@ -49,13 +53,15 @@ export function ensureMp4Fixture(audio: Mp4FixtureAudio): string {
     '-preset',
     'veryfast',
     '-profile:v',
-    'baseline',
+    FIXTURE_ENCODINGS[audio].videoProfile,
+    '-bf',
+    String(FIXTURE_ENCODINGS[audio].bFrames),
     '-pix_fmt',
     'yuv420p',
     '-g',
     String(MP4_FIXTURE.fps),
     '-c:a',
-    FFMPEG_AUDIO_ENCODERS[audio],
+    FIXTURE_ENCODINGS[audio].audioEncoder,
     '-ac',
     '1',
     '-movflags',

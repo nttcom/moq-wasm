@@ -25,7 +25,7 @@ type LogLevel = 'info' | 'warn' | 'error'
 export type Mp4PublisherCallbacks = {
   onStatus(text: string): void
   onLog(level: LogLevel, message: string): void
-  onVideoStarted(codec: string): void
+  onVideoStarted(codec: string, reorderDelayMicros: number): void
   onVideoSample(annexB: Uint8Array, keyframe: boolean, captureMicros: number): void
   onStopped(): void
 }
@@ -57,6 +57,7 @@ type SampleColumns = {
   kind: Uint8Array
   offset: Float64Array
   size: Uint32Array
+  dtsMicros: Float64Array
   ptsMicros: Float64Array
   sync: Uint8Array
 }
@@ -68,6 +69,7 @@ type Mp4Media = {
   video: Mp4Video
   audio?: Mp4Audio
   firstPresentationMicros: number
+  reorderDelayMicros: number
   durationMicros: number
 }
 
@@ -103,7 +105,7 @@ export class Mp4Publisher {
     this.stopRequested = false
     this.sentStreams.reset()
     this.active = true
-    this.callbacks.onVideoStarted(media.video.codec)
+    this.callbacks.onVideoStarted(media.video.codec, media.reorderDelayMicros)
     this.running = this.publish(media, options)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`
@@ -138,11 +140,12 @@ export class Mp4Publisher {
     }
   }
 
-  /// Samples are sent at their presentation time on the wall clock, like
-  /// `ffmpeg -re`, and stamped with that time as the LOC capture timestamp:
-  /// the viewer paces playback and resolves seek positions from it. The order
-  /// is decode order, so a frame whose presentation time precedes the frame
-  /// before it goes out right after it.
+  /// Samples go out in decode order, each at its decode time plus the file's
+  /// reorder delay on the wall clock, the way a live encoder with B-frames
+  /// emits them, and are stamped with their presentation time as the LOC
+  /// capture timestamp: the viewer paces playback and resolves seek positions
+  /// from it. Sending at the presentation time instead would hold a P-frame
+  /// until it is shown and deliver the B-frames that precede it late.
   private async pace(media: Mp4Media, options: Mp4PublishOptions): Promise<boolean> {
     const client = this.requireClient()
     const video = new LocTrackSender(client, options.namespace, VIDEO_TRACK_NAME, false, this.sentStreams)
@@ -152,7 +155,6 @@ export class Mp4Publisher {
     let passOriginMicros = monotonicUnixMicros()
     try {
       do {
-        let dueMicros = passOriginMicros
         for (let index = 0; index < media.samples.size.length; index++) {
           if (this.stopRequested) {
             return false
@@ -160,9 +162,12 @@ export class Mp4Publisher {
           const isVideo = media.samples.kind[index] !== AUDIO_SAMPLE_KIND
           const isSync = media.samples.sync[index] === 1
           const presentationMicros = passOriginMicros + (media.samples.ptsMicros[index] - media.firstPresentationMicros)
+          const sendMicros =
+            passOriginMicros +
+            (media.samples.dtsMicros[index] - media.firstPresentationMicros) +
+            media.reorderDelayMicros
           const data = await readSample(media.file, media.samples.offset[index], media.samples.size[index])
-          dueMicros = Math.max(dueMicros, presentationMicros)
-          await sleepUntilUnixMicros(dueMicros)
+          await sleepUntilUnixMicros(sendMicros)
           if (isVideo && isSync) {
             groupId = nextGroupId
             nextGroupId += 1n
@@ -363,6 +368,7 @@ async function openMp4(file: File): Promise<Mp4Media> {
       video,
       audio: audio && { ...audio, audioSpecificConfig: index.audioSpecificConfig() },
       firstPresentationMicros: Math.min(...samples.ptsMicros),
+      reorderDelayMicros: index.reorderDelayMicros(),
       durationMicros: index.durationMicros()
     }
   } catch (error) {
@@ -398,7 +404,14 @@ async function readMoovAtom(file: File): Promise<Uint8Array> {
 
 function readSampleColumns(table: Mp4SampleTable): SampleColumns {
   try {
-    return { kind: table.kind, offset: table.offset, size: table.size, ptsMicros: table.ptsMicros, sync: table.sync }
+    return {
+      kind: table.kind,
+      offset: table.offset,
+      size: table.size,
+      dtsMicros: table.dtsMicros,
+      ptsMicros: table.ptsMicros,
+      sync: table.sync
+    }
   } finally {
     table.free()
   }
