@@ -1,23 +1,23 @@
 use mediapack::mp4::{AudioCodec, Mp4Index as SampleIndex, SampleKind};
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 const MP3_CODEC: &str = "mp3";
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct VideoTrackInfo {
-    codec: String,
-    width: u32,
-    height: u32,
+#[wasm_bindgen(getter_with_clone)]
+pub struct Mp4VideoTrack {
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AudioTrackInfo {
-    codec: String,
-    sample_rate: u32,
-    channels: u8,
+#[wasm_bindgen(getter_with_clone)]
+pub struct Mp4AudioTrack {
+    pub codec: String,
+    #[wasm_bindgen(js_name = sampleRate)]
+    pub sample_rate: u32,
+    pub channels: u8,
+    #[wasm_bindgen(js_name = audioSpecificConfig)]
+    pub audio_specific_config: Option<Vec<u8>>,
 }
 
 /// The sample table as parallel columns, one entry per sample in decode
@@ -50,46 +50,38 @@ impl Mp4Index {
         Ok(Self { inner })
     }
 
-    pub fn video(&self) -> Result<JsValue, JsValue> {
+    pub fn video(&self) -> Result<Option<Mp4VideoTrack>, JsValue> {
         let Some(config) = &self.inner.video else {
-            return Ok(JsValue::UNDEFINED);
+            return Ok(None);
         };
         let sps = config
             .sequence_parameter_set()
             .map_err(|err| JsValue::from_str(&err.to_string()))?;
-        to_js(&VideoTrackInfo {
+        Ok(Some(Mp4VideoTrack {
             codec: config.codec_string(),
             width: sps.width,
             height: sps.height,
-        })
+        }))
     }
 
-    pub fn audio(&self) -> Result<JsValue, JsValue> {
-        let info = match &self.inner.audio {
-            None => return Ok(JsValue::UNDEFINED),
-            Some(AudioCodec::Aac(config)) => AudioTrackInfo {
+    pub fn audio(&self) -> Option<Mp4AudioTrack> {
+        Some(match self.inner.audio.as_ref()? {
+            AudioCodec::Aac(config) => Mp4AudioTrack {
                 codec: config.codec_string(),
                 sample_rate: config.sample_rate,
                 channels: config.channel_count(),
+                audio_specific_config: Some(config.to_bytes().to_vec()),
             },
-            Some(AudioCodec::Mp3 {
+            AudioCodec::Mp3 {
                 sample_rate,
                 channels,
-            }) => AudioTrackInfo {
+            } => Mp4AudioTrack {
                 codec: MP3_CODEC.to_string(),
                 sample_rate: *sample_rate,
                 channels: *channels,
+                audio_specific_config: None,
             },
-        };
-        to_js(&info)
-    }
-
-    #[wasm_bindgen(js_name = audioSpecificConfig)]
-    pub fn audio_specific_config(&self) -> Option<Vec<u8>> {
-        match &self.inner.audio {
-            Some(AudioCodec::Aac(config)) => Some(config.to_bytes().to_vec()),
-            _ => None,
-        }
+        })
     }
 
     pub fn samples(&self) -> Mp4SampleTable {
@@ -130,8 +122,4 @@ impl Mp4Index {
             .map(|annexb| annexb.to_vec())
             .map_err(|err| JsValue::from_str(&err.to_string()))
     }
-}
-
-fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(value).map_err(|err| JsValue::from_str(&err.to_string()))
 }

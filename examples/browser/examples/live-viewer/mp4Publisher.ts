@@ -1,5 +1,11 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper } from '@moqt/moqtClient'
-import init, { type MOQTClient, Mp4Index, type Mp4SampleTable } from '../../pkg/moqt_client_wasm'
+import init, {
+  type MOQTClient,
+  type Mp4AudioTrack,
+  Mp4Index,
+  type Mp4SampleTable,
+  type Mp4VideoTrack
+} from '../../pkg/moqt_client_wasm'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
@@ -38,19 +44,6 @@ export type Mp4PublishOptions = {
   loop: boolean
 }
 
-type Mp4Video = {
-  codec: string
-  width: number
-  height: number
-}
-
-type Mp4Audio = {
-  codec: string
-  sampleRate: number
-  channels: number
-  audioSpecificConfig?: Uint8Array
-}
-
 /// The columns of `Mp4SampleTable` are copied out of wasm memory on every
 /// access, so they are read once.
 type SampleColumns = {
@@ -66,8 +59,8 @@ type Mp4Media = {
   file: File
   index: Mp4Index
   samples: SampleColumns
-  video: Mp4Video
-  audio?: Mp4Audio
+  video: Mp4VideoTrack
+  audio?: Mp4AudioTrack
   firstPresentationMicros: number
   reorderDelayMicros: number
   durationMicros: number
@@ -355,18 +348,17 @@ async function openMp4(file: File): Promise<Mp4Media> {
   await init()
   const index = new Mp4Index(await readMoovAtom(file))
   try {
-    const video = index.video() as Mp4Video | undefined
+    const video = index.video()
     if (!video) {
       throw new Error('the file has no H.264 video track')
     }
-    const audio = index.audio() as Omit<Mp4Audio, 'audioSpecificConfig'> | undefined
     const samples = readSampleColumns(index.samples())
     return {
       file,
       index,
       samples,
       video,
-      audio: audio && { ...audio, audioSpecificConfig: index.audioSpecificConfig() },
+      audio: index.audio(),
       firstPresentationMicros: samples.ptsMicros.reduce((earliest, pts) => Math.min(earliest, pts), Infinity),
       reorderDelayMicros: index.reorderDelayMicros(),
       durationMicros: index.durationMicros()
