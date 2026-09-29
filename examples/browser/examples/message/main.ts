@@ -9,7 +9,7 @@ import {
   SubgroupObjectMessage,
   SubscribeOkMessage
 } from '../../pkg/moqt_client_wasm'
-import { MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import { GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { configureRelayUrlControls } from '../../utils/relayPresets'
 
 type HTMLFormControls = HTMLFormElement & {
@@ -376,7 +376,16 @@ function setupControlMessageButtons(): void {
     const endGroup = BigInt(getField(form, 'fetch-end-group').value)
     const endObject = BigInt(getField(form, 'fetch-end-object').value)
     await sendControlMessage('FETCH', () =>
-      ensureRawClient().sendFetch(requestId, trackNamespace, trackName, startGroup, startObject, endGroup, endObject)
+      ensureRawClient().sendFetch(
+        requestId,
+        trackNamespace,
+        trackName,
+        startGroup,
+        startObject,
+        endGroup,
+        endObject,
+        GroupOrder.Ascending
+      )
     )
   })
 
@@ -535,7 +544,7 @@ function setupActionButtons(): void {
     const trackName = getField(form, 'track-name').value
     const authInfo = getField(form, 'auth-info').value
     const subscriberPriority = Number(getField(form, 'subscriber-priority').value)
-    const groupOrder = Number(getRadioValue(form, 'group-order'))
+    const groupOrder = Number(getRadioValue(form, 'group-order')) as GroupOrder
     const filterType = Number(getRadioValue(form, 'filter-type'))
     const startGroup = BigInt(getField(form, 'start-group').value)
     const startObject = BigInt(getField(form, 'start-object').value)

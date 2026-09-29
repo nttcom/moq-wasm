@@ -54,6 +54,9 @@ export interface SubscribeNamespaceOptions {
   requestId?: bigint
 }
 
+export const GroupOrder = { Publisher: 0, Ascending: 1, Descending: 2 } as const
+export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
+
 export interface SubscribeOptions {
   /**
    * Override the request id. When omitted, a session-unique id is issued
@@ -63,7 +66,7 @@ export interface SubscribeOptions {
    */
   requestId?: bigint
   subscriberPriority?: number
-  groupOrder?: number
+  groupOrder?: GroupOrder
   filterType?: number
   startGroup?: bigint
   startObject?: bigint
@@ -75,6 +78,7 @@ export interface SubscribeOptions {
 export interface FetchOptions {
   /** Override the request id; issued internally when omitted. */
   requestId?: bigint
+  groupOrder?: GroupOrder
   /** Handler for FETCH objects, registered before the request is sent. */
   onObject?: FetchObjectHandler
   /**
@@ -345,7 +349,7 @@ export class MoqtClientWrapper {
       trackNamespace,
       trackName,
       options.subscriberPriority ?? 0,
-      options.groupOrder ?? 0,
+      options.groupOrder ?? GroupOrder.Publisher,
       options.filterType ?? 1,
       options.startGroup,
       options.startObject,
@@ -378,7 +382,16 @@ export class MoqtClientWrapper {
     }
     const response = this.awaitFetchResponse(requestId)
     try {
-      await client.sendFetch(requestId, trackNamespace, trackName, startGroupId, startObjectId, endGroupId, endObjectId)
+      await client.sendFetch(
+        requestId,
+        trackNamespace,
+        trackName,
+        startGroupId,
+        startObjectId,
+        endGroupId,
+        endObjectId,
+        options.groupOrder ?? GroupOrder.Ascending
+      )
       const fetchOk = await response
       return { requestId, fetchOk }
     } catch (error) {
@@ -406,7 +419,12 @@ export class MoqtClientWrapper {
     }
     const response = this.awaitFetchResponse(requestId)
     try {
-      await client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart)
+      await client.sendRelativeJoiningFetch(
+        requestId,
+        joiningRequestId,
+        joiningStart,
+        options.groupOrder ?? GroupOrder.Ascending
+      )
       const fetchOk = await response
       return { requestId, fetchOk }
     } catch (error) {
