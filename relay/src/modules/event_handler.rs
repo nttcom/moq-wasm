@@ -340,12 +340,12 @@ impl EventHandler {
                         .handle(
                             session_id,
                             &session_span,
-                            local_pub_sub_directory.as_ref(),
+                            &local_pub_sub_directory,
                             &cache_store,
                             &egress_sender,
                             &relay_event_sender,
                             &control_message_forwarder,
-                            upstream_publisher_resolver.as_ref(),
+                            &upstream_publisher_resolver,
                             handler,
                         )
                         .instrument(event_span)
@@ -753,7 +753,10 @@ mod tests {
         },
         control_message_forwarder::ControlMessageForwarder,
         core::{
-            mocks::{RecordedControlMessages, mock_new_session},
+            mocks::{
+                MockFetchHandler, RecordedControlMessages, mock_new_session,
+                mock_new_session_leaving_fetch_unanswered,
+            },
             session_event::MoqtSessionEvent,
         },
         inter_relay::InterRelayConnectionManager,
@@ -763,7 +766,7 @@ mod tests {
         },
         route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         sequences::{
-            tables::hashmap_table::InMemoryLocalPubSubDirectory,
+            tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
             upstream_serializer::UpstreamCreationSerializer,
         },
         session_event::{EventKind, SessionEvent},
@@ -780,6 +783,7 @@ mod tests {
         event_sender: mpsc::UnboundedSender<SessionEvent>,
         _ingress_receiver: mpsc::Receiver<IngressCommand>,
         _egress_receiver: mpsc::Receiver<EgressCommand>,
+        local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
         cache_store: Arc<TrackCacheStore>,
         cache_store_references_without_workers: usize,
     }
@@ -801,6 +805,7 @@ mod tests {
                 inter_relay_connection_manager.clone(),
             ));
             let cache_store = Arc::new(TrackCacheStore::new());
+            let local_pub_sub_directory = Arc::new(InMemoryLocalPubSubDirectory::new());
             let event_handler = EventHandler::run(
                 event_receiver,
                 WorkerDeps {
@@ -809,7 +814,7 @@ mod tests {
                     },
                     repo: repo.clone(),
                     relay_event_sender: event_sender.clone(),
-                    local_pub_sub_directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
+                    local_pub_sub_directory: local_pub_sub_directory.clone(),
                     ingress_sender,
                     egress_sender,
                     route_registry,
@@ -827,6 +832,7 @@ mod tests {
                 event_sender,
                 _ingress_receiver: ingress_receiver,
                 _egress_receiver: egress_receiver,
+                local_pub_sub_directory,
                 cache_store,
                 cache_store_references_without_workers,
             }
@@ -841,6 +847,25 @@ mod tests {
                 .add(new_session, self.event_sender.clone())
                 .await;
             recorded
+        }
+
+        async fn register_publisher_leaving_fetch_unanswered(
+            &self,
+            session_id: SessionId,
+            track_namespace: &str,
+        ) {
+            let new_session =
+                mock_new_session_leaving_fetch_unanswered(session_id, VerifiedToken::full_access());
+            self.repo
+                .lock()
+                .await
+                .add(new_session, self.event_sender.clone())
+                .await;
+            self.local_pub_sub_directory.register_publish_namespace(
+                session_id,
+                track_namespace.to_string(),
+                PeerKind::Client,
+            );
         }
 
         fn send(&self, event: SessionEvent) {
@@ -877,14 +902,21 @@ mod tests {
                 bystander_session_id,
                 "barrier".to_string(),
             ));
-            tokio::time::timeout(WAIT_TIMEOUT, async {
-                while bystander.closes().is_empty() {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
-                }
-            })
-            .await
-            .expect("bystander session should be closed");
+            wait_for_close(bystander)
+                .await
+                .expect("bystander session should be closed");
         }
+    }
+
+    async fn wait_for_close(
+        recorded: &RecordedControlMessages,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        tokio::time::timeout(WAIT_TIMEOUT, async {
+            while recorded.closes().is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
     }
 
     #[tokio::test]
@@ -914,5 +946,32 @@ mod tests {
 
         // Assert
         assert_eq!(handler.live_worker_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_upstream_fetch_does_not_hold_later_events_of_the_session() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        handler
+            .register_publisher_leaving_fetch_unanswered(1, "ns")
+            .await;
+        let subscriber = handler.register_session(2).await;
+        handler.send(SessionEvent {
+            session_id: 2,
+            kind: EventKind::FromSession(MoqtSessionEvent::Fetch(Box::new(MockFetchHandler {
+                request_id: 0,
+            }))),
+        });
+
+        // Act
+        handler.send(SessionEvent::protocol_violation_detected(
+            2,
+            "event after the fetch".to_string(),
+        ));
+
+        // Assert
+        wait_for_close(&subscriber).await.expect(
+            "the event after the FETCH should be handled while the upstream FETCH is pending",
+        );
     }
 }
