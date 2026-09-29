@@ -1,6 +1,9 @@
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
-    moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
+    moqt::control_plane::control_messages::{
+        message_parameters::MessageParameters,
+        messages::parameters::authorization_token::AuthorizationToken,
+    },
 };
 use bytes::BytesMut;
 
@@ -8,7 +11,6 @@ use bytes::BytesMut;
 pub struct SubscribeNamespace {
     pub request_id: u64,
     pub track_namespace_prefix: Vec<String>,
-    pub number_of_parameters: u64,
     pub authorization_token: Vec<AuthorizationToken>,
 }
 
@@ -18,11 +20,9 @@ impl SubscribeNamespace {
         track_namespace_prefix: Vec<String>,
         authorization_token: Vec<AuthorizationToken>,
     ) -> Self {
-        let number_of_parameters = authorization_token.len() as u64;
         SubscribeNamespace {
             request_id,
             track_namespace_prefix,
-            number_of_parameters,
             authorization_token,
         }
     }
@@ -44,21 +44,14 @@ impl SubscribeNamespace {
             track_namespace_prefix_tuple.push(track_namespace_prefix);
         }
 
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
-
-        let mut authorization_tokens = Vec::new();
-        for _ in 0..number_of_parameters {
-            let authorization_token = AuthorizationToken::decode(buf)?;
-            authorization_tokens.push(authorization_token);
-        }
+        let MessageParameters {
+            authorization_tokens,
+            ..
+        } = MessageParameters::decode(buf)?;
 
         Some(SubscribeNamespace {
             request_id,
             track_namespace_prefix: track_namespace_prefix_tuple,
-            number_of_parameters,
             authorization_token: authorization_tokens,
         })
     }
@@ -72,11 +65,13 @@ impl SubscribeNamespace {
             .for_each(|track_namespace_prefix| {
                 payload.put_string(track_namespace_prefix);
             });
-        payload.put_varint(self.authorization_token.len() as u64);
-        for authorization_token in &self.authorization_token {
-            let token_payload = authorization_token.encode();
-            payload.extend_from_slice(&token_payload);
-        }
+        payload.unsplit(
+            MessageParameters {
+                authorization_tokens: self.authorization_token.clone(),
+                ..Default::default()
+            }
+            .encode(),
+        );
         payload
     }
 }
@@ -84,7 +79,10 @@ impl SubscribeNamespace {
 #[cfg(test)]
 mod tests {
     mod success {
-        use crate::modules::moqt::control_plane::control_messages::messages::subscribe_namespace::SubscribeNamespace;
+        use crate::modules::moqt::control_plane::control_messages::messages::{
+            parameters::authorization_token::AuthorizationToken,
+            subscribe_namespace::SubscribeNamespace,
+        };
         use bytes::BytesMut;
 
         #[test]
@@ -134,6 +132,27 @@ mod tests {
                 SubscribeNamespace::new(request_id, track_namespace_prefix, parameters);
 
             assert_eq!(subscribe_announces, expected_subscribe_announces);
+        }
+
+        #[test]
+        fn authorization_tokens_round_trip_as_parameters() {
+            // Arrange
+            let message = SubscribeNamespace::new(
+                0,
+                vec!["test".to_string()],
+                vec![
+                    AuthorizationToken::use_value_utf8("a"),
+                    AuthorizationToken::use_value_utf8("b"),
+                ],
+            );
+
+            // Act
+            let buf = message.encode();
+            let decoded =
+                SubscribeNamespace::decode(&mut std::io::Cursor::new(buf.as_ref())).unwrap();
+
+            // Assert
+            assert_eq!(decoded, message);
         }
     }
 }
