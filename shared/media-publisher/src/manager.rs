@@ -16,10 +16,11 @@ use mediapack::{
 };
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
-    FetchObjectField, GroupOrder, QUIC, Session, SessionEvent, TrackWriter, TransportProtocol,
-    TransportSendError, TransportStats, WEBTRANSPORT, wire::FetchParams,
+    FetchObjectField, GroupOrder, PublishOption, QUIC, Session, SessionEvent, SubscribeHandler,
+    TrackWriter, TransportProtocol, TransportSendError, TransportStats, WEBTRANSPORT,
+    wire::FetchParams,
 };
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 
 use crate::stream_ledger::{StreamLedger, StreamRecord};
 use crate::{
@@ -34,6 +35,8 @@ pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
 const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
+/// SUBSCRIBE_ERROR code, draft-ietf-moq-transport-14 §13.1.2.
+const SUBSCRIBE_TRACK_DOES_NOT_EXIST: u64 = 0x4;
 /// FETCH_ERROR codes, draft-ietf-moq-transport-14 §9.18.
 const FETCH_NOT_SUPPORTED: u64 = 0x3;
 const FETCH_TRACK_DOES_NOT_EXIST: u64 = 0x4;
@@ -44,6 +47,10 @@ const FETCH_NO_OBJECTS: u64 = 0x6;
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
 const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
+/// Half the relay's default RELAY_CACHE_TTL_SECS: draft-ietf-moq-msf-01 §5
+/// republishes the catalog before it can fall out of a relay cache, so a
+/// viewer arriving long after the last change still finds one.
+const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct MoqtTarget {
@@ -71,6 +78,7 @@ struct BackendState<T: TransportProtocol> {
     subscribed_tracks: HashMap<u64, TrackKey>,
     fetches: HashMap<u64, JoinHandle<()>>,
     catalogs: HashMap<String, CatalogMetadata>,
+    catalog_sent_at: HashMap<String, Instant>,
     disconnected: bool,
 }
 
@@ -82,6 +90,7 @@ impl<T: TransportProtocol> Default for BackendState<T> {
             subscribed_tracks: HashMap::new(),
             fetches: HashMap::new(),
             catalogs: HashMap::new(),
+            catalog_sent_at: HashMap::new(),
             disconnected: false,
         }
     }
@@ -102,21 +111,28 @@ impl<T: TransportProtocol> BackendState<T> {
         })
     }
 
-    fn catalog_writer_ready(&self, namespace_path: &str) -> bool {
-        self.tracks
-            .get(&(namespace_path.to_string(), CATALOG_TRACK_NAME.to_string()))
-            .is_some_and(|track| track.writer.is_some())
+    fn catalog_refresh_due(&self, namespace_path: &str) -> bool {
+        self.catalog_sent_at
+            .get(namespace_path)
+            .is_some_and(|sent_at| sent_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Publication {
+    Unpublished,
+    Published,
+    Released,
+}
+
 /// Objects are numbered and cached from the first one the producer hands over,
-/// so the FETCH cache also covers the time before the first subscriber; the
-/// writer exists only while a subscription does and is taken out of its slot
+/// so the FETCH cache also covers the time before the track is published; the
+/// writer exists only while the publication does and is taken out of its slot
 /// for the duration of a write.
 struct TrackState<T: TransportProtocol> {
     numbering: ObjectNumbering,
     cache: ObjectCache,
-    subscribed: bool,
+    publication: Publication,
     writer: Option<TrackWriter<T>>,
 }
 
@@ -125,18 +141,18 @@ impl<T: TransportProtocol> TrackState<T> {
         Self {
             numbering: ObjectNumbering::new(first_group_id),
             cache,
-            subscribed: false,
+            publication: Publication::Unpublished,
             writer: None,
         }
     }
 
-    fn subscribe(&mut self, writer: TrackWriter<T>) {
-        self.subscribed = true;
+    fn publish(&mut self, writer: TrackWriter<T>) {
+        self.publication = Publication::Published;
         self.writer = Some(writer);
     }
 
-    fn unsubscribe(&mut self) {
-        self.subscribed = false;
+    fn release(&mut self) {
+        self.publication = Publication::Released;
         self.writer = None;
     }
 }
@@ -226,7 +242,6 @@ impl MoqtManager {
         self.ledger.snapshot()
     }
 
-    /// Announce namespace (once) and prepare tracks (video/audio) by waiting for SubscribeOk.
     pub async fn setup_namespace(&self, namespace: &[String]) -> Result<()> {
         let Some(target) = &self.target else {
             return Ok(());
@@ -238,9 +253,9 @@ impl MoqtManager {
             .await
     }
 
-    /// Returns whether a subscriber received the object: the object is
-    /// numbered and cached either way, but none may be subscribed, or the
-    /// writer may still wait for the next group start.
+    /// Returns whether the object was sent to the relay: the object is
+    /// numbered and cached either way, but the track may not be published yet,
+    /// or the writer may still wait for the next group start.
     pub async fn send_object(
         &self,
         namespace: &[String],
@@ -450,51 +465,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         }
                     }
                     SessionEvent::Subscribe(handler) => {
-                        let namespace = handler.track_namespace.clone();
-                        let track_name = handler.track_name.clone();
-                        let supported = {
-                            let guard = state.lock().await;
-                            is_supported_track(&track_name, guard.catalogs.get(&namespace))
-                        };
-                        if !supported {
-                            if let Err(err) = handler
-                                .error(0, format!("unsupported track: {track_name}"))
-                                .await
-                            {
-                                tracing::warn!(%namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
-                            }
-                            continue;
-                        }
-
-                        let track_alias = match handler.ok(1_000_000, ContentExists::False).await {
-                            Ok(track_alias) => track_alias,
-                            Err(err) => {
-                                tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
-                                continue;
-                            }
-                        };
-
-                        let request_id = handler.request_id();
-                        let publication = handler.into_subscription(track_alias);
-                        let should_send_catalog = track_name == CATALOG_TRACK_NAME;
-                        let mut guard = state.lock().await;
-                        guard.catalogs.entry(namespace.clone()).or_default();
-                        let key = (namespace.clone(), track_name.clone());
-                        let track = guard.track_mut(&key);
-                        let writer = TrackWriter::new(
-                            session.publisher().create_stream(&publication),
-                            track.numbering.next_group_id(),
-                        );
-                        track.subscribe(writer);
-                        guard.subscribed_tracks.insert(request_id, key);
-                        drop(guard);
-                        tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
-                        if should_send_catalog
-                            && let Err(err) =
-                                Self::send_catalog_snapshot(&state, &ledger, &namespace).await
-                        {
-                            tracing::warn!(%namespace, ?err, "failed to send initial catalog");
-                        }
+                        Self::serve_subscribe(&session, &state, handler).await;
                     }
                     SessionEvent::Unsubscribe(handler) => {
                         let request_id = handler.subscribe_id();
@@ -502,7 +473,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
                         match guard.subscribed_tracks.remove(&request_id) {
                             Some(key) => {
                                 if let Some(track) = guard.tracks.get_mut(&key) {
-                                    track.unsubscribe();
+                                    track.release();
                                     ledger.finish(&key.1);
                                 }
                                 tracing::info!(request_id, namespace = %key.0, track_name = %key.1, "UNSUBSCRIBE received; track released");
@@ -585,6 +556,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         object: OutgoingObject,
     ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
+        if self.state.lock().await.catalog_refresh_due(&key.0) {
+            self.send_catalog(&key.0).await?;
+        }
         let (placement, writer) = {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
@@ -609,18 +583,64 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let Some(track) = guard.tracks.get_mut(&key) else {
             return result;
         };
-        if let Err(error) = &result
-            && is_stopped_by_peer(error)
-        {
-            tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
-            track.unsubscribe();
-            self.ledger.finish(&key.1);
-            return Ok(false);
-        }
-        if track.subscribed {
+        let replaced_meanwhile = track.writer.is_some();
+        if !replaced_meanwhile && track.publication == Publication::Published {
             track.writer = Some(writer);
         }
-        result
+        match result {
+            Err(error) if is_stopped_by_peer(&error) => {
+                tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped a subgroup; the track resumes at the next group");
+                self.ledger.finish(&key.1);
+                Ok(false)
+            }
+            result => result,
+        }
+    }
+
+    async fn serve_subscribe(
+        session: &Session<T>,
+        state: &Mutex<BackendState<T>>,
+        handler: SubscribeHandler<T>,
+    ) {
+        let namespace = handler.track_namespace.clone();
+        let track_name = handler.track_name.clone();
+        let subscribable = {
+            let guard = state.lock().await;
+            guard
+                .catalogs
+                .get(&namespace)
+                .and_then(|metadata| build_catalog(&namespace, metadata).ok())
+                .is_some_and(|catalog| awaits_subscribe(&catalog, &track_name))
+        };
+        if !subscribable {
+            if let Err(err) = handler
+                .error(
+                    SUBSCRIBE_TRACK_DOES_NOT_EXIST,
+                    format!("{track_name} is not a CMAF track of the catalog"),
+                )
+                .await
+            {
+                tracing::warn!(%namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
+            }
+            return;
+        }
+        let track_alias = match handler.ok(1_000_000, ContentExists::False).await {
+            Ok(track_alias) => track_alias,
+            Err(err) => {
+                tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
+                return;
+            }
+        };
+        let subscription = handler.into_subscription(track_alias);
+        let key = (namespace.clone(), track_name.clone());
+        let mut guard = state.lock().await;
+        let track = guard.track_mut(&key);
+        track.publish(TrackWriter::new(
+            session.publisher().create_stream(&subscription),
+            track.numbering.next_group_id(),
+        ));
+        guard.subscribed_tracks.insert(handler.request_id(), key);
+        tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
     }
 
     async fn serve_fetch(
@@ -720,24 +740,18 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     ) -> Result<()> {
         let namespace_path = namespace.join("/");
 
-        let should_send = {
+        {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
             let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            let changed = metadata.video_tracks.get(track_name) != Some(&info);
-            if changed {
-                metadata.video_tracks.insert(track_name.to_string(), info);
+            if metadata.video_tracks.get(track_name) == Some(&info) {
+                return Ok(());
             }
-            changed && guard.catalog_writer_ready(&namespace_path)
-        };
-
-        if should_send {
-            Self::send_catalog_snapshot(&self.state, &self.ledger, &namespace_path).await?;
+            metadata.video_tracks.insert(track_name.to_string(), info);
         }
-
-        Ok(())
+        self.send_catalog(&namespace_path).await
     }
 
     async fn update_audio_catalog(
@@ -747,33 +761,27 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     ) -> Result<()> {
         let namespace_path = namespace.join("/");
 
-        let should_send = {
+        {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
             let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            let changed = metadata.audio_config.as_ref() != Some(&config);
-            if changed {
-                metadata.audio_config = Some(config);
+            if metadata.audio_config.as_ref() == Some(&config) {
+                return Ok(());
             }
-            changed && guard.catalog_writer_ready(&namespace_path)
-        };
-
-        if should_send {
-            Self::send_catalog_snapshot(&self.state, &self.ledger, &namespace_path).await?;
+            metadata.audio_config = Some(config);
         }
-
-        Ok(())
+        self.send_catalog(&namespace_path).await
     }
 
-    async fn send_catalog_snapshot(
-        state: &Arc<Mutex<BackendState<T>>>,
-        ledger: &StreamLedger,
-        namespace_path: &str,
-    ) -> Result<()> {
-        let key = (namespace_path.to_string(), CATALOG_TRACK_NAME.to_string());
-        let mut guard = state.lock().await;
+    /// Every track the catalog lists but CMAF is published before the catalog
+    /// is sent, so a viewer subscribing to one it read there finds the relay
+    /// already ingesting it instead of forwarding the SUBSCRIBE here. CMAF
+    /// tracks wait for that SUBSCRIBE, so the uplink carries them only while
+    /// someone watches them.
+    async fn send_catalog(&self, namespace_path: &str) -> Result<()> {
+        let mut guard = self.state.lock().await;
         if guard.disconnected {
             bail!("MoQ publisher disconnected");
         }
@@ -782,8 +790,26 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             .get(namespace_path)
             .cloned()
             .unwrap_or_default();
-        let payload = Bytes::from(build_catalog_payload(namespace_path, &metadata)?);
+        let catalog = build_catalog(namespace_path, &metadata)?;
+        let published_tracks = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .filter(|track| !is_cmaf(track))
+            .map(|track| track.name.as_str());
+        for track_name in published_tracks.chain([CATALOG_TRACK_NAME]) {
+            self.publish_track(
+                &mut guard,
+                (namespace_path.to_string(), track_name.to_string()),
+            )
+            .await?;
+        }
+        let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
         tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
+        guard
+            .catalog_sent_at
+            .insert(namespace_path.to_string(), Instant::now());
+        let key = (namespace_path.to_string(), CATALOG_TRACK_NAME.to_string());
         let track = guard.track_mut(&key);
         let placement = track
             .numbering
@@ -803,14 +829,39 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             writer.next_group_id(),
             placement.location.group_id
         );
-        ledger.open(CATALOG_TRACK_NAME, placement.location.group_id);
-        ledger.add_object(CATALOG_TRACK_NAME, payload.len());
-        writer
-            .write_group(payload)
-            .await
-            .context("send catalog group")?;
-        ledger.finish(CATALOG_TRACK_NAME);
+        self.ledger
+            .open(CATALOG_TRACK_NAME, placement.location.group_id);
+        self.ledger.add_object(CATALOG_TRACK_NAME, payload.len());
+        match writer.write_group(payload).await {
+            Err(error) if is_stopped_by_peer(&error) => {
+                tracing::info!(namespace = %namespace_path, "subscriber stopped the catalog group");
+            }
+            result => result.context("send catalog group")?,
+        }
+        self.ledger.finish(CATALOG_TRACK_NAME);
         tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
+        Ok(())
+    }
+
+    async fn publish_track(&self, state: &mut BackendState<T>, key: TrackKey) -> Result<()> {
+        if state.track_mut(&key).publication != Publication::Unpublished {
+            return Ok(());
+        }
+        let subscription = self
+            .session
+            .publisher()
+            .publish(key.0.clone(), key.1.clone(), PublishOption::default())
+            .await
+            .with_context(|| format!("publish {}/{}", key.0, key.1))?;
+        let track = state.track_mut(&key);
+        track.publish(TrackWriter::new(
+            self.session.publisher().create_stream(&subscription),
+            track.numbering.next_group_id(),
+        ));
+        tracing::info!(namespace = %key.0, track_name = %key.1, track_alias = subscription.track_alias(), "track published");
+        state
+            .subscribed_tracks
+            .insert(subscription.request_id(), key);
         Ok(())
     }
 }
@@ -860,18 +911,19 @@ fn in_group_order(mut objects: Vec<CachedObject>, order: GroupOrder) -> Vec<Cach
     objects
 }
 
-fn is_supported_track(track_name: &str, metadata: Option<&CatalogMetadata>) -> bool {
-    let media_track = track_name
-        .strip_suffix(CMAF_TRACK_SUFFIX)
-        .unwrap_or(track_name);
-    matches!(
-        track_name,
-        CATALOG_TRACK_NAME | CHAT_TRACK_NAME | TIMELINE_TRACK_NAME
-    ) || media_track == AUDIO_TRACK_NAME
-        || metadata.is_some_and(|metadata| metadata.video_tracks.contains_key(media_track))
+fn is_cmaf(track: &Track) -> bool {
+    track.packaging == Packaging::Known(KnownPackaging::Cmaf)
 }
 
-fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Vec<u8>> {
+fn awaits_subscribe(catalog: &Catalog, track_name: &str) -> bool {
+    catalog
+        .tracks
+        .iter()
+        .flatten()
+        .any(|track| track.name == track_name && is_cmaf(track))
+}
+
+fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Catalog> {
     let namespace = Some(namespace_path.to_string());
     let video_role = TrackRole::Known(KnownTrackRole::Video);
     let alt_group = (metadata.video_tracks.len() > 1).then_some(1);
@@ -948,7 +1000,7 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
     chat.mime_type = Some("application/json".to_string());
     tracks.push(chat);
 
-    let catalog = Catalog {
+    Ok(Catalog {
         version: Some(1),
         delta_update: None,
         add_tracks: None,
@@ -957,9 +1009,7 @@ fn build_catalog_payload(namespace_path: &str, metadata: &CatalogMetadata) -> Re
         generated_at: Some(now_unix().as_millis() as u64),
         is_complete: Some(true),
         tracks: Some(tracks),
-    };
-
-    serde_json::to_vec(&catalog).context("serialize msf catalog")
+    })
 }
 
 /// draft-ietf-moq-cmsf-01 §3.1 puts the init segment in `initData` and §3.5.2
@@ -1087,16 +1137,33 @@ mod tests {
         assert_eq!(manager.transport_stats(), None);
     }
 
-    #[test]
-    fn accepts_cmaf_siblings_of_media_tracks() {
+    #[tokio::test(start_paused = true)]
+    async fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
         // Arrange
-        let metadata = metadata_with_video_and_audio();
+        let mut state = BackendState::<QUIC>::default();
+        state
+            .catalog_sent_at
+            .insert("live/test".to_string(), Instant::now());
 
         // Act / Assert
-        assert!(is_supported_track("video_cmaf", Some(&metadata)));
-        assert!(is_supported_track("audio_cmaf", Some(&metadata)));
-        assert!(!is_supported_track("chat_cmaf", Some(&metadata)));
-        assert!(!is_supported_track("video_720p_cmaf", Some(&metadata)));
+        tokio::time::advance(CATALOG_REFRESH_INTERVAL - Duration::from_secs(1)).await;
+        assert!(!state.catalog_refresh_due("live/test"));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(state.catalog_refresh_due("live/test"));
+        assert!(!state.catalog_refresh_due("live/other"));
+    }
+
+    #[test]
+    fn only_the_cmaf_tracks_of_the_catalog_await_subscribe() {
+        // Arrange
+        let catalog = build_catalog("live/test", &metadata_with_video_and_audio()).unwrap();
+
+        // Act / Assert
+        assert!(awaits_subscribe(&catalog, "video_cmaf"));
+        assert!(awaits_subscribe(&catalog, "audio_cmaf"));
+        assert!(!awaits_subscribe(&catalog, "video"));
+        assert!(!awaits_subscribe(&catalog, "timeline"));
+        assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
     }
 
     #[test]
@@ -1105,8 +1172,7 @@ mod tests {
         let metadata = metadata_with_video_and_audio();
 
         // Act
-        let payload = build_catalog_payload("live/test", &metadata).unwrap();
-        let catalog: Catalog = serde_json::from_slice(&payload).unwrap();
+        let catalog = build_catalog("live/test", &metadata).unwrap();
 
         // Assert
         let video = track_named(&catalog, "video");
