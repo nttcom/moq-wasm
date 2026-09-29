@@ -31,42 +31,25 @@ pub enum Command {
         speed: f32,
     },
 }
-pub struct Controller {
-    tx: Sender<Command>,
-    err_rx: Receiver<String>,
+pub fn spawn(target: Target) -> Sender<Command> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || run_worker(target, rx));
+    tx
 }
-impl Controller {
-    pub fn new(target: Target) -> Result<Self> {
-        let (tx, rx) = mpsc::channel();
-        let (err_tx, err_rx) = mpsc::channel();
-        thread::spawn(move || run_worker(target, rx, err_tx));
-        Ok(Self { tx, err_rx })
-    }
-
-    pub fn command_sender(&self) -> Sender<Command> {
-        self.tx.clone()
-    }
-    pub fn try_recv_error(&self) -> Option<String> {
-        self.err_rx.try_recv().ok()
-    }
-}
-fn run_worker(target: Target, rx: Receiver<Command>, err_tx: Sender<String>) {
+fn run_worker(target: Target, rx: Receiver<Command>) {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(runtime) => runtime,
-        Err(err) => return send_init_error(&err_tx, format!("tokio runtime init failed: {err}")),
+        Err(err) => return log::warn!("PTZ error: tokio runtime init failed: {err}"),
     };
     let client = match soap_client::build(&target) {
         Ok(client) => client,
-        Err(err) => return send_init_error(&err_tx, err.to_string()),
+        Err(err) => return log::warn!("PTZ error: {err}"),
     };
-    let mut onvif = match runtime.block_on(OnvifClient::initialize(client, target)) {
+    let onvif = match runtime.block_on(OnvifClient::initialize(client, target)) {
         Ok(onvif) => onvif,
-        Err(err) => return send_init_error(&err_tx, format!("ptz init error: {err}")),
+        Err(err) => return log::warn!("PTZ error: ptz init error: {err}"),
     };
-    for message in onvif.take_init_errors() {
-        let _ = err_tx.send(message);
-    }
-    let range = onvif.ptz_state().range;
+    let range = onvif.ptz_range();
     let mut position = Position::new(&range);
     let speed_range = range.speed_range();
     for command in rx {
@@ -156,12 +139,9 @@ fn run_worker(target: Target, rx: Receiver<Command>, err_tx: Sender<String>) {
             }
         };
         if let Err(err) = result {
-            let _ = err_tx.send(err.to_string());
+            log::warn!("PTZ error: {err}");
         }
     }
-}
-fn send_init_error(err_tx: &Sender<String>, message: String) {
-    let _ = err_tx.send(message);
 }
 fn send_ptz_command(
     runtime: &tokio::runtime::Runtime,
