@@ -7,69 +7,84 @@ export type GroupMark = {
   captureMicros: number
 }
 
+type ObservedMark = GroupMark & { observedAtMicros: number }
+
 /// Group ids are seeded from a wall clock by the live-ingest bridge and groups
 /// last as long as the encoder's GOP, so seconds are resolved from the capture
 /// timestamps observed while playing live instead of from group arithmetic.
+/// The relay evicts objects by the time it received them, so a group is kept
+/// for as long as the relay caches it after the viewer first observed it.
 export class GroupTimeline {
-  private readonly marks: GroupMark[] = []
+  private marks: ObservedMark[] = []
   /// A SUBSCRIBE lands in the middle of the group the publisher is writing, and
   /// the relay starts caching a track only once it has a subscriber, so this
   /// group holds no keyframe for a FETCH replay to start from.
   private joinGroupId: bigint | undefined
   private arrivalLagMicros: number | undefined
 
-  constructor(private readonly capacity: number) {}
+  constructor(
+    private readonly retentionMicros: number,
+    private readonly nowMicros: () => number
+  ) {}
 
-  record(groupId: bigint, locHeader: LocHeader | undefined, receivedAtMicros: number): void {
+  record(groupId: bigint, locHeader: LocHeader | undefined): void {
     const captureMicros = readLocHeader(locHeader).captureTimestampMicros
     if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
       return
     }
-    this.arrivalLagMicros = receivedAtMicros - captureMicros
-    this.recordCapture(groupId, captureMicros)
+    const observedAtMicros = this.nowMicros()
+    this.arrivalLagMicros = observedAtMicros - captureMicros
+    this.recordCapture(groupId, captureMicros, observedAtMicros)
   }
 
   /// A group known only by its id, as reported by TRACK_STATUS, is placed at
   /// the capture time of the objects live delivery was bringing in last.
-  recordLiveGroup(groupId: bigint, nowMicros: number): void {
+  recordLiveGroup(groupId: bigint): void {
     if (this.arrivalLagMicros === undefined) {
       return
     }
-    this.recordCapture(groupId, nowMicros - this.arrivalLagMicros)
+    const observedAtMicros = this.nowMicros()
+    this.recordCapture(groupId, observedAtMicros - this.arrivalLagMicros, observedAtMicros)
   }
 
-  recordCapture(groupId: bigint, captureMicros: number): void {
+  recordCapture(groupId: bigint, captureMicros: number, observedAtMicros: number): void {
     this.joinGroupId ??= groupId
     if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
       return
     }
 
-    this.marks.push({ groupId, captureMicros })
+    this.marks.push({ groupId, captureMicros, observedAtMicros })
     this.marks.sort((left, right) => left.captureMicros - right.captureMicros)
-    while (this.marks.length > this.capacity) {
-      this.marks.shift()
-    }
   }
 
   reset(): void {
-    this.marks.length = 0
+    this.marks = []
     this.joinGroupId = undefined
     this.arrivalLagMicros = undefined
   }
 
   get latest(): GroupMark | undefined {
-    return this.marks[this.marks.length - 1]
+    return this.cached().at(-1)
   }
 
   /// The newest group the publisher has finished writing. The live edge group
   /// is still open, and a FETCH that reaches into it leaves the relay cache and
   /// is forwarded to a publisher that does not serve FETCH.
   get newestClosed(): GroupMark | undefined {
-    return this.marks[this.marks.length - 2]
+    return this.cached().at(-2)
+  }
+
+  get oldestClosed(): GroupMark | undefined {
+    const marks = this.cached()
+    return marks.length > 1 ? marks[0] : undefined
+  }
+
+  forgetThrough(groupId: bigint): void {
+    this.marks = this.marks.filter((mark) => mark.groupId > groupId)
   }
 
   get span(): number {
-    const oldest = this.marks[0]
+    const oldest = this.cached()[0]
     const latest = this.latest
     if (!oldest || !latest) {
       return 0
@@ -87,17 +102,23 @@ export class GroupTimeline {
       return undefined
     }
 
-    const closed = this.marks.filter((mark) => mark.groupId !== latest.groupId)
+    const closed = this.cached().filter((mark) => mark.groupId !== latest.groupId)
     return closed.findLast((mark) => mark.captureMicros <= captureMicros) ?? closed[0]
   }
 
   secondsBehindLive(groupId: bigint): number {
     const latest = this.latest
-    const mark = this.marks.find((candidate) => candidate.groupId === groupId)
+    const mark = this.cached().find((candidate) => candidate.groupId === groupId)
     if (!latest || !mark) {
       return 0
     }
     return (latest.captureMicros - mark.captureMicros) / MICROS_PER_SECOND
+  }
+
+  private cached(): ObservedMark[] {
+    const evictedBeforeMicros = this.nowMicros() - this.retentionMicros
+    this.marks = this.marks.filter((mark) => mark.observedAtMicros >= evictedBeforeMicros)
+    return this.marks
   }
 }
 

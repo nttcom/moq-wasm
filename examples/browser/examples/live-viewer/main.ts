@@ -1,4 +1,4 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { MoqtClientWrapper, RequestError, RequestErrorCode } from '@moqt/moqtClient'
 import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET } from '../../utils/relayPresets'
 import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import {
@@ -50,7 +50,9 @@ import {
 
 const AUTH_INFO = 'secret'
 const ANNEX_B_FORMAT = 'annexb'
-const TIMELINE_CAPACITY = 64
+/// The relay's default RELAY_CACHE_TTL_SECS: draft-ietf-moq-transport-14 gives
+/// a subscriber no way to ask which groups the relay still caches.
+const RELAY_CACHE_TTL_MICROS = 60_000_000
 const REWIND_GROUP_COUNT = 4n
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
@@ -63,6 +65,15 @@ const REVIEW_DRAINED_SECONDS = 0.5
 const REVIEW_VIDEO_AHEAD_FRAMES = 30
 const REVIEW_HANDOVER_MICROS = 500_000
 const MICROS_PER_SECOND = 1_000_000
+/// The relay evicts the oldest groups first, so a FETCH failing with one of
+/// these for a range it once cached means the range has aged out.
+const EVICTED_RANGE_CODES: bigint[] = [
+  RequestErrorCode.InternalError,
+  RequestErrorCode.Timeout,
+  RequestErrorCode.InvalidRange,
+  RequestErrorCode.NoObjects,
+  RequestErrorCode.UnknownStatusInRange
+]
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
@@ -89,6 +100,13 @@ type ReviewWindow = {
   frames: ReviewFrame[]
   audio: ReviewFrame[]
 }
+
+type FetchFailure = {
+  code: bigint | undefined
+  description: string
+}
+
+type ReviewWindowFailure = FetchFailure & { start: bigint }
 
 const moqtClient = new MoqtClientWrapper()
 const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
@@ -149,12 +167,12 @@ showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
-const unstampedGroups = new Set<bigint>()
+const unstampedGroupObservedAt = new Map<bigint, number>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
-const timeline = new GroupTimeline(TIMELINE_CAPACITY)
+const timeline = new GroupTimeline(RELAY_CACHE_TTL_MICROS, monotonicUnixMicros)
 const streamMonitor = new StreamMonitor()
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 let watching = false
@@ -499,16 +517,18 @@ async function switchPackaging(): Promise<void> {
 /// caches a track from its first subscriber on, so earlier groups the media
 /// timeline lists cannot be fetched.
 function observeTimelineGroup(groupId: bigint): void {
-  unstampedGroups.add(groupId)
+  if (!unstampedGroupObservedAt.has(groupId)) {
+    unstampedGroupObservedAt.set(groupId, monotonicUnixMicros())
+  }
   stampObservedGroups()
 }
 
 function stampObservedGroups(): void {
-  for (const groupId of unstampedGroups) {
+  for (const [groupId, observedAtMicros] of unstampedGroupObservedAt) {
     const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
     if (encodedAtMs !== undefined) {
-      timeline.recordCapture(groupId, encodedAtMs * 1_000)
-      unstampedGroups.delete(groupId)
+      timeline.recordCapture(groupId, encodedAtMs * 1_000, observedAtMicros)
+      unstampedGroupObservedAt.delete(groupId)
     }
   }
 }
@@ -671,7 +691,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
 
   if (kind === 'video') {
     timeline.reset()
-    unstampedGroups.clear()
+    unstampedGroupObservedAt.clear()
     backToLive()
   } else {
     newestAudioGroupId = undefined
@@ -707,7 +727,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     monitored(subscribeOk.trackAlias, wire.name, (groupId, object) => {
       if (kind === 'video') {
         videoObjectCount += 1
-        timeline.record(groupId, object.locHeader, monotonicUnixMicros())
+        timeline.record(groupId, object.locHeader)
         renderSeekbar()
         if (!reviewing) {
           setStatus('playback-status', `Playing ${trackName}`, 'ok')
@@ -1128,6 +1148,10 @@ function seekToCapture(captureMicros: number): void {
 async function review(startGroup: bigint, generation: number): Promise<void> {
   let pending = await fetchReviewWindow(startGroup, generation)
   while (pending && generation === reviewGeneration) {
+    if (!('frames' in pending)) {
+      recoverFromFailedWindow(pending)
+      return
+    }
     const upcoming = fetchReviewWindow(pending.nextGroup, generation)
     reviewBehindSeconds = timeline.secondsBehindLive(pending.start)
     renderReviewStatus()
@@ -1223,15 +1247,39 @@ function observeLiveVideoGroup(groupId: bigint): void {
   if (packaging === 'cmaf' || (name !== undefined && mediaTimelineDepends.includes(name))) {
     observeTimelineGroup(groupId)
   } else {
-    timeline.recordLiveGroup(groupId, monotonicUnixMicros())
+    timeline.recordLiveGroup(groupId)
   }
   renderSeekbar()
+}
+
+/// A window whose range has aged out of the relay cache resumes from the
+/// oldest group the timeline still holds; any other failure holds the position.
+function recoverFromFailedWindow(failure: ReviewWindowFailure): void {
+  const reason = `fetch from group ${failure.start}: ${failure.description}`
+  if (failure.code === undefined || !EVICTED_RANGE_CODES.includes(failure.code)) {
+    bufferingSpinner.hide()
+    setStatus('rewind-status', `Rewind failed: ${failure.description}`, 'error')
+    appendLog('error', reason)
+    return
+  }
+  timeline.forgetThrough(failure.start)
+  const next = timeline.oldestClosed
+  if (!next) {
+    appendLog('warn', `${reason}; no later group is cached, going live`)
+    backToLive()
+    return
+  }
+  appendLog('warn', `${reason}; resuming from group ${next.groupId}`)
+  seekToCapture(next.captureMicros)
 }
 
 /// The bridge starts the audio groups at the video keyframes with the same
 /// ids, so the audio of a window is the same group range on the audio track
 /// and is fetched alongside the video.
-async function fetchReviewWindow(start: bigint, generation: number): Promise<ReviewWindow | undefined> {
+async function fetchReviewWindow(
+  start: bigint,
+  generation: number
+): Promise<ReviewWindow | ReviewWindowFailure | undefined> {
   const end = await awaitClosedWindowEnd(start, generation)
   const subscription = subscriptions.get('video')
   if (end === undefined || !subscription) {
@@ -1242,16 +1290,22 @@ async function fetchReviewWindow(start: bigint, generation: number): Promise<Rev
     fetchFrames(subscription.name, start, end, generation),
     audioName ? fetchReviewAudio(audioName, start, end, generation) : Promise.resolve([])
   ])
-  if (!frames) {
+  if (!frames || !audio) {
     return undefined
+  }
+  if (isFetchFailure(frames)) {
+    return { start, ...frames }
   }
   if (frames.length === 0) {
-    setStatus('rewind-status', 'Rewind unavailable: no cached objects', 'error')
-    return undefined
+    return { start, code: RequestErrorCode.NoObjects, description: 'no cached objects' }
   }
+  if (isFetchFailure(audio)) {
+    appendLog('error', `fetch ${audioName}: ${audio.description}`)
+  }
+  const audioFrames = isFetchFailure(audio) ? [] : audio
   appendLog('info', `fetched ${frames.length} objects from group ${start}`)
-  reviewFetchWindows.push({ video: frames[0]?.requestId, audio: audio?.[0]?.requestId })
-  return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audio ?? []) }
+  reviewFetchWindows.push({ video: frames[0]?.requestId, audio: audioFrames[0]?.requestId })
+  return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audioFrames) }
 }
 
 /// The audio of a group ends a little after its video: the source interleaves
@@ -1263,7 +1317,7 @@ async function fetchReviewAudio(
   start: bigint,
   end: bigint,
   generation: number
-): Promise<ReviewFrame[] | undefined> {
+): Promise<ReviewFrame[] | FetchFailure | undefined> {
   const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
   while (
     generation === reviewGeneration &&
@@ -1280,7 +1334,7 @@ async function fetchFrames(
   start: bigint,
   end: bigint,
   generation: number
-): Promise<ReviewFrame[] | undefined> {
+): Promise<ReviewFrame[] | FetchFailure | undefined> {
   const frames: ReviewFrame[] = []
   let requestId: bigint | undefined
   let endStream: (end: FetchStreamEnd) => void = () => {}
@@ -1311,11 +1365,10 @@ async function fetchFrames(
         endStream(message.isReset ? { kind: 'reset', code: message.resetErrorCode } : { kind: 'fin' })
     }))
   } catch (error) {
-    if (generation === reviewGeneration) {
-      setStatus('rewind-status', `Rewind failed: ${getErrorMessage(error)}`, 'error')
-      appendLog('error', `fetch ${trackName}: ${getErrorMessage(error)}`)
+    if (generation !== reviewGeneration) {
+      return undefined
     }
-    return undefined
+    return { code: error instanceof RequestError ? error.errorCode : undefined, description: getErrorMessage(error) }
   }
 
   const outcome = await waitForFetchStreamEnd(streamEnd)
@@ -1326,9 +1379,7 @@ async function fetchFrames(
     return undefined
   }
   if (outcome.kind === 'reset') {
-    setStatus('rewind-status', `Rewind failed: fetch stream reset (code ${outcome.code ?? 'unknown'})`, 'error')
-    appendLog('error', `fetch ${trackName}: stream reset (code ${outcome.code ?? 'unknown'})`)
-    return undefined
+    return { code: outcome.code, description: `fetch stream reset (code ${outcome.code ?? 'unknown'})` }
   }
   if (outcome.kind === 'deadline') {
     appendLog(
@@ -1358,6 +1409,10 @@ async function awaitClosedWindowEnd(start: bigint, generation: number): Promise<
     await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
   }
   return undefined
+}
+
+function isFetchFailure(result: ReviewFrame[] | FetchFailure): result is FetchFailure {
+  return !Array.isArray(result)
 }
 
 type FetchStreamEnd = { kind: 'fin' } | { kind: 'reset'; code: bigint | undefined } | { kind: 'deadline' }
