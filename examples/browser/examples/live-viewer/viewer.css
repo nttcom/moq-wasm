@@ -724,3 +724,39 @@
   border-radius: 4px;
   font-size: 11px;
 }
+
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.status-dot::before {
+  content: '';
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot, #9ca3af);
+}
+
+.status-dot[data-state='ok'] {
+  --dot: #16a34a;
+}
+
+.status-dot[data-state='review'] {
+  --dot: #d97706;
+}
+
+.status-dot[data-state='error'] {
+  --dot: #dc2626;
+  color: #b91c1c;
+}
+
+.viewer-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}

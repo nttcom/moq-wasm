@@ -6,7 +6,7 @@ import {
   expectVideoDecoded,
   liveViewerE2EConfig,
   mp4FixtureFileName,
-  parseSeconds,
+  rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
 
@@ -62,7 +62,7 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
     // Act: rewind into the groups the relay has cached from the browser publisher
-    await expect.poll(async () => parseSeconds(viewer.rewindBuffer), { timeout: 30_000 }).toBeGreaterThan(3)
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 
