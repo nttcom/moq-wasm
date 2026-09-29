@@ -367,7 +367,7 @@ async function openMp4(file: File): Promise<Mp4Media> {
       samples,
       video,
       audio: audio && { ...audio, audioSpecificConfig: index.audioSpecificConfig() },
-      firstPresentationMicros: Math.min(...samples.ptsMicros),
+      firstPresentationMicros: samples.ptsMicros.reduce((earliest, pts) => Math.min(earliest, pts), Infinity),
       reorderDelayMicros: index.reorderDelayMicros(),
       durationMicros: index.durationMicros()
     }
