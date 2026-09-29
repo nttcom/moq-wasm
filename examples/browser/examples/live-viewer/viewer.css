@@ -466,6 +466,10 @@
   font-size: 0.82rem;
 }
 
+.viewer-menu label[hidden] {
+  display: none;
+}
+
 .viewer-menu select {
   width: 100%;
 }
