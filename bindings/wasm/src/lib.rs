@@ -92,7 +92,10 @@ impl TrackKey {
 #[derive(Debug, Clone)]
 struct OutgoingSubscribeRequest {
     track_key: TrackKey,
+    subscriber_priority: u8,
+    filter_type: FilterType,
     track_alias: Option<u64>,
+    largest_location: Option<Location>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -182,22 +185,70 @@ impl ClientState {
         self.publish_requests.remove(&request_id);
     }
 
-    fn start_outgoing_subscription(&mut self, request_id: u64, track_key: TrackKey) {
+    fn start_outgoing_subscription(
+        &mut self,
+        request_id: u64,
+        track_key: TrackKey,
+        subscriber_priority: u8,
+        filter_type: FilterType,
+    ) {
         self.outgoing_subscriptions.insert(
             request_id,
             OutgoingSubscribeRequest {
                 track_key,
+                subscriber_priority,
+                filter_type,
                 track_alias: None,
+                largest_location: None,
             },
         );
     }
 
-    fn activate_outgoing_subscription(&mut self, request_id: u64, track_alias: u64) {
-        if let Some(subscription) = self.outgoing_subscriptions.get_mut(&request_id) {
+    fn activate_outgoing_subscription(&mut self, subscribe_ok: &SubscribeOk) {
+        if let Some(subscription) = self
+            .outgoing_subscriptions
+            .get_mut(&subscribe_ok.request_id)
+        {
+            let track_alias = subscribe_ok.track_alias;
             subscription.track_alias = Some(track_alias);
+            subscription.largest_location = match subscribe_ok.content_exists {
+                ContentExists::True { location } => Some(location),
+                ContentExists::False => None,
+            };
             self.alias_to_track_key
                 .insert(track_alias, subscription.track_key.clone());
         }
+    }
+
+    /// draft-14 §9.10: a SUBSCRIBE_UPDATE repeats every field, so the ones
+    /// that are not changed carry the subscription's current values.
+    fn forward_update(
+        &self,
+        request_id: u64,
+        subscription_request_id: u64,
+        forward: bool,
+    ) -> Result<SubscribeUpdate> {
+        let subscription = self
+            .outgoing_subscriptions
+            .get(&subscription_request_id)
+            .filter(|subscription| subscription.track_alias.is_some())
+            .ok_or_else(|| anyhow!("no active subscription: {subscription_request_id}"))?;
+        let end_group = match subscription.filter_type {
+            FilterType::AbsoluteRange { end_group, .. } => end_group + 1,
+            _ => 0,
+        };
+        Ok(SubscribeUpdate {
+            request_id,
+            subscription_request_id,
+            start_location: subscription
+                .filter_type
+                .start_location(subscription.largest_location),
+            end_group,
+            subscriber_priority: subscription.subscriber_priority,
+            forward,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        })
     }
 
     fn remove_outgoing_subscription(&mut self, request_id: u64) -> Option<u64> {
@@ -961,11 +1012,32 @@ impl MOQTClient {
             delivery_timeout,
         }
         .encode();
-        self.state
-            .borrow_mut()
-            .start_outgoing_subscription(request_id, TrackKey::new(track_namespace, track_name));
+        self.state.borrow_mut().start_outgoing_subscription(
+            request_id,
+            TrackKey::new(track_namespace, track_name),
+            subscriber_priority,
+            filter_type,
+        );
         self.control_stream
             .send(ControlMessageType::Subscribe, payload)
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendSubscribeForward)]
+    pub async fn send_subscribe_forward(
+        &self,
+        request_id: u64,
+        subscription_request_id: u64,
+        forward: bool,
+    ) -> Result<(), JsValue> {
+        let payload = self
+            .state
+            .borrow()
+            .forward_update(request_id, subscription_request_id, forward)
+            .map_err(|error| js_error(error.to_string()))?
+            .encode();
+        self.control_stream
+            .send(ControlMessageType::SubscribeUpdate, payload)
             .await
     }
 
@@ -2063,9 +2135,7 @@ impl ControlMessageHandler {
             ControlMessageType::SubscribeOk => {
                 let message = SubscribeOk::decode(&mut cursor)
                     .ok_or_else(|| js_error("failed to decode SUBSCRIBE_OK"))?;
-                state
-                    .borrow_mut()
-                    .activate_outgoing_subscription(message.request_id, message.track_alias);
+                state.borrow_mut().activate_outgoing_subscription(&message);
                 if let Some(callback) = callbacks.borrow().subscribe_response_callback.clone() {
                     let wrapper = SubscribeOkMessage::from(&message);
                     let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));

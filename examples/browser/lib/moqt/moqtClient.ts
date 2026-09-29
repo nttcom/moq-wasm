@@ -520,6 +520,11 @@ export class MoqtClientWrapper {
     }
   }
 
+  async setSubscriptionForward(subscriptionRequestId: bigint, forward: boolean): Promise<void> {
+    const client = this.requireConnectedClient()
+    await client.sendSubscribeForward(this.issueRequestId(), subscriptionRequestId, forward)
+  }
+
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {
     const client = this.requireConnectedClient()
     const aliases = client.getTrackSubscribers(trackNamespace, trackName)
