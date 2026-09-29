@@ -6,6 +6,7 @@ on:
       - ".github/workflows/e2e.yml"
       - ".github/workflows/relay-image.yml"
       - ".github/actions/setup-wasm-pack/**"
+      - ".github/actions/install-playwright-chromium/**"
       - "README.md"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
@@ -50,6 +51,7 @@ on:
       - ".github/workflows/e2e.yml"
       - ".github/workflows/relay-image.yml"
       - ".github/actions/setup-wasm-pack/**"
+      - ".github/actions/install-playwright-chromium/**"
       - "README.md"
       - "scripts/setup-media-e2e.mjs"
       - "scripts/run-media-e2e.mjs"
@@ -143,25 +145,25 @@ jobs:
 
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|README.md|scripts/setup-media-e2e.mjs|scripts/run-media-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   media=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-message-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|scripts/setup-media-e2e.mjs|scripts/run-message-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   message=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-ffmpeg-deps/*|scripts/setup-media-e2e.mjs|scripts/run-live-viewer-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|bindings/wasm/*|bridges/live-ingest/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|scripts/setup-media-e2e.mjs|scripts/run-live-viewer-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|bindings/wasm/*|bridges/live-ingest/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|scripts/setup-media-e2e.mjs|scripts/run-meeting-e2e.mjs|scripts/vts-dev.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|scripts/setup-media-e2e.mjs|scripts/run-meeting-e2e.mjs|scripts/vts-dev.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   meeting=true
                   ;;
               esac
@@ -321,9 +323,8 @@ jobs:
       - name: Prepare media E2E environment
         run: node scripts/setup-media-e2e.mjs
 
-      - name: Install Playwright Linux dependencies
-        working-directory: examples/browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
 
       - name: Run media E2E
         env:
@@ -391,9 +392,8 @@ jobs:
           cargo build -p relay
           cargo build -p moqt-bridge-live-ingest
 
-      - name: Install Playwright Linux dependencies
-        working-directory: examples/browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
 
       - name: Run live viewer E2E
         env:
@@ -450,9 +450,8 @@ jobs:
       - name: Prepare browser E2E environment
         run: node scripts/setup-media-e2e.mjs
 
-      - name: Install Playwright Linux dependencies
-        working-directory: examples/browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
 
       - name: Run message E2E
         env:
@@ -512,9 +511,8 @@ jobs:
       - name: Prepare browser E2E environment
         run: node scripts/setup-media-e2e.mjs
 
-      - name: Install Playwright Linux dependencies
-        working-directory: examples/browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
 
       - name: Download local relay image
         if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
