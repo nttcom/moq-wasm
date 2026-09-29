@@ -52,6 +52,7 @@ const TIMELINE_CAPACITY = 64
 const REWIND_GROUP_COUNT = 4n
 const FETCH_DEADLINE_MS = 8_000
 const CLOSED_GROUP_POLL_MS = 200
+const TRACK_STATUS_POLL_MS = 500
 const AUDIO_GROUP_CLOSE_WAIT_MS = 2_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const CMAF_TRACK_SUFFIX = '_cmaf'
@@ -133,7 +134,7 @@ showPicture(livePictureSink.element)
 /// MSE decodes from the first random access point, so after a MediaSource is
 /// (re)opened live fragments are dropped until one starts a group.
 let cmafAwaitingKeyframe = true
-const unstampedCmafGroups = new Set<bigint>()
+const unstampedGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
 let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
@@ -149,7 +150,10 @@ let reviewBehindSeconds = 0
 let newestAudioGroupId: bigint | undefined
 const mediaTimeline = new MediaTimeline()
 let mediaTimelineTrackName: string | undefined
+let mediaTimelineDepends: string[] = []
 let reviewing = false
+let liveForwardPaused = false
+let liveForwardUpdate = Promise.resolve()
 let reviewGeneration = 0
 let reviewAnchorMicros: number | undefined
 let reviewOriginMicros: number | undefined
@@ -281,6 +285,7 @@ async function stopStream(): Promise<void> {
   decodedFrameIds.clear()
   mediaTimeline.reset()
   mediaTimelineTrackName = undefined
+  mediaTimelineDepends = []
   newestAudioGroupId = undefined
   backToLive()
   closeMse()
@@ -425,6 +430,7 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
   }
 
   mediaTimelineTrackName = track.name
+  mediaTimelineDepends = track.depends ?? []
   await subscribeTextTrack(track.name, (text) => {
     try {
       mediaTimeline.replace(text)
@@ -432,7 +438,7 @@ async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
       appendLog('error', `media timeline: ${getErrorMessage(error)}`)
       return
     }
-    stampObservedCmafGroups()
+    stampObservedGroups()
     renderSeekbar()
   })
 }
@@ -471,21 +477,22 @@ async function switchPackaging(): Promise<void> {
   appendLog('info', `packaging switched to ${packaging}`)
 }
 
-/// CMAF objects carry no LOC header, so a group observed on the CMAF track is
-/// stamped with the encode wallclock the media timeline records for it. Only
-/// observed groups enter the timeline: the relay caches a track from its first
-/// subscriber on, so earlier groups the media timeline lists cannot be fetched.
-function observeCmafGroup(groupId: bigint): void {
-  unstampedCmafGroups.add(groupId)
-  stampObservedCmafGroups()
+/// A group observed on a CMAF track, whose objects carry no LOC header, or
+/// reported by TRACK_STATUS is stamped with the encode wallclock the media
+/// timeline records for it. Only observed groups enter the timeline: the relay
+/// caches a track from its first subscriber on, so earlier groups the media
+/// timeline lists cannot be fetched.
+function observeTimelineGroup(groupId: bigint): void {
+  unstampedGroups.add(groupId)
+  stampObservedGroups()
 }
 
-function stampObservedCmafGroups(): void {
-  for (const groupId of unstampedCmafGroups) {
+function stampObservedGroups(): void {
+  for (const groupId of unstampedGroups) {
     const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
     if (encodedAtMs !== undefined) {
       timeline.recordCapture(groupId, encodedAtMs * 1_000)
-      unstampedCmafGroups.delete(groupId)
+      unstampedGroups.delete(groupId)
     }
   }
 }
@@ -576,7 +583,7 @@ function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, o
   if (kind === 'video') {
     videoObjectCount += 1
     if (object.objectId === 0n) {
-      observeCmafGroup(groupId)
+      observeTimelineGroup(groupId)
       renderSeekbar()
     }
     if (!reviewing) {
@@ -648,7 +655,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
 
   if (kind === 'video') {
     timeline.reset()
-    unstampedCmafGroups.clear()
+    unstampedGroups.clear()
     backToLive()
   } else {
     newestAudioGroupId = undefined
@@ -665,6 +672,9 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     forward: true
   })
   subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name, track })
+  if (liveForwardPaused) {
+    await moqtClient.setSubscriptionForward(requestId, false)
+  }
   if (packaging === 'cmaf') {
     moqtClient.setOnSubgroupObjectHandler(
       subscribeOk.trackAlias,
@@ -681,7 +691,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
     monitored(subscribeOk.trackAlias, wire.name, (groupId, object) => {
       if (kind === 'video') {
         videoObjectCount += 1
-        timeline.record(groupId, object.locHeader)
+        timeline.record(groupId, object.locHeader, monotonicUnixMicros())
         renderSeekbar()
         if (!reviewing) {
           setStatus('playback-status', `Playing ${trackName}`, 'ok')
@@ -821,8 +831,8 @@ function watchPresentedFrames(video: HTMLVideoElement): void {
 }
 
 /// A picture being replaced plays on until its successor has presented a
-/// frame, and the live picture keeps moving behind a review; only the picture
-/// playback is trying to show counts as progress.
+/// frame, and the live picture plays out what it had buffered behind a review;
+/// only the picture playback is trying to show counts as progress.
 function notePresentedFrame(picture: HTMLElement): void {
   if (paused || picture !== wantedPicture()) {
     return
@@ -1043,6 +1053,8 @@ function seekToCapture(captureMicros: number): void {
 
   const generation = ++reviewGeneration
   reviewing = true
+  pauseLiveForward()
+  void followLiveEdge(generation)
   reviewMseOpened = false
   setPaused(false)
   reviewOriginMicros = target.captureMicros
@@ -1072,6 +1084,94 @@ async function review(startGroup: bigint, generation: number): Promise<void> {
         : await playReview(frames, pending.audio, generation)
     pending = played ? await upcoming : undefined
   }
+}
+
+/// Review plays what FETCH brings, so the live subscriptions stop forwarding
+/// for its duration and deliver again, from the next group, on the way back.
+function pauseLiveForward(): void {
+  if (liveForwardPaused) {
+    return
+  }
+  liveForwardPaused = true
+  updateLiveForward(false)
+}
+
+function resumeLiveForward(): void {
+  if (!liveForwardPaused) {
+    return
+  }
+  liveForwardPaused = false
+  mse?.resumeAtNewestRange()
+  updateLiveForward(true)
+}
+
+/// A pause and a resume in quick succession must reach every subscription in
+/// that order, so the updates are chained rather than sent concurrently.
+function updateLiveForward(forward: boolean): void {
+  liveForwardUpdate = liveForwardUpdate.then(() => setLiveForward(forward))
+}
+
+async function setLiveForward(forward: boolean): Promise<void> {
+  if (!moqtClient.getConnectionStatus()) {
+    return
+  }
+  for (const subscription of subscriptions.values()) {
+    try {
+      await moqtClient.setSubscriptionForward(subscription.requestId, forward)
+    } catch (error) {
+      appendLog('error', `forward ${subscription.name}: ${getErrorMessage(error)}`)
+    }
+  }
+  appendLog('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)
+}
+
+/// Without live delivery the timeline would stop at the review's start, so
+/// TRACK_STATUS stands in for it: the groups it reports as the largest are the
+/// ones review may fetch up to next. A relay that cannot answer gets the live
+/// subscriptions forwarding again.
+async function followLiveEdge(generation: number): Promise<void> {
+  while (generation === reviewGeneration && liveForwardPaused) {
+    try {
+      const [videoGroup, audioGroup] = await Promise.all([largestLiveGroup('video'), largestLiveGroup('audio')])
+      if (generation !== reviewGeneration) {
+        return
+      }
+      if (videoGroup !== undefined) {
+        observeLiveVideoGroup(videoGroup)
+      }
+      if (audioGroup !== undefined) {
+        newestAudioGroupId = audioGroup
+      }
+    } catch (error) {
+      appendLog('warn', `track status: ${getErrorMessage(error)}; live subscriptions forward during review`)
+      resumeLiveForward()
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, TRACK_STATUS_POLL_MS))
+  }
+}
+
+async function largestLiveGroup(kind: MediaKind): Promise<bigint | undefined> {
+  const name = subscriptions.get(kind)?.name
+  if (!name) {
+    return undefined
+  }
+  const status = await moqtClient.trackStatus(trackNamespace(), name, '')
+  return status.contentExists ? status.largestGroupId : undefined
+}
+
+/// The media timeline records the groups of the tracks it depends on. A group
+/// of any other rendition is placed from the arrival lag of the last live
+/// object, which runs late by however long the main thread took to handle the
+/// TRACK_STATUS answer.
+function observeLiveVideoGroup(groupId: bigint): void {
+  const name = subscriptions.get('video')?.name
+  if (packaging === 'cmaf' || (name !== undefined && mediaTimelineDepends.includes(name))) {
+    observeTimelineGroup(groupId)
+  } else {
+    timeline.recordLiveGroup(groupId, monotonicUnixMicros())
+  }
+  renderSeekbar()
 }
 
 /// The bridge starts the audio groups at the video keyframes with the same
@@ -1287,10 +1387,10 @@ async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generatio
   return generation === reviewGeneration
 }
 
-/// Fetched fragments are appended to a MediaSource on its own element while the
-/// live one keeps playing hidden, so going back to live only swaps elements.
-/// The next window is fetched once playback has caught up to within a few
-/// seconds of what is buffered.
+/// Fetched fragments are appended to a MediaSource on its own element; the live
+/// one stays open hidden and continues from the newest range it is given once
+/// live delivery resumes. The next window is fetched once playback has caught
+/// up to within a few seconds of what is buffered.
 async function playReviewMse(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
   if (!reviewMseOpened) {
     const source = subscribedCmafSource('video')
@@ -1367,6 +1467,7 @@ function reviewAudioConfig(): AudioDecoderConfig | undefined {
 function backToLive(): void {
   reviewGeneration += 1
   reviewing = false
+  resumeLiveForward()
   reviewFrameIds.clear()
   reviewFetchIds = {}
   streamMonitor.clearPlayhead('fetch')
@@ -1457,9 +1558,8 @@ function playingMedia(): HTMLMediaElement[] {
   return livePictureSink.element instanceof HTMLMediaElement ? [livePictureSink.element] : []
 }
 
-/// Review carries its own sound, so the live audio is silenced rather than
-/// stopped while reviewing: it stays in step and is heard again the moment
-/// playback returns to live.
+/// Review carries its own sound, so whatever live audio is still buffered when
+/// a review starts is silenced, and it is heard again on the way back to live.
 function applyVolume(): void {
   volume = element<HTMLInputElement>('volume').valueAsNumber
   livePlayout.setVolume(reviewing ? 0 : volume)

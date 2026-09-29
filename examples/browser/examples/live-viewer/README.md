@@ -162,6 +162,13 @@ namespace `anon/live/test` を選んで Watch を押します。GStreamer 用コ
   relay のキャッシュを外れて上流へ転送され、publisher 側キャッシュ（60 秒）から返されます。
 - relay のキャッシュ保持は既定 60 秒（`RELAY_CACHE_TTL_SECS`）、publisher 側も 60 秒です。
   それより前へは戻れません。
+- 巻き戻し中は video と audio の SUBSCRIBE を SUBSCRIBE_UPDATE で Forward 0 にし、ライブの object を
+  受け取りません。その間に publisher が開いた group は 500 ms ごとの TRACK_STATUS の Largest Location で
+  知り、次に FETCH する範囲とシークバーの右端を進めます。group の位置は media timeline が記録する encode
+  時刻から取ります。media timeline が対象にしない rendition では、最後に受け取ったライブ object の遅れから
+  推定するので、main thread が忙しいと先へずれます。`LIVE` で Forward 1 に戻すと relay は次に開いた group から配信を再開するので、
+  ライブの絵が動き出すまで最大で 1 GOP ほどかかります。TRACK_STATUS に応えない relay では、巻き戻し中も
+  Forward 1 に戻して従来どおりライブを受け取ります。
 
 ## MP4 の配信
 
@@ -268,9 +275,11 @@ playback appends the fetched fragments to a MediaSource instead of drawing them
 on the canvas. Every MediaSource — live, review, or the replacement opened by a
 packaging or quality change — takes its own video element from a small pool, and
 a new picture is shown only once it has presented a frame while the previous one
-stays on screen until then; the live picture keeps decoding hidden behind a
-review, so `LIVE` swaps back at once. The live audio is silenced while
-reviewing and heard again on `LIVE`.
+stays on screen until then. The live MediaSource stays open hidden behind a
+review but receives nothing while the live subscriptions do not forward, so
+after `LIVE` the fragments of the next group land in a buffered range of their
+own and playback jumps there once it holds a second of video. The live audio
+still buffered when a review starts is silenced and heard again on `LIVE`.
 
 ## Review audio
 
