@@ -22,7 +22,7 @@ const PUBLISHER_PRIORITY = 0
 const MAX_REQUEST_ID = 1_000_000n
 const MILLIS_PER_MICRO = 1 / 1_000
 /// The relay's default cache TTL: an older record names a group that can no longer be fetched.
-const TIMELINE_RETENTION_MS = 30_000
+const TIMELINE_RETENTION_MS = 60_000
 const ATOM_HEADER_LENGTH = 8
 const LARGE_ATOM_HEADER_LENGTH = 16
 const MOOV = 'moov'
