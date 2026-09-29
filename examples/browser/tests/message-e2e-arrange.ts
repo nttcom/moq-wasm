@@ -31,7 +31,13 @@ export interface MessagePageModel {
   publishButton: Locator
   publishMessageNamespaceInput: Locator
   fetchButton: Locator
+  fetchRequestIdInput: Locator
   fetchNamespaceInput: Locator
+  fetchTrackNameInput: Locator
+  fetchStartGroupInput: Locator
+  fetchStartObjectInput: Locator
+  fetchEndGroupInput: Locator
+  fetchEndObjectInput: Locator
   goAwayButton: Locator
   goAwayUriInput: Locator
   maxRequestIdButton: Locator
@@ -50,7 +56,7 @@ export interface MessageE2ESession {
   client: MessagePageModel
 }
 
-function buildPagePath(): string {
+function buildPagePath(moqtUrl: string): string {
   const params = new URLSearchParams({ moqtUrl })
   return `${MESSAGE_INDEX_PATH}?${params.toString()}`
 }
@@ -78,7 +84,13 @@ function createMessagePageModel(page: Page): MessagePageModel {
     publishButton: page.locator('#sendPublishBtn'),
     publishMessageNamespaceInput: page.locator('#publish-track-namespace-2'),
     fetchButton: page.locator('#sendFetchBtn'),
+    fetchRequestIdInput: page.locator('#fetch-request-id'),
     fetchNamespaceInput: page.locator('#fetch-track-namespace'),
+    fetchTrackNameInput: page.locator('#fetch-track-name'),
+    fetchStartGroupInput: page.locator('#fetch-start-group'),
+    fetchStartObjectInput: page.locator('#fetch-start-object'),
+    fetchEndGroupInput: page.locator('#fetch-end-group'),
+    fetchEndObjectInput: page.locator('#fetch-end-object'),
     goAwayButton: page.locator('#sendGoAwayBtn'),
     goAwayUriInput: page.locator('#goaway-new-session-uri'),
     maxRequestIdButton: page.locator('#sendMaxRequestIdBtn'),
@@ -95,8 +107,11 @@ function createMessagePageModel(page: Page): MessagePageModel {
 
 export async function arrangeMessageE2ESession(browser: Browser): Promise<MessageE2ESession> {
   const context = await browser.newContext()
-  const page = await context.newPage()
-  await page.goto(buildPagePath(), { waitUntil: 'domcontentloaded' })
+  return { context, client: await openMessagePage(context, moqtUrl) }
+}
 
-  return { context, client: createMessagePageModel(page) }
+export async function openMessagePage(context: BrowserContext, relayUrl: string): Promise<MessagePageModel> {
+  const page = await context.newPage()
+  await page.goto(buildPagePath(relayUrl), { waitUntil: 'domcontentloaded' })
+  return createMessagePageModel(page)
 }

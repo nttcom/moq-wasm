@@ -1,4 +1,5 @@
 import init, {
+  FetchMessage,
   FetchObjectMessage,
   FetchOkMessage,
   FetchStreamEndMessage,
@@ -57,6 +58,8 @@ export interface SubscribeNamespaceOptions {
 export const GroupOrder = { Publisher: 0, Ascending: 1, Descending: 2 } as const
 export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
 
+export const RequestErrorCode = { NotSupported: 0x3n, TrackDoesNotExist: 0x4n, NoObjects: 0x6n } as const
+
 export interface SubscribeOptions {
   /**
    * Override the request id. When omitted, a session-unique id is issued
@@ -110,20 +113,40 @@ export interface IncomingSubscribeContext {
   subscribe: SubscribeMessage
   isSuccess: boolean
   code: number
-  respondOk(
-    expires?: bigint,
-    contentExists?: boolean,
-    largestGroupId?: bigint,
-    largestObjectId?: bigint,
-    deliveryTimeout?: bigint,
-    maxDuration?: bigint
-  ): Promise<bigint>
+  respondOk(expires?: bigint, deliveryTimeout?: bigint, maxDuration?: bigint): Promise<bigint>
   respondError(code: bigint, reasonPhrase: string): Promise<void>
+}
+
+export interface IncomingTrackStatusContext {
+  trackStatus: SubscribeMessage
+  respondOk(): Promise<void>
+  respondError(code: bigint, reasonPhrase: string): Promise<void>
+}
+
+export interface FetchObjectToSend {
+  groupId: bigint
+  subgroupId: bigint
+  objectId: bigint
+  publisherPriority: number
+  objectStatus?: number
+  payload: Uint8Array
+  locHeader?: unknown
+}
+
+export interface IncomingFetchContext {
+  fetch: FetchMessage
+  cancelSignal: AbortSignal
+  respondOk(): Promise<void>
+  respondError(code: bigint, reasonPhrase: string): Promise<void>
+  sendObject(object: FetchObjectToSend): Promise<void>
+  finish(): Promise<void>
 }
 
 type IncomingPublishNamespaceHandler = (ctx: IncomingPublishNamespaceContext) => Promise<void> | void
 type IncomingPublishNamespaceDoneHandler = (message: PublishNamespaceDoneMessage) => void
 type IncomingSubscribeHandler = (ctx: IncomingSubscribeContext) => Promise<void> | void
+type IncomingTrackStatusHandler = (ctx: IncomingTrackStatusContext) => Promise<void> | void
+type IncomingFetchHandler = (ctx: IncomingFetchContext) => Promise<void> | void
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
@@ -138,6 +161,9 @@ export class MoqtClientWrapper {
   private onConnectionClosedHandler: ConnectionClosedHandler = null
   private incomingSubscribeHandler: IncomingSubscribeHandler | null = null
   private incomingUnsubscribeHandler: IncomingUnsubscribeHandler = null
+  private incomingTrackStatusHandler: IncomingTrackStatusHandler | null = null
+  private incomingFetchHandler: IncomingFetchHandler | null = null
+  private readonly incomingFetchCancellations = new Map<bigint, AbortController>()
   private onServerSetupHandler: ((setup: ServerSetupMessage) => void) | null = null
   private onObjectDatagramHandler: ObjectDatagramHandler = null
   private onObjectDatagramStatusHandler: ObjectDatagramStatusHandler = null
@@ -271,6 +297,14 @@ export class MoqtClientWrapper {
 
   setOnIncomingUnsubscribeHandler(handler: IncomingUnsubscribeHandler | null): void {
     this.incomingUnsubscribeHandler = handler
+  }
+
+  setOnIncomingTrackStatusHandler(handler: IncomingTrackStatusHandler | null): void {
+    this.incomingTrackStatusHandler = handler
+  }
+
+  setOnIncomingFetchHandler(handler: IncomingFetchHandler | null): void {
+    this.incomingFetchHandler = handler
   }
 
   setOnObjectDatagramHandler(handler: ObjectDatagramHandler): void {
@@ -558,23 +592,8 @@ export class MoqtClientWrapper {
         subscribe,
         isSuccess,
         code,
-        respondOk: async (
-          expires = 0n,
-          contentExists = false,
-          largestGroupId,
-          largestObjectId,
-          deliveryTimeout,
-          maxDuration
-        ) =>
-          this.requireConnectedClient().sendSubscribeOk(
-            subscribe.requestId,
-            expires,
-            contentExists,
-            largestGroupId,
-            largestObjectId,
-            deliveryTimeout,
-            maxDuration
-          ),
+        respondOk: async (expires = 0n, deliveryTimeout, maxDuration) =>
+          this.requireConnectedClient().sendSubscribeOk(subscribe.requestId, expires, deliveryTimeout, maxDuration),
         respondError: (errorCode, reasonPhrase) =>
           this.requireConnectedClient().sendSubscribeError(subscribe.requestId, errorCode, reasonPhrase)
       })
@@ -626,6 +645,15 @@ export class MoqtClientWrapper {
       }
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
     })
+    this.client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
+      const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
+      await handler({
+        trackStatus,
+        respondOk: () => this.requireConnectedClient().sendTrackStatusOk(trackStatus.requestId),
+        respondError: (errorCode, reasonPhrase) =>
+          this.requireConnectedClient().sendTrackStatusError(trackStatus.requestId, errorCode, reasonPhrase)
+      })
+    })
     this.client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
       this.onTrackStatusResponseHandler?.(response)
       const pending = this.pendingTrackStatus.get(response.requestId)
@@ -638,6 +666,38 @@ export class MoqtClientWrapper {
       } else {
         pending.resolve(response)
       }
+    })
+    this.client.onFetch(async (fetch: FetchMessage) => {
+      const handler = this.incomingFetchHandler ?? defaultIncomingFetchHandler
+      const requestId = fetch.requestId
+      const cancellation = new AbortController()
+      this.incomingFetchCancellations.set(requestId, cancellation)
+      try {
+        await handler({
+          fetch,
+          cancelSignal: cancellation.signal,
+          respondOk: () => this.requireConnectedClient().sendFetchOk(requestId),
+          respondError: (errorCode, reasonPhrase) =>
+            this.requireConnectedClient().sendFetchError(requestId, errorCode, reasonPhrase),
+          sendObject: (object) =>
+            this.requireConnectedClient().sendFetchObject(
+              requestId,
+              object.groupId,
+              object.subgroupId,
+              object.objectId,
+              object.publisherPriority,
+              object.objectStatus,
+              object.payload,
+              object.locHeader
+            ),
+          finish: () => this.requireConnectedClient().finishFetch(requestId)
+        })
+      } finally {
+        this.incomingFetchCancellations.delete(requestId)
+      }
+    })
+    this.client.onFetchCancel((requestId: bigint) => {
+      this.incomingFetchCancellations.get(requestId)?.abort()
     })
     this.client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
       const pending = this.pendingFetch.get(response.requestId)
@@ -721,6 +781,12 @@ export class MoqtClientWrapper {
     this.onConnectionClosedHandler = null
     this.incomingSubscribeHandler = null
     this.incomingUnsubscribeHandler = null
+    this.incomingTrackStatusHandler = null
+    this.incomingFetchHandler = null
+    for (const cancellation of this.incomingFetchCancellations.values()) {
+      cancellation.abort()
+    }
+    this.incomingFetchCancellations.clear()
     this.onServerSetupHandler = null
     this.onObjectDatagramHandler = null
     this.onObjectDatagramStatusHandler = null
@@ -748,6 +814,14 @@ const defaultIncomingPublishNamespaceHandler: IncomingPublishNamespaceHandler = 
 
 const defaultIncomingSubscribeHandler: IncomingSubscribeHandler = async ({ code, respondError }) => {
   await respondError(BigInt(code || 500), 'subscribe rejected')
+}
+
+const defaultIncomingTrackStatusHandler: IncomingTrackStatusHandler = async ({ respondError }) => {
+  await respondError(RequestErrorCode.NotSupported, 'track status not supported')
+}
+
+const defaultIncomingFetchHandler: IncomingFetchHandler = async ({ respondError }) => {
+  await respondError(RequestErrorCode.NotSupported, 'fetch not supported')
 }
 
 function describeConnectionClose(info: ConnectionCloseInfo): string {

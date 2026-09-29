@@ -10,6 +10,7 @@ import {
   rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
+import { openMessagePage } from './message-e2e-arrange'
 
 const resolution = `${MP4_FIXTURE.width}x${MP4_FIXTURE.height}`
 /// Well under the 10 s the relay waits for a FETCH response the browser publisher never sends.
@@ -19,6 +20,10 @@ const FIRST_VIDEO_TIMEOUT_MS = 5_000
 const AUDIO_AHEAD_SAMPLES = 20
 const AUDIO_AHEAD_SAMPLE_INTERVAL_MS = 100
 const AUDIO_CELLS_AHEAD_LIMIT = 30
+const LARGEST_VARINT = '4611686018427387903'
+/// The MP3 test closes its page without stopping the publish, so the relay keeps that publisher's
+/// upstream subscriptions on the shared namespace until the QUIC idle timeout.
+const FETCH_NAMESPACE = `${liveViewerE2EConfig.mp4Namespace}-fetch`
 
 test('live viewer publishes an uploaded MP4 from the browser and plays it back', async ({ browser }) => {
   // Arrange
@@ -129,6 +134,43 @@ test('live viewer publishes the MP3 audio of an uploaded MP4 as it is', async ({
     await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio')
     await expectVideoDecoded(viewer.video)
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
+  } finally {
+    await context.close()
+  }
+})
+
+test('a FETCH reaching before the relay cache is answered by the browser MP4 publisher', async ({ browser }) => {
+  // Arrange
+  const fixturePath = ensureMp4Fixture('aac')
+  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, FETCH_NAMESPACE)
+
+  try {
+    await viewer.mp4FileInput.setInputFiles(fixturePath)
+    await viewer.publishButton.click()
+    await expect(viewer.publishStatus).toContainText('Publishing')
+    await viewer.watchButton.click()
+    await expect(viewer.playbackStatus).toContainText('Playing video')
+    const fetcher = await openMessagePage(context, liveViewerE2EConfig.moqtUrl)
+    await fetcher.connectButton.click()
+    await expect(fetcher.logPanel).toContainText('[moqt][wt] connected')
+    await fetcher.setupButton.click()
+    await expect(fetcher.sendStatus).toHaveText('Sent CLIENT_SETUP')
+    await fetcher.fetchRequestIdInput.fill('0')
+    await fetcher.fetchNamespaceInput.fill(FETCH_NAMESPACE)
+    await fetcher.fetchTrackNameInput.fill('video')
+    await fetcher.fetchStartGroupInput.fill('0')
+    await fetcher.fetchStartObjectInput.fill('0')
+    await fetcher.fetchEndGroupInput.fill(LARGEST_VARINT)
+    await fetcher.fetchEndObjectInput.fill('0')
+
+    // Act
+    await fetcher.fetchButton.click()
+
+    // Assert: the relay has cached the track only since the viewer subscribed, so it forwards the FETCH upstream
+    await expect(fetcher.sendStatus).toHaveText('Sent FETCH')
+    await expect(viewer.logPanel).toContainText(/answered FETCH video 0:0-\d+:\d+/)
+    // Assert: the replayed groups match what the relay cached from the subscription
+    await expect(viewer.logPanel).not.toContainText(/malformed/i)
   } finally {
     await context.close()
   }

@@ -7,6 +7,8 @@ use moqt::wire::{
     SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
 };
 pub use subgroup_state::SubgroupState;
+
+use crate::incoming_fetch::IncomingFetchRequest;
 use wasm_bindgen::prelude::*;
 
 fn filter_fields(filter_type: FilterType) -> (u8, Option<u64>, Option<u64>, Option<u64>) {
@@ -788,6 +790,45 @@ impl SubgroupObjectMessage {
             object_payload_length: object_payload.len() as u32,
             object_payload,
             loc_header,
+        }
+    }
+}
+
+/// The range is already resolved against the Largest Location this client
+/// has sent: the end is the End Location its FETCH_OK carries (draft-14
+/// §9.17), i.e. the Location after the last Object to send, where Object 0
+/// covers the whole Group.
+#[wasm_bindgen(getter_with_clone)]
+pub struct FetchMessage {
+    #[wasm_bindgen(js_name = requestId)]
+    pub request_id: u64,
+    #[wasm_bindgen(js_name = trackNamespace)]
+    pub track_namespace: Vec<String>,
+    #[wasm_bindgen(js_name = trackName)]
+    pub track_name: String,
+    #[wasm_bindgen(js_name = groupOrder)]
+    pub group_order: u8,
+    #[wasm_bindgen(js_name = startGroupId)]
+    pub start_group_id: u64,
+    #[wasm_bindgen(js_name = startObjectId)]
+    pub start_object_id: u64,
+    #[wasm_bindgen(js_name = endGroupId)]
+    pub end_group_id: u64,
+    #[wasm_bindgen(js_name = endObjectId)]
+    pub end_object_id: u64,
+}
+
+impl FetchMessage {
+    pub(crate) fn new(request_id: u64, request: &IncomingFetchRequest) -> Self {
+        Self {
+            request_id,
+            track_namespace: request.track_key.namespace.clone(),
+            track_name: request.track_key.name.clone(),
+            group_order: request.group_order as u8,
+            start_group_id: request.range.start.group_id,
+            start_object_id: request.range.start.object_id,
+            end_group_id: request.range.end.group_id,
+            end_object_id: request.range.end.object_id,
         }
     }
 }
