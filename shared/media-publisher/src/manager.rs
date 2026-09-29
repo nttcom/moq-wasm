@@ -583,19 +583,18 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         let Some(track) = guard.tracks.get_mut(&key) else {
             return result;
         };
-        let stopped = matches!(&result, Err(error) if is_stopped_by_peer(error));
         let replaced_meanwhile = track.writer.is_some();
-        if stopped && !replaced_meanwhile {
-            tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped the track");
-            track.release();
-            self.ledger.finish(&key.1);
-        } else if !replaced_meanwhile && track.publication == Publication::Published {
+        if !replaced_meanwhile && track.publication == Publication::Published {
             track.writer = Some(writer);
         }
-        if stopped {
-            return Ok(false);
+        match result {
+            Err(error) if is_stopped_by_peer(&error) => {
+                tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped a subgroup; the track resumes at the next group");
+                self.ledger.finish(&key.1);
+                Ok(false)
+            }
+            result => result,
         }
-        result
     }
 
     async fn serve_subscribe(
@@ -833,10 +832,12 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         self.ledger
             .open(CATALOG_TRACK_NAME, placement.location.group_id);
         self.ledger.add_object(CATALOG_TRACK_NAME, payload.len());
-        writer
-            .write_group(payload)
-            .await
-            .context("send catalog group")?;
+        match writer.write_group(payload).await {
+            Err(error) if is_stopped_by_peer(&error) => {
+                tracing::info!(namespace = %namespace_path, "subscriber stopped the catalog group");
+            }
+            result => result.context("send catalog group")?,
+        }
         self.ledger.finish(CATALOG_TRACK_NAME);
         tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
         Ok(())
