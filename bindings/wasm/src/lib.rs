@@ -1,6 +1,8 @@
 mod utils;
 
 #[cfg(web_sys_unstable_apis)]
+mod incoming_fetch;
+#[cfg(web_sys_unstable_apis)]
 mod loc;
 mod media_streaming_format;
 #[cfg(web_sys_unstable_apis)]
@@ -9,6 +11,8 @@ mod mp4;
 #[cfg(web_sys_unstable_apis)]
 mod request_rejection;
 
+#[cfg(web_sys_unstable_apis)]
+use incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest};
 pub use media_streaming_format::*;
 #[cfg(web_sys_unstable_apis)]
 pub use messages::*;
@@ -24,9 +28,9 @@ use mediapack::loc::from_extension_headers;
 #[cfg(web_sys_unstable_apis)]
 use moqt::wire::{
     AuthorizationToken, BufGetExt, BufPutExt, ClientSetup, ContentExists, ControlMessageType,
-    DatagramField, Fetch, FetchCancel, FetchHeader, FetchObjectField, FetchOk, FetchParams,
-    FilterType, GoAway, GroupOrder, Location, MaxRequestId, NamespaceOk, ObjectDatagram,
-    ObjectDatagramPayload, ObjectStatus, Publish, PublishDone, PublishNamespace,
+    DatagramField, Fetch, FetchCancel, FetchHeader, FetchObject, FetchObjectField, FetchOk,
+    FetchParams, FilterType, GoAway, GroupOrder, Location, MaxRequestId, NamespaceOk,
+    ObjectDatagram, ObjectDatagramPayload, ObjectStatus, Publish, PublishDone, PublishNamespace,
     PublishNamespaceCancel, PublishNamespaceDone, PublishOk, RequestError, RequestsBlocked,
     ServerSetup, SetupParameter, SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField,
     Subscribe, SubscribeNamespace, SubscribeOk, SubscribeUpdate, TrackStatus, TrackStatusError,
@@ -97,6 +101,7 @@ struct IncomingSubscribeRequest {
     track_key: TrackKey,
     group_order: GroupOrder,
     track_alias: Option<u64>,
+    largest_location: Option<Location>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -123,6 +128,7 @@ struct ClientState {
     next_track_alias: u64,
     largest_published_locations: HashMap<TrackKey, Location>,
     incoming_track_statuses: HashMap<u64, IncomingTrackStatusRequest>,
+    incoming_fetches: HashMap<u64, IncomingFetchRequest>,
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -229,6 +235,7 @@ impl ClientState {
                 ),
                 group_order: message.group_order,
                 track_alias: None,
+                largest_location: None,
             },
         );
     }
@@ -239,7 +246,11 @@ impl ClientState {
         track_alias
     }
 
-    fn activate_incoming_subscribe(&mut self, request_id: u64) -> Result<u64> {
+    fn activate_incoming_subscribe(
+        &mut self,
+        request_id: u64,
+        content_exists: ContentExists,
+    ) -> Result<u64> {
         let new_track_alias = self.allocate_track_alias();
         let (track_alias, track_key) = {
             let entry = self
@@ -248,6 +259,10 @@ impl ClientState {
                 .ok_or_else(|| anyhow!("unknown subscribe request: {request_id}"))?;
             let track_alias = entry.track_alias.unwrap_or(new_track_alias);
             entry.track_alias = Some(track_alias);
+            entry.largest_location = match content_exists {
+                ContentExists::True { location } => Some(location),
+                ContentExists::False => None,
+            };
             (track_alias, entry.track_key.clone())
         };
 
@@ -359,6 +374,100 @@ impl ClientState {
             .ok_or_else(|| anyhow!("unknown track status request: {request_id}"))
     }
 
+    fn accept_incoming_fetch(
+        &mut self,
+        fetch: &Fetch,
+    ) -> Result<IncomingFetchRequest, RequestRejection> {
+        let target = self.fetch_target(&fetch.fetch_params)?;
+        if !self.contains_published_namespace(&target.track_key.namespace) {
+            return Err(RequestRejection::TrackDoesNotExist);
+        }
+        let range = FetchRange::resolve(
+            target.start,
+            target.requested_end,
+            self.largest_published_locations
+                .get(&target.track_key)
+                .copied(),
+        )?;
+        let request = IncomingFetchRequest {
+            track_key: target.track_key,
+            group_order: fetch.group_order.delivered(),
+            range,
+        };
+        self.incoming_fetches
+            .insert(fetch.request_id, request.clone());
+        Ok(request)
+    }
+
+    fn fetch_target(&self, fetch_params: &FetchParams) -> Result<FetchTarget, RequestRejection> {
+        match fetch_params {
+            FetchParams::Standalone {
+                track_namespace,
+                track_name,
+                start_location,
+                end_location,
+            } => Ok(FetchTarget {
+                track_key: TrackKey::new(track_namespace.clone(), track_name.clone()),
+                start: *start_location,
+                requested_end: *end_location,
+            }),
+            FetchParams::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            } => self.joining_fetch_target(*joining_request_id, |largest| {
+                largest.group_id.saturating_sub(*joining_start)
+            }),
+            FetchParams::AbsoluteJoining {
+                joining_request_id,
+                joining_start,
+            } => self.joining_fetch_target(*joining_request_id, |_| *joining_start),
+        }
+    }
+
+    fn joining_fetch_target(
+        &self,
+        joining_request_id: u64,
+        start_group: impl FnOnce(Location) -> u64,
+    ) -> Result<FetchTarget, RequestRejection> {
+        let subscription = self
+            .incoming_subscriptions
+            .get(&joining_request_id)
+            .filter(|subscription| subscription.track_alias.is_some())
+            .ok_or(RequestRejection::InvalidJoiningRequestId)?;
+        let largest = subscription
+            .largest_location
+            .ok_or(RequestRejection::InvalidRange)?;
+        Ok(FetchTarget::joining(
+            subscription.track_key.clone(),
+            largest,
+            start_group(largest),
+        ))
+    }
+
+    fn answer_incoming_fetch(&self, request_id: u64) -> Result<FetchOk> {
+        let request = self
+            .incoming_fetches
+            .get(&request_id)
+            .ok_or_else(|| anyhow!("unknown fetch request: {request_id}"))?;
+        Ok(FetchOk {
+            request_id,
+            group_order: request.group_order,
+            end_of_track: false,
+            end_location: request.range.end,
+            max_cache_duration: None,
+        })
+    }
+
+    fn contains_incoming_fetch(&self, request_id: u64) -> bool {
+        self.incoming_fetches.contains_key(&request_id)
+    }
+
+    fn remove_incoming_fetch(&mut self, request_id: u64) -> Result<IncomingFetchRequest> {
+        self.incoming_fetches
+            .remove(&request_id)
+            .ok_or_else(|| anyhow!("unknown fetch request: {request_id}"))
+    }
+
     fn subgroup_state_entry(&mut self, track_alias: u64) -> &mut SubgroupState {
         self.subgroup_states
             .entry(track_alias)
@@ -437,6 +546,38 @@ struct ControlMessageHandler {
     callbacks: Rc<RefCell<MOQTCallbacks>>,
     state: Rc<RefCell<ClientState>>,
     control_stream: ControlStreamSender,
+    fetch_stream_writers: FetchStreamWriters,
+}
+
+#[cfg(web_sys_unstable_apis)]
+#[derive(Clone, Default)]
+struct FetchStreamWriters {
+    writers: Rc<RefCell<HashMap<u64, WritableStreamDefaultWriter>>>,
+}
+
+#[cfg(web_sys_unstable_apis)]
+impl FetchStreamWriters {
+    fn get(&self, request_id: u64) -> Option<WritableStreamDefaultWriter> {
+        self.writers.borrow().get(&request_id).cloned()
+    }
+
+    fn insert(&self, request_id: u64, writer: WritableStreamDefaultWriter) {
+        self.writers.borrow_mut().insert(request_id, writer);
+    }
+
+    fn take(&self, request_id: u64) -> Option<WritableStreamDefaultWriter> {
+        self.writers.borrow_mut().remove(&request_id)
+    }
+
+    async fn reset(&self, request_id: u64) {
+        if let Some(writer) = self.take(request_id) {
+            let _ = JsFuture::from(writer.abort()).await;
+        }
+    }
+
+    fn clear(&self) {
+        self.writers.borrow_mut().clear();
+    }
 }
 
 #[cfg(web_sys_unstable_apis)]
@@ -449,6 +590,7 @@ pub struct MOQTClient {
     datagram_writer: Rc<RefCell<Option<WritableStreamDefaultWriter>>>,
     stream_writers: Rc<RefCell<HashMap<WriterKey, WritableStreamDefaultWriter>>>,
     stream_object_numbers: Rc<RefCell<HashMap<WriterKey, u64>>>,
+    fetch_stream_writers: FetchStreamWriters,
     callbacks: Rc<RefCell<MOQTCallbacks>>,
 }
 
@@ -465,6 +607,7 @@ impl MOQTClient {
             datagram_writer: Rc::new(RefCell::new(None)),
             stream_writers: Rc::new(RefCell::new(HashMap::new())),
             stream_object_numbers: Rc::new(RefCell::new(HashMap::new())),
+            fetch_stream_writers: FetchStreamWriters::default(),
             callbacks: Rc::new(RefCell::new(MOQTCallbacks::default())),
         }
     }
@@ -545,6 +688,16 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = onSubgroupObject)]
     pub fn set_subgroup_object_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().subgroup_object_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onFetch)]
+    pub fn set_fetch_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().fetch_callback = Some(callback);
+    }
+
+    #[wasm_bindgen(js_name = onFetchCancel)]
+    pub fn set_fetch_cancel_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().fetch_cancel_callback = Some(callback);
     }
 
     #[wasm_bindgen(js_name = onFetchResponse)]
@@ -930,6 +1083,8 @@ impl MOQTClient {
         delivery_timeout: Option<u64>,
         max_duration: Option<u64>,
     ) -> Result<u64, JsValue> {
+        let content_exists =
+            content_exists_from_fields(content_exists, largest_group_id, largest_object_id);
         let (track_alias, group_order) = {
             let mut state = self.state.borrow_mut();
             let group_order = state
@@ -937,7 +1092,7 @@ impl MOQTClient {
                 .map_err(|error| js_error(error.to_string()))?
                 .delivered();
             let track_alias = state
-                .activate_incoming_subscribe(request_id)
+                .activate_incoming_subscribe(request_id, content_exists)
                 .map_err(|error| js_error(error.to_string()))?;
             (track_alias, group_order)
         };
@@ -947,11 +1102,7 @@ impl MOQTClient {
             track_alias,
             expires,
             group_order,
-            content_exists: content_exists_from_fields(
-                content_exists,
-                largest_group_id,
-                largest_object_id,
-            ),
+            content_exists,
             delivery_timeout,
             max_duration,
         }
@@ -1176,6 +1327,89 @@ impl MOQTClient {
             .await
     }
 
+    #[wasm_bindgen(js_name = sendFetchOk)]
+    pub async fn send_fetch_ok(&self, request_id: u64) -> Result<(), JsValue> {
+        let fetch_ok = self
+            .state
+            .borrow()
+            .answer_incoming_fetch(request_id)
+            .map_err(|error| js_error(error.to_string()))?;
+        self.control_stream
+            .send(ControlMessageType::FetchOk, fetch_ok.encode())
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendFetchError)]
+    pub async fn send_fetch_error(
+        &self,
+        request_id: u64,
+        error_code: u64,
+        reason_phrase: String,
+    ) -> Result<(), JsValue> {
+        self.state
+            .borrow_mut()
+            .remove_incoming_fetch(request_id)
+            .map_err(|error| js_error(error.to_string()))?;
+        self.fetch_stream_writers.reset(request_id).await;
+        self.control_stream
+            .send_request_error(
+                ControlMessageType::FetchError,
+                request_id,
+                error_code,
+                reason_phrase,
+            )
+            .await
+    }
+
+    #[wasm_bindgen(js_name = sendFetchObject)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_fetch_object(
+        &self,
+        request_id: u64,
+        group_id: u64,
+        subgroup_id: u64,
+        object_id: u64,
+        publisher_priority: u8,
+        object_status: Option<u8>,
+        object_payload: Vec<u8>,
+        loc_header: JsValue,
+    ) -> Result<(), JsValue> {
+        let fetch_object = match object_status {
+            Some(status) => FetchObject::Status(
+                ObjectStatus::try_from(status).map_err(|_| js_error("invalid object status"))?,
+            ),
+            None => FetchObject::Payload(Bytes::from(object_payload)),
+        };
+        let field = FetchObjectField::new(
+            group_id,
+            subgroup_id,
+            object_id,
+            publisher_priority,
+            crate::loc::parse_loc_header(loc_header)?,
+            fetch_object,
+        );
+        let writer = self
+            .get_or_create_fetch_stream_writer(request_id)
+            .await
+            .map_err(|error| js_error(error.to_string()))?;
+        write_to_writer(&writer, &field.encode()).await
+    }
+
+    #[wasm_bindgen(js_name = finishFetch)]
+    pub async fn finish_fetch(&self, request_id: u64) -> Result<(), JsValue> {
+        let writer = self
+            .get_or_create_fetch_stream_writer(request_id)
+            .await
+            .map_err(|error| js_error(error.to_string()))?;
+        self.state
+            .borrow_mut()
+            .remove_incoming_fetch(request_id)
+            .map_err(|error| js_error(error.to_string()))?;
+        self.fetch_stream_writers.take(request_id);
+        JsFuture::from(writer.close()).await?;
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = sendObjectDatagram)]
     pub async fn send_object_datagram(
         &self,
@@ -1371,6 +1605,7 @@ impl MOQTClient {
         self.datagram_writer.borrow_mut().take();
         self.stream_writers.borrow_mut().clear();
         self.stream_object_numbers.borrow_mut().clear();
+        self.fetch_stream_writers.clear();
         Ok(())
     }
 
@@ -1409,6 +1644,7 @@ impl MOQTClient {
             callbacks: self.callbacks.clone(),
             state: self.state.clone(),
             control_stream: self.control_stream.clone(),
+            fetch_stream_writers: self.fetch_stream_writers.clone(),
         };
         wasm_bindgen_futures::spawn_local(async move {
             let _ = control_stream_read_thread(handler, &control_reader).await;
@@ -1461,6 +1697,37 @@ impl MOQTClient {
             return Ok(writer);
         }
 
+        let writer = self.open_unidirectional_stream().await?;
+        self.stream_object_numbers.borrow_mut().remove(&writer_key);
+        self.stream_writers
+            .borrow_mut()
+            .insert(writer_key, writer.clone());
+        Ok(writer)
+    }
+
+    async fn get_or_create_fetch_stream_writer(
+        &self,
+        request_id: u64,
+    ) -> Result<WritableStreamDefaultWriter> {
+        if !self.state.borrow().contains_incoming_fetch(request_id) {
+            return Err(anyhow!("unknown fetch request: {request_id}"));
+        }
+        if let Some(writer) = self.fetch_stream_writers.get(request_id) {
+            return Ok(writer);
+        }
+        let writer = self.open_unidirectional_stream().await?;
+        if !self.state.borrow().contains_incoming_fetch(request_id) {
+            let _ = JsFuture::from(writer.abort()).await;
+            return Err(anyhow!("fetch request {request_id} was cancelled"));
+        }
+        write_to_writer(&writer, &FetchHeader::new(request_id).encode())
+            .await
+            .map_err(|error| anyhow!("write FETCH_HEADER: {error:?}"))?;
+        self.fetch_stream_writers.insert(request_id, writer.clone());
+        Ok(writer)
+    }
+
+    async fn open_unidirectional_stream(&self) -> Result<WritableStreamDefaultWriter> {
         let transport = self
             .transport
             .borrow()
@@ -1471,14 +1738,9 @@ impl MOQTClient {
                 .await
                 .map_err(|error| anyhow!("create_unidirectional_stream: {error:?}"))?,
         );
-        let writer = writable
+        writable
             .get_writer()
-            .map_err(|error| anyhow!("get_writer: {error:?}"))?;
-        self.stream_object_numbers.borrow_mut().remove(&writer_key);
-        self.stream_writers
-            .borrow_mut()
-            .insert(writer_key, writer.clone());
-        Ok(writer)
+            .map_err(|error| anyhow!("get_writer: {error:?}"))
     }
 }
 
@@ -1835,6 +2097,16 @@ impl ControlMessageHandler {
                     );
                 }
             }
+            ControlMessageType::Fetch => {
+                let message =
+                    Fetch::decode(&mut cursor).ok_or_else(|| js_error("failed to decode FETCH"))?;
+                self.receive_fetch(message).await?;
+            }
+            ControlMessageType::FetchCancel => {
+                let message = FetchCancel::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode FETCH_CANCEL"))?;
+                self.receive_fetch_cancel(message.request_id).await;
+            }
             ControlMessageType::FetchOk => {
                 let message = FetchOk::decode(&mut cursor)
                     .ok_or_else(|| js_error("failed to decode FETCH_OK"))?;
@@ -1903,6 +2175,50 @@ impl ControlMessageHandler {
         let wrapper = SubscribeMessage::from(&message);
         let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
         Ok(())
+    }
+
+    async fn receive_fetch(&self, message: Fetch) -> Result<(), JsValue> {
+        let request_id = message.request_id;
+        let Some(callback) = self.callbacks.borrow().fetch_callback.clone() else {
+            return self
+                .reject(
+                    ControlMessageType::FetchError,
+                    request_id,
+                    RequestRejection::NotSupported,
+                )
+                .await;
+        };
+        let accepted = self.state.borrow_mut().accept_incoming_fetch(&message);
+        match accepted {
+            Ok(request) => {
+                let wrapper = FetchMessage::new(request_id, &request);
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                Ok(())
+            }
+            Err(rejection) => {
+                self.reject(ControlMessageType::FetchError, request_id, rejection)
+                    .await
+            }
+        }
+    }
+
+    async fn receive_fetch_cancel(&self, request_id: u64) {
+        if self
+            .state
+            .borrow_mut()
+            .remove_incoming_fetch(request_id)
+            .is_err()
+        {
+            return;
+        }
+        self.fetch_stream_writers.reset(request_id).await;
+        let callback = self.callbacks.borrow().fetch_cancel_callback.clone();
+        if let Some(callback) = callback {
+            let _ = callback.call1(
+                &JsValue::NULL,
+                &JsValue::from(js_sys::BigInt::from(request_id)),
+            );
+        }
     }
 
     async fn reject(
@@ -2224,6 +2540,8 @@ struct MOQTCallbacks {
     object_datagram_status_callback: Option<js_sys::Function>,
     subgroup_header_callback: Option<js_sys::Function>,
     subgroup_object_callback: Option<js_sys::Function>,
+    fetch_callback: Option<js_sys::Function>,
+    fetch_cancel_callback: Option<js_sys::Function>,
     fetch_response_callback: Option<js_sys::Function>,
     fetch_object_callback: Option<js_sys::Function>,
     fetch_stream_end_callback: Option<js_sys::Function>,
@@ -2271,8 +2589,63 @@ mod tests {
     }
 
     fn subscribed_track_alias(state: &mut ClientState, request_id: u64) -> u64 {
+        answered_subscription(state, request_id, ContentExists::False)
+    }
+
+    fn answered_subscription(
+        state: &mut ClientState,
+        request_id: u64,
+        content_exists: ContentExists,
+    ) -> u64 {
         state.register_incoming_subscribe(&subscribe(request_id, GroupOrder::Ascending));
-        state.activate_incoming_subscribe(request_id).unwrap()
+        state
+            .activate_incoming_subscribe(request_id, content_exists)
+            .unwrap()
+    }
+
+    fn fetch(request_id: u64, group_order: GroupOrder, fetch_params: FetchParams) -> Fetch {
+        Fetch {
+            request_id,
+            subscriber_priority: 0,
+            group_order,
+            fetch_params,
+            authorization_tokens: vec![],
+        }
+    }
+
+    fn standalone_fetch(request_id: u64, start: Location, end: Location) -> Fetch {
+        fetch(
+            request_id,
+            GroupOrder::Publisher,
+            FetchParams::Standalone {
+                track_namespace: vec![NAMESPACE.to_string()],
+                track_name: TRACK.to_string(),
+                start_location: start,
+                end_location: end,
+            },
+        )
+    }
+
+    fn relative_joining_fetch(
+        request_id: u64,
+        joining_request_id: u64,
+        joining_start: u64,
+    ) -> Fetch {
+        fetch(
+            request_id,
+            GroupOrder::Ascending,
+            FetchParams::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            },
+        )
+    }
+
+    fn state_with_largest(largest: Location) -> ClientState {
+        let mut state = publishing_state();
+        let track_alias = subscribed_track_alias(&mut state, 2);
+        state.record_published_object(track_alias, largest);
+        state
     }
 
     fn answer_track_status(state: &mut ClientState, request: &TrackStatus) -> TrackStatusOk {
@@ -2358,6 +2731,131 @@ mod tests {
 
         // Assert
         assert_eq!(accepted, Err(RequestRejection::TrackDoesNotExist));
+    }
+
+    #[test]
+    fn fetch_ok_ends_after_the_largest_object_when_the_range_reaches_past_it() {
+        // Arrange
+        let mut state = state_with_largest(location(5, 3));
+        state
+            .accept_incoming_fetch(&standalone_fetch(6, location(4, 0), location(9, 0)))
+            .unwrap();
+
+        // Act
+        let fetch_ok = state.answer_incoming_fetch(6).unwrap();
+
+        // Assert
+        assert_eq!(fetch_ok.end_location, location(5, 4));
+        assert_eq!(fetch_ok.group_order, GroupOrder::Ascending);
+    }
+
+    #[test]
+    fn a_fetch_for_an_unpublished_namespace_is_rejected() {
+        // Arrange
+        let mut state = ClientState::default();
+
+        // Act
+        let accepted =
+            state.accept_incoming_fetch(&standalone_fetch(6, location(0, 0), location(1, 0)));
+
+        // Assert
+        assert_eq!(accepted.unwrap_err(), RequestRejection::TrackDoesNotExist);
+    }
+
+    #[test]
+    fn a_fetch_before_any_object_is_sent_is_an_invalid_range() {
+        // Arrange
+        let mut state = publishing_state();
+
+        // Act
+        let accepted =
+            state.accept_incoming_fetch(&standalone_fetch(6, location(0, 0), location(1, 0)));
+
+        // Assert
+        assert_eq!(accepted.unwrap_err(), RequestRejection::InvalidRange);
+    }
+
+    #[test]
+    fn a_relative_joining_fetch_covers_the_groups_before_the_joined_largest_location() {
+        // Arrange
+        let mut state = publishing_state();
+        let track_alias = answered_subscription(
+            &mut state,
+            2,
+            ContentExists::True {
+                location: location(7, 3),
+            },
+        );
+        state.record_published_object(track_alias, location(8, 0));
+
+        // Act
+        let request = state
+            .accept_incoming_fetch(&relative_joining_fetch(6, 2, 2))
+            .unwrap();
+
+        // Assert
+        assert_eq!(request.track_key.name, TRACK);
+        assert_eq!(request.range.start, location(5, 0));
+        assert_eq!(request.range.end, location(7, 4));
+    }
+
+    #[test]
+    fn a_joining_fetch_for_an_unknown_subscription_is_rejected() {
+        // Arrange
+        let mut state = state_with_largest(location(5, 3));
+
+        // Act
+        let accepted = state.accept_incoming_fetch(&relative_joining_fetch(6, 40, 1));
+
+        // Assert
+        assert_eq!(
+            accepted.unwrap_err(),
+            RequestRejection::InvalidJoiningRequestId
+        );
+    }
+
+    #[test]
+    fn a_joining_fetch_for_an_unanswered_subscription_is_rejected() {
+        // Arrange
+        let mut state = state_with_largest(location(5, 3));
+        state.register_incoming_subscribe(&subscribe(8, GroupOrder::Ascending));
+
+        // Act
+        let accepted = state.accept_incoming_fetch(&relative_joining_fetch(6, 8, 1));
+
+        // Assert
+        assert_eq!(
+            accepted.unwrap_err(),
+            RequestRejection::InvalidJoiningRequestId
+        );
+    }
+
+    #[test]
+    fn a_joining_fetch_for_a_subscription_answered_without_content_is_an_invalid_range() {
+        // Arrange
+        let mut state = state_with_largest(location(5, 3));
+
+        // Act
+        let accepted = state.accept_incoming_fetch(&relative_joining_fetch(6, 2, 1));
+
+        // Assert
+        assert_eq!(accepted.unwrap_err(), RequestRejection::InvalidRange);
+    }
+
+    #[test]
+    fn a_removed_fetch_request_can_no_longer_be_answered() {
+        // Arrange
+        let mut state = state_with_largest(location(5, 3));
+        state
+            .accept_incoming_fetch(&standalone_fetch(6, location(4, 0), location(5, 0)))
+            .unwrap();
+        state.remove_incoming_fetch(6).unwrap();
+
+        // Act
+        let fetch_ok = state.answer_incoming_fetch(6);
+
+        // Assert
+        assert!(fetch_ok.is_err());
     }
 
     #[test]

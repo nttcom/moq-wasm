@@ -7,6 +7,8 @@ use moqt::wire::{
     SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
 };
 pub use subgroup_state::SubgroupState;
+
+use crate::incoming_fetch::IncomingFetchRequest;
 use wasm_bindgen::prelude::*;
 
 fn filter_fields(filter_type: FilterType) -> (u8, Option<u64>, Option<u64>, Option<u64>) {
@@ -788,6 +790,80 @@ impl SubgroupObjectMessage {
             object_payload_length: object_payload.len() as u32,
             object_payload,
             loc_header,
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct FetchMessage {
+    request_id: u64,
+    track_namespace: Vec<String>,
+    track_name: String,
+    group_order: u8,
+    start_group_id: u64,
+    start_object_id: u64,
+    end_group_id: u64,
+    end_object_id: u64,
+}
+
+/// The range is already resolved against the Largest Location this client
+/// has sent: the end is the End Location its FETCH_OK carries (draft-14
+/// §9.17), i.e. the Location after the last Object to send, where Object 0
+/// covers the whole Group.
+#[wasm_bindgen]
+impl FetchMessage {
+    #[wasm_bindgen(getter, js_name = requestId)]
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter, js_name = trackNamespace)]
+    pub fn track_namespace(&self) -> Vec<String> {
+        self.track_namespace.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = trackName)]
+    pub fn track_name(&self) -> String {
+        self.track_name.clone()
+    }
+
+    #[wasm_bindgen(getter, js_name = groupOrder)]
+    pub fn group_order(&self) -> u8 {
+        self.group_order
+    }
+
+    #[wasm_bindgen(getter, js_name = startGroupId)]
+    pub fn start_group_id(&self) -> u64 {
+        self.start_group_id
+    }
+
+    #[wasm_bindgen(getter, js_name = startObjectId)]
+    pub fn start_object_id(&self) -> u64 {
+        self.start_object_id
+    }
+
+    #[wasm_bindgen(getter, js_name = endGroupId)]
+    pub fn end_group_id(&self) -> u64 {
+        self.end_group_id
+    }
+
+    #[wasm_bindgen(getter, js_name = endObjectId)]
+    pub fn end_object_id(&self) -> u64 {
+        self.end_object_id
+    }
+}
+
+impl FetchMessage {
+    pub(crate) fn new(request_id: u64, request: &IncomingFetchRequest) -> Self {
+        Self {
+            request_id,
+            track_namespace: request.track_key.namespace.clone(),
+            track_name: request.track_key.name.clone(),
+            group_order: request.group_order as u8,
+            start_group_id: request.range.start.group_id,
+            start_object_id: request.range.start.object_id,
+            end_group_id: request.range.end.group_id,
+            end_object_id: request.range.end.object_id,
         }
     }
 }
