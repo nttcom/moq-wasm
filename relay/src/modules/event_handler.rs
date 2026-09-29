@@ -753,10 +753,7 @@ mod tests {
         },
         control_message_forwarder::ControlMessageForwarder,
         core::{
-            mocks::{
-                MockFetchHandler, RecordedControlMessages, mock_new_session,
-                mock_new_session_leaving_fetch_unanswered,
-            },
+            mocks::{MockFetchHandler, RecordedControlMessages, mock_new_session},
             session_event::MoqtSessionEvent,
         },
         inter_relay::InterRelayConnectionManager,
@@ -849,18 +846,8 @@ mod tests {
             recorded
         }
 
-        async fn register_publisher_leaving_fetch_unanswered(
-            &self,
-            session_id: SessionId,
-            track_namespace: &str,
-        ) {
-            let new_session =
-                mock_new_session_leaving_fetch_unanswered(session_id, VerifiedToken::full_access());
-            self.repo
-                .lock()
-                .await
-                .add(new_session, self.event_sender.clone())
-                .await;
+        async fn register_publisher(&self, session_id: SessionId, track_namespace: &str) {
+            self.register_session(session_id).await;
             self.local_pub_sub_directory.register_publish_namespace(
                 session_id,
                 track_namespace.to_string(),
@@ -952,15 +939,11 @@ mod tests {
     async fn an_unanswered_upstream_fetch_does_not_hold_later_events_of_the_session() {
         // Arrange
         let handler = RunningEventHandler::start();
-        handler
-            .register_publisher_leaving_fetch_unanswered(1, "ns")
-            .await;
+        handler.register_publisher(1, "ns").await;
         let subscriber = handler.register_session(2).await;
         handler.send(SessionEvent {
             session_id: 2,
-            kind: EventKind::FromSession(MoqtSessionEvent::Fetch(Box::new(MockFetchHandler {
-                request_id: 0,
-            }))),
+            kind: EventKind::FromSession(MoqtSessionEvent::Fetch(Box::new(MockFetchHandler))),
         });
 
         // Act

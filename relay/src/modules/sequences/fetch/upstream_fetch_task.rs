@@ -33,9 +33,7 @@ pub(super) struct UpstreamFetchStart {
     pub(super) session_event_sender: UnboundedSender<SessionEvent>,
 }
 
-/// Waits for the upstream FETCH_OK outside the session worker, so a publisher
-/// that answers late or never does not hold the requesting session's later
-/// requests. The downstream FETCH_OK and the cache fill follow once it arrives.
+/// Off the session worker so a publisher that never answers FETCH does not stall the session.
 pub(super) struct UpstreamFetchTask {
     _join_handle: JoinHandle<()>,
 }
@@ -49,30 +47,20 @@ impl UpstreamFetchTask {
     }
 
     async fn forward(start: UpstreamFetchStart) {
-        let UpstreamFetchStart {
-            session_id,
-            handler,
-            target,
-            table,
-            forwarder,
-            upstream_publisher_resolver,
-            cache_store,
-            egress_sender,
-            session_event_sender,
-        } = start;
         let Some(prepared) = Fetch::create_upstream_fetch(
-            &table,
-            &forwarder,
-            &upstream_publisher_resolver,
-            handler.as_ref(),
-            &target,
+            &start.table,
+            &start.forwarder,
+            &start.upstream_publisher_resolver,
+            start.handler.as_ref(),
+            &start.target,
         )
         .await
         else {
             return;
         };
 
-        if let Err(e) = handler
+        if let Err(e) = start
+            .handler
             .ok(prepared.handle.end_of_track, prepared.handle.end_location)
             .await
         {
@@ -81,19 +69,19 @@ impl UpstreamFetchTask {
         }
 
         let egress_start = EgressFetchRequest {
-            subscriber_session_id: session_id,
-            request_id: handler.request_id(),
-            cache: cache_store.get_or_create(&target.track_key),
-            start_location: target.start_location,
+            subscriber_session_id: start.session_id,
+            request_id: start.handler.request_id(),
+            cache: start.cache_store.get_or_create(&start.target.track_key),
+            start_location: start.target.start_location,
             end_location: prepared.handle.end_location,
-            group_order: handler.group_order(),
+            group_order: start.handler.group_order(),
         };
         let _fetch_ingest = FetchIngest::run(
-            forwarder.repository.clone(),
-            egress_sender,
-            session_event_sender,
+            start.forwarder.repository.clone(),
+            start.egress_sender,
+            start.session_event_sender,
             FetchIngestStart {
-                track_key: target.track_key.clone(),
+                track_key: start.target.track_key,
                 upstream_publisher_session_id: prepared.upstream_publisher_session_id,
                 fetch_handle: prepared.handle,
                 egress_start,

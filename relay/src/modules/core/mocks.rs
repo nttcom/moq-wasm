@@ -41,7 +41,6 @@ type SubscribeAnswer = Arc<dyn Fn() -> ContentExists + Send + Sync>;
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
-    leaves_fetch_unanswered: bool,
 }
 
 impl MockUpstreamSession {
@@ -49,7 +48,6 @@ impl MockUpstreamSession {
         Self {
             recorded,
             answer_subscribe: None,
-            leaves_fetch_unanswered: false,
         }
     }
 }
@@ -74,38 +72,14 @@ pub(crate) fn mock_new_session(
     verified_token: VerifiedToken,
 ) -> (NewSession, RecordedControlMessages) {
     let recorded = RecordedControlMessages::default();
-    let session = MockUpstreamSession::new(recorded.clone());
-    (
-        new_client_session(session_id, session, verified_token),
-        recorded,
-    )
-}
-
-/// A publisher that accepts a FETCH but never answers it, as a browser
-/// publisher without a FETCH handler does.
-pub(crate) fn mock_new_session_leaving_fetch_unanswered(
-    session_id: SessionId,
-    verified_token: VerifiedToken,
-) -> NewSession {
-    let session = MockUpstreamSession {
-        leaves_fetch_unanswered: true,
-        ..MockUpstreamSession::new(RecordedControlMessages::default())
-    };
-    new_client_session(session_id, session, verified_token)
-}
-
-fn new_client_session(
-    session_id: SessionId,
-    session: MockUpstreamSession,
-    verified_token: VerifiedToken,
-) -> NewSession {
-    NewSession {
+    let new_session = NewSession {
         session_id,
-        session: Box::new(session),
+        session: Box::new(MockUpstreamSession::new(recorded.clone())),
         session_span: tracing::Span::none(),
         peer: SessionPeer::Client,
         verified_token,
-    }
+    };
+    (new_session, recorded)
 }
 
 pub(crate) async fn session_repository_with_upstream_session_token(
@@ -125,8 +99,8 @@ pub(crate) fn mock_session_answering_subscribe(
     answer_subscribe: impl Fn() -> ContentExists + Send + Sync + 'static,
 ) -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
+        recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(Arc::new(answer_subscribe)),
-        ..MockUpstreamSession::new(RecordedControlMessages::default())
     })
 }
 
@@ -169,7 +143,6 @@ impl Session for MockUpstreamSession {
         Box::new(MockUpstreamSubscriber {
             recorded: self.recorded.clone(),
             answer_subscribe: self.answer_subscribe.clone(),
-            leaves_fetch_unanswered: self.leaves_fetch_unanswered,
         })
     }
 
@@ -189,7 +162,6 @@ impl Session for MockUpstreamSession {
 struct MockUpstreamSubscriber {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
-    leaves_fetch_unanswered: bool,
 }
 
 #[async_trait::async_trait]
@@ -247,10 +219,7 @@ impl Subscriber for MockUpstreamSubscriber {
         _end_location: moqt::Location,
         _option: moqt::FetchOption,
     ) -> anyhow::Result<moqt::FetchHandle> {
-        if self.leaves_fetch_unanswered {
-            return std::future::pending().await;
-        }
-        unimplemented!("not used by MockUpstreamSession tests")
+        std::future::pending().await
     }
 
     async fn create_fetch_receiver(
@@ -355,15 +324,12 @@ impl SubscribeHandler for MockSubscribeHandler {
     }
 }
 
-/// A downstream FETCH of groups 0 to 1 of `ns/track` whose replies go nowhere.
-pub(crate) struct MockFetchHandler {
-    pub(crate) request_id: u64,
-}
+pub(crate) struct MockFetchHandler;
 
 #[async_trait::async_trait]
 impl FetchHandler for MockFetchHandler {
     fn request_id(&self) -> u64 {
-        self.request_id
+        0
     }
 
     fn group_order(&self) -> GroupOrder {
