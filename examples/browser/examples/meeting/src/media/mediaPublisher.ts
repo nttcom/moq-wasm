@@ -53,10 +53,8 @@ type GroupState = { groupId: bigint; lastObjectId: bigint }
 type VideoTrackEncoderContext = {
   trackName: string
   source: VideoSource
-  track: MediaStreamTrack
-  readable: ReadableStream<VideoFrame> | null
+  encodingTrack: MediaStreamTrack | null
   worker: Worker
-  encodingStarted: boolean
   config: VideoEncodingSettings
   transportState: MediaTransportState
   sendQueue: Promise<void>
@@ -217,7 +215,7 @@ export class MediaPublisher {
     void type
     void subscribeId
     for (const [trackName, context] of this.videoTrackContexts.entries()) {
-      if (!context.encodingStarted) {
+      if (!context.encodingTrack) {
         continue
       }
       queueMicrotask(() => this.suspendVideoTrackEncodingIfNoSubscribers(trackName, context))
@@ -418,7 +416,7 @@ export class MediaPublisher {
 
   forceVideoKeyframeForTrack(trackName: string): void {
     const context = this.videoTrackContexts.get(trackName)
-    if (!context || !context.encodingStarted) {
+    if (!context?.encodingTrack) {
       return
     }
     context.worker.postMessage({ type: 'forceKeyframe' })
@@ -479,8 +477,7 @@ export class MediaPublisher {
       }
     }
 
-    const sourceTrack = this.getSourceTrack(source)
-    if (!sourceTrack) {
+    if (!this.getSourceTrack(source)) {
       return
     }
 
@@ -492,12 +489,12 @@ export class MediaPublisher {
       const existing = this.videoTrackContexts.get(track.name)
       if (existing) {
         this.applyVideoTrackSettings(existing, config, keyframeInterval)
-        if (!existing.encodingStarted && this.hasAnySubscriberAliasForTrack(track.name)) {
+        if (this.hasAnySubscriberAliasForTrack(track.name)) {
           this.startVideoTrackEncoding(existing)
         }
         continue
       }
-      this.createVideoTrackContext(source, track.name, sourceTrack, config, keyframeInterval)
+      this.createVideoTrackContext(source, track.name, config, keyframeInterval)
     }
   }
 
@@ -550,25 +547,18 @@ export class MediaPublisher {
   private createVideoTrackContext(
     source: VideoSource,
     trackName: string,
-    sourceTrack: MediaStreamTrack,
     config: VideoEncodingSettings,
     keyframeInterval: number,
     retainedState?: VideoTrackTransportState
   ): void {
-    const track = sourceTrack.clone()
-    const processor = new MediaStreamTrackProcessor({ track })
-    const readable = processor.readable
-
     const context: VideoTrackEncoderContext = {
       trackName,
       source,
-      track,
-      readable,
+      encodingTrack: null,
       config,
       worker: new Worker(new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
         type: 'module'
       }),
-      encodingStarted: false,
       transportState: retainedState?.transportState ?? new MediaTransportState(),
       sendQueue: Promise.resolve(),
       pendingSendJobs: 0,
@@ -725,12 +715,8 @@ export class MediaPublisher {
     if (!context) {
       return
     }
-    if (context.readable) {
-      void context.readable.cancel().catch(() => {})
-      context.readable = null
-    }
     context.worker.terminate()
-    context.track.stop()
+    context.encodingTrack?.stop()
     this.videoTrackContexts.delete(trackName)
     this.videoBitrateByTrackName.delete(trackName)
     this.reportVideoBitrate(context.source)
@@ -781,21 +767,17 @@ export class MediaPublisher {
 
   private restartVideoTrackContext(trackName: string): void {
     const context = this.videoTrackContexts.get(trackName)
-    if (!context) {
+    if (!context || !this.getSourceTrack(context.source)) {
       return
     }
-    const sourceTrack = this.getSourceTrack(context.source)
-    if (!sourceTrack) {
-      return
-    }
-    const { source, config, encodingStarted, transportState, videoGroupStates } = context
+    const { source, config, encodingTrack, transportState, videoGroupStates } = context
     const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval, {
+    this.createVideoTrackContext(source, trackName, config, keyframeInterval, {
       transportState,
       videoGroupStates
     })
-    if (encodingStarted) {
+    if (encodingTrack) {
       const next = this.videoTrackContexts.get(trackName)
       if (next) {
         this.startVideoTrackEncoding(next)
@@ -1126,13 +1108,17 @@ export class MediaPublisher {
     return this.collectAliasesForTrack(trackName, new Set<string>(), () => {}).length > 0
   }
 
+  // Chrome caps the camera frames that all MediaStreamTrackProcessors of one device may hold
+  // (2 on Linux) and drops new frames once idle queues fill it, so a processor exists only while
+  // its frames are being read.
   private startVideoTrackEncoding(context: VideoTrackEncoderContext): void {
-    if (context.encodingStarted || !context.readable) {
+    const sourceTrack = this.getSourceTrack(context.source)
+    if (context.encodingTrack || !sourceTrack) {
       return
     }
-    const readable = context.readable
-    context.readable = null
-    context.encodingStarted = true
+    const track = sourceTrack.clone()
+    const { readable } = new MediaStreamTrackProcessor({ track })
+    context.encodingTrack = track
     context.worker.postMessage({ type: 'videoStream', videoStream: readable }, [readable])
   }
 
@@ -1149,14 +1135,10 @@ export class MediaPublisher {
 
   private suspendVideoTrackEncodingIfNoSubscribers(trackName: string, expectedContext: VideoTrackEncoderContext): void {
     const current = this.videoTrackContexts.get(trackName)
-    if (!current || current !== expectedContext || !current.encodingStarted) {
+    if (!current || current !== expectedContext || !current.encodingTrack) {
       return
     }
     if (this.hasAnySubscriberAliasForTrack(trackName)) {
-      return
-    }
-    const sourceTrack = this.getSourceTrack(current.source)
-    if (!sourceTrack) {
       return
     }
     const { source, config, transportState, videoGroupStates } = current
@@ -1168,7 +1150,7 @@ export class MediaPublisher {
     const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.handlers.onLocalVideoSendTiming?.(null, source)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, sourceTrack, config, keyframeInterval, {
+    this.createVideoTrackContext(source, trackName, config, keyframeInterval, {
       transportState,
       videoGroupStates
     })
