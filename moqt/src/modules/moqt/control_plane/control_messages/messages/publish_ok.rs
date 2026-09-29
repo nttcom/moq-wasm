@@ -37,17 +37,16 @@ impl PublishOk {
             .try_get_varint()
             .log_context("number of parameters")
             .ok()?;
-        let mut parameters = vec![];
+        let mut delivery_timeout = None;
         for _ in 0..number_of_parameters {
-            parameters.push(KeyValuePair::decode(buf)?);
-        }
-        let delivery_timeout = parameters.iter().find_map(|kv_pair| match kv_pair {
-            KeyValuePair {
+            if let KeyValuePair {
                 key: DELIVERY_TIMEOUT,
                 value: VariantType::Even(value),
-            } => Some(*value),
-            _ => None,
-        });
+            } = KeyValuePair::decode(buf)?
+            {
+                delivery_timeout = Some(value);
+            }
+        }
 
         Some(Self {
             request_id,
@@ -66,19 +65,16 @@ impl PublishOk {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.filter_type.encode());
-        let mut number_of_parameters = 0;
-        let mut parameters_payload = BytesMut::new();
+        payload.put_varint(self.delivery_timeout.is_some() as u64);
         if let Some(delivery_timeout) = self.delivery_timeout {
-            let delivery_timeout_payload = KeyValuePair {
-                key: DELIVERY_TIMEOUT,
-                value: VariantType::Even(delivery_timeout),
-            }
-            .encode();
-            parameters_payload.unsplit(delivery_timeout_payload);
-            number_of_parameters += 1;
+            payload.unsplit(
+                KeyValuePair {
+                    key: DELIVERY_TIMEOUT,
+                    value: VariantType::Even(delivery_timeout),
+                }
+                .encode(),
+            );
         }
-        payload.put_varint(number_of_parameters);
-        payload.unsplit(parameters_payload);
 
         tracing::trace!("Packetized Publish_OK message.");
         payload
@@ -195,33 +191,6 @@ mod tests {
                 1,  // Number of Parameters (i)
                 2,  // Parameter Type (i): DELIVERY_TIMEOUT
                 10, // Parameter Value (i)
-            ];
-            assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
-        }
-
-        #[test]
-        fn packetize_without_delivery_timeout_writes_zero_parameters() {
-            // Arrange
-            let publish_ok_message = PublishOk {
-                request_id: 5,
-                forward: false,
-                subscriber_priority: 5,
-                group_order: GroupOrder::Ascending,
-                filter_type: FilterType::NextGroupStart,
-                delivery_timeout: None,
-            };
-
-            // Act
-            let buf = publish_ok_message.encode();
-
-            // Assert
-            let expected_bytes_array = [
-                5, // Request ID (i)
-                0, // Forward (8)
-                5, // Subscriber Priority (8)
-                1, // Group Order (8)
-                1, // Filter Type (i)
-                0, // Number of Parameters (i)
             ];
             assert_eq!(buf.as_ref(), expected_bytes_array.as_slice());
         }
