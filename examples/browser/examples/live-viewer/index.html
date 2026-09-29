@@ -319,6 +319,31 @@ make chrome</code></pre>
             </p>
           </section>
 
+          <section
+            id="publish-streams-card"
+            class="card stack full"
+            style="display: none"
+            data-testid="live-viewer-publish-streams"
+          >
+            <div class="card-title-row">
+              <h2>Publish Streams</h2>
+              <div class="playback-meta stream-meta">
+                <span id="publish-stream-stats" data-testid="live-viewer-publish-stream-stats">-</span>
+              </div>
+            </div>
+            <svg
+              id="publish-stream-monitor"
+              class="stream-monitor"
+              role="img"
+              aria-label="Subgroup streams the MP4 publisher sends per track"
+              data-testid="live-viewer-publish-stream-monitor"
+            ></svg>
+            <p class="hint">
+              MP4 Publish が relay へ送った group(subgroup stream)を track
+              ごとに横棒で示します。右端が開いている棒は送信中です
+            </p>
+          </section>
+
           <section class="card stack full">
             <div class="card-title-row">
               <h2>Playback</h2>

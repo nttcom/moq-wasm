@@ -102,6 +102,9 @@ export interface LiveViewerPageModel {
   publishButton: Locator
   stopPublishButton: Locator
   publishStatus: Locator
+  publishStreams: Locator
+  publishStreamMonitor: Locator
+  publishStreamStats: Locator
 }
 
 export interface LiveViewerE2ESession {
@@ -151,7 +154,10 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     mp4LoopInput: page.getByTestId('live-viewer-mp4-loop-input'),
     publishButton: page.getByTestId('live-viewer-publish-button'),
     stopPublishButton: page.getByTestId('live-viewer-stop-publish-button'),
-    publishStatus: page.getByTestId('live-viewer-publish-status')
+    publishStatus: page.getByTestId('live-viewer-publish-status'),
+    publishStreams: page.getByTestId('live-viewer-publish-streams'),
+    publishStreamMonitor: page.getByTestId('live-viewer-publish-stream-monitor'),
+    publishStreamStats: page.getByTestId('live-viewer-publish-stream-stats')
   }
 }
 

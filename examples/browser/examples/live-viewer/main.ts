@@ -34,6 +34,7 @@ import {
   renderDeliveryGrid,
   renderIdleStreamMonitor,
   renderStreamMonitor,
+  streamKbps,
   summarizeStreams
 } from './streamMonitor'
 
@@ -228,7 +229,9 @@ for (const event of ['pointercancel', 'blur']) {
 startRendering()
 moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
 element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
-  streamMonitor.setKeptGroups(Number((event.target as HTMLInputElement).value) || 1)
+  const keptGroups = Number((event.target as HTMLInputElement).value) || 1
+  streamMonitor.setKeptGroups(keptGroups)
+  mp4Publisher.sentStreams.setKeptGroups(keptGroups)
 })
 element<HTMLInputElement>('playout-buffer').addEventListener('change', (event) => {
   const delayMs = Number((event.target as HTMLInputElement).value)
@@ -861,7 +864,28 @@ function monitored(
   }
 }
 
+function renderPublishStreams(): void {
+  element<HTMLElement>('publish-streams-card').style.display = mp4Publisher.publishing ? '' : 'none'
+  if (!mp4Publisher.publishing) {
+    return
+  }
+  const now = Date.now()
+  const records = mp4Publisher.sentStreams.snapshot()
+  renderStreamMonitor(
+    element<SVGSVGElement>('publish-stream-monitor'),
+    records,
+    mp4Publisher.sentStreams.slotsPerTrack(),
+    streamWindowSeconds,
+    [],
+    now
+  )
+  element<HTMLSpanElement>('publish-stream-stats').textContent = records.length
+    ? `${summarizeStreams(records, [], now)} · ${Math.round(streamKbps(records, streamWindowSeconds, now))} kbps`
+    : 'no subscriber yet'
+}
+
 function renderStreams(): void {
+  renderPublishStreams()
   const reviewGrid = element<SVGSVGElement>('delivery-grid-review')
   const reviewTimeline = element<SVGSVGElement>('stream-monitor-review')
   if (!watching) {

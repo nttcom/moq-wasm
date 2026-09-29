@@ -184,6 +184,9 @@ MP4 Publish は、選んだファイルをブラウザの中で demux し、live
   track として扱います）。
 - 各サンプルは `ffmpeg -re` と同じく presentation time のペースで送り、その時刻の壁時計を capture
   timestamp として LOC 拡張ヘッダに載せます。Loop のときは、次の周回をファイルの長さぶん後ろにずらして続けます。
+- 配信中は Publish Streams に、relay へ送った group(subgroup stream)を Streams と同じ横棒で track ごとに
+  表示します。Window と GOPs は Streams の設定を共有し、見出しの横に送信中 / 送信済みの stream 数と、窓内に
+  開いた stream の送信ビットレートを出します。relay がまだ購読していない track は送らないので表示されません。
 - 配信は視聴とは別の MoQT セッションで行うので、同じページで Watch / Stop を押しても配信は続きます。
   ブラウザは FETCH に応えないため、巻き戻しは relay のキャッシュにある閉じた group の範囲になります。
 

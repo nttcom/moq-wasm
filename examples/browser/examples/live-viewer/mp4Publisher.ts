@@ -4,6 +4,7 @@ import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
 import { getErrorMessage } from '../media/common'
+import { StreamMonitor } from './streamMonitor'
 
 const VIDEO_TRACK_NAME = 'video'
 const AUDIO_TRACK_NAME = 'audio'
@@ -67,9 +68,13 @@ type Mp4Media = {
   durationMicros: number
 }
 
+/// `sentStreams` records the subgroup streams sent to each subscriber the
+/// way the viewer's Streams panel records the ones it receives.
 export class Mp4Publisher {
+  readonly sentStreams = new StreamMonitor()
   private readonly session = new MoqtClientWrapper()
   private running: Promise<void> | undefined
+  private active = false
   private stopRequested = false
   private nextCatalogGroupId = 0n
 
@@ -93,6 +98,8 @@ export class Mp4Publisher {
       throw error
     }
     this.stopRequested = false
+    this.sentStreams.reset()
+    this.active = true
     this.running = this.publish(media, options)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`
@@ -106,6 +113,10 @@ export class Mp4Publisher {
     this.running = undefined
   }
 
+  get publishing(): boolean {
+    return this.active
+  }
+
   private async publish(media: Mp4Media, options: Mp4PublishOptions): Promise<void> {
     try {
       const completed = await this.pace(media, options)
@@ -114,6 +125,7 @@ export class Mp4Publisher {
       this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`)
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
     } finally {
+      this.active = false
       media.index.free()
       if (this.session.getConnectionStatus()) {
         await this.session.disconnect()
@@ -128,8 +140,8 @@ export class Mp4Publisher {
   /// before it goes out right after it.
   private async pace(media: Mp4Media, options: Mp4PublishOptions): Promise<boolean> {
     const client = this.requireClient()
-    const video = new LocTrackSender(client, options.namespace, VIDEO_TRACK_NAME, false)
-    const audio = media.audio && new LocTrackSender(client, options.namespace, AUDIO_TRACK_NAME, true)
+    const video = new LocTrackSender(client, options.namespace, VIDEO_TRACK_NAME, false, this.sentStreams)
+    const audio = media.audio && new LocTrackSender(client, options.namespace, AUDIO_TRACK_NAME, true, this.sentStreams)
     let nextGroupId = BigInt(monotonicUnixMicros())
     let groupId: bigint | undefined
     let passOriginMicros = monotonicUnixMicros()
@@ -208,8 +220,11 @@ export class Mp4Publisher {
     const groupId = this.nextCatalogGroupId
     this.nextCatalogGroupId += 1n
     const payload = new TextEncoder().encode(catalog)
+    this.sentStreams.label(trackAlias, MEDIA_CATALOG_TRACK_NAME)
     await client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
+    this.sentStreams.opened(trackAlias, groupId)
     await client.sendSubgroupObject(trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
+    this.sentStreams.object(trackAlias, groupId, 0n, payload.byteLength, false)
     await client.sendSubgroupObject(
       trackAlias,
       groupId,
@@ -219,6 +234,7 @@ export class Mp4Publisher {
       new Uint8Array(0),
       undefined
     )
+    this.sentStreams.object(trackAlias, groupId, 1n, 0, true)
   }
 
   private requireClient(): MOQTClient {
@@ -243,7 +259,8 @@ class LocTrackSender {
     private readonly client: MOQTClient,
     private readonly namespace: string[],
     private readonly name: string,
-    private readonly joinsMidGroup: boolean
+    private readonly joinsMidGroup: boolean,
+    private readonly sentStreams: StreamMonitor
   ) {}
 
   async send(groupId: bigint, payload: Uint8Array, captureMicros: number): Promise<void> {
@@ -260,7 +277,9 @@ class LocTrackSender {
         if (!startsGroup && !this.joinsMidGroup) {
           continue
         }
+        this.sentStreams.label(trackAlias, this.name)
         await this.client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
+        this.sentStreams.opened(trackAlias, groupId)
         this.openSubgroups.set(key, groupId)
       }
       await this.client.sendSubgroupObject(
@@ -271,6 +290,15 @@ class LocTrackSender {
         undefined,
         payload,
         locHeader
+      )
+      this.sentStreams.object(
+        trackAlias,
+        groupId,
+        this.nextObjectId,
+        payload.byteLength,
+        false,
+        Date.now(),
+        captureMicros
       )
     }
     this.nextObjectId += 1n
@@ -293,6 +321,7 @@ class LocTrackSender {
           new Uint8Array(0),
           undefined
         )
+        this.sentStreams.object(BigInt(key), groupId, this.nextObjectId, 0, true)
       }
     }
     this.openSubgroups.clear()

@@ -209,6 +209,13 @@ export function summarizeStreams(records: StreamRecord[], playheads: Playhead[] 
   return parts.join(' · ')
 }
 
+/// The payload bytes of the streams opened within the window, as a rate over it.
+export function streamKbps(records: StreamRecord[], windowSeconds: number, now = Date.now()): number {
+  const since = now - windowSeconds * 1000
+  const bytes = records.filter((record) => record.openedAt >= since).reduce((sum, record) => sum + record.bytes, 0)
+  return (bytes * 8) / 1000 / windowSeconds
+}
+
 /// FETCH streams come first, then subscriptions by track name.
 function compareRecords(a: StreamRecord, b: StreamRecord): number {
   if (a.kind !== b.kind) {

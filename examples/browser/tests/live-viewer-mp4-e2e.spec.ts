@@ -37,6 +37,15 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expectVideoDecoded(viewer.video)
     await expect(viewer.videoStats).toContainText(resolution)
 
+    // Assert: the streams the publisher sends to the relay are drawn per track
+    await expect(viewer.publishStreams).toBeVisible()
+    await expect(viewer.publishStreamStats).toHaveText(/^\d+ open · \d+ finished · \d+ kbps$/)
+    await expect(viewer.publishStreamMonitor.locator('text.stream-label', { hasText: /^video / }).first()).toBeVisible()
+    await expect(viewer.publishStreamMonitor.locator('text.stream-label', { hasText: /^audio / }).first()).toBeVisible()
+    await expect(
+      viewer.publishStreamMonitor.locator('text.stream-label', { hasText: /^catalog / }).first()
+    ).toBeVisible()
+
     // Assert: the audio of the file plays on the same clock as its picture
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
@@ -63,6 +72,7 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
 
     // Assert
     await expect(viewer.publishStatus).toHaveText('Publish stopped')
+    await expect(viewer.publishStreams).toBeHidden()
   } finally {
     await context.close()
   }
