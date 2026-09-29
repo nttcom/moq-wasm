@@ -1,6 +1,5 @@
 import {
   type IncomingFetchContext,
-  type IncomingSubscribeContext,
   type IncomingTrackStatusContext,
   MoqtClientWrapper,
   RequestErrorCode
@@ -71,6 +70,12 @@ type SampleColumns = {
   sync: Uint8Array
 }
 
+type TrackAliases = {
+  video: bigint
+  audio?: bigint
+  timeline: bigint
+}
+
 type Mp4Media = {
   file: File
   index: Mp4Index
@@ -101,14 +106,17 @@ export class Mp4Publisher {
   async start(options: Mp4PublishOptions): Promise<void> {
     await this.stop()
     const media = await openMp4(options.file)
+    let trackAliases: TrackAliases
     try {
-      const catalog = buildCatalogJson(options.namespace, media)
       this.nextCatalogGroupId = BigInt(monotonicUnixMicros())
+      this.sentStreams.reset()
       this.catalogGroups = new Map()
       this.timelineGroups = new Map()
       this.mediaGroups = new PublishedGroupLog(media.samples.size.length)
       await this.session.connect(options.url, { maxRequestId: MAX_REQUEST_ID })
-      this.session.setOnIncomingSubscribeHandler((context) => this.answerSubscribe(context, options.namespace, catalog))
+      this.session.setOnIncomingSubscribeHandler(({ respondError }) =>
+        respondError(RequestErrorCode.NotSupported, 'tracks are delivered by PUBLISH')
+      )
       const replayTracks = this.replayTracks(media)
       this.session.setOnIncomingTrackStatusHandler((context) =>
         this.answerTrackStatus(context, options.namespace, replayTracks)
@@ -119,15 +127,15 @@ export class Mp4Publisher {
         this.stopRequested = true
       })
       await this.session.publishNamespace(options.namespace, options.authInfo)
+      trackAliases = await this.publishTracks(media, options)
     } catch (error) {
       media.index.free()
       throw error
     }
     this.stopRequested = false
-    this.sentStreams.reset()
     this.active = true
     this.preview.start(media.video.codec, media.reorderDelayMicros)
-    this.running = this.publish(media, options)
+    this.running = this.publish(media, options, trackAliases)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`,
       'ok'
@@ -145,9 +153,28 @@ export class Mp4Publisher {
     return this.active
   }
 
-  private async publish(media: Mp4Media, options: Mp4PublishOptions): Promise<void> {
+  /// The tracks are published before the catalog that lists them, so a
+  /// viewer subscribing to a track it read there finds the relay already
+  /// ingesting it.
+  private async publishTracks(media: Mp4Media, options: Mp4PublishOptions): Promise<TrackAliases> {
+    const publishTrack = async (trackName: string): Promise<bigint> => {
+      const trackAlias = await this.session.publish(options.namespace, trackName, options.authInfo)
+      this.callbacks.onLog('info', `published ${trackName}`)
+      return trackAlias
+    }
+    const trackAliases = {
+      video: await publishTrack(VIDEO_TRACK_NAME),
+      audio: media.audio && (await publishTrack(AUDIO_TRACK_NAME)),
+      timeline: await publishTrack(TIMELINE_TRACK_NAME)
+    }
+    const catalogAlias = await publishTrack(MEDIA_CATALOG_TRACK_NAME)
+    await this.sendCatalog(catalogAlias, buildCatalogJson(options.namespace, media))
+    return trackAliases
+  }
+
+  private async publish(media: Mp4Media, options: Mp4PublishOptions, trackAliases: TrackAliases): Promise<void> {
     try {
-      const completed = await this.pace(media, options)
+      const completed = await this.pace(media, options, trackAliases)
       this.callbacks.onStatus(completed ? 'Publish finished' : 'Publish stopped', 'idle')
     } catch (error) {
       this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`, 'error')
@@ -168,11 +195,14 @@ export class Mp4Publisher {
   /// capture timestamp: the viewer paces playback and resolves seek positions
   /// from it. Sending at the presentation time instead would hold a P-frame
   /// until it is shown and deliver the B-frames that precede it late.
-  private async pace(media: Mp4Media, options: Mp4PublishOptions): Promise<boolean> {
+  private async pace(media: Mp4Media, options: Mp4PublishOptions, trackAliases: TrackAliases): Promise<boolean> {
     const client = this.requireClient()
-    const video = new TrackSender(client, options.namespace, VIDEO_TRACK_NAME, false, this.sentStreams)
-    const audio = media.audio && new TrackSender(client, options.namespace, AUDIO_TRACK_NAME, true, this.sentStreams)
-    const timeline = new TrackSender(client, options.namespace, TIMELINE_TRACK_NAME, false, this.sentStreams)
+    const video = new TrackSender(client, trackAliases.video, VIDEO_TRACK_NAME, this.sentStreams)
+    const audio =
+      trackAliases.audio === undefined
+        ? undefined
+        : new TrackSender(client, trackAliases.audio, AUDIO_TRACK_NAME, this.sentStreams)
+    const timeline = new TrackSender(client, trackAliases.timeline, TIMELINE_TRACK_NAME, this.sentStreams)
     const records: MediaTimelineRecord[] = []
     let nextTimelineGroupId = BigInt(monotonicUnixMicros())
     let nextGroupId = BigInt(monotonicUnixMicros())
@@ -239,36 +269,6 @@ export class Mp4Publisher {
         await timeline.closeGroup()
       }
     }
-  }
-
-  private async answerSubscribe(
-    context: IncomingSubscribeContext,
-    namespace: string[],
-    catalog: string
-  ): Promise<void> {
-    const { subscribe, isSuccess, code, respondOk, respondError } = context
-    const trackName = subscribe.trackName ?? ''
-    const requestedNamespace = (subscribe.trackNamespace ?? []).join('/')
-    if (!isSuccess) {
-      await respondError(BigInt(code), `subscribe error: code=${code}`)
-      return
-    }
-    if (requestedNamespace !== namespace.join('/')) {
-      await respondError(404n, 'unknown namespace')
-      return
-    }
-    if (trackName === MEDIA_CATALOG_TRACK_NAME) {
-      const trackAlias = await respondOk(0n)
-      await this.sendCatalog(trackAlias, catalog)
-      this.callbacks.onLog('info', `served ${MEDIA_CATALOG_TRACK_NAME} to a subscriber`)
-      return
-    }
-    if (trackName === VIDEO_TRACK_NAME || trackName === AUDIO_TRACK_NAME || trackName === TIMELINE_TRACK_NAME) {
-      await respondOk(0n)
-      this.callbacks.onLog('info', `subscriber joined ${trackName}`)
-      return
-    }
-    await respondError(404n, 'unknown track')
   }
 
   private async answerTrackStatus(
@@ -349,20 +349,14 @@ export class Mp4Publisher {
   }
 }
 
-/// One subgroup per group on every subscriber of the track. A subscriber
-/// that arrives while a group is open only gets a subgroup from the next
-/// group unless the track can be joined mid-group, which holds for audio but
-/// not for video, whose groups start with the keyframe the rest depends on.
 class TrackSender {
   private groupId: bigint | undefined
   private nextObjectId = 0n
-  private readonly openSubgroups = new Map<bigint, bigint>()
 
   constructor(
     private readonly client: MOQTClient,
-    private readonly namespace: string[],
+    private readonly trackAlias: bigint,
     private readonly name: string,
-    private readonly joinsMidGroup: boolean,
     private readonly sentStreams: StreamMonitor
   ) {}
 
@@ -371,39 +365,28 @@ class TrackSender {
       await this.closeGroup()
       this.groupId = groupId
       this.nextObjectId = 0n
+      this.sentStreams.label(this.trackAlias, this.name)
+      await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
+      this.sentStreams.opened(this.trackAlias, groupId)
     }
-    const startsGroup = this.nextObjectId === 0n
-    const locHeader =
+    await this.client.sendSubgroupObject(
+      this.trackAlias,
+      groupId,
+      SUBGROUP_ID,
+      this.nextObjectId,
+      undefined,
+      payload,
       captureMicros === undefined ? undefined : buildLocHeader({ captureTimestampMicros: captureMicros })
-    for (const trackAlias of this.subscribers()) {
-      if (this.openSubgroups.get(trackAlias) !== groupId) {
-        if (!startsGroup && !this.joinsMidGroup) {
-          continue
-        }
-        this.sentStreams.label(trackAlias, this.name)
-        await this.client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-        this.sentStreams.opened(trackAlias, groupId)
-        this.openSubgroups.set(trackAlias, groupId)
-      }
-      await this.client.sendSubgroupObject(
-        trackAlias,
-        groupId,
-        SUBGROUP_ID,
-        this.nextObjectId,
-        undefined,
-        payload,
-        locHeader
-      )
-      this.sentStreams.object(
-        trackAlias,
-        groupId,
-        this.nextObjectId,
-        payload.byteLength,
-        false,
-        Date.now(),
-        captureMicros
-      )
-    }
+    )
+    this.sentStreams.object(
+      this.trackAlias,
+      groupId,
+      this.nextObjectId,
+      payload.byteLength,
+      false,
+      Date.now(),
+      captureMicros
+    )
     this.nextObjectId += 1n
   }
 
@@ -412,17 +395,7 @@ class TrackSender {
     if (groupId === undefined) {
       return
     }
-    const subscribed = new Set(this.subscribers())
-    for (const [trackAlias, openGroupId] of this.openSubgroups) {
-      if (openGroupId === groupId && subscribed.has(trackAlias)) {
-        await sendEndOfGroup(this.client, this.sentStreams, trackAlias, groupId, this.nextObjectId)
-      }
-    }
-    this.openSubgroups.clear()
-  }
-
-  private subscribers(): bigint[] {
-    return Array.from(this.client.getTrackSubscribers(this.namespace, this.name))
+    await sendEndOfGroup(this.client, this.sentStreams, this.trackAlias, groupId, this.nextObjectId)
   }
 }
 

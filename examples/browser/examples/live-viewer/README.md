@@ -178,6 +178,9 @@ live-ingest と同じく配信するので、シークバーの経過時間も�
   codec registry にあるコーデックの生ビットストリーム）。AAC は AudioSpecificConfig を catalog の
   `initData` に載せ、MP3 は catalog の `codec: "mp3"` だけで受信側の `AudioDecoder` が設定されます。
   ほかのコーデックの音声は飛ばして映像だけを配信します。
+- 視聴者の SUBSCRIBE は待ちません。配信を始めると `video` / `audio` / `timeline` / `catalog` を PUBLISH し、catalog は
+  それが載せる track をすべて PUBLISH してから送るので、relay は各 track を最初の object からキャッシュします。
+  publisher に届いた SUBSCRIBE は NOT_SUPPORTED で断ります。
 - group は video の keyframe ごとに切り替え、audio の object は直前の keyframe の group に入れます。
   group id は catalog も含めて開始時刻（unix マイクロ秒）から採番するので、配信し直しても同じ location を
   再利用しません（relay は publisher が替わっても track のキャッシュを保持し、既知の location を malformed
@@ -192,7 +195,7 @@ live-ingest と同じく配信するので、シークバーの経過時間も�
 - 配信中は MP4 Publish の中に、左に送信中の映像の小さなプレビュー、右に Publish Streams を出します。Publish Streams は
   relay へ送った group(subgroup stream)を、Playback の映像のすぐ下にある Subscribe Streams と同じ横棒で track ごとに
   示し、Window と GOPs は Subscribe Streams の設定を共有します。見出しの横には送信中 / 送信済みの stream 数と、窓内に
-  開いた stream の送信ビットレートを出します。relay がまだ購読していない track は送らないので表示されません。
+  開いた stream の送信ビットレートを出します。
 - プレビューは、送るサンプルをそのまま WebCodecs でデコードし、各フレームを capture timestamp に reorder delay を
   足した時刻（そのフレームまでがすべて送られた時刻）に描くので、ネットワークとバッファの遅延がない受信側の絵に
   なります。viewer の LOC フレームも同じ capture timestamp を持つため、表示した時刻との差を `viewer delay` として
@@ -286,14 +289,13 @@ by `tfdt`. The rewind status shows the review's own `A/V` offset.
 ## Catalog
 
 The catalog is subscribed to for updates and fetched for its current object:
-a SUBSCRIBE delivers objects published after the largest one, and the bridge
-publishes the catalog once per upstream subscription, so a viewer joining a
-subscription the relay already holds would otherwise never see it. The FETCH
-names the group SUBSCRIBE_OK reports as the largest. When SUBSCRIBE_OK says
-no content exists yet, as the MP4 publisher does because it sends the catalog
-right after answering, nothing is fetched and the catalog arrives on the
-SUBSCRIBE; a FETCH would only be forwarded to a publisher that does not
-answer it.
+a SUBSCRIBE delivers objects published after the largest one, and the
+publishers send the catalog only when it changes, so a viewer joining after it
+was sent would otherwise never see it. The FETCH names the group SUBSCRIBE_OK
+reports as the largest, which the relay has cached since the publisher's
+PUBLISH. When SUBSCRIBE_OK says no content exists yet, nothing is fetched and
+the catalog arrives on the SUBSCRIBE; a FETCH the relay cannot cover would be
+forwarded to the publisher, and the MP4 publisher does not answer it.
 
 The two may deliver different catalogs: the relay keeps the catalog of a
 publisher that has since been replaced, so the FETCH can return the old one
