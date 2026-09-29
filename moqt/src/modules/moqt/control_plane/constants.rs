@@ -1,7 +1,10 @@
 use num_enum::IntoPrimitive;
 
-// for draft-ietf-moq-transport-10
+/// draft-ietf-moq-transport-14 negotiates the draft in SETUP; every draft
+/// before -15 shares the `moq-00` ALPN.
 pub const MOQ_TRANSPORT_VERSION: u32 = 0xff00000e;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MOQ_ALPN: &[u8] = b"moq-00";
 
 /// Session termination error codes, draft-ietf-moq-transport-14 §13.1.1.
 #[derive(Debug, IntoPrimitive, PartialEq, Clone, Copy)]

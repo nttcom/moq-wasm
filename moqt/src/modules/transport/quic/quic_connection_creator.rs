@@ -10,10 +10,10 @@ use quinn::rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 
+use crate::modules::moqt::control_plane::constants::MOQ_ALPN;
 use crate::modules::transport::{
     client_crypto::{
-        MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
-        quic_client_config,
+        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
@@ -44,8 +44,7 @@ impl QUICConnectionCreator {
             .with_no_client_auth()
             .with_single_cert(cert, key)
             .inspect_err(|e| tracing::error!("server config failed: {:?}", e.to_string()))?;
-        let alpn = &[b"moq-00"];
-        server_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
+        server_crypto.alpn_protocols = vec![MOQ_ALPN.to_vec()];
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(

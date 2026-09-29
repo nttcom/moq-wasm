@@ -183,8 +183,8 @@ One struct owns all cross-task state:
   itself contain `/`.
 - `enums.rs` — `SessionEvent<T>` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
-- `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
-  §13.1.1).
+- `constants.rs` — protocol version, the `moq-00` ALPN and
+  `TerminationErrorCode` (draft-14 §13.1.1).
 - `error_codes.rs` — the codes the application sends: `RequestErrorCode`,
   `PublishDoneCode`, `DataStreamResetCode`. draft-14 numbers request errors per
   `*_ERROR` message, so `RequestErrorCode` is semantic and its wire value comes

@@ -10,10 +10,10 @@ use quinn::rustls::{
 };
 
 use super::dual_connection::DualConnection;
+use crate::modules::moqt::control_plane::constants::MOQ_ALPN;
 use crate::modules::transport::{
     client_crypto::{
-        MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
-        quic_client_config,
+        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
@@ -98,10 +98,9 @@ impl TransportConnectionCreator for DualProtocolCreator {
             .with_single_cert(cert, key)
             .inspect_err(|e| tracing::error!("server config failed: {:?}", e.to_string()))?;
 
-        // ALPN を2つ登録（WebTransport + QUIC）
         server_crypto.alpn_protocols = vec![
-            web_transport_quinn::ALPN.as_bytes().to_vec(), // h3
-            b"moq-00".to_vec(),
+            web_transport_quinn::ALPN.as_bytes().to_vec(),
+            MOQ_ALPN.to_vec(),
         ];
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
@@ -196,7 +195,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
             Ok(DualConnection::WebTransport(Box::new(WtConnection::new(
                 session,
             ))))
-        } else if alpn.as_slice() == b"moq-00" {
+        } else if alpn.as_slice() == MOQ_ALPN {
             // Raw QUIC
             Ok(DualConnection::Quic(QUICConnection::new(connection)))
         } else {

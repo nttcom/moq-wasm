@@ -12,8 +12,6 @@ use crate::modules::transport::{
     crypto_provider::install_default_crypto_provider, quic::skip_certd_validation::SkipVerification,
 };
 
-pub(crate) const MOQ_ALPN: &[u8] = b"moq-00";
-
 pub(crate) fn client_crypto(verify_certificate: bool) -> anyhow::Result<rustls::ClientConfig> {
     install_default_crypto_provider();
     let builder = rustls::ClientConfig::builder();
