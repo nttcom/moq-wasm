@@ -105,6 +105,8 @@ export interface LiveViewerPageModel {
   publishStreams: Locator
   publishStreamMonitor: Locator
   publishStreamStats: Locator
+  publishPreview: Locator
+  publishLatency: Locator
 }
 
 export interface LiveViewerE2ESession {
@@ -157,7 +159,9 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     publishStatus: page.getByTestId('live-viewer-publish-status'),
     publishStreams: page.getByTestId('live-viewer-publish-streams'),
     publishStreamMonitor: page.getByTestId('live-viewer-publish-stream-monitor'),
-    publishStreamStats: page.getByTestId('live-viewer-publish-stream-stats')
+    publishStreamStats: page.getByTestId('live-viewer-publish-stream-stats'),
+    publishPreview: page.getByTestId('live-viewer-publish-preview'),
+    publishLatency: page.getByTestId('live-viewer-publish-latency')
   }
 }
 

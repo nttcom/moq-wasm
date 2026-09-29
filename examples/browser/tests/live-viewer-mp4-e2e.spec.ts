@@ -46,6 +46,14 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
       viewer.publishStreamMonitor.locator('text.stream-label', { hasText: /^catalog / }).first()
     ).toBeVisible()
 
+    // Assert: the page shows the picture it sends and how far the viewer runs behind it
+    await expect(viewer.publishPreview).toBeVisible()
+    await expect
+      .poll(async () => viewer.publishPreview.evaluate((element) => (element as HTMLCanvasElement).width))
+      .toBe(MP4_FIXTURE.width)
+    await expect(viewer.publishLatency).toHaveText(/^viewer delay \d+ ms$/)
+    await expect(viewer.videoStats).toContainText(/delay \d+ ms/)
+
     // Assert: the audio of the file plays on the same clock as its picture
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
@@ -73,6 +81,7 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     // Assert
     await expect(viewer.publishStatus).toHaveText('Publish stopped')
     await expect(viewer.publishStreams).toBeHidden()
+    await expect(viewer.publishPreview).toBeHidden()
   } finally {
     await context.close()
   }

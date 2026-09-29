@@ -25,6 +25,9 @@ type LogLevel = 'info' | 'warn' | 'error'
 export type Mp4PublisherCallbacks = {
   onStatus(text: string): void
   onLog(level: LogLevel, message: string): void
+  onVideoStarted(codec: string): void
+  onVideoSample(annexB: Uint8Array, keyframe: boolean, captureMicros: number): void
+  onStopped(): void
 }
 
 export type Mp4PublishOptions = {
@@ -100,6 +103,7 @@ export class Mp4Publisher {
     this.stopRequested = false
     this.sentStreams.reset()
     this.active = true
+    this.callbacks.onVideoStarted(media.video.codec)
     this.running = this.publish(media, options)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`
@@ -126,6 +130,7 @@ export class Mp4Publisher {
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
     } finally {
       this.active = false
+      this.callbacks.onStopped()
       media.index.free()
       if (this.session.getConnectionStatus()) {
         await this.session.disconnect()
@@ -166,7 +171,9 @@ export class Mp4Publisher {
             continue
           }
           if (isVideo) {
-            await video.send(groupId, media.index.annexBVideoSample(data, isSync), presentationMicros)
+            const annexB = media.index.annexBVideoSample(data, isSync)
+            this.callbacks.onVideoSample(annexB, isSync, presentationMicros)
+            await video.send(groupId, annexB, presentationMicros)
           } else if (audio) {
             await audio.send(groupId, data, presentationMicros)
           }

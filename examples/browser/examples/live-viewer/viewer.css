@@ -656,3 +656,24 @@
 .publish-row > .button-row {
   flex: 0 0 auto;
 }
+
+.publish-preview {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.publish-preview canvas {
+  width: 240px;
+  max-width: 40%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+.publish-preview span {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  color: var(--muted);
+}

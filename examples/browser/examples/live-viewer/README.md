@@ -187,6 +187,10 @@ MP4 Publish は、選んだファイルをブラウザの中で demux し、live
 - 配信中は Publish Streams に、relay へ送った group(subgroup stream)を Streams と同じ横棒で track ごとに
   表示します。Window と GOPs は Streams の設定を共有し、見出しの横に送信中 / 送信済みの stream 数と、窓内に
   開いた stream の送信ビットレートを出します。relay がまだ購読していない track は送らないので表示されません。
+- 配信中は MP4 Publish に送信中の映像を小さく表示します。送るサンプルをそのまま WebCodecs でデコードし、各フレームを
+  capture timestamp（送信した時刻）に描くので、遅延のない送信側の絵になります。viewer の LOC フレームも同じ capture
+  timestamp を持つため、表示した時刻との差を `viewer delay` として横に、`delay` として Playback の統計に出します。
+  別のブラウザで視聴するときは、両者の壁時計のずれがそのまま差に乗ります。
 - 配信は視聴とは別の MoQT セッションで行うので、同じページで Watch / Stop を押しても配信は続きます。
   ブラウザは FETCH に応えないため、巻き戻しは relay のキャッシュにある閉じた group の範囲になります。
 

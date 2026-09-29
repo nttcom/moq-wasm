@@ -10,6 +10,7 @@ import {
   type MediaCatalogTrack
 } from '../media/catalog'
 import { base64ToUint8Array } from '../../utils/media/base64'
+import { monotonicUnixMicros } from '../../utils/media/clock'
 import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
 import { readLocHeader } from '../../utils/media/loc'
 import {
@@ -24,6 +25,7 @@ import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
 import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { Mp4Publisher } from './mp4Publisher'
+import { PublishPreview } from './publishPreview'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 import {
@@ -104,10 +106,17 @@ const livePlayout = new LivePlayout(
     })
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
+const publishPreview = new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
 const mp4Publisher = new Mp4Publisher({
   onStatus: (text) => setStatusText('publish-status', text),
-  onLog: appendLog
+  onLog: appendLog,
+  onVideoStarted: (codec) => publishPreview.start(codec),
+  onVideoSample: (annexB, keyframe, captureMicros) => publishPreview.decode(annexB, keyframe, captureMicros),
+  onStopped: () => publishPreview.stop()
 })
+/// Live LOC frames carry their capture timestamp, so the moment one is shown
+/// says how far the viewer runs behind the publisher on the same wall clock.
+let viewerDelayMs: number | undefined
 const bufferingSpinner = new BufferingSpinner(element('buffering'))
 
 let videoTracks: MediaCatalogTrack[] = []
@@ -264,6 +273,7 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   watching = false
+  viewerDelayMs = undefined
   livePictureSink.detach()
   timeline.reset()
   streamMonitor.reset()
@@ -748,6 +758,7 @@ function applyDecoderConfig(): void {
 }
 
 function showLiveFrame(frame: VideoFrame): void {
+  viewerDelayMs = frame.timestamp ? (monotonicUnixMicros() - frame.timestamp) / 1_000 : undefined
   updateVideoStats(frame)
   markPlayhead(frame)
   livePictureSink.present(frame)
@@ -824,7 +835,8 @@ function wantedPicture(): HTMLElement | undefined {
 
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
+  const delay = viewerDelayMs === undefined ? '' : ` · delay ${Math.round(viewerDelayMs)} ms`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight}${delay} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
 }
 
 function formatSyncOffset(offsetMs: number | undefined): string {
@@ -866,6 +878,11 @@ function monitored(
 
 function renderPublishStreams(): void {
   element<HTMLElement>('publish-streams-card').style.display = mp4Publisher.publishing ? '' : 'none'
+  element<HTMLElement>('publish-preview-panel').style.display = mp4Publisher.publishing ? '' : 'none'
+  element<HTMLSpanElement>('publish-latency').textContent =
+    watching && packaging === 'loc' && !reviewing && viewerDelayMs !== undefined
+      ? `viewer delay ${Math.round(viewerDelayMs)} ms`
+      : 'viewer delay -'
   if (!mp4Publisher.publishing) {
     return
   }
