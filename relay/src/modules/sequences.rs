@@ -5,6 +5,7 @@ pub(crate) mod publish_namespace;
 pub(crate) mod publish_namespace_done;
 pub(crate) mod subscribe;
 pub(crate) mod subscribe_namespace;
+pub(crate) mod subscribe_update;
 pub(crate) mod tables;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
