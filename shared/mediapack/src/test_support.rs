@@ -10,6 +10,9 @@ use crate::{
 pub(crate) const FIXTURE_TS: &[u8] = include_bytes!("../fixtures/testsrc.ts");
 pub(crate) const FIXTURE_FLV: &[u8] = include_bytes!("../fixtures/testsrc.flv");
 pub(crate) const FIXTURE_MP4: &[u8] = include_bytes!("../fixtures/testsrc.mp4");
+pub(crate) const FIXTURE_PROGRESSIVE_MP4: &[u8] =
+    include_bytes!("../fixtures/testsrc_progressive.mp4");
+pub(crate) const FIXTURE_MP3_MP4: &[u8] = include_bytes!("../fixtures/testsrc_mp3.mp4");
 
 pub(crate) const FIXTURE_SPS: [u8; 24] = [
     0x67, 0x42, 0xd0, 0x0b, 0xda, 0x0a, 0x37, 0xe4, 0xc0, 0x44, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00,

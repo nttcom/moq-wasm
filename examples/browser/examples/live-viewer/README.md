@@ -1,13 +1,27 @@
 # live-viewer
 
-`bridges/live-ingest` が RTMP / SRT から MoQT へ流した配信を視聴します。catalog に載っている映像
+`bridges/live-ingest` が RTMP / SRT から MoQT へ流した配信や、このページから配信した MP4 を視聴します。catalog に載っている映像
 track を切り替えられるので、`--transcode` で生成した下位画質（`video_480p` / `video_360p`）の確認にも
 使えます。
 
 ## 配信の開始方法
 
-次の3経路から選び、各コマンドを別々のターミナルで実行します。
+次の4経路から選びます。コマンドを使う経路では、各コマンドを別々のターミナルで実行します。
 OBS / ffmpeg では映像に H.264、音声に AAC を使用します。以下の ffmpeg コマンドは Big Buck Bunny を繰り返し配信します。
+
+<details>
+<summary>MP4 ファイル（ブラウザ）→ クラウド Relay</summary>
+
+1. **MP4 を配信する**
+
+   MP4 Publish で映像が H.264、音声が AAC または MP3 の MP4 を選び、Publish を押します。Relay URL と namespace は Stream のものを使い、
+   ブラウザが MP4 を demux して LOC で配信します。Loop を外すとファイルの終わりで配信を終えます。
+
+2. **Live Viewer で視聴する**
+
+   同じ Relay URL と namespace のまま Watch を押します。別のブラウザから同じ namespace を視聴することもできます。
+
+</details>
 
 <details>
 <summary>OBS / ffmpeg → クラウド SRT / RTMP Ingestion (live-ingest) → クラウド Relay</summary>
@@ -149,6 +163,41 @@ namespace `anon/live/test` を選んで Watch を押します。GStreamer 用コ
 - relay のキャッシュ保持は既定 30 分（`RELAY_CACHE_TTL_SECS`）、publisher 側は 30 秒です。
   それより前へは戻れません。
 
+## MP4 の配信
+
+MP4 Publish は、選んだファイルをブラウザの中で demux し、live-ingest と同じ形の catalog と LOC track
+（`video` / `audio`）として relay へ配信します。demux は `shared/mediapack` の progressive MP4 index
+（`mp4::Mp4Index`）を `bindings/wasm` 経由で使い、`moov` だけを wasm に渡してサンプルは `File.slice` で
+読むので、ファイル全体をメモリに載せません。視聴側は live-ingest の配信と同じ経路で再生し、巻き戻しも
+同じように動きます。CMAF の sibling track と media timeline は配信しないため、Packaging は LOC のみで、
+経過時間は `--:-- / --:--` のままです。
+
+- 映像は H.264 のみです。mediapack が AVCC サンプルを Annex B に直し、keyframe の前に `avcC` の SPS / PPS を
+  付けるので、live-ingest と同じく catalog に `initData` はありません。
+- 音声は AAC と MP3 に対応し、どちらも MP4 のフレームをそのまま送ります（LOC の payload は WebCodecs の
+  codec registry にあるコーデックの生ビットストリーム）。AAC は AudioSpecificConfig を catalog の
+  `initData` に載せ、MP3 は catalog の `codec: "mp3"` だけで受信側の `AudioDecoder` が設定されます。
+  ほかのコーデックの音声は飛ばして映像だけを配信します。
+- group は video の keyframe ごとに切り替え、audio の object は直前の keyframe の group に入れます。
+  group id は catalog も含めて開始時刻（unix マイクロ秒）から採番するので、配信し直しても同じ location を
+  再利用しません（relay は publisher が替わっても track のキャッシュを保持し、既知の location を malformed
+  track として扱います）。
+- 各サンプルは B フレームを含むライブエンコーダと同じく decode 順に、decode time にファイルの reorder delay
+  （presentation time が decode time より進む最大量。B フレームがなければ 0）を足した壁時計で送り、presentation
+  time の壁時計を capture timestamp として LOC 拡張ヘッダに載せます。Loop のときは、次の周回をファイルの長さぶん
+  後ろにずらして続けます。
+- 配信中は Publish Streams に、relay へ送った group(subgroup stream)を Subscribe Streams と同じ横棒で track ごとに
+  表示します。2 つのカードは上下に並び、Window と GOPs は Subscribe Streams の設定を共有します。見出しの横に送信中 /
+  送信済みの stream 数と、窓内に開いた stream の送信ビットレートを出します。relay がまだ購読していない track は送らないので
+  表示されません。
+- 配信中は MP4 Publish に送信中の映像を小さく表示します。送るサンプルをそのまま WebCodecs でデコードし、各フレームを
+  capture timestamp に reorder delay を足した時刻（そのフレームまでがすべて送られた時刻）に描くので、ネットワークと
+  バッファの遅延がない受信側の絵になります。viewer の LOC フレームも同じ capture
+  timestamp を持つため、表示した時刻との差を `viewer delay` として横に、`delay` として Playback の統計に出します。
+  別のブラウザで視聴するときは、両者の壁時計のずれがそのまま差に乗ります。
+- 配信は視聴とは別の MoQT セッションで行うので、同じページで Watch / Stop を押しても配信は続きます。
+  ブラウザは FETCH に応えないため、巻き戻しは relay のキャッシュにある閉じた group の範囲になります。
+
 ## ペイロード形式
 
 live-ingest もブラウザ publisher も object を LOC（draft-ietf-moq-loc-01）で送ります。payload は
@@ -164,6 +213,15 @@ MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \
 MEDIA_E2E_MOQT_URL=https://127.0.0.1:4433 \
 LIVE_VIEWER_E2E_NAMESPACE=live \
 npm --prefix examples/browser run e2e:live-viewer
+```
+
+MP4 の配信は relay と dev server だけで実行できます。ffmpeg で生成したテスト用 MP4（H.264 baseline に AAC
+または MP3）をブラウザから配信し、同じページで視聴します。
+
+```shell
+MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \
+MEDIA_E2E_MOQT_URL=https://127.0.0.1:4433 \
+npm --prefix examples/browser run e2e:live-viewer-mp4
 ```
 
 ## Delivery check
@@ -228,8 +286,18 @@ The catalog is subscribed to for updates and fetched for its current object:
 a SUBSCRIBE delivers objects published after the largest one, and the bridge
 publishes the catalog once per upstream subscription, so a viewer joining a
 subscription the relay already holds would otherwise never see it. The FETCH
-names the group SUBSCRIBE_OK reports when the relay still knows it and the
-whole track otherwise, which the relay completes from the bridge.
+names the group SUBSCRIBE_OK reports as the largest. When SUBSCRIBE_OK says
+no content exists yet, as the MP4 publisher does because it sends the catalog
+right after answering, nothing is fetched and the catalog arrives on the
+SUBSCRIBE; a FETCH would only be forwarded to a publisher that does not
+answer it.
+
+The two may deliver different catalogs: the relay keeps the catalog of a
+publisher that has since been replaced, so the FETCH can return the old one
+while the SUBSCRIBE brings the new one. The viewer applies the catalog of the
+newest group whatever order they arrive in, and when a catalog redefines a
+track it is subscribed to under the same name, as a new publisher with another
+audio codec does, the decoder is reconfigured from the new definition.
 
 ## Audio / video synchronisation
 

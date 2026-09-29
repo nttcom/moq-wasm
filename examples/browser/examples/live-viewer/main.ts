@@ -10,6 +10,7 @@ import {
   type MediaCatalogTrack
 } from '../media/catalog'
 import { base64ToUint8Array } from '../../utils/media/base64'
+import { monotonicUnixMicros } from '../../utils/media/clock'
 import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
 import { readLocHeader } from '../../utils/media/loc'
 import {
@@ -23,6 +24,8 @@ import { BufferingSpinner } from './bufferingSpinner'
 import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
 import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
+import { Mp4Publisher } from './mp4Publisher'
+import { PublishPreview } from './publishPreview'
 import { ReviewPlayout } from './reviewPlayout'
 import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 import {
@@ -33,6 +36,7 @@ import {
   renderDeliveryGrid,
   renderIdleStreamMonitor,
   renderStreamMonitor,
+  streamKbps,
   summarizeStreams
 } from './streamMonitor'
 
@@ -53,7 +57,6 @@ const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
-const FETCH_OPEN_END_GROUP = 2n ** 62n - 1n
 const PRESENTATION_MARGIN_MS = 200
 
 type Packaging = 'loc' | 'cmaf'
@@ -68,6 +71,7 @@ type TrackSubscription = {
   requestId: bigint
   trackAlias: bigint
   name: string
+  track: MediaCatalogTrack
 }
 
 type ReviewWindow = {
@@ -102,6 +106,13 @@ const livePlayout = new LivePlayout(
     })
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
+const mp4Publisher = new Mp4Publisher(
+  { onStatus: (text) => setStatusText('publish-status', text), onLog: appendLog },
+  new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
+)
+/// Live LOC frames carry their capture timestamp, so the moment one is shown
+/// says how far the viewer runs behind the publisher on the same wall clock.
+let viewerDelayMs: number | undefined
 const bufferingSpinner = new BufferingSpinner(element('buffering'))
 
 let videoTracks: MediaCatalogTrack[] = []
@@ -118,6 +129,7 @@ showPicture(livePictureSink.element)
 let cmafAwaitingKeyframe = true
 const unstampedCmafGroups = new Set<bigint>()
 const subscriptions = new Map<MediaKind, TrackSubscription>()
+let catalogGroupId: bigint | undefined
 let videoObjectCount = 0
 let receivedKbps = 0
 const timeline = new GroupTimeline(TIMELINE_CAPACITY)
@@ -154,6 +166,8 @@ for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
+element<HTMLButtonElement>('publishBtn').addEventListener('click', () => void publishMp4())
+element<HTMLButtonElement>('stopPublishBtn').addEventListener('click', () => void mp4Publisher.stop())
 element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video').then(openLiveMse))
 element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio').then(openLiveMse))
 element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
@@ -219,7 +233,9 @@ for (const event of ['pointercancel', 'blur']) {
 startRendering()
 moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
 element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
-  streamMonitor.setKeptGroups(Number((event.target as HTMLInputElement).value) || 1)
+  const keptGroups = Number((event.target as HTMLInputElement).value) || 1
+  streamMonitor.setKeptGroups(keptGroups)
+  mp4Publisher.sentStreams.setKeptGroups(keptGroups)
 })
 element<HTMLInputElement>('playout-buffer').addEventListener('change', (event) => {
   const delayMs = Number((event.target as HTMLInputElement).value)
@@ -252,6 +268,7 @@ async function watchStream(): Promise<void> {
 
 async function stopStream(): Promise<void> {
   watching = false
+  viewerDelayMs = undefined
   livePictureSink.detach()
   timeline.reset()
   streamMonitor.reset()
@@ -267,6 +284,7 @@ async function stopStream(): Promise<void> {
   for (const kind of subscriptions.keys()) {
     await unsubscribeTrack(kind)
   }
+  catalogGroupId = undefined
   videoTracks = []
   audioTracks = []
   cmafTracks = []
@@ -280,27 +298,57 @@ async function stopStream(): Promise<void> {
   setStatusText('playback-status', 'Playback idle')
 }
 
+async function publishMp4(): Promise<void> {
+  const file = element<HTMLInputElement>('mp4-file').files?.[0]
+  if (!file) {
+    setStatusText('publish-status', 'Choose an MP4 file first')
+    return
+  }
+  setStatusText('publish-status', `Opening ${file.name}`)
+  try {
+    await mp4Publisher.start({
+      file,
+      url: element<HTMLInputElement>('url').value.trim(),
+      namespace: trackNamespace(),
+      authInfo: AUTH_INFO,
+      loop: element<HTMLInputElement>('mp4-loop').checked
+    })
+  } catch (error) {
+    setStatusText('publish-status', `Publish failed: ${getErrorMessage(error)}`)
+    appendLog('error', `publish: ${getErrorMessage(error)}`)
+  }
+}
+
 /// A SUBSCRIBE delivers objects published after the largest one and the bridge
 /// publishes the catalog once per upstream subscription, so a viewer joining a
-/// subscription the relay already holds would never see it. The current
-/// catalog is fetched instead: the group SUBSCRIBE_OK names when the relay
-/// still knows it, otherwise the whole track, which the relay completes from
-/// the bridge.
+/// subscription the relay already holds would never see it; the group
+/// SUBSCRIBE_OK names as the largest is fetched as well. The FETCH and the
+/// SUBSCRIBE race, and the relay keeps the catalog of a publisher that has
+/// since been replaced, so the catalog of the newest group wins whatever order
+/// they arrive in.
 async function subscribeCatalog(): Promise<void> {
-  const onText = (text: string) => void applyCatalog(text)
+  const onText = (text: string, groupId: bigint) => {
+    if (catalogGroupId !== undefined && groupId < catalogGroupId) {
+      return
+    }
+    catalogGroupId = groupId
+    void applyCatalog(text)
+  }
   const subscribeOk = await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, onText)
   await fetchLatestText(MEDIA_CATALOG_TRACK_NAME, subscribeOk, onText)
 }
 
-async function subscribeTextTrack(name: string, onText: (text: string) => void): Promise<SubscribeOk> {
+type TextTrackHandler = (text: string, groupId: bigint) => void
+
+async function subscribeTextTrack(name: string, onText: TextTrackHandler): Promise<SubscribeOk> {
   const namespace = trackNamespace()
   const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
   moqtClient.setOnSubgroupObjectHandler(
     subscribeOk.trackAlias,
-    monitored(subscribeOk.trackAlias, name, (_groupId, object) => {
+    monitored(subscribeOk.trackAlias, name, (groupId, object) => {
       const payload = new Uint8Array(object.objectPayload)
       if (payload.byteLength > 0) {
-        onText(new TextDecoder().decode(payload))
+        onText(new TextDecoder().decode(payload), groupId)
       }
     })
   )
@@ -308,13 +356,18 @@ async function subscribeTextTrack(name: string, onText: (text: string) => void):
   return subscribeOk
 }
 
-async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (text: string) => void): Promise<void> {
+/// draft-ietf-moq-transport-14 §9.8: SUBSCRIBE_OK names a Largest Location
+/// only when content exists; without one nothing has been published yet, so
+/// there is nothing to fetch and the first object arrives on the SUBSCRIBE.
+async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: TextTrackHandler): Promise<void> {
   const largestGroup = subscribeOk.largestGroupId
-  const startGroup = largestGroup ?? 0n
-  const endGroup = largestGroup ?? FETCH_OPEN_END_GROUP
-  const endObject = largestGroup === undefined ? 0n : (subscribeOk.largestObjectId ?? 0n) + 1n
+  if (largestGroup === undefined) {
+    appendLog('info', `${name} has no published object yet; waiting for it on the subscription`)
+    return
+  }
+  const endObject = (subscribeOk.largestObjectId ?? 0n) + 1n
   try {
-    const { requestId } = await moqtClient.fetch(trackNamespace(), name, startGroup, 0n, endGroup, endObject, {
+    const { requestId } = await moqtClient.fetch(trackNamespace(), name, largestGroup, 0n, largestGroup, endObject, {
       onObject: (message) => {
         streamMonitor.fetchObject(
           message.requestId,
@@ -325,7 +378,7 @@ async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: (
         )
         const payload = new Uint8Array(message.objectPayload)
         if (payload.byteLength > 0) {
-          onText(new TextDecoder().decode(payload))
+          onText(new TextDecoder().decode(payload), message.groupId)
         }
       }
     })
@@ -350,6 +403,8 @@ async function applyCatalog(payload: string): Promise<void> {
       await resubscribe('video')
       await resubscribe('audio')
       await openLiveMse()
+    } else {
+      reconfigureDecoders()
     }
   } catch (error) {
     setStatusText('catalog-status', `Catalog error: ${getErrorMessage(error)}`)
@@ -603,7 +658,7 @@ async function resubscribe(kind: MediaKind): Promise<void> {
   const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), wire.name, AUTH_INFO, {
     forward: true
   })
-  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name })
+  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name, track })
   if (packaging === 'cmaf') {
     moqtClient.setOnSubgroupObjectHandler(
       subscribeOk.trackAlias,
@@ -648,6 +703,26 @@ async function unsubscribeTrack(kind: MediaKind): Promise<void> {
   appendLog('info', `unsubscribed ${subscription.name}`)
 }
 
+/// A catalog update may redefine a track under the same name, as when the
+/// publisher is replaced by one with another audio codec, so the decoders
+/// take the new definition of the tracks they are already subscribed to.
+function reconfigureDecoders(): void {
+  if (packaging !== 'loc') {
+    return
+  }
+  for (const [kind, subscription] of subscriptions) {
+    const track = (kind === 'video' ? videoTracks : audioTracks).find(
+      (candidate) => candidate.name === subscription.track.name
+    )
+    if (!track || JSON.stringify(track) === JSON.stringify(subscription.track)) {
+      continue
+    }
+    postCatalogToDecoder(kind, track)
+    subscriptions.set(kind, { ...subscription, track })
+    appendLog('info', `${kind} track ${track.name} redefined by the catalog`)
+  }
+}
+
 function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
   if (kind === 'video') {
     postVideoCatalogToWorker(videoDecoderWorker, {
@@ -681,6 +756,7 @@ function applyDecoderConfig(): void {
 }
 
 function showLiveFrame(frame: VideoFrame): void {
+  viewerDelayMs = frame.timestamp ? (monotonicUnixMicros() - frame.timestamp) / 1_000 : undefined
   updateVideoStats(frame)
   markPlayhead(frame)
   livePictureSink.present(frame)
@@ -757,7 +833,8 @@ function wantedPicture(): HTMLElement | undefined {
 
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
+  const delay = viewerDelayMs === undefined ? '' : ` · delay ${Math.round(viewerDelayMs)} ms`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight}${delay} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
 }
 
 function formatSyncOffset(offsetMs: number | undefined): string {
@@ -797,7 +874,33 @@ function monitored(
   }
 }
 
+function renderPublishStreams(): void {
+  element<HTMLElement>('publish-streams-card').style.display = mp4Publisher.publishing ? '' : 'none'
+  element<HTMLElement>('publish-preview-panel').style.display = mp4Publisher.publishing ? '' : 'none'
+  element<HTMLSpanElement>('publish-latency').textContent =
+    watching && packaging === 'loc' && !reviewing && viewerDelayMs !== undefined
+      ? `viewer delay ${Math.round(viewerDelayMs)} ms`
+      : 'viewer delay -'
+  if (!mp4Publisher.publishing) {
+    return
+  }
+  const now = Date.now()
+  const records = mp4Publisher.sentStreams.snapshot()
+  renderStreamMonitor(
+    element<SVGSVGElement>('publish-stream-monitor'),
+    records,
+    mp4Publisher.sentStreams.slotsPerTrack(),
+    streamWindowSeconds,
+    [],
+    now
+  )
+  element<HTMLSpanElement>('publish-stream-stats').textContent = records.length
+    ? `${summarizeStreams(records, [], now)} · ${Math.round(streamKbps(records, streamWindowSeconds, now))} kbps`
+    : 'no subscriber yet'
+}
+
 function renderStreams(): void {
+  renderPublishStreams()
   const reviewGrid = element<SVGSVGElement>('delivery-grid-review')
   const reviewTimeline = element<SVGSVGElement>('stream-monitor-review')
   if (!watching) {

@@ -5,6 +5,7 @@ mod loc;
 mod media_streaming_format;
 #[cfg(web_sys_unstable_apis)]
 mod messages;
+mod mp4;
 
 pub use media_streaming_format::*;
 #[cfg(web_sys_unstable_apis)]

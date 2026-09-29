@@ -385,20 +385,15 @@ function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
 }
 
 function buildDecoderConfig(resolved: CachedAudioConfig): AudioDecoderConfig {
-  if (resolved.codec.startsWith('mp4a')) {
-    const description = resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined
-    return {
-      codec: resolved.codec,
-      sampleRate: resolved.sampleRate,
-      numberOfChannels: resolved.channels,
-      description
-    }
-  }
-
+  const description =
+    resolved.codec.startsWith('mp4a') && resolved.descriptionBase64
+      ? base64ToUint8Array(resolved.descriptionBase64)
+      : undefined
   return {
-    codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
+    codec: resolved.codec,
     sampleRate: resolved.sampleRate,
-    numberOfChannels: resolved.channels
+    numberOfChannels: resolved.channels,
+    description
   }
 }
 

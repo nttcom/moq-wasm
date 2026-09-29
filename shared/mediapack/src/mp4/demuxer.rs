@@ -4,10 +4,11 @@ use anyhow::{Context, Result, ensure};
 use bytes::{Bytes, BytesMut};
 
 use crate::{
-    aac::AudioSpecificConfig,
-    h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
-    mp4::atom::{
-        Atom, HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, full_atom, peek, read_u32, read_u64,
+    mp4::{
+        atom::{
+            HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, full_atom, peek, read_u32, read_u64,
+        },
+        track::{AudioCodec, Media, Track, annexb_access_unit, read_track},
     },
     sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
 };
@@ -24,28 +25,12 @@ const TRUN_SAMPLE_SIZE: u32 = 0x0200;
 const TRUN_SAMPLE_FLAGS: u32 = 0x0400;
 const TRUN_COMPOSITION_OFFSET: u32 = 0x0800;
 const SAMPLE_IS_NON_SYNC: u32 = 0x0001_0000;
-const VIDEO_SAMPLE_ENTRIES: [&[u8]; 2] = [b"avc1", b"avc3"];
-const VISUAL_SAMPLE_ENTRY_LENGTH: usize = 78;
-const AUDIO_SAMPLE_ENTRY_LENGTH: usize = 28;
-const AUDIO_SAMPLE_ENTRY: &[u8] = b"mp4a";
-const DEFAULT_TIMESCALE: u32 = 90_000;
-const AAC_LC_OBJECT_TYPE: u8 = 2;
 
 #[derive(Default)]
 pub struct Demuxer {
     buffer: BytesMut,
     tracks: BTreeMap<u32, Track>,
     pending: Option<Fragment>,
-}
-
-struct Track {
-    media: Media,
-    timescale: u32,
-}
-
-enum Media {
-    Video(AvcDecoderConfigurationRecord),
-    Audio(AudioSpecificConfig),
 }
 
 /// trun states the offset of its samples from the start of the enclosing moof,
@@ -109,10 +94,13 @@ impl Demuxer {
         Ok(Vec::new())
     }
 
+    /// `MediaEvent` carries AAC audio only, so a fragmented file with MP3 audio
+    /// is rejected rather than demuxed without its sound.
     fn read_movie(&mut self, payload: &[u8]) -> Result<Vec<MediaEvent>> {
         for trak in atoms(payload).filter(|atom| atom.kind == b"trak") {
-            let (track_id, track) = read_track(&trak)?;
-            self.tracks.insert(track_id, track);
+            if let Some((track_id, track)) = read_track(&trak)? {
+                self.tracks.insert(track_id, track);
+            }
         }
         ensure!(!self.tracks.is_empty(), "moov declares no supported track");
 
@@ -123,7 +111,10 @@ impl Demuxer {
         for track in self.tracks.values() {
             events.push(match &track.media {
                 Media::Video(config) => MediaEvent::VideoConfig(config.clone()),
-                Media::Audio(config) => MediaEvent::AudioConfig(config.clone()),
+                Media::Audio(AudioCodec::Aac(config)) => MediaEvent::AudioConfig(config.clone()),
+                Media::Audio(AudioCodec::Mp3 { .. }) => {
+                    anyhow::bail!("MP3 audio is not supported by the fragment demuxer")
+                }
             });
         }
         Ok(events)
@@ -176,19 +167,12 @@ impl SampleEntry {
         let dts = Timestamp::from_ticks(decode_time, track.timescale);
         let pts = shift(dts, self.composition_offset, track.timescale);
         Ok(match &track.media {
-            Media::Video(config) => {
-                let annexb = avcc_to_annexb(&data, config.nal_length_size as usize)?;
-                MediaEvent::Video(VideoSample {
-                    data: if self.is_sync {
-                        config.with_parameter_sets(annexb)
-                    } else {
-                        annexb
-                    },
-                    is_keyframe: self.is_sync,
-                    pts,
-                    dts,
-                })
-            }
+            Media::Video(config) => MediaEvent::Video(VideoSample {
+                data: annexb_access_unit(config, &data, self.is_sync)?,
+                is_keyframe: self.is_sync,
+                pts,
+                dts,
+            }),
             Media::Audio(_) => MediaEvent::Audio(AudioSample { data, pts }),
         })
     }
@@ -201,123 +185,6 @@ fn shift(dts: Timestamp, composition_offset: i64, timescale: u32) -> Timestamp {
     } else {
         dts.saturating_add(offset)
     }
-}
-
-fn read_track(trak: &Atom) -> Result<(u32, Track)> {
-    let tkhd = find(trak.payload, b"tkhd").context("trak has no tkhd")?;
-    let header = full_atom(tkhd.payload, "tkhd")?;
-    let track_id_offset = if header.is_version_one() { 16 } else { 8 };
-    let track_id = read_u32(header.body, track_id_offset)?;
-
-    let mdia = find(trak.payload, b"mdia").context("trak has no mdia")?;
-    let mdhd = find(mdia.payload, b"mdhd").context("mdia has no mdhd")?;
-    let header = full_atom(mdhd.payload, "mdhd")?;
-    let timescale = if header.is_version_one() {
-        read_u32(header.body, 16)?
-    } else {
-        read_u32(header.body, 8)?
-    };
-
-    let minf = find(mdia.payload, b"minf").context("mdia has no minf")?;
-    let stbl = find(minf.payload, b"stbl").context("minf has no stbl")?;
-    let stsd = find(stbl.payload, b"stsd").context("stbl has no stsd")?;
-    let media = read_sample_entry(full_atom(stsd.payload, "stsd")?.body)?;
-
-    Ok((
-        track_id,
-        Track {
-            media,
-            timescale: if timescale == 0 {
-                DEFAULT_TIMESCALE
-            } else {
-                timescale
-            },
-        },
-    ))
-}
-
-fn read_sample_entry(body: &[u8]) -> Result<Media> {
-    let entries = body.get(4..).context("stsd has no entries")?;
-    for entry in atoms(entries) {
-        if VIDEO_SAMPLE_ENTRIES.contains(&entry.kind) {
-            let children = entry
-                .payload
-                .get(VISUAL_SAMPLE_ENTRY_LENGTH..)
-                .context("visual sample entry is truncated")?;
-            let avcc = find(children, b"avcC").context("video sample entry has no avcC")?;
-            return Ok(Media::Video(AvcDecoderConfigurationRecord::parse(
-                avcc.payload,
-            )?));
-        }
-        if entry.kind == AUDIO_SAMPLE_ENTRY {
-            return Ok(Media::Audio(read_audio_config(entry.payload)?));
-        }
-    }
-    anyhow::bail!("stsd carries no H.264 or AAC sample entry")
-}
-
-/// The esds decoder specific info is optional, so a sample entry without one
-/// falls back to the channel count and sample rate the entry itself declares.
-fn read_audio_config(payload: &[u8]) -> Result<AudioSpecificConfig> {
-    let children = payload
-        .get(AUDIO_SAMPLE_ENTRY_LENGTH..)
-        .context("audio sample entry is truncated")?;
-    let specific_info = find(children, b"esds")
-        .and_then(|esds| full_atom(esds.payload, "esds").ok())
-        .and_then(|esds| decoder_specific_info(esds.body))
-        .map(AudioSpecificConfig::parse);
-    if let Some(config) = specific_info {
-        return config;
-    }
-
-    let channels = u16::from_be_bytes(
-        payload
-            .get(16..18)
-            .context("audio sample entry has no channel count")?
-            .try_into()?,
-    );
-    let sample_rate = read_u32(payload, 24)? >> 16;
-    Ok(AudioSpecificConfig::new(
-        AAC_LC_OBJECT_TYPE,
-        sample_rate,
-        channels as u8,
-    ))
-}
-
-/// ISO/IEC 14496-1 descriptors: an ES descriptor (0x03) holds a decoder config
-/// descriptor (0x04) that may hold decoder specific info (0x05).
-fn decoder_specific_info(mut body: &[u8]) -> Option<&[u8]> {
-    loop {
-        let (tag, payload, rest) = read_descriptor(body).ok()?;
-        body = match tag {
-            0x03 => payload.get(3..)?,
-            0x04 => payload.get(13..)?,
-            0x05 => return Some(payload),
-            _ => rest,
-        };
-        if body.is_empty() {
-            return None;
-        }
-    }
-}
-
-fn read_descriptor(data: &[u8]) -> Result<(u8, &[u8], &[u8])> {
-    let tag = *data.first().context("descriptor is empty")?;
-    let mut length = 0_usize;
-    let mut offset = 1;
-    loop {
-        ensure!(offset <= 4, "descriptor length exceeds four bytes");
-        let byte = *data.get(offset).context("descriptor length is truncated")?;
-        length = (length << 7) | (byte & 0x7F) as usize;
-        offset += 1;
-        if byte & 0x80 == 0 {
-            break;
-        }
-    }
-    let payload = data
-        .get(offset..offset + length)
-        .context("descriptor payload is truncated")?;
-    Ok((tag, payload, &data[offset + length..]))
 }
 
 fn read_fragment(payload: &[u8], moof_size: usize) -> Result<Fragment> {

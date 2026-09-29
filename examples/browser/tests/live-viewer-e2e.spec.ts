@@ -1,5 +1,11 @@
 import { expect, test, type Locator } from '@playwright/test'
-import { arrangeLiveViewerE2ESession, type LiveViewerPageModel } from './live-viewer-e2e-arrange'
+import {
+  arrangeLiveViewerE2ESession,
+  expectVideoDecoded,
+  type LiveViewerPageModel,
+  parseSeconds,
+  syncOffsetMs
+} from './live-viewer-e2e-arrange'
 
 test('live viewer plays the ingested stream, switches renditions and rewinds', async ({ browser }) => {
   // Arrange
@@ -302,28 +308,6 @@ async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'pau
   key: K
 ): Promise<HTMLMediaElement[K]> {
   return media.evaluate((element, property) => (element as HTMLMediaElement)[property], key)
-}
-
-async function expectVideoDecoded(video: Locator): Promise<void> {
-  await expect
-    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).readyState), {
-      timeout: 30_000
-    })
-    .toBeGreaterThanOrEqual(2)
-  await expect
-    .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
-    .toBeGreaterThan(0)
-}
-
-/// The stats line reads `A/V +12 ms` once both media have been presented and
-/// `A/V --` until then.
-async function syncOffsetMs(viewer: LiveViewerPageModel): Promise<number> {
-  const match = (await viewer.videoStats.innerText()).match(/A\/V ([+-]\d+) ms/)
-  return match ? Math.abs(Number(match[1])) : Number.POSITIVE_INFINITY
-}
-
-async function parseSeconds(locator: Locator): Promise<number> {
-  return Number.parseFloat((await locator.innerText()).replace('s', ''))
 }
 
 function parseClock(text: string): number {

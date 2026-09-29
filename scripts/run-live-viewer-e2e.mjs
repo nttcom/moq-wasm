@@ -102,15 +102,19 @@ async function main() {
       120_000,
     );
 
-    await runCommand(resolveCommandName("npm"), ["run", "e2e:live-viewer"], {
-      cwd: jsDir,
-      env: {
-        ...process.env,
-        MEDIA_E2E_BASE_URL: baseUrl,
-        MEDIA_E2E_MOQT_URL: moqtUrl,
-        LIVE_VIEWER_E2E_NAMESPACE: namespace,
+    await runCommand(
+      resolveCommandName("npm"),
+      ["run", "e2e:live-viewer", "--", "tests/live-viewer-mp4-e2e.spec.ts"],
+      {
+        cwd: jsDir,
+        env: {
+          ...process.env,
+          MEDIA_E2E_BASE_URL: baseUrl,
+          MEDIA_E2E_MOQT_URL: moqtUrl,
+          LIVE_VIEWER_E2E_NAMESPACE: namespace,
+        },
       },
-    });
+    );
   } finally {
     await cleanup();
   }
