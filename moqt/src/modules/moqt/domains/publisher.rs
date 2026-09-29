@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::bail;
 
@@ -41,13 +40,7 @@ pub struct Publisher<T: TransportProtocol> {
     pub(crate) session: Arc<SessionContext<T>>,
 }
 
-static NEXT_TRACK_ALIAS: AtomicU64 = AtomicU64::new(0);
-
 impl<T: TransportProtocol> Publisher<T> {
-    fn next_track_alias() -> u64 {
-        NEXT_TRACK_ALIAS.fetch_add(1, Ordering::SeqCst)
-    }
-
     pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -124,8 +117,7 @@ impl<T: TransportProtocol> Publisher<T> {
         track_name: String,
         option: PublishOption,
     ) -> anyhow::Result<Subscription> {
-        let track_alias = Self::next_track_alias();
-        tracing::debug!("track alias: {}", track_alias);
+        let track_alias = self.session.get_track_alias();
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -195,5 +187,39 @@ impl<T: TransportProtocol> Publisher<T> {
     pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender<T>> {
         let send_stream = self.session.transport_connection.open_uni().await?;
         FetchDataSender::new(send_stream, FetchHeader::new(request_id)).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        PublishOption, SessionEvent, modules::test_support::spawn_connected_dual_sessions,
+    };
+
+    #[tokio::test]
+    async fn publish_takes_its_track_alias_from_the_counter_subscribe_ok_uses() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("publisher-track-alias").await;
+        let session = client.publisher().session;
+        let request = tokio::spawn(async move {
+            client
+                .publisher()
+                .publish(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    PublishOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH from the client");
+        };
+
+        // Act
+        let subscribe_ok_track_alias = session.get_track_alias();
+
+        // Assert
+        assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
+        request.abort();
     }
 }
