@@ -73,7 +73,8 @@ sends no request after PUBLISH that could carry one. The relay therefore
 repurposes TRACK_STATUS, the only request that has no side effects, as the
 carrier: a client sends TRACK_STATUS (namespace `[app_id]`, track name
 `update_auth_token` by convention; the relay reads neither) with the new JWT as
-its AUTHORIZATION TOKEN parameter. The session worker runs
+its AUTHORIZATION TOKEN parameter. A TRACK_STATUS without an AUTHORIZATION
+TOKEN is a status query instead (see "TRACK_STATUS sequence"). The session worker runs
 `auth::token_refresh::refresh_token`: extract the token, verify it with the
 `TokenVerifier`, require a client (non-relay) session and a non-relay token
 whose `app_id` matches the current one. On success
@@ -81,9 +82,8 @@ whose `app_id` matches the current one. On success
 `VerifiedToken` and restarts its `SessionExpiryTask` at the new `exp`, the
 worker adopts the new token for later requests, and TRACK_STATUS_OK is sent
 with Track Alias 0 and Content Exists false — it reports no track status. On
-failure TRACK_STATUS_ERROR carries `NOT_SUPPORTED (0x3)` for a TRACK_STATUS
-without a token (a real status query, which the relay does not implement) or
-on an inter-relay session, `MALFORMED_AUTH_TOKEN (0x10)` for an unsupported
+failure TRACK_STATUS_ERROR carries `NOT_SUPPORTED (0x3)` on an inter-relay
+session, `MALFORMED_AUTH_TOKEN (0x10)` for an unsupported
 alias type / token type / non-UTF-8 value, `UNAUTHORIZED (0x1)` for a rejected
 token, a relay token or an `app_id` mismatch, and `INTERNAL_ERROR (0x0)` when
 the VTS is unreachable; the session keeps its current token. The refresh has
@@ -132,8 +132,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   it. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
   TRACK_STATUS token refresh succeeds). PUBLISH and
-  PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE
-  and standalone FETCH need `subscribe`; joining FETCH and every other
+  PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
+  standalone FETCH and a TRACK_STATUS status query (no AUTHORIZATION TOKEN)
+  need `subscribe`; a token-refresh TRACK_STATUS, joining FETCH and every other
   message pass through (they reference an already authorized request). A
   denied request is answered with the message's `*_ERROR` carrying
   `UNAUTHORIZED (0x1)` and the sequence is never invoked.
@@ -146,8 +147,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   sequence"), so a publisher that answers FETCH late or never — a browser
   publisher has no FETCH handler — does not hold the session's later requests
   for the control-message response timeout.
-- TRACK_STATUS is handled by the worker itself as a token refresh (see
-  "Token refresh" under "Session intake"); it has no `sequences` entry.
+- A TRACK_STATUS carrying an AUTHORIZATION TOKEN is handled by the worker
+  itself as a token refresh (see "Token refresh" under "Session intake"); one
+  without a token goes to `sequences::track_status`.
 - Events for control messages without relay-side logic yet (GOAWAY,
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
   SUBSCRIBE_UPDATE, FETCH_CANCEL) are logged in the event span and dropped by
@@ -175,7 +177,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 
 ### `modules/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message
-(`publish`, `subscribe`, `fetch`, `publish_namespace`,
+(`publish`, `subscribe`, `fetch`, `track_status`, `publish_namespace`,
 `publish_namespace_done`, `subscribe_namespace`, `unsubscribe`,
 `unsubscribe_namespace`). Shared collaborators:
 
@@ -234,6 +236,15 @@ waits for its FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
 `FetchIngest`, which fills the cache and hands the range to egress. A
 downstream session that disconnects meanwhile only makes the FETCH_OK send
 fail; egress drops a `StartFetch` for a departed session.
+
+### TRACK_STATUS sequence
+A status query is answered from the relay's own state only. For a track with
+an `ActiveUpstreamSubscription`, TRACK_STATUS_OK carries the upstream's
+Expires and the Largest Location resolved as on the SUBSCRIBE fast path (the
+cache's largest location, else the upstream's Content Exists). Any other track
+is answered TRACK_STATUS_ERROR `NOT_SUPPORTED (0x3)`: draft-14 §9.20 lets a
+relay without an active subscription forward the request or subscribe
+upstream (MAY), and this relay does neither.
 
 ## Authentication and authorization (`modules/auth`)
 

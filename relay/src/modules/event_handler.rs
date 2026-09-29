@@ -30,6 +30,7 @@ use crate::modules::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
         },
+        track_status::TrackStatus,
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
         upstream_serializer::UpstreamCreationSerializer,
@@ -348,6 +349,20 @@ impl EventHandler {
                             &control_message_forwarder,
                             &upstream_publisher_resolver,
                             handler,
+                        )
+                        .instrument(event_span)
+                        .await;
+                }
+                MoqtSessionEvent::TrackStatus(handler)
+                    if handler.authorization_tokens().is_empty() =>
+                {
+                    TrackStatus {}
+                        .handle(
+                            session_id,
+                            &session_span,
+                            local_pub_sub_directory.as_ref(),
+                            &cache_store,
+                            handler.as_ref(),
                         )
                         .instrument(event_span)
                         .await;

@@ -5,6 +5,7 @@ use moqt::{ContentExists, wire::AuthorizationToken};
 pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
     fn track_namespace(&self) -> &str;
+    fn track_namespace_tuple(&self) -> &[String];
     fn track_name(&self) -> &str;
     fn authorization_tokens(&self) -> &[AuthorizationToken];
     async fn ok(
@@ -24,6 +25,10 @@ impl<T: moqt::TransportProtocol> TrackStatusHandler for moqt::TrackStatusHandler
 
     fn track_namespace(&self) -> &str {
         self.track_namespace()
+    }
+
+    fn track_namespace_tuple(&self) -> &[String] {
+        self.track_namespace_tuple()
     }
 
     fn track_name(&self) -> &str {
