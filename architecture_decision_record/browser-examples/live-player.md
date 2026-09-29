@@ -55,9 +55,10 @@ L0  transport/codec @moqt/moqtClient, utils/media (decoder workers, MseSink)
 
 Rules:
 
-- L1 touches the DOM only inside the container it is given, where it creates
-  its picture elements (live video, live canvas, review canvas, the MSE pool).
-  It never reads form values or writes status text.
+- L1 touches the DOM only through the picture elements it is given (live
+  video, live canvas, review canvas, the MSE pool); from step 2 on it creates
+  them inside a container instead. It never reads form values or writes
+  status text.
 - L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
   can share one session with a publisher or with other players.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
@@ -65,30 +66,29 @@ Rules:
   the page. It registers per-alias and per-request handlers only.
 - L2 holds no playback state of its own; it renders `LivePlayer.state` and
   issues commands.
-- Diagnostics stay in L3. L1 reports deliveries to an optional observer whose
-  shape is the subset of `StreamMonitor` it calls.
+- Diagnostics stay in L3. L1 reports deliveries to an observer whose shape is
+  the subset of `StreamMonitor` it calls (`DeliveryObserver`).
 
 ## Public API (L1)
 
 ```ts
 type LivePlayerOptions = {
   client: MoqtClientWrapper
-  namespace: string[]
   authInfo: string
-  container: HTMLElement
+  surface: LivePlayerSurface
   callbacks: LivePlayerCallbacks
-  deliveryObserver?: DeliveryObserver
+  deliveryObserver: DeliveryObserver
   livePicture?: LivePictureKind
 }
 
 type LivePlayerCallbacks = {
   onStateChange(): void
-  onFramePresented(): void
+  onLiveFrame(): void
   onLog(level: 'info' | 'warn' | 'error', message: string): void
 }
 
 class LivePlayer {
-  start(): Promise<void>
+  start(namespace: string[]): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   selectAudioTrack(name: string): Promise<void>
@@ -103,12 +103,17 @@ class LivePlayer {
   setCatchUp(catchUp: CatchUp): void
   readonly state: LivePlayerState
   stats(): LivePlayerStats
+  elapsedMsAt(captureMicros: number): number | undefined
 }
 ```
 
+One player lives as long as the page; `start` and `stop` bracket one watch,
+and the settings (packaging, volume, buffer policy, catch-up) carry over.
+
 `LivePlayerState` carries what the controls and the diagnostics render: the
 catalog tracks and the selection, whether CMAF is available, the packaging,
-`mode: 'live' | 'review'`, paused, whether the playback rate is adjustable,
+`mode: 'live' | 'review'`, paused, stalled, the playback rate and whether it
+is adjustable,
 the catalog / playback / rewind status, the seek range (broadcast start,
 replayable start, live edge, review anchor and playhead, and elapsed times from
 the media timeline), and the aliases of the live subscriptions and review
@@ -120,14 +125,19 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 
 | Module | Responsibility |
 | --- | --- |
-| `livePlayer` | Facade: owns the modules below and the state, dispatches commands |
-| `catalogFollower` | Catalog SUBSCRIBE + FETCH, newest group wins, media timeline track |
+| `livePlayer` | Facade: owns the modules below and the state, dispatches commands, decides by packaging |
+| `trackContext` | The client, namespace, auth info, observer and log every request needs |
+| `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order |
-| `livePipeline` | `LocLivePipeline` (workers, `LivePlayout`, picture sink) and `CmafLivePipeline` (`MseSink`) behind one interface, so packaging is decided in one place |
-| `pictureStage` | Picture elements, the MSE element pool, handover, which picture counts as progress |
-| `seekTimeline` | `GroupTimeline` + `MediaTimeline`, stamping groups from the media timeline, following the live edge with TRACK_STATUS |
-| `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, eviction recovery; ends with an `AbortSignal` instead of generation counters |
+| `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold |
+| `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
+| `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
+| `seekTimeline` | `GroupTimeline` + `MediaTimeline`, stamping groups from the media timeline, the seek axis |
+| `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery; `isCurrent` replaces generation counters |
+| `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
+| `stallWatch` | Whether the wanted picture has stood still |
+| `streamConventions` | The publisher conventions below |
 
 The existing classes (`LivePlayout`, `PlayoutClock`, `JitterBuffer`,
 `AudioPlayout`, `AudioSplice`, `VideoPlayout`, `LivePictureSink`,
