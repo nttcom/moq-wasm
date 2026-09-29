@@ -63,6 +63,7 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
 
     // Act: rewind into the groups the relay has cached from the browser publisher
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
+    await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
 

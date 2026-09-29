@@ -169,8 +169,8 @@ MP4 Publish は、選んだファイルをブラウザの中で demux し、live
 （`video` / `audio`）として relay へ配信します。demux は `shared/mediapack` の progressive MP4 index
 （`mp4::Mp4Index`）を `bindings/wasm` 経由で使い、`moov` だけを wasm に渡してサンプルは `File.slice` で
 読むので、ファイル全体をメモリに載せません。視聴側は live-ingest の配信と同じ経路で再生し、巻き戻しも
-同じように動きます。CMAF の sibling track と media timeline は配信しないため、Packaging は LOC のみで、
-経過時間は `--:-- / --:--` のままです。
+同じように動きます。CMAF の sibling track は配信しないため、Packaging は LOC のみです。media timeline は
+live-ingest と同じく配信するので、シークバーの経過時間も出ます。
 
 - 映像は H.264 のみです。mediapack が AVCC サンプルを Annex B に直し、keyframe の前に `avcC` の SPS / PPS を
   付けるので、live-ingest と同じく catalog に `initData` はありません。
@@ -182,6 +182,9 @@ MP4 Publish は、選んだファイルをブラウザの中で demux し、live
   group id は catalog も含めて開始時刻（unix マイクロ秒）から採番するので、配信し直しても同じ location を
   再利用しません（relay は publisher が替わっても track のキャッシュを保持し、既知の location を malformed
   track として扱います）。
+- media timeline（`timeline` track）は video の keyframe ごとに、それまでの record（presentation time、
+  `[group id, 0]`、encode wallclock）を 1 つの object として新しい group に載せます。record は relay のキャッシュ
+  保持（30 秒）より古いものを捨て、presentation time は配信を始めた時点からの経過です。
 - 各サンプルは B フレームを含むライブエンコーダと同じく decode 順に、decode time にファイルの reorder delay
   （presentation time が decode time より進む最大量。B フレームがなければ 0）を足した壁時計で送り、presentation
   time の壁時計を capture timestamp として LOC 拡張ヘッダに載せます。Loop のときは、次の周回をファイルの長さぶん

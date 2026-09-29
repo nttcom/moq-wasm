@@ -63,6 +63,8 @@ export type MsfTrack = {
   isLive: boolean
   label?: string
   codec?: string
+  mimeType?: string
+  depends?: string[]
   bitrate?: number
   width?: number
   height?: number
