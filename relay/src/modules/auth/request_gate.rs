@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use moqt::wire::FetchParams;
 
 use crate::modules::{
@@ -6,10 +7,6 @@ use crate::modules::{
         verified_token::VerifiedToken,
     },
     core::session_event::MoqtSessionEvent,
-    enums::{
-        FetchErrorCode, PublishErrorCode, PublishNamespaceErrorCode, SubscribeErrorCode,
-        SubscribeNamespaceErrorCode,
-    },
 };
 
 pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, Vec<String>)> {
@@ -64,34 +61,22 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
     let reason = denied.reason.to_string();
     let sent = match event {
         MoqtSessionEvent::PublishNamespace(handler) => {
-            handler
-                .error(PublishNamespaceErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::Publish(handler) => {
-            handler
-                .error(PublishErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::Subscribe(handler) => {
-            handler
-                .error(SubscribeErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::SubscribeNamespace(handler) => {
-            handler
-                .error(SubscribeNamespaceErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::Fetch(handler) => {
-            handler
-                .error(FetchErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::TrackStatus(handler) => {
-            handler
-                .error(SubscribeErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         _ => unreachable!("only events with a requested_access are rejected"),
     };

@@ -1,16 +1,13 @@
 use std::sync::Arc;
 
 use crate::{
-    GroupOrder, TransportProtocol,
+    GroupOrder, RequestErrorCode, RequestKind, TransportProtocol,
     modules::{
         moqt::{
             control_plane::{
                 control_messages::{
                     control_message_type::ControlMessageType,
-                    messages::{
-                        fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location,
-                        request_error::RequestError,
-                    },
+                    messages::{fetch::Fetch, fetch_ok::FetchOk, parameters::location::Location},
                 },
                 handler::response_guard::ResponseGuard,
             },
@@ -33,11 +30,7 @@ impl<T: TransportProtocol> FetchHandler<T> {
     pub(crate) fn new(session_context: Arc<SessionContext<T>>, fetch: Fetch) -> Self {
         let request_id = fetch.request_id;
         let group_order = fetch.group_order;
-        let guard = ResponseGuard::new(
-            session_context.clone(),
-            request_id,
-            ControlMessageType::FetchError,
-        );
+        let guard = ResponseGuard::new(session_context.clone(), request_id, RequestKind::Fetch);
         Self {
             session_context,
             request_id,
@@ -68,19 +61,10 @@ impl<T: TransportProtocol> FetchHandler<T> {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::FetchError, err.encode())
-            .await
+        self.guard.reject(code, reason_phrase).await
     }
 }
 

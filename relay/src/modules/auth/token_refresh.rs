@@ -1,21 +1,19 @@
+use moqt::RequestErrorCode;
 use moqt::wire::AuthorizationToken;
 
-use crate::modules::{
-    auth::{
-        token_parameter::{TokenParameterError, extract_token},
-        token_verifier::{TokenVerifier, VerifyError},
-        verified_token::VerifiedToken,
-    },
-    enums::SubscribeErrorCode,
+use crate::modules::auth::{
+    token_parameter::{TokenParameterError, extract_token},
+    token_verifier::{TokenVerifier, VerifyError},
+    verified_token::VerifiedToken,
 };
 
 #[derive(Debug)]
 pub(crate) struct RefreshRejected {
-    pub(crate) code: SubscribeErrorCode,
+    pub(crate) code: RequestErrorCode,
     pub(crate) reason: String,
 }
 
-fn rejected(code: SubscribeErrorCode, reason: impl Into<String>) -> RefreshRejected {
+fn rejected(code: RequestErrorCode, reason: impl Into<String>) -> RefreshRejected {
     RefreshRejected {
         code,
         reason: reason.into(),
@@ -29,45 +27,42 @@ pub(crate) async fn refresh_token(
 ) -> Result<VerifiedToken, RefreshRejected> {
     let Some(current) = current else {
         return Err(rejected(
-            SubscribeErrorCode::Unauthorized,
+            RequestErrorCode::Unauthorized,
             "session has no verified token",
         ));
     };
     if current.is_relay {
         return Err(rejected(
-            SubscribeErrorCode::NotSupported,
+            RequestErrorCode::NotSupported,
             "token refresh is not supported on inter-relay sessions",
         ));
     }
     let token = extract_token(authorization_tokens).map_err(|error| match error {
         TokenParameterError::Missing => rejected(
-            SubscribeErrorCode::NotSupported,
+            RequestErrorCode::NotSupported,
             "TRACK_STATUS without an AUTHORIZATION TOKEN is not supported",
         ),
-        malformed => rejected(
-            SubscribeErrorCode::MalformedAuthToken,
-            malformed.to_string(),
-        ),
+        malformed => rejected(RequestErrorCode::MalformedAuthToken, malformed.to_string()),
     })?;
     let verified = verifier.verify(&token).await.map_err(|error| match error {
-        VerifyError::Unauthorized(reason) => rejected(SubscribeErrorCode::Unauthorized, reason),
+        VerifyError::Unauthorized(reason) => rejected(RequestErrorCode::Unauthorized, reason),
         VerifyError::Unavailable(source) => {
             tracing::error!(error = %source, "token verification unavailable");
             rejected(
-                SubscribeErrorCode::InternalError,
+                RequestErrorCode::InternalError,
                 "token verification unavailable",
             )
         }
     })?;
     if verified.is_relay {
         return Err(rejected(
-            SubscribeErrorCode::Unauthorized,
+            RequestErrorCode::Unauthorized,
             "relay token presented on a client session",
         ));
     }
     if verified.app_id != current.app_id {
         return Err(rejected(
-            SubscribeErrorCode::Unauthorized,
+            RequestErrorCode::Unauthorized,
             "token app_id differs from the session's",
         ));
     }
@@ -77,17 +72,15 @@ pub(crate) async fn refresh_token(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use moqt::RequestErrorCode;
     use moqt::wire::AuthorizationToken;
 
     use super::{RefreshRejected, refresh_token};
-    use crate::modules::{
-        auth::{
-            test_support::{
-                StubOutcome, StubVerifier, app_token, relay_token, spawn_relay_and_connect_client,
-            },
-            verified_token::VerifiedToken,
+    use crate::modules::auth::{
+        test_support::{
+            StubOutcome, StubVerifier, app_token, relay_token, spawn_relay_and_connect_client,
         },
-        enums::SubscribeErrorCode,
+        verified_token::VerifiedToken,
     };
 
     fn jwt() -> Vec<AuthorizationToken> {
@@ -102,7 +95,7 @@ mod tests {
         refresh_token(&StubVerifier(outcome), current, tokens).await
     }
 
-    fn code(result: Result<VerifiedToken, RefreshRejected>) -> SubscribeErrorCode {
+    fn code(result: Result<VerifiedToken, RefreshRejected>) -> RequestErrorCode {
         result.unwrap_err().code
     }
 
@@ -136,7 +129,7 @@ mod tests {
         let result = refresh(StubOutcome::Verified(current.clone()), Some(&current), &[]).await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::NotSupported);
+        assert_eq!(code(result), RequestErrorCode::NotSupported);
     }
 
     #[tokio::test]
@@ -158,7 +151,7 @@ mod tests {
         .await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::MalformedAuthToken);
+        assert_eq!(code(result), RequestErrorCode::MalformedAuthToken);
     }
 
     #[tokio::test]
@@ -170,7 +163,7 @@ mod tests {
         let result = refresh(StubOutcome::Unauthorized, Some(&current), &jwt()).await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::Unauthorized);
+        assert_eq!(code(result), RequestErrorCode::Unauthorized);
     }
 
     #[tokio::test]
@@ -182,7 +175,7 @@ mod tests {
         let result = refresh(StubOutcome::Unavailable, Some(&current), &jwt()).await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::InternalError);
+        assert_eq!(code(result), RequestErrorCode::InternalError);
     }
 
     #[tokio::test]
@@ -194,7 +187,7 @@ mod tests {
         let result = refresh(StubOutcome::Verified(relay_token()), Some(&current), &jwt()).await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::Unauthorized);
+        assert_eq!(code(result), RequestErrorCode::Unauthorized);
     }
 
     #[tokio::test]
@@ -214,7 +207,7 @@ mod tests {
         .await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::Unauthorized);
+        assert_eq!(code(result), RequestErrorCode::Unauthorized);
     }
 
     #[tokio::test]
@@ -231,7 +224,7 @@ mod tests {
         .await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::NotSupported);
+        assert_eq!(code(result), RequestErrorCode::NotSupported);
     }
 
     #[tokio::test]
@@ -245,7 +238,7 @@ mod tests {
         .await;
 
         // Assert
-        assert_eq!(code(result), SubscribeErrorCode::Unauthorized);
+        assert_eq!(code(result), RequestErrorCode::Unauthorized);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

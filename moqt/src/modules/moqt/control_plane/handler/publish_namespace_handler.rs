@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    TransportProtocol,
+    RequestErrorCode, RequestKind, TransportProtocol,
     modules::moqt::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
-                messages::{
-                    namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
-                    request_error::RequestError,
-                },
+                messages::{namespace_ok::NamespaceOk, publish_namespace::PublishNamespace},
             },
             handler::response_guard::ResponseGuard,
         },
@@ -35,7 +32,7 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
         let guard = ResponseGuard::new(
             session_context.clone(),
             publish_namespace.request_id,
-            ControlMessageType::PublishNamespaceError,
+            RequestKind::PublishNamespace,
         );
         Self {
             session_context,
@@ -62,19 +59,10 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::PublishNamespaceError, err.encode())
-            .await
+        self.guard.reject(code, reason_phrase).await
     }
 }
 

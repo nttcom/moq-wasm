@@ -52,10 +52,10 @@ impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
         }
     }
 
-    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, code: moqt::DataStreamResetCode) -> anyhow::Result<()> {
         match self.inner.as_mut() {
-            Some(SenderInner::Uninitialized(sender)) => sender.reset(error_code).await,
-            Some(SenderInner::HeaderSent(sender)) => sender.reset(error_code).await,
+            Some(SenderInner::Uninitialized(sender)) => sender.reset(code).await,
+            Some(SenderInner::HeaderSent(sender)) => sender.reset(code).await,
             None => Ok(()),
         }
     }

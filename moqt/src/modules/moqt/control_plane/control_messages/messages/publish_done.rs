@@ -3,19 +3,6 @@ use crate::modules::extensions::{
 };
 use bytes::BytesMut;
 
-/// draft-14 §9.12. The wire field stays a varint because an unknown code must
-/// not fail decoding.
-pub mod status_code {
-    pub const INTERNAL_ERROR: u64 = 0x0;
-    pub const UNAUTHORIZED: u64 = 0x1;
-    pub const TRACK_ENDED: u64 = 0x2;
-    pub const SUBSCRIPTION_ENDED: u64 = 0x3;
-    pub const GOING_AWAY: u64 = 0x4;
-    pub const EXPIRED: u64 = 0x5;
-    pub const TOO_FAR_BEHIND: u64 = 0x6;
-    pub const MALFORMED_TRACK: u64 = 0x7;
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct PublishDone {
     pub request_id: u64,
@@ -61,12 +48,17 @@ impl PublishDone {
 #[cfg(test)]
 mod tests {
     mod success {
-        use super::super::{PublishDone, status_code};
+        use super::super::PublishDone;
+        use crate::PublishDoneCode;
 
         #[test]
         fn packetize() {
-            let message =
-                PublishDone::new(7, status_code::TRACK_ENDED, 2, "track ended".to_string());
+            let message = PublishDone::new(
+                7,
+                PublishDoneCode::TrackEnded.into(),
+                2,
+                "track ended".to_string(),
+            );
 
             let buf = message.encode();
 
@@ -82,8 +74,12 @@ mod tests {
 
         #[test]
         fn depacketize() {
-            let message =
-                PublishDone::new(7, status_code::TRACK_ENDED, 2, "track ended".to_string());
+            let message = PublishDone::new(
+                7,
+                PublishDoneCode::TrackEnded.into(),
+                2,
+                "track ended".to_string(),
+            );
             let buf = message.encode();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);

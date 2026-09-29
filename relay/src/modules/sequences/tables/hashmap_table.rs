@@ -646,7 +646,7 @@ mod tests {
 
         async fn error(
             &self,
-            _code: u64,
+            _code: moqt::RequestErrorCode,
             _reason_phrase: String,
         ) -> Result<(), moqt::TransportSendError> {
             Ok(())

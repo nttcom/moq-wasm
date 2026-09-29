@@ -16,7 +16,7 @@ use crate::modules::core::{
 pub(crate) enum Sent {
     Object(DataObject),
     Closed,
-    Reset(u64),
+    Reset(moqt::DataStreamResetCode),
 }
 
 struct MockDataSender {
@@ -37,9 +37,9 @@ impl DataSender for MockDataSender {
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 
-    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, code: moqt::DataStreamResetCode) -> anyhow::Result<()> {
         self.sent
-            .send(Sent::Reset(error_code))
+            .send(Sent::Reset(code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 }
@@ -67,7 +67,7 @@ impl StreamSenderFactory for MockStreamSenderFactory {
 #[derive(Debug)]
 pub(crate) struct SentPublishDone {
     pub(crate) request_id: u64,
-    pub(crate) status_code: u64,
+    pub(crate) status_code: moqt::PublishDoneCode,
     pub(crate) stream_count: u64,
 }
 
@@ -125,7 +125,7 @@ impl Publisher for MockPublisher {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        status_code: moqt::PublishDoneCode,
         stream_count: u64,
         _error_reason: String,
     ) -> anyhow::Result<()> {
@@ -164,7 +164,7 @@ impl Publisher for MockPublisher {
 pub(crate) enum FetchSent {
     Object(moqt::FetchObjectField),
     Closed,
-    Reset(u64),
+    Reset(moqt::DataStreamResetCode),
 }
 
 pub(crate) struct MockFetchSender {
@@ -192,9 +192,9 @@ impl FetchSender for MockFetchSender {
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 
-    async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&self, code: moqt::DataStreamResetCode) -> anyhow::Result<()> {
         self.sent
-            .send(FetchSent::Reset(error_code))
+            .send(FetchSent::Reset(code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 }

@@ -172,6 +172,8 @@ One struct owns all cross-task state:
 - `handler/*` — received-message facades handed to the application inside
   `SessionEvent` (e.g. `SubscribeHandler::ok(...)`, `::error(...)`). They keep
   an `Arc<SessionContext>` so responding does not require the `Session`.
+  Every `error(...)` goes through `ResponseGuard::reject`, which also sends the
+  drop-time NOT_SUPPORTED reply.
   Namespace-carrying handlers expose the track namespace both as the wire
   tuple (`track_namespace_tuple`) and as the `/`-joined string
   (`track_namespace`); the tuple is authoritative because a tuple element may
@@ -180,6 +182,12 @@ One struct owns all cross-task state:
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
   §13.1.1).
+- `error_codes.rs` — the codes the application sends: `RequestErrorCode`,
+  `PublishDoneCode`, `DataStreamResetCode`. draft-14 numbers request errors per
+  `*_ERROR` message, so `RequestErrorCode` is semantic and its wire value comes
+  from one table keyed by `RequestKind`; a code the message does not define is
+  sent as INTERNAL_ERROR, an unknown received value reads as INTERNAL_ERROR.
+  Codes received from the wire stay `u64` on the message structs.
 
 `ControlMessageReceiveTask` splits every decoded message into one of three
 paths:

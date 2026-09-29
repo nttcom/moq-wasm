@@ -22,8 +22,11 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), moqt::TransportSendError>;
-    async fn error(&self, code: u64, reason_phrase: String)
-    -> Result<(), moqt::TransportSendError>;
+    async fn error(
+        &self,
+        code: moqt::RequestErrorCode,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError>;
     fn to_downstream_subscription(&self, track_alias: u64) -> DownstreamSubscription;
 }
 
@@ -75,7 +78,7 @@ impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> 
 
     async fn error(
         &self,
-        code: u64,
+        code: moqt::RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason_phrase).await

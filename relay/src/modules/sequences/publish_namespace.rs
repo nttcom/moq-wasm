@@ -1,7 +1,8 @@
+use moqt::RequestErrorCode;
+
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::publish_namespace::PublishNamespaceHandler,
-    enums::PublishNamespaceErrorCode,
     inter_relay::InterRelayConnectionManager,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
     sequences::{
@@ -129,7 +130,7 @@ impl PublishNamespace {
                 tracing::warn!(track_namespace = %track_namespace, "namespace already has an active publisher");
                 match handler
                     .error(
-                        PublishNamespaceErrorCode::InternalError as u64,
+                        RequestErrorCode::InternalError,
                         "namespace already published".to_string(),
                     )
                     .await

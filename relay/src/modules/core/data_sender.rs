@@ -13,7 +13,7 @@ pub(crate) trait DataSender: 'static + Send + Sync {
         Ok(())
     }
 
-    async fn reset(&mut self, _error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, _code: moqt::DataStreamResetCode) -> anyhow::Result<()> {
         Ok(())
     }
 }

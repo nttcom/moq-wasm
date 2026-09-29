@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, TransportProtocol,
+    FilterType, GroupOrder, RequestErrorCode, RequestKind, TransportProtocol,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -10,7 +10,6 @@ use crate::{
                     parameters::{
                         authorization_token::AuthorizationToken, content_exists::ContentExists,
                     },
-                    request_error::RequestError,
                     subscribe::Subscribe,
                     subscribe_ok::SubscribeOk,
                 },
@@ -42,7 +41,7 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
         let guard = ResponseGuard::new(
             session_context.clone(),
             track_status.request_id,
-            ControlMessageType::TrackStatusError,
+            RequestKind::TrackStatus,
         );
         Self {
             session_context,
@@ -83,19 +82,10 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::TrackStatusError, err.encode())
-            .await
+        self.guard.reject(code, reason_phrase).await
     }
 
     pub fn authorization_tokens(&self) -> &[AuthorizationToken] {
@@ -138,7 +128,7 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ContentExists, DUAL, Location, Session, SessionEvent,
+        ContentExists, DUAL, Location, RequestErrorCode, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{connect_sessions, spawn_dual_server},
@@ -252,7 +242,7 @@ mod tests {
         // Act
         exchange
             .handler
-            .error(0x1, "unauthorized".to_string())
+            .error(RequestErrorCode::Unauthorized, "unauthorized".to_string())
             .await
             .unwrap();
 

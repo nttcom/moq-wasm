@@ -251,7 +251,7 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 #[derive(Default)]
 pub(crate) struct MockSubscribeHandler {
     pub(crate) subscribe_ok_count: Mutex<usize>,
-    pub(crate) subscribe_errors: Mutex<Vec<u64>>,
+    pub(crate) subscribe_errors: Mutex<Vec<moqt::RequestErrorCode>>,
 }
 
 #[async_trait::async_trait]
@@ -312,7 +312,7 @@ impl SubscribeHandler for MockSubscribeHandler {
 
     async fn error(
         &self,
-        code: u64,
+        code: moqt::RequestErrorCode,
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.subscribe_errors.lock().unwrap().push(code);
@@ -359,7 +359,11 @@ impl FetchHandler for MockFetchHandler {
         Ok(())
     }
 
-    async fn error(&self, _code: u64, _reason: String) -> Result<(), moqt::TransportSendError> {
+    async fn error(
+        &self,
+        _code: moqt::RequestErrorCode,
+        _reason: String,
+    ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }
 }

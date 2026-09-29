@@ -10,7 +10,11 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
         end_of_track: bool,
         end_location: moqt::Location,
     ) -> Result<(), moqt::TransportSendError>;
-    async fn error(&self, code: u64, reason: String) -> Result<(), moqt::TransportSendError>;
+    async fn error(
+        &self,
+        code: moqt::RequestErrorCode,
+        reason: String,
+    ) -> Result<(), moqt::TransportSendError>;
 }
 
 #[async_trait]
@@ -35,7 +39,11 @@ impl<T: moqt::TransportProtocol> FetchHandler for moqt::FetchHandler<T> {
         self.ok(end_of_track, end_location).await
     }
 
-    async fn error(&self, code: u64, reason: String) -> Result<(), moqt::TransportSendError> {
+    async fn error(
+        &self,
+        code: moqt::RequestErrorCode,
+        reason: String,
+    ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason).await
     }
 }

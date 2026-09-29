@@ -21,7 +21,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        code: moqt::PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()>;
@@ -57,11 +57,11 @@ impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        code: moqt::PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        self.publish_done(request_id, status_code, stream_count, error_reason)
+        self.publish_done(request_id, code, stream_count, error_reason)
             .await
     }
 

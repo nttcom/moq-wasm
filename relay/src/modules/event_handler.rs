@@ -10,7 +10,6 @@ use crate::modules::{
     },
     control_message_forwarder::ControlMessageForwarder,
     core::session_event::MoqtSessionEvent,
-    enums::SubscribeErrorCode,
     inter_relay::InterRelayConnectionManager,
     relay::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
@@ -42,6 +41,7 @@ use crate::modules::{
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use moqt::ContentExists;
+use moqt::RequestErrorCode;
 use tracing::{Instrument, Span};
 
 pub(crate) struct EventHandler {
@@ -390,7 +390,7 @@ impl EventHandler {
                                     None => {
                                         handler
                                             .error(
-                                                SubscribeErrorCode::InternalError as u64,
+                                                RequestErrorCode::InternalError,
                                                 "session not found".to_string(),
                                             )
                                             .await
@@ -403,7 +403,7 @@ impl EventHandler {
                                     reason = %rejected.reason,
                                     "authorization token refresh rejected"
                                 );
-                                handler.error(rejected.code as u64, rejected.reason).await
+                                handler.error(rejected.code, rejected.reason).await
                             }
                         };
                         if let Err(error) = response {

@@ -1,5 +1,5 @@
 use crate::{
-    TransportProtocol,
+    DataStreamResetCode, TransportProtocol,
     modules::moqt::data_plane::{
         object::fetch::{FetchHeader, FetchObjectField},
         stream::stream_sender::StreamSender,
@@ -27,7 +27,7 @@ impl<T: TransportProtocol> FetchDataSender<T> {
         self.stream_sender.close().await
     }
 
-    pub async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
-        self.stream_sender.reset(error_code).await
+    pub async fn reset(&self, code: DataStreamResetCode) -> anyhow::Result<()> {
+        self.stream_sender.reset(code.into()).await
     }
 }

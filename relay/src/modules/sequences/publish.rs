@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
-    enums::PublishErrorCode,
     inter_relay::InterRelayConnectionManager,
     relay::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     route_registry::RelayRouteRegistry,
@@ -20,6 +19,7 @@ use crate::modules::{
 };
 
 use moqt::FilterType;
+use moqt::RequestErrorCode;
 use tracing::Span;
 
 pub(crate) struct Publish;
@@ -73,7 +73,7 @@ impl Publish {
             );
             if handler
                 .error(
-                    PublishErrorCode::InternalError as u64,
+                    RequestErrorCode::InternalError,
                     "Failed to start ingress for published track".to_string(),
                 )
                 .await

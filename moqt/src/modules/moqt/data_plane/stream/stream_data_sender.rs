@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    TransportProtocol,
+    DataStreamResetCode, TransportProtocol,
     modules::moqt::data_plane::{
         object::{
             extension_headers::ExtensionHeaders,
@@ -99,8 +99,8 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
         self.stream_sender.close().await
     }
 
-    pub async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
-        self.stream_sender.reset(error_code).await
+    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
+        self.stream_sender.reset(code.into()).await
     }
 }
 
@@ -135,7 +135,7 @@ impl<T: TransportProtocol> StreamDataSender<T, HeaderSent> {
         self.stream_sender.close().await
     }
 
-    pub async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
-        self.stream_sender.reset(error_code).await
+    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
+        self.stream_sender.reset(code.into()).await
     }
 }

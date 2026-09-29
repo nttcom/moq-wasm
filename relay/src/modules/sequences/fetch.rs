@@ -4,13 +4,13 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::sync::Arc;
 
+use moqt::RequestErrorCode;
 use moqt::wire::FetchParams;
 use tracing::Span;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::fetch::FetchHandler,
-    enums::FetchErrorCode,
     relay::{
         cache::{
             store::TrackCacheStore,
@@ -61,14 +61,14 @@ enum FetchError {
 }
 
 impl FetchError {
-    fn code(&self) -> FetchErrorCode {
+    fn code(&self) -> RequestErrorCode {
         match self {
-            Self::TrackNotFound => FetchErrorCode::TrackDoesNotExist,
-            Self::UnknownJoiningRequestId => FetchErrorCode::InvalidJoiningRequestId,
-            Self::NoObjectsPublished => FetchErrorCode::InvalidRange,
-            Self::InvalidRange => FetchErrorCode::InvalidRange,
-            Self::NoObjects => FetchErrorCode::NoObjects,
-            Self::MalformedTrack => FetchErrorCode::MalformedTrack,
+            Self::TrackNotFound => RequestErrorCode::TrackDoesNotExist,
+            Self::UnknownJoiningRequestId => RequestErrorCode::InvalidJoiningRequestId,
+            Self::NoObjectsPublished => RequestErrorCode::InvalidRange,
+            Self::InvalidRange => RequestErrorCode::InvalidRange,
+            Self::NoObjects => RequestErrorCode::NoObjects,
+            Self::MalformedTrack => RequestErrorCode::MalformedTrack,
         }
     }
 
@@ -112,9 +112,7 @@ impl Fetch {
             match self.resolve_target_and_source(session_id, fetch_params, table, cache_store) {
                 Ok(resolved) => resolved,
                 Err(err) => {
-                    let _ = handler
-                        .error(err.code() as u64, err.reason().to_string())
-                        .await;
+                    let _ = handler.error(err.code(), err.reason().to_string()).await;
                     return;
                 }
             };
@@ -191,7 +189,7 @@ impl Fetch {
                 );
                 let _ = handler
                     .error(
-                        FetchErrorCode::TrackDoesNotExist as u64,
+                        RequestErrorCode::TrackDoesNotExist,
                         FetchError::TrackNotFound.reason().to_string(),
                     )
                     .await;
@@ -208,7 +206,7 @@ impl Fetch {
                 );
                 let _ = handler
                     .error(
-                        FetchErrorCode::InternalError as u64,
+                        RequestErrorCode::InternalError,
                         "Internal relay error".to_string(),
                     )
                     .await;
@@ -256,18 +254,21 @@ impl Fetch {
         })
     }
 
-    fn upstream_fetch_error_response(error: &anyhow::Error) -> (u64, String) {
+    fn upstream_fetch_error_response(error: &anyhow::Error) -> (RequestErrorCode, String) {
         if let Some(fetch_error) = error.downcast_ref::<moqt::wire::RequestError>() {
-            return (fetch_error.error_code, fetch_error.reason_phrase.clone());
+            return (
+                RequestErrorCode::from_wire(fetch_error.error_code, moqt::RequestKind::Fetch),
+                fetch_error.reason_phrase.clone(),
+            );
         }
         if error.downcast_ref::<moqt::RequestTimeoutError>().is_some() {
             return (
-                FetchErrorCode::Timeout as u64,
+                RequestErrorCode::Timeout,
                 "Upstream fetch timed out".to_string(),
             );
         }
         (
-            FetchErrorCode::InternalError as u64,
+            RequestErrorCode::InternalError,
             "Internal relay error".to_string(),
         )
     }
@@ -451,11 +452,11 @@ mod tests {
         let (code, _reason) = Fetch::upstream_fetch_error_response(&error);
 
         // Assert
-        assert_eq!(code, FetchErrorCode::Timeout as u64);
+        assert_eq!(code, RequestErrorCode::Timeout);
     }
 
     #[test]
-    fn upstream_request_error_code_is_relayed_verbatim() {
+    fn upstream_request_error_code_is_relayed() {
         // Arrange
         let error = anyhow::Error::new(moqt::wire::RequestError {
             request_id: 7,
@@ -467,7 +468,7 @@ mod tests {
         let (code, reason) = Fetch::upstream_fetch_error_response(&error);
 
         // Assert
-        assert_eq!(code, 0x3);
+        assert_eq!(code, RequestErrorCode::NotSupported);
         assert_eq!(reason, "not supported");
     }
 

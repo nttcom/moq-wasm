@@ -1,7 +1,8 @@
+use moqt::RequestErrorCode;
+
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe_namespace::SubscribeNamespaceHandler,
-    enums::SubscribeNamespaceErrorCode,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
     sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
     types::SessionId,
@@ -86,7 +87,7 @@ impl SubscribeNameSpace {
                 tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
                 match handler
                     .error(
-                        SubscribeNamespaceErrorCode::NamespacePrefixOverlap as u64,
+                        RequestErrorCode::NamespacePrefixOverlap,
                         "namespace already subscribed".to_string(),
                     )
                     .await

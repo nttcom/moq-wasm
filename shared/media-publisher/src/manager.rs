@@ -16,9 +16,9 @@ use mediapack::{
 };
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
-    FetchObjectField, GroupOrder, PublishOption, QUIC, Session, SessionEvent, SubscribeHandler,
-    TrackWriter, TransportProtocol, TransportSendError, TransportStats, WEBTRANSPORT,
-    wire::FetchParams,
+    FetchObjectField, GroupOrder, PublishOption, QUIC, RequestErrorCode, Session, SessionEvent,
+    SubscribeHandler, TrackWriter, TransportProtocol, TransportSendError, TransportStats,
+    WEBTRANSPORT, wire::FetchParams,
 };
 use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 
@@ -35,13 +35,6 @@ pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
 const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
-/// SUBSCRIBE_ERROR code, draft-ietf-moq-transport-14 §13.1.2.
-const SUBSCRIBE_TRACK_DOES_NOT_EXIST: u64 = 0x4;
-/// FETCH_ERROR codes, draft-ietf-moq-transport-14 §9.18.
-const FETCH_NOT_SUPPORTED: u64 = 0x3;
-const FETCH_TRACK_DOES_NOT_EXIST: u64 = 0x4;
-const FETCH_INVALID_RANGE: u64 = 0x5;
-const FETCH_NO_OBJECTS: u64 = 0x6;
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for an evicted or never-cached range can still be answered here.
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
@@ -615,7 +608,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         if !subscribable {
             if let Err(err) = handler
                 .error(
-                    SUBSCRIBE_TRACK_DOES_NOT_EXIST,
+                    RequestErrorCode::TrackDoesNotExist,
                     format!("{track_name} is not a CMAF track of the catalog"),
                 )
                 .await
@@ -669,7 +662,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         else {
             return Ok(handler
                 .error(
-                    FETCH_NOT_SUPPORTED,
+                    RequestErrorCode::NotSupported,
                     "only standalone FETCH is served".to_string(),
                 )
                 .await?);
@@ -685,19 +678,22 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
             None => {
                 return Ok(handler
                     .error(
-                        FETCH_TRACK_DOES_NOT_EXIST,
+                        RequestErrorCode::TrackDoesNotExist,
                         "track not published".to_string(),
                     )
                     .await?);
             }
             Some(FetchRange::InvalidRange) => {
                 return Ok(handler
-                    .error(FETCH_INVALID_RANGE, "invalid range".to_string())
+                    .error(RequestErrorCode::InvalidRange, "invalid range".to_string())
                     .await?);
             }
             Some(FetchRange::NoObjects) => {
                 return Ok(handler
-                    .error(FETCH_NO_OBJECTS, "no cached objects in range".to_string())
+                    .error(
+                        RequestErrorCode::NoObjects,
+                        "no cached objects in range".to_string(),
+                    )
                     .await?);
             }
             Some(FetchRange::Serve {

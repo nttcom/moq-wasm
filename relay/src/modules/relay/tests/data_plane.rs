@@ -232,7 +232,7 @@ async fn upstream_reset_is_relayed_as_a_downstream_reset() {
         "objects received before the reset are still forwarded"
     );
     assert!(
-        matches!(end, Sent::Reset(0)),
+        matches!(end, Sent::Reset(moqt::DataStreamResetCode::InternalError)),
         "a partial subgroup must be reset downstream with INTERNAL_ERROR, got {end:?}"
     );
 }

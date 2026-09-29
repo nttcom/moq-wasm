@@ -1,9 +1,9 @@
 use moqt::ContentExists;
+use moqt::RequestErrorCode;
 use tracing::Span;
 
 use crate::modules::{
     core::handler::track_status::TrackStatusHandler,
-    enums::SubscribeErrorCode,
     relay::cache::store::TrackCacheStore,
     sequences::{subscribe::cached_largest, tables::hashmap_table::InMemoryLocalPubSubDirectory},
     types::SessionId,
@@ -46,7 +46,7 @@ impl TrackStatus {
             None => {
                 handler
                     .error(
-                        SubscribeErrorCode::NotSupported as u64,
+                        RequestErrorCode::NotSupported,
                         "track status is only known for subscribed tracks".to_string(),
                     )
                     .await
@@ -79,7 +79,7 @@ mod tests {
             expires: u64,
             content_exists: ContentExists,
         },
-        Error(u64),
+        Error(moqt::RequestErrorCode),
     }
 
     #[derive(Default)]
@@ -129,7 +129,7 @@ mod tests {
 
         async fn error(
             &self,
-            code: u64,
+            code: moqt::RequestErrorCode,
             _reason_phrase: String,
         ) -> Result<(), moqt::TransportSendError> {
             self.responses.lock().unwrap().push(Response::Error(code));
@@ -199,7 +199,7 @@ mod tests {
         // Assert
         assert_eq!(
             handler.responses(),
-            vec![Response::Error(SubscribeErrorCode::NotSupported as u64)]
+            vec![Response::Error(RequestErrorCode::NotSupported)]
         );
     }
 }

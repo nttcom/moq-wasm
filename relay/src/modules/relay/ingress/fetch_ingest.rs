@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use tokio::{sync::mpsc, task::JoinHandle};
 
+use moqt::DataStreamResetCode;
+
 use crate::modules::{
-    enums::FetchErrorCode,
     relay::{
         cache::{
             cached_object::CachedObject, duration::duration_from_env, track_cache::TrackCache,
@@ -60,9 +61,9 @@ impl FetchIngest {
                         upstream_request_id,
                     )
                     .await;
-                    FetchErrorCode::MalformedTrack as u64
+                    DataStreamResetCode::MalformedTrack
                 } else {
-                    FetchErrorCode::InternalError as u64
+                    DataStreamResetCode::InternalError
                 };
                 Self::reset_downstream_fetch(
                     session_repo,
@@ -186,7 +187,7 @@ impl FetchIngest {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         downstream_subscriber_session_id: SessionId,
         request_id: u64,
-        error_code: u64,
+        code: DataStreamResetCode,
     ) {
         let publisher = {
             let session_repo = session_repo.lock().await;
@@ -199,7 +200,7 @@ impl FetchIngest {
         // was delivered, so failure after FETCH_OK must be signaled with RESET_STREAM.
         match publisher.new_fetch_sender(request_id).await {
             Ok(sender) => {
-                if let Err(error) = sender.reset(error_code).await {
+                if let Err(error) = sender.reset(code).await {
                     tracing::error!(error = %format!("{error:#}"), "failed to reset downstream fetch stream");
                 }
             }

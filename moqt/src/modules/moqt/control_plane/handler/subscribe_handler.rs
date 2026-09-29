@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, SubscriberInitiatedSubscription, Subscription, TransportProtocol,
+    FilterType, GroupOrder, RequestErrorCode, RequestKind, SubscriberInitiatedSubscription,
+    Subscription, TransportProtocol,
     modules::moqt::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
-                    parameters::content_exists::ContentExists, request_error::RequestError,
-                    subscribe::Subscribe, subscribe_ok::SubscribeOk,
+                    parameters::content_exists::ContentExists, subscribe::Subscribe,
+                    subscribe_ok::SubscribeOk,
                 },
             },
             handler::response_guard::ResponseGuard,
@@ -42,7 +43,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
         let guard = ResponseGuard::new(
             session_context.clone(),
             subscribe_message.request_id,
-            ControlMessageType::SubscribeError,
+            RequestKind::Subscribe,
         );
         Self {
             session_context,
@@ -100,20 +101,10 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            // TODO: assign correct request id.
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::SubscribeError, err.encode())
-            .await
+        self.guard.reject(code, reason_phrase).await
     }
 
     pub fn request_id(&self) -> u64 {

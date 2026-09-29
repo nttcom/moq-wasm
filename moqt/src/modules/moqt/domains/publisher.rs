@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    DatagramSender,
+    DatagramSender, PublishDoneCode,
     modules::{
         moqt::{
             control_plane::{
@@ -99,11 +99,11 @@ impl<T: TransportProtocol> Publisher<T> {
     pub async fn publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let publish_done = PublishDone::new(request_id, status_code, stream_count, error_reason);
+        let publish_done = PublishDone::new(request_id, code.into(), stream_count, error_reason);
         self.session
             .send_stream
             .send(ControlMessageType::PublishDone, publish_done.encode())

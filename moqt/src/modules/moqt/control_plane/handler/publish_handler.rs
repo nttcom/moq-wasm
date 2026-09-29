@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, PublisherInitiatedSubscription, Subscription, TransportProtocol,
+    FilterType, GroupOrder, PublisherInitiatedSubscription, RequestErrorCode, RequestKind,
+    Subscription, TransportProtocol,
     modules::moqt::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
                 messages::{
                     parameters::content_exists::ContentExists, publish::Publish,
-                    publish_ok::PublishOk, request_error::RequestError,
+                    publish_ok::PublishOk,
                 },
             },
             handler::response_guard::ResponseGuard,
@@ -39,7 +40,7 @@ impl<T: TransportProtocol> PublishHandler<T> {
         let guard = ResponseGuard::new(
             session_context.clone(),
             publish_message.request_id,
-            ControlMessageType::PublishError,
+            RequestKind::Publish,
         );
         Self {
             session_context,
@@ -118,24 +119,14 @@ impl<T: TransportProtocol> PublishHandler<T> {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         self.session_context
             .cancel_unclaimed_track_alias(self.track_alias)
             .await;
-        let err = RequestError {
-            // TODO: assign correct request id.
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::PublishError, err.encode())
-            .await?;
-        Ok(())
+        self.guard.reject(code, reason_phrase).await
     }
 }
 
@@ -145,7 +136,7 @@ mod tests {
 
     use crate::PublishOption;
     use crate::{
-        SessionEvent,
+        RequestErrorCode, SessionEvent,
         modules::{
             moqt::domains::session_context::IncomingObjectNotification,
             test_support::{
@@ -204,7 +195,7 @@ mod tests {
 
         // Act
         handler
-            .error(0x0, "uninterested".to_string())
+            .error(RequestErrorCode::Uninterested, "uninterested".to_string())
             .await
             .unwrap();
         let notification = notify_datagram(&context, handler.track_alias).await;

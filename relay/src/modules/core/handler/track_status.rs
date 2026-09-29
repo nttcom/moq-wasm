@@ -13,8 +13,11 @@ pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), moqt::TransportSendError>;
-    async fn error(&self, code: u64, reason_phrase: String)
-    -> Result<(), moqt::TransportSendError>;
+    async fn error(
+        &self,
+        code: moqt::RequestErrorCode,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError>;
 }
 
 #[async_trait]
@@ -49,7 +52,7 @@ impl<T: moqt::TransportProtocol> TrackStatusHandler for moqt::TrackStatusHandler
 
     async fn error(
         &self,
-        code: u64,
+        code: moqt::RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason_phrase).await

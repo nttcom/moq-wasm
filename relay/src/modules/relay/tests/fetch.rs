@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 
-use crate::modules::{
-    enums::FetchErrorCode,
-    relay::tests::harness::{FetchSent, RelayHarness, fixtures::location},
-};
+use moqt::DataStreamResetCode;
+
+use crate::modules::relay::tests::harness::{FetchSent, RelayHarness, fixtures::location};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn closed_groups_are_delivered_before_a_later_open_group_closes() {
@@ -63,7 +62,7 @@ async fn malformed_track_resets_the_fetch_stream() {
     // Assert
     assert!(matches!(
         fetch.expect_end().await,
-        FetchSent::Reset(code) if code == FetchErrorCode::MalformedTrack as u64
+        FetchSent::Reset(code) if code == DataStreamResetCode::MalformedTrack
     ));
 }
 
@@ -84,6 +83,6 @@ async fn aborted_upstream_stream_resets_the_fetch_stream() {
     // Assert
     assert!(matches!(
         fetch.expect_end().await,
-        FetchSent::Reset(code) if code == FetchErrorCode::InternalError as u64
+        FetchSent::Reset(code) if code == DataStreamResetCode::InternalError
     ));
 }

@@ -5,8 +5,6 @@ use std::sync::{
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-use moqt::wire::publish_done_status_code;
-
 use crate::modules::{
     core::{publisher::Publisher, subscription::DownstreamSubscription},
     relay::cache::track_cache::TrackCache,
@@ -108,7 +106,7 @@ impl EgressRunner {
         if let Err(error) = publisher
             .send_publish_done(
                 request_id,
-                publish_done_status_code::MALFORMED_TRACK,
+                moqt::PublishDoneCode::MalformedTrack,
                 stream_count,
                 "malformed track".to_string(),
             )
