@@ -72,7 +72,7 @@ interchangeable; each format forms its own switching set (`altGroup` 1 for LOC,
 
 ## FETCH
 
-Every object is numbered and kept for 30 seconds from the moment the bridge
+Every object is numbered and kept for 60 seconds from the moment the bridge
 produces it, whether or not anything is subscribed, and a standalone FETCH for
 a cached range is answered from that cache (draft-ietf-moq-transport-14
 §9.16). The relay forwards a FETCH upstream when its own cache cannot cover the
@@ -80,7 +80,7 @@ range, so a viewer can rewind into the part of the stream that predates the
 relay's first subscriber. A subscriber that joins while a group is open starts
 receiving at the next group so the live and cached object ids agree.
 
-The catalog is the exception to the 30 seconds: its newest object is kept for
+The catalog is the exception to the 60 seconds: its newest object is kept for
 as long as the publisher runs. A viewer that joins a subscription the relay
 already holds never receives the catalog live, because a SUBSCRIBE starts
 after the largest object and the catalog is published once per upstream

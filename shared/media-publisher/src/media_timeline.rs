@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use media_streaming_format::MediaTimelineRecord;
 
-/// The relay drops cached objects older than `RELAY_CACHE_TTL_SECS` (30 s by
+/// The relay drops cached objects older than `RELAY_CACHE_TTL_SECS` (60 s by
 /// default), so a record past that window names a location a subscriber can no
 /// longer FETCH.
 ///
 /// Locations name groups of the primary video track only: every track gets its
 /// own writer, seeded when it is subscribed, so renditions number their groups
 /// independently.
-const RETENTION_US: u64 = 30_000_000;
+const RETENTION_US: u64 = 60_000_000;
 const MICROS_PER_MILLI: u64 = 1_000;
 
 #[derive(Default)]
@@ -79,13 +79,13 @@ mod tests {
         timeline.record(1, 0, 10);
         timeline.record(2, 2_000_000, 12);
 
-        // Act: the newest record sits 31 s past the first one
-        timeline.record(3, 31_000_000, 43);
+        // Act: the newest record sits 61 s past the first one
+        timeline.record(3, 61_000_000, 73);
 
         // Assert
         assert_eq!(
             timeline.document().unwrap(),
-            br#"[[2000,[2,0],12],[31000,[3,0],43]]"#
+            br#"[[2000,[2,0],12],[61000,[3,0],73]]"#
         );
     }
 
