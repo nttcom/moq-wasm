@@ -19,9 +19,9 @@ use crate::{
 };
 
 const AUDIO_TRACK: &str = "audio";
-/// One DEBUG line per sample as it enters (`ingest`) and as a subscriber
-/// receives it (`publish`, with the group id and LOC capture timestamp the
-/// subscriber sees), so that what a viewer received can be checked against
+/// One DEBUG line per sample as it enters (`ingest`) and as it is sent to the
+/// relay (`publish`, with the group id and LOC capture timestamp a viewer
+/// sees), so that what a viewer received can be checked against
 /// what was sent: `RUST_LOG=media_publisher::delivery=debug`.
 const DELIVERY_LOG_TARGET: &str = "media_publisher::delivery";
 
