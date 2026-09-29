@@ -82,7 +82,7 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
             request_id: self.request_id,
             track_alias,
             expires,
-            group_order: self.group_order,
+            group_order: self.group_order.delivered(),
             content_exists,
             delivery_timeout: self.delivery_timeout,
             max_duration: self.max_cache_duration,
@@ -134,9 +134,41 @@ impl<T: TransportProtocol> SubscribeHandler<T> {
 mod tests {
     use crate::SubscribeOption;
     use crate::{
-        SessionEvent,
+        ContentExists, GroupOrder, SessionEvent,
         modules::test_support::{connect_sessions, spawn_dual_server},
     };
+
+    #[tokio::test]
+    async fn subscribe_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("subscribe-handler-group-order");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption {
+                        group_order: GroupOrder::Publisher,
+                        ..SubscribeOption::default()
+                    },
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+
+        // Assert
+        let subscription = request.await.unwrap().unwrap();
+        assert_eq!(subscription.group_order(), GroupOrder::Ascending);
+    }
 
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {

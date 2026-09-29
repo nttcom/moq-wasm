@@ -780,12 +780,8 @@ impl MOQTClient {
             let mut state = self.state.borrow_mut();
             let group_order = state
                 .incoming_subscribe_group_order(request_id)
-                .map_err(|error| js_error(error.to_string()))?;
-            let group_order = if group_order == GroupOrder::Publisher {
-                GroupOrder::Ascending
-            } else {
-                group_order
-            };
+                .map_err(|error| js_error(error.to_string()))?
+                .delivered();
             let track_alias = state
                 .activate_incoming_subscribe(request_id)
                 .map_err(|error| js_error(error.to_string()))?;
