@@ -757,7 +757,10 @@ function applyBufferPolicy(): void {
   }
   livePlayout.setBufferPolicy(policy)
   applyDecoderConfig()
-  appendLog('info', `playout buffer ${policy.minimumMs}–${policy.maximumMs} ms`)
+  appendLog(
+    'info',
+    `playout buffer ${policy.minimumMs}–${Number.isFinite(policy.maximumMs) ? policy.maximumMs : '∞'} ms`
+  )
 }
 
 function nonNegativeNumber(id: string, fallback: number): number {
