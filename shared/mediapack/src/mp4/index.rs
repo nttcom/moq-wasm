@@ -100,6 +100,18 @@ impl Mp4Index {
         self.duration
     }
 
+    /// The most any sample's presentation time runs ahead of its decode time.
+    /// A live encoder with B-frames emits each frame this long after its decode
+    /// time, so a sender that does the same sends in decode order at a steady
+    /// pace and never sends a sample before its presentation time.
+    pub fn reorder_delay(&self) -> Timestamp {
+        self.samples
+            .iter()
+            .map(|sample| sample.pts.saturating_sub(sample.dts))
+            .max()
+            .unwrap_or(Timestamp::ZERO)
+    }
+
     pub fn annexb_video_sample(&self, avcc: &[u8], is_sync: bool) -> Result<Bytes> {
         let config = self.video.as_ref().context("the file has no video track")?;
         annexb_access_unit(config, avcc, is_sync)
@@ -448,6 +460,26 @@ mod tests {
         // audio by its 1024 priming samples and the timeline starts at zero
         assert_eq!(index.samples()[0].dts.micros(), 0);
         assert_eq!(video[0].pts.micros() - audio[0].pts.micros(), 21_333);
+    }
+
+    #[test]
+    fn reorder_delay_is_the_largest_lead_of_presentation_over_decode_time() {
+        // Arrange
+        let b_frames = Mp4Index::parse(moov(FIXTURE_PROGRESSIVE_MP4)).unwrap();
+        let no_b_frames = Mp4Index::parse(moov(FIXTURE_MP3_MP4)).unwrap();
+
+        // Act
+        let delays = (b_frames.reorder_delay(), no_b_frames.reorder_delay());
+
+        // Assert: a P-frame shown four 15 fps frames after it is decoded
+        assert_eq!(delays.0.micros(), 266_667);
+        assert_eq!(delays.1, Timestamp::ZERO);
+        assert!(
+            b_frames
+                .samples()
+                .iter()
+                .all(|sample| sample.dts.saturating_add(delays.0) >= sample.pts)
+        );
     }
 
     #[test]
