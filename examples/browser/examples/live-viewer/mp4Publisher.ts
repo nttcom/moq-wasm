@@ -14,10 +14,17 @@ import init, {
 } from '../../pkg/moqt_client_wasm'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
+import {
+  type ReplayTrack,
+  answerFetch,
+  documentReplayTrack,
+  endOfGroupObject,
+  replayObject
+} from '../../utils/media/fetchReplay'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
 import { type StatusState, getErrorMessage } from '../media/common'
-import { PublishedGroupLog, type ReplayObject, type ReplayTrack, answerFetch } from './fetchReplay'
+import { PublishedGroupLog } from './publishedGroupLog'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
 
@@ -447,22 +454,6 @@ function findReplayTrack(
   return requestedNamespace.join('/') === namespace.join('/') ? replayTracks.get(trackName) : undefined
 }
 
-function documentReplayTrack(documents: Map<bigint, Uint8Array>, isClosed: (groupId: bigint) => boolean): ReplayTrack {
-  return {
-    groupIds: () => Array.from(documents.keys()),
-    async *objects(groupId: bigint) {
-      const document = documents.get(groupId)
-      if (!document) {
-        return
-      }
-      yield replayObject(0n, document)
-      if (isClosed(groupId)) {
-        yield endOfGroupObject(1n)
-      }
-    }
-  }
-}
-
 /// Replays a group exactly as `Mp4Publisher.pace` sent it: the relay keeps
 /// the first copy of an object and treats different bytes at the same
 /// location as a malformed track.
@@ -490,14 +481,6 @@ function mediaReplayTrack(media: Mp4Media, groups: PublishedGroupLog, audio: boo
       }
     }
   }
-}
-
-function replayObject(objectId: bigint, payload: Uint8Array, locHeader?: unknown): ReplayObject {
-  return { objectId, subgroupId: SUBGROUP_ID, publisherPriority: PUBLISHER_PRIORITY, payload, locHeader }
-}
-
-function endOfGroupObject(objectId: bigint): ReplayObject {
-  return { ...replayObject(objectId, new Uint8Array(0)), objectStatus: OBJECT_STATUS_END_OF_GROUP }
 }
 
 function isAudioSample(media: Mp4Media, index: number): boolean {
