@@ -526,8 +526,15 @@ make chrome</code></pre>
                               <option value="cmaf">CMAF (MSE)</option>
                             </select>
                           </label>
+                          <label for="buffer-mode"
+                            >Buffer
+                            <select id="buffer-mode" data-testid="live-viewer-buffer-mode-select">
+                              <option value="adaptive">Adaptive</option>
+                              <option value="fixed">Fixed</option>
+                            </select>
+                          </label>
                           <label for="playout-buffer"
-                            >Buffer (ms)
+                            ><span id="playout-buffer-label">Min buffer (ms)</span>
                             <input
                               id="playout-buffer"
                               type="number"
@@ -537,6 +544,26 @@ make chrome</code></pre>
                               value="200"
                               data-testid="live-viewer-playout-buffer-input"
                             />
+                          </label>
+                          <label for="extra-delay" id="extra-delay-field"
+                            >Extra delay (ms)
+                            <input
+                              id="extra-delay"
+                              type="number"
+                              min="0"
+                              max="5000"
+                              step="100"
+                              value="0"
+                              data-testid="live-viewer-extra-delay-input"
+                            />
+                          </label>
+                          <label for="catch-up"
+                            >Catch up
+                            <select id="catch-up" data-testid="live-viewer-catch-up-select">
+                              <option value="skip">Skip</option>
+                              <option value="speed-up">Speed up</option>
+                              <option value="off">Off</option>
+                            </select>
                           </label>
                         </div>
                       </div>

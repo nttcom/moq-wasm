@@ -319,25 +319,45 @@ audio codec does, the decoder is reconfigured from the new definition.
 In LOC mode the two decoder workers hand every sample over as soon as it is
 decoded, and one playout clock decides when each is presented. The clock maps
 the LOC capture timestamps, which the bridge stamps on the same wall clock for
-every track, onto the local clock with a 200 ms delay that is the jitter
-budget. A subscription opens with a burst of what the relay had cached of the
-current groups, so the samples of the first 400 ms are held and the clock is
-anchored on the newest of them; older ones are dropped rather than played
-late. Sources such as MPEG-TS over SRT deliver audio in bursts, so the longest
-wait between two audio arrivals seen during that warm-up is added to the
-budget. The audio is the clock's master: it alone moves the clock, so the sound
-never skips for the picture, and the picture takes over only while no audio is
-playing. Video frames are held until they
-are due and then written to the MediaStream the video element shows; audio is
-scheduled on an `AudioContext` running at the stream's sample rate. Chunks are
-appended whole at a write head so the waveform stays continuous: capture
-timestamps are millisecond-precise and the context clock is read a render
-quantum at a time, so a chunk placed on its own target would leave a gap or an
-overlap each time. The distance between the write head and the target is fed
-back to the clock, which makes the audio device the master the picture
-follows; a late chunk is not trimmed but starts at once and moves the clock
-the same way, so the chunks behind it stay contiguous. An audio chunk due more
-than 400 ms past the budget re-anchors the clock so the extra latency is shed.
+every track, onto the local clock behind a jitter buffer. With `Buffer`
+set to `Adaptive` (the default) the buffer tracks the delay from capture to
+arrival of the audio chunks of the last 10 s and covers the spread between the
+fastest and the slowest of them, never less than `Min buffer (ms)` (200 ms by
+default), plus `Extra delay (ms)` as a margin for swings wider than the last
+10 s have shown. With `Fixed` it is `Buffer (ms)` whatever the spread. Either
+way it also covers the audio device's output latency. A subscription opens
+with a burst of what the relay had cached of the current groups, so the
+samples of the first 400 ms are held and the clock is anchored on the newest
+of them; older ones are dropped rather than played late. That burst says
+nothing about the spread, so an adaptive buffer opens on the longest wait
+between two audio arrivals seen during the warm-up instead: sources such as
+MPEG-TS over SRT deliver audio in bursts. The audio is the clock's master: it
+alone moves the clock, so the sound never skips for the picture, and the
+picture takes over only while no audio is playing. Video frames are held until
+they are due and then written to the MediaStream the video element shows;
+every move of the clock applies to the frames captured from the sample that
+caused it on, so the waiting frames move with the sound they belong to, and no
+frame is due before one captured earlier. Audio is scheduled on an
+`AudioContext` running at the stream's sample rate. Chunks are appended whole
+at a write head so the waveform stays continuous: capture timestamps are
+millisecond-precise and the context clock is read a render quantum at a time,
+so a chunk placed on its own target would leave a gap or an overlap each time.
+The distance between the write head and the target is fed back to the clock,
+which makes the audio device the master the picture follows; a late chunk is
+not trimmed but starts at once and moves the clock the same way, so the chunks
+behind it stay contiguous; that is how the buffer grows. Once the buffer has
+settled (10 s for an adaptive one), `Catch up` decides how a buffer above its
+target shrinks. `Skip`, the default, drops each audio chunk that fits in the
+excess and fades the next one in from the head of the first dropped chunk, at
+the offset within 10 ms where the two waveforms look most alike, so the sound
+jumps without a click. `Speed up` shortens the audio by 10 % while the buffer
+is more than 20 ms over, without changing its pitch: where the waveform
+repeats, one period of 2.5–10 ms is overlapped onto the next with a 5 ms
+crossfade (the time-scale modification WebRTC's NetEq calls accelerate), and
+it skips like `Skip` once the buffer is more than 400 ms over. `Off` never
+shrinks it. The stats line shows the buffer and its target as
+`buffer N ms (target M)` and how much latency the catch-up has taken out as
+`shed N ms`.
 The stats line shows the offset between the picture on screen and the sound as
 `A/V +N ms`, as `audio breaks N` how often the sound did not continue where
 the previous chunk ended, and as `video N dropped / M late` how many frames

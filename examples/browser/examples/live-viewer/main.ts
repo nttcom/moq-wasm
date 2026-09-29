@@ -27,7 +27,8 @@ import {
   setStatusText
 } from '../media/common'
 import { BufferingSpinner } from './bufferingSpinner'
-import { DEFAULT_PLAYOUT_DELAY_MS, LivePlayout } from './livePlayout'
+import type { BufferPolicy } from './jitterBuffer'
+import { type CatchUp, DEFAULT_BUFFER_POLICY, LivePlayout } from './livePlayout'
 import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
 import { MediaTimeline, formatElapsed } from './mediaTimeline'
 import { Mp4Publisher } from './mp4Publisher'
@@ -102,15 +103,12 @@ const livePictureSink = createLivePictureSink(
   (picture) => notePresentedFrame(picture),
   (new URLSearchParams(location.search).get('livePicture') as LivePictureKind | null) ?? undefined
 )
-const livePlayout = new LivePlayout(
-  showLiveFrame,
-  () => appendLog('warn', 'playout clock re-anchored: scheduled video and audio were dropped'),
-  (origin) =>
-    videoDecoderWorker.postMessage({
-      type: 'timeline',
-      captureMicros: origin?.captureMicros,
-      dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
-    })
+const livePlayout = new LivePlayout(showLiveFrame, (origin) =>
+  videoDecoderWorker.postMessage({
+    type: 'timeline',
+    captureMicros: origin?.captureMicros,
+    dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
+  })
 )
 const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const mp4Publisher = new Mp4Publisher(
@@ -247,11 +245,11 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
   streamMonitor.setKeptGroups(keptGroups)
   mp4Publisher.sentStreams.setKeptGroups(keptGroups)
 })
-element<HTMLInputElement>('playout-buffer').addEventListener('change', (event) => {
-  const delayMs = Number((event.target as HTMLInputElement).value)
-  livePlayout.setPlayoutDelayMs(Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : DEFAULT_PLAYOUT_DELAY_MS)
-  applyDecoderConfig()
-  appendLog('info', `playout buffer ${livePlayout.playoutDelayMs()} ms`)
+for (const id of ['buffer-mode', 'playout-buffer', 'extra-delay']) {
+  element(id).addEventListener('change', applyBufferPolicy)
+}
+element<HTMLSelectElement>('catch-up').addEventListener('change', (event) => {
+  livePlayout.setCatchUp((event.target as HTMLSelectElement).value as CatchUp)
 })
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
@@ -754,11 +752,42 @@ function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
 
 /// The live playout paces decoded samples on one clock so that audio and
 /// video stay together. All but the last `PRESENTATION_MARGIN_MS` of the
-/// buffer is spent before decoding, in the video worker's jitter buffer, so
+/// buffer every target includes is spent before decoding, in the video worker's jitter buffer, so
 /// objects are decoded in order however they arrived and only a few decoded
 /// frames are ever held.
+function applyBufferPolicy(): void {
+  const policy = readBufferPolicy()
+  element('playout-buffer-label').textContent = policy.mode === 'fixed' ? 'Buffer (ms)' : 'Min buffer (ms)'
+  element<HTMLElement>('extra-delay-field').hidden = policy.mode === 'fixed'
+  livePlayout.setBufferPolicy(policy)
+  applyDecoderConfig()
+  appendLog(
+    'info',
+    policy.mode === 'fixed'
+      ? `fixed playout buffer ${policy.bufferMs} ms`
+      : `adaptive playout buffer, min ${policy.minimumMs} ms + ${policy.extraMs} ms`
+  )
+}
+
+function readBufferPolicy(): BufferPolicy {
+  const bufferMs = nonNegativeNumber('playout-buffer', guaranteedBufferMs(DEFAULT_BUFFER_POLICY))
+  if (element<HTMLSelectElement>('buffer-mode').value === 'fixed') {
+    return { mode: 'fixed', bufferMs }
+  }
+  return { mode: 'adaptive', minimumMs: bufferMs, extraMs: nonNegativeNumber('extra-delay', 0) }
+}
+
+function nonNegativeNumber(id: string, fallback: number): number {
+  const value = Number(element<HTMLInputElement>(id).value)
+  return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function guaranteedBufferMs(policy: BufferPolicy): number {
+  return policy.mode === 'fixed' ? policy.bufferMs : policy.minimumMs + policy.extraMs
+}
+
 function applyDecoderConfig(): void {
-  const holdMs = Math.max(0, livePlayout.playoutDelayMs() - PRESENTATION_MARGIN_MS)
+  const holdMs = Math.max(0, guaranteedBufferMs(livePlayout.bufferPolicy()) - PRESENTATION_MARGIN_MS)
   videoDecoderWorker.postMessage({
     type: 'config',
     config: {
@@ -851,7 +880,12 @@ function wantedPicture(): HTMLElement | undefined {
 function updateVideoStats(frame: VideoFrame): void {
   const stats = element<HTMLSpanElement>('video-stats')
   const delay = viewerDelayMs === undefined ? '' : ` · delay ${Math.round(viewerDelayMs)} ms`
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight}${delay} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · re-anchors ${livePlayout.reanchors}`
+  const bufferMs = livePlayout.bufferMs()
+  const buffer =
+    bufferMs === undefined
+      ? ''
+      : ` · buffer ${Math.round(bufferMs)} ms (target ${Math.round(livePlayout.targetBufferMs())})`
+  stats.textContent = `${frame.displayWidth}x${frame.displayHeight}${delay}${buffer} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · shed ${Math.round(livePlayout.shedMs())} ms`
 }
 
 function formatSyncOffset(offsetMs: number | undefined): string {
