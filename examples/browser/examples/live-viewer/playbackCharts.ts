@@ -39,7 +39,9 @@ type ChartSpec = {
   wide?: boolean
 }
 
-type Chart = { spec: ChartSpec; svg: SVGSVGElement; value: HTMLElement; hovered?: number }
+/// `hoveredSlot` is a position on the time axis, so a pointer held still
+/// stays on the same spot while new samples push the old ones left.
+type Chart = { spec: ChartSpec; svg: SVGSVGElement; value: HTMLElement; hoveredSlot?: number }
 
 type Frame = {
   width: number
@@ -133,11 +135,11 @@ export class PlaybackCharts {
     container.append(figure)
     const chart: Chart = { spec, svg, value }
     svg.addEventListener('pointermove', (event) => {
-      chart.hovered = this.indexAt(chart, event.clientX)
+      chart.hoveredSlot = slotAt(chart, event.clientX)
       this.renderChart(chart)
     })
     svg.addEventListener('pointerleave', () => {
-      chart.hovered = undefined
+      chart.hoveredSlot = undefined
       this.renderChart(chart)
     })
     return chart
@@ -188,8 +190,9 @@ export class PlaybackCharts {
     if (spec.wide) {
       parts.push(directLabels(this.samples, spec.series, stacks, frame))
     }
-    if (chart.hovered !== undefined && this.samples[chart.hovered]) {
-      parts.push(this.hoverLayer(chart, chart.hovered, stacks, frame))
+    const hovered = chart.hoveredSlot === undefined ? -1 : chart.hoveredSlot - (WINDOW_SAMPLES - this.samples.length)
+    if (this.samples[hovered]) {
+      parts.push(this.hoverLayer(chart, hovered, stacks, frame))
     }
     svg.innerHTML = parts.join('')
     placeTooltip(svg, width - right)
@@ -218,14 +221,12 @@ export class PlaybackCharts {
       `<text class="playback-chart-tooltip-text" y="${TOP + 13}">${text}</text>`
     ].join('')
   }
+}
 
-  private indexAt(chart: Chart, clientX: number): number | undefined {
-    const bounds = chart.svg.getBoundingClientRect()
-    const plotWidth = bounds.width - LEFT - (chart.spec.wide ? LABEL_GUTTER : RIGHT)
-    const slot = Math.round(((clientX - bounds.left - LEFT) / plotWidth) * (WINDOW_SAMPLES - 1))
-    const index = slot - (WINDOW_SAMPLES - this.samples.length)
-    return index >= 0 && index < this.samples.length ? index : undefined
-  }
+function slotAt(chart: Chart, clientX: number): number {
+  const bounds = chart.svg.getBoundingClientRect()
+  const plotWidth = bounds.width - LEFT - (chart.spec.wide ? LABEL_GUTTER : RIGHT)
+  return Math.round(((clientX - bounds.left - LEFT) / plotWidth) * (WINDOW_SAMPLES - 1))
 }
 
 type Stack = ({ base: number; top: number } | undefined)[]
