@@ -9,7 +9,7 @@ import {
   SubgroupObjectMessage,
   SubscribeOkMessage
 } from '../../pkg/moqt_client_wasm'
-import { type GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import { GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { configureRelayUrlControls } from '../../utils/relayPresets'
 
 type HTMLFormControls = HTMLFormElement & {
@@ -376,7 +376,16 @@ function setupControlMessageButtons(): void {
     const endGroup = BigInt(getField(form, 'fetch-end-group').value)
     const endObject = BigInt(getField(form, 'fetch-end-object').value)
     await sendControlMessage('FETCH', () =>
-      ensureRawClient().sendFetch(requestId, trackNamespace, trackName, startGroup, startObject, endGroup, endObject)
+      ensureRawClient().sendFetch(
+        requestId,
+        trackNamespace,
+        trackName,
+        startGroup,
+        startObject,
+        endGroup,
+        endObject,
+        GroupOrder.Ascending
+      )
     )
   })
 

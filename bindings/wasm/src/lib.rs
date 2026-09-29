@@ -553,8 +553,7 @@ impl MOQTClient {
         forward: bool,
         auth_info: String,
     ) -> Result<(), JsValue> {
-        let group_order =
-            GroupOrder::try_from(group_order).map_err(|_| js_error("invalid group order"))?;
+        let group_order = group_order_from(group_order)?;
         let content_exists =
             content_exists_from_fields(content_exists, largest_group_id, largest_object_id);
         let payload = Publish {
@@ -591,8 +590,7 @@ impl MOQTClient {
         delivery_timeout: Option<u64>,
         forward: bool,
     ) -> Result<(), JsValue> {
-        let group_order =
-            GroupOrder::try_from(group_order).map_err(|_| js_error("invalid group order"))?;
+        let group_order = group_order_from(group_order)?;
         let filter_type =
             filter_type_from_fields(filter_type, start_group, start_object, end_group)?;
         let payload = PublishOk {
@@ -641,8 +639,7 @@ impl MOQTClient {
         forward: bool,
         delivery_timeout: Option<u64>,
     ) -> Result<(), JsValue> {
-        let group_order =
-            GroupOrder::try_from(group_order).map_err(|_| js_error("invalid group order"))?;
+        let group_order = group_order_from(group_order)?;
         let filter_type =
             filter_type_from_fields(filter_type, start_group, start_object, end_group)?;
         let payload = Subscribe {
@@ -675,11 +672,12 @@ impl MOQTClient {
         start_object: u64,
         end_group: u64,
         end_object: u64,
+        group_order: u8,
     ) -> Result<(), JsValue> {
         let payload = Fetch {
             request_id,
             subscriber_priority: 0,
-            group_order: GroupOrder::Ascending,
+            group_order: group_order_from(group_order)?,
             fetch_params: FetchParams::Standalone {
                 track_namespace,
                 track_name,
@@ -705,11 +703,12 @@ impl MOQTClient {
         request_id: u64,
         joining_request_id: u64,
         joining_start: u64,
+        group_order: u8,
     ) -> Result<(), JsValue> {
         let payload = Fetch {
             request_id,
             subscriber_priority: 0,
-            group_order: GroupOrder::Ascending,
+            group_order: group_order_from(group_order)?,
             fetch_params: FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,
@@ -1838,6 +1837,11 @@ fn content_exists_from_fields(
     } else {
         ContentExists::False
     }
+}
+
+#[cfg(web_sys_unstable_apis)]
+fn group_order_from(value: u8) -> Result<GroupOrder, JsValue> {
+    GroupOrder::try_from(value).map_err(|_| js_error("invalid group order"))
 }
 
 #[cfg(web_sys_unstable_apis)]
