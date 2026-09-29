@@ -34,6 +34,12 @@ pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, V
             } => Some((Operation::Subscribe, track_namespace)),
             FetchParams::RelativeJoining { .. } | FetchParams::AbsoluteJoining { .. } => None,
         },
+        MoqtSessionEvent::TrackStatus(handler) if handler.authorization_tokens().is_empty() => {
+            Some((
+                Operation::Subscribe,
+                handler.track_namespace_tuple().to_vec(),
+            ))
+        }
         _ => None,
     }
 }
@@ -80,6 +86,11 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
         MoqtSessionEvent::Fetch(handler) => {
             handler
                 .error(FetchErrorCode::Unauthorized as u64, reason)
+                .await
+        }
+        MoqtSessionEvent::TrackStatus(handler) => {
+            handler
+                .error(SubscribeErrorCode::Unauthorized as u64, reason)
                 .await
         }
         _ => unreachable!("only events with a requested_access are rejected"),
@@ -237,6 +248,48 @@ mod tests {
                 "APP/site2/x".to_string(),
                 "video".to_string(),
                 SubscribeOption::default(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        // Assert
+        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn track_status_query_inside_the_granted_path_reaches_the_relay() {
+        // Arrange
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
+
+        // Act
+        let result = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            client.subscriber().track_status(
+                "APP/site1/x".to_string(),
+                "video".to_string(),
+                vec![],
+            ),
+        )
+        .await
+        .unwrap();
+
+        // Assert: NOT_SUPPORTED, because nothing subscribes to the track yet
+        assert_eq!(request_error_code(result.unwrap_err()), 0x3);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn track_status_query_outside_the_granted_path_is_unauthorized() {
+        // Arrange
+        let (_relay, client) = spawn_relay_and_connect_client(site1_token()).await;
+
+        // Act
+        let result = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            client.subscriber().track_status(
+                "APP/site2/x".to_string(),
+                "video".to_string(),
+                vec![],
             ),
         )
         .await

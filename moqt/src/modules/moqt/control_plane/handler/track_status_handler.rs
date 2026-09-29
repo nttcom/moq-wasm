@@ -27,6 +27,7 @@ pub struct TrackStatusHandler<T: TransportProtocol> {
     session_context: Arc<SessionContext<T>>,
     request_id: u64,
     track_namespace: String,
+    track_namespace_tuple: Vec<String>,
     track_name: String,
     subscriber_priority: u8,
     group_order: GroupOrder,
@@ -47,6 +48,7 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
             session_context,
             request_id: track_status.request_id,
             track_namespace: track_status.track_namespace.join("/"),
+            track_namespace_tuple: track_status.track_namespace,
             track_name: track_status.track_name,
             subscriber_priority: track_status.subscriber_priority,
             group_order: track_status.group_order,
@@ -57,16 +59,19 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
         }
     }
 
-    /// The track's status is not inspected: TRACK_STATUS_OK is sent with
-    /// Track Alias 0 (draft-14 §9.21) and Content Exists false.
-    pub async fn ok(&self) -> Result<(), TransportSendError> {
+    /// draft-14 §9.21: the fields are those of a SUBSCRIBE_OK with Track Alias 0.
+    pub async fn ok(
+        &self,
+        expires: u64,
+        content_exists: ContentExists,
+    ) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let track_status_ok = SubscribeOk {
             request_id: self.request_id,
             track_alias: 0,
-            expires: 0,
-            group_order: self.group_order,
-            content_exists: ContentExists::False,
+            expires,
+            group_order: self.group_order.delivered(),
+            content_exists,
             delivery_timeout: None,
             max_duration: None,
         };
@@ -105,6 +110,10 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
         &self.track_namespace
     }
 
+    pub fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
+    }
+
     pub fn track_name(&self) -> &str {
         &self.track_name
     }
@@ -129,7 +138,7 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ContentExists, DUAL, Session, SessionEvent,
+        ContentExists, DUAL, Location, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{connect_sessions, spawn_dual_server},
@@ -183,12 +192,32 @@ mod tests {
         let exchange = track_status_exchange("track-status-ok").await;
 
         // Act
-        exchange.handler.ok().await.unwrap();
+        exchange.handler.ok(0, ContentExists::False).await.unwrap();
 
         // Assert
         let track_status_ok = exchange.request.await.unwrap().unwrap();
         assert_eq!(track_status_ok.track_alias, 0);
         assert_eq!(track_status_ok.content_exists, ContentExists::False);
+    }
+
+    #[tokio::test]
+    async fn ok_reports_the_largest_location_and_expires() {
+        // Arrange
+        let exchange = track_status_exchange("track-status-largest").await;
+        let content_exists = ContentExists::True {
+            location: Location {
+                group_id: 7,
+                object_id: 3,
+            },
+        };
+
+        // Act
+        exchange.handler.ok(30, content_exists).await.unwrap();
+
+        // Assert
+        let track_status_ok = exchange.request.await.unwrap().unwrap();
+        assert_eq!(track_status_ok.content_exists, content_exists);
+        assert_eq!(track_status_ok.expires, 30);
     }
 
     #[tokio::test]
@@ -201,6 +230,18 @@ mod tests {
 
         // Assert
         assert_eq!(tokens, vec![AuthorizationToken::use_value_utf8("jwt")]);
+    }
+
+    #[tokio::test]
+    async fn exposes_the_namespace_as_sent() {
+        // Arrange
+        let exchange = track_status_exchange("track-status-namespace").await;
+
+        // Act
+        let namespace = exchange.handler.track_namespace_tuple().to_vec();
+
+        // Assert
+        assert_eq!(namespace, vec!["app".to_string()]);
     }
 
     #[tokio::test]

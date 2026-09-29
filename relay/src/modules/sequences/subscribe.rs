@@ -27,7 +27,10 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
-fn cached_largest(cache_store: &TrackCacheStore, track_key: &TrackKey) -> Option<moqt::Location> {
+pub(super) fn cached_largest(
+    cache_store: &TrackCacheStore,
+    track_key: &TrackKey,
+) -> Option<moqt::Location> {
     cache_store
         .get(track_key)
         .and_then(|cache| cache.largest_location())

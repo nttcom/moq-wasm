@@ -83,8 +83,7 @@ mod tests {
     use crate::modules::{
         auth::{
             test_support::{
-                StubOutcome, StubVerifier, app_token, relay_token, request_error_code,
-                spawn_relay_and_connect_client,
+                StubOutcome, StubVerifier, app_token, relay_token, spawn_relay_and_connect_client,
             },
             verified_token::VerifiedToken,
         },
@@ -268,27 +267,5 @@ mod tests {
 
         // Assert
         assert!(result.is_ok(), "{result:?}");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn track_status_without_a_token_is_answered_with_not_supported() {
-        // Arrange
-        let (_relay, client) = spawn_relay_and_connect_client(app_token(Some(""), None)).await;
-
-        // Act
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            client
-                .subscriber()
-                .track_status("APP".to_string(), "cam1".to_string(), vec![]),
-        )
-        .await
-        .unwrap();
-
-        // Assert
-        assert_eq!(
-            request_error_code(result.unwrap_err()),
-            SubscribeErrorCode::NotSupported as u64
-        );
     }
 }

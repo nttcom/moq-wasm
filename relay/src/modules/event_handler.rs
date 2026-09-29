@@ -30,6 +30,7 @@ use crate::modules::{
             hashmap_table::InMemoryLocalPubSubDirectory,
             table::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
         },
+        track_status::TrackStatus,
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
         upstream_serializer::UpstreamCreationSerializer,
@@ -39,6 +40,7 @@ use crate::modules::{
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
+use moqt::ContentExists;
 use tracing::{Instrument, Span};
 
 pub(crate) struct EventHandler {
@@ -351,6 +353,20 @@ impl EventHandler {
                         .instrument(event_span)
                         .await;
                 }
+                MoqtSessionEvent::TrackStatus(handler)
+                    if handler.authorization_tokens().is_empty() =>
+                {
+                    TrackStatus {}
+                        .handle(
+                            session_id,
+                            &session_span,
+                            local_pub_sub_directory.as_ref(),
+                            &cache_store,
+                            handler.as_ref(),
+                        )
+                        .instrument(event_span)
+                        .await;
+                }
                 MoqtSessionEvent::TrackStatus(handler) => {
                     async {
                         let refreshed = refresh_token(
@@ -368,7 +384,7 @@ impl EventHandler {
                                             "authorization token refreshed"
                                         );
                                         verified_token = Some(token);
-                                        handler.ok().await
+                                        handler.ok(0, ContentExists::False).await
                                     }
                                     None => {
                                         handler
