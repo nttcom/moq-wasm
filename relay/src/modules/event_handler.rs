@@ -39,6 +39,7 @@ use crate::modules::{
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
+use moqt::ContentExists;
 use tracing::{Instrument, Span};
 
 pub(crate) struct EventHandler {
@@ -368,7 +369,7 @@ impl EventHandler {
                                             "authorization token refreshed"
                                         );
                                         verified_token = Some(token);
-                                        handler.ok().await
+                                        handler.ok(0, ContentExists::False).await
                                     }
                                     None => {
                                         handler

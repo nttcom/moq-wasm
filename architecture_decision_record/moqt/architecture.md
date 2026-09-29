@@ -203,10 +203,12 @@ returns the TRACK_STATUS_OK it awaits on path 2 (TRACK_STATUS_ERROR becomes a
 `RequestError`); a late TRACK_STATUS_OK
 is discarded because the request creates no state. The receiving side gets
 `SessionEvent::TrackStatus(TrackStatusHandler)` with the request's
-AUTHORIZATION TOKEN parameters exposed. `TrackStatusHandler::ok()` does not
-report the track's status: it always sends Track Alias 0 (§9.21) with Content
-Exists false, which is enough for the relay's use of TRACK_STATUS as the
-carrier for an authorization token refresh. The handler carries a
+AUTHORIZATION TOKEN parameters exposed. `TrackStatusHandler::ok(expires,
+content_exists)` fills TRACK_STATUS_OK the way `SubscribeHandler` fills a
+SUBSCRIBE_OK (Group Order resolved by `GroupOrder::delivered`) with Track
+Alias 0 (§9.21); the caller supplies the track's status, which the relay
+reports as Content Exists false when TRACK_STATUS only carries an
+authorization token refresh. The handler carries a
 `ResponseGuard`, so an application that ignores the event answers
 TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
