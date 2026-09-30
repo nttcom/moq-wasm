@@ -1,3 +1,7 @@
+mod publish_namespace_response_task;
+
+use publish_namespace_response_task::PublishNamespaceResponseTask;
+
 use std::sync::Arc;
 
 use moqt::{FilterType, GroupOrder};
@@ -47,11 +51,16 @@ impl ControlMessageForwarder {
         let Some(publisher) = self.publisher(session_id).await else {
             return false;
         };
-        publisher
-            .send_publish_namespace(track_namespace)
-            .await
-            .inspect_err(|_| tracing::error!("Failed to send publish namespace"))
-            .is_ok()
+        match publisher.send_publish_namespace(track_namespace).await {
+            Ok(response) => {
+                let _response_task = PublishNamespaceResponseTask::run(response);
+                true
+            }
+            Err(error) => {
+                tracing::error!(?error, "Failed to send publish namespace");
+                false
+            }
+        }
     }
 
     #[tracing::instrument(

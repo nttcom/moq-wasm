@@ -146,7 +146,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   a FETCH the cache cannot serve: it runs in an `UpstreamFetchTask` (see "FETCH
   sequence"), so a publisher that answers FETCH late or never — a browser
   publisher has no FETCH handler — does not hold the session's later requests
-  for the control-message response timeout.
+  for the control-message response timeout. Likewise, replies to forwarded
+  PUBLISH_NAMESPACE complete in a `PublishNamespaceResponseTask` (see
+  `ControlMessageForwarder`).
 - A TRACK_STATUS carrying an AUTHORIZATION TOKEN is handled by the worker
   itself as a token refresh (see "Token refresh" under "Session intake"); one
   without a token goes to `sequences::track_status`.
@@ -183,7 +185,11 @@ Each sequence owns the relay-side protocol logic for one message
 
 - `ControlMessageForwarder` — sends control messages on *other* sessions via
   the repository (e.g. forwarding SUBSCRIBE upstream, PUBLISH_NAMESPACE to
-  interested subscribers).
+  interested subscribers). `publish_namespace` returns once the message is
+  written (`moqt::Publisher::begin_publish_namespace`) and hands the reply to a
+  `PublishNamespaceResponseTask`, which only logs it: writing in the caller
+  keeps PUBLISH_NAMESPACE ordered before a later PUBLISH_NAMESPACE_DONE for
+  the same subscriber.
 - `InMemoryLocalPubSubDirectory` (in `tables/`) — the relay's in-memory
   registry of publish/subscribe namespaces (with `PeerKind` so client-owned
   Redis routes are cleaned up when the last *client* leaves), active upstream
@@ -469,7 +475,8 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - **Reader never awaits**: the `EventHandler` reader only routes; all awaiting
   happens in per-session workers. Cross-session deadlock is structurally
   impossible; per-session ordering is FIFO, except that an upstream FETCH
-  completes in its own task after the events that followed it.
+  and the replies to forwarded PUBLISH_NAMESPACE messages complete in their
+  own tasks after the events that followed them.
 - **Worker lifetime is the session's**: a session worker exists from the
   session's registration until its terminal event; events arriving outside
   that window are dropped by the reader.

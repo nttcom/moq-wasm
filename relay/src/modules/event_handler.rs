@@ -780,7 +780,10 @@ mod tests {
         },
         control_message_forwarder::ControlMessageForwarder,
         core::{
-            mocks::{MockFetchHandler, RecordedControlMessages, mock_new_session},
+            mocks::{
+                MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
+                mock_new_session,
+            },
             session_event::MoqtSessionEvent,
         },
         inter_relay::InterRelayConnectionManager,
@@ -882,6 +885,29 @@ mod tests {
             );
         }
 
+        async fn register_namespace_subscriber(
+            &self,
+            session_id: SessionId,
+            track_namespace_prefix: &str,
+        ) -> RecordedControlMessages {
+            let recorded = self.register_session(session_id).await;
+            self.local_pub_sub_directory.register_subscribe_namespace(
+                session_id,
+                track_namespace_prefix.to_string(),
+                PeerKind::Client,
+            );
+            recorded
+        }
+
+        fn send_publish_namespace(&self, session_id: SessionId, track_namespace: &str) {
+            self.send(SessionEvent {
+                session_id,
+                kind: EventKind::FromSession(MoqtSessionEvent::PublishNamespace(Box::new(
+                    MockPublishNamespaceHandler::new(track_namespace),
+                ))),
+            });
+        }
+
         fn send(&self, event: SessionEvent) {
             self.event_sender
                 .send(event)
@@ -927,6 +953,18 @@ mod tests {
     ) -> Result<(), tokio::time::error::Elapsed> {
         tokio::time::timeout(WAIT_TIMEOUT, async {
             while recorded.closes().is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+    }
+
+    async fn wait_for_publish_namespaces(
+        recorded: &RecordedControlMessages,
+        expected: &[&str],
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        tokio::time::timeout(WAIT_TIMEOUT, async {
+            while recorded.publish_namespaces() != expected {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         })
@@ -983,5 +1021,45 @@ mod tests {
         wait_for_close(&subscriber).await.expect(
             "the event after the FETCH should be handled while the upstream FETCH is pending",
         );
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_publish_namespace_does_not_hold_later_events_of_the_publisher() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        handler.register_namespace_subscriber(2, "ns").await;
+        let publisher = handler.register_session(1).await;
+        handler.send_publish_namespace(1, "ns/a");
+
+        // Act
+        handler.send(SessionEvent::protocol_violation_detected(
+            1,
+            "event after the publish namespace".to_string(),
+        ));
+
+        // Assert
+        wait_for_close(&publisher).await.expect(
+            "the event after PUBLISH_NAMESPACE should be handled while the subscriber has not answered",
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_reaches_every_namespace_subscriber_while_none_answers() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        let first_subscriber = handler.register_namespace_subscriber(2, "ns").await;
+        let second_subscriber = handler.register_namespace_subscriber(3, "ns").await;
+        handler.register_session(1).await;
+
+        // Act
+        handler.send_publish_namespace(1, "ns/a");
+
+        // Assert
+        wait_for_publish_namespaces(&first_subscriber, &["ns/a"])
+            .await
+            .expect("the first subscriber should receive PUBLISH_NAMESPACE");
+        wait_for_publish_namespaces(&second_subscriber, &["ns/a"])
+            .await
+            .expect("the second subscriber should receive PUBLISH_NAMESPACE");
     }
 }
