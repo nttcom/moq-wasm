@@ -1,3 +1,4 @@
+import { monotonicUnixMicros } from '../../utils/media/clock'
 import { type LocHeader, readLocHeader } from '../../utils/media/loc'
 
 const MICROS_PER_SECOND = 1_000_000
@@ -22,19 +23,15 @@ export class GroupTimeline {
   private joinGroupId: bigint | undefined
   private arrivalLagMicros: number | undefined
 
-  constructor(
-    private readonly retentionMicros: number,
-    private readonly nowMicros: () => number
-  ) {}
+  constructor(private readonly retentionMicros: number) {}
 
   record(groupId: bigint, locHeader: LocHeader | undefined): void {
     const captureMicros = readLocHeader(locHeader).captureTimestampMicros
     if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
       return
     }
-    const observedAtMicros = this.nowMicros()
-    this.arrivalLagMicros = observedAtMicros - captureMicros
-    this.recordCapture(groupId, captureMicros, observedAtMicros)
+    this.arrivalLagMicros = monotonicUnixMicros() - captureMicros
+    this.recordCapture(groupId, captureMicros)
   }
 
   /// A group known only by its id, as reported by TRACK_STATUS, is placed at
@@ -43,17 +40,16 @@ export class GroupTimeline {
     if (this.arrivalLagMicros === undefined) {
       return
     }
-    const observedAtMicros = this.nowMicros()
-    this.recordCapture(groupId, observedAtMicros - this.arrivalLagMicros, observedAtMicros)
+    this.recordCapture(groupId, monotonicUnixMicros() - this.arrivalLagMicros)
   }
 
-  recordCapture(groupId: bigint, captureMicros: number, observedAtMicros: number): void {
+  recordCapture(groupId: bigint, captureMicros: number): void {
     this.joinGroupId ??= groupId
     if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
       return
     }
 
-    this.marks.push({ groupId, captureMicros, observedAtMicros })
+    this.marks.push({ groupId, captureMicros, observedAtMicros: monotonicUnixMicros() })
     this.marks.sort((left, right) => left.captureMicros - right.captureMicros)
   }
 
@@ -72,11 +68,6 @@ export class GroupTimeline {
   /// is forwarded to a publisher that does not serve FETCH.
   get newestClosed(): GroupMark | undefined {
     return this.cached().at(-2)
-  }
-
-  get oldestClosed(): GroupMark | undefined {
-    const marks = this.cached()
-    return marks.length > 1 ? marks[0] : undefined
   }
 
   forgetThrough(groupId: bigint): void {
@@ -116,7 +107,7 @@ export class GroupTimeline {
   }
 
   private cached(): ObservedMark[] {
-    const evictedBeforeMicros = this.nowMicros() - this.retentionMicros
+    const evictedBeforeMicros = monotonicUnixMicros() - this.retentionMicros
     this.marks = this.marks.filter((mark) => mark.observedAtMicros >= evictedBeforeMicros)
     return this.marks
   }
