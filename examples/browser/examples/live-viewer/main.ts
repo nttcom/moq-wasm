@@ -27,7 +27,6 @@ const stage = element<HTMLDivElement>('stage')
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 const player = new LivePlayer({
   client: moqtClient,
-  authInfo: AUTH_INFO,
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: appendLog },
   deliveryObserver: streamMonitor,
@@ -96,7 +95,7 @@ async function watchStream(): Promise<void> {
     await moqtClient.connect(url)
     setStatus('connection-status', `Connected: ${url}`, 'ok')
     appendLog('info', `connected to ${url}`)
-    await player.start(trackNamespace())
+    await player.start(trackNamespace(), AUTH_INFO)
   } catch (error) {
     setStatus('connection-status', `Failed: ${getErrorMessage(error)}`, 'error')
     appendLog('error', getErrorMessage(error))

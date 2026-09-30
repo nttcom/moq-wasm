@@ -15,7 +15,7 @@ import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
 import type { LivePictureKind } from './livePictureSink'
 import { CatalogFollower } from './catalogFollower'
-import type { DeliveryObserver } from './deliveryObserver'
+import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
 import { LocLive } from './locLive'
@@ -42,10 +42,9 @@ export type LivePlayerCallbacks = {
 
 export type LivePlayerOptions = {
   client: MoqtClientWrapper
-  authInfo: string
   container: HTMLElement
   callbacks: LivePlayerCallbacks
-  deliveryObserver: DeliveryObserver
+  deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
 }
 
@@ -124,8 +123,8 @@ export class LivePlayer {
     this.context = {
       client: options.client,
       namespace: [],
-      authInfo: options.authInfo,
-      observer: options.deliveryObserver,
+      authInfo: '',
+      observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => options.callbacks.onLog(level, message)
     }
     this.catalog = new CatalogFollower(this.context, (text) => void this.applyCatalog(text))
@@ -228,8 +227,9 @@ export class LivePlayer {
     return this.timeline.media.elapsedMsAt(captureMicros)
   }
 
-  async start(namespace: string[]): Promise<void> {
+  async start(namespace: string[], authInfo: string): Promise<void> {
     this.context.namespace = namespace
+    this.context.authInfo = authInfo
     this.started = true
     this.changed()
     await this.catalog.follow()
