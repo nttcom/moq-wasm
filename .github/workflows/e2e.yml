@@ -104,8 +104,8 @@ jobs:
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
       meeting: ${{ steps.filter.outputs.meeting }}
       compose_suites: ${{ steps.filter.outputs.compose_suites }}
-      relay: ${{ steps.filter.outputs.relay }}
-      relay_image_source: ${{ steps.filter.outputs.relay_image_source }}
+      relay_image: ${{ steps.relay_image.outputs.image }}
+      relay_image_source: ${{ steps.relay_image.outputs.source || 'none' }}
     steps:
       - name: Checkout repository
         # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
@@ -213,16 +213,6 @@ jobs:
           relay=false
           [[ "$meeting" == "true" || ${#compose_suites[@]} -gt 0 ]] && relay=true
 
-          if [[ "$relay" == "true" ]]; then
-            if [[ "${{ github.event_name }}" == "pull_request" || ( "${{ github.event_name }}" == "push" && "${{ github.ref }}" != "refs/heads/master" ) ]]; then
-              relay_image_source=local
-            else
-              relay_image_source=prebuilt
-            fi
-          else
-            relay_image_source=none
-          fi
-
           {
             echo "media=$media"
             echo "message=$message"
@@ -230,12 +220,39 @@ jobs:
             echo "meeting=$meeting"
             echo "compose_suites=$(jq -cn '$ARGS.positional | unique' --args "${compose_suites[@]}")"
             echo "relay=$relay"
-            echo "relay_image_source=$relay_image_source"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve relay image
+        id: relay_image
+        if: ${{ steps.filter.outputs.relay == 'true' }}
+        shell: bash
+        env:
+          # Tag = hash of every input that affects the relay binary.
+          RELAY_IMAGE_TAG: ${{ hashFiles('relay/**', 'moqt/**', 'shared/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain', '.cargo/config.toml', '.dockerignore') }}
+        run: |
+          set -euo pipefail
+
+          # GHCR namespaces must be lowercase.
+          repo="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${repo}/relay:${RELAY_IMAGE_TAG}"
+
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            source=published
+          elif [[ "${{ github.event_name }}" == "pull_request" || ( "${{ github.event_name }}" == "push" && "${{ github.ref }}" != "refs/heads/master" ) ]]; then
+            source=local
+          else
+            source=publish
+          fi
+
+          echo "Relay image ${image}: ${source}"
+          {
+            echo "image=$image"
+            echo "source=$source"
           } >> "$GITHUB_OUTPUT"
 
   relay_image_local:
     needs: changes
-    if: ${{ needs.changes.outputs.relay == 'true' && needs.changes.outputs.relay_image_source == 'local' }}
+    if: ${{ needs.changes.outputs.relay_image_source == 'local' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -276,11 +293,13 @@ jobs:
 
   relay_image:
     needs: changes
-    if: ${{ needs.changes.outputs.relay == 'true' && needs.changes.outputs.relay_image_source == 'prebuilt' }}
+    if: ${{ needs.changes.outputs.relay_image_source == 'publish' }}
     permissions:
       contents: read
       packages: write
     uses: ./.github/workflows/relay-image.yml
+    with:
+      image: ${{ needs.changes.outputs.relay_image }}
 
   media_e2e:
     needs: changes
@@ -472,7 +491,7 @@ jobs:
 
   meeting_e2e:
     needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.meeting == 'true' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    if: ${{ always() && needs.changes.outputs.meeting == 'true' && (needs.changes.outputs.relay_image_source == 'published' || (needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'publish' && needs.relay_image.result == 'success')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -531,7 +550,7 @@ jobs:
           docker tag moqt-relay:local-source moqt-relay:local
 
       - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        if: ${{ needs.changes.outputs.relay_image_source != 'local' }}
         # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
         with:
@@ -539,14 +558,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+      - name: Pull published relay image
+        if: ${{ needs.changes.outputs.relay_image_source != 'local' }}
         run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
+          docker pull "${{ needs.changes.outputs.relay_image }}"
+          docker tag "${{ needs.changes.outputs.relay_image }}" moqt-relay:local
 
       - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        if: ${{ needs.changes.outputs.relay_image_source != 'local' }}
         run: docker logout ghcr.io
 
       - name: Run meeting E2E
@@ -567,7 +586,7 @@ jobs:
 
   compose_e2e:
     needs: [changes, relay_image_local, relay_image]
-    if: ${{ always() && needs.changes.outputs.compose_suites != '[]' && ((needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'prebuilt' && needs.relay_image.result == 'success')) }}
+    if: ${{ always() && needs.changes.outputs.compose_suites != '[]' && (needs.changes.outputs.relay_image_source == 'published' || (needs.changes.outputs.relay_image_source == 'local' && needs.relay_image_local.result == 'success') || (needs.changes.outputs.relay_image_source == 'publish' && needs.relay_image.result == 'success')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -611,7 +630,7 @@ jobs:
           docker tag moqt-relay:local-source moqt-relay:local
 
       - name: Log in to GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        if: ${{ needs.changes.outputs.relay_image_source != 'local' }}
         # docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 = v4.4.0
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
         with:
@@ -619,14 +638,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull prebuilt relay image
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+      - name: Pull published relay image
+        if: ${{ needs.changes.outputs.relay_image_source != 'local' }}
         run: |
-          docker pull "${{ needs.relay_image.outputs.image }}"
-          docker tag "${{ needs.relay_image.outputs.image }}" moqt-relay:local
+          docker pull "${{ needs.changes.outputs.relay_image }}"
+          docker tag "${{ needs.changes.outputs.relay_image }}" moqt-relay:local
 
       - name: Log out from GHCR
-        if: ${{ needs.changes.outputs.relay_image_source == 'prebuilt' }}
+        if: ${{ needs.changes.outputs.relay_image_source != 'local' }}
         run: docker logout ghcr.io
 
       - name: Install GStreamer
