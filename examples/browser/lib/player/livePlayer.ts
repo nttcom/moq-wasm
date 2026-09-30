@@ -111,6 +111,7 @@ export class LivePlayer {
   private packaging: Packaging = 'loc'
   private review: ReviewSession | undefined
   private started = false
+  private trackChanges: Promise<void> = Promise.resolve()
   private paused = false
   private volume = 1
   private playbackRate = 1
@@ -129,7 +130,11 @@ export class LivePlayer {
       log: (level, message) => options.callbacks.onLog(level, message)
     }
     this.textTracks = new TextTracks(this.context)
-    this.catalog = new CatalogFollower(this.context, this.textTracks, (text) => void this.applyCatalog(text))
+    this.catalog = new CatalogFollower(
+      this.context,
+      this.textTracks,
+      (text) => void this.queueTrackChange(() => this.applyCatalog(text))
+    )
     this.subscriptions = new TrackSubscriptions(this.context)
     this.stallWatch = new StallWatch(() => this.changed())
     this.stage = new PictureStage(options.container)
@@ -237,7 +242,11 @@ export class LivePlayer {
     await this.catalog.follow()
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    return this.queueTrackChange(() => this.stopWatching())
+  }
+
+  private async stopWatching(): Promise<void> {
     this.started = false
     this.timeline.reset()
     this.goLive()
@@ -267,13 +276,19 @@ export class LivePlayer {
     return this.selectTrack('audio', name)
   }
 
-  private async selectTrack(kind: MediaKind, name: string): Promise<void> {
-    this.selected[kind] = name
-    await this.resubscribe(kind)
-    await this.openLiveMse()
+  private selectTrack(kind: MediaKind, name: string): Promise<void> {
+    return this.queueTrackChange(async () => {
+      this.selected[kind] = name
+      await this.resubscribe(kind)
+      await this.openLiveMse()
+    })
   }
 
-  async setPackaging(packaging: Packaging): Promise<void> {
+  setPackaging(packaging: Packaging): Promise<void> {
+    return this.queueTrackChange(() => this.switchPackaging(packaging))
+  }
+
+  private async switchPackaging(packaging: Packaging): Promise<void> {
     if (packaging === this.packaging) {
       return
     }
@@ -400,6 +415,15 @@ export class LivePlayer {
   setPlaybackRate(rate: number): void {
     this.playbackRate = rate
     this.changed()
+  }
+
+  /// A change unsubscribes and resubscribes media tracks across awaits, so two
+  /// running at once would both subscribe the same kind and leave one of the
+  /// subscriptions behind; changes run one after another in the order they came.
+  private queueTrackChange(change: () => Promise<void>): Promise<void> {
+    const run = this.trackChanges.then(change)
+    this.trackChanges = run.catch(() => undefined)
+    return run
   }
 
   private changed(): void {
