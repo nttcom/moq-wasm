@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, btree_map::Entry},
+    collections::btree_map::Entry,
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
@@ -9,10 +9,7 @@ use std::{
 
 use tokio::sync::{Notify, broadcast};
 
-use crate::modules::relay::{
-    cache::cached_object::{CachedObject, ForwardingPreference},
-    types::SubgroupKey,
-};
+use crate::modules::relay::cache::cached_object::{CachedObject, ForwardingPreference};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
@@ -34,7 +31,7 @@ mod open_subgroup;
 
 pub(crate) use fetch_cursor::FetchCursor;
 use ledger::Ledger;
-pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard};
+pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, SubgroupRun};
 
 pub(crate) struct TrackCache {
     ledger: RwLock<Ledger>,
@@ -43,7 +40,7 @@ pub(crate) struct TrackCache {
     eviction_generation: AtomicU64,
     malformed: AtomicBool,
     malformed_notify: Notify,
-    subgroup_opened_sender: broadcast::Sender<SubgroupKey>,
+    subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
 }
 
 impl TrackCache {
@@ -59,7 +56,7 @@ impl TrackCache {
         }
     }
 
-    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupKey> {
+    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupRun> {
         self.subgroup_opened_sender.subscribe()
     }
 
@@ -152,8 +149,8 @@ impl TrackCache {
         self.read().groups_in_range(group_id, u64::MAX)
     }
 
-    pub(crate) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {
-        self.read().subgroups_in_group(group_id)
+    pub(crate) fn subgroup_runs_in_group(&self, group_id: u64) -> Vec<SubgroupRun> {
+        self.read().subgroup_runs_in_group(group_id)
     }
 
     pub(crate) fn largest_location(&self) -> Option<moqt::Location> {
@@ -178,7 +175,7 @@ impl TrackCache {
             for &at in &removed {
                 ledger.known_ranges.remove_range(at, after(at));
             }
-            ledger.forget_aborts_of_vanished_groups();
+            ledger.forget_runs_of_vanished_groups();
             removed.len()
         };
         if removed_count > 0 {
@@ -323,10 +320,21 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        datagram_object, insert_closed_group, open_group, stream_key, stream_object,
-        stream_object_in_subgroup, stream_object_with_payload,
+    use crate::modules::relay::{
+        tests::harness::fixtures::cached_object::{
+            datagram_object, insert_aborted_group, insert_closed_group, open_group, stream_key,
+            stream_object, stream_object_in_subgroup, stream_object_with_payload,
+        },
+        types::SubgroupKey,
     };
+
+    fn subgroup_keys_in_group(cache: &TrackCache, group_id: u64) -> Vec<SubgroupKey> {
+        cache
+            .subgroup_runs_in_group(group_id)
+            .iter()
+            .map(|run| run.key)
+            .collect()
+    }
 
     fn payload_at(cache: &TrackCache, group_id: u64, object_id: u64) -> Bytes {
         cache
@@ -466,23 +474,23 @@ mod tests {
     }
 
     #[test]
-    fn subgroups_in_group_lists_cached_and_open_subgroups() {
+    fn subgroup_runs_in_group_lists_cached_and_open_subgroups() {
         // Arrange
         let cache = TrackCache::new();
         let _ = cache.insert(stream_object_in_subgroup(0, 1, 0));
         let _open = cache.open_subgroup(SubgroupKey::Datagram { group_id: 0 });
         // Act / Assert
         assert_eq!(
-            cache.subgroups_in_group(0),
-            BTreeSet::from([
+            subgroup_keys_in_group(&cache, 0),
+            vec![
                 SubgroupKey::Stream {
                     group_id: 0,
                     subgroup_id: 1
                 },
                 SubgroupKey::Datagram { group_id: 0 }
-            ])
+            ]
         );
-        assert!(cache.subgroups_in_group(1).is_empty());
+        assert!(cache.subgroup_runs_in_group(1).is_empty());
     }
 
     #[tokio::test(start_paused = true)]
@@ -573,7 +581,28 @@ mod tests {
         cache.evict(ttl);
         // Assert
         assert!(cache.is_empty());
-        assert_eq!(cache.subgroups_in_group(0), BTreeSet::from([stream_key(0)]));
+        assert_eq!(subgroup_keys_in_group(&cache, 0), vec![stream_key(0)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_forgets_the_runs_of_a_vanished_group() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        insert_aborted_group(&cache, 0, &[0]);
+        drop(cache.open_subgroup(stream_key(0)));
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        tokio::time::advance(Duration::from_secs(11)).await;
+        // Act
+        cache.evict(ttl);
+        let _open = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.generation),
+            Ok(0)
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -643,9 +672,12 @@ mod fetch_tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
-        stream_object, stream_object_in_subgroup,
+    use crate::modules::relay::{
+        tests::harness::fixtures::cached_object::{
+            datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
+            stream_object, stream_object_in_subgroup,
+        },
+        types::SubgroupKey,
     };
 
     fn object_ids(objects: &[moqt::FetchObjectField]) -> Vec<(u64, u64)> {
@@ -1056,6 +1088,24 @@ mod fetch_tests {
         // Act
         drop(open);
         // Assert: the relay must not FIN a range that may be missing objects
+        let result = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must end once the subgroup aborts")
+            .unwrap();
+        assert_eq!(result, Err(FetchInterrupted::Incomplete));
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_is_incomplete_when_a_waited_subgroup_reopens_before_the_fetch_wakes() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let open = open_group(&cache, 0, &[0]);
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
+        tokio::task::yield_now().await;
+        // Act
+        drop(open);
+        let _reopened = cache.open_subgroup(stream_key(0));
+        // Assert: the reopened stream cannot restore objects lost with the reset
         let result = tokio::time::timeout(Duration::from_secs(5), fetch)
             .await
             .expect("fetch must end once the subgroup aborts")

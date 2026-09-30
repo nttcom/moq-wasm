@@ -8,7 +8,7 @@ use crate::modules::relay::{
     types::SubgroupKey,
 };
 
-use super::{after, location};
+use super::{SubgroupRun, after, location};
 
 #[derive(Default)]
 pub(super) struct LiveGroup {
@@ -29,6 +29,7 @@ pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) aborted_subgroups: HashSet<SubgroupKey>,
+    reopened_run_first_object_ids: HashMap<SubgroupKey, Vec<u64>>,
     pub(super) known_ranges: KnownRanges,
 }
 
@@ -39,16 +40,65 @@ impl Ledger {
             .any(|key| key.group_id() == group_id)
     }
 
-    pub(super) fn forget_aborts_of_vanished_groups(&mut self) {
+    pub(super) fn forget_runs_of_vanished_groups(&mut self) {
         let (objects, live_groups) = (&self.objects, &self.live_groups);
-        self.aborted_subgroups.retain(|key| {
+        let is_present = |key: &SubgroupKey| {
             let group_id = key.group_id();
             objects
                 .range(location(group_id, 0)..=location(group_id, u64::MAX))
                 .next()
                 .is_some()
                 || live_groups.contains_key(&group_id)
-        });
+        };
+        self.aborted_subgroups.retain(is_present);
+        self.reopened_run_first_object_ids
+            .retain(|key, _| is_present(key));
+    }
+
+    /// The run a reopened stream starts begins past every cached object of the
+    /// subgroup, so the object ids below it belong to the superseded runs.
+    pub(super) fn start_run_if_reopening_aborted(&mut self, key: SubgroupKey) {
+        if self.is_open(key) || !self.aborted_subgroups.remove(&key) {
+            return;
+        }
+        let after_cached_objects = self
+            .group_objects(key.group_id(), 0)
+            .rev()
+            .find(|object| object.subgroup_key() == key)
+            .map_or(0, |object| object.location.object_id.saturating_add(1));
+        let first_object_id = after_cached_objects.max(self.latest_run(key).first_object_id);
+        self.reopened_run_first_object_ids
+            .entry(key)
+            .or_default()
+            .push(first_object_id);
+    }
+
+    pub(super) fn latest_run(&self, key: SubgroupKey) -> SubgroupRun {
+        let first_object_ids = self
+            .reopened_run_first_object_ids
+            .get(&key)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        SubgroupRun {
+            key,
+            generation: first_object_ids.len(),
+            first_object_id: first_object_ids.last().copied().unwrap_or(0),
+        }
+    }
+
+    pub(super) fn reopen_count_in_group(&self, group_id: u64) -> usize {
+        self.reopened_run_first_object_ids
+            .iter()
+            .filter(|(key, _)| key.group_id() == group_id)
+            .map(|(_, first_object_ids)| first_object_ids.len())
+            .sum()
+    }
+
+    pub(super) fn superseded_run_end(&self, key: SubgroupKey, generation: usize) -> Option<u64> {
+        self.reopened_run_first_object_ids
+            .get(&key)?
+            .get(generation)
+            .copied()
     }
 
     pub(super) fn is_open(&self, key: SubgroupKey) -> bool {
@@ -80,7 +130,7 @@ impl Ledger {
         &self,
         group_id: u64,
         from_object_id: u64,
-    ) -> impl Iterator<Item = &Arc<CachedObject>> {
+    ) -> impl DoubleEndedIterator<Item = &Arc<CachedObject>> {
         self.objects
             .range(location(group_id, from_object_id)..=location(group_id, u64::MAX))
             .map(|(_, object)| object)
@@ -108,13 +158,13 @@ impl Ledger {
         self.live_groups.contains_key(&group_id)
     }
 
-    pub(super) fn subgroups_in_group(&self, group_id: u64) -> BTreeSet<SubgroupKey> {
+    pub(super) fn subgroup_runs_in_group(&self, group_id: u64) -> Vec<SubgroupRun> {
         let mut keys: BTreeSet<SubgroupKey> = self
             .group_objects(group_id, 0)
             .map(|object| object.subgroup_key())
             .collect();
         keys.extend(self.open_keys_in_group(group_id));
-        keys
+        keys.into_iter().map(|key| self.latest_run(key)).collect()
     }
 
     pub(super) fn groups_in_range(&self, first_group_id: u64, last_group_id: u64) -> Vec<u64> {

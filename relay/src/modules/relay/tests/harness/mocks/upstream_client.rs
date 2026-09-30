@@ -56,6 +56,10 @@ impl UpstreamSubgroupStream {
         self.object_with_payload(ordered_payload(index));
     }
 
+    pub(crate) fn object_with_delta(&self, object_id_delta: u64, index: usize) {
+        self.send(make_payload_object(object_id_delta, ordered_payload(index)));
+    }
+
     pub(crate) fn object_with_payload(&self, payload: bytes::Bytes) {
         self.send(make_payload_object(0, payload));
     }

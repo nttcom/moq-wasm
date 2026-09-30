@@ -1,9 +1,12 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use moqt::{FilterType, GroupOrder};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::modules::relay::{cache::track_cache::TrackCache, types::SubgroupKey};
+use crate::modules::relay::{
+    cache::track_cache::{SubgroupRun, TrackCache},
+    types::SubgroupKey,
+};
 
 /// Subscriptions only deliver objects newer than the subscribe-time Largest
 /// Object (§9.7), so an absolute start at or below it is raised past it.
@@ -21,9 +24,10 @@ fn resolve_start_location(
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GroupSendTask {
     pub(crate) key: SubgroupKey,
+    pub(crate) generation: usize,
     pub(crate) object_id: u64,
 }
 
@@ -77,7 +81,7 @@ impl EgressScheduler {
 
     pub(crate) async fn run(self, ready_sender: oneshot::Sender<anyhow::Result<()>>) {
         let mut receiver = self.cache.subscribe_subgroup_opened();
-        let mut scheduled = HashSet::<SubgroupKey>::new();
+        let mut scheduled = HashMap::<SubgroupKey, GroupSendTask>::new();
 
         let start = resolve_start_location(&self.filter_type, &self.largest_location);
         self.schedule_cached_objects(&start, &mut scheduled).await;
@@ -90,15 +94,15 @@ impl EgressScheduler {
         loop {
             match receiver.recv().await {
                 Ok(_) if !*self.forward_receiver.borrow() => {}
-                Ok(key) => {
-                    if let Some(object_id) = progress.accept(key.group_id())
+                Ok(run) => {
+                    let group_id = run.key.group_id();
+                    if let Some(object_id) = progress.accept(group_id)
                         && self
-                            .schedule(key, object_id, &mut scheduled)
+                            .schedule(run, object_id, &mut scheduled)
                             .await
                             .is_some()
                     {
-                        self.recover_lagged_groups(key.group_id(), &mut scheduled)
-                            .await;
+                        self.recover_lagged_groups(group_id, &mut scheduled).await;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -111,8 +115,12 @@ impl EgressScheduler {
 
     /// Re-schedules cached groups after `group_id`, recovering groups whose
     /// open events were lost to receiver lag. Duplicates are filtered by the
-    /// `scheduled` set.
-    async fn recover_lagged_groups(&self, group_id: u64, scheduled: &mut HashSet<SubgroupKey>) {
+    /// `scheduled` map.
+    async fn recover_lagged_groups(
+        &self,
+        group_id: u64,
+        scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
+    ) {
         if matches!(self.group_order, GroupOrder::Descending) {
             return;
         }
@@ -140,7 +148,7 @@ impl EgressScheduler {
     async fn schedule_cached_objects(
         &self,
         start: &moqt::Location,
-        scheduled: &mut HashSet<SubgroupKey>,
+        scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
         for group_id in self.cache.groups_at_or_after(start.group_id) {
             let object_id = if group_id == start.group_id {
@@ -148,8 +156,8 @@ impl EgressScheduler {
             } else {
                 0
             };
-            for key in self.cache.subgroups_in_group(group_id) {
-                let _ = self.schedule(key, object_id, scheduled).await;
+            for run in self.cache.subgroup_runs_in_group(group_id) {
+                let _ = self.schedule(run, object_id, scheduled).await;
             }
             if matches!(self.group_order, GroupOrder::Descending) {
                 return;
@@ -157,19 +165,26 @@ impl EgressScheduler {
         }
     }
 
+    /// A reopened run resumes from where the key's previous task started, so the
+    /// subscription's start clamp still holds, but never below the run itself.
     async fn schedule(
         &self,
-        key: SubgroupKey,
+        run: SubgroupRun,
         object_id: u64,
-        scheduled: &mut HashSet<SubgroupKey>,
+        scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) -> Option<()> {
-        if !scheduled.insert(key) {
-            return Some(());
-        }
-        self.sender
-            .send(GroupSendTask { key, object_id })
-            .await
-            .ok()?;
+        let object_id = match scheduled.get(&run.key) {
+            Some(previous) if previous.generation >= run.generation => return Some(()),
+            Some(previous) => previous.object_id,
+            None => object_id,
+        };
+        let task = GroupSendTask {
+            key: run.key,
+            generation: run.generation,
+            object_id: object_id.max(run.first_object_id),
+        };
+        scheduled.insert(run.key, task);
+        self.sender.send(task).await.ok()?;
         Some(())
     }
 }
@@ -178,7 +193,7 @@ impl EgressScheduler {
 mod tests {
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::{
-        cached_object::{insert_closed_group, stream_key},
+        cached_object::{insert_aborted_group, insert_closed_group, stream_key},
         location,
     };
 
@@ -238,6 +253,7 @@ mod tests {
         assert_eq!(
             task,
             GroupSendTask {
+                generation: 0,
                 key: stream_key(0),
                 object_id: 1
             }
@@ -277,6 +293,7 @@ mod tests {
         assert_eq!(
             task,
             GroupSendTask {
+                generation: 0,
                 key: stream_key(2),
                 object_id: 1
             }
@@ -326,6 +343,7 @@ mod tests {
         assert_eq!(
             task,
             GroupSendTask {
+                generation: 0,
                 key: stream_key(5),
                 object_id: 0
             }
@@ -350,6 +368,7 @@ mod tests {
         assert_eq!(
             task,
             GroupSendTask {
+                generation: 0,
                 key: stream_key(7),
                 object_id: 0
             }
@@ -372,6 +391,7 @@ mod tests {
         assert_eq!(
             task,
             GroupSendTask {
+                generation: 0,
                 key: stream_key(0),
                 object_id: 0
             }
@@ -395,9 +415,42 @@ mod tests {
         assert_eq!(
             task,
             GroupSendTask {
+                generation: 0,
                 key: stream_key(0),
                 object_id: 1
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn reopened_subgroup_is_scheduled_again_for_its_new_run() {
+        // Arrange: objects 0..=2 were cached before the upstream stream was reset
+        let cache = Arc::new(TrackCache::new());
+        insert_aborted_group(&cache, 0, &[0, 1, 2]);
+        let mut scheduler = start_scheduler(
+            cache.clone(),
+            FilterType::LargestObject,
+            Some(location(0, 2)),
+        )
+        .await;
+        let aborted_run_task = scheduler.task_receiver.recv().await;
+        // Act
+        let _reopened = cache.open_subgroup(stream_key(0));
+        let _duplicate = cache.open_subgroup(stream_key(0));
+        let _next_group = cache.open_subgroup(stream_key(1));
+        // Assert: the duplicate open of the same run is skipped
+        let tasks = [
+            aborted_run_task,
+            scheduler.task_receiver.recv().await,
+            scheduler.task_receiver.recv().await,
+        ];
+        assert_eq!(
+            tasks.map(|task| task.map(|task| (task.key, task.generation, task.object_id))),
+            [
+                Some((stream_key(0), 0, 3)),
+                Some((stream_key(0), 1, 3)),
+                Some((stream_key(1), 0, 0)),
+            ]
         );
     }
 }

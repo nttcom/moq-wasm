@@ -8,7 +8,7 @@ use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{data_object::DataObject, mocks::session_repository_with_session},
     relay::{
-        cache::track_cache::{NextObject, TrackCache},
+        cache::track_cache::{NextObject, SubgroupRun, TrackCache},
         egress::{
             coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
         },
@@ -185,7 +185,7 @@ impl RelayHarness {
             .expect("stream readers should hold the stop receiver");
     }
 
-    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupKey> {
+    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupRun> {
         self.ingest.cache.subscribe_subgroup_opened()
     }
 
@@ -198,7 +198,7 @@ impl RelayHarness {
         while let NextObject::Object(object) = self
             .ingest
             .cache
-            .next_subgroup_object_or_wait(key, cursor)
+            .next_subgroup_object_or_wait(key, 0, cursor)
             .await
             .unwrap()
         {
@@ -217,7 +217,7 @@ impl RelayHarness {
             RECV_TIMEOUT,
             self.ingest
                 .cache
-                .next_subgroup_object_or_wait(key, last_object_id + 1),
+                .next_subgroup_object_or_wait(key, 0, last_object_id + 1),
         )
         .await
         .expect("subgroup should be closed, not waiting for more objects")

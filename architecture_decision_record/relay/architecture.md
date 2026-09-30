@@ -328,8 +328,13 @@ per-request authorization gate under "Event pipeline".
   which also announces the `SubgroupKey` to egress. Only a FIN or an End of Group / End of Track
   object `finish`es the guard; every other end (RESET_STREAM, stop, decode
   error, task abort) drops it, which marks the subgroup aborted: its group is
-  never declared complete (draft-14 §10.4.2) and egress resets, rather than
-  FINs, the downstream stream (§10.4.3). Header
+  not declared complete (draft-14 §10.4.2) and egress resets, rather than
+  FINs, the downstream stream (§10.4.3). A later live stream for an aborted,
+  no-longer-open subgroup (e.g. a new upstream subscription after the
+  previous one was cancelled) reopens it as the next `SubgroupRun`: the abort
+  mark is cleared so the new stream's FIN or reset decides the tail again, and
+  the run's first object id lies past every object cached for the subgroup,
+  so the objects below it belong to the superseded runs. Header
   types without an explicit subgroup id map to 0, or to the first object's id
   (Type 0x12/0x13/0x1A/0x1B, opened once that object arrives). For End-of-Group
   header types (0x18–0x1D) a clean FIN inserts an EndOfGroup status object at
@@ -366,7 +371,8 @@ per-request authorization gate under "Event pipeline".
   close; waiters re-check the ledger under a single read guard, so there is no
   check-order race between "object present" and "subgroup closed".
 - Subgroup-opened channel: each `TrackCache` owns a
-  `broadcast::Sender<SubgroupKey>` (capacity 256). `open_subgroup` sends the key
+  `broadcast::Sender<SubgroupRun>` (capacity 256; key, generation, first object
+  id). `open_subgroup` sends the run
   after the subgroup is in the ledger, and egress schedulers subscribe through
   `subscribe_subgroup_opened`, so a subgroup is either announced to a
   subscribed scheduler or already visible to its cache scan. The channel lives
@@ -379,14 +385,20 @@ per-request authorization gate under "Event pipeline".
   becomes unknown") and a skipped id stays undecided. Fetch fills register
   their requested range only at `Fetch::End` (guarded by the eviction
   generation counter); datagram objects register nothing.
-- `next_subgroup_object_or_wait(key, from)` (live egress) returns the next object of that
+- `next_subgroup_object_or_wait(key, generation, from)` (live egress) returns the next object of that
   subgroup, `Finished` once it closed cleanly, or `Aborted` once it closed without
   a FIN; a subgroup that was never opened (fetch-fill only) therefore never blocks.
+  For a superseded generation it returns only the objects below the next run's
+  first object id and then `Aborted`, so a downstream stream never continues
+  into a reopened run (§10.4.3: a relay that cannot prove an object is the next
+  one resets the stream and opens a new one).
 - `FetchCursor::new(cache, start, end, group_order)` (`track_cache/fetch_cursor.rs`)
   walks `[start, end)` in delivery order (Descending reverses the group
   list) and yields one object per `next`, reading positions inside knowledge
   without waiting and waiting past the frontier only while some subgroup of
-  the group is open. `Aborted` from such a wait surfaces as
+  the group is open. A subgroup of the group reopening after the cursor entered
+  it counts as `Aborted`, since the reopened run cannot restore the objects
+  lost with the reset. `Aborted` from such a wait surfaces as
   `FetchInterrupted::Incomplete`, the malformed latch as
   `FetchInterrupted::Malformed`.
 - Eviction job (`eviction_job.rs`): every `RELAY_CACHE_EVICT_INTERVAL_SECS`
@@ -412,7 +424,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   computes the delivery start per draft-14 filter type (`NextGroupStart`,
   `LargestObject`, `AbsoluteStart`, `AbsoluteRange`; an absolute start at or
   below Largest is clamped to Largest+1), and emits one `GroupSendTask` per
-  `SubgroupKey`. It subscribes to open events first and then schedules every
+  `SubgroupKey` and run generation: a reopened run is scheduled again from
+  the later of the key's previous task start and the run's first object id,
+  while further opens of an already scheduled run are skipped. It subscribes to open events first and then schedules every
   cached group at or after the start, so a group that ingress opened and
   closed before the scheduler existed is still delivered. While the
   registration's Forward State is 0 it drops open events, so no subgroup opened

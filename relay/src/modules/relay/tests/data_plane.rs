@@ -5,7 +5,8 @@ use crate::modules::core::data_object::DataObject;
 use super::harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery,
     fixtures::{cached_object::FIXTURE_PRIORITY, location},
-    receive_objects_until_close, receive_objects_until_end, resolve_downstream_object_ids,
+    ordered_payload, payloads_of, receive_objects_until_close, receive_objects_until_end,
+    resolve_downstream_object_ids,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -284,4 +285,112 @@ async fn subscription_with_forward_back_on_resumes_from_the_next_group() {
         panic!("downstream stream should start with a subgroup header");
     };
     assert_eq!(header.group_id, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn subscriber_joining_after_an_upstream_reset_receives_the_reopened_subgroup() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut reset_stream = harness.open_upstream_stream();
+    reset_stream.header(0);
+    for index in 0..3 {
+        reset_stream.object(index);
+    }
+    reset_stream.reset();
+    reset_stream.wait_reader_end().await;
+    let mut egress = harness.start_egress(Some(location(0, 2))).await;
+    // Arrange: give the egress stream task time to find the subgroup aborted
+    egress
+        .assert_nothing_sent_within(Duration::from_millis(50))
+        .await;
+
+    // Act
+    let reopened_stream = harness.open_upstream_stream();
+    reopened_stream.header(0);
+    reopened_stream.object_with_delta(3, 3);
+    reopened_stream.object(4);
+    reopened_stream.object(5);
+    reopened_stream.fin();
+
+    // Assert
+    let objects = receive_objects_until_close(&mut egress).await;
+    assert_eq!(resolve_downstream_object_ids(&objects), vec![3, 4, 5]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upstream_reopen_after_a_reset_is_relayed_on_a_new_downstream_stream() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let reset_stream = harness.open_upstream_stream();
+    reset_stream.header(0);
+    for index in 0..3 {
+        reset_stream.object(index);
+    }
+    reset_stream.reset();
+    let (reset_objects, reset_end) = receive_objects_until_end(&mut egress).await;
+
+    // Act: the reopened stream skips object 3
+    let reopened_stream = harness.open_upstream_stream();
+    reopened_stream.header(0);
+    reopened_stream.object_with_delta(4, 4);
+    reopened_stream.object(5);
+    reopened_stream.fin();
+
+    // Assert
+    let reopened_objects = receive_objects_until_close(&mut egress).await;
+    assert_eq!(resolve_downstream_object_ids(&reset_objects), vec![0, 1, 2]);
+    assert!(matches!(reset_end, Sent::Reset(0)), "got {reset_end:?}");
+    assert!(matches!(
+        reopened_objects.first(),
+        Some(DataObject::SubgroupHeader(_))
+    ));
+    assert_eq!(resolve_downstream_object_ids(&reopened_objects), vec![4, 5]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upstream_reopen_racing_the_reset_relays_each_object_once_on_two_streams() {
+    for _ in 0..100 {
+        // Arrange
+        let harness = RelayHarness::new();
+        let mut egress = harness.start_egress(None).await;
+        let mut reset_stream = harness.open_upstream_stream();
+        reset_stream.header(0);
+        for index in 0..3 {
+            reset_stream.object(index);
+        }
+
+        // Act
+        reset_stream.reset();
+        reset_stream.wait_reader_end().await;
+        let reopened_stream = harness.open_upstream_stream();
+        reopened_stream.header(0);
+        reopened_stream.object_with_delta(4, 4);
+        reopened_stream.object(5);
+        reopened_stream.fin();
+
+        // Assert: the two downstream streams may interleave
+        let (mut objects, first_end) = receive_objects_until_end(&mut egress).await;
+        let (second_objects, second_end) = receive_objects_until_end(&mut egress).await;
+        objects.extend(second_objects);
+        let header_count = objects
+            .iter()
+            .filter(|object| matches!(object, DataObject::SubgroupHeader(_)))
+            .count();
+        let mut payloads = payloads_of(&objects);
+        payloads.sort();
+        assert_eq!(header_count, 2);
+        assert_eq!(
+            payloads,
+            [0, 1, 2, 4, 5].map(ordered_payload).to_vec(),
+            "each object is relayed exactly once"
+        );
+        assert!(
+            matches!(
+                (&first_end, &second_end),
+                (Sent::Reset(0), Sent::Closed) | (Sent::Closed, Sent::Reset(0))
+            ),
+            "the reset stream is reset and the reopened one finished, got {first_end:?} and {second_end:?}"
+        );
+    }
 }
