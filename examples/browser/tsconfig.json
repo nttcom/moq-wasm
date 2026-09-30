@@ -10,7 +10,8 @@
     "forceConsistentCasingInFileNames": true,
     "paths": {
       "@/*": ["./examples/meeting/src/*"],
-      "@moqt/*": ["./lib/moqt/*"]
+      "@moqt/*": ["./lib/moqt/*"],
+      "@player/*": ["./lib/player/*"]
     },
     "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom"],
     "lib": ["esnext", "webworker", "dom"]

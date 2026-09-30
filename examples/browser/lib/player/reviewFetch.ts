@@ -1,6 +1,6 @@
 import { RequestError, RequestErrorCode } from '@moqt/moqtClient'
-import { getErrorMessage } from '../../media/common'
-import { type ReviewFrame, toReviewFrame } from '../rewind'
+import { getErrorMessage } from '../../examples/media/common'
+import { type ReviewFrame, toReviewFrame } from './rewind'
 import type { TrackContext } from './trackContext'
 
 const FETCH_DEADLINE_MS = 8_000

@@ -1,6 +1,6 @@
-import type { MediaCatalogTrack } from '../../media/catalog'
-import { base64ToUint8Array } from '../../../utils/media/base64'
-import { MseSink, type MseSources, type MseTrackSource } from '../../../utils/media/mseSink'
+import type { MediaCatalogTrack } from '../../examples/media/catalog'
+import { base64ToUint8Array } from '../../utils/media/base64'
+import { MseSink, type MseSources, type MseTrackSource } from '../../utils/media/mseSink'
 import type { MediaKind } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 

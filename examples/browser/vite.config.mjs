@@ -12,7 +12,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'examples/meeting/src'),
-      '@moqt': resolve(__dirname, 'lib/moqt')
+      '@moqt': resolve(__dirname, 'lib/moqt'),
+      '@player': resolve(__dirname, 'lib/player')
     }
   },
   server: {

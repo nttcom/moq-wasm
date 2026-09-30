@@ -1,4 +1,4 @@
-import { MEDIA_CATALOG_TRACK_NAME } from '../../media/catalog'
+import { MEDIA_CATALOG_TRACK_NAME } from '../../examples/media/catalog'
 import { fetchLatestText, subscribeTextTrack } from './textTrack'
 import type { TrackContext } from './trackContext'
 

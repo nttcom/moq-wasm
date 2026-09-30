@@ -140,19 +140,6 @@
   background: #0c1111;
 }
 
-.viewer-stage video,
-.viewer-stage canvas {
-  display: block;
-  width: 100%;
-  border: 0;
-  border-radius: 0;
-}
-
-.viewer-stage video[hidden],
-.viewer-stage canvas[hidden] {
-  display: none;
-}
-
 .viewer-buffering {
   position: absolute;
   top: 50%;
@@ -195,12 +182,6 @@
 .viewer-stage:fullscreen {
   border: 0;
   border-radius: 0;
-}
-
-.viewer-stage:fullscreen video,
-.viewer-stage:fullscreen canvas {
-  height: 100%;
-  object-fit: contain;
 }
 
 /* In fullscreen the pointer is always over the stage, so the controls hide

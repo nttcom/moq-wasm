@@ -1,20 +1,21 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
+import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
 import {
   type MediaCatalogTrack,
   extractCatalogAudioTracks,
   extractCatalogCmafTracks,
   extractCatalogMediaTimelineTracks,
   extractCatalogVideoTracks
-} from '../../media/catalog'
-import { type StatusState, getErrorMessage } from '../../media/common'
-import { base64ToUint8Array } from '../../../utils/media/base64'
-import { parseAudioChannelCount } from '../../../utils/media/decoderCatalog'
-import type { MseTrackSource } from '../../../utils/media/mseSink'
-import type { BufferPolicy } from '../jitterBuffer'
-import type { CatchUp } from '../livePlayout'
-import type { LivePictureKind } from '../livePictureSink'
+} from '../../examples/media/catalog'
+import { type StatusState, getErrorMessage } from '../../examples/media/common'
+import { base64ToUint8Array } from '../../utils/media/base64'
+import { parseAudioChannelCount } from '../../utils/media/decoderCatalog'
+import type { MseTrackSource } from '../../utils/media/mseSink'
+import type { BufferPolicy } from './jitterBuffer'
+import type { CatchUp } from './livePlayout'
+import type { LivePictureKind } from './livePictureSink'
 import { CatalogFollower } from './catalogFollower'
+import type { DeliveryObserver } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
 import { LocLive } from './locLive'
@@ -24,7 +25,7 @@ import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWind
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { subscribeTextTrack } from './textTrack'
-import type { DeliveryObserver, LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
+import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import { TrackSubscriptions } from './trackSubscriptions'
 
@@ -32,13 +33,6 @@ const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 
 export type { Packaging } from './trackContext'
-
-export type LivePlayerSurface = {
-  video: HTMLVideoElement
-  liveCanvas: HTMLCanvasElement
-  reviewCanvas: HTMLCanvasElement
-  msePool: HTMLVideoElement[]
-}
 
 export type LivePlayerCallbacks = {
   onStateChange(): void
@@ -49,7 +43,7 @@ export type LivePlayerCallbacks = {
 export type LivePlayerOptions = {
   client: MoqtClientWrapper
   authInfo: string
-  surface: LivePlayerSurface
+  container: HTMLElement
   callbacks: LivePlayerCallbacks
   deliveryObserver: DeliveryObserver
   livePicture?: LivePictureKind
@@ -137,9 +131,8 @@ export class LivePlayer {
     this.catalog = new CatalogFollower(this.context, (text) => void this.applyCatalog(text))
     this.subscriptions = new TrackSubscriptions(this.context)
     this.stallWatch = new StallWatch(() => this.changed())
-    const { surface } = options
-    this.stage = new PictureStage(surface.video, surface.msePool)
-    this.locLive = new LocLive(surface.video, surface.liveCanvas, options.livePicture, {
+    this.stage = new PictureStage(options.container)
+    this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
       onPresented: (picture) => this.notePresentedFrame(picture),
       onFrameShown: (ids, captureMicros) => {
         const trackAlias = this.subscriptions.get('video')?.trackAlias
@@ -149,7 +142,7 @@ export class LivePlayer {
         this.callbacks.onLiveFrame()
       }
     })
-    this.locReview = new LocReview(surface.reviewCanvas, {
+    this.locReview = new LocReview(this.stage.reviewCanvas, {
       onFrameShown: (captureMicros, playhead) => {
         if (playhead) {
           this.context.observer.setPlayhead(playhead)
@@ -174,7 +167,7 @@ export class LivePlayer {
       }
     }
     this.stage.show(this.locLive.picture.element)
-    for (const video of [surface.video, ...surface.msePool]) {
+    for (const video of this.stage.videos()) {
       this.watchPresentedFrames(video)
     }
   }

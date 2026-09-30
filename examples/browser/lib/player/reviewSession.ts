@@ -1,5 +1,5 @@
-import { getErrorMessage } from '../../media/common'
-import { type GroupMark, type ReviewFrame, sortReviewFrames } from '../rewind'
+import { getErrorMessage } from '../../examples/media/common'
+import { type GroupMark, type ReviewFrame, sortReviewFrames } from './rewind'
 import { type FetchFailure, fetchFrames, isFetchFailure } from './reviewFetch'
 import type { SeekTimeline } from './seekTimeline'
 import type { MediaKind, TrackContext } from './trackContext'
