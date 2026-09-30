@@ -12,13 +12,9 @@ const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const POINTER_IDLE_MS = 2_500
 
-/// The controls laid over the picture: seek bar, skip buttons, play/pause,
-/// LIVE, speed, volume, the quality menu and fullscreen. They render
-/// `LivePlayer.state` and hold only the state of the gesture in progress. The
-/// arrow keys skip wherever the focus is, so a page holds one of them.
+/// The arrow keys skip wherever the focus is, so a page holds one of these.
 export class PlayerControls {
   readonly seekbar: HTMLInputElement
-  private readonly root: HTMLElement
   private seeking = false
   private pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -30,7 +26,6 @@ export class PlayerControls {
     container.classList.add('viewer-stage')
     const template = document.createElement('template')
     template.innerHTML = CONTROLS_MARKUP
-    this.root = container
     container.append(template.content)
     this.seekbar = this.part<HTMLInputElement>('seekbar')
     this.part<HTMLButtonElement>('quality-button').popoverTargetElement = this.part('quality-menu')
@@ -55,47 +50,37 @@ export class PlayerControls {
   }
 
   private part<T extends HTMLElement>(name: string): T {
-    const found = this.root.querySelector<T>(`[data-part="${name}"]`)
+    const found = this.container.querySelector<T>(`[data-part="${name}"]`)
     if (!found) {
       throw new Error(`missing control: ${name}`)
     }
     return found
   }
 
+  private onValue(part: string, type: 'change' | 'input', apply: (value: string) => void): void {
+    const control = this.part<HTMLInputElement | HTMLSelectElement>(part)
+    control.addEventListener(type, () => apply(control.value))
+  }
+
   private bind(): void {
     const { player, seekbar } = this
-    this.part<HTMLSelectElement>('video-track').addEventListener(
-      'change',
-      (event) => void player.selectVideoTrack((event.target as HTMLSelectElement).value)
-    )
-    this.part<HTMLSelectElement>('audio-track').addEventListener(
-      'change',
-      (event) => void player.selectAudioTrack((event.target as HTMLSelectElement).value)
-    )
-    this.part<HTMLSelectElement>('packaging').addEventListener(
-      'change',
-      (event) => void player.setPackaging((event.target as HTMLSelectElement).value as Packaging)
-    )
-    this.part<HTMLSelectElement>('speed').addEventListener('change', (event) =>
-      player.setPlaybackRate(Number((event.target as HTMLSelectElement).value))
-    )
+    this.onValue('video-track', 'change', (value) => void player.selectVideoTrack(value))
+    this.onValue('audio-track', 'change', (value) => void player.selectAudioTrack(value))
+    this.onValue('packaging', 'change', (value) => void player.setPackaging(value as Packaging))
+    this.onValue('speed', 'change', (value) => player.setPlaybackRate(Number(value)))
+    this.onValue('volume', 'input', (value) => player.setVolume(Number(value)))
+    this.onValue('catch-up', 'change', (value) => player.setCatchUp(value as CatchUp))
     this.part('live').addEventListener('click', () => this.goLive())
     this.part('play-pause').addEventListener('click', () => player.setPaused(!player.state.paused))
-    this.part<HTMLInputElement>('volume').addEventListener('input', (event) =>
-      player.setVolume((event.target as HTMLInputElement).valueAsNumber)
-    )
     this.part('fullscreen').addEventListener('click', () => void this.toggleFullscreen())
     for (const part of ['min-buffer', 'max-buffer']) {
       this.part(part).addEventListener('change', () => this.applyBufferPolicy())
     }
-    this.part<HTMLSelectElement>('catch-up').addEventListener('change', (event) =>
-      player.setCatchUp((event.target as HTMLSelectElement).value as CatchUp)
-    )
     this.container.addEventListener('fullscreenchange', () => this.renderFullscreen())
     for (const type of ['pointermove', 'pointerdown', 'keydown']) {
       this.container.addEventListener(type, () => this.markPointerActive())
     }
-    for (const button of Array.from(this.root.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
+    for (const button of Array.from(this.container.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
       button.addEventListener('click', () => player.skip(Number(button.dataset.skipSeconds)))
     }
     document.addEventListener('keydown', (event) => {
