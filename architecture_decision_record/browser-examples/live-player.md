@@ -65,8 +65,12 @@ Rules:
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.
-- L2 holds no playback state of its own; it renders `LivePlayer.state` and
-  issues commands.
+- L2 (`PlayerControls`) holds no playback state of its own; it renders
+  `LivePlayer.state` when the page forwards `onStateChange`, issues commands,
+  and keeps only the gesture in progress (a seek bar drag, pointer idle). It
+  appends its markup and `playerControls.css` to the same container, after the
+  pictures and the page's own overlays. The arrow keys skip wherever the focus
+  is, so a page holds one `PlayerControls`.
 - L1 still reads the MSF catalog through `examples/media/catalog.ts` and uses
   `getErrorMessage` from `examples/media/common.ts`; the catalog reader shares
   its audio track naming with the media publishers there.
@@ -185,8 +189,8 @@ the generalization the ONVIF adoption brings.
 Each step is its own PR, stacked on the previous one; the Live Viewer E2E
 suites (`e2e:live-viewer`, `e2e:live-viewer-mp4`, `e2e:live-viewer-delivery`)
 must pass through steps 1 to 3. The test ids of the page keep their
-`live-viewer-*` names; the picture elements the player creates are
-`live-player-video`, `live-player-live-canvas` and `live-player-review-canvas`.
+`live-viewer-*` names; the elements the player and its controls create are
+named `live-player-*`.
 
 1. Split `live-viewer/main.ts` into the L1 modules inside the example, with
    `main.ts` reduced to page wiring. No behavior change.
