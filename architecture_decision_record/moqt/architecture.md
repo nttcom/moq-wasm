@@ -112,6 +112,10 @@ aborted in `Drop`):
 `Subscriber<T>` facades sharing the same `Arc<SessionContext<T>>`. Application
 code consumes inbound control messages through
 `Session::receive_event() -> SessionEvent<T>`.
+`Publisher::begin_publish_namespace` returns once PUBLISH_NAMESPACE is written,
+with a `PendingPublishNamespace<T>` whose `accepted()` awaits the reply, so a
+caller fanning out to many sessions can keep the writes ordered without
+waiting on each peer.
 
 ### `TrackWriter` / `TrackReader` — track-level object I/O
 

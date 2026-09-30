@@ -3,6 +3,7 @@ pub(crate) mod connecting;
 pub(crate) mod endpoint;
 pub(crate) mod fetch_handle;
 pub(crate) mod handshake;
+pub(crate) mod pending_publish_namespace;
 pub(crate) mod publisher;
 pub(crate) mod session;
 pub(crate) mod session_context;

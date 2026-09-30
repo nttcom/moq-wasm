@@ -110,6 +110,8 @@ pub use modules::moqt::domains::fetch_handle::FetchHandle;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::handshake::Handshake;
 #[cfg(not(target_arch = "wasm32"))]
+pub use modules::moqt::domains::pending_publish_namespace::PendingPublishNamespace;
+#[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::publisher::Publisher;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::domains::session::Session;
