@@ -1,24 +1,6 @@
-import { MoqtClientWrapper, RequestError, RequestErrorCode } from '@moqt/moqtClient'
+import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET } from '../../utils/relayPresets'
-import { parse_msf_catalog_json } from '../../pkg/moqt_client_wasm'
-import {
-  MEDIA_CATALOG_TRACK_NAME,
-  extractCatalogAudioTracks,
-  extractCatalogCmafTracks,
-  extractCatalogMediaTimelineTracks,
-  extractCatalogVideoTracks,
-  type MediaCatalogTrack
-} from '../media/catalog'
-import { base64ToUint8Array } from '../../utils/media/base64'
-import { monotonicUnixMicros } from '../../utils/media/clock'
-import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
-import { readLocHeader } from '../../utils/media/loc'
-import {
-  parseAudioChannelCount,
-  postAudioCatalogToWorker,
-  postVideoCatalogToWorker
-} from '../../utils/media/decoderCatalog'
-import { MseSink, type MseTrackSource } from '../../utils/media/mseSink'
+import { MEDIA_CATALOG_TRACK_NAME, type MediaCatalogTrack } from '../media/catalog'
 import {
   getErrorMessage,
   initializeMediaExamplePage,
@@ -26,19 +8,16 @@ import {
   setStatus,
   setStatusText
 } from '../media/common'
-import { BufferingSpinner } from './bufferingSpinner'
 import type { BufferPolicy } from './jitterBuffer'
-import { type CatchUp, DEFAULT_BUFFER_POLICY, LivePlayout } from './livePlayout'
-import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
-import { type LivePictureKind, createLivePictureSink } from './livePictureSink'
-import { MediaTimeline, formatElapsed } from './mediaTimeline'
+import { type CatchUp, DEFAULT_BUFFER_POLICY } from './livePlayout'
+import type { LivePictureKind } from './livePictureSink'
+import { formatElapsed } from './mediaTimeline'
 import { Mp4Publisher } from './mp4Publisher'
+import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
+import { LivePlayer, type LivePlayerState, type Packaging, formatSyncOffset } from './player/livePlayer'
 import { PublishPreview } from './publishPreview'
-import { ReviewPlayout } from './reviewPlayout'
-import { GroupTimeline, type ReviewFrame, sortReviewFrames, toReviewFrame } from './rewind'
 import {
   DEFAULT_WINDOW_SECONDS,
-  type Playhead,
   StreamMonitor,
   type StreamRecord,
   renderDeliveryGrid,
@@ -49,157 +28,52 @@ import {
 } from './streamMonitor'
 
 const AUTH_INFO = 'secret'
-const ANNEX_B_FORMAT = 'annexb'
-/// The relay's default RELAY_CACHE_TTL_SECS: draft-ietf-moq-transport-14 gives
-/// a subscriber no way to ask which groups the relay still caches.
-const RELAY_CACHE_TTL_MICROS = 60_000_000
-const REWIND_GROUP_COUNT = 4n
-const FETCH_DEADLINE_MS = 8_000
-const CLOSED_GROUP_POLL_MS = 200
-const TRACK_STATUS_POLL_MS = 500
-const AUDIO_GROUP_CLOSE_WAIT_MS = 2_000
-const REVIEW_PLAYHEAD_STEP_US = 1_000_000
-const CMAF_TRACK_SUFFIX = '_cmaf'
-const REVIEW_BUFFER_AHEAD_SECONDS = 8
-const REVIEW_DRAINED_SECONDS = 0.5
-const REVIEW_VIDEO_AHEAD_FRAMES = 30
-const REVIEW_HANDOVER_MICROS = 500_000
 const MICROS_PER_SECOND = 1_000_000
-/// The relay evicts the oldest groups first, so a FETCH failing with one of
-/// these for a range it once cached means the range has aged out.
-const EVICTED_RANGE_CODES: bigint[] = [
-  RequestErrorCode.InternalError,
-  RequestErrorCode.Timeout,
-  RequestErrorCode.InvalidRange,
-  RequestErrorCode.NoObjects,
-  RequestErrorCode.UnknownStatusInRange
-]
-/// draft-ietf-moq-transport-14 §10.4.3 INTERNAL_ERROR: the relay resets a
-/// FETCH stream with it when the range it is serving loses cached objects.
-const STREAM_RESET_INTERNAL_ERROR = 0x0n
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
 const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
-const PRESENTATION_MARGIN_MS = 200
-
-type Packaging = 'loc' | 'cmaf'
-
-type MediaKind = 'video' | 'audio'
-
-type SubgroupObject = Parameters<Parameters<MoqtClientWrapper['setOnSubgroupObjectHandler']>[1]>[1]
-
-type SubscribeOk = Awaited<ReturnType<MoqtClientWrapper['subscribe']>>['subscribeOk']
-
-type TrackSubscription = {
-  requestId: bigint
-  trackAlias: bigint
-  name: string
-  track: MediaCatalogTrack
-}
-
-type ReviewWindow = {
-  start: bigint
-  nextGroup: bigint
-  frames: ReviewFrame[]
-  audio: ReviewFrame[]
-}
-
-type FetchFailure = {
-  evicted: boolean
-  description: string
-}
-
-type ReviewWindowFailure = FetchFailure & { start: bigint }
 
 const moqtClient = new MoqtClientWrapper()
-const videoDecoderWorker = new Worker(new URL('../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
-  type: 'module'
+const streamMonitor = new StreamMonitor()
+const seekbar = element<HTMLInputElement>('seekbar')
+const stage = element<HTMLDivElement>('stage')
+let seeking = false
+let pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
+let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
+const player = new LivePlayer({
+  client: moqtClient,
+  authInfo: AUTH_INFO,
+  surface: {
+    video: element<HTMLVideoElement>('video'),
+    liveCanvas: element<HTMLCanvasElement>('live-canvas'),
+    reviewCanvas: element<HTMLCanvasElement>('review'),
+    msePool: MSE_ELEMENT_IDS.map((id) => element<HTMLVideoElement>(id))
+  },
+  callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: appendLog },
+  deliveryObserver: streamMonitor,
+  /// `?livePicture=canvas` forces the canvas sink, to see the Safari path in Chrome.
+  livePicture: (new URLSearchParams(location.search).get('livePicture') as LivePictureKind | null) ?? undefined
 })
-const audioDecoderWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
-  type: 'module'
-})
-/// `?livePicture=canvas` forces the canvas sink, to see the Safari path in Chrome.
-const livePictureSink = createLivePictureSink(
-  element<HTMLVideoElement>('video'),
-  element<HTMLCanvasElement>('live-canvas'),
-  (picture) => notePresentedFrame(picture),
-  (new URLSearchParams(location.search).get('livePicture') as LivePictureKind | null) ?? undefined
-)
-const livePlayout = new LivePlayout(showLiveFrame, (origin) =>
-  videoDecoderWorker.postMessage({
-    type: 'timeline',
-    captureMicros: origin?.captureMicros,
-    dueAtUnixMs: origin && performance.timeOrigin + origin.atMs
-  })
-)
 const playbackCharts = new PlaybackCharts(element<HTMLElement>('playback-charts'))
 setInterval(() => {
-  if (watching) {
-    const bufferMs = livePlayout.bufferMs()
-    const buffering = bufferMs !== undefined
+  if (player.state.started) {
+    const stats = player.stats()
+    const buffering = stats.bufferMs !== undefined
     playbackCharts.push({
-      delayMs: viewerDelayMs,
-      bufferMs,
-      targetMs: buffering ? livePlayout.targetBufferMs() : undefined,
-      outputLatencyMs: buffering ? livePlayout.outputLatencyMs() : undefined,
-      spreadMs: buffering ? livePlayout.arrivalSpreadMs() : undefined,
-      kbps: receivedKbps,
-      syncMs: livePlayout.syncOffsetMs()
+      delayMs: stats.viewerDelayMs,
+      bufferMs: stats.bufferMs,
+      targetMs: buffering ? stats.targetBufferMs : undefined,
+      outputLatencyMs: buffering ? stats.outputLatencyMs : undefined,
+      spreadMs: buffering ? stats.arrivalSpreadMs : undefined,
+      kbps: stats.receivedKbps,
+      syncMs: stats.syncOffsetMs
     })
   }
 }, SAMPLE_INTERVAL_MS)
-const reviewPlayout = new ReviewPlayout(showReviewFrame, (message) => appendLog('error', message))
 const mp4Publisher = new Mp4Publisher(
   { onStatus: (text, state) => setStatus('publish-status', text, state), onLog: appendLog },
   new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
 )
-/// Live LOC frames carry their capture timestamp, so the moment one is shown
-/// says how far the viewer runs behind the publisher on the same wall clock.
-let viewerDelayMs: number | undefined
-const bufferingSpinner = new BufferingSpinner(element('buffering'))
-
-let videoTracks: MediaCatalogTrack[] = []
-let audioTracks: MediaCatalogTrack[] = []
-let cmafTracks: MediaCatalogTrack[] = []
-let packaging: Packaging = 'loc'
-let mse: MseSink | undefined
-let reviewMse: MseSink | undefined
-let reviewMseOpened = false
-let visiblePicture: HTMLElement = element('video')
-showPicture(livePictureSink.element)
-/// MSE decodes from the first random access point, so after a MediaSource is
-/// (re)opened live fragments are dropped until one starts a group.
-let cmafAwaitingKeyframe = true
-const unstampedGroups = new Set<bigint>()
-const subscriptions = new Map<MediaKind, TrackSubscription>()
-let catalogGroupId: bigint | undefined
-let videoObjectCount = 0
-let receivedKbps = 0
-const timeline = new GroupTimeline(RELAY_CACHE_TTL_MICROS)
-const streamMonitor = new StreamMonitor()
-let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
-let watching = false
-const decodedFrameIds = new Map<number, Omit<Playhead, 'kind' | 'trackAlias' | 'captureMicros'>>()
-const reviewFrameIds = new Map<number, Omit<Playhead, 'captureMicros'>>()
-let reviewFetchWindows: { video?: bigint; audio?: bigint }[] = []
-let reviewBehindSeconds = 0
-let newestAudioGroupId: bigint | undefined
-const mediaTimeline = new MediaTimeline()
-let mediaTimelineTrackName: string | undefined
-let mediaTimelineDepends: string[] = []
-let reviewing = false
-let liveForwardPaused = false
-let liveForwardUpdate = Promise.resolve()
-let reviewGeneration = 0
-let reviewAnchorMicros: number | undefined
-let reviewOriginMicros: number | undefined
-let reviewPlayheadMicros: number | undefined
-let seeking = false
-let paused = false
-let volume = 1
-let pointerIdleTimer: ReturnType<typeof setTimeout> | undefined
-const seekbar = element<HTMLInputElement>('seekbar')
-const stage = element<HTMLDivElement>('stage')
 
 for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
   const button = document.createElement('button')
@@ -210,17 +84,31 @@ for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
   element('urlPresets').appendChild(button)
 }
 initializeMediaExamplePage('namespace')
+player.setVolume(element<HTMLInputElement>('volume').valueAsNumber)
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
 element<HTMLButtonElement>('publishBtn').addEventListener('click', () => void publishMp4())
 element<HTMLButtonElement>('stopPublishBtn').addEventListener('click', () => void mp4Publisher.stop())
-element<HTMLSelectElement>('video-track').addEventListener('change', () => void resubscribe('video').then(openLiveMse))
-element<HTMLSelectElement>('audio-track').addEventListener('change', () => void resubscribe('audio').then(openLiveMse))
-element<HTMLSelectElement>('packaging').addEventListener('change', () => void switchPackaging())
-element<HTMLSelectElement>('speed').addEventListener('change', applyPlaybackSpeed)
-element<HTMLButtonElement>('liveBtn').addEventListener('click', backToLive)
-element<HTMLButtonElement>('playPauseBtn').addEventListener('click', () => setPaused(!paused))
-element<HTMLInputElement>('volume').addEventListener('input', applyVolume)
+element<HTMLSelectElement>('video-track').addEventListener(
+  'change',
+  (event) => void player.selectVideoTrack((event.target as HTMLSelectElement).value)
+)
+element<HTMLSelectElement>('audio-track').addEventListener(
+  'change',
+  (event) => void player.selectAudioTrack((event.target as HTMLSelectElement).value)
+)
+element<HTMLSelectElement>('packaging').addEventListener(
+  'change',
+  (event) => void player.setPackaging((event.target as HTMLSelectElement).value as Packaging)
+)
+element<HTMLSelectElement>('speed').addEventListener('change', (event) =>
+  player.setPlaybackRate(Number((event.target as HTMLSelectElement).value))
+)
+element<HTMLButtonElement>('liveBtn').addEventListener('click', goLive)
+element<HTMLButtonElement>('playPauseBtn').addEventListener('click', () => player.setPaused(!player.state.paused))
+element<HTMLInputElement>('volume').addEventListener('input', (event) =>
+  player.setVolume((event.target as HTMLInputElement).valueAsNumber)
+)
 element<HTMLButtonElement>('fullscreenBtn').addEventListener('click', () => void toggleFullscreen())
 element<HTMLButtonElement>('deliveryToggleBtn').addEventListener('click', () => {
   const overlay = element<HTMLDivElement>('delivery-overlay')
@@ -232,7 +120,7 @@ for (const type of ['pointermove', 'pointerdown', 'keydown']) {
   stage.addEventListener(type, markPointerActive)
 }
 for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>('[data-skip-seconds]'))) {
-  button.addEventListener('click', () => skip(Number(button.dataset.skipSeconds)))
+  button.addEventListener('click', () => player.skip(Number(button.dataset.skipSeconds)))
 }
 document.addEventListener('keydown', (event) => {
   const seconds = SKIP_SECONDS_BY_KEY[event.key]
@@ -240,7 +128,7 @@ document.addEventListener('keydown', (event) => {
     return
   }
   event.preventDefault()
-  skip(seconds)
+  player.skip(seconds)
 })
 seekbar.addEventListener('input', () => {
   seeking = true
@@ -257,8 +145,7 @@ seekbar.addEventListener('change', () => {
 seekbar.addEventListener('keydown', (event) => {
   if (event.key === 'End') {
     event.preventDefault()
-    seeking = false
-    backToLive()
+    goLive()
     return
   }
   if (event.key !== 'Home') {
@@ -266,17 +153,16 @@ seekbar.addEventListener('keydown', (event) => {
   }
   event.preventDefault()
   seeking = false
-  const start = replayableStartSeconds()
+  const start = player.state.seek.replayableStartSeconds
   seekbar.value = String(start)
   seekTo(start)
 })
 for (const event of ['pointercancel', 'blur']) {
   seekbar.addEventListener(event, () => {
     seeking = false
-    renderSeekbar()
+    renderSeekbar(player.state)
   })
 }
-startRendering()
 moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
 element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
   const keptGroups = Number((event.target as HTMLInputElement).value) || 1
@@ -287,7 +173,7 @@ for (const id of ['playout-buffer', 'max-buffer']) {
   element(id).addEventListener('change', applyBufferPolicy)
 }
 element<HTMLSelectElement>('catch-up').addEventListener('change', (event) => {
-  livePlayout.setCatchUp((event.target as HTMLSelectElement).value as CatchUp)
+  player.setCatchUp((event.target as HTMLSelectElement).value as CatchUp)
 })
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
@@ -302,10 +188,9 @@ async function watchStream(): Promise<void> {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
     await moqtClient.connect(url)
-    watching = true
     setStatus('connection-status', `Connected: ${url}`, 'ok')
     appendLog('info', `connected to ${url}`)
-    await subscribeCatalog()
+    await player.start(trackNamespace())
   } catch (error) {
     setStatus('connection-status', `Failed: ${getErrorMessage(error)}`, 'error')
     appendLog('error', getErrorMessage(error))
@@ -313,37 +198,13 @@ async function watchStream(): Promise<void> {
 }
 
 async function stopStream(): Promise<void> {
-  watching = false
-  viewerDelayMs = undefined
   playbackCharts.reset()
-  livePictureSink.detach()
-  timeline.reset()
   streamMonitor.reset()
-  decodedFrameIds.clear()
-  mediaTimeline.reset()
-  mediaTimelineTrackName = undefined
-  mediaTimelineDepends = []
-  newestAudioGroupId = undefined
-  backToLive()
-  closeMse()
-  livePlayout.reset()
-  bufferingSpinner.hide()
-  showPicture(livePictureSink.element)
-  for (const kind of subscriptions.keys()) {
-    await unsubscribeTrack(kind)
-  }
-  catalogGroupId = undefined
-  videoTracks = []
-  audioTracks = []
-  cmafTracks = []
-  renderTrackOptions()
-  videoObjectCount = 0
+  await player.stop()
   if (moqtClient.getConnectionStatus()) {
     await moqtClient.disconnect()
   }
   setStatus('connection-status', 'Not connected', 'idle')
-  setStatus('catalog-status', 'Catalog not loaded yet', 'idle')
-  setStatus('playback-status', 'Playback idle', 'idle')
 }
 
 async function publishMp4(): Promise<void> {
@@ -367,313 +228,45 @@ async function publishMp4(): Promise<void> {
   }
 }
 
-/// A SUBSCRIBE delivers objects published after the largest one and the bridge
-/// publishes the catalog once per upstream subscription, so a viewer joining a
-/// subscription the relay already holds would never see it; the group
-/// SUBSCRIBE_OK names as the largest is fetched as well. The FETCH and the
-/// SUBSCRIBE race, and the relay keeps the catalog of a publisher that has
-/// since been replaced, so the catalog of the newest group wins whatever order
-/// they arrive in.
-async function subscribeCatalog(): Promise<void> {
-  const onText = (text: string, groupId: bigint) => {
-    if (catalogGroupId !== undefined && groupId < catalogGroupId) {
-      return
-    }
-    catalogGroupId = groupId
-    void applyCatalog(text)
-  }
-  const subscribeOk = await subscribeTextTrack(MEDIA_CATALOG_TRACK_NAME, onText)
-  await fetchLatestText(MEDIA_CATALOG_TRACK_NAME, subscribeOk, onText)
-}
-
-type TextTrackHandler = (text: string, groupId: bigint) => void
-
-async function subscribeTextTrack(name: string, onText: TextTrackHandler): Promise<SubscribeOk> {
-  const namespace = trackNamespace()
-  const { subscribeOk } = await moqtClient.subscribe(namespace, name, AUTH_INFO, { forward: true })
-  moqtClient.setOnSubgroupObjectHandler(
-    subscribeOk.trackAlias,
-    monitored(subscribeOk.trackAlias, name, (groupId, object) => {
-      const payload = new Uint8Array(object.objectPayload)
-      if (payload.byteLength > 0) {
-        onText(new TextDecoder().decode(payload), groupId)
-      }
-    })
+function renderPlayer(): void {
+  const state = player.state
+  setStatus('catalog-status', state.catalogStatus.text, state.catalogStatus.state)
+  setStatus('playback-status', state.playbackStatus.text, state.playbackStatus.state)
+  setStatus('rewind-status', state.rewindStatus.text, state.rewindStatus.state)
+  fillSelect(element<HTMLSelectElement>('video-track'), state.videoTracks, state.selectedVideoTrack, describeVideoTrack)
+  fillSelect(
+    element<HTMLSelectElement>('audio-track'),
+    state.audioTracks,
+    state.selectedAudioTrack,
+    (track) => track.label
   )
-  appendLog('info', `subscribed ${namespace.join('/')}/${name}`)
-  return subscribeOk
-}
-
-/// draft-ietf-moq-transport-14 §9.8: SUBSCRIBE_OK names a Largest Location
-/// only when content exists; without one nothing has been published yet, so
-/// there is nothing to fetch and the first object arrives on the SUBSCRIBE.
-async function fetchLatestText(name: string, subscribeOk: SubscribeOk, onText: TextTrackHandler): Promise<void> {
-  const largestGroup = subscribeOk.largestGroupId
-  if (largestGroup === undefined) {
-    appendLog('info', `${name} has no published object yet; waiting for it on the subscription`)
-    return
-  }
-  const endObject = (subscribeOk.largestObjectId ?? 0n) + 1n
-  try {
-    const { requestId } = await moqtClient.fetch(trackNamespace(), name, largestGroup, 0n, largestGroup, endObject, {
-      onObject: (message) => {
-        streamMonitor.fetchObject(
-          message.requestId,
-          name,
-          message.groupId,
-          message.objectId,
-          message.objectPayload.byteLength
-        )
-        const payload = new Uint8Array(message.objectPayload)
-        if (payload.byteLength > 0) {
-          onText(new TextDecoder().decode(payload), message.groupId)
-        }
-      }
-    })
-    streamMonitor.fetchFinished(requestId)
-    appendLog('info', `fetched ${name}`)
-  } catch (error) {
-    appendLog('info', `fetch ${name}: ${getErrorMessage(error)}`)
-  }
-}
-
-async function applyCatalog(payload: string): Promise<void> {
-  try {
-    const catalog = parse_msf_catalog_json(payload)
-    videoTracks = extractCatalogVideoTracks(catalog).filter(isLocTrack)
-    audioTracks = extractCatalogAudioTracks(catalog).filter(isLocTrack)
-    cmafTracks = extractCatalogCmafTracks(catalog)
-    setStatus('catalog-status', `Catalog loaded: ${videoTracks.length} video / ${audioTracks.length} audio`, 'ok')
-    const changed = renderTrackOptions()
-    renderPackagingOptions()
-    await subscribeMediaTimeline(catalog)
-    if (changed) {
-      await resubscribe('video')
-      await resubscribe('audio')
-      await openLiveMse()
-    } else {
-      reconfigureDecoders()
-    }
-  } catch (error) {
-    setStatus('catalog-status', `Catalog error: ${getErrorMessage(error)}`, 'error')
-    appendLog('error', `catalog: ${getErrorMessage(error)}`)
-  }
-}
-
-async function subscribeMediaTimeline(catalog: unknown): Promise<void> {
-  const [track] = extractCatalogMediaTimelineTracks(catalog)
-  if (!track || mediaTimelineTrackName) {
-    return
-  }
-
-  mediaTimelineTrackName = track.name
-  mediaTimelineDepends = track.depends ?? []
-  await subscribeTextTrack(track.name, (text) => {
-    try {
-      mediaTimeline.replace(text)
-    } catch (error) {
-      appendLog('error', `media timeline: ${getErrorMessage(error)}`)
-      return
-    }
-    stampObservedGroups()
-    renderSeekbar()
-  })
-}
-
-/// The bridge lists a CMAF sibling next to every LOC track; the WebCodecs
-/// decoders below only take the LOC ones.
-function isLocTrack(track: MediaCatalogTrack): boolean {
-  return track.packaging !== 'cmaf'
-}
-
-function cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
-  return cmafTracks.find((candidate) => candidate.name === `${track.name}${CMAF_TRACK_SUFFIX}`)
-}
-
-function renderPackagingOptions(): void {
-  for (const option of Array.from(element<HTMLSelectElement>('packaging').options)) {
-    option.disabled = option.value === 'cmaf' && cmafTracks.length === 0
-  }
-}
-
-async function switchPackaging(): Promise<void> {
-  const selected = element<HTMLSelectElement>('packaging').value as Packaging
-  if (selected === packaging) {
-    return
-  }
-  packaging = selected
-  await resubscribe('video')
-  await resubscribe('audio')
-  if (packaging === 'cmaf') {
-    await openLiveMse()
-  } else {
-    const previous = mse
-    mse = undefined
-    replacePicture(livePictureSink.element, () => packaging === 'loc' && !reviewing, previous)
-  }
-  appendLog('info', `packaging switched to ${packaging}`)
-}
-
-/// A group observed on a CMAF track, whose objects carry no LOC header, or
-/// reported by TRACK_STATUS is stamped with the encode wallclock the media
-/// timeline records for it. Only observed groups enter the timeline: the relay
-/// caches a track from its first subscriber on, so earlier groups the media
-/// timeline lists cannot be fetched.
-function observeTimelineGroup(groupId: bigint): void {
-  unstampedGroups.add(groupId)
-  stampObservedGroups()
-}
-
-function stampObservedGroups(): void {
-  for (const groupId of unstampedGroups) {
-    const encodedAtMs = mediaTimeline.encodedAtMsFor(groupId)
-    if (encodedAtMs !== undefined) {
-      timeline.recordCapture(groupId, encodedAtMs * 1_000)
-      unstampedGroups.delete(groupId)
-    }
-  }
-}
-
-function cmafSource(track: MediaCatalogTrack): MseTrackSource | undefined {
-  if (!track.initData || !track.codec) {
-    return undefined
-  }
-  const container = track.role === 'audio' ? 'audio/mp4' : 'video/mp4'
-  return { mimeType: `${container}; codecs="${track.codec}"`, initSegment: base64ToUint8Array(track.initData) }
-}
-
-function subscribedCmafSource(kind: MediaKind): MseTrackSource | undefined {
-  const name = subscriptions.get(kind)?.name
-  const track = cmafTracks.find((candidate) => candidate.name === name)
-  return track && cmafSource(track)
-}
-
-async function openLiveMse(): Promise<void> {
-  if (packaging !== 'cmaf') {
-    return
-  }
-  const video = subscribedCmafSource('video')
-  if (!video) {
-    return
-  }
-  const previous = mse
-  const next = await MseSink.open(freeMseElement(), { video, audio: subscribedCmafSource('audio') })
-  mse = next
-  cmafAwaitingKeyframe = true
-  applyVolume()
-  replacePicture(next.element, () => mse === next && !reviewing, previous)
-}
-
-function closeMse(): void {
-  mse?.close()
-  mse = undefined
-  cmafAwaitingKeyframe = true
-}
-
-/// One picture is on screen at a time. A picture that has yet to present a
-/// frame stays hidden and whatever is on screen stays until it does, so a
-/// change of packaging, quality or position never shows an empty element.
-function showPicture(next: HTMLElement): void {
-  if (next === visiblePicture) {
-    return
-  }
-  visiblePicture.hidden = true
-  next.hidden = false
-  visiblePicture = next
-}
-
-/// The sink being replaced is closed as soon as it is off screen; while it is
-/// on screen it plays on until the replacement has presented a frame.
-function replacePicture(next: HTMLElement, stillWanted: () => boolean, previous: MseSink | undefined): void {
-  if (previous && previous.element !== visiblePicture) {
-    previous.close()
-  }
-  const swap = () => {
-    previous?.close()
-    if (stillWanted()) {
-      showPicture(next)
-    }
-  }
-  if (next instanceof HTMLVideoElement) {
-    next.requestVideoFrameCallback(swap)
-  } else {
-    requestAnimationFrame(swap)
-  }
-}
-
-function livePicture(): HTMLElement {
-  return mse?.element ?? livePictureSink.element
-}
-
-function freeMseElement(): HTMLVideoElement {
-  const free = MSE_ELEMENT_IDS.map((id) => element<HTMLVideoElement>(id)).find((video) => !video.getAttribute('src'))
-  if (!free) {
-    throw new Error('every MediaSource element is in use')
-  }
-  return free
-}
-
-function handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: SubgroupObject): void {
-  if (object.objectStatus != null) {
-    return
-  }
-  if (kind === 'video') {
-    videoObjectCount += 1
-    if (object.objectId === 0n) {
-      observeTimelineGroup(groupId)
-      renderSeekbar()
-    }
-    if (!reviewing) {
-      setStatus('playback-status', `Playing ${trackName}`, 'ok')
-    }
-  } else {
-    newestAudioGroupId = groupId
-  }
-  if (!mse) {
-    return
-  }
-  if (kind === 'video' && cmafAwaitingKeyframe) {
-    if (object.objectId !== 0n) {
-      return
-    }
-    cmafAwaitingKeyframe = false
-  }
-  const payload = new Uint8Array(object.objectPayload)
-  if (kind === 'video') {
-    mse.appendVideo(payload)
-  } else {
-    mse.appendAudio(payload)
-  }
-}
-
-function renderTrackOptions(): boolean {
-  const videoChanged = fillSelect(element<HTMLSelectElement>('video-track'), videoTracks, describeVideoTrack)
-  const audioChanged = fillSelect(element<HTMLSelectElement>('audio-track'), audioTracks, (track) => track.label)
-  return videoChanged || audioChanged
+  renderPackagingOptions(state)
+  renderPlayPause(state.paused)
+  element<HTMLElement>('buffering').hidden = !state.stalled
+  renderSeekbar(state)
 }
 
 function fillSelect(
   select: HTMLSelectElement,
   tracks: MediaCatalogTrack[],
+  selected: string,
   describe: (track: MediaCatalogTrack) => string
-): boolean {
+): void {
   const names = tracks.map((track) => track.name)
   const current = Array.from(select.options).map((option) => option.value)
-  if (names.length === current.length && names.every((name, index) => name === current[index])) {
-    return false
+  if (names.length !== current.length || names.some((name, index) => name !== current[index])) {
+    select.replaceChildren(
+      ...tracks.map((track) => {
+        const option = document.createElement('option')
+        option.value = track.name
+        option.textContent = describe(track)
+        return option
+      })
+    )
   }
-
-  const selected = select.value
-  select.replaceChildren(
-    ...tracks.map((track) => {
-      const option = document.createElement('option')
-      option.value = track.name
-      option.textContent = describe(track)
-      return option
-    })
-  )
-  select.value = names.includes(selected) ? selected : (names[0] ?? '')
-  return true
+  if (select.value !== selected) {
+    select.value = selected
+  }
 }
 
 function describeVideoTrack(track: MediaCatalogTrack): string {
@@ -681,112 +274,24 @@ function describeVideoTrack(track: MediaCatalogTrack): string {
   return `${track.label}${resolution}`
 }
 
-async function resubscribe(kind: MediaKind): Promise<void> {
-  const select = element<HTMLSelectElement>(kind === 'video' ? 'video-track' : 'audio-track')
-  const trackName = select.value
-  const track = (kind === 'video' ? videoTracks : audioTracks).find((candidate) => candidate.name === trackName)
-  const wire = track && (packaging === 'cmaf' ? cmafSibling(track) : track)
-  if (wire && subscriptions.get(kind)?.name === wire.name) {
-    return
+function renderPackagingOptions(state: LivePlayerState): void {
+  const select = element<HTMLSelectElement>('packaging')
+  for (const option of Array.from(select.options)) {
+    option.disabled = option.value === 'cmaf' && !state.cmafAvailable
   }
-
-  if (kind === 'video') {
-    timeline.reset()
-    unstampedGroups.clear()
-    backToLive()
-  } else {
-    newestAudioGroupId = undefined
-  }
-  await unsubscribeTrack(kind)
-  if (!track || !wire) {
-    return
-  }
-
-  if (packaging === 'loc') {
-    postCatalogToDecoder(kind, track)
-  }
-  const { requestId, subscribeOk } = await moqtClient.subscribe(trackNamespace(), wire.name, AUTH_INFO, {
-    forward: true
-  })
-  subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wire.name, track })
-  if (liveForwardPaused) {
-    await moqtClient.setSubscriptionForward(requestId, false)
-  }
-  if (packaging === 'cmaf') {
-    moqtClient.setOnSubgroupObjectHandler(
-      subscribeOk.trackAlias,
-      monitored(subscribeOk.trackAlias, wire.name, (groupId, object) =>
-        handleCmafObject(kind, wire.name, groupId, object)
-      )
-    )
-    appendLog('info', `subscribed ${trackNamespace().join('/')}/${wire.name}`)
-    return
-  }
-  const worker = kind === 'video' ? videoDecoderWorker : audioDecoderWorker
-  moqtClient.setOnSubgroupObjectHandler(
-    subscribeOk.trackAlias,
-    monitored(subscribeOk.trackAlias, wire.name, (groupId, object) => {
-      if (kind === 'video') {
-        videoObjectCount += 1
-        timeline.record(groupId, object.locHeader)
-        renderSeekbar()
-        if (!reviewing) {
-          setStatus('playback-status', `Playing ${trackName}`, 'ok')
-        }
-      } else {
-        newestAudioGroupId = groupId
-      }
-      postSubgroupObjectToWorker(worker, groupId, object)
-    })
-  )
-  appendLog('info', `subscribed ${trackNamespace().join('/')}/${trackName}`)
-}
-
-async function unsubscribeTrack(kind: MediaKind): Promise<void> {
-  const subscription = subscriptions.get(kind)
-  if (!subscription) {
-    return
-  }
-
-  subscriptions.delete(kind)
-  moqtClient.clearSubgroupObjectHandler(subscription.trackAlias)
-  streamMonitor.forget(subscription.trackAlias)
-  if (moqtClient.getConnectionStatus()) {
-    await moqtClient.unsubscribe(subscription.requestId)
-  }
-  appendLog('info', `unsubscribed ${subscription.name}`)
-}
-
-/// A catalog update may redefine a track under the same name, as when the
-/// publisher is replaced by one with another audio codec, so the decoders
-/// take the new definition of the tracks they are already subscribed to.
-function reconfigureDecoders(): void {
-  if (packaging !== 'loc') {
-    return
-  }
-  for (const [kind, subscription] of subscriptions) {
-    const track = (kind === 'video' ? videoTracks : audioTracks).find(
-      (candidate) => candidate.name === subscription.track.name
-    )
-    if (!track || JSON.stringify(track) === JSON.stringify(subscription.track)) {
-      continue
-    }
-    postCatalogToDecoder(kind, track)
-    subscriptions.set(kind, { ...subscription, track })
-    appendLog('info', `${kind} track ${track.name} redefined by the catalog`)
+  if (select.value !== state.packaging) {
+    select.value = state.packaging
   }
 }
 
-function postCatalogToDecoder(kind: MediaKind, track: MediaCatalogTrack): void {
-  if (kind === 'video') {
-    postVideoCatalogToWorker(videoDecoderWorker, {
-      codec: track.codec,
-      initData: track.initData,
-      avcFormat: track.initData ? undefined : ANNEX_B_FORMAT
-    })
+function renderPlayPause(paused: boolean): void {
+  const button = element<HTMLButtonElement>('playPauseBtn')
+  if (button.getAttribute('aria-pressed') === String(paused)) {
     return
   }
-  postAudioCatalogToWorker(audioDecoderWorker, track)
+  button.textContent = paused ? '▶' : '❚❚'
+  button.setAttribute('aria-label', paused ? 'Play' : 'Pause')
+  button.setAttribute('aria-pressed', String(paused))
 }
 
 function applyBufferPolicy(): void {
@@ -794,8 +299,7 @@ function applyBufferPolicy(): void {
     minimumMs: nonNegativeNumber('playout-buffer', DEFAULT_BUFFER_POLICY.minimumMs),
     maximumMs: nonNegativeNumber('max-buffer', DEFAULT_BUFFER_POLICY.maximumMs)
   }
-  livePlayout.setBufferPolicy(policy)
-  applyDecoderConfig()
+  player.setBufferPolicy(policy)
   appendLog(
     'info',
     `playout buffer ${policy.minimumMs}–${Number.isFinite(policy.maximumMs) ? policy.maximumMs : '∞'} ms`
@@ -808,158 +312,27 @@ function nonNegativeNumber(id: string, fallback: number): number {
   return text !== '' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
-/// The live playout paces decoded samples on one clock so that audio and
-/// video stay together. All but the last `PRESENTATION_MARGIN_MS` of the
-/// minimum buffer is spent before decoding, in the video worker's jitter
-/// buffer, so objects are decoded in order however they arrived and only a
-/// few decoded frames are ever held.
-function applyDecoderConfig(): void {
-  const holdMs = Math.max(0, livePlayout.bufferPolicy().minimumMs - PRESENTATION_MARGIN_MS)
-  videoDecoderWorker.postMessage({
-    type: 'config',
-    config: {
-      telemetryEnabled: true,
-      bypassJitterBuffer: holdMs === 0,
-      holdMs,
-      releaseMarginMs: PRESENTATION_MARGIN_MS,
-      pacing: { preset: 'disabled' }
-    }
-  })
-  audioDecoderWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
-}
-
-function showLiveFrame(frame: VideoFrame): void {
-  viewerDelayMs = frame.timestamp ? (monotonicUnixMicros() - frame.timestamp) / 1_000 : undefined
-  updateVideoStats(frame)
-  markPlayhead(frame)
-  livePictureSink.present(frame)
-}
-
-function showReviewFrame(frame: VideoFrame): void {
-  const ids = reviewFrameIds.get(frame.timestamp)
-  reviewFrameIds.delete(frame.timestamp)
-  if (ids) {
-    streamMonitor.setPlayhead({ ...ids, captureMicros: frame.timestamp })
-  }
-  const canvas = element<HTMLCanvasElement>('review')
-  const context = canvas.getContext('2d')
-  if (context) {
-    canvas.width = frame.displayWidth
-    canvas.height = frame.displayHeight
-    context.drawImage(frame, 0, 0)
-    showPicture(canvas)
-    notePresentedFrame(canvas)
-    advanceReviewPlayhead(frame.timestamp)
-  }
-  frame.close()
-}
-
-function startRendering(): void {
-  applyDecoderConfig()
-  for (const id of ['video', ...MSE_ELEMENT_IDS]) {
-    watchPresentedFrames(element<HTMLVideoElement>(id))
-  }
-
-  videoDecoderWorker.onmessage = (event) => {
-    if (event.data.type === 'bitrate') {
-      receivedKbps = event.data.kbps ?? receivedKbps
-      return
-    }
-    if (event.data.type === 'frame') {
-      const frame = event.data.frame as VideoFrame
-      decodedFrameIds.set(frame.timestamp, { groupId: event.data.groupId, objectId: event.data.objectId })
-      livePlayout.presentVideo(frame)
-    }
-  }
-
-  audioDecoderWorker.onmessage = (event) => {
-    if (event.data.type === 'audioData') {
-      livePlayout.playAudio(event.data.audioData as AudioData, event.data.captureTimestampMicros as number | undefined)
-    }
-  }
-}
-
-function watchPresentedFrames(video: HTMLVideoElement): void {
-  const onFrame = () => {
-    notePresentedFrame(video)
-    video.requestVideoFrameCallback(onFrame)
-  }
-  video.requestVideoFrameCallback(onFrame)
-}
-
-/// A picture being replaced plays on until its successor has presented a
-/// frame, and the live picture plays out what it had buffered behind a review;
-/// only the picture playback is trying to show counts as progress.
-function notePresentedFrame(picture: HTMLElement): void {
-  if (paused || picture !== wantedPicture()) {
-    return
-  }
-  bufferingSpinner.framePresented()
-}
-
-function wantedPicture(): HTMLElement | undefined {
-  if (!reviewing) {
-    return livePicture()
-  }
-  return packaging === 'cmaf' ? reviewMse?.element : element<HTMLCanvasElement>('review')
-}
-
-function updateVideoStats(frame: VideoFrame): void {
-  const stats = element<HTMLSpanElement>('video-stats')
-  const delay = viewerDelayMs === undefined ? '' : ` · delay ${Math.round(viewerDelayMs)} ms`
-  const bufferMs = livePlayout.bufferMs()
+function renderVideoStats(): void {
+  const stats = player.stats()
+  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
   const buffer =
-    bufferMs === undefined
+    stats.bufferMs === undefined
       ? ''
-      : ` · buffer ${Math.round(bufferMs)} ms (target ${Math.round(livePlayout.targetBufferMs())})`
+      : ` · buffer ${Math.round(stats.bufferMs)} ms (target ${Math.round(stats.targetBufferMs)})`
   element('buffer-current').textContent =
-    bufferMs === undefined
+    stats.bufferMs === undefined
       ? 'Current: -'
-      : `Current: ${Math.round(bufferMs)} ms (${livePlayout.fixedBuffer() ? 'fixed' : `target ${Math.round(livePlayout.targetBufferMs())}`})`
-  stats.textContent = `${frame.displayWidth}x${frame.displayHeight}${delay}${buffer} · ${Math.round(receivedKbps)} kbps · ${videoObjectCount} objects · A/V ${formatSyncOffset(livePlayout.syncOffsetMs())} · audio breaks ${livePlayout.audioBreaks()} · video ${livePlayout.videoDrops()} · shed ${Math.round(livePlayout.shedMs())} ms`
+      : `Current: ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
+  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : ''
+  element<HTMLSpanElement>('video-stats').textContent =
+    `${size}${delay}${buffer} · ${Math.round(stats.receivedKbps)} kbps · ${stats.videoObjects} objects · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops} · shed ${Math.round(stats.shedMs)} ms`
 }
 
-function formatSyncOffset(offsetMs: number | undefined): string {
-  if (offsetMs === undefined) {
-    return '--'
-  }
-  const rounded = Math.round(offsetMs)
-  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
-}
-
-function markPlayhead(frame: VideoFrame): void {
-  const ids = decodedFrameIds.get(frame.timestamp)
-  decodedFrameIds.delete(frame.timestamp)
-  const trackAlias = subscriptions.get('video')?.trackAlias
-  if (ids && trackAlias !== undefined) {
-    streamMonitor.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros: frame.timestamp })
-  }
-}
-
-function monitored(
-  trackAlias: bigint,
-  track: string,
-  handler: (groupId: bigint, object: SubgroupObject) => void
-): (groupId: bigint, object: SubgroupObject) => void {
-  streamMonitor.label(trackAlias, track)
-  return (groupId, object) => {
-    streamMonitor.object(
-      trackAlias,
-      groupId,
-      object.objectId,
-      object.objectPayloadLength,
-      object.objectStatus != null,
-      Date.now(),
-      readLocHeader(object.locHeader).captureTimestampMicros
-    )
-    handler(groupId, object)
-  }
-}
-
-function renderPublishStreams(): void {
+function renderPublishStreams(state: LivePlayerState): void {
   element<HTMLElement>('publish-live').style.display = mp4Publisher.publishing ? '' : 'none'
+  const viewerDelayMs = player.stats().viewerDelayMs
   element<HTMLSpanElement>('publish-latency').textContent =
-    watching && packaging === 'loc' && !reviewing && viewerDelayMs !== undefined
+    state.started && state.packaging === 'loc' && state.mode === 'live' && viewerDelayMs !== undefined
       ? `viewer delay ${Math.round(viewerDelayMs)} ms`
       : 'viewer delay -'
   if (!mp4Publisher.publishing) {
@@ -981,10 +354,11 @@ function renderPublishStreams(): void {
 }
 
 function renderStreams(): void {
-  renderPublishStreams()
+  const state = player.state
+  renderPublishStreams(state)
   const reviewGrid = element<SVGSVGElement>('delivery-grid-review')
   const reviewTimeline = element<SVGSVGElement>('stream-monitor-review')
-  if (!watching) {
+  if (!state.started) {
     renderIdleStreamMonitor(element<SVGSVGElement>('stream-monitor'))
     renderIdleStreamMonitor(element<SVGSVGElement>('delivery-grid'))
     reviewGrid.style.display = 'none'
@@ -992,6 +366,8 @@ function renderStreams(): void {
     element<HTMLSpanElement>('stream-stats').textContent = '-'
     return
   }
+  const reviewing = state.mode === 'review'
+  const { liveVideoAlias, liveAudioAlias, mediaTimelineTrackName, reviewFetchWindows } = state.delivery
   const now = Date.now()
   const records = streamMonitor.snapshot()
   const liveRecords = records.filter(
@@ -1030,8 +406,8 @@ function renderStreams(): void {
       liveGrid,
       records,
       [
-        { label: 'audio', kind: 'subscribe', trackAlias: subscriptions.get('audio')?.trackAlias },
-        { label: 'video', kind: 'subscribe', trackAlias: subscriptions.get('video')?.trackAlias }
+        { label: 'audio', kind: 'subscribe', trackAlias: liveAudioAlias },
+        { label: 'video', kind: 'subscribe', trackAlias: liveVideoAlias }
       ],
       streamMonitor.slotsPerTrack(),
       livePlayhead
@@ -1045,18 +421,8 @@ function renderStreams(): void {
       reviewGrid,
       records,
       [
-        {
-          label: 'fetch audio',
-          kind: 'fetch',
-          trackAlias: fetchIds.audio,
-          cadenceAlias: subscriptions.get('audio')?.trackAlias
-        },
-        {
-          label: 'fetch video',
-          kind: 'fetch',
-          trackAlias: fetchIds.video,
-          cadenceAlias: subscriptions.get('video')?.trackAlias
-        }
+        { label: 'fetch audio', kind: 'fetch', trackAlias: fetchIds.audio, cadenceAlias: liveAudioAlias },
+        { label: 'fetch video', kind: 'fetch', trackAlias: fetchIds.video, cadenceAlias: liveVideoAlias }
       ],
       streamMonitor.slotsPerTrack(),
       reviewPlayhead
@@ -1100,535 +466,9 @@ function usesArrowKeys(target: EventTarget | null): boolean {
   return target instanceof HTMLSelectElement || (target instanceof HTMLInputElement && target !== seekbar)
 }
 
-function skip(seconds: number): void {
-  const latest = timeline.latest
-  if (!latest) {
-    return
-  }
-  seekToCapture((reviewPlayheadMicros ?? latest.captureMicros) + seconds * MICROS_PER_SECOND)
-}
-
-/// A position at or past the live edge goes live. Any other position is
-/// replayed from the closed keyframe group that holds it: the frames before it
-/// are decoded without pacing and only the ones from the position on are shown.
-function seekToCapture(captureMicros: number): void {
-  const latest = timeline.latest
-  if (!latest) {
-    return
-  }
-  if (captureMicros >= latest.captureMicros) {
-    backToLive()
-    return
-  }
-  const target = timeline.resolveSeekTarget(captureMicros)
-  if (!target) {
-    setStatus('rewind-status', 'Rewind unavailable: nothing buffered yet', 'error')
-    return
-  }
-
-  const generation = ++reviewGeneration
-  reviewing = true
-  pauseLiveForward()
-  void followLiveEdge(generation)
-  reviewMseOpened = false
-  setPaused(false)
-  reviewOriginMicros = target.captureMicros
-  reviewAnchorMicros = Math.max(captureMicros, target.captureMicros)
-  reviewPlayheadMicros = reviewAnchorMicros
-  reviewPlayout.start(reviewAnchorMicros)
-  applyVolume()
-  renderSeekbar()
-  setStatus('playback-status', 'Reviewing', 'review')
-  void review(target.groupId, generation)
-}
-
-/// Review playback is paced by capture timestamps, so it trails the live edge
-/// until the viewer asks to go back. The FETCH for the next window is issued
-/// while the current one plays, so a window boundary does not stall on the
-/// request.
-async function review(startGroup: bigint, generation: number): Promise<void> {
-  let pending = await fetchReviewWindow(startGroup, generation)
-  while (pending && generation === reviewGeneration) {
-    if (!('frames' in pending)) {
-      recoverFromFailedWindow(pending)
-      return
-    }
-    const upcoming = fetchReviewWindow(pending.nextGroup, generation)
-    reviewBehindSeconds = timeline.secondsBehindLive(pending.start)
-    renderReviewStatus()
-    const frames = sortReviewFrames(pending.frames)
-    const played =
-      packaging === 'cmaf'
-        ? await playReviewMse(frames, pending.audio, generation)
-        : await playReview(frames, pending.audio, generation)
-    pending = played ? await upcoming : undefined
-  }
-}
-
-/// Review plays what FETCH brings, so the live subscriptions stop forwarding
-/// for its duration and deliver again, from the next group, on the way back.
-function pauseLiveForward(): void {
-  if (liveForwardPaused) {
-    return
-  }
-  liveForwardPaused = true
-  updateLiveForward(false)
-}
-
-function resumeLiveForward(): void {
-  if (!liveForwardPaused) {
-    return
-  }
-  liveForwardPaused = false
-  mse?.resumeAtNewestRange()
-  updateLiveForward(true)
-}
-
-/// A pause and a resume in quick succession must reach every subscription in
-/// that order, so the updates are chained rather than sent concurrently.
-function updateLiveForward(forward: boolean): void {
-  liveForwardUpdate = liveForwardUpdate.then(() => setLiveForward(forward))
-}
-
-async function setLiveForward(forward: boolean): Promise<void> {
-  if (!moqtClient.getConnectionStatus()) {
-    return
-  }
-  for (const subscription of subscriptions.values()) {
-    try {
-      await moqtClient.setSubscriptionForward(subscription.requestId, forward)
-    } catch (error) {
-      appendLog('error', `forward ${subscription.name}: ${getErrorMessage(error)}`)
-    }
-  }
-  appendLog('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)
-}
-
-/// Without live delivery the timeline would stop at the review's start, so
-/// TRACK_STATUS stands in for it: the groups it reports as the largest are the
-/// ones review may fetch up to next. A relay that cannot answer gets the live
-/// subscriptions forwarding again.
-async function followLiveEdge(generation: number): Promise<void> {
-  while (generation === reviewGeneration && liveForwardPaused) {
-    try {
-      const [videoGroup, audioGroup] = await Promise.all([largestLiveGroup('video'), largestLiveGroup('audio')])
-      if (generation !== reviewGeneration) {
-        return
-      }
-      if (videoGroup !== undefined) {
-        observeLiveVideoGroup(videoGroup)
-      }
-      if (audioGroup !== undefined) {
-        newestAudioGroupId = audioGroup
-      }
-    } catch (error) {
-      appendLog('warn', `track status: ${getErrorMessage(error)}; live subscriptions forward during review`)
-      resumeLiveForward()
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, TRACK_STATUS_POLL_MS))
-  }
-}
-
-async function largestLiveGroup(kind: MediaKind): Promise<bigint | undefined> {
-  const name = subscriptions.get(kind)?.name
-  if (!name) {
-    return undefined
-  }
-  const status = await moqtClient.trackStatus(trackNamespace(), name, '')
-  return status.contentExists ? status.largestGroupId : undefined
-}
-
-/// The media timeline records the groups of the tracks it depends on. A group
-/// of any other rendition is placed from the arrival lag of the last live
-/// object, which runs late by however long the main thread took to handle the
-/// TRACK_STATUS answer.
-function observeLiveVideoGroup(groupId: bigint): void {
-  const name = subscriptions.get('video')?.name
-  if (packaging === 'cmaf' || (name !== undefined && mediaTimelineDepends.includes(name))) {
-    observeTimelineGroup(groupId)
-  } else {
-    timeline.recordLiveGroup(groupId)
-  }
-  renderSeekbar()
-}
-
-function recoverFromFailedWindow(failure: ReviewWindowFailure): void {
-  const reason = `fetch from group ${failure.start}: ${failure.description}`
-  if (!failure.evicted) {
-    bufferingSpinner.hide()
-    setStatus('rewind-status', `Rewind failed: ${failure.description}`, 'error')
-    appendLog('error', reason)
-    return
-  }
-  timeline.forgetThrough(failure.start)
-  const next = timeline.resolveSeekTarget(0)
-  if (!next) {
-    appendLog('warn', `${reason}; no later group is cached, going live`)
-    backToLive()
-    return
-  }
-  appendLog('warn', `${reason}; resuming from group ${next.groupId}`)
-  seekToCapture(next.captureMicros)
-}
-
-/// The bridge starts the audio groups at the video keyframes with the same
-/// ids, so the audio of a window is the same group range on the audio track
-/// and is fetched alongside the video.
-async function fetchReviewWindow(
-  start: bigint,
-  generation: number
-): Promise<ReviewWindow | ReviewWindowFailure | undefined> {
-  const end = await awaitClosedWindowEnd(start, generation)
-  const subscription = subscriptions.get('video')
-  if (end === undefined || !subscription) {
-    return undefined
-  }
-  const audioName = subscriptions.get('audio')?.name
-  const [frames, audio] = await Promise.all([
-    fetchFrames(subscription.name, start, end, generation),
-    audioName ? fetchReviewAudio(audioName, start, end, generation) : Promise.resolve([])
-  ])
-  if (!frames || !audio) {
-    return undefined
-  }
-  if (isFetchFailure(frames)) {
-    return { start, ...frames }
-  }
-  if (frames.length === 0) {
-    return { start, evicted: true, description: 'no cached objects' }
-  }
-  if (isFetchFailure(audio)) {
-    appendLog('error', `fetch ${audioName}: ${audio.description}`)
-  }
-  const audioFrames = isFetchFailure(audio) ? [] : audio
-  appendLog('info', `fetched ${frames.length} objects from group ${start}`)
-  reviewFetchWindows.push({ video: frames[0]?.requestId, audio: audioFrames[0]?.requestId })
-  return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audioFrames) }
-}
-
-/// The audio of a group ends a little after its video: the source interleaves
-/// audio behind video, so audio captured just before a keyframe arrives after
-/// that keyframe has opened the next group. The audio group is fetched once
-/// the audio track has moved on to a later group, or after a bounded wait.
-async function fetchReviewAudio(
-  trackName: string,
-  start: bigint,
-  end: bigint,
-  generation: number
-): Promise<ReviewFrame[] | FetchFailure | undefined> {
-  const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
-  while (
-    generation === reviewGeneration &&
-    (newestAudioGroupId === undefined || newestAudioGroupId <= end) &&
-    performance.now() < deadline
-  ) {
-    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
-  }
-  return fetchFrames(trackName, start, end, generation)
-}
-
-async function fetchFrames(
-  trackName: string,
-  start: bigint,
-  end: bigint,
-  generation: number
-): Promise<ReviewFrame[] | FetchFailure | undefined> {
-  const frames: ReviewFrame[] = []
-  let requestId: bigint | undefined
-  let endStream: (end: FetchStreamEnd) => void = () => {}
-  const streamEnd = new Promise<FetchStreamEnd>((resolve) => {
-    endStream = resolve
-  })
-  try {
-    ;({ requestId } = await moqtClient.fetch(trackNamespace(), trackName, start, 0n, end, 0n, {
-      onObject: (message) => {
-        const frame = toReviewFrame(message)
-        streamMonitor.fetchObject(
-          message.requestId,
-          trackName,
-          message.groupId,
-          message.objectId,
-          message.objectPayload.byteLength,
-          frame?.captureMicros
-        )
-        if (generation !== reviewGeneration) {
-          return
-        }
-        if (frame) {
-          frame.requestId = message.requestId
-          frames.push(frame)
-        }
-      },
-      onStreamEnd: (message) =>
-        endStream(message.isReset ? { kind: 'reset', code: message.resetErrorCode } : { kind: 'fin' })
-    }))
-  } catch (error) {
-    if (generation !== reviewGeneration) {
-      return undefined
-    }
-    return {
-      evicted: error instanceof RequestError && EVICTED_RANGE_CODES.includes(error.errorCode),
-      description: getErrorMessage(error)
-    }
-  }
-
-  const outcome = await waitForFetchStreamEnd(streamEnd)
-  if (requestId !== undefined) {
-    streamMonitor.fetchFinished(requestId)
-  }
-  if (generation !== reviewGeneration) {
-    return undefined
-  }
-  if (outcome.kind === 'reset') {
-    return {
-      evicted: outcome.code === STREAM_RESET_INTERNAL_ERROR,
-      description: `fetch stream reset (code ${outcome.code ?? 'unknown'})`
-    }
-  }
-  if (outcome.kind === 'deadline') {
-    appendLog(
-      'warn',
-      `fetch ${trackName}: no stream end within ${FETCH_DEADLINE_MS} ms, playing ${frames.length} objects`
-    )
-  }
-  return frames
-}
-
-/// The live edge group is still open and a FETCH that reaches into it escapes
-/// the relay cache, so a window can only end at the newest closed group. Once
-/// playback has consumed those, wait for the publisher to close another one;
-/// at more than real time that wait would recur on every group from then on,
-/// so review that has played out everything fetched goes live instead.
-async function awaitClosedWindowEnd(start: bigint, generation: number): Promise<bigint | undefined> {
-  while (generation === reviewGeneration) {
-    const newestClosed = timeline.newestClosed
-    if (newestClosed && start <= newestClosed.groupId) {
-      const bounded = start + REWIND_GROUP_COUNT
-      return bounded < newestClosed.groupId ? bounded : newestClosed.groupId
-    }
-    if (newestClosed && playbackSpeed() > 1 && reviewBufferDrained()) {
-      backToLive()
-      return undefined
-    }
-    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
-  }
-  return undefined
-}
-
-function isFetchFailure(result: ReviewFrame[] | FetchFailure): result is FetchFailure {
-  return !Array.isArray(result)
-}
-
-type FetchStreamEnd = { kind: 'fin' } | { kind: 'reset'; code: bigint | undefined } | { kind: 'deadline' }
-
-/// The relay FINs the fetch stream once every object up to the FETCH_OK End
-/// Location is written; the deadline only guards against a stream that never
-/// ends.
-async function waitForFetchStreamEnd(streamEnd: Promise<FetchStreamEnd>): Promise<FetchStreamEnd> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const deadline = new Promise<FetchStreamEnd>((resolve) => {
-    timer = setTimeout(() => resolve({ kind: 'deadline' }), FETCH_DEADLINE_MS)
-  })
-  try {
-    return await Promise.race([streamEnd, deadline])
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-/// The window's audio is decoded up front. Frames are decoded a little ahead
-/// of their presentation, not the whole window at once: decoded frames hold
-/// GPU memory until they are shown. The function returns shortly before the
-/// last frame is due so the next window is decoded in time to follow on.
-async function playReview(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
-  const config = pendingReviewConfig()
-  if (!config) {
-    setStatus('rewind-status', 'Rewind unavailable: the video track has no codec', 'error')
-    return false
-  }
-  const audioConfig = reviewAudioConfig()
-  if (audioConfig) {
-    reviewPlayout.decodeAudio(audio, audioConfig)
-  }
-  const decoder = new VideoDecoder({
-    output: (frame) => {
-      if (generation !== reviewGeneration) {
-        frame.close()
-        return
-      }
-      reviewPlayout.presentVideo(frame)
-    },
-    error: (error) => appendLog('error', `review decoder: ${error.message}`)
-  })
-  decoder.configure(config)
-
-  const origin = frames[0].captureMicros ?? reviewOriginMicros ?? 0
-  for (const frame of frames) {
-    while (
-      generation === reviewGeneration &&
-      reviewPlayout.queuedVideo + decoder.decodeQueueSize > REVIEW_VIDEO_AHEAD_FRAMES
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 20))
-    }
-    if (generation !== reviewGeneration || decoder.state === 'closed') {
-      break
-    }
-    if (frame.captureMicros !== undefined && frame.requestId !== undefined) {
-      reviewFrameIds.set(frame.captureMicros, {
-        kind: 'fetch',
-        trackAlias: frame.requestId,
-        groupId: frame.groupId,
-        objectId: frame.objectId
-      })
-    }
-    decoder.decode(
-      new EncodedVideoChunk({
-        type: frame.objectId === 0n ? 'key' : 'delta',
-        timestamp: frame.captureMicros ?? origin,
-        data: frame.data
-      })
-    )
-  }
-  if (decoder.state !== 'closed') {
-    await decoder.flush().catch(() => undefined)
-    decoder.close()
-  }
-  const last = frames[frames.length - 1]?.captureMicros
-  if (last !== undefined) {
-    await reviewPlayout.waitUntilDue(last - REVIEW_HANDOVER_MICROS, () => generation === reviewGeneration)
-  }
-  return generation === reviewGeneration
-}
-
-/// Fetched fragments are appended to a MediaSource on its own element; the live
-/// one stays open hidden and continues from the newest range it is given once
-/// live delivery resumes. The next window is fetched once playback has caught
-/// up to within a few seconds of what is buffered.
-async function playReviewMse(frames: ReviewFrame[], audio: ReviewFrame[], generation: number): Promise<boolean> {
-  if (!reviewMseOpened) {
-    const source = subscribedCmafSource('video')
-    if (!source) {
-      setStatus('rewind-status', 'Rewind unavailable: the CMAF track has no init segment', 'error')
-      return false
-    }
-    const origin = reviewOriginMicros ?? 0
-    const startAtSeconds = ((reviewAnchorMicros ?? origin) - origin) / MICROS_PER_SECOND
-    const previous = reviewMse
-    const next = await MseSink.open(freeMseElement(), {
-      video: source,
-      audio: subscribedCmafSource('audio'),
-      startAtSeconds
-    })
-    reviewMse = next
-    reviewMseOpened = true
-    applyVolume()
-    applyPlaybackSpeed()
-    replacePicture(next.element, () => generation === reviewGeneration, previous)
-    next.element.addEventListener('timeupdate', () => {
-      if (generation === reviewGeneration) {
-        advanceReviewPlayhead(origin + next.secondsFromStart() * MICROS_PER_SECOND)
-      }
-    })
-  }
-  const sink = reviewMse
-  if (generation !== reviewGeneration || !sink) {
-    return false
-  }
-  for (const frame of frames) {
-    sink.appendVideo(frame.data)
-  }
-  for (const chunk of audio) {
-    sink.appendAudio(chunk.data)
-  }
-  while (generation === reviewGeneration) {
-    const ahead = (sink.bufferedEnd() ?? 0) - sink.element.currentTime
-    if (ahead < REVIEW_BUFFER_AHEAD_SECONDS) {
-      break
-    }
-    await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
-  }
-  return generation === reviewGeneration
-}
-
-function closeReviewMse(): void {
-  reviewMse?.close()
-  reviewMse = undefined
-  reviewMseOpened = false
-}
-
-function pendingReviewConfig(): VideoDecoderConfig | undefined {
-  const track = videoTracks.find((candidate) => candidate.name === subscriptions.get('video')?.name)
-  if (!track?.codec) {
-    return undefined
-  }
-  return { codec: track.codec, optimizeForLatency: true }
-}
-
-function reviewAudioConfig(): AudioDecoderConfig | undefined {
-  const track = audioTracks.find((candidate) => candidate.name === subscriptions.get('audio')?.name)
-  if (!track?.codec || !track.samplerate) {
-    return undefined
-  }
-  return {
-    codec: track.codec,
-    sampleRate: track.samplerate,
-    numberOfChannels: parseAudioChannelCount(track.channelConfig) ?? 2,
-    description: track.initData ? base64ToUint8Array(track.initData) : undefined
-  }
-}
-
-function backToLive(): void {
-  reviewGeneration += 1
-  reviewing = false
-  resumeLiveForward()
-  reviewFrameIds.clear()
-  reviewFetchWindows = []
-  streamMonitor.clearPlayhead('fetch')
+function goLive(): void {
   seeking = false
-  setPaused(false)
-  reviewAnchorMicros = undefined
-  reviewOriginMicros = undefined
-  reviewPlayheadMicros = undefined
-  reviewPlayout.stop()
-  element<HTMLSelectElement>('speed').value = '1'
-  applyVolume()
-  renderSeekbar()
-  showPicture(livePicture())
-  closeReviewMse()
-  setStatus('rewind-status', 'Live', 'ok')
-}
-
-/// Pausing holds whatever is on screen; every other transition (seek, skip,
-/// live, packaging or quality change) resumes. Resuming live CMAF jumps to the
-/// end of what is buffered so the picture is live again; the LOC MediaStream
-/// has no backlog to skip.
-function setPaused(next: boolean): void {
-  paused = next
-  const button = element<HTMLButtonElement>('playPauseBtn')
-  button.textContent = paused ? '\u25B6' : '\u275A\u275A'
-  button.setAttribute('aria-label', paused ? 'Play' : 'Pause')
-  button.setAttribute('aria-pressed', String(paused))
-  if (paused) {
-    bufferingSpinner.hide()
-  }
-  for (const media of playingMedia()) {
-    if (paused) {
-      media.pause()
-    } else {
-      void media.play().catch(() => undefined)
-    }
-  }
-  if (!reviewing && !mse) {
-    livePlayout.setPaused(paused)
-  }
-  if (reviewing && packaging === 'loc') {
-    reviewPlayout.setPaused(paused)
-  }
-  const liveEnd = mse?.bufferedEnd()
-  if (!paused && !reviewing && mse && liveEnd !== undefined) {
-    mse.element.currentTime = liveEnd
-  }
+  player.goLive()
 }
 
 async function toggleFullscreen(): Promise<void> {
@@ -1662,103 +502,36 @@ function markPointerActive(): void {
   }, POINTER_IDLE_MS)
 }
 
-function playingMedia(): HTMLMediaElement[] {
-  if (reviewing) {
-    return reviewMse ? [reviewMse.element] : []
-  }
-  if (mse) {
-    return [mse.element]
-  }
-  return livePictureSink.element instanceof HTMLMediaElement ? [livePictureSink.element] : []
-}
-
-/// Review carries its own sound, so whatever live audio is still buffered when
-/// a review starts is silenced, and it is heard again on the way back to live.
-function applyVolume(): void {
-  volume = element<HTMLInputElement>('volume').valueAsNumber
-  livePlayout.setVolume(reviewing ? 0 : volume)
-  reviewPlayout.setVolume(volume)
-  if (mse) {
-    mse.element.volume = reviewing ? 0 : volume
-  }
-  if (reviewMse) {
-    reviewMse.element.volume = volume
+function renderSpeed(state: LivePlayerState): void {
+  const select = element<HTMLSelectElement>('speed')
+  select.disabled = !state.playbackRateAdjustable
+  if (select.value !== String(state.playbackRate)) {
+    select.value = String(state.playbackRate)
   }
 }
 
-/// Only review playback through MSE can run at another rate: live playback
-/// has to keep pace with the publisher, and the WebCodecs path paces frames
-/// itself. Loading a new source resets the element's rate, so the chosen speed
-/// is applied again whenever the review MediaSource is opened.
-function speedAdjustable(): boolean {
-  return packaging === 'cmaf' && reviewing
-}
-
-function reviewBufferDrained(): boolean {
-  return (
-    reviewMse !== undefined && (reviewMse.bufferedEnd() ?? 0) - reviewMse.element.currentTime < REVIEW_DRAINED_SECONDS
-  )
-}
-
-function playbackSpeed(): number {
-  return speedAdjustable() ? Number(element<HTMLSelectElement>('speed').value) : 1
-}
-
-function applyPlaybackSpeed(): void {
-  element<HTMLSelectElement>('speed').disabled = !speedAdjustable()
-  if (speedAdjustable() && reviewMse) {
-    reviewMse.element.playbackRate = playbackSpeed()
-  }
-}
-
-/// The axis runs from the start of the broadcast, which the media timeline
-/// places, so the bar keeps its meaning as cache retention grows. Until the
-/// first timeline object arrives it falls back to the replayable window.
-function renderSeekbar(): void {
-  element<HTMLDivElement>('seek-available-window').dataset.seconds = timeline.span.toFixed(1)
+function renderSeekbar(state: LivePlayerState): void {
+  const { seek } = state
+  const reviewing = state.mode === 'review'
+  element<HTMLDivElement>('seek-available-window').dataset.seconds = seek.replayableSeconds.toFixed(1)
   element<HTMLButtonElement>('liveBtn').classList.toggle('reviewing', reviewing)
-  applyPlaybackSpeed()
+  renderSpeed(state)
   if (seeking) {
     return
   }
-  const latest = liveEdgeSeconds()
-  const replayableStart = replayableStartSeconds()
-  const broadcastStart = mediaTimeline.broadcastStartMicros()
-  seekbar.min = String(broadcastStart === undefined ? replayableStart : broadcastStart / 1_000_000)
+  const latest = seek.liveEdgeSeconds
+  seekbar.min = String(seek.broadcastStartSeconds ?? seek.replayableStartSeconds)
   seekbar.max = String(latest)
-  seekbar.disabled = !timeline.newestClosed || timeline.span <= 0
-  const anchor = reviewAnchorMicros === undefined ? latest : reviewAnchorMicros / 1_000_000
-  const playhead = reviewPlayheadMicros === undefined ? latest : reviewPlayheadMicros / 1_000_000
+  seekbar.disabled = !seek.seekable
+  const anchor = seek.anchorSeconds ?? latest
+  const playhead = seek.playheadSeconds ?? latest
   seekbar.valueAsNumber = anchor
-  renderReplayableWindow(replayableStart, latest)
-  renderReviewProgress(anchor, playhead, latest)
+  renderReplayableWindow(seek.replayableStartSeconds, latest)
+  renderReviewProgress(reviewing, anchor, playhead, latest)
   renderSeekPosition(anchor, playhead, latest)
 }
 
-/// The decoder emits frames in bursts, so the readout steps a second at a time
-/// instead of following every frame. The thumb stays on the position that was
-/// seeked to and the progress fill carries the movement.
-function advanceReviewPlayhead(captureMicros: number): void {
-  if (reviewPlayheadMicros !== undefined && Math.abs(captureMicros - reviewPlayheadMicros) < REVIEW_PLAYHEAD_STEP_US) {
-    return
-  }
-  reviewPlayheadMicros = captureMicros
-  renderReviewStatus()
-  renderSeekbar()
-}
-
-/// Starting the next window's fetch can already have taken playback live, so
-/// a status for the window is only shown while still reviewing.
-function renderReviewStatus(): void {
-  if (!reviewing) {
-    return
-  }
-  const offset = reviewPlayout.syncOffsetMs()
-  const sync = offset === undefined ? '' : ` · A/V ${formatSyncOffset(offset)}`
-  setStatus('rewind-status', `Rewound ${reviewBehindSeconds.toFixed(1)}s${sync}`, 'review')
-}
-
-function renderReviewProgress(anchor: number, playhead: number, latest: number): void {
+function renderReviewProgress(reviewing: boolean, anchor: number, playhead: number, latest: number): void {
   const played = element<HTMLDivElement>('seek-review-progress')
   played.hidden = !reviewing || latest <= Number(seekbar.min)
   if (played.hidden) {
@@ -1773,7 +546,7 @@ function renderReplayableWindow(replayableStart: number, latest: number): void {
   const window = element<HTMLDivElement>('seek-available-window')
   window.style.left = percentOfAxis(replayableStart - min, latest)
   window.style.width = percentOfAxis(latest - replayableStart, latest)
-  const elapsed = mediaTimeline.elapsedMsAt(min * 1_000_000)
+  const elapsed = player.elapsedMsAt(min * MICROS_PER_SECOND)
   setStatusText('seek-start', elapsed === undefined ? '--:--' : formatElapsed(elapsed))
 }
 
@@ -1782,23 +555,15 @@ function percentOfAxis(seconds: number, latest: number): string {
   return axis > 0 ? `${((seconds / axis) * 100).toFixed(3)}%` : '0%'
 }
 
-function liveEdgeSeconds(): number {
-  return (timeline.latest?.captureMicros ?? 0) / MICROS_PER_SECOND
-}
-
-function replayableStartSeconds(): number {
-  return liveEdgeSeconds() - timeline.span
-}
-
 /// `seekbar.max` is frozen while a drag is in progress, so comparing against it
 /// rather than against the live edge keeps the right end meaning "go live" even
 /// when a group arrives mid-gesture.
 function seekTo(captureSeconds: number): void {
   if (captureSeconds >= Number(seekbar.max)) {
-    backToLive()
+    goLive()
     return
   }
-  seekToCapture(captureSeconds * MICROS_PER_SECOND)
+  player.seek(captureSeconds * MICROS_PER_SECOND)
 }
 
 function renderSeekPosition(anchor: number, playhead: number, latest: number): void {
@@ -1811,8 +576,8 @@ function renderSeekPosition(anchor: number, playhead: number, latest: number): v
 }
 
 function renderSeekElapsed(position: number, latest: number): void {
-  const elapsed = mediaTimeline.elapsedMsAt(position * 1_000_000)
-  const broadcast = mediaTimeline.elapsedMsAt(latest * 1_000_000)
+  const elapsed = player.elapsedMsAt(position * MICROS_PER_SECOND)
+  const broadcast = player.elapsedMsAt(latest * MICROS_PER_SECOND)
   setStatusText(
     'seek-elapsed',
     elapsed === undefined || broadcast === undefined
