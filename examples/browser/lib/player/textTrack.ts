@@ -4,20 +4,34 @@ import type { SubscribeOkMessage } from '../../pkg/moqt_client_wasm'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 
-export async function subscribeTextTrack(
-  context: TrackContext,
-  name: string,
-  onText: TextTrackHandler
-): Promise<SubscribeOkMessage> {
-  const { subscribeOk } = await context.client.subscribe(context.namespace, name, context.authInfo, { forward: true })
-  context.client.setOnSubgroupObjectHandler(
-    subscribeOk.trackAlias,
-    observedObjectHandler(context, subscribeOk.trackAlias, name, (groupId, object) =>
-      deliverText(object.objectPayload, groupId, onText)
+export class TextTracks {
+  private readonly subscribed: { requestId: bigint; trackAlias: bigint }[] = []
+
+  constructor(private readonly context: TrackContext) {}
+
+  async subscribe(name: string, onText: TextTrackHandler): Promise<SubscribeOkMessage> {
+    const { client, namespace, authInfo } = this.context
+    const { requestId, subscribeOk } = await client.subscribe(namespace, name, authInfo, { forward: true })
+    this.subscribed.push({ requestId, trackAlias: subscribeOk.trackAlias })
+    client.setOnSubgroupObjectHandler(
+      subscribeOk.trackAlias,
+      observedObjectHandler(this.context, subscribeOk.trackAlias, name, (groupId, object) =>
+        deliverText(object.objectPayload, groupId, onText)
+      )
     )
-  )
-  context.log('info', `subscribed ${context.namespace.join('/')}/${name}`)
-  return subscribeOk
+    this.context.log('info', `subscribed ${namespace.join('/')}/${name}`)
+    return subscribeOk
+  }
+
+  async unsubscribeAll(): Promise<void> {
+    const { client } = this.context
+    for (const { requestId, trackAlias } of this.subscribed.splice(0)) {
+      client.clearSubgroupObjectHandler(trackAlias)
+      if (client.getConnectionStatus()) {
+        await client.unsubscribe(requestId)
+      }
+    }
+  }
 }
 
 /// draft-ietf-moq-transport-14 §9.8: SUBSCRIBE_OK names a Largest Location
