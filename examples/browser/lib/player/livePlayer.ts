@@ -235,10 +235,12 @@ export class LivePlayer {
   }
 
   async start(namespace: string[], authInfo: string): Promise<void> {
-    this.context.namespace = namespace
-    this.context.authInfo = authInfo
-    this.started = true
-    this.changed()
+    await this.queueTrackChange(async () => {
+      this.context.namespace = namespace
+      this.context.authInfo = authInfo
+      this.started = true
+      this.changed()
+    })
     await this.catalog.follow()
   }
 
@@ -437,6 +439,9 @@ export class LivePlayer {
   }
 
   private async applyCatalog(payload: string): Promise<void> {
+    if (!this.started) {
+      return
+    }
     try {
       const catalog = parse_msf_catalog_json(payload)
       const videoChanged = this.replaceTracks('video', extractCatalogVideoTracks(catalog).filter(isLocTrack))
