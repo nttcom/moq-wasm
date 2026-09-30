@@ -30,9 +30,12 @@ sequenceDiagram
 
 2. bot を起動する
 
+   `.env.example` を `.env` にコピーして `JEV_API_KEY` を書きます。`.env` は git 管理外です。
+
    ```shell
    cd examples/python/moq-chat-moderation
-   JEV_API_KEY=jv_live_... uv run python -m moq_chat_moderation.bot --insecure
+   cp .env.example .env
+   uv run --env-file .env python -m moq_chat_moderation.bot --insecure
    ```
 
    `--insecure` はローカル relay の自己署名証明書を検証しない指定です。別の relay には `--relay-url` を渡します。
