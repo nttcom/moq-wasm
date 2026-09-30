@@ -55,10 +55,11 @@ L0  transport/codec @moqt/moqtClient, utils/media (decoder workers, MseSink)
 
 Rules:
 
-- L1 touches the DOM only through the picture elements it is given (live
-  video, live canvas, review canvas, the MSE pool); from step 2 on it creates
-  them inside a container instead. It never reads form values or writes
-  status text.
+- L1 touches the DOM only through the picture elements it creates at the
+  front of the container it is given (live video, live canvas, review canvas,
+  the MSE pool), styled by `livePlayer.css`. It never reads form values or
+  writes status text; overlays the page puts in the same container stay on
+  top of the pictures.
 - L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
   can share one session with a publisher or with other players.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
@@ -66,6 +67,9 @@ Rules:
   the page. It registers per-alias and per-request handlers only.
 - L2 holds no playback state of its own; it renders `LivePlayer.state` and
   issues commands.
+- L1 still reads the MSF catalog through `examples/media/catalog.ts` and uses
+  `getErrorMessage` from `examples/media/common.ts`; the catalog reader shares
+  its audio track naming with the media publishers there.
 - Diagnostics stay in L3. L1 reports deliveries to an observer whose shape is
   the subset of `StreamMonitor` it calls (`DeliveryObserver`).
 
@@ -75,7 +79,7 @@ Rules:
 type LivePlayerOptions = {
   client: MoqtClientWrapper
   authInfo: string
-  surface: LivePlayerSurface
+  container: HTMLElement
   callbacks: LivePlayerCallbacks
   deliveryObserver: DeliveryObserver
   livePicture?: LivePictureKind
@@ -127,6 +131,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | --- | --- |
 | `livePlayer` | Facade: owns the modules below and the state, dispatches commands, decides by packaging |
 | `trackContext` | The client, namespace, auth info, observer and log every request needs |
+| `deliveryObserver` | What the player reports of every object, FETCH and playhead |
 | `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold |
@@ -179,8 +184,9 @@ the generalization the ONVIF adoption brings.
 
 Each step is its own PR, stacked on the previous one; the Live Viewer E2E
 suites (`e2e:live-viewer`, `e2e:live-viewer-mp4`, `e2e:live-viewer-delivery`)
-must pass unchanged through steps 1 to 3, with the `live-viewer-*` test ids
-kept.
+must pass through steps 1 to 3. The test ids of the page keep their
+`live-viewer-*` names; the picture elements the player creates are
+`live-player-video`, `live-player-live-canvas` and `live-player-review-canvas`.
 
 1. Split `live-viewer/main.ts` into the L1 modules inside the example, with
    `main.ts` reduced to page wiring. No behavior change.

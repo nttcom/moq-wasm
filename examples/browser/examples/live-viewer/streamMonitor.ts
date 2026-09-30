@@ -1,3 +1,5 @@
+import type { DeliveryObserver, Playhead, StreamKind } from '@player/deliveryObserver'
+
 const DEFAULT_KEPT_GROUPS = 5
 export const DEFAULT_WINDOW_SECONDS = 10
 const AXIS_HEIGHT = 18
@@ -13,8 +15,6 @@ const ROW_HEIGHT = 22
 const LABEL_WIDTH = 210
 const TOP_MARGIN = 14
 const PALETTE = ['#0f766e', '#e07a5f', '#3d5a80', '#b08968', '#6a4c93', '#2a9d8f']
-
-export type StreamKind = 'subscribe' | 'fetch'
 
 export type StreamRecord = {
   kind: StreamKind
@@ -33,21 +33,11 @@ export type StreamRecord = {
   captureAtByGroup: Map<bigint, Map<bigint, number>>
 }
 
-/// Live playback follows a subscribe stream, review playback a FETCH stream;
-/// each keeps its own playhead so a rewind does not move the live one.
-export type Playhead = {
-  kind: StreamKind
-  trackAlias: bigint
-  groupId: bigint
-  objectId: bigint
-  captureMicros: number
-}
-
 /// Subgroup streams the viewer has received, keyed by track alias and group;
 /// a stream counts as finished when its end-of-group status object arrives,
 /// and the transport closing it without one is not observable from JS. Only
 /// the newest `keptGroups` groups of each track are kept.
-export class StreamMonitor {
+export class StreamMonitor implements DeliveryObserver {
   private readonly records = new Map<string, StreamRecord>()
   private readonly labels = new Map<bigint, string>()
   private keptGroups = DEFAULT_KEPT_GROUPS
@@ -122,8 +112,6 @@ export class StreamMonitor {
     }
   }
 
-  /// One FETCH response is one stream however many groups it spans; the
-  /// request id stands in for the group id in the row key.
   fetchObject(
     requestId: bigint,
     track: string,

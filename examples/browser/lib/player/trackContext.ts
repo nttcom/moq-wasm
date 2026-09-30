@@ -1,18 +1,13 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { SubgroupObjectHandler } from '@moqt/subscriptionStateManager'
-import { readLocHeader } from '../../../utils/media/loc'
-import type { StreamMonitor } from '../streamMonitor'
+import { readLocHeader } from '../../utils/media/loc'
+import type { DeliveryObserver } from './deliveryObserver'
 
 export type Packaging = 'loc' | 'cmaf'
 
 export type MediaKind = 'video' | 'audio'
 
 export type LogLevel = 'info' | 'warn' | 'error'
-
-export type DeliveryObserver = Pick<
-  StreamMonitor,
-  'label' | 'object' | 'fetchObject' | 'fetchFinished' | 'forget' | 'setPlayhead' | 'clearPlayhead'
->
 
 export type TrackContext = {
   client: MoqtClientWrapper

@@ -1,10 +1,10 @@
-import type { MediaCatalogTrack } from '../../media/catalog'
-import { monotonicUnixMicros } from '../../../utils/media/clock'
-import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../../utils/media/decoderCatalog'
-import { postSubgroupObjectToWorker } from '../../../utils/media/decoderWorker'
-import type { BufferPolicy } from '../jitterBuffer'
-import { LivePlayout } from '../livePlayout'
-import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from '../livePictureSink'
+import type { MediaCatalogTrack } from '../../examples/media/catalog'
+import { monotonicUnixMicros } from '../../utils/media/clock'
+import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../utils/media/decoderCatalog'
+import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
+import type { BufferPolicy } from './jitterBuffer'
+import { LivePlayout } from './livePlayout'
+import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from './livePictureSink'
 import type { MediaKind } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 
@@ -20,10 +20,10 @@ export type LocLiveCallbacks = {
 export class LocLive {
   readonly playout: LivePlayout
   readonly picture: LivePictureSink
-  private readonly videoWorker = new Worker(new URL('../../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
+  private readonly videoWorker = new Worker(new URL('../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
     type: 'module'
   })
-  private readonly audioWorker = new Worker(new URL('../../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
+  private readonly audioWorker = new Worker(new URL('../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
     type: 'module'
   })
   private readonly decodedFrameIds = new Map<number, DecodedFrameIds>()

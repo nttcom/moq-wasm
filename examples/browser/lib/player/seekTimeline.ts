@@ -1,6 +1,6 @@
-import type { MediaCatalogTrack } from '../../media/catalog'
-import { MediaTimeline } from '../mediaTimeline'
-import { GroupTimeline } from '../rewind'
+import type { MediaCatalogTrack } from '../../examples/media/catalog'
+import { MediaTimeline } from './mediaTimeline'
+import { GroupTimeline } from './rewind'
 import { RELAY_CACHE_TTL_MICROS } from './streamConventions'
 
 const MICROS_PER_SECOND = 1_000_000

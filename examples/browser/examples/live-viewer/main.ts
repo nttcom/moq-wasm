@@ -8,13 +8,13 @@ import {
   setStatus,
   setStatusText
 } from '../media/common'
-import type { BufferPolicy } from './jitterBuffer'
-import { type CatchUp, DEFAULT_BUFFER_POLICY } from './livePlayout'
-import type { LivePictureKind } from './livePictureSink'
-import { formatElapsed } from './mediaTimeline'
+import type { BufferPolicy } from '@player/jitterBuffer'
+import { type CatchUp, DEFAULT_BUFFER_POLICY } from '@player/livePlayout'
+import type { LivePictureKind } from '@player/livePictureSink'
+import { formatElapsed } from '@player/mediaTimeline'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
-import { LivePlayer, type LivePlayerState, type Packaging, formatSyncOffset } from './player/livePlayer'
+import { LivePlayer, type LivePlayerState, type Packaging, formatSyncOffset } from '@player/livePlayer'
 import { PublishPreview } from './publishPreview'
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -30,7 +30,6 @@ import {
 const AUTH_INFO = 'secret'
 const MICROS_PER_SECOND = 1_000_000
 const SKIP_SECONDS_BY_KEY: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -5, ArrowUp: 5 }
-const MSE_ELEMENT_IDS = ['mse-a', 'mse-b', 'mse-c']
 const POINTER_IDLE_MS = 2_500
 
 const moqtClient = new MoqtClientWrapper()
@@ -43,12 +42,7 @@ let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 const player = new LivePlayer({
   client: moqtClient,
   authInfo: AUTH_INFO,
-  surface: {
-    video: element<HTMLVideoElement>('video'),
-    liveCanvas: element<HTMLCanvasElement>('live-canvas'),
-    reviewCanvas: element<HTMLCanvasElement>('review'),
-    msePool: MSE_ELEMENT_IDS.map((id) => element<HTMLVideoElement>(id))
-  },
+  container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: appendLog },
   deliveryObserver: streamMonitor,
   /// `?livePicture=canvas` forces the canvas sink, to see the Safari path in Chrome.

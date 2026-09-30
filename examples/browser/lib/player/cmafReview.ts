@@ -1,5 +1,5 @@
-import { MseSink, type MseSources } from '../../../utils/media/mseSink'
-import type { ReviewFrame } from '../rewind'
+import { MseSink, type MseSources } from '../../utils/media/mseSink'
+import type { ReviewFrame } from './rewind'
 
 const REVIEW_BUFFER_AHEAD_SECONDS = 8
 const REVIEW_DRAINED_SECONDS = 0.5

@@ -1,0 +1,15 @@
+.live-player-picture {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.live-player-picture[hidden] {
+  display: none;
+}
+
+:fullscreen > .live-player-picture {
+  height: 100%;
+  object-fit: contain;
+}

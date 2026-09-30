@@ -1,5 +1,5 @@
-import { getErrorMessage } from '../../media/common'
-import type { MediaCatalogTrack } from '../../media/catalog'
+import { getErrorMessage } from '../../examples/media/common'
+import type { MediaCatalogTrack } from '../../examples/media/catalog'
 import { type MediaKind, type TrackContext, observedObjectHandler } from './trackContext'
 import type { SubgroupObjectHandler } from '@moqt/subscriptionStateManager'
 
