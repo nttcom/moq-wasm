@@ -172,9 +172,8 @@ impl<T: TransportProtocol> SessionContext<T> {
     }
 
     pub(crate) fn get_request_id(&self) -> u64 {
-        let id = self.request_id.load(Ordering::SeqCst);
+        let id = self.request_id.fetch_add(2, Ordering::SeqCst);
         tracing::debug!("request_id: {}", id);
-        self.request_id.fetch_add(2, Ordering::SeqCst);
         id
     }
 
@@ -453,6 +452,8 @@ impl<T: TransportProtocol> Drop for SessionContext<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use tokio::sync::mpsc::error::TryRecvError;
 
     use super::{IncomingObjectNotification, LateResponseAction};
@@ -488,6 +489,34 @@ mod tests {
             delivery_timeout: None,
             max_duration: None,
         })
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_get_distinct_request_ids() {
+        // Arrange
+        let (_client, server) = spawn_connected_dual_sessions("request-id-concurrent").await;
+        let context = server.subscriber().session;
+
+        // Act
+        let request_ids: Vec<u64> = std::thread::scope(|scope| {
+            let callers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..1_000)
+                            .map(|_| context.get_request_id())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            callers
+                .into_iter()
+                .flat_map(|caller| caller.join().unwrap())
+                .collect()
+        });
+
+        // Assert
+        let distinct: HashSet<u64> = request_ids.iter().copied().collect();
+        assert_eq!(distinct.len(), request_ids.len());
     }
 
     #[tokio::test]
