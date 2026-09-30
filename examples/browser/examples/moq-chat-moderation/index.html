@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoQ Chat Moderation</title>
+    <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="./chat.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <h1>MoQ Chat Moderation</h1>
+          <p>pipecat の bot が Jev でチャットを判定し、暴言にラベルを付ける</p>
+        </div>
+      </header>
+      <div class="chat-layout">
+        <section class="card stack">
+          <h2>Relay</h2>
+          <label for="url">Relay URL:</label>
+          <input type="url" id="url" data-testid="chat-moderation-url-input" />
+          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <div class="button-row">
+            <button type="button" id="joinBtn" data-testid="chat-moderation-join-button">Join</button>
+            <button type="button" id="leaveBtn" data-testid="chat-moderation-leave-button" disabled>Leave</button>
+          </div>
+          <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
+          <span id="moderator-status" class="status-dot" data-state="idle">モデレーター未接続</span>
+        </section>
+        <section class="card stack chat-card">
+          <h2>Chat</h2>
+          <ol id="messages" class="chat-messages" data-testid="chat-moderation-messages"></ol>
+          <form id="chatForm" class="chat-form">
+            <input
+              type="text"
+              id="chatInput"
+              placeholder="メッセージ"
+              autocomplete="off"
+              data-testid="chat-moderation-input"
+              disabled
+            />
+            <button type="submit" id="sendBtn" data-testid="chat-moderation-send-button" disabled>Send</button>
+          </form>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
