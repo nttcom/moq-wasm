@@ -478,7 +478,7 @@ export class LivePlayer {
       this.timeline.resetGroups()
       this.goLive()
     } else {
-      this.timeline.newestAudioGroupId = undefined
+      this.timeline.audio.reset()
     }
     await this.subscriptions.unsubscribe(kind)
     if (!track || !wire) {
@@ -508,7 +508,7 @@ export class LivePlayer {
       this.timeline.groups.record(groupId, object.locHeader)
       this.notePlaying(trackName)
     } else {
-      this.timeline.newestAudioGroupId = groupId
+      this.timeline.audio.record(groupId, object.locHeader)
     }
     this.locLive.push(kind, groupId, object)
   }
@@ -529,7 +529,7 @@ export class LivePlayer {
       }
       this.notePlaying(trackName)
     } else {
-      this.timeline.newestAudioGroupId = groupId
+      this.timeline.audio.record(groupId, undefined)
     }
     this.cmafLive.append(kind, object)
   }

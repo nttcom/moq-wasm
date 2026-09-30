@@ -1,6 +1,7 @@
 import { getErrorMessage } from '../../examples/media/common'
 import { type GroupMark, type ReviewFrame, sortReviewFrames } from './rewind'
 import { type FetchFailure, fetchFrames, isFetchFailure } from './reviewFetch'
+import type { GroupRange } from './audioGroups'
 import type { SeekTimeline } from './seekTimeline'
 import type { MediaKind, TrackContext } from './trackContext'
 import type { TrackSubscriptions } from './trackSubscriptions'
@@ -41,6 +42,7 @@ export class ReviewSession {
   behindSeconds = 0
   readonly fetchWindows: ReviewFetchWindow[] = []
   private ended = false
+  private audioPlayedThroughMicros = Number.NEGATIVE_INFINITY
   readonly isCurrent = (): boolean => !this.ended
 
   constructor(
@@ -79,7 +81,10 @@ export class ReviewSession {
       const upcoming = this.fetchWindow(pending.nextGroup)
       this.behindSeconds = this.timeline.groups.secondsBehindLive(pending.start)
       this.host.windowStarted()
-      const played = await this.host.playWindow({ ...pending, frames: sortReviewFrames(pending.frames) }, this)
+      const played = await this.host.playWindow(
+        { ...pending, frames: sortReviewFrames(pending.frames), audio: this.unplayedAudio(pending.audio) },
+        this
+      )
       pending = played ? await upcoming : undefined
     }
   }
@@ -102,7 +107,7 @@ export class ReviewSession {
           this.host.observeLiveVideoGroup(videoGroup)
         }
         if (audioGroup !== undefined) {
-          this.timeline.newestAudioGroupId = audioGroup
+          this.timeline.audio.recordLiveGroup(audioGroup)
         }
       } catch (error) {
         this.context.log('warn', `track status: ${getErrorMessage(error)}; live subscriptions forward during review`)
@@ -140,9 +145,6 @@ export class ReviewSession {
     this.host.seek(next.captureMicros)
   }
 
-  /// The bridge starts the audio groups at the video keyframes with the same
-  /// ids, so the audio of a window is the same group range on the audio track
-  /// and is fetched alongside the video.
   private async fetchWindow(start: bigint): Promise<ReviewWindow | ReviewWindowFailure | undefined> {
     const end = await this.awaitClosedWindowEnd(start)
     const subscription = this.subscriptions.get('video')
@@ -172,24 +174,57 @@ export class ReviewSession {
     return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audioFrames) }
   }
 
-  /// The audio of a group ends a little after its video: the source interleaves
-  /// audio behind video, so audio captured just before a keyframe arrives after
-  /// that keyframe has opened the next group. The audio group is fetched once
-  /// the audio track has moved on to a later group, or after a bounded wait.
   private async fetchAudio(
     trackName: string,
     start: bigint,
     end: bigint
   ): Promise<ReviewFrame[] | FetchFailure | undefined> {
+    const range = await this.awaitAudioRange(start, end)
+    if (!this.isCurrent()) {
+      return undefined
+    }
+    if (!range) {
+      this.context.log('warn', `no audio group covers video groups ${start}-${end}`)
+      return []
+    }
+    return fetchFrames(this.context, trackName, range.start, range.end, this.isCurrent)
+  }
+
+  /// The audio of a group ends a little after its video: the source interleaves
+  /// audio behind video, so audio captured just before a keyframe arrives after
+  /// that keyframe has opened the next group. The audio groups are fetched once
+  /// the audio track has moved on past the window, or after a bounded wait. When
+  /// the audio groups share the ids of the video groups the window's audio is
+  /// the same group range; otherwise it is the range of audio groups whose
+  /// capture times cover the window's.
+  private async awaitAudioRange(start: bigint, end: bigint): Promise<GroupRange | undefined> {
+    const { audio, groups } = this.timeline
+    const fromMicros = groups.startOf(start)
+    const untilMicros = groups.startAfter(end)
+    const byCapture =
+      fromMicros !== undefined &&
+      untilMicros !== undefined &&
+      !audio.sharesVideoIds((groupId) => groups.startOf(groupId))
+    const movedOn = () =>
+      byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end
     const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
-    while (
-      this.isCurrent() &&
-      (this.timeline.newestAudioGroupId === undefined || this.timeline.newestAudioGroupId <= end) &&
-      performance.now() < deadline
-    ) {
+    while (this.isCurrent() && !movedOn() && performance.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
     }
-    return fetchFrames(this.context, trackName, start, end, this.isCurrent)
+    return byCapture ? audio.covering(fromMicros, untilMicros) : { start, end }
+  }
+
+  /// Audio groups that cover consecutive windows are fetched for each of them,
+  /// so what an earlier window has already played is left out.
+  private unplayedAudio(audio: ReviewFrame[]): ReviewFrame[] {
+    const unplayed = audio.filter(
+      (chunk) => chunk.captureMicros === undefined || chunk.captureMicros > this.audioPlayedThroughMicros
+    )
+    this.audioPlayedThroughMicros = unplayed.reduce(
+      (through, chunk) => Math.max(through, chunk.captureMicros ?? through),
+      this.audioPlayedThroughMicros
+    )
+    return unplayed
   }
 
   /// The live edge group is still open and a FETCH that reaches into it escapes

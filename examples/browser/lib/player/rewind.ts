@@ -97,6 +97,14 @@ export class GroupTimeline {
     return closed.findLast((mark) => mark.captureMicros <= captureMicros) ?? closed[0]
   }
 
+  startOf(groupId: bigint): number | undefined {
+    return this.cached().find((mark) => mark.groupId === groupId)?.captureMicros
+  }
+
+  startAfter(groupId: bigint): number | undefined {
+    return this.cached().find((mark) => mark.groupId > groupId)?.captureMicros
+  }
+
   secondsBehindLive(groupId: bigint): number {
     const latest = this.latest
     const mark = this.cached().find((candidate) => candidate.groupId === groupId)

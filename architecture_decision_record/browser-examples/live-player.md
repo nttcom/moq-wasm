@@ -141,7 +141,8 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
-| `seekTimeline` | `GroupTimeline` + `MediaTimeline`, stamping groups from the media timeline, the seek axis |
+| `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, stamping groups from the media timeline, the seek axis |
+| `audioGroups` | Where the audio groups start, whether they share the video group ids, which of them cover a window |
 | `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
@@ -168,10 +169,15 @@ where they are used, not as options, until a publisher differs:
 | Codec in the catalog from the first catalog | yes | only once the track's stream has started; a catalog update fills it in |
 | Relay cache TTL 60 s, join group holds no keyframe | yes | yes |
 
-The audio row is the one difference that changes behavior: review fetches the
-audio of a window by the video's group range. For ONVIF the audio range has to
-be resolved from the capture times of observed audio groups instead, which is
-the generalization the ONVIF adoption brings.
+The audio row is the one difference that changes behavior. `AudioGroups`
+records where each audio group starts on the capture axis, from live audio
+objects and, for groups known only from TRACK_STATUS during a review, from the
+arrival lag of the last live object. When every group seen on both tracks
+starts within 500 ms of the video group with the same id, review fetches a
+window's audio by the video's group range, as before; otherwise it fetches the
+closed audio groups whose starts cover the window's capture span, waiting until
+an audio group has started past the window. Audio chunks an earlier window
+already played are left out, since a 2 s audio group can span two windows.
 
 ## Invariants
 

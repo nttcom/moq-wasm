@@ -1,4 +1,5 @@
 import type { MediaCatalogTrack } from '../../examples/media/catalog'
+import { AudioGroups } from './audioGroups'
 import { MediaTimeline } from './mediaTimeline'
 import { GroupTimeline } from './rewind'
 import { RELAY_CACHE_TTL_MICROS } from './streamConventions'
@@ -16,9 +17,9 @@ export type SeekAxis = {
 export class SeekTimeline {
   readonly groups = new GroupTimeline(RELAY_CACHE_TTL_MICROS)
   readonly media = new MediaTimeline()
+  readonly audio = new AudioGroups()
   private readonly unstampedGroups = new Set<bigint>()
   private mediaTrack: { name: string; depends: string[] } | undefined
-  newestAudioGroupId: bigint | undefined
 
   get mediaTimelineTrackName(): string | undefined {
     return this.mediaTrack?.name
@@ -60,7 +61,7 @@ export class SeekTimeline {
     this.resetGroups()
     this.media.reset()
     this.mediaTrack = undefined
-    this.newestAudioGroupId = undefined
+    this.audio.reset()
   }
 
   /// The axis runs from the start of the broadcast, which the media timeline
