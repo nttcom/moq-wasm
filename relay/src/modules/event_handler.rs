@@ -1062,4 +1062,19 @@ mod tests {
             .await
             .expect("the second subscriber should receive PUBLISH_NAMESPACE");
     }
+
+    #[tokio::test]
+    async fn publish_namespace_is_echoed_to_its_publisher_subscribed_to_the_prefix() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        let publisher = handler.register_namespace_subscriber(1, "anon").await;
+
+        // Act
+        handler.send_publish_namespace(1, "anon/x/y");
+
+        // Assert: draft-14 §6.1 includes echoing PUBLISH_NAMESPACE back to the endpoint that sent it
+        wait_for_publish_namespaces(&publisher, &["anon/x/y"])
+            .await
+            .expect("the publisher should receive its own PUBLISH_NAMESPACE");
+    }
 }
