@@ -1,0 +1,39 @@
+name: Install Playwright Chromium
+description: Install Playwright's Chromium for examples/browser and its Linux dependencies, reusing downloaded browsers from the Actions cache
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Playwright version
+      id: playwright
+      shell: bash
+      working-directory: examples/browser
+      run: echo "version=$(npx playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Playwright browsers
+      id: restore
+      # actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
+    - name: Install Chromium with Linux dependencies
+      if: ${{ steps.restore.outputs.cache-hit != 'true' }}
+      shell: bash
+      working-directory: examples/browser
+      run: npx playwright install --with-deps chromium
+
+    - name: Install Chromium Linux dependencies
+      if: ${{ steps.restore.outputs.cache-hit == 'true' }}
+      shell: bash
+      working-directory: examples/browser
+      run: npx playwright install-deps chromium
+
+    - name: Save Playwright browsers
+      if: ${{ steps.restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/master' }}
+      # actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ steps.restore.outputs.cache-primary-key }}
