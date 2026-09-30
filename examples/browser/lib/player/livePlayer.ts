@@ -663,21 +663,24 @@ export class LivePlayer {
         return false
       }
       const origin = session.originMicros
-      const previous = await this.cmafReview.open(this.stage.freeMseElement(), {
-        video,
-        audio: this.subscribedCmafSource('audio'),
-        startAtSeconds: (session.anchorMicros - origin) / MICROS_PER_SECOND
-      })
+      const previous = await this.cmafReview.open(
+        this.stage.freeMseElement(),
+        {
+          video,
+          audio: this.subscribedCmafSource('audio'),
+          startAtSeconds: (session.anchorMicros - origin) / MICROS_PER_SECOND
+        },
+        (secondsFromStart) => {
+          if (session.isCurrent()) {
+            this.advanceReviewPlayhead(origin + secondsFromStart * MICROS_PER_SECOND)
+          }
+        }
+      )
       const next = this.cmafReview.sink
       this.applyVolume()
       this.applyPlaybackRate()
       if (next) {
         this.stage.replace(next.element, session.isCurrent, previous)
-        next.element.addEventListener('timeupdate', () => {
-          if (session.isCurrent()) {
-            this.advanceReviewPlayhead(origin + next.secondsFromStart() * MICROS_PER_SECOND)
-          }
-        })
       }
     }
     return this.cmafReview.append(window.frames, window.audio, session.isCurrent)

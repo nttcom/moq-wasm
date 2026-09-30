@@ -14,13 +14,23 @@ const APPEND_POLL_MS = 200
 export class CmafReview {
   sink: MseSink | undefined
   needsOpen = true
+  private positionListener = new AbortController()
 
   /// Returns the sink it replaces, which the caller closes once the new one is
-  /// on screen.
-  async open(element: HTMLVideoElement, sources: MseSources): Promise<MseSink | undefined> {
+  /// on screen. The pooled element outlives the sink, so its position listener
+  /// goes with the sink rather than with the element.
+  async open(
+    element: HTMLVideoElement,
+    sources: MseSources,
+    onPosition: (secondsFromStart: number) => void
+  ): Promise<MseSink | undefined> {
     const previous = this.sink
-    this.sink = await MseSink.open(element, sources)
+    this.positionListener.abort()
+    const listener = (this.positionListener = new AbortController())
+    const sink = await MseSink.open(element, sources)
+    this.sink = sink
     this.needsOpen = false
+    element.addEventListener('timeupdate', () => onPosition(sink.secondsFromStart()), { signal: listener.signal })
     return previous
   }
 
@@ -52,6 +62,7 @@ export class CmafReview {
   }
 
   close(): void {
+    this.positionListener.abort()
     this.sink?.close()
     this.sink = undefined
     this.needsOpen = true
