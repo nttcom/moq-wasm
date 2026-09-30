@@ -23,9 +23,9 @@ import { PictureStage } from './pictureStage'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
-import { CMAF_TRACK_SUFFIX } from './streamConventions'
 import { subscribeTextTrack } from './textTrack'
-import type { DeliveryObserver, LogLevel, MediaKind, Packaging, SubgroupObject, TrackContext } from './trackContext'
+import type { DeliveryObserver, LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
+import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import { TrackSubscriptions } from './trackSubscriptions'
 
 const MICROS_PER_SECOND = 1_000_000
@@ -98,9 +98,6 @@ export type LivePlayerStats = {
   shedMs: number
 }
 
-/// The MoQT viewer: follows the MSF catalog, plays the selected video and
-/// audio tracks live as LOC or CMAF, and replays what the relay still caches
-/// through FETCH.
 export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
@@ -114,11 +111,9 @@ export class LivePlayer {
   private readonly cmafReview = new CmafReview()
   private readonly stallWatch: StallWatch
   private readonly reviewHost: ReviewHost
-  private videoTracks: MediaCatalogTrack[] = []
-  private audioTracks: MediaCatalogTrack[] = []
+  private tracks: Record<MediaKind, MediaCatalogTrack[]> = { video: [], audio: [] }
   private cmafTracks: MediaCatalogTrack[] = []
-  private selectedVideoTrack = ''
-  private selectedAudioTrack = ''
+  private selected: Record<MediaKind, string> = { video: '', audio: '' }
   private packaging: Packaging = 'loc'
   private review: ReviewSession | undefined
   private started = false
@@ -168,7 +163,7 @@ export class LivePlayer {
     this.reviewHost = {
       playWindow: (window, session) => this.playReviewWindow(window, session),
       windowStarted: () => this.renderReviewStatus(),
-      fastForwardDrained: () => this.effectivePlaybackRate() > 1 && this.cmafReview.drained(),
+      fastForwardDrained: () => this.playbackRateAdjustable() && this.playbackRate > 1 && this.cmafReview.drained(),
       observeLiveVideoGroup: (groupId) => this.observeLiveVideoGroup(groupId),
       resumeLiveForward: () => this.resumeLiveForward(),
       goLive: () => this.goLive(),
@@ -189,10 +184,10 @@ export class LivePlayer {
     const review = this.review
     return {
       started: this.started,
-      videoTracks: this.videoTracks,
-      audioTracks: this.audioTracks,
-      selectedVideoTrack: this.selectedVideoTrack,
-      selectedAudioTrack: this.selectedAudioTrack,
+      videoTracks: this.tracks.video,
+      audioTracks: this.tracks.audio,
+      selectedVideoTrack: this.selected.video,
+      selectedAudioTrack: this.selected.audio,
       cmafAvailable: this.cmafTracks.length > 0,
       packaging: this.packaging,
       mode: review ? 'review' : 'live',
@@ -255,30 +250,30 @@ export class LivePlayer {
     this.locLive.reset()
     this.stallWatch.clear()
     this.stage.show(this.locLive.picture.element)
-    for (const kind of this.subscriptions.kinds()) {
+    for (const [kind] of this.subscriptions.entries()) {
       await this.subscriptions.unsubscribe(kind)
     }
     this.catalog.reset()
-    this.videoTracks = []
-    this.audioTracks = []
+    this.tracks = { video: [], audio: [] }
     this.cmafTracks = []
-    this.selectedVideoTrack = ''
-    this.selectedAudioTrack = ''
+    this.selected = { video: '', audio: '' }
     this.videoObjectCount = 0
     this.catalogStatus = { text: 'Catalog not loaded yet', state: 'idle' }
     this.playbackStatus = { text: 'Playback idle', state: 'idle' }
     this.changed()
   }
 
-  async selectVideoTrack(name: string): Promise<void> {
-    this.selectedVideoTrack = name
-    await this.resubscribe('video')
-    await this.openLiveMse()
+  selectVideoTrack(name: string): Promise<void> {
+    return this.selectTrack('video', name)
   }
 
-  async selectAudioTrack(name: string): Promise<void> {
-    this.selectedAudioTrack = name
-    await this.resubscribe('audio')
+  selectAudioTrack(name: string): Promise<void> {
+    return this.selectTrack('audio', name)
+  }
+
+  private async selectTrack(kind: MediaKind, name: string): Promise<void> {
+    this.selected[kind] = name
+    await this.resubscribe(kind)
     await this.openLiveMse()
   }
 
@@ -344,14 +339,13 @@ export class LivePlayer {
     )
     this.review = session
     this.subscriptions.pauseForward()
-    session.followLiveEdge()
-    this.cmafReview.restart()
+    this.cmafReview.needsOpen = true
     this.setPaused(false)
     this.locReview.playout.start(session.anchorMicros)
     this.applyVolume()
     this.playbackStatus = { text: 'Reviewing', state: 'review' }
     this.changed()
-    session.play()
+    session.start()
   }
 
   goLive(): void {
@@ -429,7 +423,7 @@ export class LivePlayer {
       const audioChanged = this.replaceTracks('audio', extractCatalogAudioTracks(catalog).filter(isLocTrack))
       this.cmafTracks = extractCatalogCmafTracks(catalog)
       this.catalogStatus = {
-        text: `Catalog loaded: ${this.videoTracks.length} video / ${this.audioTracks.length} audio`,
+        text: `Catalog loaded: ${this.tracks.video.length} video / ${this.tracks.audio.length} audio`,
         state: 'ok'
       }
       this.changed()
@@ -449,23 +443,13 @@ export class LivePlayer {
   }
 
   private replaceTracks(kind: MediaKind, tracks: MediaCatalogTrack[]): boolean {
-    const previous = (kind === 'video' ? this.videoTracks : this.audioTracks).map((track) => track.name)
-    if (kind === 'video') {
-      this.videoTracks = tracks
-    } else {
-      this.audioTracks = tracks
-    }
+    const previous = this.tracks[kind].map((track) => track.name)
+    this.tracks[kind] = tracks
     const names = tracks.map((track) => track.name)
     if (names.length === previous.length && names.every((name, index) => name === previous[index])) {
       return false
     }
-    const selected = kind === 'video' ? this.selectedVideoTrack : this.selectedAudioTrack
-    const next = names.includes(selected) ? selected : (names[0] ?? '')
-    if (kind === 'video') {
-      this.selectedVideoTrack = next
-    } else {
-      this.selectedAudioTrack = next
-    }
+    this.selected[kind] = names.includes(this.selected[kind]) ? this.selected[kind] : (names[0] ?? '')
     return true
   }
 
@@ -486,16 +470,12 @@ export class LivePlayer {
   }
 
   private cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
-    return this.cmafTracks.find((candidate) => candidate.name === `${track.name}${CMAF_TRACK_SUFFIX}`)
-  }
-
-  private tracksOf(kind: MediaKind): MediaCatalogTrack[] {
-    return kind === 'video' ? this.videoTracks : this.audioTracks
+    return this.cmafTracks.find((candidate) => candidate.name === `${track.name}_cmaf`)
   }
 
   private async resubscribe(kind: MediaKind): Promise<void> {
-    const trackName = kind === 'video' ? this.selectedVideoTrack : this.selectedAudioTrack
-    const track = this.tracksOf(kind).find((candidate) => candidate.name === trackName)
+    const trackName = this.selected[kind]
+    const track = this.tracks[kind].find((candidate) => candidate.name === trackName)
     const wire = track && (this.packaging === 'cmaf' ? this.cmafSibling(track) : track)
     if (wire && this.subscriptions.get(kind)?.name === wire.name) {
       return
@@ -524,7 +504,12 @@ export class LivePlayer {
     )
   }
 
-  private handleLocObject(kind: MediaKind, trackName: string, groupId: bigint, object: SubgroupObject): void {
+  private handleLocObject(
+    kind: MediaKind,
+    trackName: string,
+    groupId: bigint,
+    object: SubgroupObjectMessageWithLoc
+  ): void {
     if (kind === 'video') {
       this.videoObjectCount += 1
       this.timeline.groups.record(groupId, object.locHeader)
@@ -535,7 +520,12 @@ export class LivePlayer {
     this.locLive.push(kind, groupId, object)
   }
 
-  private handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: SubgroupObject): void {
+  private handleCmafObject(
+    kind: MediaKind,
+    trackName: string,
+    groupId: bigint,
+    object: SubgroupObjectMessageWithLoc
+  ): void {
     if (object.objectStatus != null) {
       return
     }
@@ -566,12 +556,12 @@ export class LivePlayer {
       return
     }
     for (const [kind, subscription] of this.subscriptions.entries()) {
-      const track = this.tracksOf(kind).find((candidate) => candidate.name === subscription.track.name)
+      const track = this.tracks[kind].find((candidate) => candidate.name === subscription.track.name)
       if (!track || JSON.stringify(track) === JSON.stringify(subscription.track)) {
         continue
       }
       this.locLive.configureTrack(kind, track)
-      this.subscriptions.redefine(kind, track)
+      subscription.track = track
       this.context.log('info', `${kind} track ${track.name} redefined by the catalog`)
     }
   }
@@ -698,7 +688,7 @@ export class LivePlayer {
   }
 
   private reviewVideoConfig(): VideoDecoderConfig | undefined {
-    const track = this.videoTracks.find((candidate) => candidate.name === this.subscriptions.get('video')?.name)
+    const track = this.subscriptions.get('video')?.track
     if (!track?.codec) {
       return undefined
     }
@@ -706,7 +696,7 @@ export class LivePlayer {
   }
 
   private reviewAudioConfig(): AudioDecoderConfig | undefined {
-    const track = this.audioTracks.find((candidate) => candidate.name === this.subscriptions.get('audio')?.name)
+    const track = this.subscriptions.get('audio')?.track
     if (!track?.codec || !track.samplerate) {
       return undefined
     }
@@ -773,13 +763,9 @@ export class LivePlayer {
     return this.packaging === 'cmaf' && this.review !== undefined
   }
 
-  private effectivePlaybackRate(): number {
-    return this.playbackRateAdjustable() ? this.playbackRate : 1
-  }
-
   private applyPlaybackRate(): void {
     if (this.playbackRateAdjustable() && this.cmafReview.sink) {
-      this.cmafReview.sink.element.playbackRate = this.effectivePlaybackRate()
+      this.cmafReview.sink.element.playbackRate = this.playbackRate
     }
   }
 }

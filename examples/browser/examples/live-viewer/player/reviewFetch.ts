@@ -39,10 +39,7 @@ export async function fetchFrames(
 ): Promise<ReviewFrame[] | FetchFailure | undefined> {
   const frames: ReviewFrame[] = []
   let requestId: bigint | undefined
-  let endStream: (end: FetchStreamEnd) => void = () => {}
-  const streamEnd = new Promise<FetchStreamEnd>((resolve) => {
-    endStream = resolve
-  })
+  const { promise: streamEnd, resolve: endStream } = Promise.withResolvers<FetchStreamEnd>()
   try {
     ;({ requestId } = await context.client.fetch(context.namespace, trackName, start, 0n, end, 0n, {
       onObject: (message) => {

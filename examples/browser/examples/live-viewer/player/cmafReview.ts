@@ -13,22 +13,14 @@ const APPEND_POLL_MS = 200
 /// replaces stays on screen until the new one has presented a frame.
 export class CmafReview {
   sink: MseSink | undefined
-  private opened = false
-
-  get needsOpen(): boolean {
-    return !this.opened
-  }
-
-  restart(): void {
-    this.opened = false
-  }
+  needsOpen = true
 
   /// Returns the sink it replaces, which the caller closes once the new one is
   /// on screen.
   async open(element: HTMLVideoElement, sources: MseSources): Promise<MseSink | undefined> {
     const previous = this.sink
     this.sink = await MseSink.open(element, sources)
-    this.opened = true
+    this.needsOpen = false
     return previous
   }
 
@@ -62,6 +54,6 @@ export class CmafReview {
   close(): void {
     this.sink?.close()
     this.sink = undefined
-    this.opened = false
+    this.needsOpen = true
   }
 }

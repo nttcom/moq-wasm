@@ -137,7 +137,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
 | `stallWatch` | Whether the wanted picture has stood still |
-| `streamConventions` | The publisher conventions below |
+| `streamConventions` | The relay cache TTL the seek axis keeps groups for |
 
 The existing classes (`LivePlayout`, `PlayoutClock`, `JitterBuffer`,
 `AudioPlayout`, `AudioSplice`, `VideoPlayout`, `LivePictureSink`,
@@ -147,8 +147,8 @@ Each player creates its own decoder workers, two per instance.
 
 ## Stream conventions
 
-The player relies on how the publishers shape their tracks. These are kept as
-named constants in one module, not as options, until a publisher differs:
+The player relies on how the publishers shape their tracks. They are written
+where they are used, not as options, until a publisher differs:
 
 | Convention | live-ingest / MP4 publisher | ONVIF bridge |
 | --- | --- | --- |

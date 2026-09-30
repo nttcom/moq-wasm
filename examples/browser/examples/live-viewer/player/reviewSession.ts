@@ -56,11 +56,8 @@ export class ReviewSession {
     this.playheadMicros = this.anchorMicros
   }
 
-  followLiveEdge(): void {
+  start(): void {
     void this.pollLiveEdge()
-  }
-
-  play(): void {
     void this.run()
   }
 

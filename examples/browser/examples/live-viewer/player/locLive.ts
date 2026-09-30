@@ -5,8 +5,8 @@ import { postSubgroupObjectToWorker } from '../../../utils/media/decoderWorker'
 import type { BufferPolicy } from '../jitterBuffer'
 import { LivePlayout } from '../livePlayout'
 import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from '../livePictureSink'
-import { ANNEX_B_FORMAT } from './streamConventions'
-import type { MediaKind, SubgroupObject } from './trackContext'
+import type { MediaKind } from './trackContext'
+import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 
 const PRESENTATION_MARGIN_MS = 200
 
@@ -76,14 +76,14 @@ export class LocLive {
       postVideoCatalogToWorker(this.videoWorker, {
         codec: track.codec,
         initData: track.initData,
-        avcFormat: track.initData ? undefined : ANNEX_B_FORMAT
+        avcFormat: track.initData ? undefined : 'annexb'
       })
       return
     }
     postAudioCatalogToWorker(this.audioWorker, track)
   }
 
-  push(kind: MediaKind, groupId: bigint, object: SubgroupObject): void {
+  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void {
     postSubgroupObjectToWorker(kind === 'video' ? this.videoWorker : this.audioWorker, groupId, object)
   }
 

@@ -1,6 +1,7 @@
 import { getErrorMessage } from '../../media/common'
 import type { MediaCatalogTrack } from '../../media/catalog'
-import { type MediaKind, type SubgroupObjectHandler, type TrackContext, observedObjectHandler } from './trackContext'
+import { type MediaKind, type TrackContext, observedObjectHandler } from './trackContext'
+import type { SubgroupObjectHandler } from '@moqt/subscriptionStateManager'
 
 export type TrackSubscription = {
   requestId: bigint
@@ -26,10 +27,6 @@ export class TrackSubscriptions {
     return [...this.subscriptions]
   }
 
-  kinds(): MediaKind[] {
-    return [...this.subscriptions.keys()]
-  }
-
   get paused(): boolean {
     return this.forwardPaused
   }
@@ -51,13 +48,6 @@ export class TrackSubscriptions {
       observedObjectHandler(this.context, subscribeOk.trackAlias, wireName, handler)
     )
     this.context.log('info', `subscribed ${namespace.join('/')}/${wireName}`)
-  }
-
-  redefine(kind: MediaKind, track: MediaCatalogTrack): void {
-    const subscription = this.subscriptions.get(kind)
-    if (subscription) {
-      this.subscriptions.set(kind, { ...subscription, track })
-    }
   }
 
   async unsubscribe(kind: MediaKind): Promise<void> {

@@ -1,5 +1,6 @@
 import { getErrorMessage } from '../../media/common'
-import { type SubscribeOk, type TrackContext, observedObjectHandler } from './trackContext'
+import { type TrackContext, observedObjectHandler } from './trackContext'
+import type { SubscribeOkMessage } from '../../../pkg/moqt_client_wasm'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 
@@ -7,16 +8,13 @@ export async function subscribeTextTrack(
   context: TrackContext,
   name: string,
   onText: TextTrackHandler
-): Promise<SubscribeOk> {
+): Promise<SubscribeOkMessage> {
   const { subscribeOk } = await context.client.subscribe(context.namespace, name, context.authInfo, { forward: true })
   context.client.setOnSubgroupObjectHandler(
     subscribeOk.trackAlias,
-    observedObjectHandler(context, subscribeOk.trackAlias, name, (groupId, object) => {
-      const payload = new Uint8Array(object.objectPayload)
-      if (payload.byteLength > 0) {
-        onText(new TextDecoder().decode(payload), groupId)
-      }
-    })
+    observedObjectHandler(context, subscribeOk.trackAlias, name, (groupId, object) =>
+      deliverText(object.objectPayload, groupId, onText)
+    )
   )
   context.log('info', `subscribed ${context.namespace.join('/')}/${name}`)
   return subscribeOk
@@ -28,7 +26,7 @@ export async function subscribeTextTrack(
 export async function fetchLatestText(
   context: TrackContext,
   name: string,
-  subscribeOk: SubscribeOk,
+  subscribeOk: SubscribeOkMessage,
   onText: TextTrackHandler
 ): Promise<void> {
   const largestGroup = subscribeOk.largestGroupId
@@ -54,10 +52,7 @@ export async function fetchLatestText(
             message.objectId,
             message.objectPayload.byteLength
           )
-          const payload = new Uint8Array(message.objectPayload)
-          if (payload.byteLength > 0) {
-            onText(new TextDecoder().decode(payload), message.groupId)
-          }
+          deliverText(message.objectPayload, message.groupId, onText)
         }
       }
     )
@@ -65,5 +60,11 @@ export async function fetchLatestText(
     context.log('info', `fetched ${name}`)
   } catch (error) {
     context.log('info', `fetch ${name}: ${getErrorMessage(error)}`)
+  }
+}
+
+function deliverText(payload: Uint8Array, groupId: bigint, onText: TextTrackHandler): void {
+  if (payload.byteLength > 0) {
+    onText(new TextDecoder().decode(payload), groupId)
   }
 }

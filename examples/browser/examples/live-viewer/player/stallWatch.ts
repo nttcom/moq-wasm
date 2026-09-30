@@ -1,8 +1,5 @@
 const STALL_MS = 500
 
-/// Reports the picture as stalled once it has stood still for `STALL_MS`:
-/// each presented frame clears it and restarts the wait, whether the data is
-/// late or the next window is still being fetched.
 export class StallWatch {
   private timer: ReturnType<typeof setTimeout> | undefined
   stalled = false

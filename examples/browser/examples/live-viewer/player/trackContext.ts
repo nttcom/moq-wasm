@@ -1,4 +1,5 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
+import type { SubgroupObjectHandler } from '@moqt/subscriptionStateManager'
 import { readLocHeader } from '../../../utils/media/loc'
 import type { StreamMonitor } from '../streamMonitor'
 
@@ -7,12 +8,6 @@ export type Packaging = 'loc' | 'cmaf'
 export type MediaKind = 'video' | 'audio'
 
 export type LogLevel = 'info' | 'warn' | 'error'
-
-export type SubgroupObject = Parameters<Parameters<MoqtClientWrapper['setOnSubgroupObjectHandler']>[1]>[1]
-
-export type SubgroupObjectHandler = (groupId: bigint, object: SubgroupObject) => void
-
-export type SubscribeOk = Awaited<ReturnType<MoqtClientWrapper['subscribe']>>['subscribeOk']
 
 export type DeliveryObserver = Pick<
   StreamMonitor,
