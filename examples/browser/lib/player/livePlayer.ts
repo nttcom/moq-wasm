@@ -15,7 +15,7 @@ import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
 import type { LivePictureKind } from './livePictureSink'
 import { CatalogFollower } from './catalogFollower'
-import type { DeliveryObserver } from './deliveryObserver'
+import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
 import { LocLive } from './locLive'
@@ -24,7 +24,7 @@ import { PictureStage } from './pictureStage'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
-import { subscribeTextTrack } from './textTrack'
+import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import { TrackSubscriptions } from './trackSubscriptions'
@@ -42,10 +42,9 @@ export type LivePlayerCallbacks = {
 
 export type LivePlayerOptions = {
   client: MoqtClientWrapper
-  authInfo: string
   container: HTMLElement
   callbacks: LivePlayerCallbacks
-  deliveryObserver: DeliveryObserver
+  deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
 }
 
@@ -95,6 +94,7 @@ export type LivePlayerStats = {
 export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
+  private readonly textTracks: TextTracks
   private readonly catalog: CatalogFollower
   private readonly subscriptions: TrackSubscriptions
   private readonly timeline = new SeekTimeline()
@@ -124,11 +124,12 @@ export class LivePlayer {
     this.context = {
       client: options.client,
       namespace: [],
-      authInfo: options.authInfo,
-      observer: options.deliveryObserver,
+      authInfo: '',
+      observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => options.callbacks.onLog(level, message)
     }
-    this.catalog = new CatalogFollower(this.context, (text) => void this.applyCatalog(text))
+    this.textTracks = new TextTracks(this.context)
+    this.catalog = new CatalogFollower(this.context, this.textTracks, (text) => void this.applyCatalog(text))
     this.subscriptions = new TrackSubscriptions(this.context)
     this.stallWatch = new StallWatch(() => this.changed())
     this.stage = new PictureStage(options.container)
@@ -228,8 +229,9 @@ export class LivePlayer {
     return this.timeline.media.elapsedMsAt(captureMicros)
   }
 
-  async start(namespace: string[]): Promise<void> {
+  async start(namespace: string[], authInfo: string): Promise<void> {
     this.context.namespace = namespace
+    this.context.authInfo = authInfo
     this.started = true
     this.changed()
     await this.catalog.follow()
@@ -246,6 +248,7 @@ export class LivePlayer {
     for (const [kind] of this.subscriptions.entries()) {
       await this.subscriptions.unsubscribe(kind)
     }
+    await this.textTracks.unsubscribeAll()
     this.catalog.reset()
     this.tracks = { video: [], audio: [] }
     this.cmafTracks = []
@@ -451,7 +454,7 @@ export class LivePlayer {
     if (!track || !this.timeline.followMediaTimeline(track)) {
       return
     }
-    await subscribeTextTrack(this.context, track.name, (text) => {
+    await this.textTracks.subscribe(track.name, (text) => {
       try {
         this.timeline.replaceMediaTimeline(text)
       } catch (error) {

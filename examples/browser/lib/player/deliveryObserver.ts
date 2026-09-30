@@ -36,3 +36,13 @@ export interface DeliveryObserver {
   setPlayhead(playhead: Playhead): void
   clearPlayhead(kind: StreamKind): void
 }
+
+export const UNOBSERVED_DELIVERIES: DeliveryObserver = {
+  label: () => {},
+  object: () => {},
+  fetchObject: () => {},
+  fetchFinished: () => {},
+  forget: () => {},
+  setPlayhead: () => {},
+  clearPlayhead: () => {}
+}

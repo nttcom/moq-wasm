@@ -74,18 +74,17 @@ Rules:
 - L1 still reads the MSF catalog through `examples/media/catalog.ts` and uses
   `getErrorMessage` from `examples/media/common.ts`; the catalog reader shares
   its audio track naming with the media publishers there.
-- Diagnostics stay in L3. L1 reports deliveries to an observer whose shape is
-  the subset of `StreamMonitor` it calls (`DeliveryObserver`).
+- Diagnostics stay in L3. L1 reports deliveries to an optional observer
+  (`DeliveryObserver`), which the Live Viewer's `StreamMonitor` implements.
 
 ## Public API (L1)
 
 ```ts
 type LivePlayerOptions = {
   client: MoqtClientWrapper
-  authInfo: string
   container: HTMLElement
   callbacks: LivePlayerCallbacks
-  deliveryObserver: DeliveryObserver
+  deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
 }
 
@@ -96,7 +95,7 @@ type LivePlayerCallbacks = {
 }
 
 class LivePlayer {
-  start(namespace: string[]): Promise<void>
+  start(namespace: string[], authInfo: string): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   selectAudioTrack(name: string): Promise<void>
@@ -204,5 +203,16 @@ named `live-player-*`.
    container; split `viewer.css` into player and page styles.
 3. Extract the controls into `lib/player/ui`.
 4. Resolve review audio by capture time (the ONVIF convention above).
-5. Adopt the player in `examples/onvif`, keeping PTZ and its diagnostics in
-   the page.
+5. Adopt the player in `examples/onvif`, keeping the PTZ commands in the page.
+
+## Consumers
+
+- `examples/live-viewer`: the player, its controls, and the page's diagnostics
+  (StreamMonitor, delivery grid, PlaybackCharts), the MP4 publisher and the
+  connection form.
+- `examples/onvif`: the player and its controls on the session that also
+  announces the viewer namespace and answers the bridge's SUBSCRIBE for the
+  PTZ command track. Latency follows the player's jitter buffer; the worker
+  pacing presets, the jitter-buffer visualizer and the worker-telemetry stats
+  the page used to show are gone with it, and the catalog, video and audio are
+  subscribed by the player instead of by request ids typed into the page.

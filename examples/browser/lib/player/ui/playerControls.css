@@ -1,6 +1,6 @@
 .viewer-stage {
   position: relative;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border, #d5e3df);
   border-radius: 16px;
   overflow: hidden;
   background: #0c1111;
@@ -86,7 +86,7 @@
   border-radius: 50%;
   background: rgba(4, 14, 14, 0.62);
   color: #fff;
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, 'SFMono-Regular', Menlo, monospace);
   font-size: 0.85rem;
   cursor: pointer;
 }
@@ -128,7 +128,7 @@
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, 'SFMono-Regular', Menlo, monospace);
   font-size: 0.78rem;
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
@@ -169,7 +169,7 @@
   top: 0;
   bottom: 0;
   border-radius: 2px;
-  background: var(--accent-2);
+  background: var(--accent-2, #e07a5f);
 }
 
 #seekbar {
@@ -231,7 +231,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
   color: #fff;
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, 'SFMono-Regular', Menlo, monospace);
   font-size: 0.78rem;
   cursor: pointer;
 }
@@ -251,7 +251,7 @@
 /* Reviewing means the viewer is behind the live edge, so the button that
    returns there is filled instead of translucent. */
 .viewer-live.reviewing {
-  background: var(--accent-2);
+  background: var(--accent-2, #e07a5f);
   color: #2b1109;
 }
 
@@ -267,7 +267,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
   color: #fff;
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, 'SFMono-Regular', Menlo, monospace);
   font-size: 0.78rem;
   cursor: pointer;
 }
@@ -319,7 +319,7 @@
 
 .viewer-menu output {
   color: rgba(255, 255, 255, 0.86);
-  font-family: var(--font-mono);
+  font-family: var(--font-mono, 'SFMono-Regular', Menlo, monospace);
   font-size: 0.78rem;
 }
 
