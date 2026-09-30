@@ -1,5 +1,4 @@
 import type { MediaCatalogTrack } from '../../examples/media/catalog'
-import { monotonicUnixMicros } from '../../utils/media/clock'
 import { AudioGroups } from './audioGroups'
 import { MediaTimeline } from './mediaTimeline'
 import { GroupTimeline } from './rewind'
@@ -18,7 +17,7 @@ export type SeekAxis = {
 export class SeekTimeline {
   readonly groups = new GroupTimeline(RELAY_CACHE_TTL_MICROS)
   readonly media = new MediaTimeline()
-  readonly audio = new AudioGroups(monotonicUnixMicros)
+  readonly audio = new AudioGroups()
   private readonly unstampedGroups = new Set<bigint>()
   private mediaTrack: { name: string; depends: string[] } | undefined
 

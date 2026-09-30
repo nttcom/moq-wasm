@@ -42,7 +42,7 @@ export class ReviewSession {
   behindSeconds = 0
   readonly fetchWindows: ReviewFetchWindow[] = []
   private ended = false
-  private audioPlayedThroughMicros: number | undefined
+  private audioPlayedThroughMicros = Number.NEGATIVE_INFINITY
   readonly isCurrent = (): boolean => !this.ended
 
   constructor(
@@ -217,18 +217,13 @@ export class ReviewSession {
   /// Audio groups that cover consecutive windows are fetched for each of them,
   /// so what an earlier window has already played is left out.
   private unplayedAudio(audio: ReviewFrame[]): ReviewFrame[] {
-    const playedThrough = this.audioPlayedThroughMicros
     const unplayed = audio.filter(
-      (chunk) => chunk.captureMicros === undefined || playedThrough === undefined || chunk.captureMicros > playedThrough
+      (chunk) => chunk.captureMicros === undefined || chunk.captureMicros > this.audioPlayedThroughMicros
     )
-    for (const chunk of unplayed) {
-      if (chunk.captureMicros !== undefined) {
-        this.audioPlayedThroughMicros = Math.max(
-          this.audioPlayedThroughMicros ?? chunk.captureMicros,
-          chunk.captureMicros
-        )
-      }
-    }
+    this.audioPlayedThroughMicros = unplayed.reduce(
+      (through, chunk) => Math.max(through, chunk.captureMicros ?? through),
+      this.audioPlayedThroughMicros
+    )
     return unplayed
   }
 

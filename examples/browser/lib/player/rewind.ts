@@ -102,10 +102,7 @@ export class GroupTimeline {
   }
 
   startAfter(groupId: bigint): number | undefined {
-    return this.cached()
-      .filter((mark) => mark.groupId > groupId)
-      .reduce<ObservedMark | undefined>((next, mark) => (next && next.groupId < mark.groupId ? next : mark), undefined)
-      ?.captureMicros
+    return this.cached().find((mark) => mark.groupId > groupId)?.captureMicros
   }
 
   secondsBehindLive(groupId: bigint): number {
