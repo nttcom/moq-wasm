@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { appendCloudRelayPresetButtons } from '../../utils/relayPresets'
 import { MEDIA_CATALOG_TRACK_NAME } from '../media/catalog'
-import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatus } from '../media/common'
+import { element, getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatus } from '../media/common'
 import type { LivePictureKind } from '@player/livePictureSink'
 import { PlayerControls } from '@player/ui/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
@@ -269,12 +269,4 @@ function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
   entry.className = `log-entry log-${level}`
   entry.textContent = `${new Date().toLocaleTimeString()} ${message}`
   panel.prepend(entry)
-}
-
-function element<T extends Element>(id: string): T {
-  const found = document.getElementById(id)
-  if (!found) {
-    throw new Error(`missing element: ${id}`)
-  }
-  return found as Element as T
 }
