@@ -25,6 +25,7 @@ sequenceDiagram
 djev-run を `--language-model-only` なしで起動し、画像を受け付けるようにした Cloud Run サービス `djev-vision`（asia-southeast1）です。
 vLLM の画像前処理キャッシュは API とエンジンのプロセス間でずれるため、`--mm-processor-cache-gb 0` で無効にしています。
 IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。停止後の最初の判定はコールドスタートで約 3 分かかります。
+デプロイ手順は [djev-run を Cloud Run にデプロイする](../djev-run-on-cloud-run.md) にあります。
 
 vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs 非対応）ため、選択肢に番号を振って番号だけで答えるよう指示し、
 返答の最終行の先頭の数字を読みます。選択肢の番号でなければ「判定できません」と表示します。
