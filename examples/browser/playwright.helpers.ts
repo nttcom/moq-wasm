@@ -8,6 +8,7 @@ export const MEDIA_SUBSCRIBER_PATH = '/moq-wasm/examples/media/subscriber/index.
 export const MEETING_INDEX_PATH = '/moq-wasm/examples/meeting/index.html'
 export const MESSAGE_INDEX_PATH = '/moq-wasm/examples/message/index.html'
 export const LIVE_VIEWER_PATH = '/moq-wasm/examples/live-viewer/index.html'
+export const CHAT_MODERATION_PATH = '/moq-wasm/examples/moq-chat-moderation/index.html'
 
 export function ensureLinuxEnvironment(): void {
   if (process.platform !== 'linux' && process.platform !== 'darwin') {

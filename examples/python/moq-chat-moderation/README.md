@@ -69,3 +69,9 @@ sequenceDiagram
 ```shell
 uv run pytest
 ```
+
+E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の Jev・bot を起動し、Playwright でページを操作します。
+
+```shell
+node scripts/run-chat-moderation-e2e.mjs
+```

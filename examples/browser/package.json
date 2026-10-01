@@ -17,7 +17,8 @@
     "e2e:message": "playwright test tests/message-e2e.spec.ts",
     "e2e:live-viewer": "playwright test tests/live-viewer-e2e.spec.ts",
     "e2e:live-viewer-mp4": "playwright test tests/live-viewer-mp4-e2e.spec.ts",
-    "e2e:live-viewer-delivery": "playwright test tests/live-viewer-delivery-e2e.spec.ts"
+    "e2e:live-viewer-delivery": "playwright test tests/live-viewer-delivery-e2e.spec.ts",
+    "e2e:chat-moderation": "playwright test tests/chat-moderation-e2e.spec.ts"
   },
   "keywords": [],
   "author": "",
