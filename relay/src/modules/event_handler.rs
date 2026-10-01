@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     auth::{
+        anonymous_root::{scope_anonymous_root_prefix, scope_anonymous_root_subscription},
         request_gate::{authorize_request, reject_unauthorized},
         token_refresh::refresh_token,
         token_verifier::TokenVerifier,
@@ -222,6 +223,7 @@ impl EventHandler {
                     continue;
                 }
             };
+            let event = scope_anonymous_root_subscription(verified_token.as_deref(), event);
             let event_span = Self::session_event_span(session_id, &session_span, &event);
             event_span.in_scope(|| match event {
                 MoqtSessionEvent::ProtocolViolation() => tracing::error!("Received session event"),
@@ -289,7 +291,10 @@ impl EventHandler {
                             local_pub_sub_directory.as_ref(),
                             &control_message_forwarder,
                             cascading_relay_context(),
-                            &handler,
+                            scope_anonymous_root_prefix(
+                                verified_token.as_deref(),
+                                handler.track_namespace_prefix(),
+                            ),
                         )
                         .instrument(event_span)
                         .await;

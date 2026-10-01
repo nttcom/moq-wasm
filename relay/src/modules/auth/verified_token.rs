@@ -2,6 +2,8 @@ use std::time::SystemTime;
 
 pub(crate) type NamespacePath = Vec<String>;
 
+pub(crate) const ANONYMOUS_APP_ID: &str = "anon";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VerifiedToken {
     pub(crate) app_id: String,
@@ -24,12 +26,16 @@ impl VerifiedToken {
 
     pub(crate) fn anonymous() -> Self {
         Self {
-            app_id: "anon".to_string(),
+            app_id: ANONYMOUS_APP_ID.to_string(),
             publish: Some(vec![]),
             subscribe: Some(vec![]),
             is_relay: false,
             expires_at: None,
         }
+    }
+
+    pub(crate) fn is_anonymous(&self) -> bool {
+        *self == Self::anonymous()
     }
 }
 

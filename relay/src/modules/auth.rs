@@ -1,3 +1,4 @@
+pub(crate) mod anonymous_root;
 pub(crate) mod authorize;
 pub(crate) mod request_gate;
 pub(crate) mod session_authenticator;

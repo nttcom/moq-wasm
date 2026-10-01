@@ -26,9 +26,8 @@ impl UnsubscribeNamespace {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
-        handler: &moqt::UnsubscribeNamespaceHandler,
+        track_namespace_prefix: &str,
     ) {
-        let track_namespace_prefix = handler.track_namespace_prefix();
         tracing::info!(
             session_id = %session_id,
             track_namespace_prefix = %track_namespace_prefix,
