@@ -34,8 +34,8 @@ class GopSender {
     private readonly trackAlias: bigint
   ) {}
 
-  /// Each keyframe opens a group, so the detector, which judges the first object of
-  /// every group, always starts from a decodable picture.
+  /// Each keyframe opens a group, so the detector, which starts a decoder at every
+  /// group, always starts from a decodable picture.
   async send(chunk: EncodedVideoChunk): Promise<void> {
     if (chunk.type === 'key') {
       await this.closeGroup()

@@ -8,27 +8,26 @@ Accepted
 
 ## Context
 The camera detection bot (`examples/python/moq-camera-detection`) receives the browser's camera as H.264 Annex B
-objects over MoQ: one group per keyframe. djev-vision judges images, not video, so the bot has to decode each
-group's keyframe and send it as a JPEG. pipecat's `MOQTransport` does not receive video, and the `moq` library
+objects over MoQ: one group per keyframe. djev-vision judges images, not video, so the bot has to decode the
+frames of each group and send a picture every 0.1 s as a JPEG. pipecat's `MOQTransport` does not receive video, and the `moq` library
 hands over encoded frames only, so neither decodes H.264.
 
 ## Decision
-Use **PyAV** (`av`) to decode the keyframe with FFmpeg's H.264 decoder and to encode the picture with its MJPEG
+Use **PyAV** (`av`) to decode the frames with FFmpeg's H.264 decoder and to encode the picture with its MJPEG
 encoder.
 
 PyAV ships binary wheels that bundle FFmpeg, so `uv sync` is enough on macOS and Linux. One library covers both
-the decode and the JPEG encode, and its libx264 encoder lets the tests build a real Annex B keyframe.
+the decode and the JPEG encode, and its libx264 encoder lets the tests build a real Annex B group.
 
 ## Consequences
 
 ### Positive
 - No system FFmpeg or extra image library is needed
-- Decoding works on any keyframe the browser's WebCodecs encoder produces, SPS/PPS included
+- Decoding works on any group the browser's WebCodecs encoder produces, SPS/PPS included
 
 ### Negative
 - The wheel is large (tens of MB) for an example
-- Each keyframe is decoded on its own, so a picture that depends on earlier frames cannot be judged; the
-  browser therefore starts every group with a keyframe
+- A decoder starts at a group boundary, so the browser has to start every group with a keyframe
 
 ## Alternatives Considered
 
@@ -40,7 +39,7 @@ Pillow cannot decode H.264. OpenCV can, through its own FFmpeg build, but it is 
 NumPy round trips to produce a JPEG.
 
 ### Shelling out to the `ffmpeg` CLI
-Requires FFmpeg on every machine and a process per keyframe.
+Requires FFmpeg on every machine and a process per camera stream.
 
 ## References
 - [PyAV](https://pyav.basswood-io.com/)

@@ -13,13 +13,17 @@ READ_TIMEOUT_SECONDS = 2
 TRACK_NAME = "eventtimeline"
 
 
-def h264_keyframe() -> bytes:
+def h264_group(frame_count: int) -> list[bytes]:
     encoder = av.CodecContext.create("libx264", "w")
     encoder.width = 64
     encoder.height = 48
     encoder.pix_fmt = "yuv420p"
-    picture = av.VideoFrame(64, 48, "yuv420p")
-    return b"".join(bytes(packet) for packet in [*encoder.encode(picture), *encoder.encode(None)])
+    encoder.options = {"tune": "zerolatency", "profile": "baseline"}
+    pictures = [av.VideoFrame(64, 48, "yuv420p") for _ in range(frame_count)]
+    for pts, picture in enumerate(pictures):
+        picture.pts = pts
+    packets = [packet for picture in [*pictures, None] for packet in encoder.encode(picture)]
+    return [bytes(packet) for packet in packets]
 
 
 async def next_records(group: moq.GroupConsumer) -> list[dict[str, Any]]:

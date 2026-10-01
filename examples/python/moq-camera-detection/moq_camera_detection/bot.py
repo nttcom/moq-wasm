@@ -9,10 +9,10 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_camera_detection.detector import CameraKeyframe, PersonDetector
+from moq_camera_detection.detector import CameraPicture, PersonDetector
 from moq_camera_detection.event_timeline import EventTimeline
 from moq_camera_detection.identity_token import GcloudIdentityToken
-from moq_camera_detection.keyframe import keyframe_to_jpeg
+from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import DjevVisionClient
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -21,6 +21,7 @@ DETECTOR_BROADCAST_PATH = "anon/moq-camera-detection/detector"
 VIDEO_TRACK = "video"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 RESUBSCRIBE_DELAY_SECONDS = 1.0
+SAMPLE_INTERVAL_SECONDS = 0.1
 # djev-vision scales to zero; a cold start copies 19 GB of weights before it answers.
 VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
@@ -44,21 +45,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def forward_keyframes(client: moq.Client, worker: PipelineWorker):
+async def forward_pictures(client: moq.Client, worker: PipelineWorker):
+    next_sample_at = 0.0
     while True:
         try:
             camera = await client.announced_broadcast(CAMERA_BROADCAST_PATH)
             track = await camera.subscribe_track(VIDEO_TRACK)
             async for group in track:
-                frame = await group.read_frame()
-                group.cancel()
-                if frame is None:
-                    continue
-                jpeg = await asyncio.to_thread(keyframe_to_jpeg, frame.payload)
-                if jpeg:
-                    await worker.queue_frame(
-                        CameraKeyframe(jpeg=jpeg, group_id=group.sequence, decoded_at=time.monotonic())
-                    )
+                decoder = GroupDecoder()
+                object_id = 0
+                while (frame := await group.read_frame()) is not None:
+                    picture = await asyncio.to_thread(decoder.decode, frame.payload)
+                    decoded_at = time.monotonic()
+                    if picture is not None and decoded_at >= next_sample_at:
+                        next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
+                        jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
+                        await worker.queue_frame(
+                            CameraPicture(
+                                jpeg=jpeg,
+                                location=(group.sequence, object_id),
+                                decoded_at=decoded_at,
+                            )
+                        )
+                    object_id += 1
         except moq.Error as error:
             logger.info(f"camera track ended: {error}")
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
@@ -89,7 +98,7 @@ async def main():
         )
         runner = WorkerRunner()
         await runner.add_workers(worker)
-        forwarding = asyncio.create_task(forward_keyframes(client, worker))
+        forwarding = asyncio.create_task(forward_pictures(client, worker))
         try:
             await runner.run()
         finally:

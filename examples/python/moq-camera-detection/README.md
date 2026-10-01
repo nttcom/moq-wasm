@@ -11,12 +11,12 @@ sequenceDiagram
     participant P as pipecat bot
     participant D as djev-vision (Cloud Run)
     B->>R: video (anon/moq-camera-detection/camera)、1 キーフレーム 1 group
-    R->>P: 各 group の先頭オブジェクト
-    P->>P: PyAV で H.264 をデコードして JPEG に
+    R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
+    P->>P: PyAV で H.264 をデコードし、0.1 秒ごとに 1 枚 JPEG に
     P->>D: /v1/chat/completions 画像 + 「person / no_person で答えて」
     D-->>P: person
     P->>R: eventtimeline (anon/moq-camera-detection/detector)
-    R->>B: {"l": [groupId, 0], "data": {"person": true}}
+    R->>B: {"l": [groupId, objectId], "data": {"person": true}}
 ```
 
 ## djev-vision
@@ -64,10 +64,11 @@ vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `anon/moq-camera-detection/camera` | `video` | ブラウザ | H.264 Annex B（640x480、ソフトウェアエンコード）。キーフレームごとに group を始める |
-| `anon/moq-camera-detection/detector` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定した group の先頭を指す |
+| `anon/moq-camera-detection/detector` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレームの位置を指す |
 
-- bot は各 group の先頭（キーフレーム）だけをデコードします。判定に 2 秒以上遅れたキーフレームは捨てるので、
-  コールドスタート中にたまったフレームは判定されません。
+- bot は group ごとにデコーダを作って全フレームをデコードし、0.1 秒ごとに 1 枚を判定に回します。判定中のリクエストが 8 件に
+  達している間の画像と、デコードから 2 秒以上たった画像は捨てるので、コールドスタート中にたまったフレームは判定されません。
+- 判定は並列に走るため、新しいフレームの判定より後に返ってきた古いフレームの判定は publish しません。
 - ブラウザはハードウェアエンコーダを使いません。macOS のハードウェアエンコーダは、偽カメラのファイル入力など一部のフレームで
   数フレーム出力したあと止まるためです。
 
