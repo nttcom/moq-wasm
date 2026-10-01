@@ -13,6 +13,7 @@ const AUTH_INFO = ''
 const SUBGROUP_ID = 0n
 const PUBLISHER_PRIORITY = 0
 const LARGEST_OBJECT_FILTER = 0x2
+const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 
 class ChatPublisher {
   /// The relay isolates a track whose publisher repeats a location, so a
@@ -169,7 +170,7 @@ function applyVerdicts(object: SubgroupObjectMessage): void {
     return
   }
   for (const verdict of parseModerationVerdicts(new Uint8Array(object.objectPayload))) {
-    labelMessage(verdict)
+    moderateMessage(verdict)
   }
 }
 
@@ -206,11 +207,18 @@ function appendMessage(text: string, location: Location): HTMLLIElement {
   return item
 }
 
-function labelMessage({ location, abusive }: ModerationVerdict): void {
+function moderateMessage({ location, abusive }: ModerationVerdict): void {
   const item = messages.get(locationKey(location))
-  if (item) {
-    setVerdict(item, abusive ? 'abusive' : 'ok', abusive ? '暴言' : '')
+  if (!item) {
+    return
   }
+  if (abusive) {
+    const body = item.querySelector('.chat-text')
+    if (body) {
+      body.textContent = REMOVED_MESSAGE_TEXT
+    }
+  }
+  setVerdict(item, abusive ? 'removed' : 'ok', '')
 }
 
 function setVerdict(item: HTMLLIElement, verdict: string, labelText: string): void {

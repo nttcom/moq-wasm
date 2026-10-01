@@ -2,7 +2,7 @@
 
 ブラウザの MoQ Chat Moderation ページ（`examples/browser/examples/moq-chat-moderation`）で打ったチャットを
 pipecat の bot が `MOQTransport` で受け取り、[Jev](https://docs.typesafe.ai/api) で暴言かどうかを判定します。
-判定結果は MSF の event timeline として publish され、ページは暴言のメッセージに「暴言」ラベルを付けます。
+判定結果は MSF の event timeline として publish され、ページは暴言のメッセージを「モデレーターによって削除されました」に置き換えます。
 
 ```mermaid
 sequenceDiagram

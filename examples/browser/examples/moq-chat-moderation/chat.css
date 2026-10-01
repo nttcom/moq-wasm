@@ -68,9 +68,13 @@
   background: #fff;
 }
 
-.chat-message[data-verdict='abusive'] {
-  border-color: #fca5a5;
-  background: #fef2f2;
+.chat-message[data-verdict='removed'] {
+  background: #f3f4f6;
+}
+
+.chat-message[data-verdict='removed'] .chat-text {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .chat-text {
@@ -87,12 +91,8 @@
   background: #f3f4f6;
 }
 
-.chat-message[data-verdict='abusive'] .chat-label {
-  color: #fff;
-  background: #dc2626;
-}
-
-.chat-message[data-verdict='ok'] .chat-label {
+.chat-message[data-verdict='ok'] .chat-label,
+.chat-message[data-verdict='removed'] .chat-label {
   display: none;
 }
 
