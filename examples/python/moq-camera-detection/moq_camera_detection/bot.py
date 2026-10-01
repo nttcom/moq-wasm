@@ -23,6 +23,7 @@ VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 RESUBSCRIBE_DELAY_SECONDS = 1.0
+RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
 # djev-vision scales to zero; a cold start copies 19 GB of weights before it answers.
 VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
@@ -103,21 +104,34 @@ async def forward_camera(client: moq.Client, worker: PipelineWorker):
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
+async def stay_connected(args: argparse.Namespace, publish_origin: moq.OriginProducer, worker: PipelineWorker):
+    while True:
+        try:
+            async with moq.Client(
+                args.relay_url,
+                tls_verify=not args.insecure,
+                publish=publish_origin,
+                subscribe=moq.OriginProducer(),
+            ) as client:
+                logger.info(f"connected to {args.relay_url}")
+                forwarding = asyncio.create_task(forward_camera(client, worker))
+                try:
+                    await client.session.closed()
+                finally:
+                    forwarding.cancel()
+            logger.warning("relay session closed")
+        except moq.Error as error:
+            logger.warning(f"relay session failed: {error}")
+        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+
+
 async def main():
     args = parse_args()
     publish_origin = moq.OriginProducer()
     detector_broadcast = publish_origin.create_broadcast(DETECTOR_BROADCAST_PATH)
     timeline = EventTimeline(detector_broadcast, EVENT_TIMELINE_TRACK)
 
-    async with (
-        aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session,
-        moq.Client(
-            args.relay_url,
-            tls_verify=not args.insecure,
-            publish=publish_origin,
-            subscribe=moq.OriginProducer(),
-        ) as client,
-    ):
+    async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session:
         vision = DjevVisionClient(
             session, args.djev_url, GcloudIdentityToken() if args.gcloud_auth else None
         )
@@ -128,11 +142,11 @@ async def main():
         )
         runner = WorkerRunner()
         await runner.add_workers(worker)
-        forwarding = asyncio.create_task(forward_camera(client, worker))
+        connecting = asyncio.create_task(stay_connected(args, publish_origin, worker))
         try:
             await runner.run()
         finally:
-            forwarding.cancel()
+            connecting.cancel()
 
 
 if __name__ == "__main__":
