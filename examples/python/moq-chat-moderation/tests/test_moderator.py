@@ -1,21 +1,14 @@
-import moq
 from pipecat.frames.frames import InputTransportMessageFrame
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.tests.utils import run_test
 
 from moq_chat_moderation.event_timeline import EventTimeline
 from moq_chat_moderation.moderator import ChatModerator
-from tests.helpers import StubJev, open_timeline
-
-TRACK_NAME = "eventtimeline"
+from tests.helpers import TRACK_NAME, StubJev, published_timeline
 
 
 async def moderate(jev: StubJev, message: dict) -> list[dict]:
-    timeline = EventTimeline(TRACK_NAME)
-    broadcast = moq.BroadcastProducer()
-    timeline.publish_on(broadcast)
-    reader = await open_timeline(broadcast, TRACK_NAME)
-    await reader.next_records()
+    timeline, reader = await published_timeline()
     await run_test(
         ChatModerator(jev, timeline),
         frames_to_send=[InputTransportMessageFrame(message=message)],

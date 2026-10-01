@@ -6,7 +6,10 @@ from typing import Any
 import moq
 from aiohttp import web
 
+from moq_chat_moderation.event_timeline import EventTimeline
+
 READ_TIMEOUT_SECONDS = 2
+TRACK_NAME = "eventtimeline"
 
 
 class TimelineReader:
@@ -22,10 +25,19 @@ class TimelineReader:
         return json.loads(frame.payload)
 
 
-async def open_timeline(broadcast: moq.BroadcastProducer, track_name: str) -> TimelineReader:
-    track = await broadcast.consume().subscribe_track(track_name)
+async def open_timeline(broadcast: moq.BroadcastProducer) -> TimelineReader:
+    track = await broadcast.consume().subscribe_track(TRACK_NAME)
     group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
     return TimelineReader(group)
+
+
+async def published_timeline() -> tuple[EventTimeline, TimelineReader]:
+    timeline = EventTimeline(TRACK_NAME)
+    broadcast = moq.BroadcastProducer()
+    timeline.publish_on(broadcast)
+    reader = await open_timeline(broadcast)
+    await reader.next_records()
+    return timeline, reader
 
 
 @dataclass
@@ -46,10 +58,4 @@ class FakeJevServer:
 
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response(
-            {
-                "model": "jev-1.13.0",
-                "answers": {"abusive": {"type": "noul", "noul": self.noul}},
-                "usage": {"input_tokens": 10, "output_tokens": 1},
-            }
-        )
+        return web.json_response({"answers": {"abusive": {"noul": self.noul}}})
