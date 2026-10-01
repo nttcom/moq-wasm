@@ -472,9 +472,12 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 ## Cascading relays (`route_registry`, `inter_relay`)
 
 - `RelayRouteRegistry` trait: `NoopRelayRouteRegistry` (single-relay, no
-  `REDIS_URL`) or `RedisRelayRouteRegistry` (relay info hash with 15 s TTL
-  refreshed by a 5 s heartbeat; namespace-publisher and namespace-subscriber
-  routes with the same TTL scheme).
+  `REDIS_URL`) or `RedisRelayRouteRegistry` (relay info hash and
+  namespace-publisher / namespace-subscriber routes with a 15 s TTL). The
+  registry keeps the routes it registered in memory, and its 5 s heartbeat
+  rewrites the relay info hash and re-registers any owned route whose entry is
+  missing, so state that expired while the relay, its host or Redis was
+  stalled is restored instead of staying lost until restart.
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
   `SubscribeNamespace` registers the subscriber route when the first client

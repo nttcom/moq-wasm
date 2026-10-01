@@ -192,6 +192,14 @@ async fn run(config: Config) -> anyhow::Result<()> {
     )
     .await?;
 
+    run_lost_route_restore_scenario(
+        &config.redis_url,
+        "relay-a",
+        &config.relay_a_url,
+        &scenario_namespace(&config.track_namespace, &run_id, "route-restore"),
+    )
+    .await?;
+
     tracing::info!("cascading relay e2e passed");
     println!("cascading relay e2e passed");
     Ok(())
@@ -210,7 +218,7 @@ async fn run_namespace_cleanup_scenario(
         %track_name,
         "running dual relay namespace cleanup scenario"
     );
-    delete_namespace_subscription(redis_url, track_namespace).await?;
+    delete_redis_keys(redis_url, &[namespace_subscription_key(track_namespace)]).await?;
 
     let result = run_pub_sub_scenario(
         "dual relay pub/sub with subscribe namespace",
@@ -223,9 +231,9 @@ async fn run_namespace_cleanup_scenario(
     )
     .await?;
 
-    wait_for_namespace_subscription_status(
+    wait_for_hash_field(
         redis_url,
-        track_namespace,
+        &namespace_subscription_key(track_namespace),
         subscriber_relay_id,
         Some("active"),
         Duration::from_secs(5),
@@ -240,15 +248,72 @@ async fn run_namespace_cleanup_scenario(
     );
     drop(result);
 
-    wait_for_namespace_subscription_status(
+    wait_for_hash_field(
         redis_url,
-        track_namespace,
+        &namespace_subscription_key(track_namespace),
         subscriber_relay_id,
         None,
         Duration::from_secs(15),
     )
     .await
     .context("subscriber relay did not remove SUBSCRIBE_NAMESPACE route after session close")?;
+    Ok(())
+}
+
+async fn run_lost_route_restore_scenario(
+    redis_url: &str,
+    publisher_relay_id: &str,
+    publisher_url: &str,
+    track_namespace: &str,
+) -> anyhow::Result<()> {
+    tracing::info!(%track_namespace, "running lost route restore scenario");
+    let route_key = namespace_publisher_key(track_namespace);
+    let publisher_session = connect_with_retry(publisher_url).await?;
+    publisher_session
+        .publisher()
+        .publish_namespace(track_namespace.to_string())
+        .await
+        .context("publisher failed to publish namespace")?;
+    wait_for_hash_field(
+        redis_url,
+        &route_key,
+        publisher_relay_id,
+        Some("active"),
+        Duration::from_secs(5),
+    )
+    .await
+    .context("publisher relay did not register PUBLISH_NAMESPACE route")?;
+
+    tracing::info!(
+        relay_id = publisher_relay_id,
+        %route_key,
+        "deleting relay entry and route as if their TTLs had lapsed"
+    );
+    delete_redis_keys(
+        redis_url,
+        &[relay_key(publisher_relay_id), route_key.clone()],
+    )
+    .await?;
+
+    wait_for_hash_field(
+        redis_url,
+        &relay_key(publisher_relay_id),
+        "status",
+        Some("active"),
+        Duration::from_secs(10),
+    )
+    .await
+    .context("publisher relay did not restore its relay entry")?;
+    wait_for_hash_field(
+        redis_url,
+        &route_key,
+        publisher_relay_id,
+        Some("active"),
+        Duration::from_secs(10),
+    )
+    .await
+    .context("publisher relay did not restore its PUBLISH_NAMESPACE route")?;
+    drop(publisher_session);
     Ok(())
 }
 
@@ -921,52 +986,41 @@ where
     }
 }
 
-async fn delete_namespace_subscription(redis_url: &str, prefix: &str) -> anyhow::Result<()> {
+async fn delete_redis_keys(redis_url: &str, keys: &[String]) -> anyhow::Result<()> {
     let mut connection = redis_connection(redis_url).await?;
-    let _: () = connection.del(namespace_subscription_key(prefix)).await?;
+    let _: () = connection.del(keys).await?;
     Ok(())
 }
 
-async fn wait_for_namespace_subscription_status(
+async fn wait_for_hash_field(
     redis_url: &str,
-    prefix: &str,
-    relay_id: &str,
+    key: &str,
+    field: &str,
     expected: Option<&str>,
     timeout: Duration,
 ) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + timeout;
     while tokio::time::Instant::now() < deadline {
-        let status = namespace_subscription_status(redis_url, prefix, relay_id).await?;
-        if status.as_deref() == expected {
-            tracing::info!(
-                track_namespace_prefix = %prefix,
-                relay_id,
-                ?expected,
-                "observed namespace subscription status"
-            );
+        let value = hash_field(redis_url, key, field).await?;
+        if value.as_deref() == expected {
+            tracing::info!(key, field, ?expected, "observed redis hash field");
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    let actual = namespace_subscription_status(redis_url, prefix, relay_id).await?;
+    let actual = hash_field(redis_url, key, field).await?;
     bail!(
-        "namespace subscription status mismatch for prefix={prefix} relay_id={relay_id}: expected {:?}, got {:?}",
+        "redis hash field mismatch for key={key} field={field}: expected {:?}, got {:?}",
         expected,
         actual
     )
 }
 
-async fn namespace_subscription_status(
-    redis_url: &str,
-    prefix: &str,
-    relay_id: &str,
-) -> anyhow::Result<Option<String>> {
+async fn hash_field(redis_url: &str, key: &str, field: &str) -> anyhow::Result<Option<String>> {
     let mut connection = redis_connection(redis_url).await?;
-    let status: Option<String> = connection
-        .hget(namespace_subscription_key(prefix), relay_id)
-        .await?;
-    Ok(status)
+    let value: Option<String> = connection.hget(key, field).await?;
+    Ok(value)
 }
 
 async fn redis_connection(redis_url: &str) -> anyhow::Result<redis::aio::ConnectionManager> {
@@ -976,6 +1030,14 @@ async fn redis_connection(redis_url: &str) -> anyhow::Result<redis::aio::Connect
 
 fn namespace_subscription_key(prefix: &str) -> String {
     format!("route:subscriber:namespace:{prefix}")
+}
+
+fn namespace_publisher_key(track_namespace: &str) -> String {
+    format!("route:publisher:namespace:{track_namespace}")
+}
+
+fn relay_key(relay_id: &str) -> String {
+    format!("relay:{relay_id}")
 }
 
 fn scenario_namespace(base: &str, run_id: &str, scenario: &str) -> String {

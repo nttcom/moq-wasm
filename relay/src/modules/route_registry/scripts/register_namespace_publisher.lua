@@ -6,6 +6,4 @@ for i = 1, #entries, 2 do
 end
 redis.call('HSET', KEYS[1], ARGV[1], 'active')
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-redis.call('SADD', KEYS[2], KEYS[1])
-redis.call('EXPIRE', KEYS[2], tonumber(ARGV[3]))
 return 1

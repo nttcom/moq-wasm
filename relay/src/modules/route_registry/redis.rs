@@ -5,10 +5,29 @@ use redis::AsyncCommands;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug)]
+enum RouteKind {
+    NamespacePublisher,
+    NamespaceSubscriber,
+}
+
+impl RouteKind {
+    fn register_script(self) -> redis::Script {
+        match self {
+            Self::NamespacePublisher => {
+                redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"))
+            }
+            Self::NamespaceSubscriber => {
+                redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"))
+            }
+        }
+    }
+}
+
 pub(crate) struct RedisRelayRouteRegistry {
     relay: RelayInfo,
     connection: redis::aio::ConnectionManager,
+    owned_routes: tokio::sync::Mutex<HashMap<String, RouteKind>>,
 }
 
 impl RedisRelayRouteRegistry {
@@ -20,8 +39,12 @@ impl RedisRelayRouteRegistry {
     pub(crate) async fn connect(redis_url: &str, relay: RelayInfo) -> anyhow::Result<Arc<Self>> {
         let client = redis::Client::open(redis_url)?;
         let connection = redis::aio::ConnectionManager::new(client).await?;
-        let registry = Arc::new(Self { relay, connection });
-        registry.register_relay(&registry.relay).await?;
+        let registry = Arc::new(Self {
+            relay,
+            connection,
+            owned_routes: tokio::sync::Mutex::new(HashMap::new()),
+        });
+        registry.register_relay().await?;
         registry.spawn_heartbeat();
         Ok(registry)
     }
@@ -34,18 +57,19 @@ impl RedisRelayRouteRegistry {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
                 loop {
                     interval.tick().await;
-                    if let Err(err) = registry.refresh_relay_info(&registry.relay.relay_id).await {
+                    if let Err(err) = registry.register_relay().await {
                         tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh relay heartbeat");
                     }
-                    if let Err(err) = registry.refresh_route_ttls().await {
-                        tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh route ttls");
+                    if let Err(err) = registry.refresh_owned_routes().await {
+                        tracing::warn!(?err, relay_id = %registry.relay.relay_id, "failed to refresh owned routes");
                     }
                 }
             })
             .expect("failed to spawn relay redis heartbeat");
     }
 
-    async fn register_relay(&self, relay: &RelayInfo) -> anyhow::Result<()> {
+    async fn register_relay(&self) -> anyhow::Result<()> {
+        let relay = &self.relay;
         let mut connection = self.connection.clone();
         let key = Self::relay_key(&relay.relay_id);
         let _: () = connection
@@ -66,15 +90,6 @@ impl RedisRelayRouteRegistry {
         Ok(())
     }
 
-    async fn refresh_relay_info(&self, relay_id: &str) -> anyhow::Result<()> {
-        let mut connection = self.connection.clone();
-        let key = Self::relay_key(relay_id);
-        let _: () = connection
-            .expire(key, Self::RELAY_TTL_SECONDS as i64)
-            .await?;
-        Ok(())
-    }
-
     fn parse_relay_info(relay_id: &str, values: &HashMap<String, String>) -> Option<RelayInfo> {
         let host = values.get("host")?.clone();
         let port = values.get("port")?.parse::<u16>().ok()?;
@@ -85,20 +100,32 @@ impl RedisRelayRouteRegistry {
         })
     }
 
-    async fn refresh_route_ttls(&self) -> anyhow::Result<()> {
-        let mut connection = self.connection.clone();
-        let relay_routes_key = Self::relay_routes_key(&self.relay.relay_id);
-        let keys: Vec<String> = connection.smembers(&relay_routes_key).await?;
-        if keys.is_empty() {
+    async fn refresh_owned_routes(&self) -> anyhow::Result<()> {
+        let owned_routes = self.owned_routes.lock().await;
+        if owned_routes.is_empty() {
             return Ok(());
         }
+        let mut connection = self.connection.clone();
         let mut pipe = redis::pipe();
-        for key in &keys {
-            pipe.expire(key, Self::ROUTE_TTL_SECONDS as i64).ignore();
+        pipe.atomic();
+        for key in owned_routes.keys() {
+            pipe.hexists(key, &self.relay.relay_id)
+                .expire(key, Self::ROUTE_TTL_SECONDS as i64)
+                .ignore();
         }
-        pipe.expire(&relay_routes_key, Self::RELAY_TTL_SECONDS as i64)
-            .ignore();
-        let _: () = pipe.query_async(&mut connection).await?;
+        let still_registered: Vec<bool> = pipe.query_async(&mut connection).await?;
+
+        for ((key, kind), still_registered) in owned_routes.iter().zip(still_registered) {
+            if still_registered {
+                continue;
+            }
+            match self.invoke_register_script(*kind, key).await {
+                Ok(()) => tracing::warn!(route_key = %key, "restored route lost from redis"),
+                Err(err) => {
+                    tracing::warn!(?err, route_key = %key, "failed to restore route lost from redis")
+                }
+            }
+        }
         Ok(())
     }
 
@@ -129,18 +156,24 @@ impl RedisRelayRouteRegistry {
         Ok(routes)
     }
 
-    async fn register_route(
+    async fn register_route(&self, kind: RouteKind, key: String) -> Result<(), RegisterRouteError> {
+        let mut owned_routes = self.owned_routes.lock().await;
+        self.invoke_register_script(kind, &key).await?;
+        owned_routes.insert(key, kind);
+        Ok(())
+    }
+
+    async fn invoke_register_script(
         &self,
-        script: &redis::Script,
+        kind: RouteKind,
         key: &str,
     ) -> Result<(), RegisterRouteError> {
         let mut connection = self.connection.clone();
-        let registered: i64 = script
+        let registered: i64 = kind
+            .register_script()
             .key(key)
-            .key(Self::relay_routes_key(&self.relay.relay_id))
             .arg(&self.relay.relay_id)
             .arg(Self::ROUTE_TTL_SECONDS)
-            .arg(Self::RELAY_TTL_SECONDS)
             .invoke_async(&mut connection)
             .await
             .map_err(|e| RegisterRouteError::Other(e.into()))?;
@@ -151,20 +184,15 @@ impl RedisRelayRouteRegistry {
     }
 
     async fn unregister_route(&self, key: &str) -> anyhow::Result<()> {
+        let mut owned_routes = self.owned_routes.lock().await;
+        owned_routes.remove(key);
         let mut connection = self.connection.clone();
         let _: () = connection.hdel(key, &self.relay.relay_id).await?;
-        let _: () = connection
-            .srem(Self::relay_routes_key(&self.relay.relay_id), key)
-            .await?;
         Ok(())
     }
 
     fn relay_key(relay_id: &str) -> String {
         format!("relay:{relay_id}")
-    }
-
-    fn relay_routes_key(relay_id: &str) -> String {
-        format!("relay_routes:{relay_id}")
     }
 
     fn publisher_namespace_key(track_namespace: &str) -> String {
@@ -189,19 +217,20 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         &self,
         track_namespace: &str,
     ) -> Result<(), RegisterRouteError> {
-        let script = redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"));
-        self.register_route(&script, &Self::publisher_namespace_key(track_namespace))
-            .await
+        self.register_route(
+            RouteKind::NamespacePublisher,
+            Self::publisher_namespace_key(track_namespace),
+        )
+        .await
     }
 
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError> {
-        let script = redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"));
         self.register_route(
-            &script,
-            &Self::subscriber_namespace_key(track_namespace_prefix),
+            RouteKind::NamespaceSubscriber,
+            Self::subscriber_namespace_key(track_namespace_prefix),
         )
         .await
     }
