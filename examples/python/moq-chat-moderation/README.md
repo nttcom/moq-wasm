@@ -38,7 +38,8 @@ sequenceDiagram
    uv run --env-file .env python -m moq_chat_moderation.bot --insecure
    ```
 
-   `--insecure` はローカル relay の自己署名証明書を検証しない指定です。別の relay には `--relay-url` を渡します。
+   `--insecure` はローカル relay の自己署名証明書を検証しない指定です。Cloud relay を使う場合は relay の起動を省き、
+   `--insecure` の代わりに `--relay-url https://relay-1.moqt.research.skyway.io:443` を渡します。
 
 3. ページを開く
 
@@ -47,7 +48,8 @@ sequenceDiagram
    make chrome
    ```
 
-   ハブから MoQ Chat Moderation を開き、bot と同じ relay を選んで Join します。モデレーター接続済みになったら送信できます。
+   ハブから MoQ Chat Moderation を開き、bot と同じ relay を選んで Join します（既定は Cloud relay-1）。
+   モデレーター接続済みになったら送信できます。Cloud relay だけを使う場合、`make chrome` は不要です。
 
 ## トラック
 

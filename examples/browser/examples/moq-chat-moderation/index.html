@@ -59,11 +59,48 @@
       <details class="card setup-toggle">
         <summary>
           <h2>モデレーターの起動方法</h2>
-          <span class="hint">pipecat の bot は relay と一緒にローカルで起動します</span>
+          <span class="hint">pipecat の bot はローカルで起動します</span>
         </summary>
         <p class="hint">各コマンドは別々のターミナルで実行します。bot には Jev の API キーが必要です</p>
         <div class="setup-routes">
-          <details class="setup-panel setup-toggle" open>
+          <details class="setup-panel setup-toggle">
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>Chat</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Jev</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps">
+              <li>
+                <h4>Jev の API キーを設定する</h4>
+                <pre><code>cd examples/python/moq-chat-moderation
+cp .env.example .env</code></pre>
+                <p class="hint">
+                  <code>.env</code> の <code>JEV_API_KEY</code> にキーを書きます。<code>.env</code> は git 管理外です
+                </p>
+              </li>
+              <li>
+                <h4>モデレーターを起動する</h4>
+                <pre><code>uv run --env-file .env python -m moq_chat_moderation.bot --relay-url https://relay-1.moqt.research.skyway.io:443</code></pre>
+              </li>
+              <li>
+                <h4>チャットに参加する</h4>
+                <p class="hint">
+                  Relay URL は既定の Cloud relay-1 のまま Join します。モデレーター接続済みになったら送信できます
+                </p>
+              </li>
+            </ol>
+          </details>
+          <details class="setup-panel setup-toggle">
             <summary>
               <h3 class="setup-flow">
                 <span class="setup-node setup-node-local"
