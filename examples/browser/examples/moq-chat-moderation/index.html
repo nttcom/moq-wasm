@@ -5,9 +5,50 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoQ Chat Moderation</title>
     <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="../media/setup-guide.css" />
     <link rel="stylesheet" href="./chat.css" />
   </head>
   <body>
+    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Icons: Lucide (ISC), https://lucide.dev -->
+      <symbol
+        id="icon-monitor"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol
+        id="icon-server"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol
+        id="icon-workflow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+    </svg>
     <main class="page">
       <header class="hero">
         <div>
@@ -15,6 +56,58 @@
           <p>pipecat の bot が Jev でチャットを判定し、暴言にラベルを付ける</p>
         </div>
       </header>
+      <details class="card setup-toggle">
+        <summary>
+          <h2>モデレーターの起動方法</h2>
+          <span class="hint">pipecat の bot は relay と一緒にローカルで起動します</span>
+        </summary>
+        <p class="hint">各コマンドは別々のターミナルで実行します。bot には Jev の API キーが必要です</p>
+        <div class="setup-routes">
+          <details class="setup-panel setup-toggle" open>
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>Chat</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Jev</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps">
+              <li>
+                <h4>relay を起動する</h4>
+                <pre><code>make relay</code></pre>
+              </li>
+              <li>
+                <h4>Jev の API キーを設定する</h4>
+                <pre><code>cd examples/python/moq-chat-moderation
+cp .env.example .env</code></pre>
+                <p class="hint">
+                  <code>.env</code> の <code>JEV_API_KEY</code> にキーを書きます。<code>.env</code> は git 管理外です
+                </p>
+              </li>
+              <li>
+                <h4>モデレーターを起動する</h4>
+                <pre><code>uv run --env-file .env python -m moq_chat_moderation.bot --insecure</code></pre>
+                <p class="hint"><code>--insecure</code> はローカル relay の自己署名証明書を検証しない指定です</p>
+              </li>
+              <li>
+                <h4>チャットに参加する</h4>
+                <p class="hint">
+                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a を選んで Join します。
+                  モデレーター接続済みになったら送信できます
+                </p>
+              </li>
+            </ol>
+          </details>
+        </div>
+      </details>
       <div class="chat-layout">
         <section class="card stack">
           <h2>Relay</h2>
