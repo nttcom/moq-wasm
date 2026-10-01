@@ -23,6 +23,18 @@
   object-fit: cover;
 }
 
+.prompt-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.prompt-form button {
+  grid-column: 2;
+  justify-self: start;
+}
+
 .camera-verdict {
   display: flex;
   align-items: center;
@@ -37,14 +49,9 @@
   background: #f3f4f6;
 }
 
-.verdict-badge[data-verdict='true'] {
+.verdict-badge[data-verdict='answer'] {
   color: #fff;
   background: #16a34a;
-}
-
-.verdict-badge[data-verdict='false'] {
-  color: #fff;
-  background: #6b7280;
 }
 
 .verdict-badge[data-verdict='unknown'] {

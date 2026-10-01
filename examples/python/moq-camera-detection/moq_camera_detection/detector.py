@@ -7,7 +7,8 @@ from loguru import logger
 from pipecat.frames.frames import Frame, SystemFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from moq_camera_detection.event_timeline import EventTimeline, location_record
+from moq_camera_detection.event_timeline import EventTimeline, Location, location_record
+from moq_camera_detection.prompt import Prompt
 from moq_camera_detection.vision import DjevVisionClient
 
 STALE_PICTURE_SECONDS = 2.0
@@ -17,11 +18,12 @@ MAX_JUDGING_PICTURES = 8
 @dataclass
 class CameraPicture(SystemFrame):
     jpeg: bytes
-    location: tuple[int, int]
+    location: Location
     decoded_at: float
+    prompt: Prompt
 
 
-class PersonDetector(FrameProcessor):
+class CameraDetector(FrameProcessor):
     def __init__(self, vision: DjevVisionClient, timeline: EventTimeline):
         super().__init__()
         self._vision = vision
@@ -51,15 +53,17 @@ class PersonDetector(FrameProcessor):
     async def _judge(self, picture: CameraPicture):
         requested_at = time.monotonic()
         try:
-            person = await self._vision.has_person(picture.jpeg)
+            answer = await self._vision.choose(picture.jpeg, picture.prompt)
         except (aiohttp.ClientError, KeyError, IndexError) as error:
             logger.warning(f"djev-vision could not judge camera picture {picture.location}: {error}")
             return
         logger.info(
-            f"camera picture {picture.location} person={person}"
+            f"camera picture {picture.location} answer={answer}"
             f" in {time.monotonic() - requested_at:.2f}s"
         )
         if picture.location <= self._latest_recorded:
             return
         self._latest_recorded = picture.location
-        self._timeline.append(location_record(picture.location, {"person": person}))
+        self._timeline.append(
+            location_record(picture.location, {"prompt": picture.prompt.location, "answer": answer})
+        )

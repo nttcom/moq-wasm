@@ -7,11 +7,14 @@ import { type StatusState, element, getErrorMessage, setStatus } from '../media/
 const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', 'camera']
 const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', 'detector']
 const VIDEO_TRACK = 'video'
+const PROMPT_TRACK = 'prompt'
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
 const AUTH_INFO = ''
 const SUBGROUP_ID = 0n
 const PUBLISHER_PRIORITY = 0
 const LARGEST_OBJECT_FILTER = 0x2
+const MAX_CHOICES = 9
+const MAX_CHOICE_LENGTH = 40
 const VIDEO_ENCODER_CONFIG = {
   codec: 'avc1.42e01f',
   width: 640,
@@ -76,8 +79,40 @@ class GopSender {
   }
 }
 
+type Prompt = { question: string; choices: string[] }
+
+class PromptPublisher {
+  private nextGroupId = BigInt(Date.now()) * 1_000n
+  latestGroupId: bigint | undefined
+
+  constructor(
+    private readonly client: MOQTClient,
+    readonly requestId: bigint,
+    private readonly trackAlias: bigint
+  ) {}
+
+  /// One group per prompt, because the detector reads every group from its first object.
+  async send(prompt: Prompt): Promise<void> {
+    const groupId = this.nextGroupId++
+    this.latestGroupId = groupId
+    const payload = new TextEncoder().encode(JSON.stringify(prompt))
+    await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
+    await this.client.sendSubgroupObject(this.trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
+    await this.client.sendSubgroupObject(
+      this.trackAlias,
+      groupId,
+      SUBGROUP_ID,
+      1n,
+      OBJECT_STATUS_END_OF_GROUP,
+      new Uint8Array(0),
+      undefined
+    )
+  }
+}
+
 const session = new MoqtClientWrapper()
 let videoSender: GopSender | undefined
+let promptPublisher: PromptPublisher | undefined
 let mediaStream: MediaStream | undefined
 let encoderWorker: Worker | undefined
 let sendQueue = Promise.resolve()
@@ -87,12 +122,20 @@ const joinButton = element<HTMLButtonElement>('joinBtn')
 const leaveButton = element<HTMLButtonElement>('leaveBtn')
 const preview = element<HTMLVideoElement>('preview')
 const verdictLabel = element<HTMLSpanElement>('verdict')
+const promptForm = element<HTMLFormElement>('promptForm')
+const questionInput = element<HTMLInputElement>('question')
+const choicesInput = element<HTMLInputElement>('choices')
+let appliedPrompt = readPrompt()
 
 appendCloudRelayPresetButtons(element('urlPresets'))
 configureRelayUrlControls()
 
 joinButton.addEventListener('click', () => void join())
 leaveButton.addEventListener('click', () => void leave())
+promptForm.addEventListener('submit', (event) => {
+  event.preventDefault()
+  applyPrompt()
+})
 
 async function join(): Promise<void> {
   joinButton.disabled = true
@@ -105,10 +148,14 @@ async function join(): Promise<void> {
     preview.srcObject = mediaStream
     await session.connect(urlInput.value.trim())
     session.setOnConnectionClosedHandler(() => resetSession('切断されました', 'error'))
-    session.setOnIncomingSubscribeHandler(acceptVideoSubscriber)
+    session.setOnIncomingSubscribeHandler(acceptDetectorSubscriber)
     session.setOnIncomingUnsubscribeHandler((requestId) => {
       if (videoSender?.requestId === requestId) {
         setVideoSender(undefined)
+      }
+      if (promptPublisher?.requestId === requestId) {
+        promptPublisher = undefined
+        showVerdict(undefined)
       }
     })
     session.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
@@ -135,6 +182,7 @@ async function leave(): Promise<void> {
 
 function resetSession(connectionText: string, connectionState: StatusState): void {
   setVideoSender(undefined)
+  promptPublisher = undefined
   for (const track of mediaStream?.getTracks() ?? []) {
     track.stop()
   }
@@ -164,7 +212,7 @@ function startEncoder(stream: MediaStream): void {
   encoderWorker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
 }
 
-async function acceptVideoSubscriber({
+async function acceptDetectorSubscriber({
   subscribe,
   isSuccess,
   code,
@@ -175,15 +223,58 @@ async function acceptVideoSubscriber({
     await respondError(BigInt(code), 'subscribe rejected')
     return
   }
-  if (!sameNamespace(subscribe.trackNamespace, CAMERA_NAMESPACE) || subscribe.trackName !== VIDEO_TRACK) {
+  const { trackName } = subscribe
+  if (!sameNamespace(subscribe.trackNamespace, CAMERA_NAMESPACE) || ![VIDEO_TRACK, PROMPT_TRACK].includes(trackName)) {
     await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
     return
   }
   const trackAlias = await respondOk()
   const client = session.getRawClient()
-  if (client) {
+  if (!client) {
+    return
+  }
+  if (trackName === VIDEO_TRACK) {
     setVideoSender(new GopSender(client, subscribe.requestId, trackAlias))
     encoderWorker?.postMessage({ type: 'forceKeyframe' })
+  } else {
+    promptPublisher = new PromptPublisher(client, subscribe.requestId, trackAlias)
+    await sendPrompt()
+  }
+}
+
+function readPrompt(): Prompt {
+  return {
+    question: questionInput.value.trim(),
+    choices: choicesInput.value
+      .split(/[,、]/)
+      .map((choice) => choice.trim())
+      .filter((choice) => choice.length > 0)
+  }
+}
+
+function applyPrompt(): void {
+  const prompt = readPrompt()
+  const { question, choices } = prompt
+  const validChoices =
+    choices.length >= 2 && choices.length <= MAX_CHOICES && choices.every((c) => c.length <= MAX_CHOICE_LENGTH)
+  questionInput.setCustomValidity(question ? '' : '質問を入力してください')
+  choicesInput.setCustomValidity(validChoices ? '' : `選択肢は 2〜${MAX_CHOICES} 個、各 ${MAX_CHOICE_LENGTH} 文字以内`)
+  if (!promptForm.reportValidity()) {
+    return
+  }
+  appliedPrompt = prompt
+  void sendPrompt()
+}
+
+async function sendPrompt(): Promise<void> {
+  if (!promptPublisher) {
+    return
+  }
+  showVerdict(undefined)
+  try {
+    await promptPublisher.send(appliedPrompt)
+  } catch (error) {
+    console.error('[moq-camera-detection] prompt send failed', error)
   }
 }
 
@@ -210,22 +301,19 @@ function applyVerdicts(object: SubgroupObjectMessage): void {
   if (object.objectStatus !== undefined) {
     return
   }
-  const person = JSON.parse(new TextDecoder().decode(new Uint8Array(object.objectPayload))).at(-1)?.data?.person
-  if (typeof person === 'boolean' || person === null) {
-    showVerdict(person)
+  const data = JSON.parse(new TextDecoder().decode(new Uint8Array(object.objectPayload))).at(-1)?.data
+  const [promptGroupId] = Array.isArray(data?.prompt) ? data.prompt : []
+  if (!Number.isInteger(promptGroupId) || BigInt(promptGroupId) !== promptPublisher?.latestGroupId) {
+    return
+  }
+  if (typeof data.answer === 'string' || data.answer === null) {
+    showVerdict(data.answer)
   }
 }
 
-function showVerdict(person: boolean | null | undefined): void {
-  verdictLabel.dataset.verdict = person === undefined ? 'pending' : person === null ? 'unknown' : String(person)
-  verdictLabel.textContent =
-    person === undefined
-      ? '判定待ち'
-      : person === null
-        ? '判定できません'
-        : person
-          ? '人が映っています'
-          : '人は映っていません'
+function showVerdict(answer: string | null | undefined): void {
+  verdictLabel.dataset.verdict = answer === undefined ? 'pending' : answer === null ? 'unknown' : 'answer'
+  verdictLabel.textContent = answer === undefined ? '判定待ち' : answer === null ? '判定できません' : answer
 }
 
 function sameNamespace(left: string[], right: string[]): boolean {

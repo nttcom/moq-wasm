@@ -53,7 +53,7 @@
       <header class="hero">
         <div>
           <h1>MoQ Camera Detection</h1>
-          <p>pipecat の bot が djev-vision でカメラ映像を判定し、人が映っているかを表示する</p>
+          <p>カメラ映像についての質問に、pipecat の bot が djev-vision で答える</p>
         </div>
       </header>
       <details class="card setup-toggle">
@@ -154,6 +154,26 @@ uv run python -m moq_camera_detection.bot --insecure \
         </section>
         <section class="card stack">
           <h2>Camera</h2>
+          <form id="promptForm" class="prompt-form" novalidate>
+            <label for="question">質問</label>
+            <input
+              type="text"
+              id="question"
+              value="人が映っていますか？"
+              maxlength="200"
+              autocomplete="off"
+              data-testid="camera-detection-question-input"
+            />
+            <label for="choices">選択肢（カンマ区切り）</label>
+            <input
+              type="text"
+              id="choices"
+              value="はい, いいえ"
+              autocomplete="off"
+              data-testid="camera-detection-choices-input"
+            />
+            <button type="submit" data-testid="camera-detection-apply-button">適用</button>
+          </form>
           <div class="camera-verdict">
             <span id="verdict" class="verdict-badge" data-verdict="pending" data-testid="camera-detection-verdict"
               >判定待ち</span

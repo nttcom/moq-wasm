@@ -8,6 +8,7 @@ import moq
 from aiohttp import web
 
 from moq_camera_detection.event_timeline import EventTimeline
+from moq_camera_detection.prompt import Prompt
 
 READ_TIMEOUT_SECONDS = 2
 TRACK_NAME = "eventtimeline"
@@ -40,14 +41,17 @@ async def published_timeline() -> tuple[EventTimeline, moq.GroupConsumer]:
     return timeline, group
 
 
+YES_NO_PROMPT = Prompt("Is there a person?", ("yes", "no"), (7, 0))
+
+
 @dataclass
 class StubVision:
-    person: bool | None
+    answer: str | None
     images: list[bytes] = field(default_factory=list)
 
-    async def has_person(self, jpeg: bytes) -> bool | None:
+    async def choose(self, jpeg: bytes, prompt: Prompt) -> str | None:
         self.images.append(jpeg)
-        return self.person
+        return self.answer
 
 
 @dataclass

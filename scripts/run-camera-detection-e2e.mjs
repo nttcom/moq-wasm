@@ -32,7 +32,7 @@ const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
 const childProcesses = [];
 
 async function startFakeDjevVision() {
-  let answer = "person";
+  let answer = "1";
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/answer") {
       answer = await text(request);
