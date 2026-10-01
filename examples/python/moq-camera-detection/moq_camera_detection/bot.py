@@ -114,14 +114,13 @@ async def stay_connected(args: argparse.Namespace, publish_origin: moq.OriginPro
                 subscribe=moq.OriginProducer(),
             ) as client:
                 logger.info(f"connected to {args.relay_url}")
-                forwarding = asyncio.create_task(forward_camera(client, worker))
-                try:
+                async with asyncio.TaskGroup() as tasks:
+                    forwarding = tasks.create_task(forward_camera(client, worker))
                     await client.session.closed()
-                finally:
                     forwarding.cancel()
             logger.warning("relay session closed")
-        except moq.Error as error:
-            logger.warning(f"relay session failed: {error}")
+        except* moq.Error as errors:
+            logger.warning(f"relay session failed: {errors.exceptions[0]}")
         await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
 
@@ -142,10 +141,9 @@ async def main():
         )
         runner = WorkerRunner()
         await runner.add_workers(worker)
-        connecting = asyncio.create_task(stay_connected(args, publish_origin, worker))
-        try:
+        async with asyncio.TaskGroup() as tasks:
+            connecting = tasks.create_task(stay_connected(args, publish_origin, worker))
             await runner.run()
-        finally:
             connecting.cancel()
 
 
