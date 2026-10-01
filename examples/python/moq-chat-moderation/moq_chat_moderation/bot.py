@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import os
 
 import aiohttp
 import moq
@@ -10,7 +9,8 @@ from pipecat.transports.moq.transport import MOQParams, MOQTransport
 from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.event_timeline import EventTimeline
-from moq_chat_moderation.jev import JEV_URL, JevClient
+from moq_chat_moderation.identity_token import GcloudIdentityToken
+from moq_chat_moderation.jev import JevClient
 from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -19,17 +19,24 @@ MODERATOR_BROADCAST_PATH = "anon/moq-chat-moderation/moderator"
 CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 CHAT_PAGE_WAIT_SECONDS = 365 * 24 * 60 * 60
+# djev-run scales to zero; a cold start copies 19 GB of weights before it answers.
+JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15 * 60)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with Jev")
+    parser = argparse.ArgumentParser(description="Judge MoQ chat messages with djev-run")
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
         action="store_true",
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
-    parser.add_argument("--jev-url", default=JEV_URL)
+    parser.add_argument("--jev-url", required=True, help="a Jev-compatible /v1/systemone endpoint")
+    parser.add_argument(
+        "--gcloud-auth",
+        action="store_true",
+        help="send a gcloud identity token, for a Cloud Run service that requires IAM",
+    )
     return parser.parse_args()
 
 
@@ -42,10 +49,6 @@ def moderator_broadcast(transport: MOQTransport) -> moq.BroadcastProducer:
 
 async def main():
     args = parse_args()
-    api_key = os.environ.get("JEV_API_KEY")
-    if not api_key:
-        raise SystemExit("JEV_API_KEY is not set")
-
     transport = MOQTransport(
         params=MOQParams(
             relay_url=args.relay_url,
@@ -64,8 +67,11 @@ async def main():
     async def on_connected(transport: MOQTransport):
         timeline.publish_on(moderator_broadcast(transport))
 
-    async with aiohttp.ClientSession() as session:
-        moderator = ChatModerator(JevClient(session, api_key, url=args.jev_url), timeline)
+    async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as session:
+        moderator = ChatModerator(
+            JevClient(session, args.jev_url, GcloudIdentityToken() if args.gcloud_auth else None),
+            timeline,
+        )
         worker = PipelineWorker(
             Pipeline([moderator, transport.input()]),
             enable_rtvi=False,

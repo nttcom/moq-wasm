@@ -53,7 +53,7 @@
       <header class="hero">
         <div>
           <h1>MoQ Chat Moderation</h1>
-          <p>pipecat の bot が Jev でチャットを判定し、暴言を削除する</p>
+          <p>pipecat の bot が djev-run でチャットを判定し、暴言を削除する</p>
         </div>
       </header>
       <details class="card setup-toggle">
@@ -61,7 +61,10 @@
           <h2>モデレーターの起動方法</h2>
           <span class="hint">pipecat の bot はローカルで起動します</span>
         </summary>
-        <p class="hint">各コマンドは別々のターミナルで実行します。bot には Jev の API キーが必要です</p>
+        <p class="hint">
+          各コマンドは別々のターミナルで実行します。gcloud のアカウントに roles/run.invoker
+          が必要です。停止後の最初の判定は約 10 分かかります
+        </p>
         <div class="setup-routes">
           <details class="setup-panel setup-toggle">
             <summary>
@@ -75,22 +78,18 @@
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Jev</small></span
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>djev-run</small></span
                 >
               </h3>
             </summary>
             <ol class="setup-steps">
               <li>
-                <h4>Jev の API キーを設定する</h4>
-                <pre><code>cd examples/python/moq-chat-moderation
-cp .env.example .env</code></pre>
-                <p class="hint">
-                  <code>.env</code> の <code>JEV_API_KEY</code> にキーを書きます。<code>.env</code> は git 管理外です
-                </p>
-              </li>
-              <li>
                 <h4>モデレーターを起動する</h4>
-                <pre><code>uv run --env-file .env python -m moq_chat_moderation.bot --relay-url https://relay-1.moqt.research.skyway.io:443</code></pre>
+                <pre><code>cd examples/python/moq-chat-moderation
+uv run python -m moq_chat_moderation.bot \
+  --relay-url https://relay-1.moqt.research.skyway.io:443 \
+  --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+  --gcloud-auth</code></pre>
               </li>
               <li>
                 <h4>チャットに参加する</h4>
@@ -112,7 +111,7 @@ cp .env.example .env</code></pre>
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Jev</small></span
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>djev-run</small></span
                 >
               </h3>
             </summary>
@@ -122,16 +121,11 @@ cp .env.example .env</code></pre>
                 <pre><code>make relay</code></pre>
               </li>
               <li>
-                <h4>Jev の API キーを設定する</h4>
-                <pre><code>cd examples/python/moq-chat-moderation
-cp .env.example .env</code></pre>
-                <p class="hint">
-                  <code>.env</code> の <code>JEV_API_KEY</code> にキーを書きます。<code>.env</code> は git 管理外です
-                </p>
-              </li>
-              <li>
                 <h4>モデレーターを起動する</h4>
-                <pre><code>uv run --env-file .env python -m moq_chat_moderation.bot --insecure</code></pre>
+                <pre><code>cd examples/python/moq-chat-moderation
+uv run python -m moq_chat_moderation.bot --insecure \
+  --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+  --gcloud-auth</code></pre>
                 <p class="hint"><code>--insecure</code> はローカル relay の自己署名証明書を検証しない指定です</p>
               </li>
               <li>

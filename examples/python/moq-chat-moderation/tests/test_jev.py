@@ -1,12 +1,13 @@
 import aiohttp
 
+from moq_chat_moderation.identity_token import GcloudIdentityToken
 from moq_chat_moderation.jev import ABUSIVE_QUESTION_ID, JevClient
 
 
 async def test_abusive_probability_is_the_noul_answer(fake_jev_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        client = JevClient(session, "jv_test_key", url=fake_jev_server.url)
+        client = JevClient(session, fake_jev_server.url)
 
         # Act
         probability = await client.abusive_probability("you are an idiot")
@@ -15,16 +16,30 @@ async def test_abusive_probability_is_the_noul_answer(fake_jev_server):
     assert probability == 0.9
 
 
-async def test_request_asks_the_abusive_question_about_the_text(fake_jev_server):
+async def test_request_asks_the_abusive_question_without_credentials(fake_jev_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        client = JevClient(session, "jv_test_key", url=fake_jev_server.url)
+        client = JevClient(session, fake_jev_server.url)
 
         # Act
         await client.abusive_probability("you are an idiot")
 
     # Assert
     [(authorization, request)] = fake_jev_server.requests
-    assert authorization == "Bearer jv_test_key"
+    assert authorization is None
     assert request["state"] == "you are an idiot"
     assert request["questions"][ABUSIVE_QUESTION_ID]["type"] == "noul"
+
+
+async def test_request_carries_the_identity_token_as_bearer(fake_jev_server):
+    # Arrange
+    async with aiohttp.ClientSession() as session:
+        token = GcloudIdentityToken(command=("echo", "identity-token"))
+        client = JevClient(session, fake_jev_server.url, token)
+
+        # Act
+        await client.abusive_probability("hello")
+
+    # Assert
+    [(authorization, _)] = fake_jev_server.requests
+    assert authorization == "Bearer identity-token"

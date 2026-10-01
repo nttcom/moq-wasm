@@ -92,7 +92,7 @@ async function main() {
         "--jev-url",
         fakeJevUrl,
       ],
-      { cwd: botDir, env: { ...process.env, JEV_API_KEY: "e2e" } },
+      { cwd: botDir },
     );
     childProcesses.push(bot);
     await waitForOutput(bot, /waiting for peer broadcast/, "bot", 180_000);

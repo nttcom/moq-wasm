@@ -1,7 +1,7 @@
 import aiohttp
 
-JEV_URL = "https://api.typesafe.ai/v1/systemone"
-JEV_MODEL = "jev-latest"
+from moq_chat_moderation.identity_token import GcloudIdentityToken
+
 ABUSIVE_QUESTION_ID = "abusive"
 ABUSIVE_QUESTION = {
     "type": "noul",
@@ -14,18 +14,23 @@ ABUSIVE_QUESTION = {
 
 
 class JevClient:
-    def __init__(self, session: aiohttp.ClientSession, api_key: str, url: str = JEV_URL):
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        identity_token: GcloudIdentityToken | None = None,
+    ):
         self._session = session
-        self._api_key = api_key
         self._url = url
+        self._identity_token = identity_token
 
     async def abusive_probability(self, text: str) -> float:
-        request = {
-            "model": JEV_MODEL,
-            "state": text,
-            "questions": {ABUSIVE_QUESTION_ID: ABUSIVE_QUESTION},
-        }
-        headers = {"Authorization": f"Bearer {self._api_key}"}
+        request = {"state": text, "questions": {ABUSIVE_QUESTION_ID: ABUSIVE_QUESTION}}
+        headers = (
+            {"Authorization": f"Bearer {await self._identity_token.value()}"}
+            if self._identity_token
+            else {}
+        )
         async with self._session.post(self._url, json=request, headers=headers) as response:
             response.raise_for_status()
             body = await response.json()
