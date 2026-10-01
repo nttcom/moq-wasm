@@ -1,12 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt_client_wasm'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
-import {
-  CLOUD_RELAY_PRESETS,
-  DEFAULT_LOCAL_RELAY_A_URL,
-  LOAD_BALANCED_RELAY_PRESET,
-  configureRelayUrlControls
-} from '../../utils/relayPresets'
+import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, getErrorMessage, setStatus } from '../media/common'
 import { type Location, type ModerationVerdict, encodeChatRecord, parseModerationVerdicts } from './chatWire'
 
@@ -75,7 +70,7 @@ for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
   button.title = preset.helper
   element('urlPresets').appendChild(button)
 }
-configureRelayUrlControls({ defaultUrl: DEFAULT_LOCAL_RELAY_A_URL })
+configureRelayUrlControls()
 
 joinButton.addEventListener('click', () => void join())
 leaveButton.addEventListener('click', () => void leave())
