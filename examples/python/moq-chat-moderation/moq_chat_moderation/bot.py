@@ -20,7 +20,7 @@ CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 CHAT_PAGE_WAIT_SECONDS = 365 * 24 * 60 * 60
 # djev-run scales to zero; a cold start copies 19 GB of weights before it answers.
-JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15 * 60)
+JEV_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:

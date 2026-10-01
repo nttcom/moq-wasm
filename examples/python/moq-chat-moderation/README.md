@@ -22,7 +22,7 @@ sequenceDiagram
 
 djev-run は Jev 互換の `/v1/systemone` を返す Cloud Run サービス `djev-dgemma`（asia-southeast1）として動いています。
 IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。bot は `--gcloud-auth` を付けると
-`gcloud auth print-identity-token` の ID トークンを Bearer で送ります。`--min-instances=0` のため、しばらく使われずに停止した後の最初の判定は、コールドスタートで約 10 分かかります。
+`gcloud auth print-identity-token` の ID トークンを Bearer で送ります。`--min-instances=0` のため、しばらく使われずに停止した後の最初の判定は、コールドスタートで約 3 分かかります。
 
 ## 起動
 
