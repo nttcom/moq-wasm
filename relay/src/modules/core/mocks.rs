@@ -7,8 +7,14 @@ use crate::modules::{
     auth::verified_token::VerifiedToken,
     core::{
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
-        handler::{fetch::FetchHandler, publish::SubscribeOption, subscribe::SubscribeHandler},
-        publisher::Publisher,
+        data_sender::{
+            DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
+        },
+        handler::{
+            fetch::FetchHandler, publish::SubscribeOption,
+            publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
+        },
+        publisher::{PublishNamespaceResponse, Publisher},
         session::Session,
         session_event::MoqtSessionEvent,
         subscriber::Subscriber,
@@ -24,6 +30,7 @@ pub(crate) struct RecordedControlMessages {
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
+    publish_namespaces: Arc<Mutex<Vec<String>>>,
 }
 
 impl RecordedControlMessages {
@@ -33,6 +40,10 @@ impl RecordedControlMessages {
 
     pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
         self.closes.lock().unwrap().clone()
+    }
+
+    pub(crate) fn publish_namespaces(&self) -> Vec<String> {
+        self.publish_namespaces.lock().unwrap().clone()
     }
 }
 
@@ -136,7 +147,9 @@ pub(crate) fn runner_stopped(runner_stop_receiver: &mut oneshot::Receiver<()>) -
 #[async_trait::async_trait]
 impl Session for MockUpstreamSession {
     fn as_publisher(&self) -> Box<dyn Publisher> {
-        unimplemented!("not used by MockUpstreamSession tests")
+        Box::new(UnansweringPublisher {
+            recorded: self.recorded.clone(),
+        })
     }
 
     fn as_subscriber(&self) -> Box<dyn Subscriber> {
@@ -156,6 +169,65 @@ impl Session for MockUpstreamSession {
             .lock()
             .unwrap()
             .push((code, reason.to_string()));
+    }
+}
+
+struct UnansweringPublisher {
+    recorded: RecordedControlMessages,
+}
+
+#[async_trait::async_trait]
+impl Publisher for UnansweringPublisher {
+    async fn send_publish_namespace(
+        &self,
+        namespaces: String,
+    ) -> anyhow::Result<PublishNamespaceResponse> {
+        self.recorded
+            .publish_namespaces
+            .lock()
+            .unwrap()
+            .push(namespaces);
+        Ok(Box::pin(std::future::pending()))
+    }
+
+    async fn send_publish_namespace_done(&self, _namespace: String) -> anyhow::Result<()> {
+        unimplemented!("not used by MockUpstreamSession tests")
+    }
+
+    async fn send_publish(
+        &self,
+        _track_namespace: String,
+        _track_name: String,
+    ) -> anyhow::Result<DownstreamSubscription> {
+        unimplemented!("not used by MockUpstreamSession tests")
+    }
+
+    async fn send_publish_done(
+        &self,
+        _request_id: u64,
+        _status_code: u64,
+        _stream_count: u64,
+        _error_reason: String,
+    ) -> anyhow::Result<()> {
+        unimplemented!("not used by MockUpstreamSession tests")
+    }
+
+    fn new_stream_factory(
+        &self,
+        _downstream_subscription: &DownstreamSubscription,
+    ) -> Box<dyn StreamSenderFactory> {
+        unimplemented!("not used by MockUpstreamSession tests")
+    }
+
+    fn new_datagram(
+        &self,
+        _downstream_subscription: &DownstreamSubscription,
+    ) -> Box<dyn DataSender> {
+        unimplemented!("not used by MockUpstreamSession tests")
+    }
+
+    async fn new_fetch_sender(&self, _request_id: u64) -> anyhow::Result<Box<dyn FetchSender>> {
+        unimplemented!("not used by MockUpstreamSession tests")
     }
 }
 
@@ -360,6 +432,43 @@ impl FetchHandler for MockFetchHandler {
     }
 
     async fn error(&self, _code: u64, _reason: String) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+}
+
+pub(crate) struct MockPublishNamespaceHandler {
+    track_namespace: String,
+    track_namespace_tuple: Vec<String>,
+}
+
+impl MockPublishNamespaceHandler {
+    pub(crate) fn new(track_namespace: &str) -> Self {
+        Self {
+            track_namespace: track_namespace.to_string(),
+            track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl PublishNamespaceHandler for MockPublishNamespaceHandler {
+    fn track_namespace(&self) -> &str {
+        &self.track_namespace
+    }
+
+    fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
+    }
+
+    async fn ok(&self) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+
+    async fn error(
+        &self,
+        _code: u64,
+        _reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }
 }

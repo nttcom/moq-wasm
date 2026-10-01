@@ -1,3 +1,5 @@
+use std::{future::Future, pin::Pin};
+
 use async_trait::async_trait;
 
 use crate::modules::core::{
@@ -9,9 +11,14 @@ use crate::modules::core::{
     subscription::DownstreamSubscription,
 };
 
+pub(crate) type PublishNamespaceResponse = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>;
+
 #[async_trait]
 pub(crate) trait Publisher: 'static + Send + Sync {
-    async fn send_publish_namespace(&self, namespaces: String) -> anyhow::Result<()>;
+    async fn send_publish_namespace(
+        &self,
+        namespaces: String,
+    ) -> anyhow::Result<PublishNamespaceResponse>;
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()>;
     async fn send_publish(
         &self,
@@ -36,8 +43,12 @@ pub(crate) trait Publisher: 'static + Send + Sync {
 
 #[async_trait]
 impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
-    async fn send_publish_namespace(&self, namespaces: String) -> anyhow::Result<()> {
-        self.publish_namespace(namespaces).await
+    async fn send_publish_namespace(
+        &self,
+        namespaces: String,
+    ) -> anyhow::Result<PublishNamespaceResponse> {
+        let pending = self.begin_publish_namespace(namespaces).await?;
+        Ok(Box::pin(pending.accepted()))
     }
 
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {

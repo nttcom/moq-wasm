@@ -5,7 +5,7 @@ use crate::modules::core::{
     data_sender::{
         DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
     },
-    publisher::Publisher,
+    publisher::{PublishNamespaceResponse, Publisher},
     session::Session,
     session_event::MoqtSessionEvent,
     subscriber::Subscriber,
@@ -106,7 +106,10 @@ impl MockPublisher {
 
 #[async_trait::async_trait]
 impl Publisher for MockPublisher {
-    async fn send_publish_namespace(&self, _namespaces: String) -> anyhow::Result<()> {
+    async fn send_publish_namespace(
+        &self,
+        _namespaces: String,
+    ) -> anyhow::Result<PublishNamespaceResponse> {
         unreachable!("not used by the egress path under test")
     }
 

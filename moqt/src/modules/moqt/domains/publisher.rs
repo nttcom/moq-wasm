@@ -26,6 +26,7 @@ use crate::{
                 },
             },
             domains::{
+                pending_publish_namespace::PendingPublishNamespace,
                 session_context::{LateResponseAction, SessionContext},
                 subscription::{PublisherInitiatedSubscription, Subscription},
             },
@@ -42,10 +43,20 @@ pub struct Publisher<T: TransportProtocol> {
 
 impl<T: TransportProtocol> Publisher<T> {
     pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        self.begin_publish_namespace(namespace)
+            .await?
+            .accepted()
+            .await
+    }
+
+    pub async fn begin_publish_namespace(
+        &self,
+        namespace: String,
+    ) -> anyhow::Result<PendingPublishNamespace<T>> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
-        let _registered_sender = self.session.register_response_sender(
+        let registered_sender = self.session.register_response_sender(
             request_id,
             sender,
             LateResponseAction::PublishNamespaceDone {
@@ -60,25 +71,12 @@ impl<T: TransportProtocol> Publisher<T> {
                 publish_namespace.encode(),
             )
             .await?;
-        let response = self.session.await_response(receiver).await?;
-        match response {
-            ResponseMessage::PublishNamespaceOk(response_request_id) => {
-                if request_id != response_request_id {
-                    bail!("Protocol violation")
-                } else {
-                    Ok(())
-                }
-            }
-            ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase) => {
-                Err(RequestError {
-                    request_id,
-                    error_code,
-                    reason_phrase,
-                }
-                .into())
-            }
-            _ => bail!("Protocol violation"),
-        }
+        Ok(PendingPublishNamespace {
+            session: self.session.clone(),
+            request_id,
+            receiver,
+            _registered_sender: registered_sender,
+        })
     }
 
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
@@ -192,9 +190,13 @@ impl<T: TransportProtocol> Publisher<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use crate::{
         PublishOption, SessionEvent, modules::test_support::spawn_connected_dual_sessions,
     };
+
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
     #[tokio::test]
     async fn publish_takes_its_track_alias_from_the_counter_subscribe_ok_uses() {
@@ -221,5 +223,33 @@ mod tests {
         // Assert
         assert_eq!(subscribe_ok_track_alias, handler.track_alias + 1);
         request.abort();
+    }
+
+    #[tokio::test]
+    async fn pending_publish_namespace_is_accepted_by_publish_namespace_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("publisher-pending-publish-namespace").await;
+        let pending = tokio::time::timeout(
+            WAIT_TIMEOUT,
+            client
+                .publisher()
+                .begin_publish_namespace("a/b".to_string()),
+        )
+        .await
+        .expect("sending PUBLISH_NAMESPACE should not wait for the answer")
+        .unwrap();
+        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE from the client");
+        };
+
+        // Act
+        handler.ok().await.unwrap();
+
+        // Assert
+        tokio::time::timeout(WAIT_TIMEOUT, pending.accepted())
+            .await
+            .expect("PUBLISH_NAMESPACE_OK should resolve the pending request")
+            .unwrap();
     }
 }
