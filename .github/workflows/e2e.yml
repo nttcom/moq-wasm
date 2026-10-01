@@ -14,6 +14,7 @@ on:
       - "scripts/run-message-e2e.mjs"
       - "scripts/run-live-viewer-e2e.mjs"
       - "scripts/run-chat-moderation-e2e.mjs"
+      - "scripts/run-camera-detection-e2e.mjs"
       - "scripts/browser-e2e-process.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
@@ -28,6 +29,7 @@ on:
       - "docker-compose.yml"
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
+      - "examples/python/moq-camera-detection/**"
       - "bindings/wasm/**"
       - "bridges/live-ingest/**"
       - "bindings/gstreamer/**"
@@ -61,6 +63,7 @@ on:
       - "scripts/run-message-e2e.mjs"
       - "scripts/run-live-viewer-e2e.mjs"
       - "scripts/run-chat-moderation-e2e.mjs"
+      - "scripts/run-camera-detection-e2e.mjs"
       - "scripts/browser-e2e-process.mjs"
       - "scripts/media-e2e-helpers.mjs"
       - "scripts/ensure-relay-certs.mjs"
@@ -75,6 +78,7 @@ on:
       - "docker-compose.yml"
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
+      - "examples/python/moq-camera-detection/**"
       - "bindings/wasm/**"
       - "bridges/live-ingest/**"
       - "bindings/gstreamer/**"
@@ -108,6 +112,7 @@ jobs:
       media: ${{ steps.filter.outputs.media }}
       message: ${{ steps.filter.outputs.message }}
       chat_moderation: ${{ steps.filter.outputs.chat_moderation }}
+      camera_detection: ${{ steps.filter.outputs.camera_detection }}
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
       meeting: ${{ steps.filter.outputs.meeting }}
       compose_suites: ${{ steps.filter.outputs.compose_suites }}
@@ -131,6 +136,7 @@ jobs:
             media=true
             message=true
             chat_moderation=true
+            camera_detection=true
             live_viewer=true
             meeting=true
             compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup)
@@ -146,6 +152,7 @@ jobs:
             media=false
             message=false
             chat_moderation=false
+            camera_detection=false
             live_viewer=false
             meeting=false
             compose_suites=()
@@ -166,6 +173,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|scripts/setup-media-e2e.mjs|scripts/run-chat-moderation-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-chat-moderation/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   chat_moderation=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|scripts/setup-media-e2e.mjs|scripts/run-camera-detection-e2e.mjs|scripts/vts-dev.mjs|scripts/browser-e2e-process.mjs|scripts/media-e2e-helpers.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-camera-detection/*|bindings/wasm/*|relay/*|moqt/*|shared/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  camera_detection=true
                   ;;
               esac
 
@@ -232,6 +245,7 @@ jobs:
             echo "media=$media"
             echo "message=$message"
             echo "chat_moderation=$chat_moderation"
+            echo "camera_detection=$camera_detection"
             echo "live_viewer=$live_viewer"
             echo "meeting=$meeting"
             echo "compose_suites=$(jq -cn '$ARGS.positional | unique' --args "${compose_suites[@]}")"
@@ -567,6 +581,76 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: chat-moderation-e2e-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  camera_detection_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.camera_detection == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/browser/package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.96.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      - name: Setup uv
+        # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: 0.12.21
+          checksum: 23f02075b652bb1df64178cfae41b5caf160822e720e2663568f3f5d63bc52c0
+          save-cache: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Run camera detection unit tests
+        working-directory: examples/python/moq-camera-detection
+        run: uv run pytest
+
+      - name: Prepare browser E2E environment
+        run: node scripts/setup-media-e2e.mjs
+
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
+
+      - name: Run camera detection E2E
+        env:
+          CI: "true"
+        run: node scripts/run-camera-detection-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: camera-detection-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report
