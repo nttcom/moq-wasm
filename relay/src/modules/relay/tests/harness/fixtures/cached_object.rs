@@ -89,6 +89,10 @@ pub(crate) fn insert_closed_group(cache: &TrackCache, group_id: u64, object_ids:
     open_group(cache, group_id, object_ids).finish();
 }
 
+pub(crate) fn insert_aborted_group(cache: &TrackCache, group_id: u64, object_ids: &[u64]) {
+    drop(open_group(cache, group_id, object_ids));
+}
+
 pub(crate) async fn fetch_all(
     cache: &TrackCache,
     start: moqt::Location,

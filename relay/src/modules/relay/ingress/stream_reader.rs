@@ -302,7 +302,10 @@ mod tests {
         );
         upstream_stream.wait_reader_end().await;
         // Assert
-        assert_eq!(subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
+        assert_eq!(
+            subgroup_opened_receiver.try_recv().map(|run| run.key),
+            Ok(stream_key(0))
+        );
         assert_eq!(
             harness.cached_object_ids(stream_key(0)).await,
             vec![(0, ObjectStatus::Normal), (1, ObjectStatus::EndOfGroup)]
@@ -326,7 +329,10 @@ mod tests {
         terminate(&upstream_stream);
         upstream_stream.wait_reader_end().await;
         // Assert
-        assert_eq!(subgroup_opened_receiver.try_recv(), Ok(stream_key(0)));
+        assert_eq!(
+            subgroup_opened_receiver.try_recv().map(|run| run.key),
+            Ok(stream_key(0))
+        );
         let end = harness.subgroup_end_after(stream_key(0), 0).await;
         assert_eq!(
             matches!(end, NextObject::Finished),
@@ -504,7 +510,10 @@ mod tests {
             group_id: 0,
             subgroup_id: 5,
         };
-        assert_eq!(subgroup_opened_receiver.try_recv(), Ok(key));
+        assert_eq!(
+            subgroup_opened_receiver.try_recv().map(|run| run.key),
+            Ok(key)
+        );
         let ids: Vec<u64> = harness
             .cached_object_ids(key)
             .await

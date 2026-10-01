@@ -33,6 +33,15 @@ impl Drop for OpenSubgroupGuard<'_> {
     }
 }
 
+/// One upstream delivery of a subgroup: generation 0 is its first live stream,
+/// and every live stream reopening it after an abort starts the next generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SubgroupRun {
+    pub(crate) key: SubgroupKey,
+    pub(crate) generation: usize,
+    pub(crate) first_object_id: u64,
+}
+
 #[derive(Debug)]
 pub(crate) enum NextObject {
     Object(Arc<CachedObject>),
@@ -52,16 +61,20 @@ impl NextObject {
 
 impl TrackCache {
     pub(crate) fn open_subgroup(&self, key: SubgroupKey) -> OpenSubgroupGuard<'_> {
-        *self
-            .write()
-            .live_groups
-            .entry(key.group_id())
-            .or_default()
-            .open_subgroups
-            .entry(key)
-            .or_default() += 1;
+        let run = {
+            let mut ledger = self.write();
+            ledger.start_run_if_reopening_aborted(key);
+            *ledger
+                .live_groups
+                .entry(key.group_id())
+                .or_default()
+                .open_subgroups
+                .entry(key)
+                .or_default() += 1;
+            ledger.latest_run(key)
+        };
         self.notify.notify_waiters();
-        let _ = self.subgroup_opened_sender.send(key);
+        let _ = self.subgroup_opened_sender.send(run);
         OpenSubgroupGuard {
             cache: self,
             key,
@@ -131,32 +144,42 @@ impl TrackCache {
     pub(crate) async fn next_subgroup_object_or_wait(
         &self,
         key: SubgroupKey,
+        generation: usize,
         from_object_id: u64,
     ) -> Result<NextObject, TrackMalformed> {
-        self.wait_until(
-            |ledger| match ledger.next_subgroup_object(key, from_object_id) {
+        self.wait_until(|ledger| {
+            let run_end = ledger.superseded_run_end(key, generation);
+            let next_object = ledger
+                .next_subgroup_object(key, from_object_id)
+                .filter(|object| run_end.is_none_or(|end| object.location.object_id < end));
+            match next_object {
                 Some(object) => Some(NextObject::Object(object)),
+                None if run_end.is_some() => Some(NextObject::Aborted),
                 None if ledger.is_open(key) => None,
                 None if ledger.aborted_subgroups.contains(&key) => Some(NextObject::Aborted),
                 None => Some(NextObject::Finished),
-            },
-        )
+            }
+        })
         .await
     }
 
     pub(super) async fn next_group_object_or_wait(
         &self,
         group_id: u64,
+        reopen_count: usize,
         from_object_id: u64,
     ) -> Result<NextObject, TrackMalformed> {
-        self.wait_until(
-            |ledger| match ledger.next_group_object(group_id, from_object_id) {
+        self.wait_until(|ledger| {
+            if ledger.reopen_count_in_group(group_id) != reopen_count {
+                return Some(NextObject::Aborted);
+            }
+            match ledger.next_group_object(group_id, from_object_id) {
                 Some(object) => Some(NextObject::Object(object)),
                 None if ledger.has_open_subgroup_in_group(group_id) => None,
                 None if ledger.is_group_aborted(group_id) => Some(NextObject::Aborted),
                 None => Some(NextObject::Finished),
-            },
-        )
+            }
+        })
         .await
     }
 }
@@ -167,7 +190,8 @@ mod tests {
 
     use super::*;
     use crate::modules::relay::tests::harness::fixtures::cached_object::{
-        datagram_object, open_group, stream_key, stream_object, stream_object_in_subgroup,
+        datagram_object, insert_aborted_group, open_group, stream_key, stream_object,
+        stream_object_in_subgroup,
     };
 
     #[tokio::test]
@@ -177,7 +201,7 @@ mod tests {
         let _open = open_group(&cache, 0, &[0, 3, 5]);
         // Act
         let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 3)
+            .next_subgroup_object_or_wait(stream_key(0), 0, 3)
             .await
             .unwrap()
             .unwrap();
@@ -192,7 +216,7 @@ mod tests {
         let _open = open_group(&cache, 0, &[0, 3, 5]);
         // Act
         let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 4)
+            .next_subgroup_object_or_wait(stream_key(0), 0, 4)
             .await
             .unwrap()
             .unwrap();
@@ -207,7 +231,9 @@ mod tests {
         open_group(&cache, 0, &[0]).finish();
         // Act / Assert
         assert!(matches!(
-            cache.next_subgroup_object_or_wait(stream_key(0), 1).await,
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .await,
             Ok(NextObject::Finished)
         ));
     }
@@ -219,7 +245,9 @@ mod tests {
         let _ = cache.insert(stream_object(0, 0));
         // Act / Assert: nothing will ever close it, so waiting would hang
         assert!(matches!(
-            cache.next_subgroup_object_or_wait(stream_key(0), 1).await,
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .await,
             Ok(NextObject::Finished)
         ));
     }
@@ -232,7 +260,7 @@ mod tests {
         let _ = cache.insert_live(stream_object_in_subgroup(0, 1, 1));
         // Act
         let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 1)
+            .next_subgroup_object_or_wait(stream_key(0), 0, 1)
             .await
             .unwrap()
             .unwrap();
@@ -247,7 +275,11 @@ mod tests {
         let live_cache = cache.clone();
         let waiter = tokio::spawn({
             let cache = cache.clone();
-            async move { cache.next_subgroup_object_or_wait(stream_key(0), 0).await }
+            async move {
+                cache
+                    .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                    .await
+            }
         });
         let open = live_cache.open_subgroup(stream_key(0));
         tokio::task::yield_now().await;
@@ -270,7 +302,11 @@ mod tests {
         let open = cache.open_subgroup(stream_key(0));
         let waiter = tokio::spawn({
             let cache = cache.clone();
-            async move { cache.next_subgroup_object_or_wait(stream_key(0), 0).await }
+            async move {
+                cache
+                    .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                    .await
+            }
         });
         tokio::task::yield_now().await;
         // Act
@@ -290,7 +326,11 @@ mod tests {
         let open = cache.open_subgroup(stream_key(0));
         let waiter = tokio::spawn({
             let cache = cache.clone();
-            async move { cache.next_subgroup_object_or_wait(stream_key(0), 0).await }
+            async move {
+                cache
+                    .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                    .await
+            }
         });
         tokio::task::yield_now().await;
         // Act
@@ -301,6 +341,85 @@ mod tests {
             .expect("waiter must wake on close")
             .unwrap();
         assert!(matches!(result, Ok(NextObject::Aborted)));
+    }
+
+    #[test]
+    fn reopening_an_aborted_subgroup_starts_a_run_after_its_cached_objects() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_aborted_group(&cache, 0, &[0, 1, 2]);
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        // Act
+        let _reopened = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver.try_recv(),
+            Ok(SubgroupRun {
+                key: stream_key(0),
+                generation: 1,
+                first_object_id: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn reopening_a_finished_subgroup_continues_its_run() {
+        // Arrange
+        let cache = TrackCache::new();
+        open_group(&cache, 0, &[0]).finish();
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        // Act
+        let _reopened = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.generation),
+            Ok(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn superseded_run_is_aborted_at_the_first_object_of_the_reopened_run() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_aborted_group(&cache, 0, &[0, 1, 2]);
+        let reopened = cache.open_subgroup(stream_key(0));
+        let _ = reopened.insert(stream_object(0, 3));
+        // Act
+        let superseded_last = cache
+            .next_subgroup_object_or_wait(stream_key(0), 0, 2)
+            .await;
+        let superseded_end = cache
+            .next_subgroup_object_or_wait(stream_key(0), 0, 3)
+            .await;
+        let reopened_first = cache
+            .next_subgroup_object_or_wait(stream_key(0), 1, 3)
+            .await;
+        // Assert
+        assert_eq!(superseded_last.unwrap().unwrap().location.object_id, 2);
+        assert!(matches!(superseded_end, Ok(NextObject::Aborted)));
+        assert_eq!(reopened_first.unwrap().unwrap().location.object_id, 3);
+    }
+
+    #[tokio::test]
+    async fn reopened_run_that_finishes_is_finished_and_completes_its_group() {
+        // Arrange: object 1 was lost with the aborted run
+        let cache = TrackCache::new();
+        insert_aborted_group(&cache, 0, &[0]);
+        let reopened = cache.open_subgroup(stream_key(0));
+        let _ = reopened.insert(stream_object(0, 2));
+        // Act
+        reopened.finish();
+        // Assert
+        assert!(matches!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 1, 3)
+                .await,
+            Ok(NextObject::Finished)
+        ));
+        assert!(cache.covers(location(0, 2), location(0, 0)));
+        assert!(!cache.covers(location(0, 1), location(0, 2)));
     }
 
     #[tokio::test]
@@ -315,14 +434,16 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
-                cache.next_subgroup_object_or_wait(stream_key(0), 0)
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, 0)
             )
             .await
             .is_err()
         );
         second.finish();
         assert!(matches!(
-            cache.next_subgroup_object_or_wait(stream_key(0), 0).await,
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                .await,
             Ok(NextObject::Finished)
         ));
     }

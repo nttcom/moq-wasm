@@ -14,6 +14,7 @@ pub(crate) struct FetchCursor<'a> {
 
 struct GroupCursor {
     group_id: u64,
+    reopen_count: usize,
     fully_known: bool,
     frontier: Option<u64>,
     next_object_id: u64,
@@ -76,7 +77,11 @@ impl<'a> FetchCursor<'a> {
                 }
             } else {
                 self.cache
-                    .next_group_object_or_wait(group.group_id, group.next_object_id)
+                    .next_group_object_or_wait(
+                        group.group_id,
+                        group.reopen_count,
+                        group.next_object_id,
+                    )
                     .await?
             };
             match found {
@@ -100,9 +105,9 @@ impl<'a> FetchCursor<'a> {
     }
 
     fn enter_group(&self, group_id: u64) -> GroupCursor {
-        let known_prefix_end = self
-            .cache
-            .read()
+        let ledger = self.cache.read();
+        let reopen_count = ledger.reopen_count_in_group(group_id);
+        let known_prefix_end = ledger
             .known_ranges
             .end_of_range_containing(location(group_id, 0));
         let fully_known = matches!(known_prefix_end, Some(end) if end.group_id > group_id);
@@ -122,6 +127,7 @@ impl<'a> FetchCursor<'a> {
         };
         GroupCursor {
             group_id,
+            reopen_count,
             fully_known,
             frontier,
             next_object_id,

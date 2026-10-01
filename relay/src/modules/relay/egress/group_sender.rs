@@ -43,6 +43,7 @@ pub(crate) struct GroupSender {
 struct StreamSendTask {
     track_alias: u64,
     key: SubgroupKey,
+    generation: usize,
     object_id: u64,
     cache: Arc<TrackCache>,
     factory: SharedStreamSenderFactory,
@@ -106,6 +107,7 @@ impl GroupSender {
                                 Self::send_stream_task(StreamSendTask {
                                     track_alias,
                                     key: task.key,
+                                    generation: task.generation,
                                     object_id: task.object_id,
                                     cache: self.cache.clone(),
                                     factory,
@@ -155,7 +157,7 @@ impl GroupSender {
         };
         let Ok(NextObject::Object(first)) = task
             .cache
-            .next_subgroup_object_or_wait(task.key, task.object_id)
+            .next_subgroup_object_or_wait(task.key, task.generation, task.object_id)
             .await
         else {
             tracing::debug!("subgroup ended before any object to send");
@@ -227,7 +229,11 @@ impl GroupSender {
             prev_sent_object_id = Some(object_id);
             next = match task
                 .cache
-                .next_subgroup_object_or_wait(task.key, object_id.saturating_add(1))
+                .next_subgroup_object_or_wait(
+                    task.key,
+                    task.generation,
+                    object_id.saturating_add(1),
+                )
                 .await
             {
                 Ok(next) => next,
@@ -258,8 +264,9 @@ impl GroupSender {
         mut sender: Box<dyn DataSender>,
     ) {
         let mut cursor = task.object_id;
-        while let Ok(NextObject::Object(object)) =
-            cache.next_subgroup_object_or_wait(task.key, cursor).await
+        while let Ok(NextObject::Object(object)) = cache
+            .next_subgroup_object_or_wait(task.key, task.generation, cursor)
+            .await
         {
             let object_id = object.location.object_id;
             tracing::debug!(
