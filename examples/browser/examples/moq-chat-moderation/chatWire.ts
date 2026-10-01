@@ -37,7 +37,12 @@ export function parseModerationVerdicts(payload: Uint8Array): ModerationVerdict[
   return records.flatMap((record) => {
     const location = record?.l
     const abusive = record?.data?.abusive
-    if (!Array.isArray(location) || location.length !== 2 || typeof abusive !== 'boolean') {
+    if (
+      !Array.isArray(location) ||
+      location.length !== 2 ||
+      !location.every(Number.isSafeInteger) ||
+      typeof abusive !== 'boolean'
+    ) {
       return []
     }
     return [{ location: { groupId: BigInt(location[0]), objectId: BigInt(location[1]) }, abusive }]
