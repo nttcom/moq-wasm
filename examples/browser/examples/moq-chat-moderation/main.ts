@@ -1,8 +1,8 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt_client_wasm'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
-import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET, configureRelayUrlControls } from '../../utils/relayPresets'
-import { type StatusState, getErrorMessage, setStatus } from '../media/common'
+import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
+import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 import { type Location, type ModerationVerdict, encodeChatRecord, parseModerationVerdicts } from './chatWire'
 
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', 'chat']
@@ -63,14 +63,7 @@ const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
 
-for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.dataset.url = preset.value
-  button.textContent = `Cloud ${preset.label}`
-  button.title = preset.helper
-  element('urlPresets').appendChild(button)
-}
+appendCloudRelayPresetButtons(element('urlPresets'))
 configureRelayUrlControls()
 
 joinButton.addEventListener('click', () => void join())
@@ -235,12 +228,4 @@ function locationKey({ groupId, objectId }: Location): string {
 
 function sameNamespace(left: string[], right: string[]): boolean {
   return left.join('/') === right.join('/')
-}
-
-function element<T extends HTMLElement>(id: string): T {
-  const found = document.getElementById(id)
-  if (!found) {
-    throw new Error(`missing element #${id}`)
-  }
-  return found as T
 }
