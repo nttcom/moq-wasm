@@ -10,7 +10,7 @@ from pipecat.transports.moq.transport import MOQParams, MOQTransport
 from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.event_timeline import EventTimeline
-from moq_chat_moderation.jev import JevClient
+from moq_chat_moderation.jev import JEV_URL, JevClient
 from moq_chat_moderation.moderator import ChatModerator
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
+    parser.add_argument("--jev-url", default=JEV_URL)
     return parser.parse_args()
 
 
@@ -64,7 +65,7 @@ async def main():
         timeline.publish_on(moderator_broadcast(transport))
 
     async with aiohttp.ClientSession() as session:
-        moderator = ChatModerator(JevClient(session, api_key), timeline)
+        moderator = ChatModerator(JevClient(session, api_key, url=args.jev_url), timeline)
         worker = PipelineWorker(
             Pipeline([moderator, transport.input()]),
             enable_rtvi=False,
