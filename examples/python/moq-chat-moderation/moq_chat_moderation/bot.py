@@ -23,7 +23,7 @@ CHAT_PAGE_WAIT_SECONDS = 365 * 24 * 60 * 60
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Judge MoQ chat messages with Jev")
-    parser.add_argument("--relay-url", default=os.environ.get("MOQ_RELAY_URL", DEFAULT_RELAY_URL))
+    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
         action="store_true",
@@ -58,7 +58,6 @@ async def main():
         )
     )
     timeline = EventTimeline(EVENT_TIMELINE_TRACK)
-    timeline.publish_on(moderator_broadcast(transport))
 
     @transport.event_handler("on_connected")
     async def on_connected(transport: MOQTransport):

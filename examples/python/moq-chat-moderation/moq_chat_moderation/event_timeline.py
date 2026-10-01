@@ -20,14 +20,10 @@ class EventTimeline:
     def __init__(self, track_name: str):
         self._track_name = track_name
         self._records: list[EventRecord] = []
-        self._broadcast: moq.BroadcastProducer | None = None
         self._track: moq.TrackProducer | None = None
         self._group: moq.GroupProducer | None = None
 
     def publish_on(self, broadcast: moq.BroadcastProducer) -> None:
-        if broadcast is self._broadcast:
-            return
-        self._broadcast = broadcast
         self._track = broadcast.publish_track(self._track_name)
         # The relay keeps a track's cache across publisher sessions and isolates a track
         # whose publisher repeats a location, so group ids are seeded from the wall clock.
