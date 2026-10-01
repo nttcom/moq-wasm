@@ -5,7 +5,7 @@ use redis::AsyncCommands;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum RouteKind {
     NamespacePublisher,
     NamespaceSubscriber,

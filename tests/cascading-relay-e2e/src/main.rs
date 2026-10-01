@@ -313,7 +313,6 @@ async fn run_lost_route_restore_scenario(
     )
     .await
     .context("publisher relay did not restore its PUBLISH_NAMESPACE route")?;
-    drop(publisher_session);
     Ok(())
 }
 
@@ -1018,9 +1017,7 @@ async fn wait_for_hash_field(
 }
 
 async fn hash_field(redis_url: &str, key: &str, field: &str) -> anyhow::Result<Option<String>> {
-    let mut connection = redis_connection(redis_url).await?;
-    let value: Option<String> = connection.hget(key, field).await?;
-    Ok(value)
+    Ok(redis_connection(redis_url).await?.hget(key, field).await?)
 }
 
 async fn redis_connection(redis_url: &str) -> anyhow::Result<redis::aio::ConnectionManager> {
