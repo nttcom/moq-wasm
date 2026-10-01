@@ -89,6 +89,17 @@ export function buildRelayPresets(): RelayPreset[] {
   return [...buildLocalRelayPresets(), LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]
 }
 
+export function appendCloudRelayPresetButtons(container: HTMLElement): void {
+  for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.dataset.url = preset.value
+    button.textContent = `Cloud ${preset.label}`
+    button.title = preset.helper
+    container.appendChild(button)
+  }
+}
+
 export function configureRelayUrlControls({
   inputId = 'url',
   presetContainerId = 'urlPresets',
