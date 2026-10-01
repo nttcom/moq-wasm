@@ -3,7 +3,13 @@ import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt_client_wa
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
-import { type Location, type ModerationVerdict, encodeChatRecord, parseModerationVerdicts } from './chatWire'
+import {
+  type Location,
+  MAX_CHAT_TEXT_LENGTH,
+  type ModerationVerdict,
+  encodeChatRecord,
+  parseModerationVerdicts
+} from './chatWire'
 
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', 'chat']
 const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', 'moderator']
@@ -62,6 +68,8 @@ const messageList = element<HTMLOListElement>('messages')
 const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
+
+chatInput.maxLength = MAX_CHAT_TEXT_LENGTH
 
 appendCloudRelayPresetButtons(element('urlPresets'))
 configureRelayUrlControls()

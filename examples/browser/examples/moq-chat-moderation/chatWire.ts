@@ -2,7 +2,7 @@ export type Location = { groupId: bigint; objectId: bigint }
 
 export type ModerationVerdict = { location: Location; abusive: boolean }
 
-const MAX_STORED_BLOCK_LENGTH = 0xffff
+export const MAX_CHAT_TEXT_LENGTH = 1000
 const NON_FINAL_STORED_BLOCK_HEADER = 0x00
 const STORED_BLOCK_HEADER_LENGTH = 5
 
@@ -10,23 +10,20 @@ const STORED_BLOCK_HEADER_LENGTH = 5
 /// one raw DEFLATE stream sync-flushed after every frame, with the flush's fixed `00 00 ff ff`
 /// tail left off the wire. Stored (uncompressed) blocks are valid DEFLATE, so a record needs no
 /// compressor; the trailing header byte opens the empty block the reader completes with that tail.
+/// A text of at most MAX_CHAT_TEXT_LENGTH UTF-16 units stays under a stored block's 65535 bytes.
 export function encodeChatRecord(text: string, location: Location): Uint8Array {
   const json = JSON.stringify({ text, location: [Number(location.groupId), Number(location.objectId)] })
   const data = new TextEncoder().encode(json)
-  const blockCount = Math.ceil(data.length / MAX_STORED_BLOCK_LENGTH)
-  const frame = new Uint8Array(data.length + blockCount * STORED_BLOCK_HEADER_LENGTH + 1)
-  let position = 0
-  for (let offset = 0; offset < data.length; offset += MAX_STORED_BLOCK_LENGTH) {
-    const chunk = data.subarray(offset, offset + MAX_STORED_BLOCK_LENGTH)
-    const inverted = chunk.length ^ 0xffff
-    frame.set(
-      [NON_FINAL_STORED_BLOCK_HEADER, chunk.length & 0xff, chunk.length >> 8, inverted & 0xff, inverted >> 8],
-      position
-    )
-    frame.set(chunk, position + STORED_BLOCK_HEADER_LENGTH)
-    position += STORED_BLOCK_HEADER_LENGTH + chunk.length
-  }
-  frame[position] = NON_FINAL_STORED_BLOCK_HEADER
+  const frame = new Uint8Array(STORED_BLOCK_HEADER_LENGTH + data.length + 1)
+  frame.set([
+    NON_FINAL_STORED_BLOCK_HEADER,
+    data.length & 0xff,
+    data.length >> 8,
+    ~data.length & 0xff,
+    (~data.length >> 8) & 0xff
+  ])
+  frame.set(data, STORED_BLOCK_HEADER_LENGTH)
+  frame[frame.length - 1] = NON_FINAL_STORED_BLOCK_HEADER
   return frame
 }
 
