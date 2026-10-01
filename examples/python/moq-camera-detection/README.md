@@ -81,7 +81,7 @@ vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs
 uv run pytest
 ```
 
-E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の判定サーバ・bot を起動し、Playwright の偽カメラでページを操作します。
+E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の djev-vision・bot を起動し、Playwright の偽カメラでページを操作します。
 
 ```shell
 node scripts/run-camera-detection-e2e.mjs

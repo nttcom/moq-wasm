@@ -75,7 +75,7 @@ IAM 認証が必須なので、bot を起動するアカウントには `roles/r
 uv run pytest
 ```
 
-E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の判定サーバ・bot を起動し、Playwright でページを操作します。
+E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の djev-run・bot を起動し、Playwright でページを操作します。
 
 ```shell
 node scripts/run-chat-moderation-e2e.mjs

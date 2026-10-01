@@ -280,7 +280,7 @@ async function sendPrompt(): Promise<void> {
 
 function setVideoSender(sender: GopSender | undefined): void {
   videoSender = sender
-  setStatus('detector-status', sender ? '判定サーバ接続済み' : '判定サーバ未接続', sender ? 'ok' : 'idle')
+  setStatus('detector-status', sender ? 'bot 接続済み' : 'bot 未接続', sender ? 'ok' : 'idle')
 }
 
 async function subscribeVerdicts(): Promise<void> {
