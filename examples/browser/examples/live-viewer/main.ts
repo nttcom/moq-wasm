@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET } from '../../utils/relayPresets'
+import { appendCloudRelayPresetButtons } from '../../utils/relayPresets'
 import { MEDIA_CATALOG_TRACK_NAME } from '../media/catalog'
-import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatus } from '../media/common'
+import { element, getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatus } from '../media/common'
 import type { LivePictureKind } from '@player/livePictureSink'
 import { PlayerControls } from '@player/ui/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
@@ -56,14 +56,7 @@ const mp4Publisher = new Mp4Publisher(
   new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
 )
 
-for (const preset of [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]) {
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.dataset.url = preset.value
-  button.textContent = `Cloud ${preset.label}`
-  button.title = preset.helper
-  element('urlPresets').appendChild(button)
-}
+appendCloudRelayPresetButtons(element('urlPresets'))
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())
@@ -276,12 +269,4 @@ function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
   entry.className = `log-entry log-${level}`
   entry.textContent = `${new Date().toLocaleTimeString()} ${message}`
   panel.prepend(entry)
-}
-
-function element<T extends Element>(id: string): T {
-  const found = document.getElementById(id)
-  if (!found) {
-    throw new Error(`missing element: ${id}`)
-  }
-  return found as Element as T
 }

@@ -107,3 +107,11 @@ function parseMediaVideoHardwareAcceleration(value: string | null): MediaVideoHa
   }
   return undefined
 }
+
+export function element<T extends Element>(id: string): T {
+  const found = document.getElementById(id)
+  if (!found) {
+    throw new Error(`missing element: ${id}`)
+  }
+  return found as Element as T
+}
