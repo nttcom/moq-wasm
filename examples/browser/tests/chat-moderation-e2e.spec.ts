@@ -4,41 +4,34 @@ import { ABUSIVE_TEXT, REMOVED_MESSAGE_TEXT, joinChat } from './chat-moderation-
 const ORDINARY_TEXT = 'こんにちは'
 
 test.describe('MoQ Chat Moderation', () => {
-  test('replaces only the message the moderator judges abusive', async ({ browser }) => {
+  test('replaces only the message the moderator judges abusive', async ({ page }) => {
     // Arrange
-    const chat = await joinChat(browser)
+    const chat = await joinChat(page)
 
-    try {
-      // Act
-      await chat.send(ORDINARY_TEXT)
-      await chat.send(`${ABUSIVE_TEXT} です`)
+    // Act
+    await chat.send(ORDINARY_TEXT)
+    await chat.send(`${ABUSIVE_TEXT} です`)
 
-      // Assert
-      await expect(chat.messages.nth(0)).toHaveAttribute('data-verdict', 'ok')
-      await expect(chat.messages.nth(0)).toContainText(ORDINARY_TEXT)
-      await expect(chat.messages.nth(1)).toHaveAttribute('data-verdict', 'removed')
-      await expect(chat.messages.nth(1)).toHaveText(REMOVED_MESSAGE_TEXT)
-    } finally {
-      await chat.context.close()
-    }
+    // Assert
+    await expect(chat.messages.nth(0)).toHaveAttribute('data-verdict', 'ok')
+    await expect(chat.messages.nth(0)).toContainText(ORDINARY_TEXT)
+    await expect(chat.messages.nth(1)).toHaveAttribute('data-verdict', 'removed')
+    await expect(chat.messages.nth(1)).toHaveText(REMOVED_MESSAGE_TEXT)
   })
 
-  test('moderates a page that joins after another one left', async ({ browser }) => {
+  test('moderates a page that joins after another one left', async ({ browser, page }) => {
     // Arrange
-    const earlierChat = await joinChat(browser)
+    const earlierPage = await browser.newPage()
+    const earlierChat = await joinChat(earlierPage)
     await earlierChat.send(ORDINARY_TEXT)
     await expect(earlierChat.messages.nth(0)).toHaveAttribute('data-verdict', 'ok')
-    await earlierChat.context.close()
-    const chat = await joinChat(browser)
+    await earlierPage.close()
+    const chat = await joinChat(page)
 
-    try {
-      // Act
-      await chat.send(ABUSIVE_TEXT)
+    // Act
+    await chat.send(ABUSIVE_TEXT)
 
-      // Assert
-      await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
-    } finally {
-      await chat.context.close()
-    }
+    // Assert
+    await expect(chat.messages.nth(0)).toHaveText(REMOVED_MESSAGE_TEXT)
   })
 })

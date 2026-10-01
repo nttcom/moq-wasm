@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
+import { once } from "node:events";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
+import { json } from "node:stream/consumers";
 
 import {
   registerSignalHandlers,
@@ -13,6 +15,7 @@ import {
 } from "./browser-e2e-process.mjs";
 import {
   assertE2EPrerequisites,
+  chatModerationPath,
   ensureLinuxEnvironment,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
@@ -25,27 +28,18 @@ import {
 } from "./media-e2e-helpers.mjs";
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
-const chatModerationPath = "/moq-wasm/examples/moq-chat-moderation/index.html";
 const botDir = resolve(repoRoot, "examples/python/moq-chat-moderation");
 const abusiveText = "e2e-abusive";
 const childProcesses = [];
 
 async function startFakeJev() {
-  const server = createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => {
-      const { state } = JSON.parse(body);
-      const noul = state.includes(abusiveText) ? 0.95 : 0.02;
-      response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ answers: { abusive: { noul } } }));
-    });
+  const server = createServer(async (request, response) => {
+    const { state } = await json(request);
+    const noul = state.includes(abusiveText) ? 0.95 : 0.02;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ answers: { abusive: { noul } } }));
   });
-  await new Promise((resolvePromise) =>
-    server.listen(0, "127.0.0.1", resolvePromise),
-  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
   return server;
 }
 
@@ -112,7 +106,6 @@ async function main() {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
           CHAT_MODERATION_E2E_MOQT_URL: moqtUrl,
-          CHAT_MODERATION_E2E_ABUSIVE_TEXT: abusiveText,
         },
       },
     );
