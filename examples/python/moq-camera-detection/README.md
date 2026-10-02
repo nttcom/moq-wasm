@@ -32,9 +32,13 @@ vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs
 
 ## 起動
 
+Cloud relay-1 には、常時動いている bot がつながっています。Cloud relay で試すだけなら bot を起動する必要はなく、
+ページを開いて既定の Cloud relay-1 のまま Join します。
+
+手元の bot を Cloud relay につなぐと Cloud の bot と同じページを二重に処理するため、relay も手元で起動します。
 各コマンドを別々のターミナルで実行します。
 
-1. relay を起動する（Cloud relay を使う場合は不要）
+1. relay を起動する
 
    ```shell
    make relay
@@ -49,7 +53,7 @@ vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs
      --gcloud-auth
    ```
 
-   Cloud relay を使う場合は `--insecure` の代わりに `--relay-url https://relay-1.moqt.research.skyway.io:443` を渡します。
+   `--insecure` は手元の relay の自己署名証明書を検証しない指定です。
 
 3. ページを開く
 
@@ -58,8 +62,7 @@ vLLM は拡散モデルの出力を選択肢に縛れない（structured outputs
    make chrome
    ```
 
-   ハブから MoQ Camera Detection を開き、bot と同じ relay を選んで Join します（既定は Cloud relay-1）。Cloud relay だけを使う場合、
-   `make chrome` は不要です。
+   `make chrome` で起動した Chrome でハブから MoQ Camera Detection を開き、Local relay-a を選んで Join します。
 
 ## トラック
 
