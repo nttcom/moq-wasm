@@ -41,6 +41,8 @@ nix develop
 npm --prefix examples/browser ci
 ```
 
+### Single relay
+
 Run a relay, publish a test stream and watch it, in four terminals:
 
 ```shell
@@ -54,14 +56,7 @@ Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
 relay's self-signed certificate. Open Live Viewer from the hub and watch
 `anon/live/test`.
 
-### Authentication
-
-Relays always authenticate. A session without a token is limited to
-`anon/**`, which every example uses by default. Tokens are HS256 JWTs verified
-by the VTS; mint one with `services/vts/bin/mint.mjs`. See
-[`services/vts/README.md`](services/vts/README.md).
-
-### Two relays with Docker Compose
+### Two relays
 
 ```shell
 docker compose up -d
@@ -69,8 +64,8 @@ docker compose up -d
 
 Starts `relay-a` (`https://127.0.0.1:4433`) and `relay-b` (`:4434`) sharing a
 VTS and a Redis route registry, the topology the cascading, auth and meeting
-E2E use. The `make` targets resolve the Docker Desktop bridge host for native
-clients on macOS.
+E2E use. The `make` targets above publish to `relay-a` and resolve the Docker
+Desktop bridge host for native clients on macOS.
 
 ### Tests
 
@@ -130,3 +125,10 @@ Architecture documents:
 [`media-publisher`](docs/architecture/media-publisher/architecture.md),
 [Live Player](docs/architecture/browser-examples/live-player.md).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
+
+## Authentication
+
+Relays always authenticate. A session without a token is limited to
+`anon/**`, which every demo uses by default. Tokens are HS256 JWTs verified
+by the VTS; mint one with `services/vts/bin/mint.mjs`. See
+[`services/vts/README.md`](services/vts/README.md).
