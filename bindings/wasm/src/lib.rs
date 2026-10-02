@@ -745,6 +745,11 @@ impl MOQTClient {
         self.callbacks.borrow_mut().incoming_unsubscribe_callback = Some(callback);
     }
 
+    #[wasm_bindgen(js_name = onPublishDone)]
+    pub fn set_publish_done_callback(&mut self, callback: js_sys::Function) {
+        self.callbacks.borrow_mut().publish_done_callback = Some(callback);
+    }
+
     #[wasm_bindgen(js_name = onObjectDatagram)]
     pub fn set_object_datagram_callback(&mut self, callback: js_sys::Function) {
         self.callbacks.borrow_mut().object_datagram_callback = Some(callback);
@@ -2190,6 +2195,17 @@ impl ControlMessageHandler {
                     );
                 }
             }
+            ControlMessageType::PublishDone => {
+                let message = PublishDone::decode(&mut cursor)
+                    .ok_or_else(|| js_error("failed to decode PUBLISH_DONE"))?;
+                state
+                    .borrow_mut()
+                    .remove_outgoing_subscription(message.request_id);
+                if let Some(callback) = callbacks.borrow().publish_done_callback.clone() {
+                    let wrapper = PublishDoneMessage::from(&message);
+                    let _ = callback.call1(&JsValue::NULL, &JsValue::from(wrapper));
+                }
+            }
             ControlMessageType::Fetch => {
                 let message =
                     Fetch::decode(&mut cursor).ok_or_else(|| js_error("failed to decode FETCH"))?;
@@ -2625,6 +2641,7 @@ struct MOQTCallbacks {
     subscribe_callback: Option<js_sys::Function>,
     subscribe_response_callback: Option<js_sys::Function>,
     incoming_unsubscribe_callback: Option<js_sys::Function>,
+    publish_done_callback: Option<js_sys::Function>,
     object_datagram_callback: Option<js_sys::Function>,
     object_datagram_status_callback: Option<js_sys::Function>,
     subgroup_header_callback: Option<js_sys::Function>,

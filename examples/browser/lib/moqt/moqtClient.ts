@@ -7,6 +7,7 @@ import init, {
   NamespaceOkMessage,
   ObjectDatagramMessage,
   ObjectDatagramStatusMessage,
+  PublishDoneMessage,
   PublishNamespaceDoneMessage,
   PublishNamespaceMessage,
   PublishOkMessage,
@@ -23,6 +24,10 @@ import {
   SubscriptionStateStore,
   SubgroupObjectHandler
 } from './subscriptionStateManager'
+
+// draft-14 §9.12: PUBLISH_DONE can overtake the subscription's last streams, so its
+// objects keep being delivered this long.
+const PUBLISH_DONE_GRACE_PERIOD_MS = 10_000
 
 type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
 type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
@@ -179,6 +184,7 @@ export class MoqtClientWrapper {
   private onConnectionClosedHandler: ConnectionClosedHandler = null
   private incomingSubscribeHandler: IncomingSubscribeHandler | null = null
   private incomingUnsubscribeHandler: IncomingUnsubscribeHandler = null
+  private readonly publishDoneExpiries = new Set<ReturnType<typeof setTimeout>>()
   private incomingTrackStatusHandler: IncomingTrackStatusHandler | null = null
   private incomingFetchHandler: IncomingFetchHandler | null = null
   private readonly incomingFetchCancellations = new Map<bigint, AbortController>()
@@ -558,8 +564,12 @@ export class MoqtClientWrapper {
 
   async unsubscribe(requestId: bigint): Promise<void> {
     const client = this.requireConnectedClient()
-    const trackAlias = this.subscriptionTrackAliases.get(requestId)
     await client.sendUnsubscribe(requestId)
+    this.forgetSubscription(requestId)
+  }
+
+  private forgetSubscription(requestId: bigint): void {
+    const trackAlias = this.subscriptionTrackAliases.get(requestId)
     this.subscriptionTrackAliases.delete(requestId)
     if (trackAlias !== undefined) {
       this.clearSubgroupObjectHandler(trackAlias)
@@ -684,6 +694,19 @@ export class MoqtClientWrapper {
 
     this.client.onIncomingUnsubscribe((requestId: bigint) => {
       this.incomingUnsubscribeHandler?.(requestId)
+    })
+
+    this.client.onPublishDone((message: PublishDoneMessage) => {
+      console.info('[moqt] received PUBLISH_DONE', {
+        requestId: message.requestId.toString(),
+        statusCode: message.statusCode.toString(),
+        errorReason: message.errorReason
+      })
+      const expiry = setTimeout(() => {
+        this.publishDoneExpiries.delete(expiry)
+        this.forgetSubscription(message.requestId)
+      }, PUBLISH_DONE_GRACE_PERIOD_MS)
+      this.publishDoneExpiries.add(expiry)
     })
 
     this.client.onObjectDatagram((message: ObjectDatagramMessage) => {
@@ -846,6 +869,10 @@ export class MoqtClientWrapper {
     this.onConnectionClosedHandler = null
     this.incomingSubscribeHandler = null
     this.incomingUnsubscribeHandler = null
+    for (const expiry of this.publishDoneExpiries) {
+      clearTimeout(expiry)
+    }
+    this.publishDoneExpiries.clear()
     this.incomingTrackStatusHandler = null
     this.incomingFetchHandler = null
     for (const cancellation of this.incomingFetchCancellations.values()) {

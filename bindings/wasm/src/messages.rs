@@ -3,8 +3,8 @@ mod subgroup_state;
 use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::wire::{
     ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk, ObjectStatus,
-    Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError, ServerSetup,
-    SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
+    Publish, PublishDone, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError,
+    ServerSetup, SubgroupObject, SubgroupObjectField, Subscribe, SubscribeNamespace, SubscribeOk,
 };
 pub use subgroup_state::SubgroupState;
 
@@ -115,6 +115,49 @@ impl From<&PublishNamespaceDone> for PublishNamespaceDoneMessage {
     fn from(message: &PublishNamespaceDone) -> Self {
         Self {
             track_namespace: message.track_namespace.clone(),
+        }
+    }
+}
+
+#[wasm_bindgen]
+#[derive(Clone)]
+pub struct PublishDoneMessage {
+    request_id: u64,
+    status_code: u64,
+    stream_count: u64,
+    error_reason: String,
+}
+
+#[wasm_bindgen]
+impl PublishDoneMessage {
+    #[wasm_bindgen(getter, js_name = requestId)]
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter, js_name = statusCode)]
+    pub fn status_code(&self) -> u64 {
+        self.status_code
+    }
+
+    #[wasm_bindgen(getter, js_name = streamCount)]
+    pub fn stream_count(&self) -> u64 {
+        self.stream_count
+    }
+
+    #[wasm_bindgen(getter, js_name = errorReason)]
+    pub fn error_reason(&self) -> String {
+        self.error_reason.clone()
+    }
+}
+
+impl From<&PublishDone> for PublishDoneMessage {
+    fn from(message: &PublishDone) -> Self {
+        Self {
+            request_id: message.request_id,
+            status_code: message.status_code,
+            stream_count: message.stream_count,
+            error_reason: message.error_reason.clone(),
         }
     }
 }
