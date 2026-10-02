@@ -28,11 +28,6 @@ connect to the cloud relay by default, so nothing needs to be installed.
 | Real-time video analysis by an AI agent | [MoQ Camera Detection](https://nttcom.github.io/moq-wasm/examples/moq-camera-detection/): answers questions about a camera feed |
 | Remote monitoring, data collection and control of drones, robots and autonomous vehicles | |
 
-Low-level API pages: [Message](https://nttcom.github.io/moq-wasm/examples/message/),
-[Media](https://nttcom.github.io/moq-wasm/examples/media/),
-[Media CMAF](https://nttcom.github.io/moq-wasm/examples/media-cmaf/),
-[WebCodecs](https://nttcom.github.io/moq-wasm/examples/webcodecs/).
-
 Publishers outside the browser: [`bridges/live-ingest`](bridges/live-ingest/README.md) (RTMP/SRT),
 [`bindings/gstreamer`](bindings/gstreamer/README.md) (`moqtsink`),
 [`examples/rust/moq-cli`](examples/rust/moq-cli/README.md) and the
