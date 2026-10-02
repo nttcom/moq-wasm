@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { text } from "node:stream/consumers";
+import { setTimeout } from "node:timers/promises";
 
 import {
   registerSignalHandlers,
@@ -33,13 +34,21 @@ const childProcesses = [];
 
 async function startFakeDjevVision() {
   let answer = "1";
+  let delayMs = 0;
   const server = createServer(async (request, response) => {
+    if (request.method === "PUT" && request.url === "/delay") {
+      delayMs = Number(await text(request));
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     if (request.method === "PUT" && request.url === "/answer") {
       answer = await text(request);
       response.statusCode = 204;
       response.end();
       return;
     }
+    await setTimeout(delayMs);
     response.setHeader("content-type", "application/json");
     response.end(
       JSON.stringify({
@@ -114,7 +123,7 @@ async function main() {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
           CAMERA_DETECTION_E2E_MOQT_URL: moqtUrl,
-          CAMERA_DETECTION_E2E_ANSWER_URL: `${fakeDjevOrigin}/answer`,
+          CAMERA_DETECTION_E2E_DJEV_ORIGIN: fakeDjevOrigin,
         },
       },
     );

@@ -2,10 +2,15 @@ import { type Locator, type Page, expect } from '@playwright/test'
 import { CAMERA_DETECTION_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.CAMERA_DETECTION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-const answerUrl = process.env.CAMERA_DETECTION_E2E_ANSWER_URL!
+const djevOrigin = process.env.CAMERA_DETECTION_E2E_DJEV_ORIGIN!
 
 export async function answerDetectorWith(choiceNumber: string): Promise<void> {
-  const response = await fetch(answerUrl, { method: 'PUT', body: choiceNumber })
+  const response = await fetch(`${djevOrigin}/answer`, { method: 'PUT', body: choiceNumber })
+  expect(response.ok).toBe(true)
+}
+
+export async function delayDjevAnswers(milliseconds: number): Promise<void> {
+  const response = await fetch(`${djevOrigin}/delay`, { method: 'PUT', body: String(milliseconds) })
   expect(response.ok).toBe(true)
 }
 

@@ -3,7 +3,8 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
-import { json } from "node:stream/consumers";
+import { json, text } from "node:stream/consumers";
+import { setTimeout } from "node:timers/promises";
 
 import {
   registerSignalHandlers,
@@ -33,8 +34,16 @@ const abusiveText = "e2e-abusive";
 const childProcesses = [];
 
 async function startFakeJev() {
+  let delayMs = 0;
   const server = createServer(async (request, response) => {
+    if (request.method === "PUT" && request.url === "/delay") {
+      delayMs = Number(await text(request));
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     const { state } = await json(request);
+    await setTimeout(delayMs);
     const noul = state.includes(abusiveText) ? 0.95 : 0.02;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ answers: { abusive: { noul } } }));
@@ -106,6 +115,7 @@ async function main() {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
           CHAT_MODERATION_E2E_MOQT_URL: moqtUrl,
+          CHAT_MODERATION_E2E_JEV_ORIGIN: `http://127.0.0.1:${fakeJev.address().port}`,
         },
       },
     );

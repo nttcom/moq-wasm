@@ -2,6 +2,7 @@ import { type Locator, type Page, expect } from '@playwright/test'
 import { CHAT_MODERATION_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
+const jevOrigin = process.env.CHAT_MODERATION_E2E_JEV_ORIGIN!
 
 export const ABUSIVE_TEXT = 'e2e-abusive'
 export const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
@@ -9,6 +10,11 @@ export const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除され�
 export interface ChatPage {
   messages: Locator
   send(text: string): Promise<void>
+}
+
+export async function delayJevAnswers(milliseconds: number): Promise<void> {
+  const response = await fetch(`${jevOrigin}/delay`, { method: 'PUT', body: String(milliseconds) })
+  expect(response.ok).toBe(true)
 }
 
 export async function joinChat(page: Page): Promise<ChatPage> {
