@@ -8,7 +8,7 @@ layout, the publishing flow or the invariants described here change.
 `shared/media-publisher` turns `mediapack` media events into MoQT tracks: an
 MSF catalog, LOC and CMAF media tracks, a media timeline and a publisher-side
 FETCH cache. `bridges/live-ingest` and `bindings/gstreamer` build on it. The
-track layout is summarised in [its README](../../shared/media-publisher/README.md);
+track layout is summarised in [its README](../../../shared/media-publisher/README.md);
 this document records why the tracks are shaped that way.
 
 ## Publishing without subscribers

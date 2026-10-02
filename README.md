@@ -10,7 +10,7 @@ and WebRTC for each use case.
 
 Implements Media over QUIC Transport
 [draft-ietf-moq-transport-14](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/)
-in Rust (drafts in [`spec/`](spec/)).
+in Rust (drafts in [`docs/spec/`](docs/spec/)).
 
 ## Use cases and demos
 
@@ -164,11 +164,11 @@ component builds on.
 | [`shared/`](shared/README.md) | `mediapack` containers, `media-streaming-format` catalog, `media-publisher`, `transcode` |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
-| [`architecture_decision_record/`](architecture_decision_record) | Architecture and dependency decisions per crate |
+| [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
 
 Architecture documents:
-[`moqt`](architecture_decision_record/moqt/architecture.md),
-[`relay`](architecture_decision_record/relay/architecture.md),
-[`media-publisher`](architecture_decision_record/media-publisher/architecture.md),
-[Live Player](architecture_decision_record/browser-examples/live-player.md).
+[`moqt`](docs/architecture/moqt/architecture.md),
+[`relay`](docs/architecture/relay/architecture.md),
+[`media-publisher`](docs/architecture/media-publisher/architecture.md),
+[Live Player](docs/architecture/browser-examples/live-player.md).
 Contributor rules: [`AGENTS.md`](AGENTS.md).

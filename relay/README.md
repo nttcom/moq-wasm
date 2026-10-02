@@ -51,4 +51,4 @@ OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=your-api-key,x-honeycomb-dataset=moq
 
 ## Design
 
-[Architecture document](../architecture_decision_record/relay/architecture.md).
+[Architecture document](../docs/architecture/relay/architecture.md).
