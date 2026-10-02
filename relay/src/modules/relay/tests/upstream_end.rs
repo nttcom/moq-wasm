@@ -26,17 +26,3 @@ async fn upstream_end_is_relayed_as_publish_done_counting_the_opened_streams() {
     assert_eq!(publish_done.request_id, 0);
     assert_eq!(publish_done.stream_count, 1);
 }
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn removed_registration_stops_without_publish_done() {
-    // Arrange
-    let harness = RelayHarness::new();
-    let mut egress = harness.start_egress(None).await;
-
-    // Act
-    egress.remove_registration();
-    egress.wait_stopped().await;
-
-    // Assert
-    egress.assert_no_publish_done();
-}

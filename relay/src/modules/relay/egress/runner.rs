@@ -47,7 +47,7 @@ impl EgressRunner {
 
     pub(crate) async fn run(
         self,
-        mut stop_receiver: oneshot::Receiver<PublishDoneReason>,
+        stop_receiver: oneshot::Receiver<PublishDoneReason>,
         subscribe_ok_receiver: oneshot::Receiver<()>,
     ) -> anyhow::Result<()> {
         let track_key = self.track_key.clone();
@@ -58,7 +58,7 @@ impl EgressRunner {
 
         let reason = tokio::select! {
             biased;
-            reason = &mut stop_receiver => {
+            reason = stop_receiver => {
                 tracing::debug!("downstream subscription removed; egress runner stopped");
                 reason.ok()
             }

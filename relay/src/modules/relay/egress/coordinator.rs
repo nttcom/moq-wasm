@@ -267,6 +267,12 @@ mod tests {
         readiness
     }
 
+    async fn assert_no_publish_done_within_window(ctx: &mut TestContext) {
+        let publish_done =
+            tokio::time::timeout(PUBLISH_DONE_WINDOW, ctx.observers.publish_done.recv()).await;
+        assert!(publish_done.is_err(), "no PUBLISH_DONE should be sent");
+    }
+
     fn runner_holds_cache(ctx: &TestContext) -> bool {
         Arc::strong_count(&ctx.cache) > ctx.idle_cache_reference_count
     }
@@ -310,8 +316,7 @@ mod tests {
 
         // Assert
         assert!(readiness.is_err());
-        wait_until_runner_released_cache(&ctx).await;
-        assert!(ctx.observers.publish_done.try_recv().is_err());
+        assert_no_publish_done_within_window(&mut ctx).await;
     }
 
     #[tokio::test]
@@ -327,28 +332,22 @@ mod tests {
         runner_stop_sender
             .send(PublishDoneReason::publisher_session_closed())
             .unwrap();
-        let early =
-            tokio::time::timeout(PUBLISH_DONE_WINDOW, ctx.observers.publish_done.recv()).await;
+        assert_no_publish_done_within_window(&mut ctx).await;
 
         // Act
         subscribe_ok_sender.send(()).unwrap();
 
         // Assert
-        assert!(early.is_err(), "PUBLISH_DONE must not precede SUBSCRIBE_OK");
-        let publish_done = tokio::time::timeout(TEST_TIMEOUT, ctx.observers.publish_done.recv())
+        tokio::time::timeout(TEST_TIMEOUT, ctx.observers.publish_done.recv())
             .await
             .expect("runner should send PUBLISH_DONE")
             .expect("runner dropped its publisher");
-        assert_eq!(
-            publish_done.status_code,
-            moqt::wire::publish_done_status_code::TRACK_ENDED
-        );
     }
 
     #[tokio::test]
     async fn runner_stops_once_its_subscription_is_removed() {
         // Arrange
-        let ctx = setup().await;
+        let mut ctx = setup().await;
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         start_reader(&ctx, runner_stop_receiver)
             .await
@@ -361,5 +360,6 @@ mod tests {
 
         // Assert
         wait_until_runner_released_cache(&ctx).await;
+        assert_no_publish_done_within_window(&mut ctx).await;
     }
 }

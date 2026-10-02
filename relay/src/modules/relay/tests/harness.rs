@@ -61,17 +61,6 @@ impl EgressRunnerHandle {
         let _ = stop_sender.send(end);
     }
 
-    pub(crate) fn remove_registration(&mut self) {
-        self.stop_sender.take();
-    }
-
-    pub(crate) async fn wait_stopped(&mut self) {
-        tokio::time::timeout(RECV_TIMEOUT, &mut self.join_handle)
-            .await
-            .expect("egress runner should stop")
-            .expect("egress runner should not panic");
-    }
-
     pub(crate) fn set_forward(&self, forward: bool) {
         self.forward_sender.send_replace(forward);
     }
