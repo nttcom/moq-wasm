@@ -409,6 +409,7 @@ impl Subscribe {
         };
 
         let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
+        let (subscribe_ok_sender, subscribe_ok_receiver) = tokio::sync::oneshot::channel();
         if egress_sender
             .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
                 subscriber_session_id: session_id,
@@ -418,6 +419,7 @@ impl Subscribe {
                 parent_span: Span::current(),
                 ready_sender,
                 runner_stop_receiver: runner_signals.stop_receiver,
+                subscribe_ok_receiver,
                 forward_receiver: runner_signals.forward_receiver,
                 largest_location,
             })))
@@ -468,6 +470,7 @@ impl Subscribe {
             );
             return;
         }
+        let _ = subscribe_ok_sender.send(());
         tracing::info!(
             session_id = %session_id,
             track_namespace = %upstream_key.track_namespace,

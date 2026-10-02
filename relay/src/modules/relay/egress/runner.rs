@@ -5,11 +5,10 @@ use std::sync::{
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-use moqt::wire::publish_done_status_code;
-
 use crate::modules::{
     core::{publisher::Publisher, subscription::DownstreamSubscription},
     relay::cache::track_cache::TrackCache,
+    sequences::tables::table::PublishDoneReason,
     types::TrackKey,
 };
 
@@ -18,7 +17,7 @@ use super::{group_sender::GroupSender, scheduler::EgressScheduler};
 pub(crate) struct EgressRunner {
     track_key: TrackKey,
     cache: Arc<TrackCache>,
-    publisher: Box<dyn Publisher>,
+    publisher: Arc<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
     largest_location: Option<moqt::Location>,
@@ -38,7 +37,7 @@ impl EgressRunner {
         Self {
             track_key,
             cache,
-            publisher,
+            publisher: Arc::from(publisher),
             downstream_subscription,
             ready_sender,
             largest_location,
@@ -46,71 +45,102 @@ impl EgressRunner {
         }
     }
 
-    pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let publisher: Arc<dyn Publisher> = Arc::from(self.publisher);
+    pub(crate) async fn run(
+        self,
+        mut stop_receiver: oneshot::Receiver<PublishDoneReason>,
+        subscribe_ok_receiver: oneshot::Receiver<()>,
+    ) -> anyhow::Result<()> {
+        let track_key = self.track_key.clone();
+        let publisher = self.publisher.clone();
         let request_id = self.downstream_subscription.request_id();
-
-        if self.cache.is_malformed() {
-            let _ = self.ready_sender.send(Ok(()));
-            Self::send_malformed_publish_done(publisher.as_ref(), &self.track_key, request_id, 0)
-                .await;
-            return Ok(());
-        }
-
-        let (sender, receiver) = mpsc::channel(64);
         let opened_stream_count = Arc::new(AtomicU64::new(0));
-        let filter_type = self.downstream_subscription.filter_type();
-        let group_order = self.downstream_subscription.group_order();
-        let scheduler = EgressScheduler::new(
-            self.cache.clone(),
-            filter_type,
-            group_order,
-            sender,
-            self.largest_location,
-            self.forward_receiver,
-        );
-        let group_sender = GroupSender::new(
-            self.track_key.clone(),
-            self.cache.clone(),
-            publisher.clone(),
-            self.downstream_subscription,
-            receiver,
-            opened_stream_count.clone(),
-        );
+        let delivery = self.deliver(opened_stream_count.clone());
 
-        tokio::select! {
-            _ = async { tokio::join!(scheduler.run(self.ready_sender), group_sender.run()) } => {}
-            _ = self.cache.malformed_track_detected() => {
-                let stream_count = opened_stream_count.load(Ordering::Acquire);
-                Self::send_malformed_publish_done(
-                    publisher.as_ref(),
-                    &self.track_key,
-                    request_id,
-                    stream_count,
-                )
-                .await;
+        let reason = tokio::select! {
+            biased;
+            reason = &mut stop_receiver => {
+                tracing::debug!("downstream subscription removed; egress runner stopped");
+                reason.ok()
             }
+            reason = delivery => reason,
+        };
+        // PUBLISH_DONE must follow the SUBSCRIBE_OK the subscriber's session worker sends; a
+        // subscription that never got one is answered with SUBSCRIBE_ERROR instead.
+        if let Some(reason) = reason
+            && subscribe_ok_receiver.await.is_ok()
+        {
+            Self::send_publish_done(
+                publisher.as_ref(),
+                &track_key,
+                request_id,
+                reason,
+                opened_stream_count.load(Ordering::Acquire),
+            )
+            .await;
         }
         Ok(())
     }
 
-    async fn send_malformed_publish_done(
+    async fn deliver(self, opened_stream_count: Arc<AtomicU64>) -> Option<PublishDoneReason> {
+        let Self {
+            track_key,
+            cache,
+            publisher,
+            downstream_subscription,
+            ready_sender,
+            largest_location,
+            forward_receiver,
+        } = self;
+
+        if cache.is_malformed() {
+            let _ = ready_sender.send(Ok(()));
+            return Some(Self::malformed(&track_key));
+        }
+
+        let (sender, receiver) = mpsc::channel(64);
+        let filter_type = downstream_subscription.filter_type();
+        let group_order = downstream_subscription.group_order();
+        let scheduler = EgressScheduler::new(
+            cache.clone(),
+            filter_type,
+            group_order,
+            sender,
+            largest_location,
+            forward_receiver,
+        );
+        let group_sender = GroupSender::new(
+            track_key.clone(),
+            cache.clone(),
+            publisher,
+            downstream_subscription,
+            receiver,
+            opened_stream_count,
+        );
+
+        tokio::select! {
+            _ = async { tokio::join!(scheduler.run(ready_sender), group_sender.run()) } => None,
+            _ = cache.malformed_track_detected() => Some(Self::malformed(&track_key)),
+        }
+    }
+
+    fn malformed(track_key: &TrackKey) -> PublishDoneReason {
+        tracing::warn!(%track_key, "malformed track detected; terminating downstream subscription");
+        PublishDoneReason::malformed_track()
+    }
+
+    async fn send_publish_done(
         publisher: &dyn Publisher,
         track_key: &TrackKey,
         request_id: u64,
+        reason: PublishDoneReason,
         stream_count: u64,
     ) {
-        tracing::warn!(
-            %track_key,
-            request_id,
-            "malformed track detected; terminating downstream subscription"
-        );
         if let Err(error) = publisher
             .send_publish_done(
                 request_id,
-                publish_done_status_code::MALFORMED_TRACK,
+                reason.status_code,
                 stream_count,
-                "malformed track".to_string(),
+                reason.error_reason,
             )
             .await
         {
@@ -118,7 +148,7 @@ impl EgressRunner {
                 ?error,
                 %track_key,
                 request_id,
-                "failed to send PUBLISH_DONE for malformed track"
+                "failed to send PUBLISH_DONE"
             );
         }
     }

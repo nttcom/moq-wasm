@@ -12,6 +12,7 @@ pub(crate) mod test_fixtures;
 pub(crate) mod track_status;
 pub(crate) mod unsubscribe;
 pub(crate) mod unsubscribe_namespace;
+pub(crate) mod upstream_publish_done;
 pub(crate) mod upstream_serializer;
 
 use crate::modules::{
@@ -76,6 +77,14 @@ pub(crate) async fn release_upstream(
         );
     }
 
+    stop_ingress(ingress_sender, publisher_session_id, track_key).await;
+}
+
+pub(crate) async fn stop_ingress(
+    ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+    publisher_session_id: SessionId,
+    track_key: &TrackKey,
+) {
     if ingress_sender
         .send(IngressCommand::StopTrack {
             track_key: track_key.clone(),

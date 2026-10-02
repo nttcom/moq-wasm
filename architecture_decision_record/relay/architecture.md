@@ -152,10 +152,16 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 - A TRACK_STATUS carrying an AUTHORIZATION TOKEN is handled by the worker
   itself as a token refresh (see "Token refresh" under "Session intake"); one
   without a token goes to `sequences::track_status`.
+- An upstream PUBLISH_DONE goes to
+  `sequences::upstream_publish_done::UpstreamPublishDone`: it ends the
+  matching `ActiveUpstreamSubscription` together with its downstream
+  registrations, handing them the received status code and reason (see
+  "Egress"), and stops ingress. No UNSUBSCRIBE is sent, since the publisher
+  already ended the subscription.
 - Events for control messages without relay-side logic yet (GOAWAY,
-  MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, PUBLISH_DONE,
-  FETCH_CANCEL) are logged in the event span and dropped by
-  the worker; they have no `sequences` entry.
+  MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are
+  logged in the event span and dropped by the worker; they have no
+  `sequences` entry.
 - Two relay-internal events exist, both reported by the ingest path (not by
   a peer) and routed to the upstream publisher session's worker:
   - `MalformedTrackDetected(session_id, track_key)`, raised by the insert that
@@ -172,7 +178,8 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
   `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
   session from the pub/sub directory (which stops the egress runners of every
-  removed downstream subscription, see "Egress"), forward
+  removed downstream subscription, and ends the downstream subscriptions on
+  the session's own upstream subscriptions with TRACK_ENDED, see "Egress"), forward
   upstream UNSUBSCRIBE / stop ingress when the last downstream subscriber
   left, withdraw namespace routes for client sessions, then drop the session
   from the repository.
@@ -418,12 +425,21 @@ per-request authorization gate under "Event pipeline".
 ### Egress (`modules/relay/egress`)
 `EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
 command: each registered downstream subscription in the pub/sub directory owns the
-`oneshot::Sender` whose receiver the runner's task selects on (biased, before
-the runner itself), so the runner lives exactly as long as the registration.
+`oneshot::Sender<PublishDoneReason>` whose receiver `EgressRunner::run` selects on (biased,
+before its delivery), so the runner lives exactly as long as the registration.
 Whoever removes the registration — UNSUBSCRIBE, the subscriber's or the publisher's session
-cleanup — stops the runner, and a registration removed before the coordinator got to
-`StartReader` yields a runner that never runs; the order in which different
-session workers touch the registration and the coordinator cannot leak a runner. The
+cleanup, an upstream PUBLISH_DONE — stops the runner, and a registration removed before the
+coordinator got to `StartReader` yields a runner that never runs; the order in which different
+session workers touch the registration and the coordinator cannot leak a runner. Removal
+drops the sender when the subscriber ended the subscription (draft-14 §5.1: the publisher
+may destroy its state). Removal because the upstream ended — the publisher's session went
+away (TRACK_ENDED) or it sent PUBLISH_DONE (its status code) — sends a `PublishDoneReason`
+instead, and the runner answers it with PUBLISH_DONE carrying that status and the number
+of streams it opened, after its senders stopped (§9.12: no state is destroyed without
+PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRACK. The
+runner sends PUBLISH_DONE only once the subscribe sequence signals that SUBSCRIBE_OK went
+out (`subscribe_ok_receiver`), so it never precedes SUBSCRIBE_OK; a runner stopped before
+readiness drops it, the SUBSCRIBE fails with SUBSCRIBE_ERROR and no PUBLISH_DONE is sent. The
 coordinator keeps the runner tasks in a `JoinSet`, reaping each one as it
 finishes (including runners that end on their own, e.g. on a malformed track)
 and aborting the rest when it shuts down. `EgressRunner` splits into:
@@ -512,6 +528,10 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   when its registered downstream subscription is removed, regardless of which
   session worker removes it or when; a downstream subscription is only ever
   registered while its upstream subscription exists.
+- **An ended upstream is announced downstream**: every downstream subscription
+  removed because its upstream subscription ended receives PUBLISH_DONE, always
+  after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
+  also unregisters that PUBLISH, so the ended track is no longer resolved.
 - **Cache identity is the key**: a cached object is self-contained (§8.1 "MUST
   store all properties"); nothing in the cache refers to an entry by handle,
   so eviction can never orphan a header or resurrect a partial entry.

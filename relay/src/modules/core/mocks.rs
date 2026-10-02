@@ -21,6 +21,7 @@ use crate::modules::{
         subscription::{DownstreamSubscription, UpstreamSubscription},
     },
     relay::tests::harness::fixtures::subscription::make_subscription,
+    sequences::tables::table::PublishDoneReason,
     session_repository::{NewSession, SessionPeer, SessionRepository},
     types::SessionId,
 };
@@ -137,7 +138,9 @@ pub(crate) async fn session_repository_with_session(
     Arc::new(tokio::sync::Mutex::new(repository))
 }
 
-pub(crate) fn runner_stopped(runner_stop_receiver: &mut oneshot::Receiver<()>) -> bool {
+pub(crate) fn runner_stopped(
+    runner_stop_receiver: &mut oneshot::Receiver<PublishDoneReason>,
+) -> bool {
     matches!(
         runner_stop_receiver.try_recv(),
         Err(oneshot::error::TryRecvError::Closed)

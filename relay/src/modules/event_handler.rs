@@ -25,21 +25,23 @@ use crate::modules::{
         publish::Publish,
         publish_namespace::PublishNamespace,
         publish_namespace_done::PublishNamespaceDone,
+        stop_ingress,
         subscribe::Subscribe,
         subscribe_namespace::SubscribeNameSpace,
         subscribe_update::SubscribeUpdate,
         tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
+            table::{PublishDoneReason, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
         },
         track_status::TrackStatus,
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
+        upstream_publish_done::UpstreamPublishDone,
         upstream_serializer::UpstreamCreationSerializer,
     },
     session_event::{EventKind, SessionEvent},
     session_repository::SessionRepository,
-    types::{SessionId, TrackKey},
+    types::SessionId,
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use moqt::ContentExists;
@@ -429,11 +431,26 @@ impl EventHandler {
                         )
                     });
                 }
+                MoqtSessionEvent::PublishDone(handler) => {
+                    UpstreamPublishDone
+                        .handle(
+                            session_id,
+                            &session_span,
+                            handler.request_id(),
+                            PublishDoneReason {
+                                status_code: handler.status_code(),
+                                error_reason: handler.error_reason().to_string(),
+                            },
+                            local_pub_sub_directory.as_ref(),
+                            &ingress_sender,
+                        )
+                        .instrument(event_span)
+                        .await;
+                }
                 MoqtSessionEvent::GoAway(..)
                 | MoqtSessionEvent::MaxRequestId(..)
                 | MoqtSessionEvent::RequestsBlocked(..)
                 | MoqtSessionEvent::PublishNamespaceCancel(..)
-                | MoqtSessionEvent::PublishDone(..)
                 | MoqtSessionEvent::FetchCancel(..) => {
                     event_span.in_scope(|| {
                         tracing::warn!("Relay handling for this event is not implemented");
@@ -697,17 +714,17 @@ impl EventHandler {
                     );
                 }
 
-                Self::stop_ingress_track(
+                stop_ingress(
                     ingress_sender,
-                    removed_downstream.track_key,
                     removed_downstream.upstream_key.publisher_session_id,
+                    &removed_downstream.track_key,
                 )
                 .await;
             }
         }
 
         for track_key in removed.upstream_track_keys {
-            Self::stop_ingress_track(ingress_sender, track_key, removed_session_id).await;
+            stop_ingress(ingress_sender, removed_session_id, &track_key).await;
         }
 
         if control_message_forwarder
@@ -743,23 +760,6 @@ impl EventHandler {
                 )
                 .await;
             }
-        }
-    }
-
-    async fn stop_ingress_track(
-        ingress_sender: &mpsc::Sender<IngressCommand>,
-        track_key: TrackKey,
-        publisher_session_id: SessionId,
-    ) {
-        if ingress_sender
-            .send(IngressCommand::StopTrack {
-                track_key: track_key.clone(),
-                publisher_session_id,
-            })
-            .await
-            .is_err()
-        {
-            tracing::debug!(%track_key, "failed to send ingress stop request");
         }
     }
 }
