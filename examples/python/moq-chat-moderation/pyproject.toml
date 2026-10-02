@@ -1,0 +1,15 @@
+[project]
+name = "moq-chat-moderation"
+version = "0.1.0"
+description = "pipecat bot that judges MoQ chat messages with Jev and publishes the verdicts as an MSF event timeline"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.11",
+    "pipecat-ai[moq]>=1.12",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoQ Chat Moderation</title>
+    <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="../media/setup-guide.css" />
+    <link rel="stylesheet" href="./chat.css" />
+  </head>
+  <body>
+    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
+      <symbol
+        id="icon-monitor"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol
+        id="icon-server"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol
+        id="icon-workflow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+      <symbol
+        id="icon-cloud"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+      </symbol>
+    </svg>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <h1>MoQ Chat Moderation</h1>
+          <p>pipecat の bot が djev-run でチャットを判定し、暴言を削除する</p>
+        </div>
+      </header>
+      <details class="card setup-toggle">
+        <summary>
+          <h2>モデレーターの起動方法</h2>
+          <span class="hint">pipecat の bot はローカルで起動します</span>
+        </summary>
+        <p class="hint">
+          各コマンドは別々のターミナルで実行します。gcloud のアカウントに roles/run.invoker が必要です。Cloud Run の
+          djev-run は停止後の最初の判定に約 3 分かかります
+        </p>
+        <div class="setup-routes">
+          <details class="setup-panel setup-toggle">
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>Chat</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-run</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps" start="0">
+              <li>
+                <h4>djev-run を Cloud Run にデプロイする</h4>
+                <p class="hint">
+                  <a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md"
+                    target="_blank"
+                    rel="noopener"
+                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md</a
+                  >
+                </p>
+              </li>
+              <li>
+                <h4>モデレーターを起動する</h4>
+                <pre><code>cd examples/python/moq-chat-moderation
+uv run python -m moq_chat_moderation.bot \
+  --relay-url https://relay-1.moqt.research.skyway.io:443 \
+  --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+  --gcloud-auth</code></pre>
+              </li>
+              <li>
+                <h4>チャットに参加する</h4>
+                <p class="hint">
+                  Relay URL は既定の Cloud relay-1 のまま Join します。モデレーター接続済みになったら送信できます
+                </p>
+              </li>
+            </ol>
+          </details>
+          <details class="setup-panel setup-toggle">
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>Chat</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-run</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps" start="0">
+              <li>
+                <h4>djev-run を Cloud Run にデプロイする</h4>
+                <p class="hint">
+                  <a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md"
+                    target="_blank"
+                    rel="noopener"
+                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md</a
+                  >
+                </p>
+              </li>
+              <li>
+                <h4>relay を起動する</h4>
+                <pre><code>make relay</code></pre>
+              </li>
+              <li>
+                <h4>モデレーターを起動する</h4>
+                <pre><code>cd examples/python/moq-chat-moderation
+uv run python -m moq_chat_moderation.bot --insecure \
+  --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+  --gcloud-auth</code></pre>
+                <p class="hint"><code>--insecure</code> はローカル relay の自己署名証明書を検証しない指定です</p>
+              </li>
+              <li>
+                <h4>チャットに参加する</h4>
+                <p class="hint">
+                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a を選んで Join します。
+                  モデレーター接続済みになったら送信できます
+                </p>
+              </li>
+            </ol>
+          </details>
+        </div>
+      </details>
+      <div class="chat-layout">
+        <section class="card stack">
+          <h2>Relay</h2>
+          <label for="url">Relay URL:</label>
+          <input type="url" id="url" data-testid="chat-moderation-url-input" />
+          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <div class="button-row">
+            <button type="button" id="joinBtn" data-testid="chat-moderation-join-button">Join</button>
+            <button type="button" id="leaveBtn" data-testid="chat-moderation-leave-button" disabled>Leave</button>
+          </div>
+          <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
+          <span id="moderator-status" class="status-dot" data-state="idle">モデレーター未接続</span>
+        </section>
+        <section class="card stack">
+          <h2>Chat</h2>
+          <ol id="messages" class="chat-messages" data-testid="chat-moderation-messages"></ol>
+          <form id="chatForm" class="chat-form">
+            <input
+              type="text"
+              id="chatInput"
+              placeholder="メッセージ"
+              autocomplete="off"
+              data-testid="chat-moderation-input"
+              disabled
+            />
+            <button type="submit" id="sendBtn" data-testid="chat-moderation-send-button" disabled>Send</button>
+          </form>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

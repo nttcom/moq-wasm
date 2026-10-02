@@ -1,0 +1,60 @@
+.camera-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .camera-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card h2 {
+  margin: 0;
+}
+
+.camera-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 12px;
+  background: #111827;
+  object-fit: cover;
+}
+
+.prompt-form {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.prompt-form button {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.camera-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.verdict-badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--muted);
+  background: #f3f4f6;
+}
+
+.verdict-badge[data-verdict='answer'] {
+  color: #fff;
+  background: #16a34a;
+}
+
+.verdict-badge[data-verdict='unknown'] {
+  color: #92400e;
+  background: #fef3c7;
+}

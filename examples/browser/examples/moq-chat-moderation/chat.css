@@ -1,0 +1,75 @@
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card h2 {
+  margin: 0;
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 320px;
+  max-height: 60vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.chat-message {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.chat-message[data-verdict='removed'] {
+  background: #f3f4f6;
+}
+
+.chat-message[data-verdict='removed'] .chat-text {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.chat-text {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.chat-label {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: #f3f4f6;
+}
+
+.chat-message[data-verdict='ok'] .chat-label,
+.chat-message[data-verdict='removed'] .chat-label {
+  display: none;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+}
+
+.chat-form input {
+  flex: 1;
+}

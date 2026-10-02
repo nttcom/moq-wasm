@@ -37,7 +37,9 @@ export default defineConfig({
         meeting: resolve(__dirname, 'examples/meeting/index.html'),
         webcodecs: resolve(__dirname, 'examples/webcodecs/index.html'),
         'remote-monitoring': resolve(__dirname, 'examples/remote-monitoring/index.html'),
-        'live-viewer': resolve(__dirname, 'examples/live-viewer/index.html')
+        'live-viewer': resolve(__dirname, 'examples/live-viewer/index.html'),
+        'moq-chat-moderation': resolve(__dirname, 'examples/moq-chat-moderation/index.html'),
+        'moq-camera-detection': resolve(__dirname, 'examples/moq-camera-detection/index.html')
       }
     }
   }

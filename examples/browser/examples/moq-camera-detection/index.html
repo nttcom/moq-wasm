@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoQ Camera Detection</title>
+    <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="../media/setup-guide.css" />
+    <link rel="stylesheet" href="./camera.css" />
+  </head>
+  <body>
+    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
+      <symbol
+        id="icon-monitor"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol
+        id="icon-server"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol
+        id="icon-workflow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+      <symbol
+        id="icon-cloud"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+      </symbol>
+    </svg>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <h1>MoQ Camera Detection</h1>
+          <p>カメラ映像についての質問に、pipecat の bot が djev-vision で答える</p>
+        </div>
+      </header>
+      <details class="card setup-toggle">
+        <summary>
+          <h2>bot の起動方法</h2>
+          <span class="hint">pipecat の bot はローカルで起動します</span>
+        </summary>
+        <p class="hint">
+          各コマンドは別々のターミナルで実行します。gcloud のアカウントに roles/run.invoker が必要です。Cloud Run の
+          djev-vision は停止後の最初の判定に約 3 分かかります
+        </p>
+        <div class="setup-routes">
+          <details class="setup-panel setup-toggle">
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>Camera</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps" start="0">
+              <li>
+                <h4>djev-run を Cloud Run にデプロイする</h4>
+                <p class="hint">
+                  <a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md"
+                    target="_blank"
+                    rel="noopener"
+                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md</a
+                  >
+                </p>
+              </li>
+              <li>
+                <h4>pipecat bot を起動する</h4>
+                <pre><code>cd examples/python/moq-camera-detection
+uv run python -m moq_camera_detection.bot \
+  --relay-url https://relay-1.moqt.research.skyway.io:443 \
+  --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
+  --gcloud-auth</code></pre>
+              </li>
+              <li>
+                <h4>カメラを配信する</h4>
+                <p class="hint">Relay URL は既定の Cloud relay-1 のまま Join します</p>
+              </li>
+            </ol>
+          </details>
+          <details class="setup-panel setup-toggle">
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>Camera</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps" start="0">
+              <li>
+                <h4>djev-run を Cloud Run にデプロイする</h4>
+                <p class="hint">
+                  <a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md"
+                    target="_blank"
+                    rel="noopener"
+                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md</a
+                  >
+                </p>
+              </li>
+              <li>
+                <h4>relay を起動する</h4>
+                <pre><code>make relay</code></pre>
+              </li>
+              <li>
+                <h4>pipecat bot を起動する</h4>
+                <pre><code>cd examples/python/moq-camera-detection
+uv run python -m moq_camera_detection.bot --insecure \
+  --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
+  --gcloud-auth</code></pre>
+              </li>
+              <li>
+                <h4>カメラを配信する</h4>
+                <p class="hint">
+                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a を選んで Join します
+                </p>
+              </li>
+            </ol>
+          </details>
+        </div>
+      </details>
+      <div class="camera-layout">
+        <section class="card stack">
+          <h2>Relay</h2>
+          <label for="url">Relay URL:</label>
+          <input type="url" id="url" data-testid="camera-detection-url-input" />
+          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <div class="button-row">
+            <button type="button" id="joinBtn" data-testid="camera-detection-join-button">Join</button>
+            <button type="button" id="leaveBtn" data-testid="camera-detection-leave-button" disabled>Leave</button>
+          </div>
+          <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
+          <span id="detector-status" class="status-dot" data-state="idle">bot 未接続</span>
+        </section>
+        <section class="card stack">
+          <h2>Camera</h2>
+          <form id="promptForm" class="prompt-form" novalidate>
+            <label for="question">質問</label>
+            <input
+              type="text"
+              id="question"
+              value="人が映っていますか？"
+              maxlength="200"
+              autocomplete="off"
+              data-testid="camera-detection-question-input"
+            />
+            <label for="choices">選択肢（カンマ区切り）</label>
+            <input
+              type="text"
+              id="choices"
+              value="はい, いいえ"
+              autocomplete="off"
+              data-testid="camera-detection-choices-input"
+            />
+            <button type="submit" data-testid="camera-detection-apply-button">適用</button>
+          </form>
+          <div class="camera-verdict">
+            <span id="verdict" class="verdict-badge" data-verdict="pending" data-testid="camera-detection-verdict"
+              >判定待ち</span
+            >
+          </div>
+          <video id="preview" class="camera-preview" autoplay muted playsinline></video>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

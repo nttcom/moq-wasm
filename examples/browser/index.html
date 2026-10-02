@@ -134,12 +134,14 @@
         color: var(--text-sub);
       }
 
-      .node.relay {
+      .node.relay,
+      .node.cloud {
         border-color: rgba(124, 199, 255, 0.55);
         color: var(--accent);
       }
 
-      .node.relay svg {
+      .node.relay svg,
+      .node.cloud svg {
         stroke: var(--accent);
       }
 
@@ -270,7 +272,7 @@
   </head>
   <body>
     <svg style="display: none" xmlns="http://www.w3.org/2000/svg">
-      <!-- Icons: Lucide (ISC), https://lucide.dev -->
+      <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
       <symbol
         id="icon-monitor"
         viewBox="0 0 24 24"
@@ -376,6 +378,28 @@
         <rect width="8" height="8" x="3" y="3" rx="2" />
         <path d="M7 11v4a2 2 0 0 0 2 2h4" />
         <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+      <symbol
+        id="icon-brain-circuit"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+        <path d="M9 13a4.5 4.5 0 0 0 3-4" />
+        <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+        <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+        <path d="M6 18a4 4 0 0 1-1.967-.516" />
+        <path d="M12 13h4" />
+        <path d="M12 18h6a2 2 0 0 1 2 2v1" />
+        <path d="M12 8h8" />
+        <path d="M16 8V5a2 2 0 0 1 2-2" />
+        <circle cx="16" cy="13" r=".5" />
+        <circle cx="18" cy="3" r=".5" />
+        <circle cx="20" cy="21" r=".5" />
+        <circle cx="20" cy="8" r=".5" />
       </symbol>
     </svg>
     <main class="page">
@@ -504,6 +528,62 @@
               <span class="link">→</span>
               <span class="node"
                 ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+              >
+            </p>
+            <span class="arrow">Open Example</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="ai-heading">
+        <div class="section-heading">
+          <h2 id="ai-heading">AI連携デモ</h2>
+        </div>
+        <div class="grid usecases">
+          <a class="card" href="examples/moq-chat-moderation/index.html">
+            <div class="card-head">
+              <h3>MoQ Chat Moderation</h3>
+              <p>チャットの暴言判定</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="#icon-monitor" /></svg>Browser</span
+              >
+              <span class="link">↔</span>
+              <span class="node relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link">↔</span>
+              <span class="node"
+                ><svg><use href="#icon-workflow" /></svg>pipecat</span
+              >
+              <span class="link">↔</span>
+              <span class="node cloud"
+                ><svg><use href="#icon-brain-circuit" /></svg>djev-run</span
+              >
+            </p>
+            <span class="arrow">Open Example</span>
+          </a>
+          <a class="card" href="examples/moq-camera-detection/index.html">
+            <div class="card-head">
+              <h3>MoQ Camera Detection</h3>
+              <p>カメラ映像への質問に答える</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="#icon-webcam" /></svg>Browser</span
+              >
+              <span class="link">↔</span>
+              <span class="node relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link">↔</span>
+              <span class="node"
+                ><svg><use href="#icon-workflow" /></svg>pipecat</span
+              >
+              <span class="link">↔</span>
+              <span class="node cloud"
+                ><svg><use href="#icon-brain-circuit" /></svg>djev-run</span
               >
             </p>
             <span class="arrow">Open Example</span>

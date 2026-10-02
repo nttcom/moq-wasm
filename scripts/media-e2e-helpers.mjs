@@ -11,6 +11,10 @@ export const jsDir = resolve(repoRoot, "examples", "browser");
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
 export const liveViewerPath = "/moq-wasm/examples/live-viewer/index.html";
+export const chatModerationPath =
+  "/moq-wasm/examples/moq-chat-moderation/index.html";
+export const cameraDetectionPath =
+  "/moq-wasm/examples/moq-camera-detection/index.html";
 export const serverKeysDir = resolve(repoRoot, "relay", "keys");
 export const certPath = resolve(serverKeysDir, "cert.pem");
 export const keyPath = resolve(serverKeysDir, "key.pem");
