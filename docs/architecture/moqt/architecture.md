@@ -98,7 +98,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 ### `Session` and its background tasks
 
-`Session::new` spawns four tasks (all named via `tokio::task::Builder`, all
+`Session::new` spawns five tasks (all named via `tokio::task::Builder`, all
 aborted in `Drop`):
 
 | Task | Role |
@@ -107,6 +107,7 @@ aborted in `Drop`):
 | `UniStreamReceiveTask` | accepts incoming unidirectional streams; the first frame must be a subgroup header (→ `SubscriptionNotifier`) or fetch header (→ `FetchNotifier`). |
 | `DatagramReceiveTask` | receives datagrams, decodes `ObjectDatagram`, dispatches via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
+| `PublishDoneExpiryTask` | receives the Request ID of each PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription 10 s later (see *Key invariants*). Holds a `Weak<SessionContext>`. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher<T>` /
 `Subscriber<T>` facades sharing the same `Arc<SessionContext<T>>`. Application
@@ -197,9 +198,9 @@ paths:
    stop the task.
 
 Messages the crate can decode but not yet act on (GOAWAY, MAX_REQUEST_ID,
-REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
-PUBLISH_NAMESPACE_CANCEL) still take path 1, so the application sees them
-instead of the session dying.
+REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, FETCH_CANCEL, PUBLISH_NAMESPACE_CANCEL)
+still take path 1, so the application sees them instead of the session dying.
+PUBLISH_DONE takes path 1 too and also starts its subscription's expiry.
 
 TRACK_STATUS is a request whose format is that of SUBSCRIBE (§9.20).
 `Subscriber::track_status(namespace, name, authorization_tokens)` sends it and
@@ -272,8 +273,14 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   the buffered objects, the channel sender and a receiver not yet taken by
   `accept_data_receiver`. Objects still in flight are then dropped on arrival
   instead of being buffered as an unknown alias until the session ends. The
-  `Cancelled` marker stays until a new subscription reuses the alias; it is
-  not released on PUBLISH_DONE because late streams may follow it (§9.12).
+  `Cancelled` marker stays until a new subscription reuses the alias.
+- **PUBLISH_DONE ends a subscription after 10 s** (draft-14 §9.12): the
+  control stream can deliver PUBLISH_DONE before the subscription's last data
+  streams, so the subscription keeps receiving for
+  `PUBLISH_DONE_GRACE_PERIOD` and is then cancelled like an unsubscribe. Its
+  data receiver ends, so `TrackReader::next_object` returns `Ok(None)` after
+  the streams already accepted. Stream Count is not used to end it earlier,
+  and no STOP_SENDING is sent.
 - **Duplicate track alias**: if SUBSCRIBE_OK carries a track alias that already
   has a registered receiver, the subscriber closes the session with
   `DuplicateTrackAlias` (draft-14 §9.8). A cancelled subscription's alias does
@@ -289,7 +296,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Priority before data**: a stream's transport priority is settable only
   before its header, because the transport applies a changed priority to a
   stream with queued data only after that stream's next frame.
-- **Session teardown**: dropping `Session` aborts all four background tasks;
+- **Session teardown**: dropping `Session` aborts all five background tasks;
   the control task's `Weak` reference guarantees it never keeps the context
   alive.
 

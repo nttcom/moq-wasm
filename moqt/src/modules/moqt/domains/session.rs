@@ -13,7 +13,7 @@ use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::runtime::tasks::{
     control_message_receive_task::ControlMessageReceiveTask,
     datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
-    uni_stream_receive_task::UniStreamReceiveTask,
+    publish_done_expiry_task::PublishDoneExpiryTask, uni_stream_receive_task::UniStreamReceiveTask,
 };
 use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_stats::TransportStats;
@@ -26,6 +26,7 @@ pub struct Session<T: TransportProtocol> {
     datagram_receive_task: tokio::task::JoinHandle<()>,
     uni_stream_receive_task: tokio::task::JoinHandle<()>,
     disconnect_watch_task: tokio::task::JoinHandle<()>,
+    publish_done_expiry_task: tokio::task::JoinHandle<()>,
 }
 
 impl<T: TransportProtocol> Session<T> {
@@ -47,10 +48,15 @@ impl<T: TransportProtocol> Session<T> {
             tracing::info_span!(parent: &session_span, "data_plane.uni_stream_receiver");
         let transport_close_watcher_span =
             tracing::info_span!(parent: &session_span, "moqt.transport.close_watcher");
+        let publish_done_expiry_span =
+            tracing::info_span!(parent: &session_span, "moqt.publish_done_expiry");
+
+        let (publish_done_sender, publish_done_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let control_message_receive_task = ControlMessageReceiveTask::run(
             receive_stream,
             Arc::downgrade(&inner),
+            publish_done_sender,
             control_plane_receiver_span,
         );
         let datagram_receive_task = DatagramReceiveTask::run(inner.clone(), datagram_receiver_span);
@@ -58,6 +64,11 @@ impl<T: TransportProtocol> Session<T> {
             UniStreamReceiveTask::run(inner.clone(), uni_stream_receiver_span);
         let disconnect_watch_task =
             DisconnectWatchTask::run(inner.clone(), transport_close_watcher_span);
+        let publish_done_expiry_task = PublishDoneExpiryTask::run(
+            publish_done_receiver,
+            Arc::downgrade(&inner),
+            publish_done_expiry_span,
+        );
 
         Self {
             inner,
@@ -67,6 +78,7 @@ impl<T: TransportProtocol> Session<T> {
             datagram_receive_task,
             uni_stream_receive_task,
             disconnect_watch_task,
+            publish_done_expiry_task,
         }
     }
 
@@ -114,6 +126,7 @@ impl<T: TransportProtocol> Drop for Session<T> {
         self.datagram_receive_task.abort();
         self.uni_stream_receive_task.abort();
         self.disconnect_watch_task.abort();
+        self.publish_done_expiry_task.abort();
     }
 }
 
