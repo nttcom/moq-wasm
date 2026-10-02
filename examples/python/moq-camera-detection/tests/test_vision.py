@@ -1,7 +1,7 @@
 import aiohttp
 import pytest
 
-from moq_camera_detection.identity_token import GcloudIdentityToken
+from moq_camera_detection.identity_token import gcloud_identity_token
 from moq_camera_detection.vision import DjevVisionClient, parse_choice
 from tests.helpers import YES_NO_PROMPT
 
@@ -26,7 +26,7 @@ def test_choice_is_read_from_the_number_on_the_last_line(content, choice):
 async def test_image_is_sent_with_the_numbered_choices(fake_vision_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        token = GcloudIdentityToken(command=("echo", "identity-token"))
+        token = gcloud_identity_token(command=("echo", "identity-token"))
         client = DjevVisionClient(session, fake_vision_server.url, token)
 
         # Act

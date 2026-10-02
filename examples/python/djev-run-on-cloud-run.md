@@ -119,7 +119,7 @@ gcloud run services add-iam-policy-binding djev-vision --project=${PROJECT} --re
   --member=user:someone@example.com --role=roles/run.invoker
 ```
 
-bot には `--gcloud-auth` を付け、`gcloud auth print-identity-token` の ID トークンで呼ばせます。起動方法は各 bot の README を参照してください。
+手元の bot には `--gcloud-auth` を付け、`gcloud auth print-identity-token` の ID トークンで呼ばせます。GCE の VM で動かす bot には `--metadata-auth` を付け、VM のサービスアカウントの ID トークンをメタデータサーバーから取らせます。起動方法は各 bot の README を参照してください。
 
 ## 費用と起動時間
 

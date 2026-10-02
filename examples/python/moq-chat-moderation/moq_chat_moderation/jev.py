@@ -1,6 +1,6 @@
 import aiohttp
 
-from moq_chat_moderation.identity_token import GcloudIdentityToken
+from moq_chat_moderation.identity_token import IdentityToken
 
 ABUSIVE_QUESTION_ID = "abusive"
 ABUSIVE_QUESTION = {
@@ -18,7 +18,7 @@ class JevClient:
         self,
         session: aiohttp.ClientSession,
         url: str,
-        identity_token: GcloudIdentityToken | None = None,
+        identity_token: IdentityToken | None = None,
     ):
         self._session = session
         self._url = url

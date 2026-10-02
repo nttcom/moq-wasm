@@ -11,7 +11,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from moq_camera_detection.detector import CameraPicture, CameraDetector
 from moq_camera_detection.event_timeline import EventTimeline
-from moq_camera_detection.identity_token import GcloudIdentityToken
+from moq_camera_detection.identity_token import gcloud_identity_token, metadata_identity_token
 from moq_camera_detection.prompt import Prompt, parse_prompt
 from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import DjevVisionClient
@@ -40,10 +40,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--djev-url", required=True, help="djev-vision's /v1/chat/completions endpoint"
     )
-    parser.add_argument(
+    auth = parser.add_mutually_exclusive_group()
+    auth.add_argument(
         "--gcloud-auth",
         action="store_true",
         help="send a gcloud identity token, for a Cloud Run service that requires IAM",
+    )
+    auth.add_argument(
+        "--metadata-auth",
+        action="store_true",
+        help="send the GCE metadata server's identity token, for the bot VM",
     )
     return parser.parse_args()
 
@@ -131,9 +137,14 @@ async def main():
     timeline = EventTimeline(detector_broadcast, EVENT_TIMELINE_TRACK)
 
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session:
-        vision = DjevVisionClient(
-            session, args.djev_url, GcloudIdentityToken() if args.gcloud_auth else None
+        identity_token = (
+            gcloud_identity_token()
+            if args.gcloud_auth
+            else metadata_identity_token(session, args.djev_url)
+            if args.metadata_auth
+            else None
         )
+        vision = DjevVisionClient(session, args.djev_url, identity_token)
         worker = PipelineWorker(
             Pipeline([CameraDetector(vision, timeline)]),
             enable_rtvi=False,

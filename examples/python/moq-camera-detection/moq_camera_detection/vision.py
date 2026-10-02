@@ -3,7 +3,7 @@ import re
 
 import aiohttp
 
-from moq_camera_detection.identity_token import GcloudIdentityToken
+from moq_camera_detection.identity_token import IdentityToken
 from moq_camera_detection.prompt import Prompt
 
 MODEL = "djev-dgemma"
@@ -25,7 +25,7 @@ class DjevVisionClient:
         self,
         session: aiohttp.ClientSession,
         url: str,
-        identity_token: GcloudIdentityToken | None = None,
+        identity_token: IdentityToken | None = None,
     ):
         self._session = session
         self._url = url

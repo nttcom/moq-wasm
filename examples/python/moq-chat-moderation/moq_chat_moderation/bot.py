@@ -9,7 +9,7 @@ from pipecat.transports.moq.transport import MOQParams, MOQTransport
 from pipecat.workers.runner import WorkerRunner
 
 from moq_chat_moderation.event_timeline import EventTimeline
-from moq_chat_moderation.identity_token import GcloudIdentityToken
+from moq_chat_moderation.identity_token import gcloud_identity_token, metadata_identity_token
 from moq_chat_moderation.jev import JevClient
 from moq_chat_moderation.moderator import ChatModerator
 
@@ -32,10 +32,16 @@ def parse_args() -> argparse.Namespace:
         help="skip TLS verification, for a local relay with a self-signed certificate",
     )
     parser.add_argument("--jev-url", required=True, help="a Jev-compatible /v1/systemone endpoint")
-    parser.add_argument(
+    auth = parser.add_mutually_exclusive_group()
+    auth.add_argument(
         "--gcloud-auth",
         action="store_true",
         help="send a gcloud identity token, for a Cloud Run service that requires IAM",
+    )
+    auth.add_argument(
+        "--metadata-auth",
+        action="store_true",
+        help="send the GCE metadata server's identity token, for the bot VM",
     )
     return parser.parse_args()
 
@@ -68,10 +74,14 @@ async def main():
         timeline.publish_on(moderator_broadcast(transport))
 
     async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as session:
-        moderator = ChatModerator(
-            JevClient(session, args.jev_url, GcloudIdentityToken() if args.gcloud_auth else None),
-            timeline,
+        identity_token = (
+            gcloud_identity_token()
+            if args.gcloud_auth
+            else metadata_identity_token(session, args.jev_url)
+            if args.metadata_auth
+            else None
         )
+        moderator = ChatModerator(JevClient(session, args.jev_url, identity_token), timeline)
         worker = PipelineWorker(
             Pipeline([moderator, transport.input()]),
             enable_rtvi=False,

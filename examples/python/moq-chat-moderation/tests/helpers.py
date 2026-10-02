@@ -59,3 +59,13 @@ class FakeJevServer:
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Authorization"), await request.json()))
         return web.json_response({"answers": {"abusive": {"noul": self.noul}}})
+
+
+@dataclass
+class FakeMetadataServer:
+    url: str = ""
+    requests: list[tuple[str | None, str | None]] = field(default_factory=list)
+
+    async def handle(self, request: web.Request) -> web.Response:
+        self.requests.append((request.headers.get("Metadata-Flavor"), request.query.get("audience")))
+        return web.Response(text="metadata-token")

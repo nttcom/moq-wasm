@@ -1,6 +1,6 @@
 import aiohttp
 
-from moq_chat_moderation.identity_token import GcloudIdentityToken
+from moq_chat_moderation.identity_token import gcloud_identity_token
 from moq_chat_moderation.jev import ABUSIVE_QUESTION_ID, JevClient
 
 
@@ -34,7 +34,7 @@ async def test_request_asks_the_abusive_question_without_credentials(fake_jev_se
 async def test_request_carries_the_identity_token_as_bearer(fake_jev_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
-        token = GcloudIdentityToken(command=("echo", "identity-token"))
+        token = gcloud_identity_token(command=("echo", "identity-token"))
         client = JevClient(session, fake_jev_server.url, token)
 
         # Act
