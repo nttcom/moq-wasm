@@ -68,13 +68,10 @@
       </header>
       <details class="card setup-toggle">
         <summary>
-          <h2>モデレーターの起動方法</h2>
-          <span class="hint">pipecat の bot はローカルで起動します</span>
+          <h2>使い方</h2>
+          <span class="hint">Cloud relay では bot が常時動いています</span>
         </summary>
-        <p class="hint">
-          各コマンドは別々のターミナルで実行します。gcloud のアカウントに roles/run.invoker が必要です。Cloud Run の
-          djev-run は停止後の最初の判定に約 3 分かかります
-        </p>
+        <p class="hint">Cloud Run の djev-run は停止後の最初の判定に約 3 分かかります</p>
         <div class="setup-routes">
           <details class="setup-panel setup-toggle">
             <summary>
@@ -87,8 +84,8 @@
                   ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
-                <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Cloud VM</small></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
@@ -96,26 +93,7 @@
                 >
               </h3>
             </summary>
-            <ol class="setup-steps" start="0">
-              <li>
-                <h4>djev-run を Cloud Run にデプロイする</h4>
-                <p class="hint">
-                  <a
-                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md"
-                    target="_blank"
-                    rel="noopener"
-                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md</a
-                  >
-                </p>
-              </li>
-              <li>
-                <h4>モデレーターを起動する</h4>
-                <pre><code>cd examples/python/moq-chat-moderation
-uv run python -m moq_chat_moderation.bot \
-  --relay-url https://relay-1.moqt.research.skyway.io:443 \
-  --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
-  --gcloud-auth</code></pre>
-              </li>
+            <ol class="setup-steps">
               <li>
                 <h4>チャットに参加する</h4>
                 <p class="hint">
@@ -158,6 +136,10 @@ uv run python -m moq_chat_moderation.bot \
               </li>
               <li>
                 <h4>relay を起動する</h4>
+                <p class="hint">
+                  Cloud relay-1 には Cloud の bot がつながっているため、手元の bot はローカルの relay
+                  につなぎます。各コマンドは別々のターミナルで実行します
+                </p>
                 <pre><code>make relay</code></pre>
               </li>
               <li>
@@ -166,7 +148,7 @@ uv run python -m moq_chat_moderation.bot \
 uv run python -m moq_chat_moderation.bot --insecure \
   --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
   --gcloud-auth</code></pre>
-                <p class="hint"><code>--insecure</code> はローカル relay の自己署名証明書を検証しない指定です</p>
+                <p class="hint">gcloud のアカウントに roles/run.invoker が必要です</p>
               </li>
               <li>
                 <h4>チャットに参加する</h4>
