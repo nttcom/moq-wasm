@@ -15,6 +15,7 @@ use crate::modules::{
         ingress::{stream_reader::read_stream, track_ingest_task::TrackIngest},
         types::SubgroupKey,
     },
+    sequences::tables::table::PublishDoneReason,
     session_event::SessionEvent,
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
@@ -50,10 +51,16 @@ pub(crate) struct EgressRunnerHandle {
     priorities: mpsc::UnboundedReceiver<moqt::StreamPriority>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
     forward_sender: watch::Sender<bool>,
+    stop_sender: Option<oneshot::Sender<PublishDoneReason>>,
     join_handle: tokio::task::JoinHandle<()>,
 }
 
 impl EgressRunnerHandle {
+    pub(crate) fn end_upstream(&mut self, end: PublishDoneReason) {
+        let stop_sender = self.stop_sender.take().expect("upstream ends once");
+        let _ = stop_sender.send(end);
+    }
+
     pub(crate) fn set_forward(&self, forward: bool) {
         self.forward_sender.send_replace(forward);
     }
@@ -240,6 +247,8 @@ impl RelayHarness {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
         let (forward_sender, forward_receiver) = watch::channel(true);
+        let (stop_sender, stop_receiver) = oneshot::channel();
+        let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
         let runner = EgressRunner::new(
             self.ingest.track_key.clone(),
             self.ingest.cache.clone(),
@@ -250,18 +259,20 @@ impl RelayHarness {
             forward_receiver,
         );
         let join_handle = tokio::spawn(async move {
-            let _ = runner.run().await;
+            let _ = runner.run(stop_receiver, subscribe_ok_receiver).await;
         });
         tokio::time::timeout(RECV_TIMEOUT, ready_receiver)
             .await
             .expect("egress runner should signal readiness")
             .expect("egress readiness should not be dropped")
             .expect("egress runner should start");
+        let _ = subscribe_ok_sender.send(());
         EgressRunnerHandle {
             sent: observers.sent,
             priorities: observers.priorities,
             publish_done: observers.publish_done,
             forward_sender,
+            stop_sender: Some(stop_sender),
             join_handle,
         }
     }

@@ -1,4 +1,4 @@
-use moqt::ContentExists;
+use moqt::{ContentExists, wire::publish_done_status_code};
 
 use crate::modules::types::{SessionId, TrackKey};
 
@@ -17,6 +17,28 @@ pub(crate) struct ActiveUpstreamSubscription {
     pub(crate) content_exists: ContentExists,
     pub(crate) downstream_subscriber_count: usize,
     pub(crate) origin: UpstreamSubscriptionOrigin,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PublishDoneReason {
+    pub(crate) status_code: u64,
+    pub(crate) error_reason: String,
+}
+
+impl PublishDoneReason {
+    pub(crate) fn publisher_session_closed() -> Self {
+        Self {
+            status_code: publish_done_status_code::TRACK_ENDED,
+            error_reason: "publisher session closed".to_string(),
+        }
+    }
+
+    pub(crate) fn malformed_track() -> Self {
+        Self {
+            status_code: publish_done_status_code::MALFORMED_TRACK,
+            error_reason: "malformed track".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

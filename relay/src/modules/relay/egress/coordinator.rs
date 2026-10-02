@@ -12,6 +12,7 @@ use crate::modules::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
     },
+    sequences::tables::table::PublishDoneReason,
     session_repository::SessionRepository,
     types::{SessionId, TrackKey},
 };
@@ -23,7 +24,8 @@ pub(crate) struct EgressStartRequest {
     pub(crate) downstream_subscription: DownstreamSubscription,
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
-    pub(crate) runner_stop_receiver: oneshot::Receiver<()>,
+    pub(crate) runner_stop_receiver: oneshot::Receiver<PublishDoneReason>,
+    pub(crate) subscribe_ok_receiver: oneshot::Receiver<()>,
     pub(crate) forward_receiver: watch::Receiver<bool>,
     /// From LargestLocation of SUBSCRIBE_OK
     /// None means that no content has been delivered yet.
@@ -161,18 +163,14 @@ impl EgressCoordinator {
         );
 
         let runner_stop_receiver = request.runner_stop_receiver;
+        let subscribe_ok_receiver = request.subscribe_ok_receiver;
         runners.spawn(
             async move {
-                tokio::select! {
-                    biased;
-                    _ = runner_stop_receiver => {
-                        tracing::debug!("downstream subscription removed; egress runner stopped");
-                    }
-                    result = runner.run() => {
-                        if let Err(e) = result {
-                            tracing::error!(?e, "egress runner finished with error");
-                        }
-                    }
+                if let Err(e) = runner
+                    .run(runner_stop_receiver, subscribe_ok_receiver)
+                    .await
+                {
+                    tracing::error!(?e, "egress runner finished with error");
                 }
             }
             .instrument(egress_track_span),
@@ -199,13 +197,14 @@ mod tests {
     const SUBSCRIBER_SESSION_ID: SessionId = 2;
     const DOWNSTREAM_SUBSCRIBE_ID: u64 = 7;
     const TEST_TIMEOUT: Duration = Duration::from_secs(3);
+    const PUBLISH_DONE_WINDOW: Duration = Duration::from_millis(100);
 
     struct TestContext {
         coordinator: EgressCoordinator,
         track_key: TrackKey,
         cache: Arc<TrackCache>,
         idle_cache_reference_count: usize,
-        _observers: MockPublisherObservers,
+        observers: MockPublisherObservers,
     }
 
     async fn setup() -> TestContext {
@@ -221,15 +220,19 @@ mod tests {
             track_key,
             cache,
             idle_cache_reference_count,
-            _observers: observers,
+            observers,
         }
     }
 
-    async fn start_reader(
+    async fn start_reader_without_subscribe_ok(
         ctx: &TestContext,
-        runner_stop_receiver: oneshot::Receiver<()>,
-    ) -> Result<anyhow::Result<()>, oneshot::error::RecvError> {
+        runner_stop_receiver: oneshot::Receiver<PublishDoneReason>,
+    ) -> (
+        Result<anyhow::Result<()>, oneshot::error::RecvError>,
+        oneshot::Sender<()>,
+    ) {
         let (ready_sender, ready_receiver) = oneshot::channel();
+        let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
         ctx.coordinator
             .sender()
             .send(EgressCommand::StartReader(Box::new(EgressStartRequest {
@@ -240,14 +243,34 @@ mod tests {
                 parent_span: Span::none(),
                 ready_sender,
                 runner_stop_receiver,
+                subscribe_ok_receiver,
                 forward_receiver: watch::channel(true).1,
                 largest_location: None,
             })))
             .await
             .expect("coordinator should accept commands");
-        tokio::time::timeout(TEST_TIMEOUT, ready_receiver)
+        let readiness = tokio::time::timeout(TEST_TIMEOUT, ready_receiver)
             .await
-            .expect("runner should resolve its readiness")
+            .expect("runner should resolve its readiness");
+        (readiness, subscribe_ok_sender)
+    }
+
+    async fn start_reader(
+        ctx: &TestContext,
+        runner_stop_receiver: oneshot::Receiver<PublishDoneReason>,
+    ) -> Result<anyhow::Result<()>, oneshot::error::RecvError> {
+        let (readiness, subscribe_ok_sender) =
+            start_reader_without_subscribe_ok(ctx, runner_stop_receiver).await;
+        if matches!(readiness, Ok(Ok(()))) {
+            let _ = subscribe_ok_sender.send(());
+        }
+        readiness
+    }
+
+    async fn assert_no_publish_done_within_window(ctx: &mut TestContext) {
+        let publish_done =
+            tokio::time::timeout(PUBLISH_DONE_WINDOW, ctx.observers.publish_done.recv()).await;
+        assert!(publish_done.is_err(), "no PUBLISH_DONE should be sent");
     }
 
     fn runner_holds_cache(ctx: &TestContext) -> bool {
@@ -280,9 +303,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runner_whose_upstream_ended_before_start_sends_no_publish_done() {
+        // Arrange
+        let mut ctx = setup().await;
+        let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
+        runner_stop_sender
+            .send(PublishDoneReason::publisher_session_closed())
+            .unwrap();
+
+        // Act
+        let readiness = start_reader(&ctx, runner_stop_receiver).await;
+
+        // Assert
+        assert!(readiness.is_err());
+        assert_no_publish_done_within_window(&mut ctx).await;
+    }
+
+    #[tokio::test]
+    async fn publish_done_waits_for_subscribe_ok() {
+        // Arrange
+        let mut ctx = setup().await;
+        let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
+        let (readiness, subscribe_ok_sender) =
+            start_reader_without_subscribe_ok(&ctx, runner_stop_receiver).await;
+        readiness
+            .expect("runner readiness should not be dropped")
+            .expect("runner should start");
+        runner_stop_sender
+            .send(PublishDoneReason::publisher_session_closed())
+            .unwrap();
+        assert_no_publish_done_within_window(&mut ctx).await;
+
+        // Act
+        subscribe_ok_sender.send(()).unwrap();
+
+        // Assert
+        tokio::time::timeout(TEST_TIMEOUT, ctx.observers.publish_done.recv())
+            .await
+            .expect("runner should send PUBLISH_DONE")
+            .expect("runner dropped its publisher");
+    }
+
+    #[tokio::test]
     async fn runner_stops_once_its_subscription_is_removed() {
         // Arrange
-        let ctx = setup().await;
+        let mut ctx = setup().await;
         let (runner_stop_sender, runner_stop_receiver) = oneshot::channel();
         start_reader(&ctx, runner_stop_receiver)
             .await
@@ -295,5 +360,6 @@ mod tests {
 
         // Assert
         wait_until_runner_released_cache(&ctx).await;
+        assert_no_publish_done_within_window(&mut ctx).await;
     }
 }

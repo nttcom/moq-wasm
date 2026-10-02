@@ -76,6 +76,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         core::mocks::runner_stopped,
+        sequences::tables::table::PublishDoneReason,
         sequences::test_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
             upstream_release_context,
@@ -95,7 +96,7 @@ mod tests {
 
     struct TestContext {
         upstream: UpstreamReleaseContext,
-        runner_stop_receivers: Vec<oneshot::Receiver<()>>,
+        runner_stop_receivers: Vec<oneshot::Receiver<PublishDoneReason>>,
     }
 
     async fn setup(
