@@ -54,13 +54,6 @@ Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
 relay's self-signed certificate. Open Live Viewer from the hub and watch
 `anon/live/test`.
 
-### Authentication
-
-Relays always authenticate. A session without a token is limited to
-`anon/**`, which every example uses by default. Tokens are HS256 JWTs verified
-by the VTS; mint one with `services/vts/bin/mint.mjs`. See
-[`services/vts/README.md`](services/vts/README.md).
-
 ### Two relays with Docker Compose
 
 ```shell
@@ -130,3 +123,10 @@ Architecture documents:
 [`media-publisher`](docs/architecture/media-publisher/architecture.md),
 [Live Player](docs/architecture/browser-examples/live-player.md).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
+
+## Authentication
+
+Relays always authenticate. A session without a token is limited to
+`anon/**`, which every demo uses by default. Tokens are HS256 JWTs verified
+by the VTS; mint one with `services/vts/bin/mint.mjs`. See
+[`services/vts/README.md`](services/vts/README.md).
