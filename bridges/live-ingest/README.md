@@ -1,189 +1,72 @@
 # moqt-bridge-live-ingest
 
-Live ingest bridge for publishing RTMP or SRT media into MoQT.
-
-## Prerequisites
-
-`--transcode` needs GStreamer; see `shared/transcode/README.md` for the packages.
+Publishes RTMP or SRT input into a MoQT relay as the tracks described in
+[`shared/media-publisher`](../../shared/media-publisher/README.md).
 
 ## Run
 
-Run the bridge:
-
 ```shell
+make relay
 make live-ingest
 ```
 
-`make live-ingest` listens for RTMP on `0.0.0.0:1935`, listens for SRT on
-`0.0.0.0:9000`, and publishes to the local MoQT relay. On macOS with the
-Docker Compose relay running, the relay URL is resolved to the Docker Desktop
-bridge host automatically.
+| Input | Listens on | Namespace |
+| --- | --- | --- |
+| RTMP | `0.0.0.0:1935` | Application name of the URL: `rtmp://host:1935/anon/live/test/<key>` |
+| SRT | `0.0.0.0:9000` | Stream id: `anon/live/test` or `#!::r=anon/live/test,m=publish`; `anon/srt/live` when absent |
 
-Override the relay URL when needed:
+Tokenless publishers may only use `anon/**`.
 
-```shell
-LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest
-```
+| Option | Effect |
+| --- | --- |
+| `LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest` | Publish to another relay (default: the local one) |
+| `make live-ingest-transcode` | Add `video_720p` / `video_480p` / `video_360p` renditions. Needs GStreamer, see [`shared/transcode`](../../shared/transcode/README.md) |
+| `make live-ingest-stats` | Redraw the QUIC statistics of every relay connection on stdout once a second |
 
-Add lower renditions with `make live-ingest-transcode` (or
-`LIVE_INGEST_TRANSCODE=1 make live-ingest`). Each rendition
-below the source resolution (720p / 480p / 360p) is published as `video_<height>p`
-next to `video`, and the catalog lists them in one `altGroup` with `width` / `height`.
+## Send a test stream
 
-## Transport stream loss
+| Command | Source |
+| --- | --- |
+| `make ffmpeg-rtmp` | Test pattern and 1 kHz tone over RTMP |
+| `make ffmpeg-srt` | Test pattern and 1 kHz tone over SRT |
+| `make ffmpeg-srt-bbb-local` | Big Buck Bunny, looped, to `localhost:9000` |
+| `make ffmpeg-srt-bbb-remote` | Big Buck Bunny to `relay-1.moqt.research.skyway.io:9000`; no local bridge or relay needed |
 
-The SRT listener reads with a 4 MiB UDP receive buffer: a keyframe arrives as
-a burst of several hundred kilobytes within a few milliseconds, and the 64 KiB
-that srt-tokio uses by default overflowed whenever the reader was not scheduled
-at once, with the lost datagrams rarely recovered before their delivery time.
-The MPEG-TS demuxer checks continuity counters; when packets are still lost,
-the frame they cut is dropped along with the frames predicted from it until
-the next keyframe, instead of being published corrupt for every viewer's
-decoder to fail on. Each loss is logged as a warning, and the SRT statistics
-are logged when a stream ends.
+All of them publish `anon/live/test`. Watch it with the
+[Live Viewer](../../examples/browser/examples/live-viewer/README.md): relay
+`https://127.0.0.1:4433` for the local commands,
+`https://relay-1.moqt.research.skyway.io:443` for the remote one.
+
+The Big Buck Bunny commands download the film (263 MiB) into the git-ignored
+`assets/bbb/` on first use and re-encode it with a 2-second GOP.
+Big Buck Bunny is (c) 2008 Blender Foundation | www.bigbuckbunny.org,
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
+
+## Packet loss
+
+SRT is read with a 4 MiB UDP receive buffer. When MPEG-TS packets are lost
+anyway, the frame they cut and the frames predicted from it are dropped until
+the next keyframe; each loss is logged as a warning and the SRT statistics are
+logged when a stream ends. Why:
+[architecture](../../architecture_decision_record/moqt-bridge-live-ingest/architecture.md).
 
 ## Delivery log
 
-`RUST_LOG=info,media_publisher::delivery=debug` writes one line per sample as
-it enters the publisher (`stage="ingest"`, with its presentation time) and as
-it is sent to the relay (`stage="publish"`, with the namespace, group id and
-the LOC capture timestamp a viewer sees). The Live Viewer's delivery check
-(`npm --prefix examples/browser run e2e:live-viewer-delivery`) reads that log
-and reports every published sample the viewer did not receive.
-
-## Publishing
-
-The bridge does not wait for subscribers: every track the catalog lists except
-the CMAF tracks is published with PUBLISH (draft-ietf-moq-transport-14 §9.13)
-before the catalog that lists it is sent, so the relay ingests and caches each
-of them from its first object and a viewer subscribing to one it read in the
-catalog is served by the relay. The CMAF tracks are sent only while the relay
-holds a SUBSCRIBE for them, so the uplink does not carry both packagings of
-every rendition while nobody watches CMAF; the relay caches a CMAF track from
-its first subscriber on. PUBLISH_NAMESPACE is still sent so that the relay can
-forward those SUBSCRIBEs here, and so that relays in a cascade can route a
-SUBSCRIBE to the relay the bridge publishes to. A SUBSCRIBE for any other track
-is rejected with TRACK_DOES_NOT_EXIST.
-
-## Track Format
-
-Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
-codec bitstream, H.264 in Annex-B and raw AAC frames, and the capture timestamp
-travels as MoQT extension header 2. The audio track's AudioSpecificConfig is
-published Base64-encoded as the catalog `initData`; the video track carries its
-parameter sets in band and has none.
-
-## CMAF Tracks
-
-Every media track has a CMAF sibling named with a `_cmaf` suffix (`video_cmaf`,
-`video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
-(draft-ietf-moq-cmsf-01). Its init segment travels Base64-encoded in the catalog
-`initData` (§3.1) and every object is one `moof` + `mdat` fragment holding one
-sample (§3.3). Groups start on keyframes and take the same ids as the LOC track
-for the same presentation time, so the LOC and CMAF versions of a rendition are
-interchangeable; each format forms its own switching set (`altGroup` 1 for LOC,
-2 for CMAF).
-
-## FETCH
-
-Every object is numbered and kept for 60 seconds from the moment the bridge
-produces it, whether or not anything is subscribed, and a standalone FETCH for
-a cached range is answered from that cache (draft-ietf-moq-transport-14
-§9.16). The relay forwards a FETCH upstream when its own cache cannot cover the
-range, so a viewer can rewind a CMAF track into the part that predates the
-relay's first subscriber to it. A track published or subscribed while a group
-is open starts sending at the next group so the live and cached object ids
-agree.
-
-The catalog is the exception to the 60 seconds: its newest object is kept for
-as long as the publisher runs. It is sent when it changes and again every 30
-seconds, half the relay's default cache retention, so the relay always holds
-one (draft-ietf-moq-msf-01 §5). A viewer that joins a subscription the relay
-already holds does not wait for the next one on the SUBSCRIBE, which starts
-after the largest object: it fetches the current catalog, and the relay
-completes that FETCH from here when its own cache has dropped it.
-
-## Group Alignment
-
-The source video track and its transcoded renditions form a CMSF switching set
-(draft-ietf-moq-cmsf-01 §3.2): the transcoder is asked for a keyframe at every
-source keyframe and each rendition group takes the group id the source assigned
-to that presentation time, so the same group id names the same instant on every
-track. A rendition that misses a source keyframe keeps writing into its current
-group and announces the skipped ids with the Prior Group ID Gap header when it
-catches up.
-
-The audio tracks follow the same boundaries: an audio sample belongs to the
-group of the latest video keyframe at or before it, so audio groups start at
-the same keyframes with the same ids as the video groups. Audio before the
-first keyframe is dropped as the video before it is. A viewer therefore replays
-the audio of a video group range by fetching the same range on the audio
-track, and a subscriber joining late starts both tracks at the same keyframe.
-
-## Publish Test RTMP
-
-Publish a generated test video and sine audio stream with the namespace
-`anon/live/test`:
-
 ```shell
-make ffmpeg-rtmp
+RUST_LOG=info,media_publisher::delivery=debug make live-ingest
 ```
 
-## Publish Test SRT
+Writes one line per sample as it enters the publisher (`stage="ingest"`) and
+as it is sent to the relay (`stage="publish"`, with namespace, group id and
+LOC capture timestamp). The Live Viewer's delivery check reads this log; see
+its README.
 
-Publish an MPEG-TS test stream with the namespace `anon/live/test`:
-
-```shell
-make ffmpeg-srt
-```
-
-The bridge uses the SRT stream ID as the MoQT namespace: either the `r=` resource
-of an access-control stream ID (`#!::r=anon/live/test,m=publish`) or a plain
-path (`anon/live/test`). Connections without a stream ID publish under
-`anon/srt/live`. Relays only let tokenless publishers into `anon/**`.
-
-## Publish Big Buck Bunny over SRT
-
-For a local SRT receiver at `localhost:9000`, start `make live-ingest` (or
-`make gst-srt-publish`) and run this in another terminal:
-
-```shell
-make ffmpeg-srt-bbb-local
-```
-
-To send directly to the remote SRT receiver at
-`relay-1.moqt.research.skyway.io:9000`:
-
-```shell
-make ffmpeg-srt-bbb-remote
-```
-
-The remote command requires the remote SRT receiver to be running; no local
-bridge or relay is needed. In Live Viewer, select
-`https://relay-1.moqt.research.skyway.io:443` and namespace `anon/live/test`.
-
-The first run downloads `bbb_sunflower_1080p_30fps_normal.mp4` (263 MiB) from
-download.blender.org into `assets/bbb/`, which is git-ignored; the film is then
-looped into the same `anon/live/test` namespace as `make ffmpeg-srt`, re-encoded
-to a 2-second GOP so the viewer's seek granularity matches the test pattern.
-
-Big Buck Bunny is (c) 2008 Blender Foundation | www.bigbuckbunny.org, licensed
-under [Creative Commons Attribution 3.0](https://creativecommons.org/licenses/by/3.0/).
-
-## Direct CLI Options
-
-Use `cargo run` directly when you need options that are not exposed by the Makefile helpers.
+## CLI
 
 ```shell
 cargo run -p moqt-bridge-live-ingest -- \
   --rtmp-addr 0.0.0.0:1935 \
   --srt-addr 0.0.0.0:9000 \
-  --moqt-url https://127.0.0.1:4433
+  --moqt-url https://127.0.0.1:4433 \
+  [--transcode] [--stats]
 ```
-
-Options:
-
-- `--rtmp-addr`: RTMP listen address
-- `--srt-addr`: SRT listen address
-- `--moqt-url`: MoQT relay URL
-- `--transcode`: re-encode video into the standard renditions below the source resolution
