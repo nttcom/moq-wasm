@@ -1,6 +1,6 @@
 # bridges
 
-Bridges for connecting external inputs and devices to MoQT.
+External inputs into MoQT.
 
-- `onvif/`: ONVIF/RTSP camera bridge
-- `live-ingest/`: RTMP/SRT live ingest bridge
+- [`live-ingest/`](live-ingest/README.md): RTMP and SRT ingest
+- [`onvif/`](onvif/README.md): ONVIF/RTSP cameras with PTZ control

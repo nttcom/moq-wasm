@@ -1,7 +1,8 @@
 # shared
 
-Shared types used by multiple crates, bridges, and browser examples.
+Crates used by more than one component.
 
-- `media-streaming-format/`: MSF catalog structures
-- `mediapack/`: container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC) and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers and the `serde` feature exposes them to JavaScript
-- `transcode/`: GStreamer-backed re-encoding of `MediaEvent` video into multiple renditions
+- [`mediapack/`](mediapack/README.md): container demuxers and muxers (MPEG-TS, FLV, fMP4, LOC) and H.264/AAC bitstream helpers
+- [`media-streaming-format/`](media-streaming-format/README.md): MSF catalog and media timeline types
+- [`media-publisher/`](media-publisher/README.md): catalog, LOC/CMAF track publishing and FETCH cache shared by the publishers
+- [`transcode/`](transcode/README.md): GStreamer-backed re-encoding of video into lower renditions

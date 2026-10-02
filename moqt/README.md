@@ -1,11 +1,7 @@
 # moqt
 
-MoQT draft-14 protocol implementation.
+MoQT draft-14 protocol library: wire format, sessions, and the publisher and
+subscriber API every other crate builds on. Design:
+[architecture document](../architecture_decision_record/moqt/architecture.md).
 
-- `src/`: wire format, codec, and session implementation
-
-The WASM bindings used by the browser examples are in `bindings/wasm`.
-
-```shell
-npm --prefix examples/browser run wasm
-```
+Browser bindings are in [`bindings/wasm`](../bindings/wasm/README.md).
