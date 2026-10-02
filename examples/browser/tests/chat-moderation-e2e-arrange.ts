@@ -12,9 +12,14 @@ export interface ChatPage {
 }
 
 export async function joinChat(page: Page): Promise<ChatPage> {
+  const chat = await clickJoin(page)
+  await expect(page.locator('#moderator-status')).toHaveAttribute('data-state', 'ok', { timeout: 60_000 })
+  return chat
+}
+
+export async function clickJoin(page: Page): Promise<ChatPage> {
   await page.goto(`${CHAT_MODERATION_PATH}?${new URLSearchParams({ moqtUrl })}`)
   await page.getByTestId('chat-moderation-join-button').click()
-  await expect(page.locator('#moderator-status')).toHaveAttribute('data-state', 'ok', { timeout: 60_000 })
   return {
     messages: page.locator('.chat-message'),
     send: async (text) => {
