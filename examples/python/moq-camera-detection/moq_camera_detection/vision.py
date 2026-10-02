@@ -3,6 +3,7 @@ import re
 
 import aiohttp
 
+from moq_camera_detection.djev_status import DjevStatus
 from moq_camera_detection.identity_token import IdentityToken
 from moq_camera_detection.prompt import Prompt
 
@@ -25,10 +26,12 @@ class DjevVisionClient:
         self,
         session: aiohttp.ClientSession,
         url: str,
+        status: DjevStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session
         self._url = url
+        self._status = status
         self._identity_token = identity_token
 
     async def choose(self, jpeg: bytes, prompt: Prompt) -> str | None:
@@ -51,7 +54,10 @@ class DjevVisionClient:
             if self._identity_token
             else {}
         )
-        async with self._session.post(self._url, json=request, headers=headers) as response:
+        async with (
+            self._status.request(),
+            self._session.post(self._url, json=request, headers=headers) as response,
+        ):
             response.raise_for_status()
             body = await response.json()
         return parse_choice(body["choices"][0]["message"]["content"], prompt)

@@ -10,6 +10,7 @@ from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from moq_camera_detection.detector import CameraPicture, CameraDetector
+from moq_camera_detection.djev_status import DjevStatus
 from moq_camera_detection.event_timeline import EventTimeline
 from moq_camera_detection.identity_token import gcloud_identity_token, metadata_identity_token
 from moq_camera_detection.prompt import Prompt, parse_prompt
@@ -22,6 +23,7 @@ DETECTOR_BROADCAST_PATH = "anon/moq-camera-detection/detector"
 VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
+STATUS_TRACK = "status"
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
@@ -135,6 +137,8 @@ async def main():
     publish_origin = moq.OriginProducer()
     detector_broadcast = publish_origin.create_broadcast(DETECTOR_BROADCAST_PATH)
     timeline = EventTimeline(detector_broadcast, EVENT_TIMELINE_TRACK)
+    status = DjevStatus(STATUS_TRACK)
+    status.publish_on(detector_broadcast)
 
     async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as session:
         identity_token = (
@@ -144,7 +148,7 @@ async def main():
             if args.metadata_auth
             else None
         )
-        vision = DjevVisionClient(session, args.djev_url, identity_token)
+        vision = DjevVisionClient(session, args.djev_url, status, identity_token)
         worker = PipelineWorker(
             Pipeline([CameraDetector(vision, timeline)]),
             enable_rtvi=False,
