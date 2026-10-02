@@ -42,7 +42,7 @@ test.describe('MoQ Chat Moderation', () => {
     await earlierChat.send(ORDINARY_TEXT)
     await expect(earlierChat.messages.nth(0)).toHaveAttribute('data-verdict', 'ok')
     const chat = await clickJoin(page)
-    await earlierPage.close()
+    await earlierPage.getByTestId('chat-moderation-leave-button').click()
     await expect(page.locator('#moderator-status')).toHaveAttribute('data-state', 'ok', { timeout: 30_000 })
 
     // Act
