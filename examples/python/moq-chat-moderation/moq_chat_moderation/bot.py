@@ -10,6 +10,7 @@ from pipecat.pipeline.worker import PipelineWorker
 from pipecat.transports.moq.transport import MOQParams, MOQTransport
 from pipecat.workers.runner import WorkerRunner
 
+from moq_chat_moderation.djev_status import DjevStatus
 from moq_chat_moderation.event_timeline import EventTimeline
 from moq_chat_moderation.identity_token import gcloud_identity_token, metadata_identity_token
 from moq_chat_moderation.jev import JevClient
@@ -20,6 +21,7 @@ CHAT_BROADCAST_PATH = "anon/moq-chat-moderation/chat"
 MODERATOR_BROADCAST_PATH = "anon/moq-chat-moderation/moderator"
 CHAT_TRACK = "chat"
 EVENT_TIMELINE_TRACK = "eventtimeline"
+STATUS_TRACK = "status"
 CHAT_PAGE_WAIT_SECONDS = 365 * 24 * 60 * 60
 REBUILD_DELAY_SECONDS = 2.0
 # djev-run scales to zero; a cold start copies 19 GB of weights before it answers.
@@ -57,7 +59,7 @@ def moderator_broadcast(transport: MOQTransport) -> moq.BroadcastProducer:
 
 
 async def moderate_until_transport_fails(
-    args: argparse.Namespace, jev: JevClient, timeline: EventTimeline
+    args: argparse.Namespace, jev: JevClient, timeline: EventTimeline, status: DjevStatus
 ) -> bool:
     transport = MOQTransport(
         params=MOQParams(
@@ -76,7 +78,9 @@ async def moderate_until_transport_fails(
 
     @transport.event_handler("on_connected")
     async def on_connected(transport: MOQTransport):
-        timeline.publish_on(moderator_broadcast(transport))
+        broadcast = moderator_broadcast(transport)
+        timeline.publish_on(broadcast)
+        status.publish_on(broadcast)
 
     # MOQTransport stops for good after a failure it does not count as the peer leaving.
     @transport.event_handler("on_error")
@@ -99,6 +103,7 @@ async def moderate_until_transport_fails(
 async def main():
     args = parse_args()
     timeline = EventTimeline(EVENT_TIMELINE_TRACK)
+    status = DjevStatus(STATUS_TRACK)
     async with aiohttp.ClientSession(timeout=JEV_REQUEST_TIMEOUT) as session:
         identity_token = (
             gcloud_identity_token()
@@ -107,8 +112,8 @@ async def main():
             if args.metadata_auth
             else None
         )
-        jev = JevClient(session, args.jev_url, identity_token)
-        while await moderate_until_transport_fails(args, jev, timeline):
+        jev = JevClient(session, args.jev_url, status, identity_token)
+        while await moderate_until_transport_fails(args, jev, timeline, status):
             # The finished runner leaves its SIGINT handler installed; restore the default one so
             # Ctrl-C still stops the bot until the next runner takes over.
             asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)

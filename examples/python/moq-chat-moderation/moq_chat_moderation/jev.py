@@ -1,5 +1,6 @@
 import aiohttp
 
+from moq_chat_moderation.djev_status import DjevStatus
 from moq_chat_moderation.identity_token import IdentityToken
 
 ABUSIVE_QUESTION_ID = "abusive"
@@ -18,10 +19,12 @@ class JevClient:
         self,
         session: aiohttp.ClientSession,
         url: str,
+        status: DjevStatus,
         identity_token: IdentityToken | None = None,
     ):
         self._session = session
         self._url = url
+        self._status = status
         self._identity_token = identity_token
 
     async def abusive_probability(self, text: str) -> float:
@@ -31,7 +34,10 @@ class JevClient:
             if self._identity_token
             else {}
         )
-        async with self._session.post(self._url, json=request, headers=headers) as response:
+        async with (
+            self._status.request(),
+            self._session.post(self._url, json=request, headers=headers) as response,
+        ):
             response.raise_for_status()
             body = await response.json()
         return float(body["answers"][ABUSIVE_QUESTION_ID]["noul"])

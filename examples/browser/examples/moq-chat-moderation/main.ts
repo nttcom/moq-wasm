@@ -1,6 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt_client_wasm'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 import {
@@ -68,6 +69,7 @@ const messageList = element<HTMLOListElement>('messages')
 const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
+const djevStatus = new DjevStatusView(element('djev-status'))
 
 chatInput.maxLength = MAX_CHAT_TEXT_LENGTH
 
@@ -97,6 +99,9 @@ async function join(): Promise<void> {
       await respondOk()
       if (sameNamespace(publishNamespace.trackNamespace, MODERATOR_NAMESPACE)) {
         await subscribeVerdicts()
+        await djevStatus
+          .follow(session, MODERATOR_NAMESPACE)
+          .catch((error) => console.warn('[moq-chat-moderation] djev status subscribe failed', error))
       }
     })
     await session.publishNamespace(CHAT_NAMESPACE, AUTH_INFO)
@@ -115,6 +120,7 @@ async function leave(): Promise<void> {
 }
 
 function resetSession(connectionText: string, connectionState: StatusState): void {
+  djevStatus.reset()
   setChatPublisher(undefined)
   setStatus('connection-status', connectionText, connectionState)
   joinButton.disabled = false

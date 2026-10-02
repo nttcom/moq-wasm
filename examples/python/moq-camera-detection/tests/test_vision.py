@@ -1,6 +1,7 @@
 import aiohttp
 import pytest
 
+from moq_camera_detection.djev_status import DjevStatus
 from moq_camera_detection.identity_token import gcloud_identity_token
 from moq_camera_detection.vision import DjevVisionClient, parse_choice
 from tests.helpers import YES_NO_PROMPT
@@ -27,7 +28,7 @@ async def test_image_is_sent_with_the_numbered_choices(fake_vision_server):
     # Arrange
     async with aiohttp.ClientSession() as session:
         token = gcloud_identity_token(command=("echo", "identity-token"))
-        client = DjevVisionClient(session, fake_vision_server.url, token)
+        client = DjevVisionClient(session, fake_vision_server.url, DjevStatus("status"), token)
 
         # Act
         choice = await client.choose(b"jpeg", YES_NO_PROMPT)

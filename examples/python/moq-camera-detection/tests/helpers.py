@@ -7,11 +7,13 @@ import av
 import moq
 from aiohttp import web
 
+from moq_camera_detection.djev_status import DjevStatus
 from moq_camera_detection.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt
 
 READ_TIMEOUT_SECONDS = 2
 TRACK_NAME = "eventtimeline"
+STATUS_TRACK_NAME = "status"
 
 
 def h264_group(frame_count: int) -> list[bytes]:
@@ -73,3 +75,15 @@ class FakeMetadataServer:
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Metadata-Flavor"), request.query.get("audience")))
         return web.Response(text="metadata-token")
+
+
+async def published_status(status: DjevStatus) -> moq.TrackConsumer:
+    broadcast = moq.BroadcastProducer()
+    status.publish_on(broadcast)
+    return await broadcast.consume().subscribe_track(STATUS_TRACK_NAME)
+
+
+async def next_status(track: moq.TrackConsumer) -> str:
+    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
+    frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
+    return json.loads(frame.payload)["djev"]

@@ -1,6 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt_client_wasm'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 
@@ -125,6 +126,7 @@ const verdictLabel = element<HTMLSpanElement>('verdict')
 const promptForm = element<HTMLFormElement>('promptForm')
 const questionInput = element<HTMLInputElement>('question')
 const choicesInput = element<HTMLInputElement>('choices')
+const djevStatus = new DjevStatusView(element('djev-status'))
 let appliedPrompt = readPrompt()
 
 appendCloudRelayPresetButtons(element('urlPresets'))
@@ -162,6 +164,9 @@ async function join(): Promise<void> {
       await respondOk()
       if (sameNamespace(publishNamespace.trackNamespace, DETECTOR_NAMESPACE)) {
         await subscribeVerdicts()
+        await djevStatus
+          .follow(session, DETECTOR_NAMESPACE)
+          .catch((error) => console.warn('[moq-camera-detection] djev status subscribe failed', error))
       }
     })
     await session.publishNamespace(CAMERA_NAMESPACE, AUTH_INFO)
@@ -181,6 +186,7 @@ async function leave(): Promise<void> {
 }
 
 function resetSession(connectionText: string, connectionState: StatusState): void {
+  djevStatus.reset()
   setVideoSender(undefined)
   promptPublisher = undefined
   for (const track of mediaStream?.getTracks() ?? []) {
