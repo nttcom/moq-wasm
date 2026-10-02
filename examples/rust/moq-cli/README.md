@@ -1,102 +1,81 @@
 # moq-cli
 
-エンコード済みの映像を MoQ relay に publish / subscribe する CLI。
+Publishes an encoded H.264 stream from stdin to a MoQ relay, or subscribes to
+one and writes it to stdout.
 
-## 使い方
+## Usage
 
 ```sh
-# 配信
 ffmpeg ... | moq-cli publish --relay <relay> --track <track> --codec <codec>
-
-# 購読
 moq-cli subscribe --relay <relay> --track <track> | ffplay -
 ```
 
-## オプション
+| Flag | publish | subscribe | Meaning |
+| --- | :-: | :-: | --- |
+| `--relay` | ● | ● | Relay URL, e.g. `moqt://localhost:4433` |
+| `--track` | ● | ● | Full track name, e.g. `anon/tokyo/cam01/video` |
+| `--codec` | ● | | Required with `--container loc`: `avc3`. Not used with `cmaf` |
+| `--container` | ● | | `loc` (default) or `cmaf` |
+| `--insecure` | ● | ● | Skip certificate verification, for self-signed relays |
+| `--auth-token` | ● | ● | JWT for the relay. Also `MOQT_AUTH_TOKEN` |
+| `--auth-token-file` | ● | ● | File holding the JWT. Also `MOQT_AUTH_TOKEN_FILE`. Exclusive with `--auth-token` |
 
-| フラグ | publish | subscribe | 説明 |
-|---|:-:|:-:|---|
-| `--relay` | ● | ● | 接続先 relay。例 `moqt://localhost:4433` |
-| `--track` | ● | ● | full track name。例 `anon/tokyo/cam01/video` |
-| `--codec` | ● | | `--container loc` のとき必須。`avc3`。cmaf では不要 |
-| `--container` | ● | | `loc`（既定）か `cmaf` |
-| `--insecure` | ● | ● | 証明書検証を無効化。自己署名 relay 用 |
-| `--auth-token` | ● | ● | relay に渡す認可トークン（JWT）。環境変数 `MOQT_AUTH_TOKEN` でも可 |
-| `--auth-token-file` | ● | ● | 認可トークンを書いたファイル。環境変数 `MOQT_AUTH_TOKEN_FILE` でも可。`--auth-token` とは排他 |
+`subscribe` reads codec and container from the catalog. Timestamps are
+stamped from the wall clock. Input and output are always stdin and stdout.
 
-subscribe は codec と container を catalog から読むので指定しない。timestamp は wall-clock で自動付与。入力・出力は stdin/stdout 固定。
+## Container
 
-## 認可トークン
+| `--container` | Input | moq-cli does | Needs codec knowledge |
+| --- | --- | --- | --- |
+| `loc` (default) | Raw elementary stream (Annex-B) | Splits frames, detects keyframes, one frame per object | yes |
+| `cmaf` | CMAF (`moof` + `mdat`, ffmpeg `-f mp4 -movflags frag...`) | One object per box boundary | no |
 
-relay が認証を要求する場合、`--auth-token` か `--auth-token-file` で JWT を渡す。省略すると anonymous として接続し、`anon/` 配下だけ使える。
+## Auth token
 
-`--auth-token-file` を使うと、接続後もファイルを 10 秒ごとに読み直し、内容が変わっていれば新しいトークンを relay に送って session の期限を延ばす。トークンの期限（既定で最大 24 時間）より前に、払い出し側がファイルを新しいトークンで書き換えておけば、配信を止めずに運用できる。moq-cli はトークンの中身（`exp` など）を解釈しない。
+Without a token the session is anonymous and limited to `anon/`. With
+`--auth-token-file`, the file is re-read every 10 s after connecting and a
+changed token is sent to the relay to extend the session, so an issuer that
+rewrites the file before the token expires (24 h at most by default) keeps
+the stream running. moq-cli does not interpret the token.
 
 ```sh
 node services/vts/bin/mint.mjs --apps services/vts/apps.json --app-id <appId> --publish site1 --ttl 12h > /etc/moq/token
 moq-cli publish --relay moqt://relay:4433 --track <appId>/site1/video --codec avc3 --auth-token-file /etc/moq/token
 ```
 
-## コンテナ
-
-publish する側が、視聴側の再生方法に合わせて `--container` を選ぶ。
-
-| container | 入力 | moq-cli の仕事 | codec 知識 |
-|---|---|---|---|
-| `loc`（既定） | 生 elementary stream（annex-b） | フレーム分割・keyframe 判定・1frame=1object | 必要 |
-| `cmaf` | CMAF（moof+mdat, ffmpeg `-f mp4 -movflags frag...`） | 箱境界で Object 化するだけ | 不要 |
-
-## 例
+## Examples
 
 ```sh
-# ローカル loopback
+# local loopback
 cat sample.h264 | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
 moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecure | ffplay -
 
-# Mac カメラ
-ffmpeg -f avfoundation -framerate 30 -video_size 1280x720 -pix_fmt nv12 -i "0" \
-  -c:v libx264 -pix_fmt yuv420p -preset ultrafast -tune zerolatency -g 30 -f h264 - \
-  | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
-
-# mp4 から（ffmpeg で annex-b にして渡す）
+# from an MP4, converted to Annex-B by ffmpeg
 ffmpeg -i movie.mp4 -c:v copy -bsf:v h264_mp4toannexb -f h264 - \
   | moq-cli publish --relay moqt://localhost:4433 --track anon/live/video --codec avc3 --insecure
 ```
 
 ## Raspberry Pi
 
-Mac から cargo-zigbuild で静的バイナリを作って scp する。
+Build a static binary on a Mac with cargo-zigbuild and copy it over:
 
 ```sh
 cargo zigbuild --release --target aarch64-unknown-linux-musl -p moq-cli
 scp target/aarch64-unknown-linux-musl/release/moq-cli pi@pi-cam.local:~/
 
-# ライブカメラ
 rpicam-vid -t 0 --codec h264 --inline --width 1280 --height 720 --framerate 30 -o - \
   | ./moq-cli publish --relay moqt://<relay>:443 --track anon/live/video --codec avc3
 ```
 
-## ビルド・テスト
+## Build and test
 
 ```sh
 cargo build --release -p moq-cli
 cargo test -p moq-cli
 ```
 
-## 設計メモ
+## Known limitation
 
-- **catalog 取得**: 後から join した subscriber に届けるため publisher が各キーフレーム（group 境界）で catalog を再送している。正しい形は「一度だけ publish、subscriber は joining fetch（`Subscriber::fetch_relative_joining`）で取得」。
-- **LOC payload**: payload=生 annex-b。Object Header Extension に Capture Timestamp を ID=2 の varint として入れる（spec §2.3.1.1、`mediapack::loc`）。
-- spec: `spec/draft-ietf-moq-loc-01.txt`(LOC) / `draft-ietf-moq-msf-01.txt`(MSF) / `draft-ietf-moq-transport-14.txt`(MoQT)
-
-## 実装状況
-
-- [x] publish / subscribe（H.264/avc3 の LOC 配信）
-- [x] ブラウザ再生（WebCodecs）・Pi 実機配信
-- [x] catalog の publish / subscribe（subscribe で取得。publisher は各キーフレームで再送する暫定実装）
-- [x] CLI 整理（`--container` 追加、`--fps`/`--input` 撤廃、timestamp を wall-clock 化）
-- [ ] catalog を joining fetch で取得し、publisher は catalog を一度だけ publish
-- [ ] VP8 / VP9（LOC 経路の codec splitter）
-- [ ] `--container cmaf`（CMAF パススルー・MSE 再生）
-- [x] payload JSON 廃止 → 生 annex-b
-- [x] spec-true LOC 化（Capture Timestamp を Object Header Extension ID=2 varint で送る）
+The catalog is re-sent at every keyframe so that late subscribers receive it.
+The intended form is one catalog publish picked up by subscribers with a
+joining FETCH.

@@ -1,82 +1,87 @@
 # MoQT
 
-Rust workspace for MoQT draft-14.
+Media over QUIC Transport in Rust: the protocol library, a relay, and the
+publishers and players around them. Implements draft-ietf-moq-transport-14
+(drafts in [`spec/`](spec/)).
 
-## Directories
+## What is here
 
-- `moqt/`: MoQT core implementation
-- `bindings/`: bindings for non-Rust runtimes
-- `relay/`: QUIC + WebTransport relay
-- `bridges/`: ONVIF and live ingest bridges
-- `shared/`: shared data structures
-- `examples/`: browser and interop examples
-- `spec/`: protocol specifications
+| Path | Component |
+| --- | --- |
+| [`moqt/`](moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
+| [`relay/`](relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
+| [`services/vts/`](services/vts/README.md) | Verify Token Service: checks client JWTs for the relay |
+| [`bindings/`](bindings/README.md) | `wasm` for browsers, `gstreamer` (`moqtsink`) for GStreamer pipelines |
+| [`bridges/`](bridges/README.md) | `live-ingest` (RTMP/SRT) and `onvif` (cameras) into MoQT |
+| [`shared/`](shared/README.md) | `mediapack` containers, `media-streaming-format` catalog, `media-publisher`, `transcode` |
+| [`examples/browser/`](examples/browser/README.md) | Browser demos: Live Viewer, Meeting, ONVIF, AI bots and the low-level API pages |
+| [`examples/rust/moq-cli/`](examples/rust/moq-cli/README.md) | CLI that pipes H.264 in and out of a relay |
+| [`examples/python/`](examples/python) | pipecat bots: chat moderation and camera detection |
+| [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
+| [`architecture_decision_record/`](architecture_decision_record) | Architecture and dependency decisions per crate |
 
-## Setup
-
-Enter the Nix development shell:
+## Quick start
 
 ```shell
 nix develop
-```
-
-Install browser dependencies:
-
-```shell
 npm --prefix examples/browser ci
 ```
 
-## Run
-
-Run these commands inside the Nix development shell:
+Four terminals:
 
 ```shell
-make relay
-make browser
-make chrome
-make live-ingest
-make gst-srt-publish   # SRT -> MoQT through the GStreamer moqtsink plugin
-
-# For Linux users
-make chrome:linux
+make relay          # 1. relay and a local VTS on https://127.0.0.1:4433
+make live-ingest    # 2. RTMP/SRT ingest publishing to the relay
+make ffmpeg-srt     # 3. test pattern over SRT into the ingest
+make browser        # 4. wasm build and the demo hub on http://localhost:5173
 ```
 
-`make browser` builds the browser WASM bindings before starting Vite.
+Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
+relay's self-signed certificate. Open Live Viewer from the hub and watch
+`anon/live/test`.
 
-## Big Buck Bunny over SRT
+## Make targets
 
-Run `make ffmpeg-srt-bbb-local` to send to `localhost:9000` after starting a
-local SRT receiver with `make live-ingest` or `make gst-srt-publish`.
-Run each long-running command in a separate terminal.
+| Target | Does |
+| --- | --- |
+| `relay` | Relay with a local VTS; the certificate is generated into `relay/keys/` on first run |
+| `browser`, `chrome`, `chrome:linux` | Vite dev server with the wasm build; Chrome pinned to the relay certificate |
+| `live-ingest`, `live-ingest-transcode`, `live-ingest-stats` | RTMP/SRT bridge; with lower renditions; with QUIC statistics |
+| `gst-plugin`, `gst-srt-publish` | Build `moqtsink`; SRT into MoQT through `gst-launch-1.0` |
+| `onvif` | ONVIF camera bridge, configured in `.env` |
+| `ffmpeg-rtmp`, `ffmpeg-srt`, `ffmpeg-srt-bbb-local`, `ffmpeg-srt-bbb-remote` | Test sources: pattern over RTMP or SRT, Big Buck Bunny to a local or the cloud ingest |
+| `test`, `lint`, `format` | `cargo test`; clippy and `tsc`; rustfmt and prettier |
+| `browser-e2e-media`, `browser-e2e-live-viewer`, `browser-e2e-meeting`, `browser-e2e-meeting-headed` | Playwright E2E; relay and dev server are started for you |
+| `relay-certs` | Generate the relay certificate without starting the relay |
 
-Run `make ffmpeg-srt-bbb-remote` to send directly to the remote SRT receiver at
-`relay-1.moqt.research.skyway.io:9000`; no local bridge or relay is needed.
-Watch with Live Viewer using `https://relay-1.moqt.research.skyway.io:443` and
-namespace `anon/live/test`.
+## Authentication
 
-Both commands download the sample on first use and loop it continuously.
-See the [live ingest guide](bridges/live-ingest/README.md#publish-big-buck-bunny-over-srt)
-for details.
+Relays always authenticate. A session without a token is limited to
+`anon/**`, which every demo uses by default. Tokens are HS256 JWTs verified by
+the VTS; mint one with `services/vts/bin/mint.mjs`. See
+[`services/vts/README.md`](services/vts/README.md).
 
-## Test
-
-Run Rust tests:
+## Two relays with Docker Compose
 
 ```shell
-make test
-make browser-e2e-media
+docker compose up -d
 ```
 
-`make browser-e2e-media` installs the browser E2E prerequisites, starts the local
-relay and Vite server, waits until both are ready, runs the Playwright media E2E
-test, and then cleans up the child processes. The automated media E2E flow is
-supported on Linux and macOS.
+Starts `relay-a` (`https://127.0.0.1:4433`) and `relay-b` (`:4434`) sharing a
+VTS and a Redis route registry, the topology the cascading, auth and meeting
+E2E use. Native clients on macOS reach them through the Docker Desktop bridge
+host; the `make` targets resolve that for you.
 
-## Validation
-
-Run linters and formatters:
+## Tests
 
 ```shell
-make lint
-make format
+make test                        # Rust unit tests
+make browser-e2e-media           # browser publish/subscribe
+./scripts/auth-e2e.sh            # relay scenarios, see tests/README.md
+npm --prefix services/vts test   # VTS
 ```
+
+## Documents
+
+- Architecture: [`moqt`](architecture_decision_record/moqt/architecture.md), [`relay`](architecture_decision_record/relay/architecture.md), [`media-publisher`](architecture_decision_record/media-publisher/architecture.md), [Live Player](architecture_decision_record/browser-examples/live-player.md)
+- Contributor rules: [`AGENTS.md`](AGENTS.md)

@@ -1,5 +1,6 @@
 # bindings
 
-Bindings for using `moqt` from non-Rust runtimes.
+`moqt` for non-Rust runtimes.
 
-- `wasm/`: WASM bindings used by the browser examples
+- [`wasm/`](wasm/README.md): WebAssembly package used by `examples/browser`
+- [`gstreamer/`](gstreamer/README.md): GStreamer plugin with the `moqtsink` element
