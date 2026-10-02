@@ -189,6 +189,314 @@ already played are left out, since a 2 s audio group can span two windows.
 - The pre-decode hold stays in the video worker and the playout budget on the
   main thread (see `LivePlayout`); the worker's superseded-group drop stays.
 
+## Playback behaviour
+
+What the Live Viewer page documents to its users as controls; this section
+records how they work.
+
+### Review (rewind)
+
+The skip buttons, the arrow keys and the seek bar all FETCH groups the relay
+still caches and play them paced by their capture timestamps: video on the
+review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
+
+- A position is derived from the capture timestamps observed during live
+  playback. The publishers number groups from the wall clock and switch groups
+  at encoder keyframes, so a difference of group ids is not a number of seconds.
+- A review FETCHes from the closed keyframe group that contains the target,
+  decodes the frames before the target without pacing and draws from the target
+  on; in MSE the same amount is added to `currentTime` before playing.
+- The range is limited to groups the publisher has closed. A range that reaches
+  into an open group leaves the relay cache, is forwarded upstream and answered
+  from the publisher's 60 s cache.
+- The relay keeps objects for 60 s by default (`RELAY_CACHE_TTL_SECS`) and the
+  publishers for 60 s; nothing older can be reached.
+- While reviewing, the video and audio SUBSCRIBEs are set to Forward 0 with
+  SUBSCRIBE_UPDATE so no live objects arrive. Groups the publisher opens in the
+  meantime are learned from the Largest Location of a TRACK_STATUS every
+  500 ms, which advances the next FETCH range and the right end of the seek bar.
+  Their positions come from the encode time the media timeline records; for a
+  rendition the timeline does not cover they are estimated from the arrival
+  lag of the last live object and drift ahead while the main thread is busy.
+  `LIVE` restores Forward 1; the relay resumes from the next group it opens,
+  so the live picture takes up to one GOP to move. Against a relay that does
+  not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
+
+### MP4 publisher
+
+The MP4 Publish panel demuxes the chosen file in the browser and publishes it
+as the catalog and LOC tracks `live-ingest` produces, plus the media timeline,
+so the viewer and the rewind work unchanged. No CMAF siblings are published.
+
+- Demuxing uses the progressive MP4 index of `shared/mediapack`
+  (`mp4::Mp4Index`) through `bindings/wasm`: only `moov` is handed to wasm and
+  samples are read with `File.slice`, so the file never sits in memory whole.
+- Video must be H.264. `mediapack` converts AVCC samples to Annex-B and puts
+  the SPS / PPS from `avcC` before every keyframe, so the catalog carries no
+  `initData`, as with `live-ingest`.
+- Audio may be AAC or MP3, both sent as the MP4 frames they are (a LOC payload
+  is the raw bitstream of a codec in the WebCodecs registry). AAC puts its
+  AudioSpecificConfig in the catalog `initData`; MP3 needs only
+  `codec: "mp3"` for the receiver's `AudioDecoder`. Other audio codecs are
+  skipped and the video is published alone.
+- It does not wait for a SUBSCRIBE: `video`, `audio`, `timeline` and `catalog`
+  are PUBLISHed, the catalog after every track it lists so the relay caches
+  each from its first object, and the catalog is re-sent every 30 s so it never
+  leaves the relay cache. A SUBSCRIBE that reaches the publisher is rejected
+  with NOT_SUPPORTED.
+- Groups switch at video keyframes and audio objects join the group of the
+  preceding keyframe. Group ids, the catalog's included, are numbered from the
+  start time in unix microseconds, so a republished file never reuses a
+  location (the relay keeps a track's cache across publishers and treats a
+  reused location as a malformed track).
+- The `timeline` track sends, at every keyframe, the records so far
+  (presentation time, `[group id, 0]`, encode wallclock) as one object in a new
+  group; records older than the relay's 60 s retention are dropped and
+  presentation time counts from the start of publishing.
+- Samples are sent in decode order, like a live encoder with B-frames, at a
+  wall clock of decode time plus the file's reorder delay (the largest amount
+  presentation time runs ahead of decode time; 0 without B-frames), and the
+  presentation wall clock travels as the LOC capture timestamp. Loop shifts the
+  next pass by the file's duration.
+- The preview decodes the samples as sent with WebCodecs and draws each frame
+  at capture timestamp plus reorder delay, the moment everything up to that
+  frame has been sent, giving the picture of a receiver without network or
+  buffer delay. The viewer's LOC frames carry the same capture timestamps, so
+  the difference to their display time is shown as `viewer delay` under the
+  preview and as `delay` in the Playback stats; across two browsers the clock
+  skew between them adds to it.
+- Publish Streams shows the groups (subgroup streams) sent per track as the
+  same bars as Subscribe Streams under the Playback picture, sharing its Window
+  and GOPs settings, with the counts of streams in flight and finished and the
+  send bitrate of the streams open in the window.
+- Publishing runs on its own MoQT session, so Watch and Stop on the same page
+  do not interrupt it. Browsers do not answer FETCH, so rewinding is limited to
+  the closed groups in the relay cache.
+
+### Packaging
+
+The gear menu selects how the media tracks are received. `LOC` subscribes to
+the `loc` tracks and decodes them with WebCodecs into a MediaStream; `CMAF`
+subscribes to the `_cmaf` siblings the bridge publishes alongside them
+(draft-ietf-moq-cmsf-01) and feeds their fragments to a MediaSource on the
+same video element, with the init segment taken from the catalog `initData`.
+Switching packaging re-subscribes both tracks at the current quality.
+
+In CMAF mode the seek bar and rewind targets are built from the MSF media
+timeline, because CMAF objects carry no LOC capture timestamp, and review
+playback appends the fetched fragments to a MediaSource instead of drawing them
+on the canvas. Every MediaSource — live, review, or the replacement opened by a
+packaging or quality change — takes its own video element from a small pool, and
+a new picture is shown only once it has presented a frame while the previous one
+stays on screen until then. The live MediaSource stays open hidden behind a
+review but receives nothing while the live subscriptions do not forward, so
+after `LIVE` the fragments of the next group land in a buffered range of their
+own and playback jumps there once it holds a second of video. The live audio
+still buffered when a review starts is silenced and heard again on `LIVE`.
+
+### Review audio
+
+The bridge starts the audio groups at the video keyframes with the same ids,
+so the audio of a window is the same group range on the audio track and is
+fetched alongside the video. The audio of a group ends a little after its
+video, because the source interleaves audio behind video, so an audio group is
+fetched once the audio track has moved on to a later group; fetched earlier,
+its tail would be missing and MSE would stall on the hole. In LOC mode the chunks are decoded up front and
+scheduled on the review's own clock, which maps capture timestamps onto local
+time from the position the review starts at and follows the drift the audio
+device shows, so the picture keeps step with the sound; frames are decoded a
+little ahead of their presentation rather than a whole window at once. In CMAF
+mode the fragments are appended to the review MediaSource, which aligns them
+by `tfdt`. The rewind status shows the review's own `A/V` offset.
+
+### Catalog
+
+The catalog is subscribed to for updates and fetched for its current object:
+a SUBSCRIBE delivers objects published after the largest one, and the
+publishers send the catalog when it changes and every 30 seconds, so a viewer
+joining in between would otherwise wait for the next one. The FETCH names the
+group SUBSCRIBE_OK reports as the largest, which the publishers republish
+before the relay cache drops it. When SUBSCRIBE_OK says no content exists yet, nothing is fetched and
+the catalog arrives on the SUBSCRIBE; a FETCH the relay cannot cover would be
+forwarded to the publisher, and the MP4 publisher does not answer it.
+
+The two may deliver different catalogs: the relay keeps the catalog of a
+publisher that has since been replaced, so the FETCH can return the old one
+while the SUBSCRIBE brings the new one. The viewer applies the catalog of the
+newest group whatever order they arrive in, and when a catalog redefines a
+track it is subscribed to under the same name, as a new publisher with another
+audio codec does, the decoder is reconfigured from the new definition.
+
+### Audio / video synchronisation
+
+In LOC mode the two decoder workers hand every sample over as soon as it is
+decoded, and one playout clock decides when each is presented. The clock maps
+the LOC capture timestamps, which the bridge stamps on the same wall clock for
+every track, onto the local clock behind a jitter buffer. The buffer tracks
+the delay from capture to arrival of the audio chunks of the last 10 s and
+covers their peak-to-peak jitter (the slowest minus the fastest) plus the audio
+device's output latency (the time from handing a chunk to the device to
+hearing it, some 25 ms on built-in speakers and far more over Bluetooth). That
+sum is clamped to `Min buffer (ms)` (200 ms by default) and `Max buffer (ms)`
+(unlimited when empty), so the bounds are the buffer as displayed; equal
+bounds fix it, and a maximum below the output latency makes every chunk late.
+`Current` next to the bounds shows the buffer and its target, and the Buffer
+chart below the player stacks the output latency and `audio jitter (p-p)` under
+the target and the buffer held, with delay, bitrate and A/V charted beside it
+over the last minute. A subscription opens
+with a burst of what the relay had cached of the current groups, so the
+samples of the first 400 ms are held and the clock is anchored on the newest
+of them; older ones are dropped rather than played late. That burst says
+nothing about the jitter, so the buffer opens on the longest wait
+between two audio arrivals seen during the warm-up instead: sources such as
+MPEG-TS over SRT deliver audio in bursts. The audio is the clock's master: it
+alone moves the clock, so the sound never skips for the picture, and the
+picture takes over only while no audio is playing. Video frames are held until
+they are due and then written to the MediaStream the video element shows;
+every move of the clock applies to the frames captured from the sample that
+caused it on, so the waiting frames move with the sound they belong to, and no
+frame is due before one captured earlier. Audio is scheduled on an
+`AudioContext` running at the stream's sample rate. Chunks are appended whole
+at a write head so the waveform stays continuous: capture timestamps are
+millisecond-precise and the context clock is read a render quantum at a time,
+so a chunk placed on its own target would leave a gap or an overlap each time.
+The distance between the write head and the target is fed back to the clock,
+which makes the audio device the master the picture follows; a late chunk is
+not trimmed but starts at once and moves the clock the same way, so the chunks
+behind it stay contiguous; that is how the buffer grows. Once the buffer has
+settled (10 s unless its bounds are equal), `Catch up` decides how a buffer above its
+target shrinks. `Skip (trim + crossfade)`, the default, drops each audio chunk that fits in the
+excess and fades the next one in from the head of the first dropped chunk, at
+the offset within 10 ms where the two waveforms look most alike, so the sound
+jumps without a click. `Speed up (WSOLA)` shortens the audio by 10 % while the buffer
+is more than 20 ms over, without changing its pitch: where the waveform
+repeats, one period of 2.5–10 ms is overlapped onto the next with a 5 ms
+crossfade (the time-scale modification WebRTC's NetEq calls accelerate), and
+it skips like `Skip (trim + crossfade)` once the buffer is more than 400 ms over. `Off` never
+shrinks it. The stats line shows the buffer and its target as
+`buffer N ms (target M)` and how much latency the catch-up has taken out as
+`shed N ms`.
+The stats line shows the offset between the picture on screen and the sound as
+`A/V +N ms`, as `audio breaks N` how often the sound did not continue where
+the previous chunk ended, and as `video N dropped / M late` how many frames
+fell due together with a newer one or arrived after a newer one was shown and
+were never shown, and how many were shown more than a frame period after they
+were due.
+
+The audio decoder stamps its outputs from the sample count it has produced,
+not from the timestamps of the chunks, so a hole in the source, such as a lost
+frame or a file that loops, would shift every later output and leave the sound
+ahead of the picture for as long as the decoder lives. Each output is
+therefore labelled with the capture timestamp of the chunk it was decoded
+from, in the live and the review decoder alike. The relay delivers each group
+on its own stream, and when the tail of one audio group and the head of the
+next are in flight together the streams interleave and the head lands first;
+the audio worker holds the objects of a later group until the group before
+them has ended, for at most 100 ms, so the decoder sees them in order. The
+video worker instead moves on with the keyframe of the newer group as soon as
+it arrives and drops what is left of the older group: those frames predict
+from references the keyframe has replaced, and decoding them would smear the
+picture until the next keyframe and show a frame older than the one on screen.
+
+In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
+which the bridge writes on one timeline for both tracks, so the SourceBuffers
+append in the default segments mode rather than back to back.
+
+### Playback speed
+
+The speed control next to the rewind buttons offers 0.5x, 1x, 1.25x, 1.5x and
+2x. It is enabled only while reviewing in CMAF mode, where the fetched fragments
+play through a MediaSource and the element's `playbackRate` applies; live
+playback has to keep pace with the publisher and the WebCodecs path paces
+frames itself. Returning to live resets the rate to 1x, and review that runs
+faster than real time returns to live by itself once it has caught up with the
+live edge, instead of stalling on every group the publisher has yet to close.
+Audio, once review carries it, is time-stretched by the browser (`preservesPitch`
+is on by default).
+
+### Player controls
+
+The seek bar, the skip buttons and the quality menu sit on the video itself
+rather than in their own cards. They appear while the pointer is over the
+picture, while a control has focus or while the quality menu is open, and fade
+out otherwise. The gear opens the video and audio track selection and the
+packaging choice, and closes on a second click, on Escape, or on a click
+outside it.
+
+A spinner appears in the centre of the picture once it has stood still for half
+a second while playback is meant to be running: the data is arriving too slowly
+to decode the next group, or the window a seek asked for is still being fetched.
+It disappears with the next frame, and is not shown while paused or stopped.
+
+The centre button pauses and resumes whatever is on screen. Every other
+transition — seek, skip, `LIVE`, a packaging or quality change — resumes.
+Pausing a review freezes the picture and the sound where they are and resuming
+carries on from there; pausing live playback stops both, and resuming returns
+to the live edge (live CMAF jumps to the end of what is buffered, live LOC
+warms up again). The volume slider next to the speed control drives the live audio output
+(the `AudioContext` gain for LOC, the MediaSource element for CMAF).
+
+The `LIVE` button returns to the live edge. It is translucent with a red dot
+while playback is live and filled while playback is behind the live edge, so the
+button doubles as the indicator for which of the two the viewer is watching.
+
+The button at the right end of the controls puts the picture into fullscreen and
+takes it out again (Escape also leaves). In fullscreen the pointer never leaves
+the picture, so the controls and the cursor hide once the pointer has rested for
+a few seconds and come back when it moves.
+
+### Seek bar
+
+The slider below the video spans the whole broadcast: its left end is the start,
+placed by the MSF media timeline, and its right end is the live edge. The thin bar
+underneath marks the part of that range the relay still caches and can therefore
+replay, which is the only part a seek resolves. The relay cannot be asked which
+groups it still holds, so the bar covers the groups the viewer observed within the
+relay's default cache TTL (60 s) and shrinks as they age out. Home jumps to the oldest
+replayable position rather than to the start of the broadcast, and End returns to
+live.
+
+While review playback runs, the thumb stays on the position that was seeked to
+and a fill from it carries the movement, because the decoder emits frames in
+bursts and a thumb that followed each one read as jitter. The fill and the
+readouts step a second at a time for the same reason.
+
+The position label shows seconds behind live and follows review playback. A seek
+decodes from the preceding closed keyframe group, shows frames from the chosen
+position on, and continues with the same bounded FETCH replay as the skip
+buttons.
+
+Review playback does not stop at the end of the fetched window: the next
+bounded FETCH is issued while the current window plays, so playback keeps
+running behind the live edge until Live is pressed. Because the window is paced
+by capture timestamps it never catches up on its own, and when it reaches the
+newest closed group it waits for the publisher to close another one.
+
+The slider is disabled until a closed group is available. Stop and video quality
+changes clear the timeline and cancel pending review playback. The observed
+range is not a guarantee of relay cache retention: an evicted group can no longer
+be replayed. A FETCH that fails with INTERNAL_ERROR, TIMEOUT, INVALID_RANGE,
+NO_OBJECTS or UNKNOWN_STATUS_IN_RANGE, whose stream is reset with INTERNAL_ERROR,
+or that returns no objects, is taken as eviction: the groups up to the failed one leave the
+timeline and review resumes from the oldest group left, or goes live when none
+is. Any other failure reports the FETCH error and holds the requested position,
+so pick another position or press Live to resume.
+
+### Broadcast elapsed time
+
+The readout above the slider shows `position / broadcast`, both measured from the
+start of the broadcast, and the label at its left end the elapsed time at the axis
+start. The numbers come from the MSF media timeline track
+(draft-ietf-moq-msf-01 section 7), which the bridge publishes as a JSON array of
+`[presentation time, [group id, object id], encode wallclock]` records covering
+the groups the relay still caches. The viewer finds it in the catalog by its
+`mediatimeline` packaging and subscribes to it alongside the media tracks.
+
+A capture timestamp resolves to a presentation time by offsetting from the
+newest record at or before it, so the reading survives a video quality change
+even though renditions number their groups independently. The label shows
+`--:-- / --:--` until the first timeline object arrives.
+
 ## Migration
 
 Each step is its own PR, stacked on the previous one; the Live Viewer E2E
