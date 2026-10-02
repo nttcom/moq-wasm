@@ -41,6 +41,8 @@ nix develop
 npm --prefix examples/browser ci
 ```
 
+### Single relay
+
 Run a relay, publish a test stream and watch it, in four terminals:
 
 ```shell
@@ -54,7 +56,7 @@ Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
 relay's self-signed certificate. Open Live Viewer from the hub and watch
 `anon/live/test`.
 
-### Two relays with Docker Compose
+### Two relays
 
 ```shell
 docker compose up -d
@@ -62,8 +64,8 @@ docker compose up -d
 
 Starts `relay-a` (`https://127.0.0.1:4433`) and `relay-b` (`:4434`) sharing a
 VTS and a Redis route registry, the topology the cascading, auth and meeting
-E2E use. The `make` targets resolve the Docker Desktop bridge host for native
-clients on macOS.
+E2E use. The `make` targets above publish to `relay-a` and resolve the Docker
+Desktop bridge host for native clients on macOS.
 
 ### Tests
 
