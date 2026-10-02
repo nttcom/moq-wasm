@@ -60,17 +60,45 @@ relay's self-signed certificate. Open Live Viewer from the hub and watch
 
 ### Make targets
 
+Run:
+
 | Target | Does |
 | --- | --- |
-| `relay` | Relay with a local VTS; the certificate is generated into `relay/keys/` on first run |
-| `browser`, `chrome`, `chrome:linux` | Vite dev server with the wasm build; Chrome pinned to the relay certificate |
-| `live-ingest`, `live-ingest-transcode`, `live-ingest-stats` | RTMP/SRT bridge; with lower renditions; with QUIC statistics |
-| `gst-plugin`, `gst-srt-publish` | Build `moqtsink`; SRT into MoQT through `gst-launch-1.0` |
-| `onvif` | ONVIF camera bridge, configured in `.env` |
-| `ffmpeg-rtmp`, `ffmpeg-srt`, `ffmpeg-srt-bbb-local`, `ffmpeg-srt-bbb-remote` | Test sources: pattern over RTMP or SRT, Big Buck Bunny to a local or the cloud ingest |
-| `test`, `lint`, `format` | `cargo test`; clippy and `tsc`; rustfmt and prettier |
-| `browser-e2e-media`, `browser-e2e-live-viewer`, `browser-e2e-meeting`, `browser-e2e-meeting-headed` | Playwright E2E; relay and dev server are started for you |
-| `relay-certs` | Generate the relay certificate without starting the relay |
+| `make relay` | Relay with a local VTS on `https://127.0.0.1:4433`; generates the certificate into `relay/keys/` on first run |
+| `make browser` | Builds the wasm package and serves the demo hub on `http://localhost:5173` |
+| `make chrome`, `make chrome:linux` | Chrome that trusts the local relay certificate |
+| `make relay-certs` | Generates the relay certificate without starting the relay |
+
+Publish into the relay:
+
+| Target | Does |
+| --- | --- |
+| `make live-ingest` | RTMP (`:1935`) and SRT (`:9000`) ingest |
+| `make live-ingest-transcode` | Same, adding 720p / 480p / 360p renditions (needs GStreamer) |
+| `make live-ingest-stats` | Same, printing QUIC statistics once a second |
+| `make gst-srt-publish` | SRT (`:9000`) ingest through the GStreamer `moqtsink` element (needs GStreamer) |
+| `make gst-plugin` | Builds `moqtsink` only |
+| `make onvif` | ONVIF camera bridge; camera address and credentials come from `.env` |
+
+Send a test stream to the ingest:
+
+| Target | Does |
+| --- | --- |
+| `make ffmpeg-rtmp` | Test pattern over RTMP |
+| `make ffmpeg-srt` | Test pattern over SRT |
+| `make ffmpeg-srt-bbb-local` | Big Buck Bunny over SRT to `localhost:9000` |
+| `make ffmpeg-srt-bbb-remote` | Big Buck Bunny over SRT to the cloud ingest; no local relay or ingest needed |
+
+Check:
+
+| Target | Does |
+| --- | --- |
+| `make test` | `cargo test` |
+| `make lint` | clippy and `tsc` |
+| `make format` | rustfmt and prettier |
+| `make browser-e2e-media` | Playwright E2E of the Media demo; relay and dev server are started for you |
+| `make browser-e2e-live-viewer` | Playwright E2E of the Live Viewer |
+| `make browser-e2e-meeting`, `make browser-e2e-meeting-headed` | Playwright E2E of the Meeting on two Docker Compose relays; `-headed` shows the browser |
 
 ### Authentication
 
@@ -92,9 +120,9 @@ clients on macOS.
 
 ### Tests
 
+Besides the `make` targets above:
+
 ```shell
-make test                        # Rust unit tests
-make browser-e2e-media           # browser publish/subscribe
 ./scripts/auth-e2e.sh            # relay scenarios, see tests/README.md
 npm --prefix services/vts test   # VTS
 ```
