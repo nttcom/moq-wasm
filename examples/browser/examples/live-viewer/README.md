@@ -122,4 +122,4 @@ npm --prefix examples/browser run e2e:live-viewer-delivery
 ## Design
 
 How the catalog, rewind, A/V synchronisation, packaging and the MP4 publisher
-work: [Live Player architecture](../../../../architecture_decision_record/browser-examples/live-player.md).
+work: [Live Player architecture](../../../../docs/architecture/browser-examples/live-player.md).

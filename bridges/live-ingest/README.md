@@ -48,7 +48,7 @@ SRT is read with a 4 MiB UDP receive buffer. When MPEG-TS packets are lost
 anyway, the frame they cut and the frames predicted from it are dropped until
 the next keyframe; each loss is logged as a warning and the SRT statistics are
 logged when a stream ends. Why:
-[architecture](../../architecture_decision_record/moqt-bridge-live-ingest/architecture.md).
+[architecture](../../docs/architecture/moqt-bridge-live-ingest/architecture.md).
 
 ## Delivery log
 

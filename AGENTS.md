@@ -11,10 +11,10 @@ Library components (draft-governed):
 
 | Component | Description | Related Draft |
 | --- | --- | --- |
-| `moqt` | Core MoQT protocol implementation | `spec/draft-ietf-moq-transport-14.txt` |
-| `relay` | MoQT relay server, extending `moqt` with server-specific logic | `spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
-| `shared/media-streaming-format` | Object format for content transported over MoQT | `spec/draft-ietf-moq-msf-01.txt`, `spec/draft-ietf-moq-cmsf-01.txt` |
-| `shared/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
+| `moqt` | Core MoQT protocol implementation | `docs/spec/draft-ietf-moq-transport-14.txt` |
+| `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
+| `shared/media-streaming-format` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
+| `shared/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
 
 Application and integration components (draft reference is normally not required):
 
@@ -32,7 +32,7 @@ Application and integration components (draft reference is normally not required
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
 
 ### Architecture Documents
-- Architecture documents live at `architecture_decision_record/${package_name}/architecture.md` (currently `moqt` and `relay`).
+- Architecture documents live at `docs/architecture/${package_name}/architecture.md`.
 - Before making structural changes to a component (module layout, layering, task/channel topology), read its architecture document first.
 - When a change alters the design intent, module boundaries, runtime flow, or key invariants described in an architecture document, update that document in the same change.
 

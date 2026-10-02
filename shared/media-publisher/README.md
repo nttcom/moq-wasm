@@ -29,4 +29,4 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 - A SUBSCRIBE for a track the catalog does not list is rejected with TRACK_DOES_NOT_EXIST.
 
 The reasoning behind these choices is in the
-[architecture document](../../architecture_decision_record/media-publisher/architecture.md).
+[architecture document](../../docs/architecture/media-publisher/architecture.md).
