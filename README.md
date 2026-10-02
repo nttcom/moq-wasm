@@ -54,48 +54,6 @@ Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
 relay's self-signed certificate. Open Live Viewer from the hub and watch
 `anon/live/test`.
 
-### Make targets
-
-Run:
-
-| Target | Does |
-| --- | --- |
-| `make relay` | Relay with a local VTS on `https://127.0.0.1:4433`; generates the certificate into `relay/keys/` on first run |
-| `make browser` | Builds the wasm package and serves the demo hub on `http://localhost:5173` |
-| `make chrome`, `make chrome:linux` | Chrome that trusts the local relay certificate |
-| `make relay-certs` | Generates the relay certificate without starting the relay |
-
-Publish into the relay:
-
-| Target | Does |
-| --- | --- |
-| `make live-ingest` | RTMP (`:1935`) and SRT (`:9000`) ingest |
-| `make live-ingest-transcode` | Same, adding 720p / 480p / 360p renditions (needs GStreamer) |
-| `make live-ingest-stats` | Same, printing QUIC statistics once a second |
-| `make gst-srt-publish` | SRT (`:9000`) ingest through the GStreamer `moqtsink` element (needs GStreamer) |
-| `make gst-plugin` | Builds `moqtsink` only |
-| `make onvif` | ONVIF camera bridge; camera address and credentials come from `.env` |
-
-Send a test stream to the ingest:
-
-| Target | Does |
-| --- | --- |
-| `make ffmpeg-rtmp` | Test pattern over RTMP |
-| `make ffmpeg-srt` | Test pattern over SRT |
-| `make ffmpeg-srt-bbb-local` | Big Buck Bunny over SRT to `localhost:9000` |
-| `make ffmpeg-srt-bbb-remote` | Big Buck Bunny over SRT to the cloud ingest; no local relay or ingest needed |
-
-Check:
-
-| Target | Does |
-| --- | --- |
-| `make test` | `cargo test` |
-| `make lint` | clippy and `tsc` |
-| `make format` | rustfmt and prettier |
-| `make browser-e2e-media` | Playwright E2E of the Media demo; relay and dev server are started for you |
-| `make browser-e2e-live-viewer` | Playwright E2E of the Live Viewer |
-| `make browser-e2e-meeting`, `make browser-e2e-meeting-headed` | Playwright E2E of the Meeting on two Docker Compose relays; `-headed` shows the browser |
-
 ### Authentication
 
 Relays always authenticate. A session without a token is limited to
@@ -116,9 +74,9 @@ clients on macOS.
 
 ### Tests
 
-Besides the `make` targets above:
-
 ```shell
+make test                        # Rust unit tests
+make browser-e2e-media           # browser publish/subscribe
 ./scripts/auth-e2e.sh            # relay scenarios, see tests/README.md
 npm --prefix services/vts test   # VTS
 ```
