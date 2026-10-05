@@ -8,7 +8,9 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 const CERT_DIR: &str = "keys";
 
 fn cert_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CERT_DIR)
+    std::env::var_os("RELAY_CERT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CERT_DIR))
 }
 
 fn get_cert_path() -> PathBuf {

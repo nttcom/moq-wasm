@@ -1,3 +1,9 @@
+ARG RELAY_BUILD_PROFILE=debug
+# source:   compile the relay inside the image (docker compose --profile build).
+# prebuilt: take target/<profile>/relay from a build context holding only that
+#           binary and crates/relay/keys (CI builds it on the runner with cargo).
+ARG RELAY_BINARY=source
+
 FROM lukemathwalker/cargo-chef:0.1.77-rust-1.96.0-slim-bookworm@sha256:4a51277f4e3e8e4643dd6384f6f6b2b3c8de9f074299cd0c19a80f3c29e8dd15 AS chef
 WORKDIR /workspace
 
@@ -5,8 +11,8 @@ FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
-ARG RELAY_BUILD_PROFILE=debug
+FROM chef AS source
+ARG RELAY_BUILD_PROFILE
 
 # Dependencies are cooked from the recipe alone so this layer is reused
 # until a manifest or Cargo.lock changes; only the workspace crates are
@@ -25,12 +31,20 @@ RUN case "$RELAY_BUILD_PROFILE" in \
       *) echo "unsupported RELAY_BUILD_PROFILE: $RELAY_BUILD_PROFILE" >&2; exit 1 ;; \
     esac && mkdir -p /workspace/crates/relay/keys
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:b0ae8e989418b458e0f25489bc3be523718938a2b70864cc0f6a00af1ddbd985
-ARG RELAY_BUILD_PROFILE=debug
+FROM scratch AS prebuilt
+ARG RELAY_BUILD_PROFILE
+COPY relay /workspace/target/${RELAY_BUILD_PROFILE}/relay
+COPY keys /workspace/crates/relay/keys
+
+FROM ${RELAY_BINARY} AS builder
+
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
+ARG RELAY_BUILD_PROFILE
 
 WORKDIR /app
 COPY --from=builder /workspace/target/${RELAY_BUILD_PROFILE}/relay /usr/local/bin/relay
 COPY --from=builder --chown=nonroot:nonroot /workspace/crates/relay/keys /workspace/crates/relay/keys
+ENV RELAY_CERT_DIR=/workspace/crates/relay/keys
 
 EXPOSE 443/udp 444/udp
 USER nonroot:nonroot
