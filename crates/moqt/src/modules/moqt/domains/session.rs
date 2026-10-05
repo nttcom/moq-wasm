@@ -7,6 +7,10 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::executor::JoinHandle;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
+use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
+use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
+use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
+use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
@@ -109,6 +113,45 @@ impl<T: TransportProtocol> Session<T> {
         self.inner.transport_connection.stats()
     }
 
+    /// draft-14 §9.4. A client sends an empty URI; only a server names a new
+    /// session. Fire-and-forget: the draft defines no response.
+    pub async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
+        self.inner
+            .send_stream
+            .send(
+                ControlMessageType::GoAway,
+                GoAway::new(new_session_uri).encode(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Allows the peer to use request ids below `max_request_id` (draft-14
+    /// §9.2). Fire-and-forget.
+    pub async fn raise_max_request_id(&self, max_request_id: u64) -> anyhow::Result<()> {
+        self.inner
+            .send_stream
+            .send(
+                ControlMessageType::MaxRequestId,
+                MaxRequestId::new(max_request_id).encode(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Tells the peer this side ran out of request ids at
+    /// `maximum_request_id` (draft-14 §9.3). Fire-and-forget.
+    pub async fn requests_blocked(&self, maximum_request_id: u64) -> anyhow::Result<()> {
+        self.inner
+            .send_stream
+            .send(
+                ControlMessageType::RequestsBlocked,
+                RequestsBlocked::new(maximum_request_id).encode(),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// The SERVER_SETUP this client received; `None` on a server session.
     pub fn server_setup(&self) -> Option<&ServerSetup> {
         self.server_setup.as_ref()
@@ -130,7 +173,10 @@ impl<T: TransportProtocol> Drop for Session<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        SessionEvent,
+        modules::test_support::{
+            connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
+        },
         wire::MOQ_TRANSPORT_VERSION,
     };
 
@@ -169,5 +215,51 @@ mod tests {
             Some(MOQ_TRANSPORT_VERSION)
         );
         assert!(server.server_setup().is_none());
+    }
+
+    #[tokio::test]
+    async fn go_away_reaches_the_peer_with_its_uri() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-go-away").await;
+
+        // Act
+        client.go_away(String::new()).await.unwrap();
+
+        // Assert
+        let SessionEvent::GoAway(go_away) = server.receive_event().await.unwrap() else {
+            panic!("expected GOAWAY from the client");
+        };
+        assert_eq!(go_away.new_session_uri(), "");
+    }
+
+    #[tokio::test]
+    async fn raise_max_request_id_reaches_the_peer() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-max-request-id").await;
+
+        // Act
+        client.raise_max_request_id(200).await.unwrap();
+
+        // Assert
+        let SessionEvent::MaxRequestId(max_request_id) = server.receive_event().await.unwrap()
+        else {
+            panic!("expected MAX_REQUEST_ID from the client");
+        };
+        assert_eq!(max_request_id.request_id(), 200);
+    }
+
+    #[tokio::test]
+    async fn requests_blocked_reaches_the_peer() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-requests-blocked").await;
+
+        // Act
+        client.requests_blocked(100).await.unwrap();
+
+        // Assert
+        let SessionEvent::RequestsBlocked(blocked) = server.receive_event().await.unwrap() else {
+            panic!("expected REQUESTS_BLOCKED from the client");
+        };
+        assert_eq!(blocked.maximum_request_id(), 100);
     }
 }
