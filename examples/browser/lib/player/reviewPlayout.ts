@@ -11,7 +11,8 @@ const WAIT_POLL_MS = 200
 /// only maps capture timestamps onto local time from the position the review
 /// starts at, and the drift the audio device shows moves it so the picture
 /// keeps step with the sound. Pausing freezes both, and resuming moves the
-/// clock by the pause so playback carries on where it stopped.
+/// clock by the pause so playback carries on where it stopped. A review
+/// started paused shows the frame at its position and holds there.
 export class ReviewPlayout {
   private readonly clock = new PlayoutClock()
   private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
@@ -31,10 +32,16 @@ export class ReviewPlayout {
     this.video = new VideoPlayout(show)
   }
 
-  start(shownFromMicros: number): void {
+  start(shownFromMicros: number, paused = false): void {
     this.stop()
     this.shownFromMicros = shownFromMicros
     this.clock.anchor(shownFromMicros, performance.now() + REVIEW_LEAD_MS)
+    if (paused) {
+      this.pausedAtMs = performance.now()
+      this.video.setPaused(true)
+      this.video.showNextWhilePaused()
+      void this.audio.suspend()
+    }
   }
 
   stop(): void {

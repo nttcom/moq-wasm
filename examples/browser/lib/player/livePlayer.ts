@@ -306,6 +306,7 @@ export class LivePlayer {
   /// A position at or past the live edge goes live. Any other position is
   /// replayed from the closed keyframe group that holds it: the frames before it
   /// are decoded without pacing and only the ones from the position on are shown.
+  /// A paused player stays paused on the frame at the position.
   seek(captureMicros: number): void {
     const latest = this.timeline.groups.latest
     if (!latest) {
@@ -333,8 +334,8 @@ export class LivePlayer {
     this.review = session
     this.subscriptions.pauseForward()
     this.cmafReview.needsOpen = true
-    this.setPaused(false)
-    this.locReview.playout.start(session.anchorMicros)
+    this.locReview.playout.start(session.anchorMicros, this.paused)
+    this.setPaused(this.paused)
     this.applyVolume()
     this.playbackStatus = { text: 'Reviewing', state: 'review' }
     this.changed()
@@ -357,10 +358,10 @@ export class LivePlayer {
     this.changed()
   }
 
-  /// Pausing holds whatever is on screen; every other transition (seek, skip,
-  /// live, packaging or quality change) resumes. Resuming live CMAF jumps to the
-  /// end of what is buffered so the picture is live again; the LOC MediaStream
-  /// has no backlog to skip.
+  /// Pausing holds whatever is on screen; a seek or skip keeps the pause and
+  /// every other transition (live, packaging or quality change) resumes.
+  /// Resuming live CMAF jumps to the end of what is buffered so the picture is
+  /// live again; the LOC MediaStream has no backlog to skip.
   setPaused(paused: boolean): void {
     this.paused = paused
     if (paused) {

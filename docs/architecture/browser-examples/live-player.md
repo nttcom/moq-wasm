@@ -436,17 +436,15 @@ In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers
 append in the default segments mode rather than back to back.
 
-### Frame stepping while paused (target)
+### Seeking while paused
 
-A paused player keeps its position across `seek` and `skip`: the frame at the
-new position is decoded and shown, and nothing plays until the pause is
-lifted. `stepFrame(direction)` moves by one frame of the review's video track:
-forward to the next decoded frame, backward by seeking to the capture
-timestamp before the one on screen, which replays from the keyframe group
-that holds it as any seek does. The step buttons appear in the controls while
-reviewing. This is how a monitoring page scrubs a still picture through the
-relay cache, one second or one frame at a time; the relay cache TTL bounds
-how far back a step can go, as it bounds every review.
+A paused player keeps its pause across `seek` and `skip`: the review opens
+on the frame at the new position, shows that one frame and holds it, with
+the audio suspended, and resuming plays on from there with the sound of that
+position. This is how a monitoring page scrubs a still picture through the
+relay cache a second at a time: pause, then skip. Stepping by one frame is
+not offered yet; it would seek to the capture timestamp of the neighbouring
+frame, which the player does not know without decoding it.
 
 ### Instant live return (target)
 
@@ -570,8 +568,8 @@ named `live-player-*`.
 5. Adopt the player in `examples/onvif`, keeping the PTZ commands in the page.
 6. `start` with tracks given by the page (`LiveTracks`), for publishers
    without a catalog.
-7. Frame stepping while paused: `seek` / `skip` keep the pause, `stepFrame`,
-   step buttons in the controls.
+7. Seeking while paused: `seek` / `skip` keep the pause and show the frame
+   at the position.
 8. Adopt the player in `examples/remote-monitoring`: one player per camera on
    a canvas picture, the page's seek bar and transport buttons on the
    player's seek axis and stepping, the camera publisher unchanged.
@@ -606,7 +604,7 @@ named `live-player-*`.
   camera, started with the camera's `video` track given as `LiveTracks`
   (`avc3.640028`, no catalog) on a canvas picture, video only. The stage and
   the thumbnails are the page's layout over four players; the page's review
-  (frame-accurate still pictures stepped through the relay cache, immediate
-  live return) becomes the player's paused seeking, frame stepping and
+  (still pictures stepped through the relay cache a second at a time,
+  immediate live return) becomes the player's paused seeking and
   `keepLiveWhileReviewing`, and its group-id seek bar becomes the player's
   capture-time seek axis.
