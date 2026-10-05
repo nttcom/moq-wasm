@@ -7,6 +7,11 @@
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
 - Every Rust crate lives in `crates/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
+- Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
+  1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
+  2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
+  3. Otherwise → name the role in one or two kebab-case words (`relay`, `publisher`, `live-ingest`, `onvif-ingest`).
+  Use an abbreviation only when it is already the identifier in code, flags or environment variables (`msf`, `vts`); otherwise spell it out (`auth-token`). Binaries take the package name.
 
 Library components (draft-governed):
 
