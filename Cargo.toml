@@ -1,24 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    'shared/mediapack',
-    'shared/transcode',
-    'shared/media-streaming-format',
-    'shared/media-publisher',
-    'moqt',
-    'relay',
+    'crates/*',
     'examples/rust/moq-cli',
-    'tests/auth-e2e',
-    'tests/cache-eviction-e2e',
-    'tests/cascading-relay-e2e',
-    'tests/fetch-e2e',
-    'tests/multiple-publishers-e2e',
-    'tests/moqtsink-e2e',
-    'tests/object-dedup-e2e',
     'examples/cross-protocol-test/publisher',
     'examples/cross-protocol-test/quic-subscriber',
-    'bindings/wasm',
-    'bindings/gstreamer',
-    'bridges/live-ingest',
-    'bridges/onvif',
+    'tests/*',
 ]

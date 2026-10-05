@@ -43,7 +43,7 @@ Shared by all agents (Claude Code, Codex).
 - The struct's constructor `run()` spawns the task and returns `Self`.
 - If the task needs to receive commands, store an `mpsc::Sender` alongside the `JoinHandle` (actor pattern).
 - Place each task file in the directory whose responsibility the task fulfills, not necessarily where it is spawned.
-  - Example: `moqt/src/modules/moqt/runtime/tasks/control_message_receive_task.rs`
+  - Example: `crates/moqt/src/modules/moqt/runtime/tasks/control_message_receive_task.rs`
 
 ## Async Primitives
 - In async code, use `tokio` equivalents over `std` for synchronization, file I/O, and time operations.

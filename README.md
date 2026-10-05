@@ -30,8 +30,8 @@ connect to the cloud relay by default, so nothing needs to be installed.
 | Remote monitoring, data collection and control of robots | |
 | Remote monitoring, data collection and control of autonomous vehicles | |
 
-Publishers outside the browser: [`bridges/live-ingest`](bridges/live-ingest/README.md) (RTMP/SRT),
-[`bindings/gstreamer`](bindings/gstreamer/README.md) (`moqtsink`),
+Publishers outside the browser: [`crates/moqt-bridge-live-ingest`](crates/moqt-bridge-live-ingest/README.md) (RTMP/SRT),
+[`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) (`moqtsink`),
 [`examples/rust/moq-cli`](examples/rust/moq-cli/README.md) and the
 [pipecat bots](examples/python). Details of every browser demo are in
 [`examples/browser/README.md`](examples/browser/README.md).
@@ -74,7 +74,7 @@ Desktop bridge host for native clients on macOS.
 ```shell
 make test                        # Rust unit tests
 make browser-e2e-media           # browser publish/subscribe
-./scripts/auth-e2e.sh            # relay scenarios, see tests/README.md
+./tests/auth-e2e/run.sh            # relay scenarios, see tests/README.md
 npm --prefix services/vts test   # VTS
 ```
 
@@ -83,7 +83,7 @@ npm --prefix services/vts test   # VTS
 ```mermaid
 flowchart LR
     subgraph Publishers
-        B1[Browser<br/>bindings/wasm]
+        B1[Browser<br/>moqt-client-wasm]
         LI[live-ingest<br/>RTMP / SRT]
         GS[moqtsink<br/>GStreamer]
         ON[onvif bridge]
@@ -107,16 +107,18 @@ flowchart LR
 Every client speaks MoQT to a relay over QUIC or WebTransport. Relays cache
 objects for FETCH, forward subscriptions to each other and authenticate
 sessions through the VTS. The `moqt` crate is the protocol library every other
-component builds on.
+component builds on. Every Rust crate lives in `crates/<package name>/`.
 
 | Path | Component |
 | --- | --- |
-| [`moqt/`](moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
-| [`relay/`](relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
+| [`crates/moqt/`](crates/moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
+| [`crates/relay/`](crates/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
+| [`crates/moqt-client-wasm/`](crates/moqt-client-wasm/README.md) | WebAssembly bindings used by the browser examples |
+| [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
+| [`crates/moqt-bridge-live-ingest/`](crates/moqt-bridge-live-ingest/README.md) | RTMP and SRT ingest into MoQT |
+| [`crates/moqt-bridge-onvif/`](crates/moqt-bridge-onvif/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
+| [`crates/mediapack/`](crates/mediapack/README.md), [`media-streaming-format/`](crates/media-streaming-format/README.md), [`media-publisher/`](crates/media-publisher/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, track publishing, re-encoding |
 | [`services/vts/`](services/vts/README.md) | Verify Token Service: checks client JWTs for the relay |
-| [`bindings/`](bindings/README.md) | `wasm` for browsers, `gstreamer` (`moqtsink`) for GStreamer pipelines |
-| [`bridges/`](bridges/README.md) | `live-ingest` (RTMP/SRT) and `onvif` (cameras) into MoQT |
-| [`shared/`](shared/README.md) | `mediapack` containers, `media-streaming-format` catalog, `media-publisher`, `transcode` |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
 | [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |

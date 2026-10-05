@@ -5,9 +5,9 @@ Living document. Update this file in the same change whenever the ingest flow
 or the loss handling described here changes.
 
 ## Scope
-`bridges/live-ingest` accepts RTMP (FLV) and SRT (MPEG-TS), demuxes the input
-with `mediapack`, optionally re-encodes it with `shared/transcode`, and hands
-the resulting media events to `shared/media-publisher`, which owns the track
+`crates/moqt-bridge-live-ingest` accepts RTMP (FLV) and SRT (MPEG-TS), demuxes the input
+with `mediapack`, optionally re-encodes it with `crates/transcode`, and hands
+the resulting media events to `crates/media-publisher`, which owns the track
 layout (see [its architecture document](../media-publisher/architecture.md)).
 
 ## Transport stream loss

@@ -22,7 +22,7 @@ services:
     image: moqt-relay:local
     build:
       context: .
-      dockerfile: relay/Dockerfile
+      dockerfile: crates/relay/Dockerfile
     profiles:
       - build
     command: ["true"]
@@ -67,7 +67,7 @@ services:
       - "4433:443/udp"
     # Playwright pins the host certificate SPKI; relay must serve the same keypair.
     volumes:
-      - ./relay/keys:/workspace/relay/keys:ro
+      - ./crates/relay/keys:/workspace/crates/relay/keys:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -98,7 +98,7 @@ services:
       - "4434:443/udp"
     # Playwright pins the host certificate SPKI; relay must serve the same keypair.
     volumes:
-      - ./relay/keys:/workspace/relay/keys:ro
+      - ./crates/relay/keys:/workspace/crates/relay/keys:ro
     depends_on:
       redis:
         condition: service_healthy

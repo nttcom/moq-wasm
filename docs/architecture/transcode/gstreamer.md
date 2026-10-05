@@ -39,5 +39,5 @@ crate with a `MediaEvent`-in / `MediaEvent`-out boundary.
 Use the GStreamer Rust bindings. `tee` fan-out to N `videoscale ! x264enc`
 branches is a pipeline primitive, back-pressure is built in, and the same
 description can swap `x264enc` for `vtenc_h264`/`nvh264enc` later. The
-dependency is confined to `shared/transcode`; `mediapack` and the bridges
+dependency is confined to `crates/transcode`; `mediapack` and the bridges
 compile without GStreamer unless they opt in.

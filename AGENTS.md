@@ -6,6 +6,7 @@
 
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
+- Every Rust crate lives in `crates/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
 
 Library components (draft-governed):
 
@@ -13,19 +14,19 @@ Library components (draft-governed):
 | --- | --- | --- |
 | `moqt` | Core MoQT protocol implementation | `docs/spec/draft-ietf-moq-transport-14.txt` |
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
-| `shared/media-streaming-format` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
-| `shared/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
+| `crates/media-streaming-format` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
+| `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
 
 Application and integration components (draft reference is normally not required):
 
 | Component | Description |
 | --- | --- |
-| `bindings/wasm` | WebAssembly bindings to use `moqt` from the browser |
-| `bindings/gstreamer` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
-| `shared/media-publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `live-ingest` and `bindings/gstreamer` |
-| `shared/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
-| `bridges/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
-| `bridges/onvif` | Bridge ingesting ONVIF camera streams into MoQT |
+| `crates/moqt-client-wasm` | WebAssembly bindings to use `moqt` from the browser |
+| `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
+| `crates/media-publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `moqt-bridge-live-ingest` and `gst-plugin-moqt` |
+| `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
+| `crates/moqt-bridge-live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
+| `crates/moqt-bridge-onvif` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/vts` | Verify Token Service (Node.js): verifies client JWTs for the relay over HTTP |
 | `examples/` | Usage examples and test clients |
 
@@ -54,11 +55,11 @@ Application and integration components (draft reference is normally not required
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
 - Lint (JavaScript): `npx prettier --check`
-- Wasm: `wasm-pack build bindings/wasm`
+- Wasm: `wasm-pack build crates/moqt-client-wasm`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node scripts/run-media-e2e.mjs`
 - E2E Test (meeting): `node scripts/run-meeting-e2e.mjs`
-- E2E Test (auth): `./scripts/auth-e2e.sh`
+- E2E Test (auth): `./tests/auth-e2e/run.sh`
 - VTS test: `npm --prefix services/vts test`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 

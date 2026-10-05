@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cert_path="${repo_root}/relay/keys/cert.pem"
+cert_path="${repo_root}/crates/relay/keys/cert.pem"
 
 if [[ ! -f "${cert_path}" ]]; then
   echo "Certificate not found: ${cert_path}" >&2

@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 
-RELAY_CERT_PEM="${REPO_ROOT}/relay/keys/cert.pem"
+RELAY_CERT_PEM="${REPO_ROOT}/crates/relay/keys/cert.pem"
 DEFAULT_CERT_PEM="${REPO_ROOT}/keys/cert.pem"
 
 if [[ -n "${MOQT_CERT_PEM:-}" ]]; then

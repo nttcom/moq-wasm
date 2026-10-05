@@ -1,6 +1,6 @@
 # live-viewer
 
-Plays a stream that `bridges/live-ingest`, the GStreamer `moqtsink` or this
+Plays a stream that `crates/moqt-bridge-live-ingest`, the GStreamer `moqtsink` or this
 page's MP4 publisher sends to a relay, switches between the renditions the
 catalog lists, and rewinds through what the relay still caches.
 
