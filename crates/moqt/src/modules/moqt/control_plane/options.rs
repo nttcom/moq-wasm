@@ -1,5 +1,5 @@
 use crate::{
-    FilterType, GroupOrder,
+    FilterType, GroupOrder, Location,
     modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists,
 };
 
@@ -31,6 +31,15 @@ impl Default for FetchOption {
             group_order: GroupOrder::Ascending,
         }
     }
+}
+
+/// draft-14 §9.10: every field is sent, so a caller that only changes one
+/// of them repeats the subscription's current values for the others.
+pub struct SubscribeUpdateOption {
+    pub start_location: Location,
+    pub end_group: u64,
+    pub subscriber_priority: u8,
+    pub forward: bool,
 }
 
 pub struct SubscribeOption {

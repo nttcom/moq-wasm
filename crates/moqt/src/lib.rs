@@ -29,6 +29,7 @@ pub use modules::moqt::control_plane::handler::unsubscribe_namespace_handler::Un
 pub use modules::moqt::control_plane::options::FetchOption;
 pub use modules::moqt::control_plane::options::PublishOption;
 pub use modules::moqt::control_plane::options::SubscribeOption;
+pub use modules::moqt::control_plane::options::SubscribeUpdateOption;
 pub use modules::moqt::data_plane::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::data_plane::datagram::datagram_sender::DatagramSender;
 pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
