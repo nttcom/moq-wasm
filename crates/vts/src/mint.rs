@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::bail;
-use serde::Serialize;
+use auth_token::Claims;
 
 use crate::{apps::Apps, jwt::sign_token};
 
@@ -24,28 +24,16 @@ pub struct MintRequest {
     pub ttl: Duration,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Claims<'a> {
-    app_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    publish: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    subscribe: Option<&'a str>,
-    iat: u64,
-    exp: u64,
-}
-
 pub fn mint_token(apps: &Apps, request: &MintRequest, now: u64) -> anyhow::Result<String> {
     let Some(app) = apps.get(&request.app_id) else {
         bail!("unknown appId {:?}", request.app_id);
     };
     let claims = Claims {
-        app_id: &request.app_id,
-        publish: request.publish.as_deref(),
-        subscribe: request.subscribe.as_deref(),
-        iat: now,
-        exp: now + request.ttl.as_secs(),
+        app_id: request.app_id.clone(),
+        publish: request.publish.clone(),
+        subscribe: request.subscribe.clone(),
+        iat: Some(now),
+        exp: Some(now + request.ttl.as_secs()),
     };
     sign_token(&claims, &app.secret)
 }

@@ -1,16 +1,9 @@
 use std::time::{Duration, SystemTime};
 
+use auth_token::Claims;
 use serde::Deserialize;
 
 use crate::modules::auth::verified_token::{VerifiedToken, parse_namespace_path};
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct TokenClaims {
-    pub(crate) publish: Option<String>,
-    pub(crate) subscribe: Option<String>,
-    pub(crate) iat: Option<u64>,
-    pub(crate) exp: Option<u64>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaimPolicy {
@@ -32,7 +25,7 @@ impl Default for ClaimPolicy {
 pub(crate) struct SignedToken {
     pub(crate) app_id: String,
     pub(crate) is_relay: bool,
-    pub(crate) claims: TokenClaims,
+    pub(crate) claims: Claims,
 }
 
 pub(crate) fn build_verified_token(
@@ -79,7 +72,9 @@ fn namespace_path_claim(claim: Option<&str>) -> Result<Option<Vec<String>>, &'st
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use super::{ClaimPolicy, SignedToken, TokenClaims, build_verified_token};
+    use auth_token::Claims;
+
+    use super::{ClaimPolicy, SignedToken, build_verified_token};
 
     const NOW_SECS: u64 = 1_759_600_000;
 
@@ -91,7 +86,8 @@ mod tests {
         SignedToken {
             app_id: "APP".to_string(),
             is_relay,
-            claims: TokenClaims {
+            claims: Claims {
+                app_id: "APP".to_string(),
                 publish: publish.map(str::to_string),
                 subscribe: Some("site1".to_string()),
                 iat: Some(iat),

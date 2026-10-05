@@ -290,7 +290,7 @@ per-request authorization gate under "Event pipeline".
 - `token_verifier.rs` — `TokenVerifier` trait with
   `VerifyError::{Unauthorized, Unavailable}`; the split lets callers map a
   rejected token and an unreachable VTS to different termination codes.
-- `token_claims.rs` — `build_verified_token(SignedToken, ClaimPolicy, now)`:
+- `token_claims.rs` — `build_verified_token(SignedToken, ClaimPolicy, now)` (`SignedToken.claims` is `auth_token::Claims`):
   the relay, not the VTS, decides what a signed token means. It requires
   `iat` and `exp`, applies the clock leeway, rejects client tokens whose
   `exp - iat` exceeds the maximum ttl (relay tokens are exempt), and checks
