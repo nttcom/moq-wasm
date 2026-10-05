@@ -1,4 +1,4 @@
-# moqt-bridge-live-ingest
+# live-ingest
 
 Publishes RTMP or SRT input into a MoQT relay as the tracks described in
 [`crates/publisher`](../publisher/README.md).
@@ -48,7 +48,7 @@ SRT is read with a 4 MiB UDP receive buffer. When MPEG-TS packets are lost
 anyway, the frame they cut and the frames predicted from it are dropped until
 the next keyframe; each loss is logged as a warning and the SRT statistics are
 logged when a stream ends. Why:
-[architecture](../../docs/architecture/moqt-bridge-live-ingest/architecture.md).
+[architecture](../../docs/architecture/live-ingest/architecture.md).
 
 ## Delivery log
 
@@ -64,7 +64,7 @@ its README.
 ## CLI
 
 ```shell
-cargo run -p moqt-bridge-live-ingest -- \
+cargo run -p live-ingest -- \
   --rtmp-addr 0.0.0.0:1935 \
   --srt-addr 0.0.0.0:9000 \
   --moqt-url https://127.0.0.1:4433 \

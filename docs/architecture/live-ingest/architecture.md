@@ -1,11 +1,11 @@
-# `moqt-bridge-live-ingest` Architecture
+# `live-ingest` Architecture
 
 ## Status
 Living document. Update this file in the same change whenever the ingest flow
 or the loss handling described here changes.
 
 ## Scope
-`crates/moqt-bridge-live-ingest` accepts RTMP (FLV) and SRT (MPEG-TS), demuxes the input
+`crates/live-ingest` accepts RTMP (FLV) and SRT (MPEG-TS), demuxes the input
 with `mediapack`, optionally re-encodes it with `crates/transcode`, and hands
 the resulting media events to `crates/publisher`, which owns the track
 layout (see [its architecture document](../publisher/architecture.md)).

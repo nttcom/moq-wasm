@@ -18,7 +18,7 @@ on:
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
       - "crates/wasm/**"
-      - "crates/moqt-bridge-live-ingest/**"
+      - "crates/live-ingest/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - "crates/relay/**"
@@ -59,7 +59,7 @@ on:
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
       - "crates/wasm/**"
-      - "crates/moqt-bridge-live-ingest/**"
+      - "crates/live-ingest/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - "crates/relay/**"
@@ -167,7 +167,7 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|crates/wasm/*|crates/moqt-bridge-live-ingest/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|crates/wasm/*|crates/live-ingest/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
                   ;;
               esac
@@ -391,7 +391,7 @@ jobs:
         # differently, which would recompile the dependencies at run time.
         run: |
           cargo build -p relay
-          cargo build -p moqt-bridge-live-ingest
+          cargo build -p live-ingest
 
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium

@@ -1,7 +1,7 @@
 # publisher
 
 Publishes an MSF catalog and H.264/AAC tracks into a MoQT relay. It is the
-publishing side shared by `crates/moqt-bridge-live-ingest` and `crates/gst-plugin-moqt`
+publishing side shared by `crates/live-ingest` and `crates/gst-plugin-moqt`
 (`moqtsink`); the Live Viewer's in-browser MP4 publisher follows the same
 conventions. Every publisher built on it produces the tracks below, so one
 player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.

@@ -37,7 +37,7 @@ chrome\:linux:
 # RTMP/SRT Bridges
 live-ingest:
 	@echo "Using MoQT relay URL: $(LIVE_INGEST_MOQT_URL)"
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-live-ingest -- \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
 		--moqt-url $(LIVE_INGEST_MOQT_URL) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,)

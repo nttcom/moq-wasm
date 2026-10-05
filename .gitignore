@@ -19,7 +19,7 @@ examples/browser/examples/*/dist/*
 *.pem
 .DS_Store
 
-crates/moqt-bridge-live-ingest/recordings/
+crates/live-ingest/recordings/
 
 # Sample media downloaded by the Big Buck Bunny SRT targets
 /assets/

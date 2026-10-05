@@ -7,7 +7,7 @@ layout, the publishing flow or the invariants described here change.
 ## Scope
 `crates/publisher` turns `mediapack` media events into MoQT tracks: an
 MSF catalog, LOC and CMAF media tracks, a media timeline and a publisher-side
-FETCH cache. `crates/moqt-bridge-live-ingest` and `crates/gst-plugin-moqt` build on it. The
+FETCH cache. `crates/live-ingest` and `crates/gst-plugin-moqt` build on it. The
 track layout is summarised in [its README](../../../crates/publisher/README.md);
 this document records why the tracks are shaped that way.
 

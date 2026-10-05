@@ -25,7 +25,7 @@ GStreamer buffers into `mediapack::MediaEvent`s and hands them to it.
 
 ## Alternatives
 
-- Extend `crates/moqt-bridge-live-ingest` with more input protocols. Each protocol needs
+- Extend `crates/live-ingest` with more input protocols. Each protocol needs
   its own listener and demuxer in Rust; GStreamer already has them all and the
   operator can add filters, encoders and format conversion in the pipeline.
 - An `appsink`-based program that links against `gstreamer-app` and owns the

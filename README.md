@@ -30,7 +30,7 @@ connect to the cloud relay by default, so nothing needs to be installed.
 | Remote monitoring, data collection and control of robots | |
 | Remote monitoring, data collection and control of autonomous vehicles | |
 
-Publishers outside the browser: [`crates/moqt-bridge-live-ingest`](crates/moqt-bridge-live-ingest/README.md) (RTMP/SRT),
+Publishers outside the browser: [`crates/live-ingest`](crates/live-ingest/README.md) (RTMP/SRT),
 [`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) (`moqtsink`),
 [`examples/rust/moq-cli`](examples/rust/moq-cli/README.md) and the
 [pipecat bots](examples/python). Details of every browser demo are in
@@ -115,7 +115,7 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 | [`crates/relay/`](crates/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
 | [`crates/wasm/`](crates/wasm/README.md) | WebAssembly bindings used by the browser examples |
 | [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
-| [`crates/moqt-bridge-live-ingest/`](crates/moqt-bridge-live-ingest/README.md) | RTMP and SRT ingest into MoQT |
+| [`crates/live-ingest/`](crates/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
 | [`crates/moqt-bridge-onvif/`](crates/moqt-bridge-onvif/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
 | [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`publisher/`](crates/publisher/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, track publishing, re-encoding |
 | [`crates/vts/`](crates/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |

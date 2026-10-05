@@ -23,9 +23,9 @@ Application and integration components (draft reference is normally not required
 | --- | --- |
 | `crates/wasm` | WebAssembly bindings to use `moqt` from the browser |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
-| `crates/publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `moqt-bridge-live-ingest` and `gst-plugin-moqt` |
+| `crates/publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `live-ingest` and `gst-plugin-moqt` |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
-| `crates/moqt-bridge-live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
+| `crates/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `crates/moqt-bridge-onvif` | Bridge ingesting ONVIF camera streams into MoQT |
 | `crates/auth-token` | Claims of the client JWT, shared by `relay` (reads them from the VTS) and `vts` (signs them) |
 | `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
