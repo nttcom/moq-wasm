@@ -42,7 +42,7 @@ const E2E_VIDEO_BITRATE = 100_000
 let meetingClientCounter = 0
 
 const FORWARDED_CONSOLE_TEXT_PATTERN =
-  /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[subscriber\]\[video\]|\[meeting\]\[media-element\]\[video\]|\[meeting\]\[catalog\]|\[videoDecoder\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
+  /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[catalog\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
 async function openMeetingPage(page: Page, jwt: string | undefined): Promise<void> {
   const params = new URLSearchParams({
@@ -52,8 +52,7 @@ async function openMeetingPage(page: Page, jwt: string | undefined): Promise<voi
     e2eVideoFramerate: String(E2E_VIDEO_FRAMERATE),
     e2eVideoBitrate: String(E2E_VIDEO_BITRATE),
     relayAUrl: RELAY_A_URL,
-    relayBUrl: RELAY_B_URL,
-    debugVideoPipeline: '1'
+    relayBUrl: RELAY_B_URL
   })
   if (jwt) {
     params.set('jwt', jwt)
@@ -151,9 +150,9 @@ export function getMemberVideo(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-video-${memberName}`)
 }
 
-// Locate the audio element inside a remote member card.
-export function getMemberAudio(page: Page, memberName: string): Locator {
-  return page.getByTestId(`member-audio-${memberName}`)
+// Locate the playback stats line under a remote member's video.
+export function getMemberStats(page: Page, memberName: string): Locator {
+  return page.getByTestId(`member-stats-${memberName}`)
 }
 
 // Locate the subscribe-video button for a remote member.

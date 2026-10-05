@@ -1,121 +1,36 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { postSubgroupObjectToWorker } from '../../../../utils/media/decoderWorker'
-import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../../../utils/media/decoderCatalog'
-import type { AudioJitterBufferMode } from '../../../../utils/media/audioJitterBuffer'
-import {
-  DEFAULT_AUDIO_JITTER_CONFIG,
-  DEFAULT_VIDEO_JITTER_CONFIG,
-  normalizeVideoJitterConfig,
-  normalizeAudioJitterConfig,
-  type VideoJitterConfig,
-  type AudioJitterConfig
-} from '../types/jitterBuffer'
-import type { JitterBufferEvent } from '../types/media'
+import { type LiveStats, LocLive } from '@player/locLive'
+import { createPictureCanvas, createPictureVideo } from '@player/pictureElements'
+import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
+import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
 export type RemoteVideoSource = 'camera' | 'screenshare'
-type JitterBufferActivity = {
-  event: JitterBufferEvent
-  bufferedFrames: number
-  capacityFrames: number
-}
-const AUDIO_PLAYBACK_QUEUE_REPORT_INTERVAL_MS = 100
-const VIDEO_SUBSCRIBER_LOG_PREFIX = '[meeting][subscriber][video]'
+export type RemotePlaybackStats = Partial<Record<RemoteVideoSource, LiveStats>>
 
-interface MediaSubscriberHandlers {
-  onRemoteVideoStream?: (userId: string, stream: MediaStream, source: RemoteVideoSource) => void
-  onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
-  onRemoteAudioStreamClosed?: (userId: string) => void
-  onRemoteVideoBitrate?: (userId: string, mbps: number, source: RemoteVideoSource) => void
-  onRemoteVideoKeyframeInterval?: (userId: string, frames: number, source: RemoteVideoSource) => void
-  onRemoteAudioBitrate?: (userId: string, mbps: number) => void
-  onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
-  onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: RemoteVideoSource) => void
-  onRemoteVideoTiming?: (
-    userId: string,
-    timing: {
-      receiveToDecodeMs: number | null
-      receiveToRenderMs: number | null
-    },
-    source: RemoteVideoSource
-  ) => void
-  onRemoteVideoDecodingObject?: (
-    userId: string,
-    decoding: {
-      phase: 'submit' | 'output' | 'error'
-      groupId: string
-      objectId: string
-      chunkType: string
-      codec?: string
-    },
-    source: RemoteVideoSource
-  ) => void
-  onRemoteVideoPacing?: (
-    userId: string,
-    pacing: {
-      intervalMs: number
-      effectiveIntervalMs: number
-      bufferedFrames: number
-      decodeQueueSize: number
-      targetFrames: number
-      lastReason?: string
-      action?: string
-      detailMs?: number
-    },
-    source: RemoteVideoSource
-  ) => void
-  onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
-  onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
-  onRemoteAudioPlaybackQueue?: (userId: string, queuedMs: number) => void
-  onRemoteVideoJitterBufferActivity?: (
-    userId: string,
-    activity: JitterBufferActivity,
-    source: RemoteVideoSource
-  ) => void
-  onRemoteAudioJitterBufferActivity?: (userId: string, activity: JitterBufferActivity) => void
-  onRemoteVideoConfig?: (
-    userId: string,
-    config: {
-      codec: string
-      width?: number
-      height?: number
-      descriptionLength?: number
-      avcFormat?: 'annexb' | 'avc'
-      hardwareAcceleration?: HardwareAcceleration
-      optimizeForLatency?: boolean
-    },
-    source: RemoteVideoSource
-  ) => void
+export interface MediaSubscriberHandlers {
+  onRemotePicture?: (userId: string, source: RemoteVideoSource, picture: HTMLElement) => void
+  onRemotePictureClosed?: (userId: string, source: RemoteVideoSource) => void
 }
 
-interface VideoSubscriptionContext {
+type TrackRegistration = {
   userId: string
   source: RemoteVideoSource
-  worker: Worker
-  writer: WritableStreamDefaultWriter<VideoFrame>
-  stream: MediaStream
-  frameLogCount: number
+  kind: MediaKind
+  trackName: string
+  config: TrackMediaConfig | undefined
 }
 
-interface AudioSubscriptionContext {
-  userId: string
-  worker: Worker
-  writer: WritableStreamDefaultWriter<AudioData>
-  stream: MediaStream
-  pendingPlaybackQueueMs: number
-  lastPlaybackQueueReportAtMs: number
-}
+/// The camera pipeline also carries the member's audio; a screen share plays
+/// on its own pipeline with the picture as the clock's master.
+type MemberPipelines = Partial<Record<RemoteVideoSource, LocLive>>
 
 export class MediaSubscriber {
   private handlers: MediaSubscriberHandlers = {}
-  private readonly videoContexts = new Map<bigint, VideoSubscriptionContext>()
-  private readonly audioContexts = new Map<bigint, AudioSubscriptionContext>()
-  private readonly videoJitterConfigByUserId = new Map<string, VideoJitterConfig>()
-  private readonly audioJitterConfigByUserId = new Map<string, AudioJitterConfig>()
-  private readonly videoCodecByTrackAlias = new Map<bigint, string>()
-  private readonly videoSizeByTrackAlias = new Map<bigint, { width: number; height: number }>()
+  private readonly pipelines = new Map<string, MemberPipelines>()
+  private readonly registrations = new Map<bigint, TrackRegistration>()
+  private readonly playoutSettingsByUserId = new Map<string, PlayoutSettings>()
 
   constructor(private readonly client: MoqtClientWrapper) {}
 
@@ -124,417 +39,137 @@ export class MediaSubscriber {
   }
 
   registerVideoTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
-    if (this.videoContexts.has(trackAlias)) {
-      return
-    }
     const source: RemoteVideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
-    const worker = new Worker(new URL('../../../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
-      type: 'module'
-    })
-    const generator = new MediaStreamTrackGenerator({ kind: 'video' })
-    const writer = generator.writable.getWriter()
-    worker.onmessage = async (event: MessageEvent) => {
-      const data = event.data as
-        | { type: 'frame'; frame: VideoFrame; width?: number; height?: number }
-        | { type: 'bufferedObject'; media: 'video'; groupId: bigint; objectId: bigint }
-        | { type: 'bitrate'; kbps: number }
-        | { type: 'keyframeInterval'; media: 'video'; frames: number }
-        | { type: 'receiveLatency'; media: 'video'; ms: number }
-        | { type: 'renderingLatency'; media: 'video'; ms: number }
-        | {
-            type: 'timing'
-            media: 'video'
-            receiveToDecodeMs: number | null
-            receiveToRenderMs: number | null
-          }
-        | {
-            type: 'decodingObject'
-            media: 'video'
-            phase: 'submit' | 'output' | 'error'
-            groupId: string
-            objectId: string
-            chunkType: string
-            codec?: string
-          }
-        | {
-            type: 'pacing'
-            media: 'video'
-            intervalMs: number
-            effectiveIntervalMs: number
-            bufferedFrames: number
-            decodeQueueSize: number
-            targetFrames: number
-            lastReason?: string
-            action?: string
-            detailMs?: number
-          }
-        | {
-            type: 'jitterBufferActivity'
-            media: 'video'
-            event: JitterBufferEvent
-            bufferedFrames: number
-            capacityFrames: number
-          }
-        | {
-            type: 'decoderConfig'
-            codec: string
-            width?: number
-            height?: number
-            descriptionLength?: number
-            avcFormat?: 'annexb' | 'avc'
-            hardwareAcceleration?: HardwareAcceleration
-            optimizeForLatency?: boolean
-          }
-        | { type: 'configError'; media: 'video'; reason: string; config: VideoDecoderConfig }
-      if (data.type === 'bitrate') {
-        this.handlers.onRemoteVideoBitrate?.(userId, data.kbps, source)
-        return
-      }
-      if (data.type === 'configError') {
-        console.error('[meeting][videoDecoder] config error', {
-          userId,
-          source,
-          reason: data.reason,
-          config: data.config
-        })
-        return
-      }
-      if (data.type === 'keyframeInterval') {
-        this.handlers.onRemoteVideoKeyframeInterval?.(userId, data.frames, source)
-        return
-      }
-      if (data.type === 'receiveLatency') {
-        this.handlers.onRemoteVideoReceiveLatency?.(userId, data.ms, source)
-        return
-      }
-      if (data.type === 'renderingLatency') {
-        this.handlers.onRemoteVideoRenderingLatency?.(userId, data.ms, source)
-        return
-      }
-      if (data.type === 'timing') {
-        this.handlers.onRemoteVideoTiming?.(
-          userId,
-          {
-            receiveToDecodeMs: data.receiveToDecodeMs,
-            receiveToRenderMs: data.receiveToRenderMs
-          },
-          source
-        )
-        return
-      }
-      if (data.type === 'decodingObject') {
-        this.handlers.onRemoteVideoDecodingObject?.(
-          userId,
-          {
-            phase: data.phase,
-            groupId: data.groupId,
-            objectId: data.objectId,
-            chunkType: data.chunkType,
-            codec: data.codec
-          },
-          source
-        )
-        return
-      }
-      if (data.type === 'pacing') {
-        this.handlers.onRemoteVideoPacing?.(userId, data, source)
-        return
-      }
-      if (data.type === 'jitterBufferActivity') {
-        this.handlers.onRemoteVideoJitterBufferActivity?.(
-          userId,
-          {
-            event: data.event,
-            bufferedFrames: data.bufferedFrames,
-            capacityFrames: data.capacityFrames
-          },
-          source
-        )
-        return
-      }
-      if (data.type === 'decoderConfig') {
-        this.videoCodecByTrackAlias.set(trackAlias, data.codec)
-        const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
-        this.handlers.onRemoteVideoConfig?.(
-          userId,
-          {
-            codec: data.codec,
-            width: data.width ?? lastSize?.width,
-            height: data.height ?? lastSize?.height,
-            descriptionLength: data.descriptionLength,
-            avcFormat: data.avcFormat,
-            hardwareAcceleration: data.hardwareAcceleration,
-            optimizeForLatency: data.optimizeForLatency
-          },
-          source
-        )
-        return
-      }
-      if (data.type === 'bufferedObject') {
-        return
-      }
-      if (data.type === 'frame') {
-        this.logVideoSubscriberFrame(context, trackAlias, 'worker-frame', data)
-        const lastCodec = this.videoCodecByTrackAlias.get(trackAlias)
-        const lastSize = this.videoSizeByTrackAlias.get(trackAlias)
-        if (
-          (typeof data.width === 'number' && data.width !== lastSize?.width) ||
-          (typeof data.height === 'number' && data.height !== lastSize?.height)
-        ) {
-          if (typeof data.width === 'number' && typeof data.height === 'number') {
-            this.videoSizeByTrackAlias.set(trackAlias, { width: data.width, height: data.height })
-            this.handlers.onRemoteVideoConfig?.(
-              userId,
-              {
-                codec: lastCodec ?? 'unknown',
-                width: data.width,
-                height: data.height
-              },
-              source
-            )
-          }
-        }
-      }
-      try {
-        await writer.ready
-        this.logVideoSubscriberFrame(context, trackAlias, 'writer-ready', data)
-        await writer.write(data.frame)
-        this.logVideoSubscriberFrame(context, trackAlias, 'writer-written', data)
-      } catch (error) {
-        this.logVideoSubscriberFrame(context, trackAlias, 'writer-failed', data, error)
-        throw error
-      }
-    }
-
-    const stream = new MediaStream([generator])
-    const context: VideoSubscriptionContext = { userId, source, worker, writer, stream, frameLogCount: 0 }
-    this.videoContexts.set(trackAlias, context)
-    this.handlers.onRemoteVideoStream?.(userId, stream, source)
-    if (config) {
-      postVideoCatalogToWorker(worker, config)
-    }
-    const jitterConfig = this.videoJitterConfigByUserId.get(userId) ?? DEFAULT_VIDEO_JITTER_CONFIG
-    if (!this.videoJitterConfigByUserId.has(userId)) {
-      this.videoJitterConfigByUserId.set(userId, jitterConfig)
-    }
-    worker.postMessage({
-      type: 'config',
-      config: { ...jitterConfig, debugVideoPipeline: isMeetingVideoPipelineDebugEnabled() }
-    })
-
-    this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      postSubgroupObjectToWorker(worker, groupId, message)
-    )
+    this.register(trackAlias, { userId, source, kind: 'video', trackName, config })
   }
 
-  private logVideoSubscriberFrame(
-    context: VideoSubscriptionContext,
-    trackAlias: bigint,
-    event: string,
-    frame: { width?: number; height?: number },
-    error?: unknown
-  ): void {
-    if (!isMeetingVideoPipelineDebugEnabled()) {
-      return
-    }
-    const shouldLog = context.frameLogCount < 5 || event === 'writer-failed'
-    if (event === 'worker-frame') {
-      context.frameLogCount += 1
-    }
-    if (!shouldLog) {
-      return
-    }
-    console.info(
-      VIDEO_SUBSCRIBER_LOG_PREFIX,
-      JSON.stringify({
-        event,
-        userId: context.userId,
-        source: context.source,
-        trackAlias: trackAlias.toString(),
-        frameLogCount: context.frameLogCount,
-        width: frame.width,
-        height: frame.height,
-        error: error instanceof Error ? error.message : undefined
-      })
-    )
+  registerAudioTrack(userId: string, trackName: string, trackAlias: bigint, config?: TrackMediaConfig): void {
+    this.register(trackAlias, { userId, source: 'camera', kind: 'audio', trackName, config })
   }
 
-  registerAudioTrack(userId: string, trackAlias: bigint, config?: TrackMediaConfig): void {
-    if (this.audioContexts.has(trackAlias)) {
-      return
-    }
-    const worker = new Worker(new URL('../../../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
-      type: 'module'
-    })
-    const generator = new MediaStreamTrackGenerator({ kind: 'audio' })
-    const writer = generator.writable.getWriter()
-    const context: AudioSubscriptionContext = {
-      userId,
-      worker,
-      writer,
-      stream: new MediaStream([generator]),
-      pendingPlaybackQueueMs: 0,
-      lastPlaybackQueueReportAtMs: Number.NEGATIVE_INFINITY
-    }
-    worker.onmessage = async (event: MessageEvent) => {
-      const data = event.data as
-        | { type: 'audioData'; audioData: AudioData }
-        | { type: 'bufferedObject'; media: 'audio'; groupId: bigint; objectId: bigint }
-        | { type: 'bitrate'; kbps: number }
-        | { type: 'receiveLatency'; media: 'audio'; ms: number }
-        | { type: 'renderingLatency'; media: 'audio'; ms: number }
-        | {
-            type: 'jitterBufferActivity'
-            media: 'audio'
-            event: JitterBufferEvent
-            bufferedFrames: number
-            capacityFrames: number
-          }
-      if (data.type === 'bitrate') {
-        this.handlers.onRemoteAudioBitrate?.(userId, data.kbps)
-        return
-      }
-      if (data.type === 'receiveLatency') {
-        this.handlers.onRemoteAudioReceiveLatency?.(userId, data.ms)
-        return
-      }
-      if (data.type === 'renderingLatency') {
-        this.handlers.onRemoteAudioRenderingLatency?.(userId, data.ms)
-        return
-      }
-      if (data.type === 'jitterBufferActivity') {
-        this.handlers.onRemoteAudioJitterBufferActivity?.(userId, {
-          event: data.event,
-          bufferedFrames: data.bufferedFrames,
-          capacityFrames: data.capacityFrames
-        })
-        return
-      }
-      if (data.type === 'bufferedObject') {
-        return
-      }
-      const audioData = data.audioData
-      const queuedDurationMs = estimateAudioDataDurationMs(audioData)
-      if (queuedDurationMs > 0) {
-        context.pendingPlaybackQueueMs += queuedDurationMs
-        this.maybeReportAudioPlaybackQueue(context)
-      }
-      try {
-        await writer.ready
-        await writer.write(audioData)
-      } finally {
-        if (queuedDurationMs > 0) {
-          context.pendingPlaybackQueueMs = Math.max(0, context.pendingPlaybackQueueMs - queuedDurationMs)
-          this.maybeReportAudioPlaybackQueue(context)
-        }
-      }
-    }
-
-    this.audioContexts.set(trackAlias, context)
-    this.handlers.onRemoteAudioStream?.(userId, context.stream)
-    this.maybeReportAudioPlaybackQueue(context, true)
-    if (config) {
-      postAudioCatalogToWorker(worker, config)
-    }
-    const jitterConfig = this.audioJitterConfigByUserId.get(userId)
-    if (jitterConfig) {
-      worker.postMessage({ type: 'config', config: jitterConfig })
-    }
-
-    this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
-      postSubgroupObjectToWorker(worker, groupId, message)
-    )
-  }
-
-  unregisterVideoTrack(trackAlias: bigint): void {
-    const context = this.videoContexts.get(trackAlias)
-    if (!context) {
-      this.client.clearSubgroupObjectHandler(trackAlias)
-      return
-    }
+  unregisterTrack(trackAlias: bigint): void {
     this.client.clearSubgroupObjectHandler(trackAlias)
-    context.stream.getTracks().forEach((track) => track.stop())
-    void context.writer.close().catch(() => {})
-    context.worker.terminate()
-    this.videoContexts.delete(trackAlias)
-    this.videoCodecByTrackAlias.delete(trackAlias)
-    this.videoSizeByTrackAlias.delete(trackAlias)
-  }
-
-  unregisterAudioTrack(trackAlias: bigint): void {
-    const context = this.audioContexts.get(trackAlias)
-    if (!context) {
-      this.client.clearSubgroupObjectHandler(trackAlias)
+    const registration = this.registrations.get(trackAlias)
+    if (!registration) {
       return
     }
-    this.client.clearSubgroupObjectHandler(trackAlias)
-    context.stream.getTracks().forEach((track) => track.stop())
-    void context.writer.close().catch(() => {})
-    context.worker.terminate()
-    this.handlers.onRemoteAudioStreamClosed?.(context.userId)
-    this.handlers.onRemoteAudioPlaybackQueue?.(context.userId, 0)
-    this.audioContexts.delete(trackAlias)
+    this.registrations.delete(trackAlias)
+    const { userId, source, kind } = registration
+    const remaining = this.registrationsOf(userId, source)
+    if (remaining.length === 0) {
+      this.closePipeline(userId, source)
+      return
+    }
+    // The video worker keeps the decoder state of the track that left, so the
+    // next video track starts on a fresh pipeline; only the audio warm-up repeats.
+    if (kind === 'video') {
+      this.closePipeline(userId, source)
+      for (const [alias, remainingRegistration] of remaining) {
+        this.attach(alias, remainingRegistration)
+      }
+    }
+  }
+
+  setPlayoutSettings(userId: string, settings: PlayoutSettings): void {
+    this.playoutSettingsByUserId.set(userId, settings)
+    for (const pipeline of Object.values(this.pipelines.get(userId) ?? {})) {
+      applyPlayoutSettings(pipeline, settings)
+    }
+  }
+
+  stats(userId: string): RemotePlaybackStats {
+    const pipelines = this.pipelines.get(userId) ?? {}
+    return {
+      camera: pipelines.camera?.stats(),
+      screenshare: pipelines.screenshare?.stats()
+    }
   }
 
   dispose(): void {
-    for (const trackAlias of Array.from(this.videoContexts.keys())) {
-      this.unregisterVideoTrack(trackAlias)
+    for (const trackAlias of Array.from(this.registrations.keys())) {
+      this.client.clearSubgroupObjectHandler(trackAlias)
     }
-    for (const trackAlias of Array.from(this.audioContexts.keys())) {
-      this.unregisterAudioTrack(trackAlias)
+    this.registrations.clear()
+    for (const [userId, pipelines] of this.pipelines) {
+      for (const source of Object.keys(pipelines) as RemoteVideoSource[]) {
+        this.closePipeline(userId, source)
+      }
     }
-    this.videoJitterConfigByUserId.clear()
-    this.audioJitterConfigByUserId.clear()
-    this.videoCodecByTrackAlias.clear()
-    this.videoSizeByTrackAlias.clear()
+    this.playoutSettingsByUserId.clear()
     this.handlers = {}
   }
 
-  setVideoJitterBufferConfig(userId: string, config: VideoJitterConfig): void {
-    const sanitized = this.sanitizeConfig(config)
-    this.videoJitterConfigByUserId.set(userId, sanitized)
-    for (const context of this.videoContexts.values()) {
-      if (context.userId === userId) {
-        context.worker.postMessage({ type: 'config', config: sanitized })
-      }
-    }
-  }
-
-  setAudioJitterBufferConfig(userId: string, config: AudioJitterConfig): void {
-    const sanitized = this.sanitizeAudioConfig(config)
-    this.audioJitterConfigByUserId.set(userId, sanitized)
-    for (const context of this.audioContexts.values()) {
-      if (context.userId === userId) {
-        context.worker.postMessage({ type: 'config', config: sanitized })
-      }
-    }
-  }
-
-  private sanitizeConfig(config: VideoJitterConfig): VideoJitterConfig {
-    return normalizeVideoJitterConfig(config)
-  }
-
-  private sanitizeAudioConfig(config: AudioJitterConfig): AudioJitterConfig {
-    const normalized = normalizeAudioJitterConfig(config)
-    const mode: AudioJitterBufferMode = normalized.mode ?? DEFAULT_AUDIO_JITTER_CONFIG.mode
-    return { ...normalized, mode }
-  }
-
-  private maybeReportAudioPlaybackQueue(context: AudioSubscriptionContext, force: boolean = false): void {
-    const now = performance.now()
-    if (!force && now - context.lastPlaybackQueueReportAtMs < AUDIO_PLAYBACK_QUEUE_REPORT_INTERVAL_MS) {
+  private register(trackAlias: bigint, registration: TrackRegistration): void {
+    if (this.registrations.has(trackAlias)) {
       return
     }
-    context.lastPlaybackQueueReportAtMs = now
-    this.handlers.onRemoteAudioPlaybackQueue?.(context.userId, context.pendingPlaybackQueueMs)
+    this.registrations.set(trackAlias, registration)
+    const pipeline = this.pipelines.get(registration.userId)?.[registration.source]
+    // Audio joining a running picture warms up again so the relay's cached
+    // burst does not drag the clock back as the new master.
+    if (pipeline && registration.kind === 'audio') {
+      pipeline.reset()
+    }
+    this.attach(trackAlias, registration)
+  }
+
+  private attach(trackAlias: bigint, { userId, source, kind, trackName, config }: TrackRegistration): void {
+    const pipeline = this.ensurePipeline(userId, source)
+    pipeline.configureTrack(kind, {
+      name: trackName,
+      label: trackName,
+      codec: config?.codec,
+      initData: config?.initData,
+      samplerate: config?.samplerate,
+      channelConfig: config?.channelConfig
+    })
+    this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => pipeline.push(kind, groupId, message))
+  }
+
+  private ensurePipeline(userId: string, source: RemoteVideoSource): LocLive {
+    const pipelines = this.pipelines.get(userId) ?? {}
+    const existing = pipelines[source]
+    if (existing) {
+      return existing
+    }
+    const testId = source === 'camera' ? `member-video-${userId}` : `member-screenshare-video-${userId}`
+    const pipeline = new LocLive(
+      createPictureVideo({ testId, muted: true }),
+      createPictureCanvas(`${testId}-canvas`),
+      undefined,
+      { onPresented: () => {}, onFrameShown: () => {} }
+    )
+    pipeline.picture.element.hidden = false
+    applyPlayoutSettings(pipeline, this.playoutSettingsByUserId.get(userId) ?? DEFAULT_PLAYOUT_SETTINGS)
+    this.pipelines.set(userId, { ...pipelines, [source]: pipeline })
+    this.handlers.onRemotePicture?.(userId, source, pipeline.picture.element)
+    return pipeline
+  }
+
+  private closePipeline(userId: string, source: RemoteVideoSource): void {
+    const pipelines = this.pipelines.get(userId)
+    const pipeline = pipelines?.[source]
+    if (!pipelines || !pipeline) {
+      return
+    }
+    pipeline.dispose()
+    const { [source]: _closed, ...rest } = pipelines
+    if (Object.keys(rest).length === 0) {
+      this.pipelines.delete(userId)
+    } else {
+      this.pipelines.set(userId, rest)
+    }
+    this.handlers.onRemotePictureClosed?.(userId, source)
+  }
+
+  private registrationsOf(userId: string, source: RemoteVideoSource): [bigint, TrackRegistration][] {
+    return Array.from(this.registrations).filter(
+      ([, registration]) => registration.userId === userId && registration.source === source
+    )
   }
 }
 
-function estimateAudioDataDurationMs(audioData: AudioData): number {
-  const sampleRate = audioData.sampleRate
-  const numberOfFrames = audioData.numberOfFrames
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0 || !Number.isFinite(numberOfFrames) || numberOfFrames <= 0) {
-    return 0
-  }
-  return (numberOfFrames / sampleRate) * 1000
+function applyPlayoutSettings(pipeline: LocLive, settings: PlayoutSettings): void {
+  pipeline.setBufferPolicy(settings.policy)
+  pipeline.playout.setCatchUp(settings.catchUp)
 }
