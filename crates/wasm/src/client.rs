@@ -46,14 +46,6 @@ type WriterKey = (u64, u64, u64);
 const ERROR_INTERNAL: u64 = 0x0;
 const ERROR_TIMEOUT: u64 = 0x2;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum Phase {
-    #[default]
-    Idle,
-    Started,
-    Connected,
-}
-
 /// Request handlers the peer is waiting on until JavaScript answers them,
 /// keyed by the peer's request id. A handler dropped unanswered rejects its
 /// request with NOT_SUPPORTED.
@@ -68,7 +60,7 @@ pub(crate) struct IncomingRequests {
 
 #[derive(Default)]
 pub(crate) struct ClientShared {
-    phase: Cell<Phase>,
+    in_use: Cell<bool>,
     session: RefCell<Option<Rc<Session<BROWSER>>>>,
     pub(crate) state: RefCell<ClientState>,
     pub(crate) callbacks: RefCell<Callbacks>,
@@ -95,9 +87,9 @@ impl ClientShared {
     }
 
     fn clear(&self) {
-        self.phase.set(Phase::Idle);
+        self.in_use.set(false);
         self.session.borrow_mut().take();
-        self.incoming.borrow_mut().clear();
+        *self.incoming.borrow_mut() = IncomingRequests::default();
         self.subscriptions.borrow_mut().clear();
         self.subscription_wire_ids.borrow_mut().clear();
         self.fetch_requests.borrow_mut().clear();
@@ -114,16 +106,6 @@ impl ClientShared {
         spawn_local(async move {
             let _ = sender.lock().await.reset(0).await;
         });
-    }
-}
-
-impl IncomingRequests {
-    fn clear(&mut self) {
-        self.publish_namespaces.clear();
-        self.publishes.clear();
-        self.subscribes.clear();
-        self.track_statuses.clear();
-        self.fetches.clear();
     }
 }
 
@@ -265,16 +247,14 @@ impl MOQTClient {
 
     #[wasm_bindgen(js_name = isConnected)]
     pub fn is_connected(&self) -> bool {
-        self.shared.phase.get() != Phase::Idle
+        self.shared.in_use.get()
     }
 
     /// The WebTransport session is opened together with the SETUP exchange in
     /// `sendClientSetup`, because the authorization token travels in
     /// CLIENT_SETUP; `start` only marks the client as in use.
     pub async fn start(&self) -> Result<(), JsValue> {
-        if self.shared.phase.get() == Phase::Idle {
-            self.shared.phase.set(Phase::Started);
-        }
+        self.shared.in_use.set(true);
         Ok(())
     }
 
@@ -314,7 +294,6 @@ impl MOQTClient {
             .map_err(anyhow_error)?;
         let session = Rc::new(session);
         *self.shared.session.borrow_mut() = Some(session.clone());
-        self.shared.phase.set(Phase::Connected);
         spawn_local(session_events::run_session_events(
             self.shared.clone(),
             session.clone(),

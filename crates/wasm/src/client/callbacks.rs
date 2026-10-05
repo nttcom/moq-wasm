@@ -48,11 +48,7 @@ pub(crate) fn emit(callbacks: &RefCell<Callbacks>, select: CallbackSelector, arg
     let Some(callback) = callback else {
         return;
     };
-    let arguments = js_sys::Array::new();
-    for argument in args {
-        arguments.push(argument);
-    }
-    let _ = callback.apply(&JsValue::NULL, &arguments);
+    let _ = callback.apply(&JsValue::NULL, &args.iter().collect::<js_sys::Array>());
 }
 
 pub(crate) fn has_callback(callbacks: &RefCell<Callbacks>, select: CallbackSelector) -> bool {
