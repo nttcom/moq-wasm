@@ -61,7 +61,7 @@ Application and integration components (draft reference is normally not required
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
 - Lint (JavaScript): `npx prettier --check`
-- Wasm: `wasm-pack build crates/wasm --out-name moqt`
+- Wasm: `wasm-pack build crates/wasm`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
