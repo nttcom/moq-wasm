@@ -200,6 +200,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auth-token"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2764,6 +2774,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "auth-token",
  "bytes",
  "dashmap",
  "moqt",
@@ -3882,6 +3893,7 @@ name = "vts"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth-token",
  "base64",
  "clap",
  "http-body-util",

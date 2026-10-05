@@ -1,0 +1,11 @@
+[package]
+name = "auth-token"
+version = "0.1.0"
+edition = "2024"
+description = "Claims of the JWT a MoQT client presents in CLIENT_SETUP"
+
+[dependencies]
+anyhow = "1.0.102"
+base64 = "0.22.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1"

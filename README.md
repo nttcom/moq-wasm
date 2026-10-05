@@ -118,7 +118,7 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 | [`crates/moqt-bridge-live-ingest/`](crates/moqt-bridge-live-ingest/README.md) | RTMP and SRT ingest into MoQT |
 | [`crates/moqt-bridge-onvif/`](crates/moqt-bridge-onvif/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
 | [`crates/mediapack/`](crates/mediapack/README.md), [`media-streaming-format/`](crates/media-streaming-format/README.md), [`media-publisher/`](crates/media-publisher/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, track publishing, re-encoding |
-| [`crates/vts/`](crates/vts/README.md) | Verify Token Service: checks client JWTs for the relay |
+| [`crates/vts/`](crates/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
 | [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
