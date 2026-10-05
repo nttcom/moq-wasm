@@ -2,9 +2,9 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
+import { formatSyncOffset } from '@player/livePlayer'
+import { LocLive } from '@player/locLive'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
-import { postSubgroupObjectToWorker } from '../../../utils/media/decoderWorker'
-import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../../utils/media/decoderCatalog'
 import {
   extractCatalogAudioTracks,
   extractCatalogVideoTracks,
@@ -15,52 +15,30 @@ import { initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '
 
 const moqtClient = new MoqtClientWrapper()
 
-const audioDecoderWorker = new Worker(new URL('../../../utils/media/decoders/audioDecoder.ts', import.meta.url), {
-  type: 'module'
+const PLAYOUT_STATS_INTERVAL_MS = 1000
+
+const videoElement = document.getElementById('video') as HTMLVideoElement
+const canvasElement = document.getElementById('canvas') as HTMLCanvasElement
+const locLive = new LocLive(videoElement, canvasElement, undefined, {
+  onPresented: () => {},
+  onFrameShown: (ids) => {
+    if (ids) {
+      setPlaybackObjectPosition('video', ids.groupId, ids.objectId)
+    }
+  }
 })
-const videoDecoderWorker = new Worker(new URL('../../../utils/media/decoders/videoDecoder.ts', import.meta.url), {
-  type: 'module'
-})
+videoElement.hidden = locLive.picture.element !== videoElement
+canvasElement.hidden = locLive.picture.element !== canvasElement
 
-type AudioDecoderWorkerMessage =
-  | { type: 'audioData'; audioData: AudioData }
-  | { type: 'bitrate'; media: 'audio'; kbps: number }
-  | { type: 'receiveLatency'; media: 'audio'; ms: number }
-  | { type: 'renderingLatency'; media: 'audio'; ms: number }
-  | { type: 'bufferedObject'; media: 'audio'; groupId: bigint; objectId: bigint }
-
-type VideoDecoderWorkerMessage =
-  | { type: 'frame'; frame: VideoFrame }
-  | { type: 'bitrate'; kbps: number }
-  | { type: 'receiveLatency'; media: 'video'; ms: number }
-  | { type: 'renderingLatency'; media: 'video'; ms: number }
-  | { type: 'bufferedObject'; media: 'video'; groupId: bigint; objectId: bigint }
-
-let audioWorkerInitialized = false
-let videoWorkerInitialized = false
 let handlersInitialized = false
 let catalogVideoTracks: MediaCatalogTrack[] = []
 let catalogAudioTracks: MediaCatalogTrack[] = []
 let selectedVideoTrackName: string | null = null
 let selectedAudioTrackName: string | null = null
-let audioPlaybackStarted = false
-let videoPlaybackStarted = false
 let receivedVideoObjectCount = 0
 let receivedAudioObjectCount = 0
 
-function shouldBypassJitterBuffer(): boolean {
-  const input = document.getElementById('bypass-jitter-buffer') as HTMLInputElement | null
-  return input?.checked ?? true
-}
-
-function applyDecoderWorkerConfig(): void {
-  const bypassJitterBuffer = shouldBypassJitterBuffer()
-  const config = { telemetryEnabled: true, bypassJitterBuffer }
-  audioDecoderWorker.postMessage({ type: 'config', config })
-  videoDecoderWorker.postMessage({ type: 'config', config })
-}
-
-function setPlaybackObjectStatus(kind: 'video' | 'audio', text: string): void {
+function setPlaybackObjectStatus(kind: 'video', text: string): void {
   const element = document.getElementById(`${kind}-playback-object`)
   if (!element) {
     return
@@ -68,8 +46,26 @@ function setPlaybackObjectStatus(kind: 'video' | 'audio', text: string): void {
   element.textContent = text
 }
 
-function setPlaybackObjectPosition(kind: 'video' | 'audio', groupId: bigint, objectId: bigint): void {
+function setPlaybackObjectPosition(kind: 'video', groupId: bigint, objectId: bigint): void {
   setPlaybackObjectStatus(kind, `groupId=${groupId.toString()} objectId=${objectId.toString()}`)
+}
+
+function renderPlayoutStats(): void {
+  const element = document.getElementById('playout-stats')
+  if (!element) {
+    return
+  }
+  const stats = locLive.stats()
+  if (stats.bufferMs === undefined && stats.frameSize === undefined) {
+    element.textContent = 'Waiting for media'
+    return
+  }
+  const delay = stats.viewerDelayMs === undefined ? '' : `delay ${Math.round(stats.viewerDelayMs)} ms · `
+  const buffer =
+    stats.bufferMs === undefined
+      ? ''
+      : `buffer ${Math.round(stats.bufferMs)} ms (target ${Math.round(stats.targetBufferMs)}) · `
+  element.textContent = `${delay}${buffer}A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}`
 }
 
 function toBigUint64Array(value: string): BigUint64Array {
@@ -146,7 +142,9 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
   }
   if (kind === 'video') {
     const track = catalogVideoTracks.find((entry) => entry.name === trackName)
-    postVideoCatalogToWorker(videoDecoderWorker, {
+    locLive.configureTrack('video', {
+      name: trackName,
+      label: track?.label ?? trackName,
       codec: track?.codec ?? getResolvedMediaVideoCodec(),
       initData: track?.initData
     })
@@ -154,7 +152,7 @@ function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | nu
   }
   const track = catalogAudioTracks.find((entry) => entry.name === trackName)
   if (track) {
-    postAudioCatalogToWorker(audioDecoderWorker, track)
+    locLive.configureTrack('audio', track)
   }
 }
 
@@ -243,15 +241,6 @@ function setupCatalogSelectionHandler(): void {
     audioSelect.addEventListener('change', () => {
       const value = audioSelect.value.trim()
       setSelectedCatalogTrack('audio', value.length > 0 ? value : null)
-    })
-  }
-  const bypassInput = document.getElementById('bypass-jitter-buffer') as HTMLInputElement | null
-  if (bypassInput) {
-    bypassInput.addEventListener('change', () => {
-      applyDecoderWorkerConfig()
-      console.info('[MediaSubscriber] decoder config updated', {
-        bypassJitterBuffer: bypassInput.checked
-      })
     })
   }
 }
@@ -347,64 +336,6 @@ function sendSubscribeButtonClickHandler(): void {
   })
 }
 
-function setupAudioDecoderWorker() {
-  if (audioWorkerInitialized) return
-
-  audioWorkerInitialized = true
-  const audioGenerator = new MediaStreamTrackGenerator({ kind: 'audio' })
-  const audioWriter = audioGenerator.writable.getWriter()
-  const audioStream = new MediaStream([audioGenerator])
-  const audioElement = document.getElementById('audio') as HTMLAudioElement
-  audioElement.srcObject = audioStream
-  applyDecoderWorkerConfig()
-  audioDecoderWorker.onmessage = async (event: MessageEvent<AudioDecoderWorkerMessage>) => {
-    const data = event.data
-    if (data.type === 'bufferedObject') {
-      setPlaybackObjectPosition('audio', data.groupId, data.objectId)
-      return
-    }
-    if (data.type !== 'audioData') {
-      return
-    }
-    await audioWriter.ready
-    await audioWriter.write(data.audioData)
-    data.audioData.close()
-    if (!audioPlaybackStarted) {
-      await audioElement.play()
-      audioPlaybackStarted = true
-    }
-  }
-}
-function setupVideoDecoderWorker() {
-  if (videoWorkerInitialized) return
-
-  videoWorkerInitialized = true
-  const videoGenerator = new MediaStreamTrackGenerator({ kind: 'video' })
-  const videoWriter = videoGenerator.writable.getWriter()
-  const videoStream = new MediaStream([videoGenerator])
-  const videoElement = document.getElementById('video') as HTMLVideoElement
-  videoElement.srcObject = videoStream
-  applyDecoderWorkerConfig()
-  videoDecoderWorker.onmessage = async (event: MessageEvent<VideoDecoderWorkerMessage>) => {
-    const data = event.data
-    if (data.type === 'bufferedObject') {
-      setPlaybackObjectPosition('video', data.groupId, data.objectId)
-      return
-    }
-    if (data.type !== 'frame') {
-      return
-    }
-    const videoFrame = data.frame
-    await videoWriter.ready
-    await videoWriter.write(videoFrame)
-    videoFrame.close()
-    if (!videoPlaybackStarted) {
-      await videoElement.play()
-      videoPlaybackStarted = true
-    }
-  }
-}
-
 function setupVideoPlaybackStatus(): void {
   const videoElement = document.getElementById('video') as HTMLVideoElement
   const updatePlaybackStatus = (label: string) => {
@@ -435,7 +366,6 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
   const alias = trackAlias
 
   if (type === 'audio') {
-    setupAudioDecoderWorker()
     moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
       receivedAudioObjectCount += 1
       setReceiveStatus(
@@ -457,12 +387,11 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
         status: subgroupStreamObject.objectStatus,
         loc: locSummary
       })
-      postSubgroupObjectToWorker(audioDecoderWorker, groupId, subgroupStreamObject)
+      locLive.push('audio', groupId, subgroupStreamObject)
     })
     return
   }
 
-  setupVideoDecoderWorker()
   moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
     receivedVideoObjectCount += 1
     setReceiveStatus(`Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`)
@@ -486,7 +415,7 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
       loc: locSummary
     })
 
-    postSubgroupObjectToWorker(videoDecoderWorker, groupId, subgroupStreamObject)
+    locLive.push('video', groupId, subgroupStreamObject)
   })
 }
 
@@ -503,15 +432,13 @@ function setupCloseButtonHandler(): void {
   const closeBtn = document.getElementById('closeBtn') as HTMLButtonElement
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
-    audioPlaybackStarted = false
-    videoPlaybackStarted = false
     moqtClient.clearSubgroupObjectHandlers()
+    locLive.reset()
     catalogVideoTracks = []
     catalogAudioTracks = []
     selectedVideoTrackName = null
     selectedAudioTrackName = null
     setPlaybackObjectStatus('video', 'Waiting for objects')
-    setPlaybackObjectStatus('audio', 'Waiting for objects')
     receivedVideoObjectCount = 0
     receivedAudioObjectCount = 0
     renderCatalogTracks()
@@ -551,8 +478,8 @@ connectBtn.addEventListener('click', async () => {
 initializeMediaExamplePage('subscribe-track-namespace')
 initializeStatuses()
 setupButtonHandlers()
-applyDecoderWorkerConfig()
 setupVideoPlaybackStatus()
 renderCatalogTracks()
 setPlaybackObjectStatus('video', 'Waiting for objects')
-setPlaybackObjectStatus('audio', 'Waiting for objects')
+renderPlayoutStats()
+window.setInterval(renderPlayoutStats, PLAYOUT_STATS_INTERVAL_MS)
