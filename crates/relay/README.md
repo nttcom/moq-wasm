@@ -23,6 +23,7 @@ on `https://127.0.0.1:4433`. A self-signed certificate is generated under
 | `RELAY_INNER_PORT` | `RELAY_PORT + 1` | QUIC port other relays connect to |
 | `RELAY_ID` | `relay-local` | Name in logs and in the route registry |
 | `RELAY_ADVERTISE_HOST` | `localhost` | Host other relays use to reach this one |
+| `RELAY_CERT_DIR` | `crates/relay/keys` | Directory holding `cert.pem` and `key.pem`; self-signed ones are generated there if missing |
 | `REDIS_URL` | unset | Route registry shared by cascading relays; unset runs standalone |
 | `AUTH_VTS_URL` | required | VTS verify endpoint, e.g. `http://vts:8081/verify` |
 | `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays |

@@ -14,7 +14,7 @@ optionally cascades across relays via a Redis-backed route registry.
 
 `main.rs`:
 1. `init_logging` (tracing + OpenTelemetry OTLP export).
-2. Generate self-signed certs under `crates/relay/keys/` if missing.
+2. Generate self-signed certs under `RELAY_CERT_DIR` (default `crates/relay/keys/`) if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PORT` (default 4433), `RELAY_INNER_PORT` (default port+1),
    `REDIS_URL` (optional), and the authentication settings (`AuthConfig`):
