@@ -48,6 +48,7 @@ export class LocLive {
   /// Live LOC frames carry their capture timestamp, so the moment one is shown
   /// says how far the viewer runs behind the publisher on the same wall clock.
   viewerDelayMs: number | undefined
+  shownCaptureMicros: number | undefined
   frameSize: { width: number; height: number } | undefined
 
   constructor(
@@ -115,6 +116,7 @@ export class LocLive {
 
   reset(): void {
     this.viewerDelayMs = undefined
+    this.shownCaptureMicros = undefined
     this.picture.detach()
     this.decodedFrameIds.clear()
     this.playout.reset()
@@ -147,6 +149,7 @@ export class LocLive {
 
   private show(frame: VideoFrame): void {
     this.viewerDelayMs = frame.timestamp ? (monotonicUnixMicros() - frame.timestamp) / 1_000 : undefined
+    this.shownCaptureMicros = frame.timestamp || undefined
     this.frameSize = { width: frame.displayWidth, height: frame.displayHeight }
     const ids = this.decodedFrameIds.get(frame.timestamp)
     this.decodedFrameIds.delete(frame.timestamp)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { CameraId, MonitorMode, ALL_CAMERA_IDS } from '../types/monitoring'
 import { StageCamera } from './StageCamera'
 import { ThumbStrip } from './ThumbStrip'
@@ -9,8 +9,7 @@ import { RelayUrlField } from './RelayUrlField'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
-import { MonitorSession } from '../monitor/monitorSession'
-import { CameraSubscriber, type ReviewFrame } from '../monitor/cameraSubscriber'
+import { CameraPlayers } from '../monitor/cameraPlayers'
 import { useUrlSync } from '../hooks/useUrlSync'
 
 interface Props {
@@ -20,56 +19,48 @@ interface Props {
 
 type ConnStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
+const STEP_SECONDS = 1
+const MICROS_PER_SECOND = 1_000_000
+
 export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRelayUrl }: Props) {
   const [location, setLocation] = useState(defaultLocation)
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl)
   const [stageId, setStageId] = useState<CameraId>('cam01')
-  const [mode, setMode] = useState<MonitorMode>('live')
   const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
   const [subscribedCameras, setSubscribedCameras] = useState<Set<CameraId>>(new Set())
   const [subscribingCameras, setSubscribingCameras] = useState<Set<CameraId>>(new Set())
   const [error, setError] = useState<string | null>(null)
+  const [, playerChanged] = useReducer((version: number) => version + 1, 0)
 
-  // Seek state
-  const [currentGroupId, setCurrentGroupId] = useState<bigint | null>(null)
-  const [latestGroupId, setLatestGroupId] = useState<bigint | null>(null)
-  const [firstGroupId, setFirstGroupId] = useState<bigint | null>(null)
-  const [entryGroupId, setEntryGroupId] = useState<bigint | null>(null)
-  const [fetchWindow, setFetchWindow] = useState<{ startGroup: bigint; endGroup: bigint } | null>(null)
-
-  const sessionRef = useRef<MonitorSession | null>(null)
-  const subscribersRef = useRef<Map<CameraId, CameraSubscriber>>(new Map())
-  const canvasRefs = useRef<Map<CameraId, HTMLCanvasElement>>(new Map())
-  const stageIdRef = useRef<CameraId>(stageId)
-
-  // Review
-  const reviewBufferRef = useRef<Map<bigint, ReviewFrame>>(new Map())
-  const activeFetchIdRef = useRef<bigint | null>(null)
-  const fetchGenRef = useRef(0)
+  const playersRef = useRef<CameraPlayers | null>(null)
+  if (!playersRef.current) {
+    playersRef.current = new CameraPlayers(() => playerChanged())
+  }
+  const players = playersRef.current
 
   const thumbIds = ALL_CAMERA_IDS.filter((id) => id !== stageId)
   const isConnected = connStatus === 'connected'
+  const stagePlayer = players.get(stageId)
+  const stageState = stagePlayer?.state
+  // A paused live picture is the first still frame of a review, before any skip.
+  const mode: MonitorMode = stageState && (stageState.mode === 'review' || stageState.paused) ? 'review' : 'live'
+  const playheadSeconds = stageState?.seek.playheadSeconds ?? stageState?.seek.liveEdgeSeconds
+  const behindSeconds =
+    stageState && playheadSeconds !== undefined ? stageState.seek.liveEdgeSeconds - playheadSeconds : null
 
   useUrlSync({ location, relay: relayUrl })
 
   useEffect(() => {
-    stageIdRef.current = stageId
-  }, [stageId])
-
-  useEffect(() => {
     return () => {
-      subscribersRef.current.forEach((s) => s.dispose())
-      sessionRef.current?.disconnect().catch(console.error)
+      players.disconnect().catch(console.error)
     }
-  }, [])
+  }, [players])
 
   const handleConnect = async () => {
     setConnStatus('connecting')
     setError(null)
     try {
-      const session = new MonitorSession()
-      await session.connect(relayUrl)
-      sessionRef.current = session
+      await players.connect(relayUrl, () => setConnStatus('error'))
       setConnStatus('connected')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Connect failed')
@@ -78,31 +69,12 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
   }
 
   const handleSubscribe = async (camId: CameraId) => {
-    const session = sessionRef.current
-    if (!session) return
-
     setSubscribingCameras((prev) => new Set([...prev, camId]))
     try {
-      const subscriber = new CameraSubscriber(camId)
-      subscriber.onGroupIdUpdate = (first, latest) => {
-        if (camId !== stageIdRef.current) return
-        setFirstGroupId(first)
-        setLatestGroupId(latest)
-      }
-      const existingCanvas = canvasRefs.current.get(camId)
-      if (existingCanvas) subscriber.setCanvas(existingCanvas)
-      subscribersRef.current.set(camId, subscriber)
-
-      const ok = await session.subscribeVideo(location, camId, (groupId, msg) => {
-        subscriber.handleObject(groupId, msg)
-      })
-
-      if (ok) {
-        setSubscribedCameras((prev) => new Set([...prev, camId]))
-      } else {
-        subscriber.dispose()
-        subscribersRef.current.delete(camId)
-      }
+      await players.watch(location, camId)
+      setSubscribedCameras((prev) => new Set([...prev, camId]))
+    } catch (e) {
+      console.error('[mon] watch failed', { camId, error: String(e) })
     } finally {
       setSubscribingCameras((prev) => {
         const s = new Set(prev)
@@ -112,177 +84,27 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
     }
   }
 
-  const handleCanvasReady = useCallback(
-    (camId: CameraId) => (canvas: HTMLCanvasElement | null) => {
-      subscribersRef.current.get(camId)?.setCanvas(canvas)
-      if (canvas) {
-        canvasRefs.current.set(camId, canvas)
-      }
-    },
-    []
-  )
-
-  const cleanupReview = useCallback((targetStageId: CameraId) => {
-    fetchGenRef.current++
-    if (activeFetchIdRef.current !== null && sessionRef.current) {
-      sessionRef.current.clearFetch(activeFetchIdRef.current)
-      activeFetchIdRef.current = null
-    }
-    reviewBufferRef.current = new Map()
-    subscribersRef.current.get(targetStageId)!.resumeLive()
-    setFetchWindow(null)
-    setCurrentGroupId(null)
-    setEntryGroupId(null)
-  }, [])
-
-  const startFetch = useCallback(
-    async (seekGroup: bigint, camId: CameraId, targetObjectId?: bigint) => {
-      const session = sessionRef.current
-      const subscriber = subscribersRef.current.get(camId)
-      if (!session || !subscriber) return
-
-      const myGen = ++fetchGenRef.current
-
-      const first = subscriber.firstReceivedGroupId ?? seekGroup
-      const windowStart = seekGroup - first > 6n ? seekGroup - 6n : first
-      const rawWindowEnd = seekGroup + 5n
-      const windowEnd = latestGroupId !== null && rawWindowEnd > latestGroupId ? latestGroupId : rawWindowEnd
-
-      if (activeFetchIdRef.current !== null) {
-        session.clearFetch(activeFetchIdRef.current)
-        activeFetchIdRef.current = null
-      }
-      reviewBufferRef.current = new Map()
-
-      setCurrentGroupId(seekGroup)
-      setFetchWindow({ startGroup: windowStart, endGroup: windowEnd })
-
-      const targetGroup = seekGroup
-      const needSequential = targetObjectId !== undefined && targetObjectId > 0n
-      const seqBuffer = new Map<bigint, ReviewFrame>()
-      let seqDecoded = false
-
-      try {
-        const fetchId = await session.fetchVideo(location, camId, windowStart, windowEnd, (msg) => {
-          if (fetchGenRef.current !== myGen) return
-          const payload = new Uint8Array(msg.objectPayload)
-
-          // Always store I-frames for step navigation
-          if (msg.objectId === 0n) {
-            reviewBufferRef.current.set(msg.groupId, { payload, locHeader: msg.locHeader })
-          }
-
-          if (msg.groupId === targetGroup) {
-            if (needSequential) {
-              // Collect all frames up to targetObjectId for sequential decode
-              if (msg.objectId <= targetObjectId!) {
-                seqBuffer.set(msg.objectId, { payload, locHeader: msg.locHeader })
-              }
-              if (msg.objectId === targetObjectId && !seqDecoded) {
-                seqDecoded = true
-                subscriber.decodeFrameSequential(seqBuffer, targetObjectId!)
-              }
-            } else if (msg.objectId === 0n) {
-              subscriber.decodeFrame(msg.groupId, payload, msg.locHeader)
-            }
-          }
-        })
-        if (fetchGenRef.current !== myGen) {
-          session.clearFetch(fetchId)
-          return
-        }
-        activeFetchIdRef.current = fetchId
-      } catch (e) {
-        if (fetchGenRef.current === myGen) {
-          console.error('[review] FETCH failed', e)
-        }
-      }
-    },
-    [location]
-  )
-
-  const handleStageClick = async () => {
-    if (!subscribedCameras.has(stageId)) return
-    if (mode === 'review') return
-
-    const subscriber = subscribersRef.current.get(stageId)
-    if (!subscriber) return
-    const latest = subscriber.latestReceivedGroupId
-    const first = subscriber.firstReceivedGroupId
-    if (latest === null || first === null) return
-
-    // Pause live decode before fetching
-    subscriber.paused = true
-    setMode('review')
-    setEntryGroupId(latest)
-
-    // Seek to the exact frame being displayed at click time
-    const seekGroup = subscriber.lastSentGroupId ?? latest
-    const seekObjectId = subscriber.lastSentObjectId
-
-    await startFetch(seekGroup, stageId, seekObjectId).catch((e) => {
-      console.error('[review] FETCH failed', e)
-      cleanupReview(stageId)
-      setMode('live')
-    })
+  const handleStageClick = () => {
+    if (!stagePlayer || !subscribedCameras.has(stageId) || mode === 'review') return
+    stagePlayer.setPaused(true)
   }
 
-  const handleStepBack = () => {
-    if (currentGroupId === null || firstGroupId === null) return
-    if (currentGroupId <= firstGroupId) return
-    const next = currentGroupId - 1n
-    if (fetchWindow && next < fetchWindow.startGroup) {
-      startFetch(next, stageId).catch(console.error)
-      return
-    }
-    setCurrentGroupId(next)
-    const entry = reviewBufferRef.current.get(next)
-    const subscriber = subscribersRef.current.get(stageId)
-    if (entry && subscriber) subscriber.decodeFrame(next, entry.payload, entry.locHeader)
-  }
-
-  const handleStepForward = () => {
-    if (currentGroupId === null || latestGroupId === null) return
-    if (currentGroupId >= latestGroupId) return
-    const next = currentGroupId + 1n
-    if (fetchWindow && next > fetchWindow.endGroup) {
-      startFetch(next, stageId).catch(console.error)
-      return
-    }
-    setCurrentGroupId(next)
-    const entry = reviewBufferRef.current.get(next)
-    const subscriber = subscribersRef.current.get(stageId)
-    if (entry && subscriber) subscriber.decodeFrame(next, entry.payload, entry.locHeader)
-  }
-
-  const handleJump = (seekGroup: bigint) => {
-    startFetch(seekGroup, stageId).catch(console.error)
-  }
-
-  const handleReturnToLive = () => {
-    cleanupReview(stageId)
-    setMode('live')
-  }
+  const handleStepBack = () => stagePlayer?.skip(-STEP_SECONDS)
+  const handleStepForward = () => stagePlayer?.skip(STEP_SECONDS)
+  const handleJump = (seconds: number) => stagePlayer?.seek(seconds * MICROS_PER_SECOND)
+  const handleReturnToLive = () => stagePlayer?.goLive()
 
   const handleThumbSelect = (id: CameraId) => {
     if (mode === 'review') {
-      cleanupReview(stageId)
+      stagePlayer?.goLive()
     }
-    const stageCanvas = canvasRefs.current.get(stageId)
-    if (stageCanvas) {
-      stageCanvas.getContext('2d')?.clearRect(0, 0, stageCanvas.width, stageCanvas.height)
-    }
-    const newSubscriber = subscribersRef.current.get(id)
-    setFirstGroupId(newSubscriber?.firstReceivedGroupId ?? null)
-    setLatestGroupId(newSubscriber?.latestReceivedGroupId ?? null)
     setStageId(id)
-    setMode('live')
   }
 
   const subButtonForCamera = isConnected ? handleSubscribe : undefined
 
-  const canStepBack = currentGroupId !== null && firstGroupId !== null && currentGroupId > firstGroupId
-  const canStepForward = currentGroupId !== null && latestGroupId !== null && currentGroupId < latestGroupId
+  const canStepBack = mode === 'review' && stageState !== undefined && stageState.seek.seekable
+  const canStepForward = stageState?.mode === 'review'
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 p-4 gap-4">
@@ -351,25 +173,22 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
         <div>
           <StageCamera
             cameraId={stageId}
+            host={players.host(stageId)}
             mode={mode}
             connState={isConnected ? 'connected' : 'closed'}
-            currentGroupId={currentGroupId}
-            latestGroupId={latestGroupId}
-            onCanvasReady={handleCanvasReady(stageId)}
+            behindSeconds={behindSeconds}
             onSubscribe={subButtonForCamera ? () => subButtonForCamera(stageId) : undefined}
             isSubscribed={subscribedCameras.has(stageId)}
             isSubscribing={subscribingCameras.has(stageId)}
             onClick={handleStageClick}
           />
-          {mode === 'review' && (
+          {mode === 'review' && stageState && (
             <div className="mt-3 space-y-2">
-              {firstGroupId !== null && entryGroupId !== null && currentGroupId !== null && (
+              {stageState.seek.seekable && playheadSeconds !== undefined && (
                 <SeekBar
-                  firstGroupId={firstGroupId}
-                  entryGroupId={entryGroupId}
-                  latestGroupId={latestGroupId ?? entryGroupId}
-                  currentGroupId={currentGroupId}
-                  fetchWindow={fetchWindow}
+                  replayableStartSeconds={stageState.seek.replayableStartSeconds}
+                  liveEdgeSeconds={stageState.seek.liveEdgeSeconds}
+                  playheadSeconds={playheadSeconds}
                   onJump={handleJump}
                 />
               )}
@@ -388,8 +207,8 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
         {thumbIds.length > 0 && (
           <ThumbStrip
             cameraIds={thumbIds}
+            hostOf={(id) => players.host(id)}
             onSelect={handleThumbSelect}
-            onCanvasReady={handleCanvasReady}
             onSubscribe={subButtonForCamera}
             subscribedCameras={subscribedCameras}
             subscribingCameras={subscribingCameras}
@@ -399,11 +218,11 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
 
       {/* debug bar */}
       <DebugBar
-        connState={isConnected ? 'connected' : connStatus === 'idle' ? 'closed' : 'closed'}
+        connState={isConnected ? 'connected' : 'closed'}
         relayUrl={relayUrl}
         subscribedCameras={[...subscribedCameras]}
-        fetchingCamera={mode === 'review' ? stageId : null}
-        fetchWindow={fetchWindow}
+        reviewingCamera={mode === 'review' ? stageId : null}
+        reviewStatus={stageState?.rewindStatus.text ?? null}
       />
     </div>
   )

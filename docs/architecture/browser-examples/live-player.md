@@ -600,11 +600,13 @@ named `live-player-*`.
   hidden `<canvas>`, configured from the MSF catalog tracks the page selects
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
   buffer bypass checkbox.
-- `examples/remote-monitoring` (migration steps 6 to 9): one player per
-  camera, started with the camera's `video` track given as `LiveTracks`
-  (`avc3.640028`, no catalog) on a canvas picture, video only. The stage and
-  the thumbnails are the page's layout over four players; the page's review
-  (still pictures stepped through the relay cache a second at a time,
-  immediate live return) becomes the player's paused seeking and
-  `keepLiveWhileReviewing`, and its group-id seek bar becomes the player's
-  capture-time seek axis.
+- `examples/remote-monitoring`: one player per camera on the page's session,
+  started with the camera's `video` track given as `LiveTracks`
+  (`avc3.640028`, no catalog) on a canvas picture, video only. Each player
+  draws into a host element the page moves between the stage and the strip,
+  so the stage and the thumbnails are layout over four players. Clicking the
+  stage pauses its player, which is the first still picture of a review; the
+  step buttons skip a second with the pause kept, the seek bar is the
+  player's capture-time axis, and the debug bar shows the player's rewind
+  status. Immediate live return (`keepLiveWhileReviewing`, step 9) is still to
+  come, so `LIVE 復帰` waits for the next group like the Live Viewer.
