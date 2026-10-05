@@ -50,6 +50,9 @@ export type LivePlayerOptions = {
 
 export type PlayerStatus = { text: string; state: StatusState }
 
+/// The LOC tracks of a publisher that announces no catalog.
+export type LiveTracks = { video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }
+
 export type LivePlayerState = {
   started: boolean
   videoTracks: MediaCatalogTrack[]
@@ -205,13 +208,19 @@ export class LivePlayer {
     return this.timeline.media.elapsedMsAt(captureMicros)
   }
 
-  async start(namespace: string[], authInfo: string): Promise<void> {
+  /// Tracks given by the page replace the catalog: nothing is subscribed for
+  /// them but the tracks themselves, and they never change.
+  async start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void> {
     await this.queueTrackChange(async () => {
       this.context.namespace = namespace
       this.context.authInfo = authInfo
       this.started = true
       this.changed()
     })
+    if (tracks) {
+      await this.queueTrackChange(() => this.applyGivenTracks(tracks))
+      return
+    }
     await this.catalog.follow()
   }
 
@@ -415,27 +424,45 @@ export class LivePlayer {
     }
     try {
       const catalog = parse_msf_catalog_json(payload)
-      const videoChanged = this.replaceTracks('video', extractCatalogVideoTracks(catalog).filter(isLocTrack))
-      const audioChanged = this.replaceTracks('audio', extractCatalogAudioTracks(catalog).filter(isLocTrack))
       this.cmafTracks = extractCatalogCmafTracks(catalog)
-      this.catalogStatus = {
-        text: `Catalog loaded: ${this.tracks.video.length} video / ${this.tracks.audio.length} audio`,
-        state: 'ok'
-      }
-      this.changed()
+      const changed = this.replaceAllTracks(
+        extractCatalogVideoTracks(catalog).filter(isLocTrack),
+        extractCatalogAudioTracks(catalog).filter(isLocTrack),
+        'Catalog loaded'
+      )
       await this.subscribeMediaTimeline(catalog)
-      if (videoChanged || audioChanged) {
-        await this.resubscribe('video')
-        await this.resubscribe('audio')
-        await this.openLiveMse()
-      } else {
-        this.reconfigureDecoders()
-      }
+      await this.subscribeReplacedTracks(changed)
     } catch (error) {
       this.catalogStatus = { text: `Catalog error: ${getErrorMessage(error)}`, state: 'error' }
       this.changed()
       this.context.log('error', `catalog: ${getErrorMessage(error)}`)
     }
+  }
+
+  private async applyGivenTracks(tracks: LiveTracks): Promise<void> {
+    if (!this.started) {
+      return
+    }
+    this.cmafTracks = []
+    await this.subscribeReplacedTracks(this.replaceAllTracks(tracks.video, tracks.audio ?? [], 'Tracks given'))
+  }
+
+  private replaceAllTracks(video: MediaCatalogTrack[], audio: MediaCatalogTrack[], source: string): boolean {
+    const videoChanged = this.replaceTracks('video', video)
+    const audioChanged = this.replaceTracks('audio', audio)
+    this.catalogStatus = { text: `${source}: ${video.length} video / ${audio.length} audio`, state: 'ok' }
+    this.changed()
+    return videoChanged || audioChanged
+  }
+
+  private async subscribeReplacedTracks(changed: boolean): Promise<void> {
+    if (!changed) {
+      this.reconfigureDecoders()
+      return
+    }
+    await this.resubscribe('video')
+    await this.resubscribe('audio')
+    await this.openLiveMse()
   }
 
   private replaceTracks(kind: MediaKind, tracks: MediaCatalogTrack[]): boolean {

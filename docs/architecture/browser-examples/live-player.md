@@ -95,7 +95,7 @@ type LivePlayerCallbacks = {
 }
 
 class LivePlayer {
-  start(namespace: string[], authInfo: string): Promise<void>
+  start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   selectAudioTrack(name: string): Promise<void>
@@ -140,6 +140,12 @@ decoder workers and closes the `AudioContext`, so a page that creates one
 `LivePlayer.stats()` reports minus the object count: frame size, viewer delay,
 buffer and target, output latency, arrival spread, video and audio bitrate,
 A/V offset, audio breaks, video drops, shed.
+
+`LiveTracks` (`{ video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }`)
+stands in for the catalog of a publisher that announces none, such as the
+remote-monitoring cameras: `start` subscribes to the tracks given and nothing
+else, the catalog status reads `Tracks given`, and a track redefinition can
+only come from another `start`.
 
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
@@ -430,6 +436,28 @@ In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers
 append in the default segments mode rather than back to back.
 
+### Frame stepping while paused (target)
+
+A paused player keeps its position across `seek` and `skip`: the frame at the
+new position is decoded and shown, and nothing plays until the pause is
+lifted. `stepFrame(direction)` moves by one frame of the review's video track:
+forward to the next decoded frame, backward by seeking to the capture
+timestamp before the one on screen, which replays from the keyframe group
+that holds it as any seek does. The step buttons appear in the controls while
+reviewing. This is how a monitoring page scrubs a still picture through the
+relay cache, one second or one frame at a time; the relay cache TTL bounds
+how far back a step can go, as it bounds every review.
+
+### Instant live return (target)
+
+`goLive` after a review resumes the live subscriptions and the picture moves
+with the next group the relay forwards, up to one GOP later. A page that
+wants the live picture back at once opts into `keepLiveWhileReviewing`: the
+live subscriptions keep forwarding during the review, the video worker parks
+the objects of the newest group undecoded and drops the groups before it, and
+`goLive` decodes the parked group straight away. The cost is the live
+bandwidth spent while reviewing, which is why it is not the default.
+
 ### Playback speed
 
 The speed control next to the rewind buttons offers 0.5x, 1x, 1.25x, 1.5x and
@@ -540,6 +568,15 @@ named `live-player-*`.
 3. Extract the controls into `lib/player/ui`.
 4. Resolve review audio by capture time (the ONVIF convention above).
 5. Adopt the player in `examples/onvif`, keeping the PTZ commands in the page.
+6. `start` with tracks given by the page (`LiveTracks`), for publishers
+   without a catalog.
+7. Frame stepping while paused: `seek` / `skip` keep the pause, `stepFrame`,
+   step buttons in the controls.
+8. Adopt the player in `examples/remote-monitoring`: one player per camera on
+   a canvas picture, the page's seek bar and transport buttons on the
+   player's seek axis and stepping, the camera publisher unchanged.
+9. Instant live return (`keepLiveWhileReviewing`), so the monitoring page
+   keeps the immediate return it has today.
 
 ## Consumers
 
@@ -565,3 +602,11 @@ named `live-player-*`.
   hidden `<canvas>`, configured from the MSF catalog tracks the page selects
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
   buffer bypass checkbox.
+- `examples/remote-monitoring` (migration steps 6 to 9): one player per
+  camera, started with the camera's `video` track given as `LiveTracks`
+  (`avc3.640028`, no catalog) on a canvas picture, video only. The stage and
+  the thumbnails are the page's layout over four players; the page's review
+  (frame-accurate still pictures stepped through the relay cache, immediate
+  live return) becomes the player's paused seeking, frame stepping and
+  `keepLiveWhileReviewing`, and its group-id seek bar becomes the player's
+  capture-time seek axis.
