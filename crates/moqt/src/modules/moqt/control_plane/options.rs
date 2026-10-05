@@ -4,9 +4,9 @@ use crate::{
 };
 
 pub struct PublishOption {
-    pub(crate) group_order: GroupOrder,
-    pub(crate) content_exists: ContentExists,
-    pub(crate) forward: bool,
+    pub group_order: GroupOrder,
+    pub content_exists: ContentExists,
+    pub forward: bool,
 }
 
 impl Default for PublishOption {
