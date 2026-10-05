@@ -4,11 +4,11 @@ import { spawn } from "node:child_process";
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
-  jsDir,
   repoRoot,
   resolveCommandName,
-} from "./media-e2e-helpers.mjs";
-import { ensureRelayCertificates } from "./ensure-relay-certs.mjs";
+} from "../../scripts/dev-env.mjs";
+import { jsDir } from "./helpers.mjs";
+import { ensureRelayCertificates } from "../../scripts/ensure-relay-certs.mjs";
 
 async function main() {
   ensureLinuxEnvironment();

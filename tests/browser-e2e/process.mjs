@@ -1,10 +1,7 @@
 import { spawn } from "node:child_process";
 
-import {
-  getErrorMessage,
-  jsDir,
-  resolveCommandName,
-} from "./media-e2e-helpers.mjs";
+import { getErrorMessage, resolveCommandName } from "../../scripts/dev-env.mjs";
+import { jsDir } from "./helpers.mjs";
 
 export function registerSignalHandlers(cleanup) {
   const handler = async () => {

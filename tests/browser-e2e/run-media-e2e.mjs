@@ -7,20 +7,22 @@ import {
   spawnViteServer,
   terminateProcess,
   waitForOutput,
-} from "./browser-e2e-process.mjs";
+} from "./process.mjs";
+import {
+  ensureLinuxEnvironment,
+  getErrorMessage,
+  repoRoot,
+  resolveCommandName,
+} from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
-  ensureLinuxEnvironment,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   getDefaultWebPort,
-  getErrorMessage,
   jsDir,
-  messageIndexPath,
-  repoRoot,
-  resolveCommandName,
+  mediaIndexPath,
   waitForHttpOk,
-} from "./media-e2e-helpers.mjs";
+} from "./helpers.mjs";
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const childProcesses = [];
@@ -31,7 +33,7 @@ async function main() {
 
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
-  const namespace = process.env.MESSAGE_E2E_NAMESPACE ?? `anon/e2e/${Date.now()}`;
+  const namespace = process.env.MEDIA_E2E_NAMESPACE ?? `anon/e2e/${Date.now()}`;
   const moqtUrl = getDefaultMoqtUrl();
 
   const cleanup = async () => {
@@ -55,16 +57,16 @@ async function main() {
 
     await Promise.all([
       waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${messageIndexPath}`, 120_000),
+      waitForHttpOk(`${baseUrl}${mediaIndexPath}`, 120_000),
     ]);
 
-    await runCommand(resolveCommandName("npm"), ["run", "e2e:message"], {
+    await runCommand(resolveCommandName("npm"), ["run", "e2e:media"], {
       cwd: jsDir,
       env: {
         ...process.env,
         MEDIA_E2E_BASE_URL: baseUrl,
-        MESSAGE_E2E_MOQT_URL: moqtUrl,
-        MESSAGE_E2E_NAMESPACE: namespace,
+        MEDIA_E2E_MOQT_URL: moqtUrl,
+        MEDIA_E2E_NAMESPACE: namespace,
       },
     });
   } finally {

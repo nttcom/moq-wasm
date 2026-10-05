@@ -7,7 +7,7 @@ cert_path="${repo_root}/crates/relay/keys/cert.pem"
 
 if [[ ! -f "${cert_path}" ]]; then
   echo "Certificate not found: ${cert_path}" >&2
-  echo "Run make relay once or node scripts/setup-media-e2e.mjs first." >&2
+  echo "Run make relay once or node tests/browser-e2e/setup-media-e2e.mjs first." >&2
   exit 1
 fi
 

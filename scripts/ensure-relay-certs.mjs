@@ -11,7 +11,7 @@ import {
   repoRoot,
   resolveCommandName,
   serverKeysDir,
-} from "./media-e2e-helpers.mjs";
+} from "./dev-env.mjs";
 
 const requiredSubjectAltNames = [
   "DNS:localhost",

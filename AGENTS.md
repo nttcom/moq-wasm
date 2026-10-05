@@ -57,8 +57,8 @@ Application and integration components (draft reference is normally not required
 - Lint (JavaScript): `npx prettier --check`
 - Wasm: `wasm-pack build crates/moqt-client-wasm`
 - Relay: `cargo run --bin relay`
-- E2E Test (media): `node scripts/run-media-e2e.mjs`
-- E2E Test (meeting): `node scripts/run-meeting-e2e.mjs`
+- E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
+- E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
 - E2E Test (auth): `./tests/auth-e2e/run.sh`
 - VTS test: `npm --prefix services/vts test`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.

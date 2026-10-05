@@ -6,12 +6,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { spawnProcess } from "./browser-e2e-process.mjs";
-import {
-  repoRoot,
-  resolveCommandName,
-  waitForHttpOk,
-} from "./media-e2e-helpers.mjs";
+import { spawnProcess } from "./process.mjs";
+import { repoRoot, resolveCommandName } from "../../scripts/dev-env.mjs";
+import { waitForHttpOk } from "./helpers.mjs";
 
 export const vtsAppsFile = "services/vts/apps.example.json";
 export const relayAppId = "11111111-2222-3333-4444-555555555555";

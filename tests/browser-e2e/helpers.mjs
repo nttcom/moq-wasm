@@ -1,12 +1,13 @@
-import { X509Certificate, createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import {
+  certPath,
+  getErrorMessage,
+  keyPath,
+  repoRoot,
+} from "../../scripts/dev-env.mjs";
 
-export const repoRoot = resolve(__dirname, "..");
 export const jsDir = resolve(repoRoot, "examples", "browser");
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
@@ -15,22 +16,7 @@ export const chatModerationPath =
   "/moq-wasm/examples/moq-chat-moderation/index.html";
 export const cameraDetectionPath =
   "/moq-wasm/examples/moq-camera-detection/index.html";
-export const serverKeysDir = resolve(repoRoot, "crates", "relay", "keys");
-export const certPath = resolve(serverKeysDir, "cert.pem");
-export const keyPath = resolve(serverKeysDir, "key.pem");
-const setupHelpText = "Run node scripts/setup-media-e2e.mjs first.";
-
-export function ensureLinuxEnvironment() {
-  if (process.platform !== "linux" && process.platform !== "darwin") {
-    throw new Error(
-      "The automated media E2E flow is supported on Linux and macOS only.",
-    );
-  }
-}
-
-export function resolveCommandName(command) {
-  return process.platform === "win32" ? `${command}.cmd` : command;
-}
+const setupHelpText = "Run node tests/browser-e2e/setup-media-e2e.mjs first.";
 
 function assertPathExists(path, label, helpText) {
   if (!existsSync(path)) {
@@ -67,28 +53,6 @@ export function getDefaultBaseUrl() {
   return (
     process.env.MEDIA_E2E_BASE_URL ?? `http://127.0.0.1:${getDefaultWebPort()}`
   );
-}
-
-export function computeCertificateSpkiBase64(targetCertPath = certPath) {
-  assertPathExists(targetCertPath, "TLS certificate", setupHelpText);
-  const certificatePem = readFileSync(targetCertPath, "utf8");
-  const certificate = new X509Certificate(certificatePem);
-  const spkiDer = certificate.publicKey.export({ type: "spki", format: "der" });
-  return createHash("sha256").update(spkiDer).digest("base64");
-}
-
-export function getErrorMessage(error) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === "string") {
-    return error;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch (_error) {
-    return String(error);
-  }
 }
 
 export async function waitForHttpOk(url, timeoutMs = 60_000) {

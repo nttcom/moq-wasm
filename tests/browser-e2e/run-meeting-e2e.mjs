@@ -8,19 +8,21 @@ import {
   spawnViteServer,
   terminateProcess,
   waitForOutput,
-} from "./browser-e2e-process.mjs";
+} from "./process.mjs";
 import {
-  assertE2EPrerequisites,
   ensureLinuxEnvironment,
-  getDefaultBaseUrl,
-  getDefaultWebPort,
   getErrorMessage,
-  jsDir,
   repoRoot,
   resolveCommandName,
+} from "../../scripts/dev-env.mjs";
+import {
+  assertE2EPrerequisites,
+  getDefaultBaseUrl,
+  getDefaultWebPort,
+  jsDir,
   waitForHttpOk,
-} from "./media-e2e-helpers.mjs";
-import { resolveLocalRelayUrl } from "./resolve-local-relay-url.mjs";
+} from "./helpers.mjs";
+import { resolveLocalRelayUrl } from "../../scripts/resolve-local-relay-url.mjs";
 import { experimentAppId, mintToken } from "./vts-dev.mjs";
 
 const meetingIndexPath = "/moq-wasm/examples/meeting/index.html";
