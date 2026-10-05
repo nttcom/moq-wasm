@@ -5,6 +5,7 @@ use tracing::{Instrument, Span};
 
 use crate::{
     TransportProtocol,
+    modules::executor::{self, JoinHandle},
     modules::{
         moqt::{
             data_plane::object::object_datagram::ObjectDatagram,
@@ -23,28 +24,26 @@ impl DatagramReceiveTask {
     pub(crate) fn run<T: TransportProtocol>(
         context: Arc<SessionContext<T>>,
         datagram_span: Span,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
-            .name("Datagram Receiver")
-            .spawn(
-                async move {
-                    tracing::debug!("Datagram Receiver started");
-                    loop {
-                        match context.transport_connection.receive_datagram().await {
-                            Ok(mut data) => {
-                                tracing::debug!("accepted incoming datagram");
-                                Self::on_datagram_received(&context, &mut data).await;
-                            }
-                            Err(_) => {
-                                tracing::error!("Failed to receive datagram");
-                                break;
-                            }
+    ) -> JoinHandle<()> {
+        executor::spawn(
+            "Datagram Receiver",
+            async move {
+                tracing::debug!("Datagram Receiver started");
+                loop {
+                    match context.transport_connection.receive_datagram().await {
+                        Ok(mut data) => {
+                            tracing::debug!("accepted incoming datagram");
+                            Self::on_datagram_received(&context, &mut data).await;
+                        }
+                        Err(_) => {
+                            tracing::error!("Failed to receive datagram");
+                            break;
                         }
                     }
                 }
-                .instrument(datagram_span),
-            )
-            .unwrap()
+            }
+            .instrument(datagram_span),
+        )
     }
 
     #[tracing::instrument(level = "info", name = "on_datagram_received", skip_all)]

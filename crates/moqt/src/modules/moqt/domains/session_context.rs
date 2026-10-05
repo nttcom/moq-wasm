@@ -11,6 +11,7 @@ use std::{
 use crate::{
     SessionEvent, TransportProtocol,
     modules::{
+        executor,
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
@@ -312,7 +313,7 @@ impl<T: TransportProtocol> SessionContext<T> {
         &self,
         receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
     ) -> anyhow::Result<ResponseMessage> {
-        match tokio::time::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
+        match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(error)) => anyhow::bail!("control response channel closed: {}", error),
             Err(_) => Err(RequestTimeoutError.into()),

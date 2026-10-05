@@ -24,6 +24,7 @@ modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL m
         │
         ▼
 modules/transport         ← transport abstraction + quinn/web-transport-quinn impls
+modules/executor          ← task spawning, yielding and timeouts (tokio today)
 ```
 
 - `lib.rs` re-exports the session-level API. Everything except the message
@@ -98,8 +99,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 ### `Session` and its background tasks
 
-`Session::new` spawns four tasks (all named via `tokio::task::Builder`, all
-aborted in `Drop`):
+`Session::new` spawns four tasks (all named, all aborted in `Drop`):
 
 | Task | Role |
 | --- | --- |
@@ -292,6 +292,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Session teardown**: dropping `Session` aborts all four background tasks;
   the control task's `Weak` reference guarantees it never keeps the context
   alive.
+- **No direct runtime calls in the session stack**: `modules/moqt` spawns,
+  yields and bounds waits only through `modules/executor` (`spawn`,
+  `try_spawn`, `yield_now`, `timeout`); `tokio::sync` channels and locks are
+  used directly. `modules/transport` is the only other place that touches
+  tokio I/O. The executor is the seam for a browser (wasm32) implementation.
 
 ## Testing conventions
 Unit tests live in `#[cfg(test)] mod tests` inside the module under test

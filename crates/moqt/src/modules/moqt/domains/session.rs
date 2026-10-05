@@ -5,6 +5,7 @@ use tracing::Span;
 
 use crate::Publisher;
 use crate::Subscriber;
+use crate::modules::executor::JoinHandle;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
@@ -22,10 +23,10 @@ pub struct Session<T: TransportProtocol> {
     inner: Arc<SessionContext<T>>,
     session_span: Span,
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>>,
-    control_message_receive_task: tokio::task::JoinHandle<()>,
-    datagram_receive_task: tokio::task::JoinHandle<()>,
-    uni_stream_receive_task: tokio::task::JoinHandle<()>,
-    disconnect_watch_task: tokio::task::JoinHandle<()>,
+    control_message_receive_task: JoinHandle<()>,
+    datagram_receive_task: JoinHandle<()>,
+    uni_stream_receive_task: JoinHandle<()>,
+    disconnect_watch_task: JoinHandle<()>,
 }
 
 impl<T: TransportProtocol> Session<T> {
