@@ -1820,21 +1820,13 @@ dependencies = [
  "anyhow",
  "base64",
  "bytes",
- "media-streaming-format",
  "mediapack",
  "moqt",
+ "msf",
  "serde_json",
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "media-streaming-format"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1904,9 +1896,9 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "media-streaming-format",
  "mediapack",
  "moqt",
+ "msf",
  "serde_json",
  "tokio",
  "tracing",
@@ -1966,9 +1958,9 @@ dependencies = [
  "env_logger",
  "ffmpeg-next",
  "log",
- "media-streaming-format",
  "mediapack",
  "moqt",
+ "msf",
  "rand 0.10.2",
  "reqwest",
  "roxmltree",
@@ -1989,9 +1981,9 @@ dependencies = [
  "console_error_panic_hook",
  "futures",
  "js-sys",
- "media-streaming-format",
  "mediapack",
  "moqt",
+ "msf",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -2005,12 +1997,20 @@ name = "moqtsink-e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "media-streaming-format",
  "moqt",
+ "msf",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "msf"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

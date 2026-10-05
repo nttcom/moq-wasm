@@ -7,10 +7,6 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::{Engine, engine::general_purpose};
 use bytes::Bytes;
-use media_streaming_format::{
-    Catalog, Track,
-    types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
-};
 use mediapack::{
     aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
 };
@@ -19,6 +15,10 @@ use moqt::{
     FetchObjectField, GroupOrder, PublishOption, QUIC, Session, SessionEvent, SubscribeHandler,
     TrackWriter, TransportProtocol, TransportSendError, TransportStats, WEBTRANSPORT,
     wire::FetchParams,
+};
+use msf::{
+    Catalog, Track,
+    types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 

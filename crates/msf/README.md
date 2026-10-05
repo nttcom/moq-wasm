@@ -1,4 +1,4 @@
-# media-streaming-format
+# msf
 
 Types for the MSF catalog (draft-ietf-moq-msf-01) and its CMAF profile
 (draft-ietf-moq-cmsf-01): `Catalog`, `Track`, `Packaging`, `TrackRole` and the

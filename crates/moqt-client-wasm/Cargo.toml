@@ -21,7 +21,7 @@ wasm-bindgen = "0.2.123"
 wasm-bindgen-futures = "0.4.73"
 moqt = { path = "../moqt" }
 mediapack = { path = "../mediapack", features = ["moqt", "serde"] }
-media-streaming-format = { path = "../media-streaming-format" }
+msf = { path = "../msf" }
 futures = "0.3.32"
 anyhow = "1.0.102"
 

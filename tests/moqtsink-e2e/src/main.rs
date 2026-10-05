@@ -1,12 +1,12 @@
 use std::{collections::BTreeSet, env, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
-use media_streaming_format::Catalog;
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, Fetch, FetchObject, FetchOption,
     FilterType, GroupOrder, Location, QUIC, Session, Subgroup, SubgroupObject, SubscribeOption,
     Subscriber, Subscription,
 };
+use msf::Catalog;
 use tokio::process::{Child, Command};
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";

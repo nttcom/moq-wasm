@@ -1,9 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use media_streaming_format::{
-    Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole,
-};
+use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 
 /// Track name carrying the catalog on every namespace.
 pub const TRACK: &str = "catalog";

@@ -14,7 +14,7 @@ Library components (draft-governed):
 | --- | --- | --- |
 | `moqt` | Core MoQT protocol implementation | `docs/spec/draft-ietf-moq-transport-14.txt` |
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
-| `crates/media-streaming-format` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
+| `crates/msf` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
 | `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
 
 Application and integration components (draft reference is normally not required):

@@ -65,7 +65,7 @@ Shared by all agents (Claude Code, Codex).
 
 ## Dependencies
 - Minimize the number of external crates. Prefer existing dependencies over adding new ones.
-- When adding a new crate, create an Architecture Decision Record (ADR) at `docs/architecture/${package_name}/<crate>.md`, where `${package_name}` is the package's `name` in `Cargo.toml` (e.g. `docs/architecture/media-streaming-format/tokio-util.md`). The ADR must cover:
+- When adding a new crate, create an Architecture Decision Record (ADR) at `docs/architecture/${package_name}/<crate>.md`, where `${package_name}` is the package's `name` in `Cargo.toml` (e.g. `docs/architecture/msf/tokio-util.md`). The ADR must cover:
   1. What — the crate being added and its purpose.
   2. Context — the problem or requirement that motivates the addition.
   3. Alternatives — other crates or approaches considered, with trade-offs.

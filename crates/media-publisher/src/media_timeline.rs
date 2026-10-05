@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use media_streaming_format::MediaTimelineRecord;
+use msf::MediaTimelineRecord;
 
 /// The relay drops cached objects older than `RELAY_CACHE_TTL_SECS` (60 s by
 /// default), so a record past that window names a location a subscriber can no

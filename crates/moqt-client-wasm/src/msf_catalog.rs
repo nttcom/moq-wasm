@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use media_streaming_format::Catalog;
+use msf::Catalog;
 
 #[wasm_bindgen]
 pub fn parse_msf_catalog_json(json: &str) -> Result<JsValue, JsValue> {

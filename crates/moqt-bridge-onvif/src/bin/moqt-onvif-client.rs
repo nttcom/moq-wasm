@@ -2,9 +2,6 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use clap::Parser;
-use media_streaming_format::{
-    Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole,
-};
 use mediapack::loc::{to_extension_headers, LocExtension, CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID};
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
@@ -16,6 +13,7 @@ use moqt_bridge_onvif::{
     rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
     soap_client,
 };
+use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::io::Write;

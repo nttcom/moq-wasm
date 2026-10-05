@@ -12,7 +12,7 @@ env_logger = "0.11.10"
 ffmpeg-next = "8.1.0"
 log = "0.4.32"
 moqt = { path = "../moqt" }
-media-streaming-format = { path = "../media-streaming-format" }
+msf = { path = "../msf" }
 mediapack = { path = "../mediapack", features = ["moqt"] }
 rand = "0.10.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }

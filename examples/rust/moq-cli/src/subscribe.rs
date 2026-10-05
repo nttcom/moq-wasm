@@ -54,7 +54,7 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
     Ok(())
 }
 
-fn describe_catalog(catalog: &media_streaming_format::Catalog) {
+fn describe_catalog(catalog: &msf::Catalog) {
     let Some(track) = catalog.tracks.as_ref().and_then(|tracks| tracks.first()) else {
         info!("catalog has no tracks");
         return;

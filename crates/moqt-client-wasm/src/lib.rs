@@ -4,18 +4,18 @@ mod utils;
 mod incoming_fetch;
 #[cfg(web_sys_unstable_apis)]
 mod loc;
-mod media_streaming_format;
 #[cfg(web_sys_unstable_apis)]
 mod messages;
 mod mp4;
+mod msf_catalog;
 #[cfg(web_sys_unstable_apis)]
 mod request_rejection;
 
 #[cfg(web_sys_unstable_apis)]
 use incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest, location_after};
-pub use media_streaming_format::*;
 #[cfg(web_sys_unstable_apis)]
 pub use messages::*;
+pub use msf_catalog::*;
 #[cfg(web_sys_unstable_apis)]
 use request_rejection::RequestRejection;
 
