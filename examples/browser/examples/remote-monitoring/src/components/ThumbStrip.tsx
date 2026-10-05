@@ -3,21 +3,14 @@ import { ThumbCamera } from './ThumbCamera'
 
 interface Props {
   cameraIds: CameraId[]
+  hostOf: (camId: CameraId) => HTMLElement
   onSelect: (id: CameraId) => void
-  onCanvasReady?: (camId: CameraId) => (canvas: HTMLCanvasElement | null) => void
   onSubscribe?: (camId: CameraId) => void
   subscribedCameras?: Set<CameraId>
   subscribingCameras?: Set<CameraId>
 }
 
-export function ThumbStrip({
-  cameraIds,
-  onSelect,
-  onCanvasReady,
-  onSubscribe,
-  subscribedCameras,
-  subscribingCameras
-}: Props) {
+export function ThumbStrip({ cameraIds, hostOf, onSelect, onSubscribe, subscribedCameras, subscribingCameras }: Props) {
   if (cameraIds.length === 0) return null
 
   return (
@@ -27,7 +20,7 @@ export function ThumbStrip({
         <ThumbCamera
           key={id}
           cameraId={id}
-          onCanvasReady={onCanvasReady?.(id)}
+          host={hostOf(id)}
           onSubscribe={onSubscribe ? () => onSubscribe(id) : undefined}
           isSubscribed={subscribedCameras?.has(id)}
           isSubscribing={subscribingCameras?.has(id)}
