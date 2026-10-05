@@ -542,7 +542,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         };
         match stream_with_object {
             IncomingObject::StreamHeader { stream, header } => {
-                let first = StreamDataReceiver::new(stream, header).await?;
+                let first = StreamDataReceiver::new(stream, header);
                 Ok(DataReceiver::Stream(StreamDataReceiverFactory::new(
                     first, receiver,
                 )))
