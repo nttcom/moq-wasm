@@ -1916,6 +1916,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "futures",
  "mockall",
  "num_enum",
  "quinn",
