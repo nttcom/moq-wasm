@@ -1,6 +1,6 @@
 ---
 name: create-pull-request
-description: Create a pull request for the current branch. Use when the user asks to open, create, or update a PR. Writes the title and body in Japanese, fills in the repository PR template, and adds a mermaid diagram when it makes the change easier to review.
+description: Create a pull request for the current branch. Use when the user asks to open, create, or update a PR. Runs the ponytail over-engineering review on the diff first, writes the title and body in Japanese, fills in the repository PR template, has the body reviewed for redundancy and against the i-have-adhd rules, and adds a mermaid diagram when it makes the change easier to review.
 ---
 
 # Create Pull Request
@@ -8,12 +8,30 @@ description: Create a pull request for the current branch. Use when the user ask
 ## Steps
 
 1. Review the change: `git status`, `git diff origin/master...HEAD`, and `git log origin/master..HEAD --oneline`.
-2. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
-3. Push the branch: `git push -u origin <branch>`.
-4. Draft the title and body, then have a subagent review them for redundancy (see *Review Before Posting*) and apply its cuts.
-5. Create the PR with `gh pr create --base master --title <title> --body <body>`.
+2. Run the ponytail review on the diff and apply its cuts (see *Ponytail Review*). Repeat until it answers `Lean already. Ship.`
+3. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
+4. Push the branch: `git push -u origin <branch>`.
+5. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
+6. Create the PR with `gh pr create --base master --title <title> --body <body>`.
    - If a PR already exists for the branch, push the new commits and update the existing PR with `gh pr edit` instead of creating a duplicate.
-6. Report the PR URL.
+7. Report the PR URL.
+
+## Plugins
+
+Two steps run skills from third-party plugins rather than rules written here:
+
+| Plugin | Skill |
+| --- | --- |
+| [ponytail](https://github.com/DietrichGebert/ponytail) | `ponytail-review` |
+| [i-have-adhd](https://github.com/ayghri/i-have-adhd) | `i-have-adhd` |
+
+`.claude/settings.json` declares both, so Claude Code offers to install them when the repository is opened. It also sets `PONYTAIL_DEFAULT_MODE=off`, which keeps ponytail's always-on mode out of sessions here; only its skills load. If a skill is missing, stop and ask the user to install the plugin; do not improvise the review.
+
+## Ponytail Review
+
+Invoke the `ponytail-review` skill on `git diff origin/master...HEAD`. It lists cuts and does not apply them. Run it every time a PR is requested, including via the desktop "Create PR" command and when the user has waived QA.
+
+Apply every cut except those that remove something the user asked for by name (an API, an option, a test). A finding that exposes a bug, such as duplicated logic that has diverged, is fixed in its own `fix` commit rather than folded into the cut.
 
 ## Title
 
@@ -55,14 +73,24 @@ Write the whole body in Japanese.
 
 ## Review Before Posting
 
-Never post the first draft. Pass the drafted title and body to a subagent and ask it to cut anything that costs the reader attention without informing the review:
+Never post the first draft. Pass the drafted title and body to a subagent with the two checks below. Ask for the revised text plus a one-line reason per edit, then apply the edits you agree with. The review may cut, reorder, and renumber; it must not add facts. Verify the result still satisfies the line limits.
+
+### Redundancy
+
+Cut anything that costs the reader attention without informing the review:
 
 - Sentences that restate the diff, the section heading, or a point already made elsewhere in the body
 - Background the reviewer of this repository already knows
 - Hedging and filler that carries no information
 - Claims of effect or benefit that follow automatically from the change (see *Do Not Write*)
 
-Whole sections are in scope: the review may propose deleting one, not just shortening it. Ask for the shortened text plus a one-line reason per cut, then apply the cuts you agree with. Do not let the review add new content — it only removes. Verify the result still satisfies the line limits.
+Whole sections are in scope: the review may propose deleting one, not just shortening it.
+
+### i-have-adhd
+
+`i-have-adhd` sets `disable-model-invocation: true`, so the Skill tool cannot load it. Have the subagent read the skill file from the installed plugin instead: take `installPath` of `i-have-adhd@i-have-adhd` from `~/.claude/plugins/installed_plugins.json` and open `skills/i-have-adhd/SKILL.md` under it.
+
+Apply its rules to the body as if it were a single response to the reviewer. Rules about turn-to-turn state, time estimates, and closers have no PR equivalent; skip them.
 
 ## Mermaid Diagrams
 
