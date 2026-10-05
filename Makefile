@@ -48,7 +48,7 @@ live-ingest-transcode: live-ingest
 live-ingest-stats: LIVE_INGEST_STATS := 1
 live-ingest-stats: live-ingest
 
-# GStreamer plugin (bindings/gstreamer): `moqtsink` publishes H.264/AAC into MoQT.
+# GStreamer plugin (crates/gst-plugin-moqt): `moqtsink` publishes H.264/AAC into MoQT.
 gst-plugin:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p gst-plugin-moqt
 

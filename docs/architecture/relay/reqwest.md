@@ -34,6 +34,6 @@ outbound HTTP call.
 ## Decision
 
 Use `reqwest`. It is already in the workspace lock at 0.13.4 (a direct
-dependency of `bridges/onvif` and a transitive one of `opentelemetry-otlp`
+dependency of `crates/moqt-bridge-onvif` and a transitive one of `opentelemetry-otlp`
 inside `relay`), so no new crate enters the dependency tree. The `rustls`
 feature matches the TLS stack the relay already links for QUIC.

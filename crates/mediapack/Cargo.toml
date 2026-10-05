@@ -10,7 +10,7 @@ serde = ["dep:serde", "bytes/serde"]
 [dependencies]
 anyhow = "1"
 bytes = "1"
-moqt = { path = "../../moqt", optional = true }
+moqt = { path = "../moqt", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]

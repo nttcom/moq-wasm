@@ -7,7 +7,7 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 The `moqt` crate is the core implementation of Media over QUIC Transport
 (draft-ietf-moq-transport-14). Every other crate in the workspace depends on it:
-`relay` builds a server on top of it, `bindings/wasm` reuses its message codecs,
+`relay` builds a server on top of it, `crates/moqt-client-wasm` reuses its message codecs,
 and the bridges/examples use its client API.
 
 ## Layering
@@ -28,7 +28,7 @@ modules/transport         ← transport abstraction + quinn/web-transport-quinn 
 
 - `lib.rs` re-exports the session-level API. Everything except the message
   codecs is `#[cfg(not(target_arch = "wasm32"))]`; on wasm32 only
-  `control_plane` and `data_plane` compile, which is what `bindings/wasm`
+  `control_plane` and `data_plane` compile, which is what `crates/moqt-client-wasm`
   consumes.
 - `wire.rs` re-exports raw control-message structs, framing helpers
   (`encode_control_message` / `take_control_message`), and data-plane object

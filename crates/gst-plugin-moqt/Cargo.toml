@@ -14,8 +14,8 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "1"
 bytes = "1"
 gstreamer = "0.25"
-media-publisher = { path = "../../shared/media-publisher" }
-mediapack = { path = "../../shared/mediapack" }
+media-publisher = { path = "../media-publisher" }
+mediapack = { path = "../mediapack" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

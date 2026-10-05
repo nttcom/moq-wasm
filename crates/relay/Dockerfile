@@ -23,14 +23,14 @@ RUN case "$RELAY_BUILD_PROFILE" in \
       debug) cargo build -p relay ;; \
       release) cargo build --release -p relay ;; \
       *) echo "unsupported RELAY_BUILD_PROFILE: $RELAY_BUILD_PROFILE" >&2; exit 1 ;; \
-    esac && mkdir -p /workspace/relay/keys
+    esac && mkdir -p /workspace/crates/relay/keys
 
 FROM gcr.io/distroless/cc-debian12:nonroot@sha256:b0ae8e989418b458e0f25489bc3be523718938a2b70864cc0f6a00af1ddbd985
 ARG RELAY_BUILD_PROFILE=debug
 
 WORKDIR /app
 COPY --from=builder /workspace/target/${RELAY_BUILD_PROFILE}/relay /usr/local/bin/relay
-COPY --from=builder --chown=nonroot:nonroot /workspace/relay/keys /workspace/relay/keys
+COPY --from=builder --chown=nonroot:nonroot /workspace/crates/relay/keys /workspace/crates/relay/keys
 
 EXPOSE 443/udp 444/udp
 USER nonroot:nonroot

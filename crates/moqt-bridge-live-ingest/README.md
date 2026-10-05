@@ -1,7 +1,7 @@
 # moqt-bridge-live-ingest
 
 Publishes RTMP or SRT input into a MoQT relay as the tracks described in
-[`shared/media-publisher`](../../shared/media-publisher/README.md).
+[`crates/media-publisher`](../media-publisher/README.md).
 
 ## Run
 
@@ -20,7 +20,7 @@ Tokenless publishers may only use `anon/**`.
 | Option | Effect |
 | --- | --- |
 | `LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest` | Publish to another relay (default: the local one) |
-| `make live-ingest-transcode` | Add `video_720p` / `video_480p` / `video_360p` renditions. Needs GStreamer, see [`shared/transcode`](../../shared/transcode/README.md) |
+| `make live-ingest-transcode` | Add `video_720p` / `video_480p` / `video_360p` renditions. Needs GStreamer, see [`crates/transcode`](../transcode/README.md) |
 | `make live-ingest-stats` | Redraw the QUIC statistics of every relay connection on stdout once a second |
 
 ## Send a test stream

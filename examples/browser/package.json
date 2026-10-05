@@ -4,8 +4,8 @@
   "description": "moq-wasm client",
   "main": "index.js",
   "scripts": {
-    "wasm": "wasm-pack build ../../bindings/wasm --target web --out-dir=../../examples/browser/pkg",
-    "wasm:dev": "wasm-pack build --dev ../../bindings/wasm --target web --out-dir=../../examples/browser/pkg",
+    "wasm": "wasm-pack build ../../crates/moqt-client-wasm --target web --out-dir=../../examples/browser/pkg",
+    "wasm:dev": "wasm-pack build --dev ../../crates/moqt-client-wasm --target web --out-dir=../../examples/browser/pkg",
     "dev": "npm run wasm:dev && vite",
     "build": "npm run wasm && vite build",
     "prod": "npm run wasm && vite --host",

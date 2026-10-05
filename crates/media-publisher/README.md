@@ -1,7 +1,7 @@
 # media-publisher
 
 Publishes an MSF catalog and H.264/AAC tracks into a MoQT relay. It is the
-publishing side shared by `bridges/live-ingest` and `bindings/gstreamer`
+publishing side shared by `crates/moqt-bridge-live-ingest` and `crates/gst-plugin-moqt`
 (`moqtsink`); the Live Viewer's in-browser MP4 publisher follows the same
 conventions. Every publisher built on it produces the tracks below, so one
 player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
@@ -17,7 +17,7 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 | `timeline` | MSF media timeline | `[presentation time, [group, object], encode wallclock]` per keyframe |
 
 `video_720p` / `video_480p` / `video_360p` appear when the publisher transcodes
-(`shared/transcode`); each is one `altGroup` entry with `width` / `height`.
+(`crates/transcode`); each is one `altGroup` entry with `width` / `height`.
 
 ## Behaviour
 

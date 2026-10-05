@@ -18,7 +18,7 @@ export function ensureLinuxEnvironment(): void {
 }
 
 export function computeCertificateSpkiBase64(): string {
-  const certPath = resolve(__dirname, '..', '..', 'relay', 'keys', 'cert.pem')
+  const certPath = resolve(__dirname, '..', '..', 'crates', 'relay', 'keys', 'cert.pem')
   const certificatePem = readFileSync(certPath, 'utf8')
   const certificate = new X509Certificate(certificatePem)
   const spkiDer = certificate.publicKey.export({ type: 'spki', format: 'der' })

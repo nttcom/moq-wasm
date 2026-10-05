@@ -12,7 +12,7 @@ make relay
 
 Starts a local VTS, mints the relay's own token and runs `cargo run -p relay`
 on `https://127.0.0.1:4433`. A self-signed certificate is generated under
-`relay/keys/` on the first run. For two relays, use `docker compose up -d`
+`crates/relay/keys/` on the first run. For two relays, use `docker compose up -d`
 (ports 4433 and 4434).
 
 ## Configuration

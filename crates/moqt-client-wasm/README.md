@@ -11,6 +11,6 @@ npm --prefix examples/browser run wasm       # wasm-pack build --target web
 you want the package without the dev server.
 
 Exports `MOQTClient` (sessions, PUBLISH/SUBSCRIBE/FETCH and the incoming
-FETCH handler), the MSF catalog types from `shared/media-streaming-format`,
-LOC helpers from `shared/mediapack` and the progressive MP4 index the Live
+FETCH handler), the MSF catalog types from `crates/media-streaming-format`,
+LOC helpers from `crates/mediapack` and the progressive MP4 index the Live
 Viewer's MP4 publisher uses.
