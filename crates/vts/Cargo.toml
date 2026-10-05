@@ -6,6 +6,7 @@ description = "Verify Token Service: verifies MoQT client JWTs on behalf of the 
 
 [dependencies]
 anyhow = "1.0.102"
+auth-token = { path = "../auth-token" }
 base64 = "0.22.1"
 clap = { version = "4.6.1", features = ["derive"] }
 http-body-util = "0.1.4"
