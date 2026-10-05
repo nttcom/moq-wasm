@@ -1,17 +1,16 @@
 import { MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { MediaPublisher, type SubscribedCatalogTrack } from './mediaPublisher'
-import { MediaSubscriber } from './mediaSubscriber'
-import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer'
+import { MediaSubscriber, type MediaSubscriberHandlers, type RemotePlaybackStats } from './mediaSubscriber'
+import type { PlayoutSettings } from '../types/playout'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import type { SubscribeMessage } from '../../../../pkg/moqt'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, CatalogTrackRole, TrackMediaConfig } from '../types/catalog'
-import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
-export interface MediaHandlers {
+export interface MediaHandlers extends MediaSubscriberHandlers {
   onLocalVideoStream?: (stream: MediaStream | null, source: 'camera' | 'screenshare') => void
   onLocalAudioStream?: (stream: MediaStream | null) => void
   onLocalVideoBitrate?: (mbps: number) => void
@@ -31,72 +30,6 @@ export interface MediaHandlers {
       aliasCount: number
       keyframe: boolean
     } | null,
-    source: 'camera' | 'screenshare'
-  ) => void
-  onRemoteVideoStream?: (userId: string, stream: MediaStream, source: 'camera' | 'screenshare') => void
-  onRemoteAudioStream?: (userId: string, stream: MediaStream) => void
-  onRemoteAudioStreamClosed?: (userId: string) => void
-  onRemoteVideoBitrate?: (userId: string, mbps: number, source: 'camera' | 'screenshare') => void
-  onRemoteVideoKeyframeInterval?: (userId: string, frames: number, source: 'camera' | 'screenshare') => void
-  onRemoteAudioBitrate?: (userId: string, mbps: number) => void
-  onRemoteVideoReceiveLatency?: (userId: string, ms: number, source: 'camera' | 'screenshare') => void
-  onRemoteVideoRenderingLatency?: (userId: string, ms: number, source: 'camera' | 'screenshare') => void
-  onRemoteVideoTiming?: (
-    userId: string,
-    timing: {
-      receiveToDecodeMs: number | null
-      receiveToRenderMs: number | null
-    },
-    source: 'camera' | 'screenshare'
-  ) => void
-  onRemoteVideoDecodingObject?: (
-    userId: string,
-    decoding: {
-      phase: 'submit' | 'output' | 'error'
-      groupId: string
-      objectId: string
-      chunkType: string
-      codec?: string
-    },
-    source: 'camera' | 'screenshare'
-  ) => void
-  onRemoteVideoPacing?: (
-    userId: string,
-    pacing: {
-      intervalMs: number
-      effectiveIntervalMs: number
-      bufferedFrames: number
-      decodeQueueSize: number
-      targetFrames: number
-      lastReason?: string
-      action?: string
-      detailMs?: number
-    },
-    source: 'camera' | 'screenshare'
-  ) => void
-  onRemoteAudioReceiveLatency?: (userId: string, ms: number) => void
-  onRemoteAudioRenderingLatency?: (userId: string, ms: number) => void
-  onRemoteAudioPlaybackQueue?: (userId: string, queuedMs: number) => void
-  onRemoteVideoJitterBufferActivity?: (
-    userId: string,
-    activity: { event: JitterBufferEvent; bufferedFrames: number; capacityFrames: number },
-    source: 'camera' | 'screenshare'
-  ) => void
-  onRemoteAudioJitterBufferActivity?: (
-    userId: string,
-    activity: { event: JitterBufferEvent; bufferedFrames: number; capacityFrames: number }
-  ) => void
-  onRemoteVideoConfig?: (
-    userId: string,
-    config: {
-      codec: string
-      width?: number
-      height?: number
-      descriptionLength?: number
-      avcFormat?: 'annexb' | 'avc'
-      hardwareAcceleration?: HardwareAcceleration
-      optimizeForLatency?: boolean
-    },
     source: 'camera' | 'screenshare'
   ) => void
   onVideoEncodeError?: (message: string) => void
@@ -130,29 +63,8 @@ export class MeetingMediaController {
     })
 
     this.subscriber.setHandlers({
-      onRemoteVideoStream: (userId, stream, source) => this.handlers.onRemoteVideoStream?.(userId, stream, source),
-      onRemoteAudioStream: (userId, stream) => this.handlers.onRemoteAudioStream?.(userId, stream),
-      onRemoteAudioStreamClosed: (userId) => this.handlers.onRemoteAudioStreamClosed?.(userId),
-      onRemoteVideoBitrate: (userId, mbps, source) => this.handlers.onRemoteVideoBitrate?.(userId, mbps, source),
-      onRemoteVideoKeyframeInterval: (userId, frames, source) =>
-        this.handlers.onRemoteVideoKeyframeInterval?.(userId, frames, source),
-      onRemoteAudioBitrate: (userId, mbps) => this.handlers.onRemoteAudioBitrate?.(userId, mbps),
-      onRemoteVideoReceiveLatency: (userId, ms, source) =>
-        this.handlers.onRemoteVideoReceiveLatency?.(userId, ms, source),
-      onRemoteVideoRenderingLatency: (userId, ms, source) =>
-        this.handlers.onRemoteVideoRenderingLatency?.(userId, ms, source),
-      onRemoteVideoTiming: (userId, timing, source) => this.handlers.onRemoteVideoTiming?.(userId, timing, source),
-      onRemoteVideoDecodingObject: (userId, decoding, source) =>
-        this.handlers.onRemoteVideoDecodingObject?.(userId, decoding, source),
-      onRemoteVideoPacing: (userId, pacing, source) => this.handlers.onRemoteVideoPacing?.(userId, pacing, source),
-      onRemoteAudioReceiveLatency: (userId, ms) => this.handlers.onRemoteAudioReceiveLatency?.(userId, ms),
-      onRemoteAudioRenderingLatency: (userId, ms) => this.handlers.onRemoteAudioRenderingLatency?.(userId, ms),
-      onRemoteAudioPlaybackQueue: (userId, queuedMs) => this.handlers.onRemoteAudioPlaybackQueue?.(userId, queuedMs),
-      onRemoteVideoJitterBufferActivity: (userId, activity, source) =>
-        this.handlers.onRemoteVideoJitterBufferActivity?.(userId, activity, source),
-      onRemoteAudioJitterBufferActivity: (userId, activity) =>
-        this.handlers.onRemoteAudioJitterBufferActivity?.(userId, activity),
-      onRemoteVideoConfig: (userId, config, source) => this.handlers.onRemoteVideoConfig?.(userId, config, source)
+      onRemotePicture: (userId, source, picture) => this.handlers.onRemotePicture?.(userId, source, picture),
+      onRemotePictureClosed: (userId, source) => this.handlers.onRemotePictureClosed?.(userId, source)
     })
 
     client.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
@@ -261,21 +173,12 @@ export class MeetingMediaController {
     if (resolvedRole === 'video' || resolvedRole === 'screenshare') {
       this.subscriber.registerVideoTrack(userId, trackName, trackAlias, config)
     } else if (resolvedRole === 'audio') {
-      this.subscriber.registerAudioTrack(userId, trackAlias, config)
+      this.subscriber.registerAudioTrack(userId, trackName, trackAlias, config)
     }
   }
 
-  unregisterRemoteTrack(trackAlias: bigint, role?: CatalogSubscribeRole): void {
-    if (role === 'video' || role === 'screenshare') {
-      this.subscriber.unregisterVideoTrack(trackAlias)
-      return
-    }
-    if (role === 'audio') {
-      this.subscriber.unregisterAudioTrack(trackAlias)
-      return
-    }
-    this.subscriber.unregisterVideoTrack(trackAlias)
-    this.subscriber.unregisterAudioTrack(trackAlias)
+  unregisterRemoteTrack(trackAlias: bigint): void {
+    this.subscriber.unregisterTrack(trackAlias)
   }
 
   async dispose(): Promise<void> {
@@ -300,12 +203,12 @@ export class MeetingMediaController {
     return this.publisher.resolveTrackRole(trackName)
   }
 
-  setVideoJitterBufferConfig(userId: string, config: VideoJitterConfig): void {
-    this.subscriber.setVideoJitterBufferConfig(userId, config)
+  setPlayoutSettings(userId: string, settings: PlayoutSettings): void {
+    this.subscriber.setPlayoutSettings(userId, settings)
   }
 
-  setAudioJitterBufferConfig(userId: string, config: AudioJitterConfig): void {
-    this.subscriber.setAudioJitterBufferConfig(userId, config)
+  getRemotePlaybackStats(userId: string): RemotePlaybackStats {
+    return this.subscriber.stats(userId)
   }
 
   async setVideoEncodingSettings(settings: VideoEncodingSettings, deviceId?: string, restartIfActive: boolean = false) {

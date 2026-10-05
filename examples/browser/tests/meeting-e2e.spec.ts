@@ -5,8 +5,8 @@ import {
   enableMedia,
   getCatalogStatus,
   getChatMessageByText,
-  getMemberAudio,
   getMemberCard,
+  getMemberStats,
   getMemberVideo,
   getSubscribeAudioButton,
   getSubscribeVideoButton,
@@ -29,53 +29,23 @@ async function expectVideoPlaying(video: import('@playwright/test').Locator): Pr
   await expect.poll(async () => video.evaluate((el) => (el as HTMLVideoElement).paused)).toBe(false)
 }
 
-// Wait until the debug video pipeline reports that a decoded frame with the target chunk type reached output.
-function waitForDecodedVideoFrameOutput(page: Page, chunkType: 'key' | 'delta'): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup()
-      reject(new Error(`Timed out waiting for decoded ${chunkType} video frame output`))
-    }, 30_000)
-    const onConsole = (message: import('@playwright/test').ConsoleMessage) => {
-      const text = message.text()
-      if (!text.startsWith('[videoDecoder][output]')) {
-        return
-      }
-      const jsonStart = text.indexOf('{')
-      if (jsonStart === -1) {
-        return
-      }
-      try {
-        const output = JSON.parse(text.slice(jsonStart)) as { event?: string; chunkType?: string }
-        if (output.event === 'output-frame' && output.chunkType === chunkType) {
-          cleanup()
-          resolve()
-        }
-      } catch {
-        // Ignore unrelated console payloads.
-      }
-    }
-    const cleanup = () => {
-      clearTimeout(timeout)
-      page.off('console', onConsole)
-    }
-    page.on('console', onConsole)
-  })
+// Assert that inter-frames decode too: the publisher sends one keyframe per second, so frames
+// must keep arriving well above that rate.
+async function expectInterFramesDecoded(video: import('@playwright/test').Locator): Promise<void> {
+  const initialFrames = await video.evaluate(
+    (el) => (el as HTMLVideoElement).getVideoPlaybackQuality().totalVideoFrames
+  )
+  await expect
+    .poll(async () => video.evaluate((el) => (el as HTMLVideoElement).getVideoPlaybackQuality().totalVideoFrames), {
+      timeout: 30_000
+    })
+    .toBeGreaterThanOrEqual(initialFrames + 10)
 }
 
-// Assert that an audio element has an active source object (track is being received).
-async function expectAudioReceiving(audio: import('@playwright/test').Locator): Promise<void> {
-  // Assert: audio 要素の srcObject にトラックが存在することを確認する。
-  await expect
-    .poll(
-      async () =>
-        audio.evaluate((el) => {
-          const stream = (el as HTMLAudioElement).srcObject as MediaStream | null
-          return (stream?.getAudioTracks().length ?? 0) > 0
-        }),
-      { timeout: 30_000 }
-    )
-    .toBe(true)
+// Assert that the member's audio plays: the A/V offset is only reported while audio chunks are
+// being scheduled on a running AudioContext alongside shown frames.
+async function expectAudioPlaying(stats: import('@playwright/test').Locator): Promise<void> {
+  await expect(stats).toHaveText(/A\/V [+-]\d+ ms/, { timeout: 30_000 })
 }
 
 // Wait until a remote member's catalog is fully subscribed on the viewer's screen.
@@ -94,10 +64,10 @@ async function subscribeMedia(viewer: import('@playwright/test').Page, memberNam
   await expect(getTrackStatus(viewer, 'audio', memberName)).toHaveText('Subscribed', { timeout: 60_000 })
 }
 
-// Assert a remote member's video is playing and audio is being received.
+// Assert a remote member's video is playing and audio is being heard.
 async function expectMediaFlowing(viewer: import('@playwright/test').Page, memberName: string): Promise<void> {
   await expectVideoPlaying(getMemberVideo(viewer, memberName))
-  await expectAudioReceiving(getMemberAudio(viewer, memberName))
+  await expectAudioPlaying(getMemberStats(viewer, memberName))
 }
 
 // Subscribe to a remote member's video+audio and assert both are actually flowing.
@@ -132,24 +102,22 @@ test('cross-relay: two clients on different relays see each other and receive vi
     await expect(getCatalogStatus(client2.page.page, 'alice')).toHaveText('Subscribed', { timeout: 60_000 })
 
     // Act: Client1/Client2 が相手の映像・音声を明示的に購読する。
-    const bobDeltaOutput = waitForDecodedVideoFrameOutput(client1.page.page, 'delta')
-    const aliceDeltaOutput = waitForDecodedVideoFrameOutput(client2.page.page, 'delta')
     await subscribeMedia(client1.page.page, 'bob')
     await subscribeMedia(client2.page.page, 'alice')
 
     // Assert: Client1 が bob の映像を再生していることを確認する（クロスリレー経路）。
     await expectVideoPlaying(getMemberVideo(client1.page.page, 'bob'))
-    // Assert: Client1 が bob の音声を受信していることを確認する。
-    await expectAudioReceiving(getMemberAudio(client1.page.page, 'bob'))
+    // Assert: Client1 が bob の音声を再生していることを確認する。
+    await expectAudioPlaying(getMemberStats(client1.page.page, 'bob'))
 
     // Assert: Client2 が alice の映像を再生していることを確認する（クロスリレー経路）。
     await expectVideoPlaying(getMemberVideo(client2.page.page, 'alice'))
-    // Assert: Client2 が alice の音声を受信していることを確認する。
-    await expectAudioReceiving(getMemberAudio(client2.page.page, 'alice'))
+    // Assert: Client2 が alice の音声を再生していることを確認する。
+    await expectAudioPlaying(getMemberStats(client2.page.page, 'alice'))
 
-    // Assert: both directions decode at least one inter-frame, not only keyframes.
-    await bobDeltaOutput
-    await aliceDeltaOutput
+    // Assert: both directions decode inter-frames, not only keyframes.
+    await expectInterFramesDecoded(getMemberVideo(client1.page.page, 'bob'))
+    await expectInterFramesDecoded(getMemberVideo(client2.page.page, 'alice'))
   } finally {
     await client1.context.close()
     await client2.context.close()

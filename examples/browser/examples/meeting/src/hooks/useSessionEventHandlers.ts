@@ -121,7 +121,7 @@ function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
     if (track.subscribeId === undefined) {
       continue
     }
-    void session.unsubscribe(track.subscribeId, role).catch((error) => {
+    void session.unsubscribe(track.subscribeId).catch((error) => {
       console.warn(`[meeting] failed to unsubscribe departed member ${member.id} (${role})`, error)
     })
   }

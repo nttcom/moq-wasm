@@ -1,13 +1,13 @@
 import { cn } from '../utils/cn'
 import { CameraId, MonitorMode, ConnState } from '../types/monitoring'
+import { PlayerHost } from './PlayerHost'
 
 interface Props {
   cameraId: CameraId
+  host: HTMLElement
   mode: MonitorMode
   connState: ConnState
-  currentGroupId: bigint | null
-  latestGroupId: bigint | null
-  onCanvasReady?: (canvas: HTMLCanvasElement | null) => void
+  behindSeconds: number | null
   onSubscribe?: () => void
   isSubscribed?: boolean
   isSubscribing?: boolean
@@ -16,11 +16,10 @@ interface Props {
 
 export function StageCamera({
   cameraId,
+  host,
   mode,
   connState,
-  currentGroupId,
-  latestGroupId,
-  onCanvasReady,
+  behindSeconds,
   onSubscribe,
   isSubscribed,
   isSubscribing,
@@ -29,10 +28,9 @@ export function StageCamera({
   const isReview = mode === 'review'
   const isUnhealthy = connState !== 'connected'
 
-  const delaySeconds = currentGroupId != null && latestGroupId != null ? Number(latestGroupId - currentGroupId) : null
   const timestamp =
-    isReview && delaySeconds != null
-      ? `−${String(Math.floor(delaySeconds / 60)).padStart(2, '0')}:${String(delaySeconds % 60).padStart(2, '0')}`
+    isReview && behindSeconds != null
+      ? `−${String(Math.floor(behindSeconds / 60)).padStart(2, '0')}:${String(Math.round(behindSeconds) % 60).padStart(2, '0')}`
       : 'NOW'
 
   return (
@@ -51,7 +49,7 @@ export function StageCamera({
           backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 9px, transparent 9px 18px)'
         }}
       >
-        <canvas ref={onCanvasReady} className="absolute inset-0 w-full h-full object-cover" />
+        <PlayerHost host={host} />
         {!isSubscribed && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <span className="font-mono text-sm text-zinc-500">

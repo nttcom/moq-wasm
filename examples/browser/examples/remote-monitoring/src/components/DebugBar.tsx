@@ -5,8 +5,8 @@ interface Props {
   connState: ConnState
   relayUrl: string
   subscribedCameras: CameraId[]
-  fetchingCamera: CameraId | null
-  fetchWindow: { startGroup: bigint; endGroup: bigint } | null
+  reviewingCamera: CameraId | null
+  reviewStatus: string | null
 }
 
 const connLabel: Record<ConnState, string> = {
@@ -24,7 +24,7 @@ const connTextClass: Record<ConnState, string> = {
   closed: 'text-red-400'
 }
 
-export function DebugBar({ connState, relayUrl, subscribedCameras, fetchingCamera, fetchWindow }: Props) {
+export function DebugBar({ connState, relayUrl, subscribedCameras, reviewingCamera, reviewStatus }: Props) {
   const isUnhealthy = connState !== 'connected'
 
   return (
@@ -58,17 +58,17 @@ export function DebugBar({ connState, relayUrl, subscribedCameras, fetchingCamer
         )}
       </div>
 
-      {/* fetch row */}
+      {/* review row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-amber-400 w-24 shrink-0">FETCH</span>
-        {fetchingCamera && fetchWindow ? (
+        <span className="text-amber-400 w-24 shrink-0">REVIEW</span>
+        {reviewingCamera && reviewStatus ? (
           <span
             className={cn(
               'rounded-full border px-2 py-0.5 text-xs',
               isUnhealthy ? 'border-zinc-700 text-zinc-600 line-through opacity-50' : 'border-amber-800 text-amber-400'
             )}
           >
-            {fetchingCamera} [ group {fetchWindow.startGroup.toString()} → {fetchWindow.endGroup.toString()} ]
+            {reviewingCamera} [ {reviewStatus} ]
           </span>
         ) : (
           <span className="text-zinc-600">—</span>

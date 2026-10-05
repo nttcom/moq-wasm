@@ -17,6 +17,22 @@ export type LocLiveCallbacks = {
   onFrameShown(ids: DecodedFrameIds | undefined, captureMicros: number): void
 }
 
+export type LiveStats = {
+  frameSize: { width: number; height: number } | undefined
+  viewerDelayMs: number | undefined
+  bufferMs: number | undefined
+  targetBufferMs: number
+  fixedBuffer: boolean
+  outputLatencyMs: number
+  arrivalSpreadMs: number | undefined
+  receivedKbps: number
+  receivedAudioKbps: number
+  syncOffsetMs: number | undefined
+  audioBreaks: number
+  videoDrops: string
+  shedMs: number
+}
+
 export class LocLive {
   readonly playout: LivePlayout
   readonly picture: LivePictureSink
@@ -28,9 +44,11 @@ export class LocLive {
   })
   private readonly decodedFrameIds = new Map<number, DecodedFrameIds>()
   receivedKbps = 0
+  receivedAudioKbps = 0
   /// Live LOC frames carry their capture timestamp, so the moment one is shown
   /// says how far the viewer runs behind the publisher on the same wall clock.
   viewerDelayMs: number | undefined
+  shownCaptureMicros: number | undefined
   frameSize: { width: number; height: number } | undefined
 
   constructor(
@@ -62,6 +80,10 @@ export class LocLive {
       }
     }
     this.audioWorker.onmessage = (event) => {
+      if (event.data.type === 'bitrate') {
+        this.receivedAudioKbps = event.data.kbps ?? this.receivedAudioKbps
+        return
+      }
       if (event.data.type === 'audioData') {
         this.playout.playAudio(
           event.data.audioData as AudioData,
@@ -94,13 +116,40 @@ export class LocLive {
 
   reset(): void {
     this.viewerDelayMs = undefined
+    this.shownCaptureMicros = undefined
     this.picture.detach()
     this.decodedFrameIds.clear()
     this.playout.reset()
   }
 
+  dispose(): void {
+    this.reset()
+    this.videoWorker.terminate()
+    this.audioWorker.terminate()
+    this.playout.close()
+  }
+
+  stats(): LiveStats {
+    return {
+      frameSize: this.frameSize,
+      viewerDelayMs: this.viewerDelayMs,
+      bufferMs: this.playout.bufferMs(),
+      targetBufferMs: this.playout.targetBufferMs(),
+      fixedBuffer: this.playout.fixedBuffer(),
+      outputLatencyMs: this.playout.outputLatencyMs(),
+      arrivalSpreadMs: this.playout.arrivalSpreadMs(),
+      receivedKbps: this.receivedKbps,
+      receivedAudioKbps: this.receivedAudioKbps,
+      syncOffsetMs: this.playout.syncOffsetMs(),
+      audioBreaks: this.playout.audioBreaks(),
+      videoDrops: this.playout.videoDrops(),
+      shedMs: this.playout.shedMs()
+    }
+  }
+
   private show(frame: VideoFrame): void {
     this.viewerDelayMs = frame.timestamp ? (monotonicUnixMicros() - frame.timestamp) / 1_000 : undefined
+    this.shownCaptureMicros = frame.timestamp || undefined
     this.frameSize = { width: frame.displayWidth, height: frame.displayHeight }
     const ids = this.decodedFrameIds.get(frame.timestamp)
     this.decodedFrameIds.delete(frame.timestamp)
@@ -127,4 +176,26 @@ export class LocLive {
     })
     this.audioWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
   }
+}
+
+export function formatSyncOffset(offsetMs: number | undefined): string {
+  if (offsetMs === undefined) {
+    return '--'
+  }
+  const rounded = Math.round(offsetMs)
+  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
+}
+
+export function formatLiveStats(stats: LiveStats): string {
+  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : 'no video yet'
+  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
+  const buffer =
+    stats.bufferMs === undefined
+      ? ''
+      : ` · buffer ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
+  return (
+    `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
+    ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}` +
+    ` · shed ${Math.round(stats.shedMs)} ms`
+  )
 }

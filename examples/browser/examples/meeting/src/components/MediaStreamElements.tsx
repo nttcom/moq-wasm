@@ -90,7 +90,6 @@ function logVideoElementEvent(
       testId,
       hasStream: Boolean(stream),
       videoTrackCount: videoTracks.length,
-      videoTrackIds: videoTracks.map((track) => track.id),
       readyState: element.readyState,
       networkState: element.networkState,
       paused: element.paused,
@@ -100,31 +99,62 @@ function logVideoElementEvent(
   )
 }
 
-interface MediaStreamAudioProps {
-  stream?: MediaStream | null
-  className?: string
-  testId?: string
+interface PictureFrameProps {
+  picture?: HTMLElement | null
+  placeholder: string
+  footer?: ReactNode
 }
 
-export function MediaStreamAudio({ stream, className, testId }: MediaStreamAudioProps) {
-  const ref = useRef<HTMLAudioElement | null>(null)
+/// Shows a picture element the live pipeline owns (a `<video>` fed by a
+/// MediaStreamTrackGenerator, or a `<canvas>` where the generator is missing).
+export function PictureFrame({ picture, placeholder, footer }: PictureFrameProps) {
+  const frameRef = useRef<HTMLDivElement | null>(null)
+  const [hasFirstFrame, setHasFirstFrame] = useState(false)
 
   useEffect(() => {
-    const element = ref.current
-    if (!element) {
+    const frame = frameRef.current
+    if (!frame || !picture) {
+      setHasFirstFrame(false)
       return
     }
-    element.pause()
-    element.srcObject = null
-    if (stream) {
-      element.srcObject = stream
-      void element.play().catch(() => {})
+    picture.classList.add('h-full', 'object-contain')
+    frame.appendChild(picture)
+    if (!(picture instanceof HTMLVideoElement)) {
+      setHasFirstFrame(true)
+      return () => {
+        picture.remove()
+      }
     }
+    const video = picture
+    setHasFirstFrame(video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+    const handleLoadedData = () => setHasFirstFrame(true)
+    const handleEmptied = () => setHasFirstFrame(false)
+    video.addEventListener('loadeddata', handleLoadedData)
+    video.addEventListener('emptied', handleEmptied)
     return () => {
-      element.pause()
-      element.srcObject = null
+      video.removeEventListener('loadeddata', handleLoadedData)
+      video.removeEventListener('emptied', handleEmptied)
+      video.remove()
     }
-  }, [stream])
+  }, [picture])
 
-  return <audio ref={ref} data-testid={testId} className={className} autoPlay controls={false} />
+  useEffect(() => {
+    if (picture instanceof HTMLVideoElement) {
+      picture.controls = hasFirstFrame
+    }
+  }, [picture, hasFirstFrame])
+
+  return (
+    <div className="w-full">
+      <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-black">
+        <div ref={frameRef} className="h-full w-full" />
+        {!hasFirstFrame && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-blue-200/70">
+            {placeholder}
+          </div>
+        )}
+      </div>
+      {footer}
+    </div>
+  )
 }

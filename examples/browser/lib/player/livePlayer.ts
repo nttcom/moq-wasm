@@ -18,7 +18,7 @@ import { CatalogFollower } from './catalogFollower'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
-import { LocLive } from './locLive'
+import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
@@ -46,9 +46,17 @@ export type LivePlayerOptions = {
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
+  /// Keeps the live subscriptions forwarding and the live picture playing
+  /// behind a review, so `goLive` shows the live picture at once instead of
+  /// waiting for the next group; it costs the live bandwidth and decoding
+  /// while reviewing.
+  keepLiveWhileReviewing?: boolean
 }
 
 export type PlayerStatus = { text: string; state: StatusState }
+
+/// The LOC tracks of a publisher that announces no catalog.
+export type LiveTracks = { video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }
 
 export type LivePlayerState = {
   started: boolean
@@ -75,25 +83,12 @@ export type LivePlayerState = {
   }
 }
 
-export type LivePlayerStats = {
-  frameSize: { width: number; height: number } | undefined
-  viewerDelayMs: number | undefined
-  bufferMs: number | undefined
-  targetBufferMs: number
-  fixedBuffer: boolean
-  outputLatencyMs: number
-  arrivalSpreadMs: number | undefined
-  receivedKbps: number
-  videoObjects: number
-  syncOffsetMs: number | undefined
-  audioBreaks: number
-  videoDrops: string
-  shedMs: number
-}
+export type LivePlayerStats = LiveStats & { videoObjects: number }
 
 export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
+  private readonly keepLiveWhileReviewing: boolean
   private readonly textTracks: TextTracks
   private readonly catalog: CatalogFollower
   private readonly subscriptions: TrackSubscriptions
@@ -122,6 +117,7 @@ export class LivePlayer {
 
   constructor(options: LivePlayerOptions) {
     this.callbacks = options.callbacks
+    this.keepLiveWhileReviewing = options.keepLiveWhileReviewing ?? false
     this.context = {
       client: options.client,
       namespace: [],
@@ -212,35 +208,26 @@ export class LivePlayer {
   }
 
   stats(): LivePlayerStats {
-    const playout = this.locLive.playout
-    return {
-      frameSize: this.locLive.frameSize,
-      viewerDelayMs: this.locLive.viewerDelayMs,
-      bufferMs: playout.bufferMs(),
-      targetBufferMs: playout.targetBufferMs(),
-      fixedBuffer: playout.fixedBuffer(),
-      outputLatencyMs: playout.outputLatencyMs(),
-      arrivalSpreadMs: playout.arrivalSpreadMs(),
-      receivedKbps: this.locLive.receivedKbps,
-      videoObjects: this.videoObjectCount,
-      syncOffsetMs: playout.syncOffsetMs(),
-      audioBreaks: playout.audioBreaks(),
-      videoDrops: playout.videoDrops(),
-      shedMs: playout.shedMs()
-    }
+    return { ...this.locLive.stats(), videoObjects: this.videoObjectCount }
   }
 
   elapsedMsAt(captureMicros: number): number | undefined {
     return this.timeline.media.elapsedMsAt(captureMicros)
   }
 
-  async start(namespace: string[], authInfo: string): Promise<void> {
+  /// Tracks given by the page replace the catalog: nothing is subscribed for
+  /// them but the tracks themselves, and they never change.
+  async start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void> {
     await this.queueTrackChange(async () => {
       this.context.namespace = namespace
       this.context.authInfo = authInfo
       this.started = true
       this.changed()
     })
+    if (tracks) {
+      await this.queueTrackChange(() => this.applyGivenTracks(tracks))
+      return
+    }
     await this.catalog.follow()
   }
 
@@ -315,17 +302,21 @@ export class LivePlayer {
     this.locLive.playout.setCatchUp(catchUp)
   }
 
+  /// Skips from the position on screen: the review playhead, the live frame
+  /// shown last, or the live edge before a frame has been shown.
   skip(seconds: number): void {
     const latest = this.timeline.groups.latest
     if (!latest) {
       return
     }
-    this.seek((this.review?.playheadMicros ?? latest.captureMicros) + seconds * MICROS_PER_SECOND)
+    const from = this.review?.playheadMicros ?? this.locLive.shownCaptureMicros ?? latest.captureMicros
+    this.seek(from + seconds * MICROS_PER_SECOND)
   }
 
   /// A position at or past the live edge goes live. Any other position is
   /// replayed from the closed keyframe group that holds it: the frames before it
   /// are decoded without pacing and only the ones from the position on are shown.
+  /// A paused player stays paused on the frame at the position.
   seek(captureMicros: number): void {
     const latest = this.timeline.groups.latest
     if (!latest) {
@@ -351,10 +342,12 @@ export class LivePlayer {
       captureMicros
     )
     this.review = session
-    this.subscriptions.pauseForward()
+    if (!this.keepLiveWhileReviewing) {
+      this.subscriptions.pauseForward()
+    }
     this.cmafReview.needsOpen = true
-    this.setPaused(false)
-    this.locReview.playout.start(session.anchorMicros)
+    this.locReview.playout.start(session.anchorMicros, this.paused)
+    this.setPaused(this.paused)
     this.applyVolume()
     this.playbackStatus = { text: 'Reviewing', state: 'review' }
     this.changed()
@@ -377,10 +370,10 @@ export class LivePlayer {
     this.changed()
   }
 
-  /// Pausing holds whatever is on screen; every other transition (seek, skip,
-  /// live, packaging or quality change) resumes. Resuming live CMAF jumps to the
-  /// end of what is buffered so the picture is live again; the LOC MediaStream
-  /// has no backlog to skip.
+  /// Pausing holds whatever is on screen; a seek or skip keeps the pause and
+  /// every other transition (live, packaging or quality change) resumes.
+  /// Resuming live CMAF jumps to the end of what is buffered so the picture is
+  /// live again; the LOC MediaStream has no backlog to skip.
   setPaused(paused: boolean): void {
     this.paused = paused
     if (paused) {
@@ -444,27 +437,45 @@ export class LivePlayer {
     }
     try {
       const catalog = parse_msf_catalog_json(payload)
-      const videoChanged = this.replaceTracks('video', extractCatalogVideoTracks(catalog).filter(isLocTrack))
-      const audioChanged = this.replaceTracks('audio', extractCatalogAudioTracks(catalog).filter(isLocTrack))
       this.cmafTracks = extractCatalogCmafTracks(catalog)
-      this.catalogStatus = {
-        text: `Catalog loaded: ${this.tracks.video.length} video / ${this.tracks.audio.length} audio`,
-        state: 'ok'
-      }
-      this.changed()
+      const changed = this.replaceAllTracks(
+        extractCatalogVideoTracks(catalog).filter(isLocTrack),
+        extractCatalogAudioTracks(catalog).filter(isLocTrack),
+        'Catalog loaded'
+      )
       await this.subscribeMediaTimeline(catalog)
-      if (videoChanged || audioChanged) {
-        await this.resubscribe('video')
-        await this.resubscribe('audio')
-        await this.openLiveMse()
-      } else {
-        this.reconfigureDecoders()
-      }
+      await this.subscribeReplacedTracks(changed)
     } catch (error) {
       this.catalogStatus = { text: `Catalog error: ${getErrorMessage(error)}`, state: 'error' }
       this.changed()
       this.context.log('error', `catalog: ${getErrorMessage(error)}`)
     }
+  }
+
+  private async applyGivenTracks(tracks: LiveTracks): Promise<void> {
+    if (!this.started) {
+      return
+    }
+    this.cmafTracks = []
+    await this.subscribeReplacedTracks(this.replaceAllTracks(tracks.video, tracks.audio ?? [], 'Tracks given'))
+  }
+
+  private replaceAllTracks(video: MediaCatalogTrack[], audio: MediaCatalogTrack[], source: string): boolean {
+    const videoChanged = this.replaceTracks('video', video)
+    const audioChanged = this.replaceTracks('audio', audio)
+    this.catalogStatus = { text: `${source}: ${video.length} video / ${audio.length} audio`, state: 'ok' }
+    this.changed()
+    return videoChanged || audioChanged
+  }
+
+  private async subscribeReplacedTracks(changed: boolean): Promise<void> {
+    if (!changed) {
+      this.reconfigureDecoders()
+      return
+    }
+    await this.resubscribe('video')
+    await this.resubscribe('audio')
+    await this.openLiveMse()
   }
 
   private replaceTracks(kind: MediaKind, tracks: MediaCatalogTrack[]): boolean {
@@ -804,10 +815,4 @@ function isLocTrack(track: MediaCatalogTrack): boolean {
   return track.packaging !== 'cmaf'
 }
 
-export function formatSyncOffset(offsetMs: number | undefined): string {
-  if (offsetMs === undefined) {
-    return '--'
-  }
-  const rounded = Math.round(offsetMs)
-  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
-}
+export { formatSyncOffset } from './locLive'
