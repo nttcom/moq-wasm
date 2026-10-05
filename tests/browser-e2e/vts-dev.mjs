@@ -12,7 +12,7 @@ import { waitForHttpOk } from "./helpers.mjs";
 export const vtsAppsFile = "crates/vts/apps.example.json";
 export const relayAppId = "11111111-2222-3333-4444-555555555555";
 export const experimentAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
-const vtsPort = 8081;
+const vtsPort = Number(process.env.VTS_PORT ?? 8081);
 const vtsBinary = resolve(repoRoot, "target/debug/vts");
 const mintBinary = resolve(repoRoot, "target/debug/vts-mint");
 
