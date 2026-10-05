@@ -1,5 +1,4 @@
 import { LocalMember, RemoteMember } from '../types/member'
-import type { RemotePictures } from '../types/media'
 import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
 import { ReactNode, useEffect, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
@@ -13,9 +12,8 @@ import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL }
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import type { SidebarStatsSample } from '../types/stats'
 import { MemberStatsCharts } from './MemberStatsCharts'
-import type { RemotePlaybackStats } from '../media/mediaSubscriber'
-import type { LiveStats } from '@player/locLive'
-import { formatSyncOffset } from '@player/livePlayer'
+import type { RemotePictures, RemotePlaybackStats } from '../media/mediaSubscriber'
+import { formatLiveStats } from '@player/locLive'
 import type {
   VideoCodecOption,
   VideoHardwareAccelerationOption,
@@ -324,7 +322,7 @@ export function MemberGrid({
                 data-testid={`member-stats-${member.name}`}
                 className="mt-1 break-words font-mono text-[11px] leading-relaxed text-blue-200/90"
               >
-                {formatLiveStatsLine(primaryStats)}
+                {primaryStats ? formatLiveStats(primaryStats) : 'Awaiting media'}
               </div>
             }
             secondaryPicture={secondaryPicture}
@@ -460,23 +458,6 @@ function MemberCard({
       )}
       <div className="mt-4 space-y-3 text-sm text-blue-100">{details}</div>
     </div>
-  )
-}
-
-function formatLiveStatsLine(stats: LiveStats | undefined): string {
-  if (!stats) {
-    return 'Awaiting media'
-  }
-  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : 'no video yet'
-  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
-  const buffer =
-    stats.bufferMs === undefined
-      ? ''
-      : ` · buffer ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
-  return (
-    `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
-    ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}` +
-    ` · shed ${Math.round(stats.shedMs)} ms`
   )
 }
 

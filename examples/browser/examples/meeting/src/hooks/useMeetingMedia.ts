@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
-import type { RemotePictures } from '../types/media'
+import type { RemotePictures } from '../media/mediaSubscriber'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_VIDEO_ENCODING_SETTINGS,

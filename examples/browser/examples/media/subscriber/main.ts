@@ -2,8 +2,7 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
-import { formatSyncOffset } from '@player/livePlayer'
-import { LocLive } from '@player/locLive'
+import { LocLive, formatLiveStats } from '@player/locLive'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
 import {
   extractCatalogAudioTracks,
@@ -56,16 +55,8 @@ function renderPlayoutStats(): void {
     return
   }
   const stats = locLive.stats()
-  if (stats.bufferMs === undefined && stats.frameSize === undefined) {
-    element.textContent = 'Waiting for media'
-    return
-  }
-  const delay = stats.viewerDelayMs === undefined ? '' : `delay ${Math.round(stats.viewerDelayMs)} ms · `
-  const buffer =
-    stats.bufferMs === undefined
-      ? ''
-      : `buffer ${Math.round(stats.bufferMs)} ms (target ${Math.round(stats.targetBufferMs)}) · `
-  element.textContent = `${delay}${buffer}A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}`
+  element.textContent =
+    stats.bufferMs === undefined && stats.frameSize === undefined ? 'Waiting for media' : formatLiveStats(stats)
 }
 
 function toBigUint64Array(value: string): BigUint64Array {

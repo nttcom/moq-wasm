@@ -8,6 +8,7 @@ import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
 export type RemoteVideoSource = 'camera' | 'screenshare'
 export type RemotePlaybackStats = Partial<Record<RemoteVideoSource, LiveStats>>
+export type RemotePictures = Partial<Record<RemoteVideoSource, HTMLElement>>
 
 export interface MediaSubscriberHandlers {
   onRemotePicture?: (userId: string, source: RemoteVideoSource, picture: HTMLElement) => void
@@ -55,7 +56,9 @@ export class MediaSubscriber {
     }
     this.registrations.delete(trackAlias)
     const { userId, source, kind } = registration
-    const remaining = this.registrationsOf(userId, source)
+    const remaining = Array.from(this.registrations).filter(
+      ([, other]) => other.userId === userId && other.source === source
+    )
     if (remaining.length === 0) {
       this.closePipeline(userId, source)
       return
@@ -160,12 +163,6 @@ export class MediaSubscriber {
       this.pipelines.set(userId, rest)
     }
     this.handlers.onRemotePictureClosed?.(userId, source)
-  }
-
-  private registrationsOf(userId: string, source: RemoteVideoSource): [bigint, TrackRegistration][] {
-    return Array.from(this.registrations).filter(
-      ([, registration]) => registration.userId === userId && registration.source === source
-    )
   }
 }
 

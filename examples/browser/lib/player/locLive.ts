@@ -174,3 +174,25 @@ export class LocLive {
     this.audioWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
   }
 }
+
+export function formatSyncOffset(offsetMs: number | undefined): string {
+  if (offsetMs === undefined) {
+    return '--'
+  }
+  const rounded = Math.round(offsetMs)
+  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
+}
+
+export function formatLiveStats(stats: LiveStats): string {
+  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : 'no video yet'
+  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
+  const buffer =
+    stats.bufferMs === undefined
+      ? ''
+      : ` · buffer ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
+  return (
+    `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
+    ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops}` +
+    ` · shed ${Math.round(stats.shedMs)} ms`
+  )
+}

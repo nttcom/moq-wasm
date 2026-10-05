@@ -18,7 +18,7 @@ import { CatalogFollower } from './catalogFollower'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
-import { type LiveStats, LocLive } from './locLive'
+import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
@@ -775,10 +775,4 @@ function isLocTrack(track: MediaCatalogTrack): boolean {
   return track.packaging !== 'cmaf'
 }
 
-export function formatSyncOffset(offsetMs: number | undefined): string {
-  if (offsetMs === undefined) {
-    return '--'
-  }
-  const rounded = Math.round(offsetMs)
-  return `${rounded < 0 ? '-' : '+'}${Math.abs(rounded)} ms`
-}
+export { formatSyncOffset } from './locLive'
