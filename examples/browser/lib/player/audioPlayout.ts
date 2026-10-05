@@ -133,6 +133,18 @@ export class AudioPlayout {
     await this.output?.context.resume()
   }
 
+  close(): void {
+    this.flush()
+    if (this.renderingPoll !== undefined) {
+      clearTimeout(this.renderingPoll)
+      this.renderingPoll = undefined
+    }
+    if (this.output) {
+      void this.output.context.close()
+      this.output = undefined
+    }
+  }
+
   /// How long before it is heard a chunk has to be scheduled.
   outputLatencyMs(): number {
     return (this.output?.context.outputLatency || 0) * MILLIS_PER_SECOND

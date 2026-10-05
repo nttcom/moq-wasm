@@ -18,7 +18,7 @@ import { CatalogFollower } from './catalogFollower'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
-import { LocLive } from './locLive'
+import { type LiveStats, LocLive } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
@@ -75,21 +75,7 @@ export type LivePlayerState = {
   }
 }
 
-export type LivePlayerStats = {
-  frameSize: { width: number; height: number } | undefined
-  viewerDelayMs: number | undefined
-  bufferMs: number | undefined
-  targetBufferMs: number
-  fixedBuffer: boolean
-  outputLatencyMs: number
-  arrivalSpreadMs: number | undefined
-  receivedKbps: number
-  videoObjects: number
-  syncOffsetMs: number | undefined
-  audioBreaks: number
-  videoDrops: string
-  shedMs: number
-}
+export type LivePlayerStats = LiveStats & { videoObjects: number }
 
 export class LivePlayer {
   private readonly context: TrackContext
@@ -212,22 +198,7 @@ export class LivePlayer {
   }
 
   stats(): LivePlayerStats {
-    const playout = this.locLive.playout
-    return {
-      frameSize: this.locLive.frameSize,
-      viewerDelayMs: this.locLive.viewerDelayMs,
-      bufferMs: playout.bufferMs(),
-      targetBufferMs: playout.targetBufferMs(),
-      fixedBuffer: playout.fixedBuffer(),
-      outputLatencyMs: playout.outputLatencyMs(),
-      arrivalSpreadMs: playout.arrivalSpreadMs(),
-      receivedKbps: this.locLive.receivedKbps,
-      videoObjects: this.videoObjectCount,
-      syncOffsetMs: playout.syncOffsetMs(),
-      audioBreaks: playout.audioBreaks(),
-      videoDrops: playout.videoDrops(),
-      shedMs: playout.shedMs()
-    }
+    return { ...this.locLive.stats(), videoObjects: this.videoObjectCount }
   }
 
   elapsedMsAt(captureMicros: number): number | undefined {

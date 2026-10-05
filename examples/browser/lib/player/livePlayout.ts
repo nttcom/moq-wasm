@@ -177,6 +177,11 @@ export class LivePlayout {
     this.newestAudioCaptureMicros = undefined
   }
 
+  close(): void {
+    this.reset()
+    this.audio.close()
+  }
+
   /// How many times the sound has not continued where the previous chunk
   /// ended since playback started.
   audioBreaks(): number {
