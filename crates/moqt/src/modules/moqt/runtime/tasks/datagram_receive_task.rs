@@ -24,7 +24,7 @@ impl DatagramReceiveTask {
     pub(crate) fn run<T: TransportProtocol>(
         context: Arc<SessionContext<T>>,
         datagram_span: Span,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle {
         executor::spawn(
             "Datagram Receiver",
             async move {

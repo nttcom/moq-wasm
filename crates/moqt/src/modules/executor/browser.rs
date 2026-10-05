@@ -1,39 +1,33 @@
-use std::{future::Future, marker::PhantomData, pin::pin, time::Duration};
+use std::{future::Future, pin::pin, time::Duration};
 
 use futures::future::{AbortHandle, Abortable};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
-use super::Elapsed;
-
-pub(crate) struct JoinHandle<T> {
+pub(crate) struct JoinHandle {
     abort_handle: AbortHandle,
-    _output: PhantomData<T>,
 }
 
-impl<T> JoinHandle<T> {
+impl JoinHandle {
     pub(crate) fn abort(&self) {
         self.abort_handle.abort();
     }
 }
 
-pub(crate) fn spawn<F>(_name: &str, future: F) -> JoinHandle<F::Output>
+pub(crate) fn spawn<F>(_name: &str, future: F) -> JoinHandle
 where
-    F: Future + 'static,
+    F: Future<Output = ()> + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
     spawn_local(async move {
         let _ = Abortable::new(future, abort_registration).await;
     });
-    JoinHandle {
-        abort_handle,
-        _output: PhantomData,
-    }
+    JoinHandle { abort_handle }
 }
 
-pub(crate) fn try_spawn<F>(name: &str, future: F) -> Option<JoinHandle<F::Output>>
+pub(crate) fn try_spawn<F>(name: &str, future: F) -> Option<JoinHandle>
 where
-    F: Future + 'static,
+    F: Future<Output = ()> + 'static,
 {
     Some(spawn(name, future))
 }
@@ -42,14 +36,11 @@ pub(crate) async fn yield_now() {
     let _ = JsFuture::from(js_sys::Promise::resolve(&JsValue::UNDEFINED)).await;
 }
 
-pub(crate) async fn timeout<F: Future>(
-    duration: Duration,
-    future: F,
-) -> Result<F::Output, Elapsed> {
+pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output, ()> {
     let mut future = pin!(future);
     tokio::select! {
         output = &mut future => Ok(output),
-        _ = sleep(duration) => Err(Elapsed),
+        _ = sleep(duration) => Err(()),
     }
 }
 

@@ -44,7 +44,7 @@ impl ControlMessageReceiveTask {
         mut receive_stream: BiStreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
         receiver_span: Span,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle {
         executor::spawn(
             "Control Message Receiver",
                 async move {

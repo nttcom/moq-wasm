@@ -52,7 +52,7 @@ impl<T: TransportProtocol> TrackReader<T> {
 }
 
 struct SubgroupStreamAcceptTask {
-    join_handle: JoinHandle<()>,
+    join_handle: JoinHandle,
 }
 
 impl SubgroupStreamAcceptTask {

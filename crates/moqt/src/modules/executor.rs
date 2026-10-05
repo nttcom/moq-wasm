@@ -10,9 +10,6 @@ pub(crate) use browser::{JoinHandle, spawn, timeout, try_spawn, yield_now};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{JoinHandle, spawn, timeout, try_spawn, yield_now};
 
-#[derive(Debug)]
-pub(crate) struct Elapsed;
-
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) trait MaybeSend: Send {}
 #[cfg(not(target_arch = "wasm32"))]

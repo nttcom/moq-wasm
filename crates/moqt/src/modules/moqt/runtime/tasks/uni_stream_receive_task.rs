@@ -27,7 +27,7 @@ impl UniStreamReceiveTask {
     pub(crate) fn run<T: TransportProtocol>(
         context: Arc<SessionContext<T>>,
         stream_span: Span,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle {
         executor::spawn(
             "Uni Stream Receiver",
             async move {

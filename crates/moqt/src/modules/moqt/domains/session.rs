@@ -28,10 +28,10 @@ pub struct Session<T: TransportProtocol> {
     inner: Arc<SessionContext<T>>,
     session_span: Span,
     event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>>,
-    control_message_receive_task: JoinHandle<()>,
-    datagram_receive_task: JoinHandle<()>,
-    uni_stream_receive_task: JoinHandle<()>,
-    disconnect_watch_task: JoinHandle<()>,
+    control_message_receive_task: JoinHandle,
+    datagram_receive_task: JoinHandle,
+    uni_stream_receive_task: JoinHandle,
+    disconnect_watch_task: JoinHandle,
     server_setup: Option<ServerSetup>,
 }
 

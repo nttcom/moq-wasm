@@ -17,7 +17,7 @@ impl DisconnectWatchTask {
     pub(crate) fn run<T: TransportProtocol>(
         session_context: Arc<SessionContext<T>>,
         close_watcher_span: Span,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle {
         executor::spawn(
             "Connection Close Watcher",
             async move {
