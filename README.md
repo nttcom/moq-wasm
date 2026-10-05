@@ -74,7 +74,7 @@ Desktop bridge host for native clients on macOS.
 ```shell
 make test                        # Rust unit tests
 make browser-e2e-media           # browser publish/subscribe
-./scripts/auth-e2e.sh            # relay scenarios, see tests/README.md
+./tests/auth-e2e/run.sh            # relay scenarios, see tests/README.md
 npm --prefix services/vts test   # VTS
 ```
 

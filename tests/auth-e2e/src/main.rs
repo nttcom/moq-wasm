@@ -1,6 +1,6 @@
 //! Authentication e2e against two relays backed by the VTS.
 //!
-//! Driven by `scripts/auth-e2e.sh`, which starts the compose stack with the
+//! Driven by `tests/auth-e2e/run.sh`, which starts the compose stack with the
 //! `auth` profile, mints the tokens and passes them through the environment:
 //!
 //! - `AUTH_E2E_APP_ID`      appId of the client app (`publish`/`subscribe` = `site1`)
@@ -32,7 +32,7 @@ const TEST_PAYLOAD: &[u8] = b"auth e2e payload";
 const UNAUTHORIZED: u64 = 0x1;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const EXPIRY_TIMEOUT: Duration = Duration::from_secs(60);
-/// scripts/auth-e2e.sh mints the short token with `--ttl 15s`; probing after
+/// tests/auth-e2e/run.sh mints the short token with `--ttl 15s`; probing after
 /// this delay only succeeds if the refresh moved the session's expiry.
 const REFRESH_PROBE_DELAY: Duration = Duration::from_secs(20);
 const REFRESH_TRACK_NAME: &str = "update_auth_token";

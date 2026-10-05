@@ -71,7 +71,7 @@ listen address and the namespace.
 ## E2E
 
 ```shell
-./scripts/moqtsink-e2e.sh
+./tests/moqtsink-e2e/run.sh
 ```
 
 Publishes a test pattern and tone through `moqtsink` into a Docker Compose
