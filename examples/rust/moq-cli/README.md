@@ -39,7 +39,7 @@ rewrites the file before the token expires (24 h at most by default) keeps
 the stream running. moq-cli does not interpret the token.
 
 ```sh
-node services/vts/bin/mint.mjs --apps services/vts/apps.json --app-id <appId> --publish site1 --ttl 12h > /etc/moq/token
+cargo run -p vts --bin vts-mint -- --apps crates/vts/apps.json --app-id <appId> --publish site1 --ttl 12h > /etc/moq/token
 moq-cli publish --relay moqt://relay:4433 --track <appId>/site1/video --codec avc3 --auth-token-file /etc/moq/token
 ```
 

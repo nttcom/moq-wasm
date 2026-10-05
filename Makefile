@@ -12,17 +12,17 @@ GST_NAMESPACE ?= anon/live/test
 .PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats gst-plugin gst-srt-publish onvif ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
-VTS_APPS_FILE ?= services/vts/apps.example.json
+VTS_APPS_FILE ?= crates/vts/apps.example.json
 DEV_RELAY_APP_ID := 11111111-2222-3333-4444-555555555555
 
 # Starts a VTS on 127.0.0.1:8081 for the lifetime of the relay process.
 relay: export AUTH_VTS_URL ?= http://127.0.0.1:8081/verify
 relay:
 	set -a; [ ! -f .env ] || . ./.env; set +a; \
-	[ -d services/vts/node_modules ] || npm --prefix services/vts ci; \
-	VTS_APPS_FILE="$(VTS_APPS_FILE)" node services/vts/src/main.mjs & VTS_PID=$$!; \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p vts; \
+	VTS_APPS_FILE="$(VTS_APPS_FILE)" ./target/debug/vts & VTS_PID=$$!; \
 	trap 'kill $$VTS_PID' EXIT; \
-	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(node services/vts/bin/mint.mjs --apps "$(VTS_APPS_FILE)" --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
+	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(./target/debug/vts-mint --apps "$(VTS_APPS_FILE)" --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
 
 browser:

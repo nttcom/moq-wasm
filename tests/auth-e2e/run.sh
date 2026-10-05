@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 export RELAY_STDOUT_FILTER="${RELAY_STDOUT_FILTER:-relay=info,moqt=info}"
 export RELAY_LOG_FILTER="${RELAY_LOG_FILTER:-relay=info,moqt=info}"
 
-APPS_FILE="services/vts/apps.example.json"
+APPS_FILE="crates/vts/apps.example.json"
 APP_ID="ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e"
 OTHER_APP_ID="9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b"
 RELAY_APP_ID="11111111-2222-3333-4444-555555555555"
@@ -34,7 +34,7 @@ cleanup() {
 trap cleanup EXIT
 
 mint() {
-  node services/vts/bin/mint.mjs --apps "$APPS_FILE" "$@"
+  ./target/debug/vts-mint --apps "$APPS_FILE" "$@"
 }
 
 expect_passed() {
@@ -55,9 +55,7 @@ else
 fi
 docker compose build vts
 
-if [[ ! -d services/vts/node_modules ]]; then
-  npm --prefix services/vts ci
-fi
+cargo build -p vts
 cargo build -p auth-e2e
 cargo build -p moq-cli
 

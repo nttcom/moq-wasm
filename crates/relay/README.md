@@ -2,7 +2,7 @@
 
 MoQT relay. It accepts QUIC and WebTransport on one port, caches objects for
 FETCH, forwards subscriptions between relays, and authenticates every session
-through the [VTS](../services/vts/README.md).
+through the [VTS](../vts/README.md).
 
 ## Run
 
