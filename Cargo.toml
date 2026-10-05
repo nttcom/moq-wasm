@@ -7,3 +7,4 @@ members = [
     'examples/cross-protocol-test/quic-subscriber',
     'tests/*',
 ]
+exclude = ['tests/browser-e2e']
