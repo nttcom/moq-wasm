@@ -32,5 +32,5 @@ pub struct MOQTClient;
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn js_error(message: impl Into<String>) -> JsValue {
-    JsValue::from_str(&message.into())
+    js_sys::Error::new(&message.into()).into()
 }
