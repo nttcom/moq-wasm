@@ -1,4 +1,4 @@
-# moqt-bridge-onvif
+# onvif-ingest
 
 ONVIF/RTSP bridge for controlling an ONVIF camera and publishing its media over MoQT.
 
@@ -47,7 +47,7 @@ All names are configurable via CLI flags (`--publish-namespace`, `--subscribe-na
 Use `cargo run` directly when you need options that are not exposed by the Makefile helpers.
 
 ```shell
-cargo run -p moqt-bridge-onvif --bin moqt-onvif-client -- \
+cargo run -p onvif-ingest -- \
   --ip 192.168.11.45 \
   --username admin \
   --password secret \

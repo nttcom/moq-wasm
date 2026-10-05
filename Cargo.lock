@@ -1932,31 +1932,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moqt-bridge-onvif"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "clap",
- "env_logger",
- "ffmpeg-next",
- "log",
- "mediapack",
- "moqt",
- "msf",
- "rand 0.10.2",
- "reqwest",
- "roxmltree",
- "serde",
- "serde_json",
- "sha1",
- "time",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "moqtsink-e2e"
 version = "0.1.0"
 dependencies = [
@@ -2122,6 +2097,31 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "onvif-ingest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "clap",
+ "env_logger",
+ "ffmpeg-next",
+ "log",
+ "mediapack",
+ "moqt",
+ "msf",
+ "rand 0.10.2",
+ "reqwest",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha1",
+ "time",
+ "tokio",
+ "url",
+]
 
 [[package]]
 name = "opaque-debug"

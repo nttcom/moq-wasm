@@ -26,7 +26,7 @@ Application and integration components (draft reference is normally not required
 | `crates/publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `live-ingest` and `gst-plugin-moqt` |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `crates/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
-| `crates/moqt-bridge-onvif` | Bridge ingesting ONVIF camera streams into MoQT |
+| `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `crates/auth-token` | Claims of the client JWT, shared by `relay` (reads them from the VTS) and `vts` (signs them) |
 | `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
 | `examples/` | Usage examples and test clients |

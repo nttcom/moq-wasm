@@ -18,7 +18,7 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 | `webcodecs`                                     | Encoder and decoder behaviour without MoQ in between                                                                       |
 | [`live-viewer`](examples/live-viewer/README.md) | Player for `live-ingest`, `moqtsink` and in-browser MP4 publishing, with rewind                                            |
 | [`meeting`](examples/meeting/README.md)         | Multi-party video meeting                                                                                                  |
-| `onvif`                                         | Remote control and monitoring of a PTZ camera through `crates/moqt-bridge-onvif`                                           |
+| `onvif`                                         | Remote control and monitoring of a PTZ camera through `crates/onvif-ingest`                                           |
 | `remote-monitoring`                             | Remote monitoring from a USB camera                                                                                        |
 | `moq-chat-moderation`                           | Chat moderated by a pipecat bot, see [`examples/python`](../python/moq-chat-moderation/README.md)                          |
 | `moq-camera-detection`                          | Questions about a camera feed answered by a pipecat bot, see [`examples/python`](../python/moq-camera-detection/README.md) |

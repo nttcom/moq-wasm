@@ -116,7 +116,7 @@ onvif:
 		exit 1; \
 	fi
 	@echo "Using MoQT relay URL: $(ONVIF_MOQT_URL)"
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p moqt-bridge-onvif --bin moqt-onvif-client -- \
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p onvif-ingest -- \
 		--ip $(ONVIF_IP) \
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \
