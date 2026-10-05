@@ -38,7 +38,12 @@ impl<T: TransportProtocol> Handshake<T> {
             event_sender,
         );
         tracing::info!("Session is established.");
-        Ok(Session::new(self.receive_stream, context, event_receiver))
+        Ok(Session::new(
+            self.receive_stream,
+            context,
+            event_receiver,
+            None,
+        ))
     }
 
     pub async fn reject(self, code: TerminationErrorCode, reason: &str) {

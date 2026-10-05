@@ -31,12 +31,18 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 authorization_token.as_deref(),
             )
             .await?;
-            SessionContextFactory::receive_server_setup(&mut receive_stream).await?;
+            let server_setup =
+                SessionContextFactory::receive_server_setup(&mut receive_stream).await?;
             let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
             let context =
                 SessionContext::new(transport_conn, send_stream, AtomicU64::new(0), event_sender);
             tracing::info!("Session is created.");
-            Ok(Session::<T>::new(receive_stream, context, event_receiver))
+            Ok(Session::<T>::new(
+                receive_stream,
+                context,
+                event_receiver,
+                Some(server_setup),
+            ))
         };
         Ok(Connecting {
             inner: Box::pin(handshake),

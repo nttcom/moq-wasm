@@ -51,7 +51,7 @@ impl SessionContextFactory {
 
     pub(crate) async fn receive_server_setup<T: TransportProtocol>(
         receive_stream: &mut BiStreamReceiver<T>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ServerSetup> {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
             Ok(None) => {
@@ -69,7 +69,7 @@ impl SessionContextFactory {
                     "Received server setup. selected_version: {}",
                     server_setup.selected_version
                 );
-                Ok(())
+                Ok(server_setup)
             }
             _ => {
                 tracing::error!("Protocol violation.");

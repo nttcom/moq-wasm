@@ -7,6 +7,7 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::executor::JoinHandle;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
+use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
@@ -27,6 +28,7 @@ pub struct Session<T: TransportProtocol> {
     datagram_receive_task: JoinHandle<()>,
     uni_stream_receive_task: JoinHandle<()>,
     disconnect_watch_task: JoinHandle<()>,
+    server_setup: Option<ServerSetup>,
 }
 
 impl<T: TransportProtocol> Session<T> {
@@ -34,6 +36,7 @@ impl<T: TransportProtocol> Session<T> {
         receive_stream: BiStreamReceiver<T>,
         inner: SessionContext<T>,
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>,
+        server_setup: Option<ServerSetup>,
     ) -> Self {
         let inner = Arc::new(inner);
         let parent_span = Span::current();
@@ -68,6 +71,7 @@ impl<T: TransportProtocol> Session<T> {
             datagram_receive_task,
             uni_stream_receive_task,
             disconnect_watch_task,
+            server_setup,
         }
     }
 
@@ -104,6 +108,11 @@ impl<T: TransportProtocol> Session<T> {
     pub fn transport_stats(&self) -> TransportStats {
         self.inner.transport_connection.stats()
     }
+
+    /// The SERVER_SETUP this client received; `None` on a server session.
+    pub fn server_setup(&self) -> Option<&ServerSetup> {
+        self.server_setup.as_ref()
+    }
 }
 
 impl<T: TransportProtocol> Drop for Session<T> {
@@ -120,7 +129,10 @@ impl<T: TransportProtocol> Drop for Session<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::test_support::{connect_sessions, spawn_dual_server};
+    use crate::{
+        modules::test_support::{connect_sessions, spawn_dual_server},
+        wire::MOQ_TRANSPORT_VERSION,
+    };
 
     #[tokio::test]
     async fn transport_stats_reports_the_established_quic_path() {
@@ -137,5 +149,25 @@ mod tests {
         assert!(stats.cwnd > 0);
         assert!(!stats.rtt.is_zero());
         assert_eq!(stats.lost_packets, 0);
+    }
+
+    #[tokio::test]
+    async fn client_session_keeps_the_server_setup_it_received() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("session-server-setup");
+
+        // Act
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            client
+                .server_setup()
+                .map(|server_setup| server_setup.selected_version),
+            Some(MOQ_TRANSPORT_VERSION)
+        );
+        assert!(server.server_setup().is_none());
     }
 }
