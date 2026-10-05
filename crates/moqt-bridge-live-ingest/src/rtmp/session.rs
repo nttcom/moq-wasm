@@ -8,13 +8,13 @@ use mediapack::{
 };
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use media_publisher::MoqtManager;
+use publisher::MoqtManager;
 
 use crate::stats_panel::Registration;
 
 use crate::{
     ingest::flv::FlvRecorder,
-    publisher::{IngestOptions, IngestPublisher},
+    ingest_publisher::{IngestOptions, IngestPublisher},
 };
 
 #[derive(Default)]

@@ -14,7 +14,7 @@ use super::{
     handshake::perform_handshake,
     session::{RtmpState, handle_event},
 };
-use crate::publisher::IngestOptions;
+use crate::ingest_publisher::IngestOptions;
 
 pub async fn run_rtmp_listener(addr: String, options: IngestOptions) -> Result<()> {
     let listener = TcpListener::bind(&addr)

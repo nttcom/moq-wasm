@@ -1,4 +1,4 @@
-# media-publisher
+# publisher
 
 Publishes an MSF catalog and H.264/AAC tracks into a MoQT relay. It is the
 publishing side shared by `crates/moqt-bridge-live-ingest` and `crates/gst-plugin-moqt`
@@ -29,4 +29,4 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 - A SUBSCRIBE for a track the catalog does not list is rejected with TRACK_DOES_NOT_EXIST.
 
 The reasoning behind these choices is in the
-[architecture document](../../docs/architecture/media-publisher/architecture.md).
+[architecture document](../../docs/architecture/publisher/architecture.md).

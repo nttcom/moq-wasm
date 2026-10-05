@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use futures::{FutureExt, StreamExt};
-use media_publisher::MoqtManager;
 use mediapack::mpegts;
+use publisher::MoqtManager;
 use srt_tokio::{ConnectionRequest, SrtListener, options::ByteCount};
 use tokio::task;
 
-use crate::publisher::{IngestOptions, IngestPublisher};
+use crate::ingest_publisher::{IngestOptions, IngestPublisher};
 
 const DEFAULT_NAMESPACE: &str = "anon/srt/live";
 /// A keyframe arrives as a burst of several hundred kilobytes in a few

@@ -1,5 +1,5 @@
 mod ingest;
-mod publisher;
+mod ingest_publisher;
 mod renditions;
 mod rtmp;
 mod srt;
@@ -7,11 +7,11 @@ mod stats_panel;
 
 use anyhow::Result;
 use clap::Parser;
-use media_publisher::MoqtTarget;
+use publisher::MoqtTarget;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{
-    publisher::IngestOptions,
+    ingest_publisher::IngestOptions,
     stats_panel::{ConnectionRegistry, StatsPanel},
 };
 

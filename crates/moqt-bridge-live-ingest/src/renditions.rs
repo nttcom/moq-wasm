@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use media_publisher::{
+use mediapack::{MediaEvent, VideoSample, loc::to_extension_headers, mp4::Fmp4TrackMuxer};
+use publisher::{
     GroupAlignment, GroupBoundary, MediaPublisher, MoqtManager, OutgoingObject, SharedTiming,
     VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
 };
-use mediapack::{MediaEvent, VideoSample, loc::to_extension_headers, mp4::Fmp4TrackMuxer};
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},

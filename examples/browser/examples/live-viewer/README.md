@@ -110,7 +110,7 @@ compares what the viewer received with the bridge's delivery log; it fails
 when a published sample is missing:
 
 ```shell
-RUST_LOG=info,media_publisher::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
+RUST_LOG=info,publisher::delivery=debug make live-ingest 2>&1 | tee /tmp/live-ingest.log
 DELIVERY_BRIDGE_LOG=/tmp/live-ingest.log \
 DELIVERY_SECONDS=60 \
 MEDIA_E2E_BASE_URL=http://127.0.0.1:5173 \

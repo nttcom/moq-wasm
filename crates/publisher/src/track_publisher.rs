@@ -22,8 +22,8 @@ const AUDIO_TRACK: &str = "audio";
 /// One DEBUG line per sample as it enters (`ingest`) and as it is sent to the
 /// relay (`publish`, with the group id and LOC capture timestamp a viewer
 /// sees), so that what a viewer received can be checked against
-/// what was sent: `RUST_LOG=media_publisher::delivery=debug`.
-const DELIVERY_LOG_TARGET: &str = "media_publisher::delivery";
+/// what was sent: `RUST_LOG=publisher::delivery=debug`.
+const DELIVERY_LOG_TARGET: &str = "publisher::delivery";
 
 /// The clocks every track of one switching set stamps from, so renditions of
 /// the source video carry the same capture timestamp and group id for the same

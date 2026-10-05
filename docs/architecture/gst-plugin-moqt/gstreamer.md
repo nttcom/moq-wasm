@@ -20,7 +20,7 @@ Operators re-packaging SRT, RTMP or file inputs into MoQT want to describe the
 media path as a `gst-launch-1.0` pipeline and let GStreamer do demuxing and
 parsing (`srtsrc ! tsdemux ! h264parse`). The publishing side — MoQT session,
 MSF catalog, LOC/CMAF objects, FETCH cache — already exists in
-`crates/media-publisher`; what is missing is a sink element that turns
+`crates/publisher`; what is missing is a sink element that turns
 GStreamer buffers into `mediapack::MediaEvent`s and hands them to it.
 
 ## Alternatives
@@ -42,5 +42,5 @@ so one element owns one MoQT session and the pipeline can link demuxer pads to
 it by caps. The plugin descriptor is declared with `gst::plugin_define!` using
 Cargo package metadata, so no build script or `gst-plugin-version-helper`
 dependency is needed. The `gstreamer` crate is confined to this crate and
-`crates/transcode`; `moqt`, `mediapack` and `media-publisher` compile without
+`crates/transcode`; `moqt`, `mediapack` and `publisher` compile without
 it.

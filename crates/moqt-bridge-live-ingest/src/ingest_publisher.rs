@@ -1,6 +1,6 @@
 use anyhow::Result;
-use media_publisher::{MediaPublisher, MoqtManager, MoqtTarget, VideoTrackInfo};
 use mediapack::MediaEvent;
+use publisher::{MediaPublisher, MoqtManager, MoqtTarget, VideoTrackInfo};
 
 use crate::{renditions::RenditionFanout, stats_panel::ConnectionRegistry};
 

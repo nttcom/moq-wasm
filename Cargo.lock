@@ -1150,8 +1150,8 @@ dependencies = [
  "anyhow",
  "bytes",
  "gstreamer",
- "media-publisher",
  "mediapack",
+ "publisher",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1814,22 +1814,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "media-publisher"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "mediapack",
- "moqt",
- "msf",
- "serde_json",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "mediapack"
 version = "0.1.0"
 dependencies = [
@@ -1936,9 +1920,9 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
- "media-publisher",
  "mediapack",
  "moqt",
+ "publisher",
  "rml_rtmp",
  "srt-tokio",
  "tokio",
@@ -2474,6 +2458,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "publisher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "mediapack",
+ "moqt",
+ "msf",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

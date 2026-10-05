@@ -1,7 +1,7 @@
 # moqt-bridge-live-ingest
 
 Publishes RTMP or SRT input into a MoQT relay as the tracks described in
-[`crates/media-publisher`](../media-publisher/README.md).
+[`crates/publisher`](../publisher/README.md).
 
 ## Run
 
@@ -53,7 +53,7 @@ logged when a stream ends. Why:
 ## Delivery log
 
 ```shell
-RUST_LOG=info,media_publisher::delivery=debug make live-ingest
+RUST_LOG=info,publisher::delivery=debug make live-ingest
 ```
 
 Writes one line per sample as it enters the publisher (`stage="ingest"`) and
