@@ -86,6 +86,7 @@ type LivePlayerOptions = {
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
+  keepLiveWhileReviewing?: boolean
 }
 
 type LivePlayerCallbacks = {
@@ -446,15 +447,18 @@ relay cache a second at a time: pause, then skip. Stepping by one frame is
 not offered yet; it would seek to the capture timestamp of the neighbouring
 frame, which the player does not know without decoding it.
 
-### Instant live return (target)
+### Instant live return
 
 `goLive` after a review resumes the live subscriptions and the picture moves
 with the next group the relay forwards, up to one GOP later. A page that
 wants the live picture back at once opts into `keepLiveWhileReviewing`: the
-live subscriptions keep forwarding during the review, the video worker parks
-the objects of the newest group undecoded and drops the groups before it, and
-`goLive` decodes the parked group straight away. The cost is the live
-bandwidth spent while reviewing, which is why it is not the default.
+live subscriptions keep forwarding during the review and the live pipeline
+keeps decoding and presenting behind the review picture, muted, so `goLive`
+only brings that picture to the front. The seek axis follows the live objects
+instead of TRACK_STATUS. The cost is the live bandwidth and the decoding spent
+while reviewing, which is why it is not the default; parking the newest group
+undecoded in the worker would save the decoding and is left for when a page
+needs it.
 
 ### Playback speed
 
@@ -573,8 +577,7 @@ named `live-player-*`.
 8. Adopt the player in `examples/remote-monitoring`: one player per camera on
    a canvas picture, the page's seek bar and transport buttons on the
    player's seek axis and stepping, the camera publisher unchanged.
-9. Instant live return (`keepLiveWhileReviewing`), so the monitoring page
-   keeps the immediate return it has today.
+9. Instant live return (`keepLiveWhileReviewing`) for the monitoring page.
 
 ## Consumers
 
@@ -608,5 +611,5 @@ named `live-player-*`.
   stage pauses its player, which is the first still picture of a review; the
   step buttons skip a second with the pause kept, the seek bar is the
   player's capture-time axis, and the debug bar shows the player's rewind
-  status. Immediate live return (`keepLiveWhileReviewing`, step 9) is still to
-  come, so `LIVE 復帰` waits for the next group like the Live Viewer.
+  status. The players keep live while reviewing, so `LIVE 復帰` shows the live
+  picture at once.

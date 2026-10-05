@@ -46,6 +46,11 @@ export type LivePlayerOptions = {
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
+  /// Keeps the live subscriptions forwarding and the live picture playing
+  /// behind a review, so `goLive` shows the live picture at once instead of
+  /// waiting for the next group; it costs the live bandwidth and decoding
+  /// while reviewing.
+  keepLiveWhileReviewing?: boolean
 }
 
 export type PlayerStatus = { text: string; state: StatusState }
@@ -83,6 +88,7 @@ export type LivePlayerStats = LiveStats & { videoObjects: number }
 export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
+  private readonly keepLiveWhileReviewing: boolean
   private readonly textTracks: TextTracks
   private readonly catalog: CatalogFollower
   private readonly subscriptions: TrackSubscriptions
@@ -111,6 +117,7 @@ export class LivePlayer {
 
   constructor(options: LivePlayerOptions) {
     this.callbacks = options.callbacks
+    this.keepLiveWhileReviewing = options.keepLiveWhileReviewing ?? false
     this.context = {
       client: options.client,
       namespace: [],
@@ -335,7 +342,9 @@ export class LivePlayer {
       captureMicros
     )
     this.review = session
-    this.subscriptions.pauseForward()
+    if (!this.keepLiveWhileReviewing) {
+      this.subscriptions.pauseForward()
+    }
     this.cmafReview.needsOpen = true
     this.locReview.playout.start(session.anchorMicros, this.paused)
     this.setPaused(this.paused)
