@@ -27,7 +27,7 @@ Application and integration components (draft reference is normally not required
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `crates/moqt-bridge-live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `crates/moqt-bridge-onvif` | Bridge ingesting ONVIF camera streams into MoQT |
-| `services/vts` | Verify Token Service (Node.js): verifies client JWTs for the relay over HTTP |
+| `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
@@ -60,7 +60,6 @@ Application and integration components (draft reference is normally not required
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
 - E2E Test (auth): `./tests/auth-e2e/run.sh`
-- VTS test: `npm --prefix services/vts test`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines

@@ -27,7 +27,7 @@ crates/moqt-bridge-live-ingest/recordings/
 log/*
 
 /.env
-services/*/apps.json
+crates/vts/apps.json
 test-results
 
 cargo-flamegraph.trace/*

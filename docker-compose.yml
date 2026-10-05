@@ -31,17 +31,12 @@ services:
     image: moqt-vts:local
     build:
       context: .
-      dockerfile: services/vts/Dockerfile
+      dockerfile: crates/vts/Dockerfile
     environment:
       VTS_PORT: "8081"
       VTS_APPS_FILE: /etc/vts/apps.json
     volumes:
-      - ${VTS_APPS_FILE:-./services/vts/apps.example.json}:/etc/vts/apps.json:ro
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
-      interval: 2s
-      timeout: 3s
-      retries: 10
+      - ${VTS_APPS_FILE:-./crates/vts/apps.example.json}:/etc/vts/apps.json:ro
 
   relay-a:
     image: moqt-relay:local
@@ -55,7 +50,7 @@ services:
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
       AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
-      # Development relay token minted from apps.example.json (see services/vts/README.md).
+      # Development relay token minted from apps.example.json (see crates/vts/README.md).
       AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
@@ -72,7 +67,7 @@ services:
       redis:
         condition: service_healthy
       vts:
-        condition: service_healthy
+        condition: service_started
 
   relay-b:
     image: moqt-relay:local
@@ -86,7 +81,7 @@ services:
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
       AUTH_VTS_URL: ${AUTH_VTS_URL:-http://vts:8081/verify}
-      # Development relay token minted from apps.example.json (see services/vts/README.md).
+      # Development relay token minted from apps.example.json (see crates/vts/README.md).
       AUTH_RELAY_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       RELAY_STDOUT_FILTER: ${RELAY_STDOUT_FILTER:-relay=info,moqt=info}
@@ -103,4 +98,4 @@ services:
       redis:
         condition: service_healthy
       vts:
-        condition: service_healthy
+        condition: service_started

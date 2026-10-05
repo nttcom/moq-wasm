@@ -1,37 +1,39 @@
-// Development VTS backed by services/vts/apps.example.json, for e2e runners
+// Development VTS backed by crates/vts/apps.example.json, for e2e runners
 // that start a native relay. Compose-based runners get the same defaults
 // from docker-compose.yml.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { spawnProcess } from "./process.mjs";
-import { repoRoot, resolveCommandName } from "../../scripts/dev-env.mjs";
+import { repoRoot } from "../../scripts/dev-env.mjs";
 import { waitForHttpOk } from "./helpers.mjs";
 
-export const vtsAppsFile = "services/vts/apps.example.json";
+export const vtsAppsFile = "crates/vts/apps.example.json";
 export const relayAppId = "11111111-2222-3333-4444-555555555555";
 export const experimentAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
 const vtsPort = 8081;
-const vtsDir = resolve(repoRoot, "services/vts");
+const vtsBinary = resolve(repoRoot, "target/debug/vts");
+const mintBinary = resolve(repoRoot, "target/debug/vts-mint");
 
-function ensureVtsDependencies() {
-  if (!existsSync(resolve(vtsDir, "node_modules"))) {
-    execFileSync(resolveCommandName("npm"), ["ci"], {
-      cwd: vtsDir,
+let vtsBuilt = false;
+
+function ensureVtsBuilt() {
+  if (!vtsBuilt) {
+    execFileSync("cargo", ["build", "-p", "vts"], {
+      cwd: repoRoot,
       stdio: "inherit",
     });
+    vtsBuilt = true;
   }
 }
 
 // Client tokens must stay within the relay's 24h ttl cap; relay tokens are exempt.
 export function mintToken(appId, ttl) {
-  ensureVtsDependencies();
+  ensureVtsBuilt();
   return execFileSync(
-    process.execPath,
+    mintBinary,
     [
-      "services/vts/bin/mint.mjs",
       "--apps",
       vtsAppsFile,
       "--app-id",
@@ -48,20 +50,15 @@ export function mintToken(appId, ttl) {
 }
 
 export async function startVts() {
-  ensureVtsDependencies();
-  const child = spawnProcess(
-    "vts",
-    process.execPath,
-    ["services/vts/src/main.mjs"],
-    {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        VTS_PORT: String(vtsPort),
-        VTS_APPS_FILE: vtsAppsFile,
-      },
+  ensureVtsBuilt();
+  const child = spawnProcess("vts", vtsBinary, [], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      VTS_PORT: String(vtsPort),
+      VTS_APPS_FILE: vtsAppsFile,
     },
-  );
+  });
   await waitForHttpOk(`http://127.0.0.1:${vtsPort}/healthz`, 30_000);
   return child;
 }
