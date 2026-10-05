@@ -86,6 +86,7 @@ type LivePlayerOptions = {
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
   livePicture?: LivePictureKind
+  keepLiveWhileReviewing?: boolean
 }
 
 type LivePlayerCallbacks = {
@@ -95,7 +96,7 @@ type LivePlayerCallbacks = {
 }
 
 class LivePlayer {
-  start(namespace: string[], authInfo: string): Promise<void>
+  start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   selectAudioTrack(name: string): Promise<void>
@@ -113,6 +114,39 @@ class LivePlayer {
   elapsedMsAt(captureMicros: number): number | undefined
 }
 ```
+
+`LocLive` is the live LOC pipeline on its own, for a page that keeps its own
+catalog and subscriptions and only needs the playback: it is given the picture
+elements (`createPictureVideo` / `createPictureCanvas` from
+`pictureElements.ts`), is told the catalog track of each kind, and is fed the
+subgroup objects the page receives.
+
+```ts
+class LocLive {
+  constructor(video: HTMLVideoElement, canvas: HTMLCanvasElement, livePicture: LivePictureKind | undefined, callbacks: LocLiveCallbacks)
+  readonly playout: LivePlayout
+  readonly picture: LivePictureSink
+  configureTrack(kind: MediaKind, track: MediaCatalogTrack): void
+  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void
+  setBufferPolicy(policy: BufferPolicy): void
+  reset(): void
+  dispose(): void
+  stats(): LiveStats
+}
+```
+
+`reset` empties the playout and detaches the picture; `dispose` also ends the
+decoder workers and closes the `AudioContext`, so a page that creates one
+`LocLive` per stream it shows can let it go. `LiveStats` is what
+`LivePlayer.stats()` reports minus the object count: frame size, viewer delay,
+buffer and target, output latency, arrival spread, video and audio bitrate,
+A/V offset, audio breaks, video drops, shed.
+
+`LiveTracks` (`{ video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }`)
+stands in for the catalog of a publisher that announces none, such as the
+remote-monitoring cameras: `start` subscribes to the tracks given and nothing
+else, the catalog status reads `Tracks given`, and a track redefinition can
+only come from another `start`.
 
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
@@ -137,7 +171,8 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `deliveryObserver` | What the player reports of every object, FETCH and playhead |
 | `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order |
-| `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold |
+| `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
+| `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
 | `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, stamping groups from the media timeline, the seek axis |
@@ -402,6 +437,29 @@ In CMAF mode the MediaSource does the same from the `tfdt` of the fragments,
 which the bridge writes on one timeline for both tracks, so the SourceBuffers
 append in the default segments mode rather than back to back.
 
+### Seeking while paused
+
+A paused player keeps its pause across `seek` and `skip`: the review opens
+on the frame at the new position, shows that one frame and holds it, with
+the audio suspended, and resuming plays on from there with the sound of that
+position. This is how a monitoring page scrubs a still picture through the
+relay cache a second at a time: pause, then skip. Stepping by one frame is
+not offered yet; it would seek to the capture timestamp of the neighbouring
+frame, which the player does not know without decoding it.
+
+### Instant live return
+
+`goLive` after a review resumes the live subscriptions and the picture moves
+with the next group the relay forwards, up to one GOP later. A page that
+wants the live picture back at once opts into `keepLiveWhileReviewing`: the
+live subscriptions keep forwarding during the review and the live pipeline
+keeps decoding and presenting behind the review picture, muted, so `goLive`
+only brings that picture to the front. The seek axis follows the live objects
+instead of TRACK_STATUS. The cost is the live bandwidth and the decoding spent
+while reviewing, which is why it is not the default; parking the newest group
+undecoded in the worker would save the decoding and is left for when a page
+needs it.
+
 ### Playback speed
 
 The speed control next to the rewind buttons offers 0.5x, 1x, 1.25x, 1.5x and
@@ -512,6 +570,14 @@ named `live-player-*`.
 3. Extract the controls into `lib/player/ui`.
 4. Resolve review audio by capture time (the ONVIF convention above).
 5. Adopt the player in `examples/onvif`, keeping the PTZ commands in the page.
+6. `start` with tracks given by the page (`LiveTracks`), for publishers
+   without a catalog.
+7. Seeking while paused: `seek` / `skip` keep the pause and show the frame
+   at the position.
+8. Adopt the player in `examples/remote-monitoring`: one player per camera on
+   a canvas picture, the page's seek bar and transport buttons on the
+   player's seek axis and stepping, the camera publisher unchanged.
+9. Instant live return (`keepLiveWhileReviewing`) for the monitoring page.
 
 ## Consumers
 
@@ -524,3 +590,26 @@ named `live-player-*`.
   pacing presets, the jitter-buffer visualizer and the worker-telemetry stats
   the page used to show are gone with it, and the catalog, video and audio are
   subscribed by the player instead of by request ids typed into the page.
+- `examples/meeting`: `LocLive` without `LivePlayer`, since the meeting has its
+  own catalog and subscribes per participant. Each remote member plays through
+  one `LocLive` for the camera and the audio and another for a screen share;
+  the pipeline is replaced when its video track is unsubscribed, so the next
+  video track starts on fresh decoders, and audio joining a running picture
+  warms the playout up again. The buffer policy and catch-up are set per
+  member, and the per-member stats line and charts show `LiveStats`. The
+  worker pacing presets, the jitter-buffer visualizer and the worker-telemetry
+  charts are gone with it, as in `examples/onvif`.
+- `examples/media/subscriber`: one `LocLive` on the page's own `<video>` and a
+  hidden `<canvas>`, configured from the MSF catalog tracks the page selects
+  and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
+  buffer bypass checkbox.
+- `examples/remote-monitoring`: one player per camera on the page's session,
+  started with the camera's `video` track given as `LiveTracks`
+  (`avc3.640028`, no catalog) on a canvas picture, video only. Each player
+  draws into a host element the page moves between the stage and the strip,
+  so the stage and the thumbnails are layout over four players. Clicking the
+  stage pauses its player, which is the first still picture of a review; the
+  step buttons skip a second with the pause kept, the seek bar is the
+  player's capture-time axis, and the debug bar shows the player's rewind
+  status. The players keep live while reviewing, so `LIVE 復帰` shows the live
+  picture at once.

@@ -1,15 +1,16 @@
 import { CameraId } from '../types/monitoring'
+import { PlayerHost } from './PlayerHost'
 
 interface Props {
   cameraId: CameraId
-  onCanvasReady?: (canvas: HTMLCanvasElement | null) => void
+  host: HTMLElement
   onSubscribe?: () => void
   isSubscribed?: boolean
   isSubscribing?: boolean
   onClick: () => void
 }
 
-export function ThumbCamera({ cameraId, onCanvasReady, onSubscribe, isSubscribed, isSubscribing, onClick }: Props) {
+export function ThumbCamera({ cameraId, host, onSubscribe, isSubscribed, isSubscribing, onClick }: Props) {
   return (
     <div
       className="relative flex flex-col justify-end overflow-hidden rounded-md cursor-pointer ring-1 ring-zinc-700 hover:ring-blue-400 transition-shadow aspect-video w-full"
@@ -22,10 +23,12 @@ export function ThumbCamera({ cameraId, onCanvasReady, onSubscribe, isSubscribed
           backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 6px, transparent 6px 12px)'
         }}
       >
-        <canvas ref={onCanvasReady} className="absolute inset-0 w-full h-full object-cover" />
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span className="font-mono text-xs text-zinc-600">{cameraId.toUpperCase()}</span>
-        </div>
+        <PlayerHost host={host} />
+        {!isSubscribed && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="font-mono text-xs text-zinc-600">{cameraId.toUpperCase()}</span>
+          </div>
+        )}
       </div>
 
       {/* meta row */}
