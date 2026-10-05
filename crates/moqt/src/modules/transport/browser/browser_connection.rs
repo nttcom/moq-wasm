@@ -16,7 +16,8 @@ use super::{
     js_value::{js_error, read_next},
 };
 use crate::modules::transport::{
-    transport_connection::TransportConnection, transport_stats::TransportStats,
+    transport_connection::{TransportClose, TransportConnection},
+    transport_stats::TransportStats,
 };
 
 #[derive(Debug)]
@@ -66,9 +67,25 @@ impl TransportConnection for BrowserConnection {
     type SendStream = BrowserSendStream;
     type ReceiveStream = BrowserReceiveStream;
 
-    async fn closed(&self) {
-        let close_info = JsFuture::from(self.transport.closed()).await;
-        tracing::info!(?close_info, "WebTransport connection closed");
+    async fn closed(&self) -> TransportClose {
+        let close = match JsFuture::from(self.transport.closed()).await {
+            Ok(close_info) => TransportClose {
+                code: js_sys::Reflect::get(&close_info, &JsValue::from_str("closeCode"))
+                    .ok()
+                    .and_then(|code| code.as_f64())
+                    .map(|code| code as u32),
+                reason: js_sys::Reflect::get(&close_info, &JsValue::from_str("reason"))
+                    .ok()
+                    .and_then(|reason| reason.as_string())
+                    .unwrap_or_default(),
+            },
+            Err(error) => TransportClose {
+                code: None,
+                reason: format!("{error:?}"),
+            },
+        };
+        tracing::info!(?close, "WebTransport connection closed");
+        close
     }
 
     fn close(&self, code: u32, reason: &str) {

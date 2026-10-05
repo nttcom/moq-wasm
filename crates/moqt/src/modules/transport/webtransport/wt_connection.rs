@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
-use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
 use crate::modules::transport::transport_stats::TransportStats;
 
 #[derive(Debug)]
@@ -21,9 +21,21 @@ impl TransportConnection for WtConnection {
     type SendStream = WtSendStream;
     type ReceiveStream = WtReceiveStream;
 
-    async fn closed(&self) {
-        let reason = self.session.closed().await;
-        tracing::info!("WebTransport connection closed: {:?}", reason);
+    async fn closed(&self) -> TransportClose {
+        let error = self.session.closed().await;
+        tracing::info!("WebTransport connection closed: {:?}", error);
+        match error {
+            web_transport_quinn::SessionError::WebTransportError(
+                web_transport_quinn::WebTransportError::Closed(code, reason),
+            ) => TransportClose {
+                code: Some(code),
+                reason,
+            },
+            other => TransportClose {
+                code: None,
+                reason: other.to_string(),
+            },
+        }
     }
 
     fn close(&self, code: u32, reason: &str) {
