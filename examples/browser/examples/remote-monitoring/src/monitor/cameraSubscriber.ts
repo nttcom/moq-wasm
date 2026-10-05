@@ -1,4 +1,4 @@
-import type { SubgroupObjectMessage } from '../../../../pkg/moqt_client_wasm'
+import type { SubgroupObjectMessage } from '../../../../pkg/moqt'
 import type { CameraId } from '../types/monitoring'
 import { type DeserializedChunk } from '../../../../utils/media/chunk'
 import { postSubgroupObjectToWorker } from '../../../../utils/media/decoderWorker'

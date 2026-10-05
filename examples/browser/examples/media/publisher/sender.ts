@@ -1,4 +1,4 @@
-import { MOQTClient } from '../../../pkg/moqt_client_wasm'
+import { MOQTClient } from '../../../pkg/moqt'
 import { createBitrateLogger } from '../../../utils/media/logger'
 import type { LocHeader } from '../../../utils/media/loc'
 

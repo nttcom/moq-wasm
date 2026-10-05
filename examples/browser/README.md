@@ -1,6 +1,6 @@
 # browser examples
 
-Browser demos built on `crates/moqt-client-wasm`.
+Browser demos built on `crates/wasm`.
 
 ```shell
 npm --prefix examples/browser ci

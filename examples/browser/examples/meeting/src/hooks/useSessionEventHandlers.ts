@@ -4,7 +4,7 @@ import {
   PublishNamespaceMessage,
   RequestErrorMessage,
   SubscribeOkMessage
-} from '../../../../pkg/moqt_client_wasm'
+} from '../../../../pkg/moqt'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'

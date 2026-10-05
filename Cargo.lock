@@ -1957,26 +1957,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moqt-client-wasm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "console_error_panic_hook",
- "futures",
- "js-sys",
- "mediapack",
- "moqt",
- "msf",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "moqtsink-e2e"
 version = "0.1.0"
 dependencies = [
@@ -3940,6 +3920,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen",
+]
+
+[[package]]
+name = "wasm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "console_error_panic_hook",
+ "futures",
+ "js-sys",
+ "mediapack",
+ "moqt",
+ "msf",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

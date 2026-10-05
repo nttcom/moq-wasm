@@ -17,7 +17,7 @@ import init, {
   SubgroupState,
   SubscribeMessage,
   SubscribeOkMessage
-} from '../../pkg/moqt_client_wasm'
+} from '../../pkg/moqt'
 import {
   InMemorySubscriptionStateManager,
   SubscriptionStateStore,

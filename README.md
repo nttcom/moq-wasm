@@ -83,7 +83,7 @@ cargo test -p vts                # VTS
 ```mermaid
 flowchart LR
     subgraph Publishers
-        B1[Browser<br/>moqt-client-wasm]
+        B1[Browser<br/>wasm]
         LI[live-ingest<br/>RTMP / SRT]
         GS[moqtsink<br/>GStreamer]
         ON[onvif bridge]
@@ -113,7 +113,7 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 | --- | --- |
 | [`crates/moqt/`](crates/moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
 | [`crates/relay/`](crates/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
-| [`crates/moqt-client-wasm/`](crates/moqt-client-wasm/README.md) | WebAssembly bindings used by the browser examples |
+| [`crates/wasm/`](crates/wasm/README.md) | WebAssembly bindings used by the browser examples |
 | [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
 | [`crates/moqt-bridge-live-ingest/`](crates/moqt-bridge-live-ingest/README.md) | RTMP and SRT ingest into MoQT |
 | [`crates/moqt-bridge-onvif/`](crates/moqt-bridge-onvif/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |

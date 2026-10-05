@@ -1,4 +1,4 @@
-# moqt-client-wasm
+# wasm
 
 WebAssembly bindings that expose `moqt` to the browser over WebTransport.
 `examples/browser` consumes the generated package from `examples/browser/pkg`.

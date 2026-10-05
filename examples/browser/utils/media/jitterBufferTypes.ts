@@ -1,4 +1,4 @@
-import type { SubgroupObjectMessage } from '../../pkg/moqt_client_wasm'
+import type { SubgroupObjectMessage } from '../../pkg/moqt'
 import type { LocHeader } from './loc'
 import type { DeserializedChunk } from './chunk'
 

@@ -5,7 +5,7 @@ import type { VideoJitterConfig, AudioJitterConfig } from '../types/jitterBuffer
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
-import type { SubscribeMessage } from '../../../../pkg/moqt_client_wasm'
+import type { SubscribeMessage } from '../../../../pkg/moqt'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, CatalogTrackRole, TrackMediaConfig } from '../types/catalog'
 import type { JitterBufferEvent } from '../types/media'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'

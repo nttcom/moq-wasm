@@ -29,11 +29,7 @@ export function assertE2EPrerequisites() {
   assertPathExists(certPath, "TLS certificate", setupHelpText);
   assertPathExists(keyPath, "TLS private key", setupHelpText);
   assertPathExists(`${jsDir}/node_modules`, "node_modules", setupHelpText);
-  assertPathExists(
-    `${jsDir}/pkg/moqt_client_wasm.js`,
-    "wasm build output",
-    setupHelpText,
-  );
+  assertPathExists(`${jsDir}/pkg/moqt.js`, "wasm build output", setupHelpText);
 }
 
 export function getDefaultWebPort() {

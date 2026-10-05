@@ -1,4 +1,4 @@
-import type { MOQTClient } from '../../pkg/moqt_client_wasm'
+import type { MOQTClient } from '../../pkg/moqt'
 import { MediaTransportState } from './transportState'
 import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'

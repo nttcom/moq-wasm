@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../pkg/moqt_client_wasm'
+import type { MOQTClient } from '../../../pkg/moqt'
 import { AUTH_INFO } from './const'
 import { sendVideoObjectMessage } from './sender'
 import { getFormElement } from './utils'

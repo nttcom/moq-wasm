@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
+import type { MOQTClient } from '../../../../pkg/moqt'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)

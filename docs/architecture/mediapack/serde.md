@@ -18,7 +18,7 @@ unit test.
 
 ## Context
 
-`crates/moqt-client-wasm` hands LOC header extensions across the JavaScript boundary
+`crates/wasm` hands LOC header extensions across the JavaScript boundary
 with `serde_wasm_bindgen`, and previously did so through a parallel set of LOC
 types in the `packages` crate. Folding `packages` into `mediapack` leaves the
 `mediapack` types as the only LOC model, so they must be the ones that cross
@@ -28,7 +28,7 @@ the draft-ietf-moq-loc-01 §2.3 representation and is mirrored by
 
 ## Alternatives
 
-- Keep a serde-only DTO enum in `crates/moqt-client-wasm` and convert to and from
+- Keep a serde-only DTO enum in `crates/wasm` and convert to and from
   `mediapack::loc::LocExtension`. Keeps `mediapack` free of `serde`, but
   keeps the id-to-name table that the merge is removing alive in a second
   place.

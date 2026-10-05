@@ -21,7 +21,7 @@ Application and integration components (draft reference is normally not required
 
 | Component | Description |
 | --- | --- |
-| `crates/moqt-client-wasm` | WebAssembly bindings to use `moqt` from the browser |
+| `crates/wasm` | WebAssembly bindings to use `moqt` from the browser |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `moqt-bridge-live-ingest` and `gst-plugin-moqt` |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
@@ -56,7 +56,7 @@ Application and integration components (draft reference is normally not required
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
 - Lint (JavaScript): `npx prettier --check`
-- Wasm: `wasm-pack build crates/moqt-client-wasm`
+- Wasm: `wasm-pack build crates/wasm --out-name moqt`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`

@@ -2443,7 +2443,7 @@ fn setup_parameters(max_request_id: u64, auth_token: Option<&str>) -> SetupParam
         authorization_token: auth_token.map(authorization_tokens).unwrap_or_default(),
         max_auth_token_cache_size: None,
         authority: None,
-        moq_implementation: Some("moqt-client-wasm".to_string()),
+        moq_implementation: Some("MOQ-WASM".to_string()),
     }
 }
 

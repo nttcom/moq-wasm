@@ -32,7 +32,7 @@ response uses camelCase keys (`appId`, `isRelay`), handled by
 ## Decision
 
 Use `serde` derives. Both crates are already in the workspace lock (`moqt` and
-`crates/moqt-client-wasm` depend on `serde`; `serde_json` is used by the bridges and
+`crates/wasm` depend on `serde`; `serde_json` is used by the bridges and
 pulled in by `reqwest/json`), so no new crate enters the dependency tree.
 `serde_json` stays a dev-dependency because production code only touches JSON
 through `reqwest`.
