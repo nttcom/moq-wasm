@@ -186,13 +186,16 @@ function publishingStatus(fileName: string, namespace: string, audioCodec: strin
 test('a paused viewer steps through still frames and resumes from the last one', async ({ browser }) => {
   // Arrange
   const fixturePath = ensureMp4Fixture('aac')
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, `${liveViewerE2EConfig.mp4Namespace}-paused`)
+  const namespace = `${liveViewerE2EConfig.mp4Namespace}-paused`
+  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, namespace)
   const skipBack1Button = viewer.page.getByTestId('live-player-skip-back-1-button')
 
   try {
     await viewer.mp4FileInput.setInputFiles(fixturePath)
     await viewer.publishButton.click()
+    await expect(viewer.publishStatus).toHaveText(publishingStatus(mp4FixtureFileName('aac'), namespace, 'mp4a.40.2'))
     await viewer.watchButton.click()
+    await expect(viewer.connectionStatus).toContainText('Connected:')
     await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: FIRST_VIDEO_TIMEOUT_MS })
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
     await viewer.playPauseButton.click()

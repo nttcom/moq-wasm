@@ -45,6 +45,7 @@ export class CameraPlayers {
       client: this.client,
       container: this.host(camId),
       livePicture: 'canvas',
+      keepLiveWhileReviewing: true,
       callbacks: {
         onStateChange: () => this.onStateChange(camId),
         onLiveFrame: () => {},
