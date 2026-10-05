@@ -557,4 +557,4 @@ e.g. reader/worker non-blocking and terminal-event handling in
 `event_handler.rs`, largest-location resolution in `sequences/subscribe.rs`,
 eviction refcount rules in `cache/store.rs`. Multi-process behaviour
 (cascading relays, cache eviction, fetch, multiple publishers, dedup) lives in
-the workspace-level `tests/*-e2e` suites driven by `scripts/run-*.mjs`.
+the workspace-level `tests/*-e2e` suites, each driven by its `run.sh`.

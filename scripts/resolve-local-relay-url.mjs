@@ -2,7 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { repoRoot, resolveCommandName } from "./media-e2e-helpers.mjs";
+import { repoRoot, resolveCommandName } from "./dev-env.mjs";
 
 const defaultMoqtUrl = "https://127.0.0.1:4433";
 const dockerRelayHostEnvNames = ["MOQT_DOCKER_RELAY_HOST", "LOCAL_RELAY_HOST"];

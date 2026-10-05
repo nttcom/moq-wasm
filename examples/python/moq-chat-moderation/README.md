@@ -82,5 +82,5 @@ uv run pytest
 E2E はリポジトリのルートで実行します。relay・VTS・vite・偽の djev-run・bot を起動し、Playwright でページを操作します。
 
 ```shell
-node scripts/run-chat-moderation-e2e.mjs
+node tests/browser-e2e/run-chat-moderation-e2e.mjs
 ```

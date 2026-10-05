@@ -7,20 +7,22 @@ import {
   spawnViteServer,
   terminateProcess,
   waitForOutput,
-} from "./browser-e2e-process.mjs";
+} from "./process.mjs";
+import {
+  ensureLinuxEnvironment,
+  getErrorMessage,
+  repoRoot,
+  resolveCommandName,
+} from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
-  ensureLinuxEnvironment,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   getDefaultWebPort,
-  getErrorMessage,
   jsDir,
   liveViewerPath,
-  repoRoot,
-  resolveCommandName,
   waitForHttpOk,
-} from "./media-e2e-helpers.mjs";
+} from "./helpers.mjs";
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";

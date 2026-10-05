@@ -145,18 +145,18 @@ format:
 	npx --prefix examples/browser prettier --write "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
 
 browser-e2e-media:
-	node scripts/setup-media-e2e.mjs
-	node scripts/run-media-e2e.mjs
+	node tests/browser-e2e/setup-media-e2e.mjs
+	node tests/browser-e2e/run-media-e2e.mjs
 
 # Two-relay meeting E2E: brings up relay-a/relay-b via docker compose, then Playwright.
 browser-e2e-live-viewer:
-	node scripts/run-live-viewer-e2e.mjs
+	node tests/browser-e2e/run-live-viewer-e2e.mjs
 
 browser-e2e-meeting:
-	node scripts/setup-media-e2e.mjs
-	node scripts/run-meeting-e2e.mjs
+	node tests/browser-e2e/setup-media-e2e.mjs
+	node tests/browser-e2e/run-meeting-e2e.mjs
 
 # Same as browser-e2e-meeting but with a visible browser to watch behavior.
 # Assumes setup already ran once (via browser-e2e-meeting or setup-media-e2e.mjs).
 browser-e2e-meeting-headed:
-	PLAYWRIGHT_HEADLESS=false node scripts/run-meeting-e2e.mjs
+	PLAYWRIGHT_HEADLESS=false node tests/browser-e2e/run-meeting-e2e.mjs

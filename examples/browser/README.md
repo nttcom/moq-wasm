@@ -39,7 +39,7 @@ appId, and a rejected token is reported with the relay's close code and reason.
 make browser-e2e-media
 make browser-e2e-live-viewer
 make browser-e2e-meeting
-node scripts/run-message-e2e.mjs
-node scripts/run-chat-moderation-e2e.mjs
-node scripts/run-camera-detection-e2e.mjs
+node tests/browser-e2e/run-message-e2e.mjs
+node tests/browser-e2e/run-chat-moderation-e2e.mjs
+node tests/browser-e2e/run-camera-detection-e2e.mjs
 ```

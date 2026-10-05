@@ -3,7 +3,7 @@
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
-import { json, text } from "node:stream/consumers";
+import { text } from "node:stream/consumers";
 import { setTimeout } from "node:timers/promises";
 
 import {
@@ -13,27 +13,29 @@ import {
   spawnViteServer,
   terminateProcess,
   waitForOutput,
-} from "./browser-e2e-process.mjs";
+} from "./process.mjs";
+import {
+  ensureLinuxEnvironment,
+  getErrorMessage,
+  repoRoot,
+  resolveCommandName,
+} from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
-  chatModerationPath,
-  ensureLinuxEnvironment,
+  cameraDetectionPath,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   getDefaultWebPort,
-  getErrorMessage,
   jsDir,
-  repoRoot,
-  resolveCommandName,
   waitForHttpOk,
-} from "./media-e2e-helpers.mjs";
+} from "./helpers.mjs";
 import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
-const botDir = resolve(repoRoot, "examples/python/moq-chat-moderation");
-const abusiveText = "e2e-abusive";
+const botDir = resolve(repoRoot, "examples/python/moq-camera-detection");
 const childProcesses = [];
 
-async function startFakeJev() {
+async function startFakeDjevVision() {
+  let answer = "1";
   let delayMs = 0;
   const server = createServer(async (request, response) => {
     if (request.method === "PUT" && request.url === "/delay") {
@@ -42,11 +44,19 @@ async function startFakeJev() {
       response.end();
       return;
     }
-    const { state } = await json(request);
+    if (request.method === "PUT" && request.url === "/answer") {
+      answer = await text(request);
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     await setTimeout(delayMs);
-    const noul = state.includes(abusiveText) ? 0.95 : 0.02;
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ answers: { abusive: { noul } } }));
+    response.end(
+      JSON.stringify({
+        choices: [{ message: { content: `thought\n${answer}` } }],
+      }),
+    );
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   return server;
@@ -59,14 +69,14 @@ async function main() {
   const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
-  const fakeJev = await startFakeJev();
-  const fakeJevUrl = `http://127.0.0.1:${fakeJev.address().port}/v1/systemone`;
+  const fakeDjev = await startFakeDjevVision();
+  const fakeDjevOrigin = `http://127.0.0.1:${fakeDjev.address().port}`;
 
   const cleanup = async () => {
     await Promise.allSettled(
       [...childProcesses].reverse().map((child) => terminateProcess(child)),
     );
-    fakeJev.close();
+    fakeDjev.close();
   };
 
   registerSignalHandlers(cleanup);
@@ -84,7 +94,7 @@ async function main() {
 
     await Promise.all([
       waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${chatModerationPath}`, 120_000),
+      waitForHttpOk(`${baseUrl}${cameraDetectionPath}`, 120_000),
     ]);
 
     const bot = spawnProcess(
@@ -94,28 +104,28 @@ async function main() {
         "run",
         "python",
         "-m",
-        "moq_chat_moderation.bot",
+        "moq_camera_detection.bot",
         "--relay-url",
         moqtUrl,
         "--insecure",
-        "--jev-url",
-        fakeJevUrl,
+        "--djev-url",
+        `${fakeDjevOrigin}/v1/chat/completions`,
       ],
       { cwd: botDir },
     );
     childProcesses.push(bot);
-    await waitForOutput(bot, /waiting for peer broadcast/, "bot", 180_000);
+    await waitForOutput(bot, /pipeline is now ready/, "bot", 180_000);
 
     await runCommand(
       resolveCommandName("npm"),
-      ["run", "e2e:chat-moderation"],
+      ["run", "e2e:camera-detection"],
       {
         cwd: jsDir,
         env: {
           ...process.env,
           MEDIA_E2E_BASE_URL: baseUrl,
-          CHAT_MODERATION_E2E_MOQT_URL: moqtUrl,
-          CHAT_MODERATION_E2E_JEV_ORIGIN: `http://127.0.0.1:${fakeJev.address().port}`,
+          CAMERA_DETECTION_E2E_MOQT_URL: moqtUrl,
+          CAMERA_DETECTION_E2E_DJEV_ORIGIN: fakeDjevOrigin,
         },
       },
     );

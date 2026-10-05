@@ -14,5 +14,6 @@ down.
 | `./tests/object-dedup-e2e/run.sh` | Republishing a group does not duplicate objects for FETCH |
 | `./tests/moqtsink-e2e/run.sh` | The GStreamer `moqtsink` publishes the expected tracks |
 
-Browser E2E lives in `examples/browser/tests` and runs through `make browser-e2e-*`
-or `node scripts/run-*-e2e.mjs`.
+Browser E2E: the Playwright specs live in `examples/browser/tests`, and the
+runners in `browser-e2e/` start the relay, VTS and Vite around them. Run them
+through `make browser-e2e-*` or `node tests/browser-e2e/run-*-e2e.mjs`.

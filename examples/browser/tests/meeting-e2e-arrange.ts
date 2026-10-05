@@ -3,7 +3,7 @@ import { MEETING_INDEX_PATH } from '../playwright.helpers'
 
 export const RELAY_A_URL = process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
 export const RELAY_B_URL = process.env.MEETING_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434'
-// Set by scripts/run-meeting-e2e.mjs: an app-scoped JWT the pages present via ?jwt=.
+// Set by tests/browser-e2e/run-meeting-e2e.mjs: an app-scoped JWT the pages present via ?jwt=.
 export const MEETING_JWT = process.env.MEETING_E2E_JWT || undefined
 
 export interface MeetingClientPageModel {
