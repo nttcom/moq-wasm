@@ -12,9 +12,10 @@ use crate::{
                 control_message_type::ControlMessageType,
                 messages::{
                     fetch::Fetch, fetch::FetchParams, fetch_cancel::FetchCancel,
-                    parameters::authorization_token::AuthorizationToken, subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace, unsubscribe::Unsubscribe,
-                    unsubscribe_namespace::UnsubscribeNamespace,
+                    parameters::authorization_token::AuthorizationToken,
+                    parameters::content_exists::ContentExists, subscribe::Subscribe,
+                    subscribe_namespace::SubscribeNamespace, subscribe_update::SubscribeUpdate,
+                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                 },
             },
             enums::ResponseMessage,
@@ -425,6 +426,48 @@ impl<T: TransportProtocol> Subscriber<T> {
         }
     }
 
+    /// draft-14 §9.10: SUBSCRIBE_UPDATE repeats every field and may only
+    /// narrow a subscription, so the current Start Location, End Group and
+    /// priority are sent unchanged; no response message is defined.
+    #[tracing::instrument(
+        level = "info",
+        name = "moqt.subscriber.update_forward",
+        skip_all,
+        fields(subscription_request_id = subscription.request_id(), forward = forward)
+    )]
+    pub async fn update_forward(
+        &self,
+        subscription: &Subscription,
+        forward: bool,
+    ) -> anyhow::Result<()> {
+        let largest = match subscription.content_exists() {
+            ContentExists::True { location } => Some(location),
+            ContentExists::False => None,
+        };
+        let end_group = match subscription.filter_type() {
+            FilterType::AbsoluteRange { end_group, .. } => end_group + 1,
+            _ => 0,
+        };
+        let subscribe_update = SubscribeUpdate {
+            request_id: self.session.get_request_id(),
+            subscription_request_id: subscription.request_id(),
+            start_location: subscription.filter_type().start_location(largest),
+            end_group,
+            subscriber_priority: subscription.subscriber_priority(),
+            forward,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+        };
+        self.session
+            .send_stream
+            .send(
+                ControlMessageType::SubscribeUpdate,
+                subscribe_update.encode(),
+            )
+            .await?;
+        Ok(())
+    }
+
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.unsubscribe",
@@ -563,9 +606,11 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        ExtensionHeaders, Fetch, FetchObject, FetchObjectField, FetchOption, Location,
-        SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        ContentExists, ExtensionHeaders, Fetch, FetchObject, FetchObjectField, FetchOption,
+        Location, SessionEvent, SubscribeOption,
+        modules::test_support::{
+            connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
+        },
     };
 
     const START: Location = Location {
@@ -640,5 +685,56 @@ mod tests {
         );
         assert!(matches!(header, Fetch::Header(_)));
         assert!(matches!(object, Fetch::Object(field) if field == fetch_object()));
+    }
+
+    #[tokio::test]
+    async fn update_forward_repeats_the_subscription_fields_with_the_new_forward_flag() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-update-forward").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        let largest = Location {
+            group_id: 3,
+            object_id: 1,
+        };
+        handler
+            .ok(0, ContentExists::True { location: largest })
+            .await
+            .unwrap();
+        let subscription = request.await.unwrap().unwrap();
+
+        // Act
+        client
+            .subscriber()
+            .update_forward(&subscription, false)
+            .await
+            .unwrap();
+
+        // Assert
+        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE_UPDATE from the client");
+        };
+        assert_eq!(update.subscription_request_id(), handler.request_id());
+        assert!(!update.forward());
+        assert_eq!(
+            update.start_location(),
+            Location {
+                group_id: 3,
+                object_id: 2
+            }
+        );
+        assert_eq!(update.end_group(), 0);
+        assert_eq!(update.subscriber_priority(), 128);
     }
 }
