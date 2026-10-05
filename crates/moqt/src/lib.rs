@@ -76,6 +76,8 @@ pub use modules::moqt::domains::subscription::Subscription;
 pub use modules::moqt::domains::track_reader::TrackObject;
 pub use modules::moqt::domains::track_reader::TrackReader;
 pub use modules::moqt::domains::track_writer::TrackWriter;
+#[cfg(target_arch = "wasm32")]
+pub use modules::moqt::protocol::BROWSER;
 #[cfg(not(target_arch = "wasm32"))]
 pub use modules::moqt::protocol::DUAL;
 #[cfg(not(target_arch = "wasm32"))]

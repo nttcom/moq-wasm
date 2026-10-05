@@ -1,5 +1,10 @@
 use std::fmt::Debug;
 
+#[cfg(target_arch = "wasm32")]
+use crate::modules::transport::browser::{
+    browser_connection::BrowserConnection, browser_connection_creator::BrowserConnectionCreator,
+    browser_receive_stream::BrowserReceiveStream, browser_send_stream::BrowserSendStream,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::modules::transport::{
     dual::{
@@ -68,4 +73,17 @@ impl TransportProtocol for DUAL {
     type Connection = DualConnection;
     type SendStream = DualSendStream;
     type ReceiveStream = DualReceiveStream;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+#[derive(Debug)]
+pub struct BROWSER;
+
+#[cfg(target_arch = "wasm32")]
+impl TransportProtocol for BROWSER {
+    type ConnectionCreator = BrowserConnectionCreator;
+    type Connection = BrowserConnection;
+    type SendStream = BrowserSendStream;
+    type ReceiveStream = BrowserReceiveStream;
 }

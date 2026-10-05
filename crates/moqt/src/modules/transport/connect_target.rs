@@ -1,5 +1,5 @@
 use anyhow::Context;
-use url::{Host, Url};
+use url::Url;
 
 const DEFAULT_MOQT_PORT: u16 = 4433;
 const DEFAULT_HTTPS_PORT: u16 = 443;
@@ -41,7 +41,9 @@ impl ConnectTarget {
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn server_name(&self) -> String {
+        use url::Host;
         match self.host() {
             Host::Domain(domain) => domain.to_string(),
             Host::Ipv4(address) => address.to_string(),
@@ -54,6 +56,7 @@ impl ConnectTarget {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn resolve_remote_address(&self) -> anyhow::Result<std::net::SocketAddr> {
         use std::net::{IpAddr, SocketAddr};
+        use url::Host;
 
         let domain = match self.host() {
             Host::Domain(domain) => domain,
@@ -72,7 +75,8 @@ impl ConnectTarget {
             .with_context(|| format!("{domain} resolved to no address"))
     }
 
-    fn host(&self) -> Host<&str> {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn host(&self) -> url::Host<&str> {
         self.url
             .host()
             .expect("ConnectTarget::parse rejects urls without a host")

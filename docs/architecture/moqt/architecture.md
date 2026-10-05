@@ -28,9 +28,10 @@ modules/executor          ← task spawning, yielding and timeouts (tokio native
 ```
 
 - `lib.rs` re-exports the session-level API. The whole stack compiles for
-  `wasm32` as well; only the quinn-based transports and their markers
-  (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`.
-  `crates/wasm` currently consumes the message codecs only.
+  `wasm32` as well; the quinn-based transports and their markers
+  (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`
+  and the `BROWSER` marker is wasm32-only. `crates/wasm` currently consumes
+  the message codecs only.
 - `wire.rs` re-exports raw control-message structs, framing helpers
   (`encode_control_message` / `take_control_message`), and data-plane object
   types for consumers that need direct wire access (the relay uses
@@ -49,13 +50,14 @@ trait TransportProtocol {
 }
 ```
 
-Three zero-sized markers implement it:
+Four zero-sized markers implement it; the first three are native-only:
 
 | Marker | Implementation | Notes |
 | --- | --- | --- |
 | `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection (`connect_with` for raw QUIC, `web_transport_quinn::Client` for WebTransport). |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 The whole session stack is generic over `T: TransportProtocol`, so protocol
 selection is a compile-time type parameter (e.g. `Endpoint::<moqt::DUAL>`),
