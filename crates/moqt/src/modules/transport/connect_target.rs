@@ -1,5 +1,3 @@
-use std::net::{IpAddr, SocketAddr};
-
 use anyhow::Context;
 use url::{Host, Url};
 
@@ -53,7 +51,10 @@ impl ConnectTarget {
 
     /// The client endpoint binds an IPv4 socket, so an IPv4 address is
     /// preferred when the host resolves to both families.
-    pub(crate) async fn resolve_remote_address(&self) -> anyhow::Result<SocketAddr> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn resolve_remote_address(&self) -> anyhow::Result<std::net::SocketAddr> {
+        use std::net::{IpAddr, SocketAddr};
+
         let domain = match self.host() {
             Host::Domain(domain) => domain,
             Host::Ipv4(address) => return Ok(SocketAddr::new(IpAddr::V4(address), self.port)),

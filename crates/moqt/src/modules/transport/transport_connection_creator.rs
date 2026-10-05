@@ -1,10 +1,12 @@
-use crate::modules::transport::{
-    connect_target::ConnectTarget, transport_connection::TransportConnection,
+use crate::modules::{
+    executor::{MaybeSend, MaybeSync},
+    transport::{connect_target::ConnectTarget, transport_connection::TransportConnection},
 };
 use async_trait::async_trait;
 
-#[async_trait]
-pub(crate) trait TransportConnectionCreator: Send + Sync + 'static {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
     type Connection: TransportConnection;
 
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self>

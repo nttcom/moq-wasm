@@ -24,13 +24,13 @@ modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL m
         │
         ▼
 modules/transport         ← transport abstraction + quinn/web-transport-quinn impls
-modules/executor          ← task spawning, yielding and timeouts (tokio today)
+modules/executor          ← task spawning, yielding and timeouts (tokio natively, wasm-bindgen-futures on wasm32)
 ```
 
-- `lib.rs` re-exports the session-level API. Everything except the message
-  codecs is `#[cfg(not(target_arch = "wasm32"))]`; on wasm32 only
-  `control_plane` and `data_plane` compile, which is what `crates/wasm`
-  consumes.
+- `lib.rs` re-exports the session-level API. The whole stack compiles for
+  `wasm32` as well; only the quinn-based transports and their markers
+  (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`.
+  `crates/wasm` currently consumes the message codecs only.
 - `wire.rs` re-exports raw control-message structs, framing helpers
   (`encode_control_message` / `take_control_message`), and data-plane object
   types for consumers that need direct wire access (the relay uses
@@ -296,7 +296,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   yields and bounds waits only through `modules/executor` (`spawn`,
   `try_spawn`, `yield_now`, `timeout`); `tokio::sync` channels and locks are
   used directly. `modules/transport` is the only other place that touches
-  tokio I/O. The executor is the seam for a browser (wasm32) implementation.
+  tokio I/O. `executor/native.rs` is the tokio implementation,
+  `executor/browser.rs` the `spawn_local` one; the executor also defines
+  `MaybeSend` / `MaybeSync` / `BoxFuture`, which are `Send` / `Sync` bounds
+  natively and empty on wasm32 because JavaScript values cannot cross
+  threads. The transport traits and `async_trait` attributes use them.
 
 ## Testing conventions
 Unit tests live in `#[cfg(test)] mod tests` inside the module under test

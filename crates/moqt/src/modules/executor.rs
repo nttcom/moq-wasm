@@ -1,48 +1,37 @@
-use std::{future::Future, time::Duration};
+use std::{future::Future, pin::Pin};
 
-pub(crate) struct JoinHandle<T> {
-    inner: tokio::task::JoinHandle<T>,
-}
+#[cfg(target_arch = "wasm32")]
+mod browser;
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
 
-impl<T> JoinHandle<T> {
-    pub(crate) fn abort(&self) {
-        self.inner.abort();
-    }
-}
-
-pub(crate) fn spawn<F>(name: &str, future: F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    try_spawn(name, future).expect("spawn called outside of a tokio runtime")
-}
-
-pub(crate) fn try_spawn<F>(name: &str, future: F) -> Option<JoinHandle<F::Output>>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    let runtime = tokio::runtime::Handle::try_current().ok()?;
-    let inner = tokio::task::Builder::new()
-        .name(name)
-        .spawn_on(future, &runtime)
-        .expect("tokio runtime is shutting down");
-    Some(JoinHandle { inner })
-}
-
-pub(crate) async fn yield_now() {
-    tokio::task::yield_now().await
-}
+#[cfg(target_arch = "wasm32")]
+pub(crate) use browser::{JoinHandle, spawn, timeout, try_spawn, yield_now};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use native::{JoinHandle, spawn, timeout, try_spawn, yield_now};
 
 #[derive(Debug)]
 pub(crate) struct Elapsed;
 
-pub(crate) async fn timeout<F: Future>(
-    duration: Duration,
-    future: F,
-) -> Result<F::Output, Elapsed> {
-    tokio::time::timeout(duration, future)
-        .await
-        .map_err(|_| Elapsed)
-}
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait MaybeSend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + ?Sized> MaybeSend for T {}
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait MaybeSend {}
+#[cfg(target_arch = "wasm32")]
+impl<T: ?Sized> MaybeSend for T {}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait MaybeSync: Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Sync + ?Sized> MaybeSync for T {}
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait MaybeSync {}
+#[cfg(target_arch = "wasm32")]
+impl<T: ?Sized> MaybeSync for T {}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+#[cfg(target_arch = "wasm32")]
+pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T>>>;

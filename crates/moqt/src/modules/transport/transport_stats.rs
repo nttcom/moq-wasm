@@ -12,6 +12,7 @@ pub struct TransportStats {
     pub received_max_stream_data: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<quinn::ConnectionStats> for TransportStats {
     fn from(stats: quinn::ConnectionStats) -> Self {
         Self {

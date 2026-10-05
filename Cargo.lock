@@ -1917,6 +1917,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "js-sys",
  "mockall",
  "num_enum",
  "quinn",
@@ -1929,6 +1930,8 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-transport-quinn",
 ]
 

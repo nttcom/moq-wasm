@@ -1,9 +1,9 @@
 use std::{pin::Pin, task::Poll};
 
-use crate::{Handshake, TransportProtocol};
+use crate::{Handshake, TransportProtocol, modules::executor::BoxFuture};
 
 pub struct Accepting<T: TransportProtocol> {
-    pub(crate) inner: Pin<Box<dyn Future<Output = anyhow::Result<Handshake<T>>> + Send>>,
+    pub(crate) inner: BoxFuture<anyhow::Result<Handshake<T>>>,
 }
 
 impl<T: TransportProtocol> Future for Accepting<T> {

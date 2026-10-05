@@ -1,13 +1,17 @@
 use std::fmt::Debug;
 
-use crate::modules::transport::{
-    transport_receive_stream::TransportReceiveStream, transport_send_stream::TransportSendStream,
-    transport_stats::TransportStats,
+use crate::modules::{
+    executor::{MaybeSend, MaybeSync},
+    transport::{
+        transport_receive_stream::TransportReceiveStream,
+        transport_send_stream::TransportSendStream, transport_stats::TransportStats,
+    },
 };
 use async_trait::async_trait;
 
-#[async_trait]
-pub(crate) trait TransportConnection: Send + Sync + Debug {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub(crate) trait TransportConnection: MaybeSend + MaybeSync + Debug {
     type SendStream: TransportSendStream;
     type ReceiveStream: TransportReceiveStream;
     async fn closed(&self);
