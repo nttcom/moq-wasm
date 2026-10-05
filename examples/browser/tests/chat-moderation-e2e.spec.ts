@@ -1,12 +1,23 @@
 import { expect, test } from '@playwright/test'
-import { ABUSIVE_TEXT, REMOVED_MESSAGE_TEXT, clickJoin, delayJevAnswers, joinChat } from './chat-moderation-e2e-arrange'
+import {
+  ABUSIVE_TEXT,
+  LEAVE_BUTTON_TEST_ID,
+  REMOVED_MESSAGE_TEXT,
+  clickJoin,
+  delayJevAnswers,
+  joinChat
+} from './chat-moderation-e2e-arrange'
+import { leaveAllPages } from './leave-all-pages'
 
 const ORDINARY_TEXT = 'こんにちは'
 const LATE_ANSWER_MS = 6_000
 const LATE_JOIN_ANSWER_MS = 15_000
 
 test.describe('MoQ Chat Moderation', () => {
-  test.afterEach(() => delayJevAnswers(0))
+  test.afterEach(async ({ browser }) => {
+    await leaveAllPages(browser, LEAVE_BUTTON_TEST_ID)
+    await delayJevAnswers(0)
+  })
 
   test('replaces only the message the moderator judges abusive', async ({ page }) => {
     // Arrange
@@ -29,7 +40,7 @@ test.describe('MoQ Chat Moderation', () => {
     const earlierChat = await joinChat(earlierPage)
     await earlierChat.send(ORDINARY_TEXT)
     await expect(earlierChat.messages.nth(0)).toHaveAttribute('data-verdict', 'ok')
-    await earlierPage.close()
+    await earlierChat.leave()
     const chat = await joinChat(page)
 
     // Act
@@ -46,7 +57,7 @@ test.describe('MoQ Chat Moderation', () => {
     await earlierChat.send(ORDINARY_TEXT)
     await expect(earlierChat.messages.nth(0)).toHaveAttribute('data-verdict', 'ok')
     const chat = await clickJoin(page)
-    await earlierPage.getByTestId('chat-moderation-leave-button').click()
+    await earlierChat.leave()
     await expect(page.locator('#moderator-status')).toHaveAttribute('data-state', 'ok', { timeout: 30_000 })
 
     // Act

@@ -1,10 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { answerDetectorWith, askCamera, delayDjevAnswers, joinCamera } from './camera-detection-e2e-arrange'
+import { leaveAllPages } from './leave-all-pages'
 
 const LATE_ANSWER_MS = 6_000
 
 test.describe('MoQ Camera Detection', () => {
-  test.afterEach(() => delayDjevAnswers(0))
+  test.afterEach(async ({ browser }) => {
+    await leaveAllPages(browser, 'camera-detection-leave-button')
+    await delayDjevAnswers(0)
+  })
 
   test('follows the detector when its choice changes', async ({ page }) => {
     // Arrange
