@@ -3934,7 +3934,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "console_error_panic_hook",
- "futures",
  "js-sys",
  "mediapack",
  "moqt",
@@ -3942,9 +3941,9 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 use moqt::wire::{GroupOrder, Location};
 
-use crate::TrackKey;
+use crate::client_state::TrackKey;
 use crate::request_rejection::RequestRejection;
 
 /// Both ends use the FETCH End Location encoding (draft-14 §9.16.1): the
