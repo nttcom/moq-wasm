@@ -171,24 +171,20 @@
 
           <section class="card stack full">
             <h2>Playback</h2>
-            <label>
-              <input type="checkbox" name="bypass-jitter-buffer" id="bypass-jitter-buffer" checked />
-              Bypass JitterBuffer
-            </label>
             <div class="media-grid">
               <section class="playback-panel stack">
                 <div class="playback-meta">
                   <strong>Video</strong>
                   <span id="video-playback-object">Waiting for objects</span>
                 </div>
-                <video id="video" muted inline controls data-testid="subscriber-video"></video>
+                <video id="video" muted autoplay playsinline controls data-testid="subscriber-video"></video>
+                <canvas id="canvas" hidden></canvas>
               </section>
               <section class="playback-panel stack">
                 <div class="playback-meta">
-                  <strong>Audio</strong>
-                  <span id="audio-playback-object">Waiting for objects</span>
+                  <strong>Playout</strong>
+                  <span id="playout-stats" data-testid="subscriber-playout-stats">Waiting for media</span>
                 </div>
-                <audio id="audio" data-testid="subscriber-audio"></audio>
               </section>
             </div>
           </section>

@@ -27,30 +27,12 @@ export interface SidebarStatsSample {
   localScreenShareSendObjectCount?: number | null
   localScreenShareSendAliasCount?: number | null
   localScreenShareSendKeyframe?: number | null
-  videoKeyframeIntervalFrames?: number | null
-  screenShareKeyframeIntervalFrames?: number | null
-  videoReceiveLatencyMs?: number | null
-  screenShareReceiveLatencyMs?: number | null
-  audioReceiveLatencyMs?: number | null
-  videoRenderLatencyMs?: number | null
-  screenShareRenderLatencyMs?: number | null
-  audioRenderLatencyMs?: number | null
-  videoReceiveToDecodeMs?: number | null
-  videoReceiveToRenderMs?: number | null
-  screenShareReceiveToDecodeMs?: number | null
-  screenShareReceiveToRenderMs?: number | null
-  videoPacingEffectiveIntervalMs?: number | null
-  videoPacingBufferedFrames?: number | null
-  videoDecodeQueueSize?: number | null
-  videoPacingTargetFrames?: number | null
-  screenSharePacingEffectiveIntervalMs?: number | null
-  screenSharePacingBufferedFrames?: number | null
-  screenShareDecodeQueueSize?: number | null
-  screenSharePacingTargetFrames?: number | null
-  audioPlaybackQueueMs?: number | null
-  videoRenderingRateFps?: number | null
-  screenShareRenderingRateFps?: number | null
-  audioRenderingRateFps?: number | null
+  bufferMs?: number | null
+  targetBufferMs?: number | null
+  outputLatencyMs?: number | null
+  arrivalSpreadMs?: number | null
+  viewerDelayMs?: number | null
+  syncOffsetMs?: number | null
 }
 
 export interface SidebarMemberStats {

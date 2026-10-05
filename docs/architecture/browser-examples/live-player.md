@@ -114,6 +114,33 @@ class LivePlayer {
 }
 ```
 
+`LocLive` is the live LOC pipeline on its own, for a page that keeps its own
+catalog and subscriptions and only needs the playback: it is given the picture
+elements (`createPictureVideo` / `createPictureCanvas` from
+`pictureElements.ts`), is told the catalog track of each kind, and is fed the
+subgroup objects the page receives.
+
+```ts
+class LocLive {
+  constructor(video: HTMLVideoElement, canvas: HTMLCanvasElement, livePicture: LivePictureKind | undefined, callbacks: LocLiveCallbacks)
+  readonly playout: LivePlayout
+  readonly picture: LivePictureSink
+  configureTrack(kind: MediaKind, track: MediaCatalogTrack): void
+  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void
+  setBufferPolicy(policy: BufferPolicy): void
+  reset(): void
+  dispose(): void
+  stats(): LiveStats
+}
+```
+
+`reset` empties the playout and detaches the picture; `dispose` also ends the
+decoder workers and closes the `AudioContext`, so a page that creates one
+`LocLive` per stream it shows can let it go. `LiveStats` is what
+`LivePlayer.stats()` reports minus the object count: frame size, viewer delay,
+buffer and target, output latency, arrival spread, video and audio bitrate,
+A/V offset, audio breaks, video drops, shed.
+
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
 
@@ -137,7 +164,8 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `deliveryObserver` | What the player reports of every object, FETCH and playhead |
 | `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order |
-| `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold |
+| `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
+| `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
 | `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, stamping groups from the media timeline, the seek axis |
@@ -524,3 +552,16 @@ named `live-player-*`.
   pacing presets, the jitter-buffer visualizer and the worker-telemetry stats
   the page used to show are gone with it, and the catalog, video and audio are
   subscribed by the player instead of by request ids typed into the page.
+- `examples/meeting`: `LocLive` without `LivePlayer`, since the meeting has its
+  own catalog and subscribes per participant. Each remote member plays through
+  one `LocLive` for the camera and the audio and another for a screen share;
+  the pipeline is replaced when its video track is unsubscribed, so the next
+  video track starts on fresh decoders, and audio joining a running picture
+  warms the playout up again. The buffer policy and catch-up are set per
+  member, and the per-member stats line and charts show `LiveStats`. The
+  worker pacing presets, the jitter-buffer visualizer and the worker-telemetry
+  charts are gone with it, as in `examples/onvif`.
+- `examples/media/subscriber`: one `LocLive` on the page's own `<video>` and a
+  hidden `<canvas>`, configured from the MSF catalog tracks the page selects
+  and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
+  buffer bypass checkbox.

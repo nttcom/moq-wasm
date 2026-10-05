@@ -310,7 +310,7 @@ export class LocalSession {
     })
   }
 
-  async unsubscribe(subscribeId: bigint, role?: CatalogSubscribeRole): Promise<void> {
+  async unsubscribe(subscribeId: bigint): Promise<void> {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot unsubscribe when session state is "${this.state}"`)
     }
@@ -318,7 +318,7 @@ export class LocalSession {
     const trackAlias = this.subscribeTrackAliases.get(subscribeId)
     this.subscribeTrackAliases.delete(subscribeId)
     if (trackAlias !== undefined) {
-      this.mediaController.unregisterRemoteTrack(trackAlias, role)
+      this.mediaController.unregisterRemoteTrack(trackAlias)
     }
 
     await this.client.unsubscribe(subscribeId)

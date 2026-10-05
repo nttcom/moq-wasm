@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
-import type { JitterBufferEvent, JitterBufferSnapshot, RemoteMediaStreams } from '../types/media'
-import {
-  DEFAULT_VIDEO_JITTER_CONFIG,
-  normalizeVideoJitterConfig,
-  type VideoJitterConfig,
-  DEFAULT_AUDIO_JITTER_CONFIG,
-  normalizeAudioJitterConfig,
-  type AudioJitterConfig
-} from '../types/jitterBuffer'
+import type { RemotePictures } from '../media/mediaSubscriber'
+import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_VIDEO_ENCODING_SETTINGS,
   VIDEO_BITRATE_OPTIONS,
@@ -55,14 +48,12 @@ interface UseMeetingMediaResult {
   localAudioBitrate: number | null
   localCameraVideoSendTiming: LocalVideoSendTiming | null
   localScreenShareVideoSendTiming: LocalVideoSendTiming | null
-  remoteMedia: Map<string, RemoteMediaStreams>
+  remotePictures: Map<string, RemotePictures>
   toggleCamera: () => Promise<boolean>
   toggleScreenShare: () => Promise<boolean>
   toggleMicrophone: () => Promise<boolean>
-  videoJitterConfigs: Map<string, VideoJitterConfig>
-  setVideoJitterBufferConfig: (userId: string, config: Partial<VideoJitterConfig>) => void
-  audioJitterConfigs: Map<string, AudioJitterConfig>
-  setAudioJitterBufferConfig: (userId: string, config: Partial<AudioJitterConfig>) => void
+  playoutSettings: Map<string, PlayoutSettings>
+  setPlayoutSettings: (userId: string, settings: PlayoutSettings) => void
   videoCodecOptions: typeof VIDEO_CODEC_OPTIONS
   videoResolutionOptions: typeof VIDEO_RESOLUTION_OPTIONS
   videoBitrateOptions: typeof VIDEO_BITRATE_OPTIONS
@@ -190,15 +181,6 @@ const CATALOG_PRESETS: Record<CatalogPresetSource, CatalogPreset> = {
   }
 }
 
-type RenderingRateState = {
-  lastEventAtMs: number
-  smoothedFps: number
-}
-
-const RENDERING_RATE_SMOOTHING_FACTOR = 0.2
-const MIN_RENDERING_INTERVAL_MS = 1
-const MAX_RENDERING_FPS = 120
-
 export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaResult {
   const [cameraEnabled, setCameraEnabled] = useState(false)
   const [screenShareEnabled, setScreenShareEnabled] = useState(false)
@@ -214,9 +196,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<LocalVideoSendTiming | null>(
     null
   )
-  const [remoteMedia, setRemoteMedia] = useState<Map<string, RemoteMediaStreams>>(new Map())
-  const [videoJitterConfigs, setVideoJitterConfigs] = useState<Map<string, VideoJitterConfig>>(new Map())
-  const [audioJitterConfigs, setAudioJitterConfigs] = useState<Map<string, AudioJitterConfig>>(new Map())
+  const [remotePictures, setRemotePictures] = useState<Map<string, RemotePictures>>(new Map())
+  const [playoutSettings, setPlayoutSettingsState] = useState<Map<string, PlayoutSettings>>(new Map())
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState<string | null>(null)
@@ -244,8 +225,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   })
   const [catalogTracks, setCatalogTracks] = useState<EditableMeetingCatalogTrack[]>([])
   const [subscribedCatalogTracks, setSubscribedCatalogTracks] = useState<SubscribedCatalogTrack[]>([])
-  const videoRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
-  const audioRenderingRateStateRef = useRef<Map<string, RenderingRateState>>(new Map())
 
   const refreshDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -271,18 +250,15 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setLocalAudioStream(null)
       setLocalCameraVideoSendTiming(null)
       setLocalScreenShareVideoSendTiming(null)
-      setRemoteMedia(new Map())
+      setRemotePictures(new Map())
       setCameraEnabled(false)
       setMicrophoneEnabled(false)
       setScreenShareEnabled(false)
-      setVideoJitterConfigs(new Map())
-      setAudioJitterConfigs(new Map())
+      setPlayoutSettingsState(new Map())
       setVideoEncoderError(null)
       setAudioEncoderError(null)
       setCatalogTracks([])
       setSubscribedCatalogTracks([])
-      videoRenderingRateStateRef.current.clear()
-      audioRenderingRateStateRef.current.clear()
       return
     }
 
@@ -328,36 +304,21 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         setLocalAudioStream(stream)
         setMicrophoneEnabled(!!stream)
       },
-      onRemoteVideoStream: (userId, stream, source) =>
-        setRemoteMedia((prev) => {
+      onRemotePicture: (userId, source, picture) =>
+        setRemotePictures((prev) => {
           const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, { ...current, screenShareStream: stream })
-            return updated
-          }
-          updated.set(userId, { ...current, videoStream: stream })
+          updated.set(userId, { ...updated.get(userId), [source]: picture })
           return updated
         }),
-      onRemoteAudioStream: (userId, stream) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          updated.set(userId, { ...current, audioStream: stream, audioPlaybackQueueMs: 0 })
-          return updated
-        }),
-      onRemoteAudioStreamClosed: (userId) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId)
-          if (!current) {
+      onRemotePictureClosed: (userId, source) =>
+        setRemotePictures((prev) => {
+          const current = prev.get(userId)
+          if (!current?.[source]) {
             return prev
           }
-          updated.set(userId, {
-            ...current,
-            audioStream: null,
-            audioPlaybackQueueMs: 0
-          })
+          const updated = new Map(prev)
+          const { [source]: _closed, ...rest } = current
+          updated.set(userId, rest)
           return updated
         }),
       onLocalVideoBitrate: (kbps) => setLocalVideoBitrate(kbps),
@@ -369,241 +330,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         }
         setLocalCameraVideoSendTiming(timing)
       },
-      onRemoteVideoBitrate: (userId, kbps, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, { ...current, screenShareBitrateKbps: kbps })
-            return updated
-          }
-          updated.set(userId, { ...current, videoBitrateKbps: kbps })
-          return updated
-        }),
-      onRemoteVideoKeyframeInterval: (userId, frames, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, { ...current, screenShareKeyframeIntervalFrames: frames })
-            return updated
-          }
-          updated.set(userId, { ...current, videoKeyframeIntervalFrames: frames })
-          return updated
-        }),
-      onRemoteAudioBitrate: (userId, kbps) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          updated.set(userId, { ...current, audioBitrateKbps: kbps })
-          return updated
-        }),
-      onRemoteVideoReceiveLatency: (userId, ms, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenShareLatencyReceiveMs: ms
-            })
-            return updated
-          }
-          updated.set(userId, { ...current, videoLatencyReceiveMs: ms })
-          return updated
-        }),
-      onRemoteVideoRenderingLatency: (userId, ms, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          const renderingRate = updateRenderingRate(
-            videoRenderingRateStateRef.current,
-            buildVideoRenderingRateKey(userId, source)
-          )
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenShareLatencyRenderMs: ms,
-              screenShareRenderingRateFps: renderingRate
-            })
-            return updated
-          }
-          updated.set(userId, {
-            ...current,
-            videoLatencyRenderMs: ms,
-            videoRenderingRateFps: renderingRate
-          })
-          return updated
-        }),
-      onRemoteVideoTiming: (userId, timing, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenShareReceiveToDecodeMs: timing.receiveToDecodeMs,
-              screenShareReceiveToRenderMs: timing.receiveToRenderMs
-            })
-            return updated
-          }
-          updated.set(userId, {
-            ...current,
-            videoReceiveToDecodeMs: timing.receiveToDecodeMs,
-            videoReceiveToRenderMs: timing.receiveToRenderMs
-          })
-          return updated
-        }),
-      onRemoteVideoDecodingObject: (userId, decoding, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenShareDecodingGroupId: decoding.groupId,
-              screenShareDecodingObjectId: decoding.objectId,
-              screenShareDecodingChunkType: decoding.chunkType,
-              screenShareDecodingPhase: decoding.phase
-            })
-            return updated
-          }
-          updated.set(userId, {
-            ...current,
-            videoDecodingGroupId: decoding.groupId,
-            videoDecodingObjectId: decoding.objectId,
-            videoDecodingChunkType: decoding.chunkType,
-            videoDecodingPhase: decoding.phase
-          })
-          return updated
-        }),
-      onRemoteVideoPacing: (userId, pacing, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenSharePacingIntervalMs: pacing.intervalMs,
-              screenSharePacingEffectiveIntervalMs: pacing.effectiveIntervalMs,
-              screenSharePacingBufferedFrames: pacing.bufferedFrames,
-              screenShareDecodeQueueSize: pacing.decodeQueueSize,
-              screenSharePacingTargetFrames: pacing.targetFrames
-            })
-            return updated
-          }
-          updated.set(userId, {
-            ...current,
-            videoPacingIntervalMs: pacing.intervalMs,
-            videoPacingEffectiveIntervalMs: pacing.effectiveIntervalMs,
-            videoPacingBufferedFrames: pacing.bufferedFrames,
-            videoDecodeQueueSize: pacing.decodeQueueSize,
-            videoPacingTargetFrames: pacing.targetFrames
-          })
-          return updated
-        }),
-      onRemoteAudioReceiveLatency: (userId, ms) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          updated.set(userId, {
-            ...current,
-            audioLatencyReceiveMs: ms
-          })
-          return updated
-        }),
-      onRemoteAudioRenderingLatency: (userId, ms) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          const renderingRate = updateRenderingRate(audioRenderingRateStateRef.current, userId)
-          updated.set(userId, {
-            ...current,
-            audioLatencyRenderMs: ms,
-            audioRenderingRateFps: renderingRate
-          })
-          return updated
-        }),
-      onRemoteAudioPlaybackQueue: (userId, queuedMs) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          updated.set(userId, {
-            ...current,
-            audioPlaybackQueueMs: queuedMs
-          })
-          return updated
-        }),
-      onRemoteVideoJitterBufferActivity: (userId, activity, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          const nextSnapshot = createJitterBufferSnapshot(
-            source === 'screenshare' ? current.screenShareJitterBuffer : current.videoJitterBuffer,
-            activity.event,
-            activity.bufferedFrames,
-            activity.capacityFrames
-          )
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenShareJitterBuffer: nextSnapshot
-            })
-            return updated
-          }
-          updated.set(userId, {
-            ...current,
-            videoJitterBuffer: nextSnapshot
-          })
-          return updated
-        }),
-      onRemoteAudioJitterBufferActivity: (userId, activity) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          updated.set(userId, {
-            ...current,
-            audioJitterBuffer: createJitterBufferSnapshot(
-              current.audioJitterBuffer,
-              activity.event,
-              activity.bufferedFrames,
-              activity.capacityFrames
-            )
-          })
-          return updated
-        }),
-      onRemoteVideoConfig: (userId, config, source) =>
-        setRemoteMedia((prev) => {
-          const updated = new Map(prev)
-          const current = updated.get(userId) ?? {}
-          if (source === 'screenshare') {
-            updated.set(userId, {
-              ...current,
-              screenShareCodec: config.codec ?? current.screenShareCodec,
-              screenShareWidth: config.width ?? current.screenShareWidth,
-              screenShareHeight: config.height ?? current.screenShareHeight,
-              screenShareDecoderDescriptionLength:
-                config.descriptionLength ?? current.screenShareDecoderDescriptionLength,
-              screenShareDecoderAvcFormat: config.avcFormat ?? current.screenShareDecoderAvcFormat,
-              screenShareDecoderHardwareAcceleration:
-                config.hardwareAcceleration ?? current.screenShareDecoderHardwareAcceleration,
-              screenShareDecoderOptimizeForLatency:
-                config.optimizeForLatency ?? current.screenShareDecoderOptimizeForLatency
-            })
-            return updated
-          }
-          updated.set(userId, {
-            ...current,
-            videoCodec: config.codec ?? current.videoCodec,
-            videoWidth: config.width ?? current.videoWidth,
-            videoHeight: config.height ?? current.videoHeight,
-            videoDecoderDescriptionLength: config.descriptionLength ?? current.videoDecoderDescriptionLength,
-            videoDecoderAvcFormat: config.avcFormat ?? current.videoDecoderAvcFormat,
-            videoDecoderHardwareAcceleration: config.hardwareAcceleration ?? current.videoDecoderHardwareAcceleration,
-            videoDecoderOptimizeForLatency: config.optimizeForLatency ?? current.videoDecoderOptimizeForLatency
-          })
-          return updated
-        }),
       onVideoEncodeError: (message) => setVideoEncoderError(message),
       onAudioEncodeError: (message) => setAudioEncoderError(message),
       onAudioEncodingAdjusted: (settings) => setSelectedAudioEncoding(settings),
@@ -612,7 +338,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
 
     return () => {
       controller.setHandlers({})
-      setRemoteMedia(new Map())
+      setRemotePictures(new Map())
       setLocalVideoBitrate(null)
       setLocalAudioBitrate(null)
       setLocalCameraVideoSendTiming(null)
@@ -623,11 +349,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setCameraEnabled(false)
       setScreenShareEnabled(false)
       setMicrophoneEnabled(session.localMember.publishedTracks.audio)
-      setVideoJitterConfigs(new Map())
-      setAudioJitterConfigs(new Map())
+      setPlayoutSettingsState(new Map())
       setSubscribedCatalogTracks([])
-      videoRenderingRateStateRef.current.clear()
-      audioRenderingRateStateRef.current.clear()
     }
   }, [session])
 
@@ -867,36 +590,15 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     session
   ])
 
-  const setVideoJitterBufferConfig = useCallback(
-    (userId: string, config: Partial<VideoJitterConfig>) => {
+  const setPlayoutSettings = useCallback(
+    (userId: string, settings: PlayoutSettings) => {
       if (!session) {
         return
       }
-      const controller = session.getMediaController()
-      setVideoJitterConfigs((prev) => {
-        const current = prev.get(userId) ?? DEFAULT_VIDEO_JITTER_CONFIG
-        const next = normalizeVideoJitterConfig({ ...current, ...config })
+      session.getMediaController().setPlayoutSettings(userId, settings)
+      setPlayoutSettingsState((prev) => {
         const updated = new Map(prev)
-        updated.set(userId, next)
-        controller.setVideoJitterBufferConfig(userId, next)
-        return updated
-      })
-    },
-    [session]
-  )
-
-  const setAudioJitterBufferConfig = useCallback(
-    (userId: string, config: Partial<AudioJitterConfig>) => {
-      if (!session) {
-        return
-      }
-      const controller = session.getMediaController()
-      setAudioJitterConfigs((prev) => {
-        const current = prev.get(userId) ?? DEFAULT_AUDIO_JITTER_CONFIG
-        const next = normalizeAudioJitterConfig({ ...current, ...config })
-        const updated = new Map(prev)
-        updated.set(userId, next)
-        controller.setAudioJitterBufferConfig(userId, next)
+        updated.set(userId, settings)
         return updated
       })
     },
@@ -1134,14 +836,12 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     localAudioBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
-    remoteMedia,
+    remotePictures,
     toggleCamera,
     toggleScreenShare,
     toggleMicrophone,
-    videoJitterConfigs,
-    setVideoJitterBufferConfig,
-    audioJitterConfigs,
-    setAudioJitterBufferConfig,
+    playoutSettings,
+    setPlayoutSettings,
     videoCodecOptions: VIDEO_CODEC_OPTIONS,
     videoResolutionOptions: VIDEO_RESOLUTION_OPTIONS,
     videoBitrateOptions: VIDEO_BITRATE_OPTIONS,
@@ -1203,49 +903,6 @@ function isSameSubscribedCatalogTracks(left: SubscribedCatalogTrack[], right: Su
     }
   }
   return true
-}
-
-function buildVideoRenderingRateKey(userId: string, source: 'camera' | 'screenshare'): string {
-  return `${userId}:${source}`
-}
-
-function updateRenderingRate(states: Map<string, RenderingRateState>, key: string): number | undefined {
-  const now = performance.now()
-  const previous = states.get(key)
-  if (!previous) {
-    states.set(key, { lastEventAtMs: now, smoothedFps: 0 })
-    return undefined
-  }
-
-  const intervalMs = now - previous.lastEventAtMs
-  if (!Number.isFinite(intervalMs) || intervalMs < MIN_RENDERING_INTERVAL_MS) {
-    states.set(key, { ...previous, lastEventAtMs: now })
-    return previous.smoothedFps > 0 ? previous.smoothedFps : undefined
-  }
-
-  const instantaneousFps = Math.min(MAX_RENDERING_FPS, 1000 / intervalMs)
-  const nextFps =
-    previous.smoothedFps > 0
-      ? previous.smoothedFps * (1 - RENDERING_RATE_SMOOTHING_FACTOR) +
-        instantaneousFps * RENDERING_RATE_SMOOTHING_FACTOR
-      : instantaneousFps
-  states.set(key, { lastEventAtMs: now, smoothedFps: nextFps })
-  return nextFps
-}
-
-function createJitterBufferSnapshot(
-  current: JitterBufferSnapshot | undefined,
-  event: JitterBufferEvent,
-  bufferedFrames: number,
-  capacityFrames: number
-): JitterBufferSnapshot {
-  return {
-    bufferedFrames: Math.max(0, Math.floor(bufferedFrames)),
-    capacityFrames: Math.max(1, Math.floor(capacityFrames)),
-    lastEvent: event,
-    sequence: (current?.sequence ?? 0) + 1,
-    updatedAtMs: Date.now()
-  }
 }
 
 function deriveCameraEncodingFromCatalogTracks(

@@ -37,12 +37,8 @@ const CHART_VIEWBOX_HEIGHT = 48
 const SINGLE_CHART_LINE_STROKE_WIDTH = 0.9
 const MULTI_CHART_LINE_STROKE_WIDTH = 0.8
 const AUDIO_BITRATE_Y_TICKS = [30, 60, 90, 120, 160, 200]
-const RENDERING_RATE_Y_TICKS = [10, 20, 30, 40, 50, 60]
 const VIDEO_BITRATE_TICK_STEP_KBPS = 250
-const KEYFRAME_INTERVAL_TICK_STEP_FRAMES = 30
-const KEYFRAME_INTERVAL_MAX_TICK_COUNT = 6
 const LATENCY_Y_TICK_STEP_MS = 100
-const AUDIO_PLAYOUT_QUEUE_TICK_STEP_MS = 10
 const ADAPTIVE_TICK_HEADROOM_RATIO = 0.25
 const BITRATE_Y_PADDING: ChartYAxisPadding = { topRatio: 0.14, bottomRatio: 0.1 }
 const RENDERING_RATE_Y_PADDING: ChartYAxisPadding = { topRatio: 0.16, bottomRatio: 0.12 }
@@ -73,16 +69,6 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     yTicks: AUDIO_BITRATE_Y_TICKS,
     yPadding: BITRATE_Y_PADDING,
     yTickLabelFormatter: (value) => `${Math.round(value)} kbps`
-  },
-  {
-    kind: 'single',
-    key: 'audio-playout-queue',
-    title: 'Audio Playout Queue',
-    accessor: (sample) => sample.audioPlaybackQueueMs,
-    colorClass: 'text-teal-300',
-    yTickStep: AUDIO_PLAYOUT_QUEUE_TICK_STEP_MS,
-    yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
   },
   {
     kind: 'single',
@@ -223,196 +209,39 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     yTickLabelFormatter: (value) => `${Math.round(value)} KB`
   },
   {
-    kind: 'single',
-    key: 'video-frame-rate',
-    title: 'Video frame rate/s',
-    accessor: (sample) => sample.videoRenderingRateFps,
-    colorClass: 'text-fuchsia-300',
-    yTicks: RENDERING_RATE_Y_TICKS,
-    yPadding: RENDERING_RATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} /s`
-  },
-  {
-    kind: 'single',
-    key: 'video-keyframe-interval',
-    title: 'Video Keyframe Interval (frames)',
-    accessor: (sample) => sample.videoKeyframeIntervalFrames,
-    colorClass: 'text-lime-300',
-    yTickStep: KEYFRAME_INTERVAL_TICK_STEP_FRAMES,
-    adaptiveMaxTickCount: KEYFRAME_INTERVAL_MAX_TICK_COUNT,
-    yPadding: RENDERING_RATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} frames`
-  },
-  {
-    kind: 'single',
-    key: 'screenshare-keyframe-interval',
-    title: 'ScreenShare Keyframe Interval (frames)',
-    accessor: (sample) => sample.screenShareKeyframeIntervalFrames,
-    colorClass: 'text-yellow-300',
-    yTickStep: KEYFRAME_INTERVAL_TICK_STEP_FRAMES,
-    adaptiveMaxTickCount: KEYFRAME_INTERVAL_MAX_TICK_COUNT,
-    yPadding: RENDERING_RATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} frames`
-  },
-  {
     kind: 'multi',
-    key: 'video-latency',
-    title: 'Video Latency (Cumulative)',
+    key: 'playout-buffer',
+    title: 'Playout Buffer (ms)',
     series: [
-      {
-        label: 'Network',
-        accessor: (sample) => sample.videoReceiveLatencyMs,
-        colorClass: 'text-amber-300'
-      },
-      {
-        label: 'Network+Decode',
-        accessor: (sample) =>
-          typeof sample.videoReceiveLatencyMs === 'number' &&
-          Number.isFinite(sample.videoReceiveLatencyMs) &&
-          typeof sample.videoReceiveToDecodeMs === 'number' &&
-          Number.isFinite(sample.videoReceiveToDecodeMs)
-            ? sample.videoReceiveLatencyMs + sample.videoReceiveToDecodeMs
-            : null,
-        colorClass: 'text-lime-300'
-      },
-      {
-        label: 'E2E (Network+Render)',
-        accessor: (sample) =>
-          typeof sample.videoReceiveLatencyMs === 'number' &&
-          Number.isFinite(sample.videoReceiveLatencyMs) &&
-          typeof sample.videoReceiveToRenderMs === 'number' &&
-          Number.isFinite(sample.videoReceiveToRenderMs)
-            ? sample.videoReceiveLatencyMs + sample.videoReceiveToRenderMs
-            : sample.videoRenderLatencyMs,
-        colorClass: 'text-rose-300'
-      }
+      { label: 'Buffer', accessor: (sample) => sample.bufferMs, colorClass: 'text-emerald-300' },
+      { label: 'Target', accessor: (sample) => sample.targetBufferMs, colorClass: 'text-orange-300' },
+      { label: 'Output latency', accessor: (sample) => sample.outputLatencyMs, colorClass: 'text-sky-300' },
+      { label: 'Jitter (p-p)', accessor: (sample) => sample.arrivalSpreadMs, colorClass: 'text-rose-300' }
     ],
     yTickStep: LATENCY_Y_TICK_STEP_MS,
+    yPadding: LATENCY_Y_PADDING,
+    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+  },
+  {
+    kind: 'single',
+    key: 'viewer-delay',
+    title: 'Delay (capture → display, ms)',
+    accessor: (sample) => sample.viewerDelayMs,
+    colorClass: 'text-cyan-300',
+    yTickStep: LATENCY_Y_TICK_STEP_MS,
+    yPadding: LATENCY_Y_PADDING,
+    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+  },
+  {
+    kind: 'single',
+    key: 'av-offset',
+    title: 'A/V Offset (video − audio, ms)',
+    accessor: (sample) => sample.syncOffsetMs,
+    colorClass: 'text-violet-300',
+    yTickStep: 20,
     adaptiveTickRangeMode: 'dataFocused',
     yPadding: LATENCY_Y_PADDING,
     yTickLabelFormatter: (value) => `${Math.round(value)} ms`
-  },
-  {
-    kind: 'multi',
-    key: 'audio-latency',
-    title: 'Audio Latency',
-    series: [
-      {
-        label: 'Network',
-        accessor: (sample) => sample.audioReceiveLatencyMs,
-        colorClass: 'text-sky-300'
-      },
-      {
-        label: 'E2E',
-        accessor: (sample) => sample.audioRenderLatencyMs,
-        colorClass: 'text-violet-300'
-      }
-    ],
-    yTickStep: LATENCY_Y_TICK_STEP_MS,
-    yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
-  },
-  {
-    kind: 'multi',
-    key: 'screenshare-pipeline-latency',
-    title: 'ScreenShare Pipeline Latency',
-    series: [
-      {
-        label: 'Receive→Decode',
-        accessor: (sample) => sample.screenShareReceiveToDecodeMs,
-        colorClass: 'text-yellow-300'
-      },
-      {
-        label: 'Receive→Render',
-        accessor: (sample) => sample.screenShareReceiveToRenderMs,
-        colorClass: 'text-orange-300'
-      }
-    ],
-    yTickStep: LATENCY_Y_TICK_STEP_MS,
-    yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
-  },
-  {
-    kind: 'multi',
-    key: 'video-pacing',
-    title: 'Video Pacing',
-    series: [
-      {
-        label: 'Eff interval',
-        accessor: (sample) => sample.videoPacingEffectiveIntervalMs,
-        colorClass: 'text-violet-300'
-      }
-    ],
-    yTickStep: 25,
-    yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
-  },
-  {
-    kind: 'multi',
-    key: 'video-pacing-buffer',
-    title: 'Video Pacing Buffer',
-    series: [
-      {
-        label: 'Buffered',
-        accessor: (sample) => sample.videoPacingBufferedFrames,
-        colorClass: 'text-emerald-300'
-      },
-      {
-        label: 'Decode queue',
-        accessor: (sample) => sample.videoDecodeQueueSize,
-        colorClass: 'text-violet-300'
-      },
-      {
-        label: 'Target',
-        accessor: (sample) => sample.videoPacingTargetFrames,
-        colorClass: 'text-sky-300'
-      }
-    ],
-    yTickStep: 1,
-    adaptiveMaxTickCount: 8,
-    yPadding: RENDERING_RATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} frames`
-  },
-  {
-    kind: 'multi',
-    key: 'screenshare-pacing',
-    title: 'ScreenShare Pacing',
-    series: [
-      {
-        label: 'Eff interval',
-        accessor: (sample) => sample.screenSharePacingEffectiveIntervalMs,
-        colorClass: 'text-rose-300'
-      }
-    ],
-    yTickStep: 25,
-    yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
-  },
-  {
-    kind: 'multi',
-    key: 'screenshare-pacing-buffer',
-    title: 'ScreenShare Pacing Buffer',
-    series: [
-      {
-        label: 'Buffered',
-        accessor: (sample) => sample.screenSharePacingBufferedFrames,
-        colorClass: 'text-yellow-300'
-      },
-      {
-        label: 'Decode queue',
-        accessor: (sample) => sample.screenShareDecodeQueueSize,
-        colorClass: 'text-rose-300'
-      },
-      {
-        label: 'Target',
-        accessor: (sample) => sample.screenSharePacingTargetFrames,
-        colorClass: 'text-orange-300'
-      }
-    ],
-    yTickStep: 1,
-    adaptiveMaxTickCount: 8,
-    yPadding: RENDERING_RATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} frames`
   }
 ]
 

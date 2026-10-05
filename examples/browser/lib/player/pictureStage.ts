@@ -1,4 +1,5 @@
 import type { MseSink } from '../../utils/media/mseSink'
+import { createPictureCanvas, createPictureVideo } from './pictureElements'
 import './livePlayer.css'
 
 const MSE_POOL_SIZE = 3
@@ -7,16 +8,14 @@ const MSE_POOL_SIZE = 3
 /// frame stays hidden and whatever is on screen stays until it does, so a
 /// change of packaging, quality or position never shows an empty element.
 export class PictureStage {
-  readonly liveVideo = pictureVideo('live-player-video')
-  readonly liveCanvas = pictureCanvas('live-player-live-canvas')
-  readonly reviewCanvas = pictureCanvas('live-player-review-canvas')
-  private readonly msePool = Array.from({ length: MSE_POOL_SIZE }, () => pictureVideo())
+  readonly liveVideo = createPictureVideo({ testId: 'live-player-video', muted: true })
+  readonly liveCanvas = createPictureCanvas('live-player-live-canvas')
+  readonly reviewCanvas = createPictureCanvas('live-player-review-canvas')
+  private readonly msePool = Array.from({ length: MSE_POOL_SIZE }, () => createPictureVideo({ muted: false }))
   private visible: HTMLElement = this.liveVideo
 
   constructor(container: HTMLElement) {
     this.liveVideo.hidden = false
-    this.liveVideo.muted = true
-    this.liveVideo.setAttribute('muted', '')
     container.prepend(this.liveVideo, this.liveCanvas, this.reviewCanvas, ...this.msePool)
   }
 
@@ -59,24 +58,4 @@ export class PictureStage {
     }
     return free
   }
-}
-
-function pictureVideo(testId?: string): HTMLVideoElement {
-  const video = document.createElement('video')
-  video.className = 'live-player-picture'
-  video.playsInline = true
-  video.autoplay = true
-  video.hidden = true
-  if (testId) {
-    video.dataset.testid = testId
-  }
-  return video
-}
-
-function pictureCanvas(testId: string): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.className = 'live-player-picture'
-  canvas.hidden = true
-  canvas.dataset.testid = testId
-  return canvas
 }

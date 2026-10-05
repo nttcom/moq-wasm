@@ -1,10 +1,9 @@
 import { LocalMember, RemoteMember } from '../types/member'
-import { RemoteMediaStreams } from '../types/media'
-import { MediaStreamVideo, MediaStreamAudio } from './MediaStreamElements'
+import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
 import { ReactNode, useEffect, useState } from 'react'
-import { DEFAULT_VIDEO_JITTER_CONFIG, type VideoJitterConfig, type AudioJitterConfig } from '../types/jitterBuffer'
-import { VideoJitterBufferControls, AudioJitterBufferControls } from './JitterBufferControls'
-import { BarChart3, LayoutGrid, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOff } from 'lucide-react'
+import type { PlayoutSettings } from '../types/playout'
+import { PlayoutControls } from './PlayoutControls'
+import { BarChart3, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOff } from 'lucide-react'
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
@@ -13,7 +12,8 @@ import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL }
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import type { SidebarStatsSample } from '../types/stats'
 import { MemberStatsCharts } from './MemberStatsCharts'
-import { JitterBufferVisualizer } from './JitterBufferVisualizer'
+import type { RemotePictures, RemotePlaybackStats } from '../media/mediaSubscriber'
+import { formatLiveStats } from '@player/locLive'
 import type {
   VideoCodecOption,
   VideoHardwareAccelerationOption,
@@ -41,11 +41,10 @@ interface MemberGridProps {
   remoteMembers: RemoteMember[]
   localVideoStream?: MediaStream | null
   localScreenShareStream?: MediaStream | null
-  remoteMedia: Map<string, RemoteMediaStreams>
-  videoJitterConfigs: Map<string, VideoJitterConfig>
-  onChangeVideoJitterConfig: (userId: string, config: Partial<VideoJitterConfig>) => void
-  audioJitterConfigs: Map<string, AudioJitterConfig>
-  onChangeAudioJitterConfig: (userId: string, config: Partial<AudioJitterConfig>) => void
+  remotePictures: Map<string, RemotePictures>
+  remoteStats: Map<string, RemotePlaybackStats>
+  playoutSettings: Map<string, PlayoutSettings>
+  onChangePlayoutSettings: (userId: string, settings: PlayoutSettings) => void
   onToggleCamera: () => void
   onToggleScreenShare: () => void
   onToggleMicrophone: () => void
@@ -97,11 +96,10 @@ export function MemberGrid({
   remoteMembers,
   localVideoStream,
   localScreenShareStream,
-  remoteMedia,
-  videoJitterConfigs,
-  onChangeVideoJitterConfig,
-  audioJitterConfigs,
-  onChangeAudioJitterConfig,
+  remotePictures,
+  remoteStats,
+  playoutSettings,
+  onChangePlayoutSettings,
   onToggleCamera,
   onToggleScreenShare,
   onToggleMicrophone,
@@ -149,40 +147,11 @@ export function MemberGrid({
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false)
-  const [jitterModalTarget, setJitterModalTarget] = useState<string | null>(null)
+  const [playoutModalTarget, setPlayoutModalTarget] = useState<string | null>(null)
   const [statsModalTarget, setStatsModalTarget] = useState<string | null>(null)
-  const [visualizedMemberIds, setVisualizedMemberIds] = useState<Set<string>>(new Set())
 
   const localPrimaryVideoStream = localVideoStream ?? localScreenShareStream ?? null
   const localSecondaryVideoStream = localVideoStream && localScreenShareStream ? localScreenShareStream : null
-
-  useEffect(() => {
-    const remoteIds = new Set(remoteMembers.map((member) => member.id))
-    setVisualizedMemberIds((prev) => {
-      let changed = false
-      const next = new Set<string>()
-      for (const memberId of prev) {
-        if (remoteIds.has(memberId)) {
-          next.add(memberId)
-        } else {
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [remoteMembers])
-
-  const toggleMemberVisualization = (memberId: string) => {
-    setVisualizedMemberIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(memberId)) {
-        next.delete(memberId)
-      } else {
-        next.add(memberId)
-      }
-      return next
-    })
-  }
 
   return (
     <section className="mt-8 grid gap-6 md:grid-cols-2 xl:grid-cols-2">
@@ -239,7 +208,6 @@ export function MemberGrid({
         videoStream={localPrimaryVideoStream}
         secondaryVideoStream={localSecondaryVideoStream}
         secondaryVideoTitle={localSecondaryVideoStream ? 'Screen Share' : undefined}
-        audioStream={null}
         muted
         placeholder="Camera disabled"
         secondaryPlaceholder="Screen share disabled"
@@ -324,124 +292,41 @@ export function MemberGrid({
         </DeviceModal>
       )}
       {remoteMembers.map((member) => {
-        const media = remoteMedia.get(member.id)
-        const isVisualizationEnabled = visualizedMemberIds.has(member.id)
-        const videoJitterConfig = videoJitterConfigs.get(member.id) ?? DEFAULT_VIDEO_JITTER_CONFIG
-        const remotePrimaryVideoStream = media?.videoStream ?? media?.screenShareStream ?? null
-        const primaryVideoSource: 'camera' | 'screenshare' = media?.videoStream ? 'camera' : 'screenshare'
-        const primaryVideoJitterBuffer =
-          media?.videoStream && media.videoJitterBuffer ? media.videoJitterBuffer : media?.screenShareJitterBuffer
-        const remoteSecondaryVideoStream =
-          media?.videoStream && media?.screenShareStream ? media.screenShareStream : null
+        const pictures = remotePictures.get(member.id)
+        const stats = remoteStats.get(member.id)
+        const primaryPicture = pictures?.camera ?? pictures?.screenshare ?? null
+        const primaryStats = pictures?.camera ? stats?.camera : stats?.screenshare
+        const secondaryPicture = pictures?.camera && pictures?.screenshare ? pictures.screenshare : null
         return (
           <MemberCard
             key={member.id}
             testId={`member-card-${member.name}`}
-            videoTestId={`member-video-${member.name}`}
-            audioTestId={`member-audio-${member.name}`}
             title={member.name}
             headerActions={
               <div className="flex items-center gap-2">
                 <IconButton
-                  ariaLabel="Configure jitter buffer"
-                  title="Jitter buffer settings"
-                  onClick={() => setJitterModalTarget(member.id)}
+                  ariaLabel="Configure playout"
+                  title="Playout settings"
+                  onClick={() => setPlayoutModalTarget(member.id)}
                 >
                   <Settings2 className="h-4 w-4" />
                 </IconButton>
                 <IconButton ariaLabel="Show stats" title="Show stats" onClick={() => setStatsModalTarget(member.id)}>
                   <BarChart3 className="h-4 w-4" />
                 </IconButton>
-                <IconButton
-                  ariaLabel={
-                    isVisualizationEnabled
-                      ? 'Hide receive jitter buffer visualization'
-                      : 'Show receive jitter buffer visualization'
-                  }
-                  title={
-                    isVisualizationEnabled
-                      ? 'Hide receive jitter buffer visualization'
-                      : 'Show receive jitter buffer visualization'
-                  }
-                  onClick={() => toggleMemberVisualization(member.id)}
-                  className={`rounded-lg px-2 py-2 transition ${
-                    isVisualizationEnabled
-                      ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                      : 'bg-white/10 text-blue-100 hover:bg-white/20'
-                  }`}
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                </IconButton>
               </div>
             }
-            videoStream={remotePrimaryVideoStream}
+            picture={primaryPicture}
             videoFooter={
-              isVisualizationEnabled ? (
-                <JitterBufferVisualizer
-                  videoBuffer={primaryVideoJitterBuffer}
-                  audioBuffer={media?.audioJitterBuffer}
-                  videoDiagnostics={{
-                    targetLatencyMs: videoJitterConfig?.pacing.targetLatencyMs,
-                    networkLatencyMs:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoLatencyReceiveMs
-                        : media?.screenShareLatencyReceiveMs,
-                    e2eLatencyMs:
-                      primaryVideoSource === 'camera' ? media?.videoLatencyRenderMs : media?.screenShareLatencyRenderMs,
-                    receiveToDecodeMs:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoReceiveToDecodeMs
-                        : media?.screenShareReceiveToDecodeMs,
-                    receiveToRenderMs:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoReceiveToRenderMs
-                        : media?.screenShareReceiveToRenderMs,
-                    pacingPreset: videoJitterConfig?.pacing.preset,
-                    pacingPipeline: videoJitterConfig?.pacing.pipeline,
-                    pacingEffectiveIntervalMs:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoPacingEffectiveIntervalMs
-                        : media?.screenSharePacingEffectiveIntervalMs,
-                    pacingBufferedFrames:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoPacingBufferedFrames
-                        : media?.screenSharePacingBufferedFrames,
-                    pacingTargetFrames:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoPacingTargetFrames
-                        : media?.screenSharePacingTargetFrames,
-                    decodingGroupId:
-                      primaryVideoSource === 'camera' ? media?.videoDecodingGroupId : media?.screenShareDecodingGroupId,
-                    decodingObjectId:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoDecodingObjectId
-                        : media?.screenShareDecodingObjectId,
-                    decoderCodec: primaryVideoSource === 'camera' ? media?.videoCodec : media?.screenShareCodec,
-                    decoderWidth: primaryVideoSource === 'camera' ? media?.videoWidth : media?.screenShareWidth,
-                    decoderHeight: primaryVideoSource === 'camera' ? media?.videoHeight : media?.screenShareHeight,
-                    decoderAvcFormat:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoDecoderAvcFormat
-                        : media?.screenShareDecoderAvcFormat,
-                    decoderDescriptionBytes:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoDecoderDescriptionLength
-                        : media?.screenShareDecoderDescriptionLength,
-                    decoderHardwareAcceleration:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoDecoderHardwareAcceleration
-                        : media?.screenShareDecoderHardwareAcceleration,
-                    decoderOptimizeForLatency:
-                      primaryVideoSource === 'camera'
-                        ? media?.videoDecoderOptimizeForLatency
-                        : media?.screenShareDecoderOptimizeForLatency
-                  }}
-                />
-              ) : undefined
+              <div
+                data-testid={`member-stats-${member.name}`}
+                className="mt-1 break-words font-mono text-[11px] leading-relaxed text-blue-200/90"
+              >
+                {primaryStats ? formatLiveStats(primaryStats) : 'Awaiting media'}
+              </div>
             }
-            secondaryVideoStream={remoteSecondaryVideoStream}
-            secondaryVideoTitle={remoteSecondaryVideoStream ? 'Screen Share' : undefined}
-            audioStream={media?.audioStream ?? null}
+            secondaryPicture={secondaryPicture}
+            secondaryVideoTitle={secondaryPicture ? 'Screen Share' : undefined}
             placeholder="Awaiting video"
             secondaryPlaceholder="Awaiting screen share"
             details={
@@ -479,19 +364,15 @@ export function MemberGrid({
           />
         )
       })}
-      {jitterModalTarget && (
-        <DeviceModal title="Jitter Buffer" onClose={() => setJitterModalTarget(null)}>
+      {playoutModalTarget && (
+        <DeviceModal title="Playout" onClose={() => setPlayoutModalTarget(null)}>
           <div className="space-y-3">
             <h4 className="text-base font-semibold text-white">
-              Jitter Buffer ({findMemberName(remoteMembers, jitterModalTarget)})
+              Playout ({findMemberName(remoteMembers, playoutModalTarget)})
             </h4>
-            <VideoJitterBufferControls
-              value={videoJitterConfigs.get(jitterModalTarget)}
-              onChange={(config) => onChangeVideoJitterConfig(jitterModalTarget, config)}
-            />
-            <AudioJitterBufferControls
-              value={audioJitterConfigs.get(jitterModalTarget)}
-              onChange={(config) => onChangeAudioJitterConfig(jitterModalTarget, config)}
+            <PlayoutControls
+              value={playoutSettings.get(playoutModalTarget)}
+              onChange={(settings) => onChangePlayoutSettings(playoutModalTarget, settings)}
             />
           </div>
         </DeviceModal>
@@ -515,30 +396,32 @@ interface MemberCardProps {
   title: string
   testId?: string
   videoTestId?: string
-  audioTestId?: string
   headerActions?: ReactNode
   videoStream?: MediaStream | null
+  picture?: HTMLElement | null
   videoFooter?: ReactNode
   secondaryVideoStream?: MediaStream | null
+  secondaryPicture?: HTMLElement | null
   secondaryVideoTitle?: string
-  audioStream?: MediaStream | null
   placeholder: string
   secondaryPlaceholder?: string
   muted?: boolean
   details: ReactNode
 }
 
+/// A remote card shows the picture elements its live pipelines own; the
+/// local card shows the capture streams.
 function MemberCard({
   title,
   testId,
   videoTestId,
-  audioTestId,
   headerActions,
   videoStream,
+  picture,
   videoFooter,
   secondaryVideoStream,
+  secondaryPicture,
   secondaryVideoTitle,
-  audioStream,
   placeholder,
   secondaryPlaceholder = 'Video unavailable',
   muted = false,
@@ -550,22 +433,29 @@ function MemberCard({
         <h3 className="text-xl font-semibold text-white">{title}</h3>
         {headerActions}
       </div>
-      <MediaStreamVideo
-        stream={videoStream}
-        muted={muted}
-        placeholder={placeholder}
-        footer={videoFooter}
-        testId={videoTestId}
-      />
-      {secondaryVideoStream && (
+      {picture !== undefined ? (
+        <PictureFrame picture={picture} placeholder={placeholder} footer={videoFooter} />
+      ) : (
+        <MediaStreamVideo
+          stream={videoStream}
+          muted={muted}
+          placeholder={placeholder}
+          footer={videoFooter}
+          testId={videoTestId}
+        />
+      )}
+      {(secondaryPicture || secondaryVideoStream) && (
         <div className="mt-2 space-y-1">
           {secondaryVideoTitle ? (
             <div className="text-xs font-semibold text-blue-200">{secondaryVideoTitle}</div>
           ) : null}
-          <MediaStreamVideo stream={secondaryVideoStream} muted={muted} placeholder={secondaryPlaceholder} />
+          {secondaryPicture ? (
+            <PictureFrame picture={secondaryPicture} placeholder={secondaryPlaceholder} />
+          ) : (
+            <MediaStreamVideo stream={secondaryVideoStream} muted={muted} placeholder={secondaryPlaceholder} />
+          )}
         </div>
       )}
-      {audioStream && <MediaStreamAudio stream={audioStream} className="hidden" testId={audioTestId} />}
       <div className="mt-4 space-y-3 text-sm text-blue-100">{details}</div>
     </div>
   )

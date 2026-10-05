@@ -10,7 +10,7 @@ import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
 import { useRetryBackoff } from '../hooks/useRetryBackoff'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
-import type { RemoteMediaStreams } from '../types/media'
+import type { RemotePlaybackStats } from '../media/mediaSubscriber'
 import type { SidebarStatsSample } from '../types/stats'
 import { updateSubscriptionState } from '../utils/state/roomState'
 
@@ -59,7 +59,6 @@ type StatsSnapshot = {
     keyframe: boolean
   } | null
   remoteMembers: RemoteMember[]
-  remoteMedia: Map<string, RemoteMediaStreams>
 }
 
 const SIDEBAR_STATS_SAMPLE_INTERVAL_MS = 1000
@@ -72,6 +71,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [statsHistory, setStatsHistory] = useState<Map<string, SidebarStatsSample[]>>(new Map())
+  const [remoteStats, setRemoteStats] = useState<Map<string, RemotePlaybackStats>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
   const [remoteCatalogSelections, setRemoteCatalogSelections] = useState<Map<string, CatalogSelections>>(new Map())
   const [catalogLoadingMemberIds, setCatalogLoadingMemberIds] = useState<Set<string>>(new Set())
@@ -92,14 +92,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     localVideoBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
-    remoteMedia,
+    remotePictures,
     toggleCamera,
     toggleScreenShare,
     toggleMicrophone,
-    videoJitterConfigs,
-    setVideoJitterBufferConfig,
-    audioJitterConfigs,
-    setAudioJitterBufferConfig,
+    playoutSettings,
+    setPlayoutSettings,
     videoCodecOptions,
     videoResolutionOptions,
     videoBitrateOptions,
@@ -133,8 +131,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     localAudioBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
-    remoteMembers: [],
-    remoteMedia
+    remoteMembers: []
   })
 
   const [room, setRoom] = useState<Room>(() => ({
@@ -187,6 +184,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setCatalogUnsubscribingTrackKeys(new Set())
     setIsSidebarOpen(true)
     setStatsHistory(new Map())
+    setRemoteStats(new Map())
   }, [session])
 
   useEffect(() => {
@@ -205,15 +203,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       localAudioBitrate,
       localCameraVideoSendTiming,
       localScreenShareVideoSendTiming,
-      remoteMembers: Array.from(room.remoteMembers.values()),
-      remoteMedia
+      remoteMembers: Array.from(room.remoteMembers.values())
     }
   }, [
     localAudioBitrate,
     localVideoBitrate,
     localCameraVideoSendTiming,
     localScreenShareVideoSendTiming,
-    remoteMedia,
     room.localMember.id,
     room.remoteMembers
   ])
@@ -222,6 +218,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     const timer = window.setInterval(() => {
       const snapshot = statsSnapshotRef.current
       const sampledAt = Date.now()
+      const controller = session.getMediaController()
+      const latestRemoteStats = new Map<string, RemotePlaybackStats>()
       setStatsHistory((prev) => {
         const next = new Map<string, SidebarStatsSample[]>()
         const localSample: SidebarStatsSample = {
@@ -264,41 +262,26 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         }
         next.set(snapshot.localMemberId, appendStatsSample(prev.get(snapshot.localMemberId), localSample))
         for (const remoteMember of snapshot.remoteMembers) {
-          const media = snapshot.remoteMedia.get(remoteMember.id)
+          const stats = controller.getRemotePlaybackStats(remoteMember.id)
+          latestRemoteStats.set(remoteMember.id, stats)
+          const primary = stats.camera ?? stats.screenshare
           const remoteSample: SidebarStatsSample = {
             timestamp: sampledAt,
-            videoBitrateKbps: media?.videoBitrateKbps,
-            screenShareBitrateKbps: media?.screenShareBitrateKbps,
-            audioBitrateKbps: media?.audioBitrateKbps,
-            videoKeyframeIntervalFrames: media?.videoKeyframeIntervalFrames,
-            screenShareKeyframeIntervalFrames: media?.screenShareKeyframeIntervalFrames,
-            videoReceiveLatencyMs: media?.videoLatencyReceiveMs,
-            screenShareReceiveLatencyMs: media?.screenShareLatencyReceiveMs,
-            audioReceiveLatencyMs: media?.audioLatencyReceiveMs,
-            videoRenderLatencyMs: media?.videoLatencyRenderMs,
-            screenShareRenderLatencyMs: media?.screenShareLatencyRenderMs,
-            audioRenderLatencyMs: media?.audioLatencyRenderMs,
-            videoReceiveToDecodeMs: media?.videoReceiveToDecodeMs,
-            videoReceiveToRenderMs: media?.videoReceiveToRenderMs,
-            screenShareReceiveToDecodeMs: media?.screenShareReceiveToDecodeMs,
-            screenShareReceiveToRenderMs: media?.screenShareReceiveToRenderMs,
-            videoPacingEffectiveIntervalMs: media?.videoPacingEffectiveIntervalMs,
-            videoPacingBufferedFrames: media?.videoPacingBufferedFrames,
-            videoDecodeQueueSize: media?.videoDecodeQueueSize,
-            videoPacingTargetFrames: media?.videoPacingTargetFrames,
-            screenSharePacingEffectiveIntervalMs: media?.screenSharePacingEffectiveIntervalMs,
-            screenSharePacingBufferedFrames: media?.screenSharePacingBufferedFrames,
-            screenShareDecodeQueueSize: media?.screenShareDecodeQueueSize,
-            screenSharePacingTargetFrames: media?.screenSharePacingTargetFrames,
-            audioPlaybackQueueMs: media?.audioPlaybackQueueMs,
-            videoRenderingRateFps: media?.videoRenderingRateFps,
-            screenShareRenderingRateFps: media?.screenShareRenderingRateFps,
-            audioRenderingRateFps: media?.audioRenderingRateFps
+            videoBitrateKbps: stats.camera?.receivedKbps,
+            screenShareBitrateKbps: stats.screenshare?.receivedKbps,
+            audioBitrateKbps: stats.camera?.receivedAudioKbps,
+            bufferMs: primary?.bufferMs,
+            targetBufferMs: primary?.targetBufferMs,
+            outputLatencyMs: primary?.outputLatencyMs,
+            arrivalSpreadMs: primary?.arrivalSpreadMs,
+            viewerDelayMs: primary?.viewerDelayMs,
+            syncOffsetMs: primary?.syncOffsetMs
           }
           next.set(remoteMember.id, appendStatsSample(prev.get(remoteMember.id), remoteSample))
         }
         return next
       })
+      setRemoteStats(latestRemoteStats)
     }, SIDEBAR_STATS_SAMPLE_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
@@ -511,7 +494,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       return next
     })
     try {
-      await session.unsubscribe(subscribeId, role)
+      await session.unsubscribe(subscribeId)
       setRoom((currentRoom) =>
         updateSubscriptionState(currentRoom, subscribeId, (track) => ({
           ...track,
@@ -617,11 +600,10 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             remoteMembers={Array.from(room.remoteMembers.values())}
             localVideoStream={localVideoStream}
             localScreenShareStream={localScreenShareStream}
-            remoteMedia={remoteMedia}
-            videoJitterConfigs={videoJitterConfigs}
-            onChangeVideoJitterConfig={setVideoJitterBufferConfig}
-            audioJitterConfigs={audioJitterConfigs}
-            onChangeAudioJitterConfig={setAudioJitterBufferConfig}
+            remotePictures={remotePictures}
+            remoteStats={remoteStats}
+            playoutSettings={playoutSettings}
+            onChangePlayoutSettings={setPlayoutSettings}
             onToggleCamera={handleToggleCamera}
             onToggleScreenShare={async () => {
               const enabled = await toggleScreenShare()
