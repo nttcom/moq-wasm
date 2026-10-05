@@ -295,12 +295,15 @@ export class LivePlayer {
     this.locLive.playout.setCatchUp(catchUp)
   }
 
+  /// Skips from the position on screen: the review playhead, the live frame
+  /// shown last, or the live edge before a frame has been shown.
   skip(seconds: number): void {
     const latest = this.timeline.groups.latest
     if (!latest) {
       return
     }
-    this.seek((this.review?.playheadMicros ?? latest.captureMicros) + seconds * MICROS_PER_SECOND)
+    const from = this.review?.playheadMicros ?? this.locLive.shownCaptureMicros ?? latest.captureMicros
+    this.seek(from + seconds * MICROS_PER_SECOND)
   }
 
   /// A position at or past the live edge goes live. Any other position is
