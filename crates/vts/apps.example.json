@@ -1,0 +1,17 @@
+[
+  {
+    "appId": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
+    "secret": "local-dev-secret-for-the-experiment-app-change-me",
+    "isRelay": false
+  },
+  {
+    "appId": "9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b",
+    "secret": "local-dev-secret-for-the-other-app-change-me",
+    "isRelay": false
+  },
+  {
+    "appId": "11111111-2222-3333-4444-555555555555",
+    "secret": "local-dev-secret-for-relays-change-me",
+    "isRelay": true
+  }
+]
