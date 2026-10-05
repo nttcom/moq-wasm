@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import {
   MP4_FIXTURE,
   arrangeLiveViewerE2ESession,
@@ -181,4 +181,70 @@ function publishingStatus(fileName: string, namespace: string, audioCodec: strin
   return new RegExp(
     `^Publishing ${escape(fileName)} \\(${resolution} avc1\\.[0-9A-F]{6}, ${escape(audioCodec)}\\) to ${escape(namespace)}$`
   )
+}
+
+test('a paused viewer steps through still frames and resumes from the last one', async ({ browser }) => {
+  // Arrange
+  const fixturePath = ensureMp4Fixture('aac')
+  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, `${liveViewerE2EConfig.mp4Namespace}-paused`)
+  const skipBack1Button = viewer.page.getByTestId('live-player-skip-back-1-button')
+
+  try {
+    await viewer.mp4FileInput.setInputFiles(fixturePath)
+    await viewer.publishButton.click()
+    await viewer.watchButton.click()
+    await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: FIRST_VIDEO_TIMEOUT_MS })
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
+    await viewer.playPauseButton.click()
+    await expect(viewer.playPauseButton).toHaveAttribute('aria-pressed', 'true')
+
+    // Act
+    await skipBack1Button.click()
+
+    // Assert: the review opens on the frame at the position and holds it while paused
+    await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    await expect(viewer.playPauseButton).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(async () => reviewCanvasWidth(viewer.reviewCanvas)).toBeGreaterThan(0)
+    const firstStill = await canvasDigest(viewer.reviewCanvas)
+    await viewer.page.waitForTimeout(STILL_FRAME_HOLD_MS)
+    expect(await canvasDigest(viewer.reviewCanvas)).toBe(firstStill)
+
+    // Act
+    await skipBack1Button.click()
+
+    // Assert: the next step shows another frame and holds it as well
+    await expect.poll(async () => canvasDigest(viewer.reviewCanvas), { timeout: 10_000 }).not.toBe(firstStill)
+    const secondStill = await canvasDigest(viewer.reviewCanvas)
+    await viewer.page.waitForTimeout(STILL_FRAME_HOLD_MS)
+    expect(await canvasDigest(viewer.reviewCanvas)).toBe(secondStill)
+
+    // Act
+    await viewer.playPauseButton.click()
+
+    // Assert: resuming plays on from the still frame with the audio of that position
+    await expect(viewer.playPauseButton).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(async () => canvasDigest(viewer.reviewCanvas), { timeout: 10_000 }).not.toBe(secondStill)
+    await expect(viewer.rewindStatus).toContainText(/A\/V [+-]\d+ ms/, { timeout: 20_000 })
+  } finally {
+    await context.close()
+  }
+})
+
+const STILL_FRAME_HOLD_MS = 1_500
+
+function reviewCanvasWidth(canvas: Locator): Promise<number> {
+  return canvas.evaluate((element) => (element as HTMLCanvasElement).width)
+}
+
+/// A checksum over a sample of the canvas pixels, enough to tell two frames apart.
+function canvasDigest(canvas: Locator): Promise<string> {
+  return canvas.evaluate((element) => {
+    const pixels = element as HTMLCanvasElement
+    const { data } = pixels.getContext('2d')!.getImageData(0, 0, pixels.width, pixels.height)
+    let sum = 0
+    for (let index = 0; index < data.length; index += 97) {
+      sum = (sum + data[index] * (index % 251)) % 1_000_000_007
+    }
+    return `${pixels.width}x${pixels.height}:${sum}`
+  })
 }

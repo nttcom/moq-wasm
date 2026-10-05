@@ -16,13 +16,14 @@ type Presented = {
 /// to the sink that shows them, which also closes them. A frame is never due
 /// before one captured earlier, and when several frames fall due together
 /// only the newest is shown. While paused nothing is shown and the frames keep
-/// waiting; `shift` moves their due times by the pause, or by a move of the
-/// clock from a capture on.
+/// waiting, except the one frame `showNextWhilePaused` asks for; `shift` moves
+/// their due times by the pause, or by a move of the clock from a capture on.
 export class VideoPlayout {
   private pending: PendingFrame[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
   private last: Presented | undefined
   private paused = false
+  private showingNextWhilePaused = false
   /// Frames that fell due together with a newer one, or arrived after a newer
   /// one was shown, and were never shown.
   dropped = 0
@@ -57,6 +58,16 @@ export class VideoPlayout {
 
   setPaused(paused: boolean): void {
     this.paused = paused
+    if (!paused) {
+      this.showingNextWhilePaused = false
+    }
+    this.schedule()
+  }
+
+  /// The earliest frame in capture order, pending or still to come, is shown
+  /// as soon as it is there, and the pause holds again from the next one.
+  showNextWhilePaused(): void {
+    this.showingNextWhilePaused = true
     this.schedule()
   }
 
@@ -92,15 +103,19 @@ export class VideoPlayout {
   private schedule(): void {
     this.clearTimer()
     const head = this.pending[0]
-    if (!head || this.paused) {
+    if (!head || (this.paused && !this.showingNextWhilePaused)) {
       return
     }
     this.timer = setTimeout(
       () => {
         this.timer = undefined
-        this.presentDue()
+        if (this.paused) {
+          this.presentHead()
+        } else {
+          this.presentDue()
+        }
       },
-      Math.max(0, head.atMs - performance.now())
+      this.paused ? 0 : Math.max(0, head.atMs - performance.now())
     )
   }
 
@@ -108,6 +123,15 @@ export class VideoPlayout {
     if (this.timer !== undefined) {
       clearTimeout(this.timer)
       this.timer = undefined
+    }
+  }
+
+  private presentHead(): void {
+    const head = this.pending.shift()
+    this.showingNextWhilePaused = false
+    if (head) {
+      this.last = head.frame.timestamp ? { captureMicros: head.frame.timestamp, atMs: performance.now() } : undefined
+      this.show(head.frame)
     }
   }
 
