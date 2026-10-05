@@ -12,6 +12,7 @@ use crate::{
                     messages::{
                         publish::Publish, publish_done::PublishDone,
                         publish_namespace::PublishNamespace,
+                        publish_namespace_cancel::PublishNamespaceCancel,
                         publish_namespace_done::PublishNamespaceDone,
                     },
                 },
@@ -89,6 +90,27 @@ impl<T: TransportProtocol> Publisher<T> {
             .send(
                 ControlMessageType::PublishNamespaceDone,
                 publish_namespace_done.encode(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Tells the peer this side no longer serves `namespace` (draft-14
+    /// §9.6). Fire-and-forget: the draft defines no response.
+    pub async fn publish_namespace_cancel(
+        &self,
+        namespace: String,
+        error_code: u64,
+        error_reason: String,
+    ) -> anyhow::Result<()> {
+        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
+        let publish_namespace_cancel =
+            PublishNamespaceCancel::new(vec_namespace, error_code, error_reason);
+        self.session
+            .send_stream
+            .send(
+                ControlMessageType::PublishNamespaceCancel,
+                publish_namespace_cancel.encode(),
             )
             .await?;
         Ok(())
@@ -251,5 +273,27 @@ mod tests {
             .await
             .expect("PUBLISH_NAMESPACE_OK should resolve the pending request")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn publish_namespace_cancel_reaches_the_peer_with_its_code_and_reason() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("publisher-namespace-cancel").await;
+
+        // Act
+        client
+            .publisher()
+            .publish_namespace_cancel("live/room".to_string(), 0x5, "moved".to_string())
+            .await
+            .unwrap();
+
+        // Assert
+        let SessionEvent::PublishNamespaceCancel(cancel) = server.receive_event().await.unwrap()
+        else {
+            panic!("expected PUBLISH_NAMESPACE_CANCEL from the client");
+        };
+        assert_eq!(cancel.track_namespace(), "live/room");
+        assert_eq!(cancel.error_code(), 0x5);
+        assert_eq!(cancel.error_reason(), "moved");
     }
 }
