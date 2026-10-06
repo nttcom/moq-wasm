@@ -174,7 +174,8 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   publisher has no FETCH handler — does not hold the session's later requests
   for the control-message response timeout. Likewise, replies to forwarded
   PUBLISH_NAMESPACE complete in a `PublishNamespaceResponseTask` (see
-  `ControlMessageForwarder`).
+  `ControlMessageForwarder`), and every forwarded PUBLISH runs in a
+  `DownstreamPublishTask` (see "PUBLISH sequence").
 - A TRACK_STATUS carrying an AUTHORIZATION TOKEN is handled by the worker
   itself as a token refresh (see "Token refresh" under "Session intake"); one
   without a token goes to `sequences::track_status`.
@@ -338,8 +339,11 @@ establishes a subscription):
 The subscription starts at the Forward State of the PUBLISH_OK (§5.1: the
 sender of PUBLISH_OK sets it), and the forwarded PUBLISH waits for that
 PUBLISH_OK before any object is sent.
-The worker waits for each subscriber's PUBLISH_OK in turn before answering the
-publisher.
+Each forward runs in its own `DownstreamPublishTask`, so the worker answers the
+publisher without waiting for any subscriber's PUBLISH_OK, and a subscriber
+that answers late or never holds neither the publisher's session nor the other
+subscribers' forwards. A publisher that ends the track meanwhile is covered by
+the PUBLISH_DONE TRACK_ENDED answer above.
 
 ### SUBSCRIBE_NAMESPACE sequence
 Register the prefix (and, for the first client subscriber of the prefix, its
@@ -349,8 +353,8 @@ matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
 track (one per publisher session), then PUBLISH_NAMESPACE for remote
 namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards
 the existing messages once the subscription succeeded; a subscriber that
-handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise hold the
-relay's PUBLISH_OK wait for the request timeout.
+handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise never
+answer the PUBLISH before the request timeout.
 
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
@@ -710,9 +714,9 @@ so cache, fan-out, FETCH and authorization need no separate path.
 
 - **Reader never awaits**: the `EventHandler` reader only routes; all awaiting
   happens in per-session workers. Cross-session deadlock is structurally
-  impossible; per-session ordering is FIFO, except that an upstream FETCH
-  and the replies to forwarded PUBLISH_NAMESPACE messages complete in their
-  own tasks after the events that followed them.
+  impossible; per-session ordering is FIFO, except that an upstream FETCH,
+  the replies to forwarded PUBLISH_NAMESPACE messages and forwarded PUBLISHes
+  complete in their own tasks after the events that followed them.
 - **Worker lifetime is the session's**: a session worker exists from the
   session's registration until its terminal event; events arriving outside
   that window are dropped by the reader.

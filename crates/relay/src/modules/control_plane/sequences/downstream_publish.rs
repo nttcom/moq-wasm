@@ -1,3 +1,7 @@
+pub(crate) mod downstream_publish_task;
+
+use std::sync::Arc;
+
 use anyhow::bail;
 use moqt::{ContentExists, wire::publish_done_status_code};
 use tokio::sync::{mpsc, oneshot};
@@ -18,14 +22,15 @@ use crate::modules::{
     },
 };
 
-pub(crate) struct DownstreamPublish<'a> {
-    pub(crate) table: &'a InMemoryLocalPubSubDirectory,
-    pub(crate) forwarder: &'a ControlMessageForwarder,
-    pub(crate) egress_sender: &'a mpsc::Sender<EgressCommand>,
-    pub(crate) cache_store: &'a TrackCacheStore,
+#[derive(Clone)]
+pub(crate) struct DownstreamPublish {
+    pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
+    pub(crate) forwarder: ControlMessageForwarder,
+    pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
 }
 
-impl DownstreamPublish<'_> {
+impl DownstreamPublish {
     /// A subscriber that already receives the track, e.g. from an earlier
     /// publisher of it, gets no second PUBLISH.
     #[tracing::instrument(
@@ -52,7 +57,7 @@ impl DownstreamPublish<'_> {
             ContentExists::True { location } => Some(location),
             ContentExists::False => None,
         };
-        let largest_location = cached_largest(self.cache_store, track_key).max(upstream_largest);
+        let largest_location = cached_largest(&self.cache_store, track_key).max(upstream_largest);
         let content_exists = largest_location.map_or(ContentExists::False, |location| {
             ContentExists::True { location }
         });
@@ -70,7 +75,7 @@ impl DownstreamPublish<'_> {
         let Some(forward) = downstream_subscription.publish_ok_forward() else {
             bail!("PUBLISH answered without a publisher-initiated subscription");
         };
-        let subscriber_peer = super::session_peer(subscriber_session_id, self.forwarder).await;
+        let subscriber_peer = super::session_peer(subscriber_session_id, &self.forwarder).await;
 
         let Some(runner_signals) = self.table.register_downstream_subscription(
             subscriber_session_id,
@@ -117,8 +122,6 @@ impl DownstreamPublish<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::modules::{
         domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,

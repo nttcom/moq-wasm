@@ -161,8 +161,8 @@ mod tests {
             session_repository::SessionRepository,
         },
         test_support::mock_session::{
-            MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
-            mock_new_session,
+            MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
+            RecordedControlMessages, mock_new_session,
         },
     };
 
@@ -384,6 +384,31 @@ mod tests {
         // Assert
         wait_for_close(&subscriber).await.expect(
             "the event after the FETCH should be handled while the upstream FETCH is pending",
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_forwarded_publish_does_not_hold_later_events_of_the_publisher() {
+        // Arrange
+        let handler = RunningEventHandler::start();
+        handler.register_namespace_subscriber(2, "ns").await;
+        let publisher = handler.register_session(1).await;
+        handler.send(SessionEvent {
+            session_id: 1,
+            kind: EventKind::FromSession(MoqtSessionEvent::Publish(Box::new(
+                MockPublishHandler::new("ns", "track", 0),
+            ))),
+        });
+
+        // Act
+        handler.send(SessionEvent::protocol_violation_detected(
+            1,
+            "event after the PUBLISH".to_string(),
+        ));
+
+        // Assert
+        wait_for_close(&publisher).await.expect(
+            "the event after the PUBLISH should be handled while the forwarded PUBLISH is unanswered",
         );
     }
 
