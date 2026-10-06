@@ -394,3 +394,56 @@ async fn upstream_reopen_racing_the_reset_relays_each_object_once_on_two_streams
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lagging_publisher_does_not_hold_back_the_subgroup_another_publisher_finished() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let lagging_stream = harness.open_upstream_stream();
+    lagging_stream.header(0);
+    lagging_stream.object(0);
+
+    // Act
+    let finishing_stream = harness.open_upstream_stream();
+    finishing_stream.header(0);
+    finishing_stream.object(0);
+    finishing_stream.object(1);
+    finishing_stream.fin();
+
+    // Assert
+    let (objects, end) = receive_objects_until_end(&mut egress).await;
+    assert_eq!(resolve_downstream_object_ids(&objects), vec![0, 1]);
+    assert!(matches!(end, Sent::Closed), "expected a FIN, got {end:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_publisher_reset_is_not_relayed_while_another_publisher_finishes_the_subgroup() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let mut subgroup_opened_receiver = harness.subscribe_subgroup_opened();
+    let resetting_stream = harness.open_upstream_stream();
+    resetting_stream.header(0);
+    let finishing_stream = harness.open_upstream_stream();
+    finishing_stream.header(0);
+    for _ in 0..2 {
+        subgroup_opened_receiver
+            .recv()
+            .await
+            .expect("both publishers should open the subgroup");
+    }
+    resetting_stream.object(0);
+    finishing_stream.object(0);
+    harness.wait_largest_location(location(0, 0)).await;
+
+    // Act
+    resetting_stream.reset();
+    finishing_stream.object(1);
+    finishing_stream.fin();
+
+    // Assert
+    let (objects, end) = receive_objects_until_end(&mut egress).await;
+    assert_eq!(resolve_downstream_object_ids(&objects), vec![0, 1]);
+    assert!(matches!(end, Sent::Closed), "expected a FIN, got {end:?}");
+}
