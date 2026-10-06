@@ -292,8 +292,8 @@ function sendCatalogSubscribeButtonClickHandler(): void {
       await moqtClient.subscribe(trackNamespace, catalogTrackName, AUTH_INFO, { requestId: catalogSubscribeId })
     ).subscribeOk.trackAlias
     form['catalog-track-alias'].value = catalogTrackAlias.toString()
-    setupCatalogCallbacks(catalogTrackAlias)
     setCatalogTrackStatus(`Catalog subscribe requested: ${catalogTrackName}`)
+    setupCatalogCallbacks(catalogTrackAlias)
   })
 }
 
