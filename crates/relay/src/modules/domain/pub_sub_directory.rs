@@ -35,6 +35,7 @@ pub(crate) enum TrackJoin {
     Joined,
     TrackGone,
     AlreadyFed,
+    NotWanted,
 }
 
 pub(crate) struct RegisteredPublish {
@@ -443,8 +444,6 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
-    /// A relay publisher only serves this relay's clients, so it is wanted on
-    /// tracks that a client watches; a client publisher on any watched track.
     pub(crate) fn tracks_awaiting_publisher(
         &self,
         track_namespace: &str,
@@ -455,12 +454,8 @@ impl InMemoryLocalPubSubDirectory {
             .iter()
             .filter(|entry| {
                 let track = entry.value();
-                let watchers = match publisher_peer {
-                    SessionPeer::Client => track.downstream_subscriber_count,
-                    SessionPeer::Relay => track.client_downstream_subscriber_count,
-                };
                 entry.key().track_namespace == track_namespace
-                    && watchers > 0
+                    && track.wants(publisher_peer)
                     && !track.subscriptions.contains_key(&publisher_session_id)
             })
             .map(|entry| entry.key().clone())
@@ -515,6 +510,9 @@ impl InMemoryLocalPubSubDirectory {
         };
         if track.subscriptions.contains_key(&publisher_session_id) {
             return TrackJoin::AlreadyFed;
+        }
+        if !track.wants(subscription.publisher_peer) {
+            return TrackJoin::NotWanted;
         }
         track
             .subscriptions

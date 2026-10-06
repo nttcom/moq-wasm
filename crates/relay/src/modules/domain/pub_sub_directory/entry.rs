@@ -46,6 +46,16 @@ impl UpstreamTrack {
             })
     }
 
+    /// A relay's upstream subscription only serves this relay's clients, so a
+    /// relay publisher is wanted while a client watches the track and a
+    /// client publisher while anyone does.
+    pub(crate) fn wants(&self, publisher_peer: SessionPeer) -> bool {
+        match publisher_peer {
+            SessionPeer::Client => self.downstream_subscriber_count > 0,
+            SessionPeer::Relay => self.client_downstream_subscriber_count > 0,
+        }
+    }
+
     pub(crate) fn expires(&self) -> Option<u64> {
         self.subscriptions
             .values()

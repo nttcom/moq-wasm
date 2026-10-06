@@ -149,48 +149,29 @@ async fn join_track(
     subscription: UpstreamSubscription,
 ) {
     let upstream_request_id = active_upstream.upstream_request_id;
-    match deps.table.add_upstream_subscription_to_track(
+    let join = deps.table.add_upstream_subscription_to_track(
         track_key,
         publisher_session_id,
         active_upstream,
-    ) {
-        TrackJoin::Joined => {}
-        TrackJoin::AlreadyFed => {
-            tracing::info!(
-                pub_session_id = %publisher_session_id,
-                %track_key,
-                "publisher already feeds the track; unsubscribing the duplicate upstream subscription"
+    );
+    if join != TrackJoin::Joined {
+        tracing::info!(
+            ?join,
+            pub_session_id = %publisher_session_id,
+            %track_key,
+            "unsubscribing a publisher the track does not take"
+        );
+        if let Err(error) = deps
+            .forwarder
+            .unsubscribe(publisher_session_id, upstream_request_id)
+            .await
+        {
+            tracing::warn!(
+                ?error,
+                "failed to unsubscribe the untaken upstream subscription"
             );
-            if let Err(error) = deps
-                .forwarder
-                .unsubscribe(publisher_session_id, upstream_request_id)
-                .await
-            {
-                tracing::warn!(
-                    ?error,
-                    "failed to unsubscribe the duplicate upstream subscription"
-                );
-            }
-            return;
         }
-        TrackJoin::TrackGone => {
-            tracing::info!(
-                pub_session_id = %publisher_session_id,
-                %track_key,
-                "track ended before the publisher answered; unsubscribing"
-            );
-            if let Err(error) = deps
-                .forwarder
-                .unsubscribe(publisher_session_id, upstream_request_id)
-                .await
-            {
-                tracing::warn!(
-                    ?error,
-                    "failed to unsubscribe the late upstream subscription"
-                );
-            }
-            return;
-        }
+        return;
     }
     if deps
         .ingress_sender
@@ -325,7 +306,10 @@ mod tests {
     #[tokio::test]
     async fn a_publisher_answering_while_the_track_lives_joins_it() {
         // Arrange
-        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
+            .unwrap();
         let table = Arc::new(table);
 
         // Act
@@ -339,6 +323,29 @@ mod tests {
             Ok(IngressCommand::Start(request)) if request.publisher_session_id == LATE_PUBLISHER_SESSION
         ));
         assert!(table.has_upstream_subscription(
+            &TrackKey::new("ns", "track"),
+            LATE_PUBLISHER_SESSION,
+            LATE_UPSTREAM_REQUEST_ID
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_publisher_answering_after_every_subscriber_left_is_unsubscribed() {
+        // Arrange
+        let (table, _) = table_with_upstream(UpstreamSubscriptionOrigin::Publish);
+        let table = Arc::new(table);
+
+        // Act
+        let (recorded, mut ingress_receiver) =
+            join_after_answer(table.clone(), LATE_PUBLISHER_SESSION).await;
+
+        // Assert
+        assert_eq!(
+            recorded.unsubscribed_request_ids(),
+            vec![LATE_UPSTREAM_REQUEST_ID]
+        );
+        assert!(ingress_receiver.try_recv().is_err());
+        assert!(!table.has_upstream_subscription(
             &TrackKey::new("ns", "track"),
             LATE_PUBLISHER_SESSION,
             LATE_UPSTREAM_REQUEST_ID

@@ -248,8 +248,11 @@ Each sequence owns the relay-side protocol logic for one message
    of them at once (draft-14 §8.4). The first SUBSCRIBE_OK starts ingress,
    registers the track and serves this SUBSCRIBE; the still pending requests
    go to an `UpstreamJoinTask` (`sequences/subscribe/upstream_join_task.rs`),
-   which adds each publisher that answers later to the track (or unsubscribes
-   it when the track has ended meanwhile). A publisher that never answers —
+   started once this SUBSCRIBE's downstream subscription is registered. It
+   adds each publisher that answers later to the track while the track still
+   wants it — someone watches it, and for a relay publisher a client does —
+   and unsubscribes it otherwise (the track ended, nobody watches it any more,
+   or the publisher already feeds it). A publisher that never answers —
    e.g. a session that died without closing and lingers until its idle
    timeout — therefore delays nobody, and the SUBSCRIBE fails only when every
    publisher refuses it. Concurrent subscribers to the same track produce one
