@@ -20,7 +20,7 @@ use crate::modules::{
         subscriber::Subscriber,
         subscription::{DownstreamSubscription, UpstreamSubscription},
     },
-    relay::tests::harness::fixtures::subscription::make_subscription,
+    data_plane::tests::harness::fixtures::subscription::make_subscription,
     sequences::tables::table::PublishDoneReason,
     session_repository::{NewSession, SessionPeer, SessionRepository},
     types::SessionId,

@@ -10,14 +10,14 @@ use tracing::Span;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::fetch::FetchHandler,
-    enums::FetchErrorCode,
-    relay::{
+    data_plane::{
         cache::{
             store::TrackCacheStore,
             track_cache::{FetchRangeResolution, TrackCache},
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
+    enums::FetchErrorCode,
     sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
     session_event::SessionEvent,
     types::{SessionId, TrackKey},
@@ -424,7 +424,7 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::modules::{
-        relay::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
+        data_plane::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
         sequences::{
             tables::table::UpstreamSubscriptionOrigin, test_fixtures::table_with_upstream,
         },

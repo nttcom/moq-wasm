@@ -5,13 +5,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::modules::{
     auth::token_verifier::TokenVerifier,
     control_message_forwarder::ControlMessageForwarder,
-    event_handler::{EventHandler, WorkerDeps},
-    inter_relay::InterRelayConnectionManager,
-    relay::{
+    data_plane::{
         cache::{eviction_job::spawn_cache_eviction_job, store::TrackCacheStore},
         egress::coordinator::EgressCoordinator,
         ingress::ingress_coordinator::IngressCoordinator,
     },
+    event_handler::{EventHandler, WorkerDeps},
+    inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
     sequences::{
         tables::hashmap_table::InMemoryLocalPubSubDirectory,

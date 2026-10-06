@@ -1,7 +1,7 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::unsubscribe::UnsubscribeHandler,
-    relay::ingress::ingress_coordinator::IngressCommand,
+    data_plane::ingress::ingress_coordinator::IngressCommand,
     sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::UpstreamSubscriptionOrigin,
     },

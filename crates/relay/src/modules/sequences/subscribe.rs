@@ -3,12 +3,12 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::subscribe::SubscribeHandler,
-    enums::SubscribeErrorCode,
-    relay::{
+    data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
+    enums::SubscribeErrorCode,
     sequences::{
         tables::{
             hashmap_table::InMemoryLocalPubSubDirectory,
@@ -522,9 +522,9 @@ mod tests {
     use crate::modules::core::mocks::{
         MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
     };
+    use crate::modules::data_plane::cache::track_cache::TrackCache;
+    use crate::modules::data_plane::tests::harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::inter_relay::InterRelayConnectionManager;
-    use crate::modules::relay::cache::track_cache::TrackCache;
-    use crate::modules::relay::tests::harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::route_registry::NoopRelayRouteRegistry;
     use crate::modules::sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,

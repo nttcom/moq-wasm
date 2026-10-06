@@ -10,7 +10,7 @@ use super::{Fetch, FetchTarget};
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     core::handler::fetch::FetchHandler,
-    relay::{
+    data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},

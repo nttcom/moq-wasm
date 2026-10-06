@@ -1,5 +1,5 @@
 use crate::modules::{
-    relay::ingress::ingress_coordinator::IngressCommand,
+    data_plane::ingress::ingress_coordinator::IngressCommand,
     sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PublishDoneReason},
     types::SessionId,
 };
