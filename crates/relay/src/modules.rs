@@ -4,3 +4,5 @@ pub(crate) mod control_plane;
 pub(crate) mod data_plane;
 pub(crate) mod domain;
 pub(crate) mod session;
+#[cfg(test)]
+pub(crate) mod test_support;

@@ -248,7 +248,7 @@ impl CachedObject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::data_plane::tests::harness::fixtures::cached_object::{
+    use crate::modules::test_support::relay_harness::fixtures::cached_object::{
         FIXTURE_PRIORITY, datagram_object, status_object, stream_object, stream_object_in_subgroup,
         stream_object_with_payload, subgroup_header_fields,
     };

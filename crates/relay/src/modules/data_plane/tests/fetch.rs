@@ -3,8 +3,8 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::modules::{
-    data_plane::tests::harness::{FetchSent, RelayHarness, fixtures::location},
     domain::error_code::FetchErrorCode,
+    test_support::relay_harness::{FetchSent, RelayHarness, fixtures::location},
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

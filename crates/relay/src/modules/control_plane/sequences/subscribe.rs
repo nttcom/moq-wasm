@@ -524,17 +524,17 @@ mod tests {
     use crate::modules::auth::verified_token::VerifiedToken;
     use crate::modules::cascading::inter_relay_connection_manager::InterRelayConnectionManager;
     use crate::modules::cascading::route_registry::NoopRelayRouteRegistry;
-    use crate::modules::control_plane::sequences::test_fixtures::{
-        PUBLISHER_SESSION, active_upstream, upstream_key,
-    };
     use crate::modules::data_plane::cache::track_cache::TrackCache;
-    use crate::modules::data_plane::tests::harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::domain::pub_sub_directory::{
         InMemoryLocalPubSubDirectory, entry::PeerKind,
     };
-    use crate::modules::session::mocks::{
+    use crate::modules::test_support::directory_fixtures::{
+        PUBLISHER_SESSION, active_upstream, upstream_key,
+    };
+    use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
     };
+    use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {
         insert_closed_group(cache, group_id, &[0]);

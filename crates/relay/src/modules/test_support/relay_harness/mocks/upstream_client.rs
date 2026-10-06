@@ -1,11 +1,11 @@
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
-    data_plane::tests::harness::{
+    session::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
+    test_support::relay_harness::{
         RECV_TIMEOUT,
         fixtures::data_object::{make_header, make_payload_object, ordered_payload},
     },
-    session::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
 };
 
 type ReceiveResult = Result<Option<DataObject>, moqt::StreamReceiveError>;

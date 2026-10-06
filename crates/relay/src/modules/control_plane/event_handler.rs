@@ -803,13 +803,13 @@ mod tests {
             track_key::TrackKey,
         },
         session::{
-            mocks::{
-                MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
-                mock_new_session,
-            },
             moqt_session_event::MoqtSessionEvent,
             session_event::{EventKind, SessionEvent},
             session_repository::SessionRepository,
+        },
+        test_support::mock_session::{
+            MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
+            mock_new_session,
         },
     };
 

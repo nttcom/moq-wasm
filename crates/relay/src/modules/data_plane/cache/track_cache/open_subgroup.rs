@@ -189,7 +189,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::modules::data_plane::tests::harness::fixtures::cached_object::{
+    use crate::modules::test_support::relay_harness::fixtures::cached_object::{
         datagram_object, insert_aborted_group, open_group, stream_key, stream_object,
         stream_object_in_subgroup,
     };

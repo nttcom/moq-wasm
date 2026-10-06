@@ -110,7 +110,7 @@ impl KnownRanges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::data_plane::tests::harness::fixtures::location;
+    use crate::modules::test_support::relay_harness::fixtures::location;
 
     #[test]
     fn contains_inserted_range() {

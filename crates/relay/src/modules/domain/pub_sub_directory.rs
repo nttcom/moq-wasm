@@ -612,10 +612,10 @@ impl InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::control_plane::sequences::test_fixtures::{
+    use crate::modules::test_support::directory_fixtures::{
         UPSTREAM_REQUEST_ID, table_with_upstream,
     };
-    use crate::modules::session::mocks::runner_stopped;
+    use crate::modules::test_support::mock_session::runner_stopped;
     use moqt::{ContentExists, FilterType, GroupOrder};
 
     #[derive(Debug)]

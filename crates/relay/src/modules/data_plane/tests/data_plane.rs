@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::modules::session::data_object::DataObject;
 
-use super::harness::{
+use crate::modules::test_support::relay_harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery,
     fixtures::{cached_object::FIXTURE_PRIORITY, location},
     ordered_payload, payloads_of, receive_objects_until_close, receive_objects_until_end,

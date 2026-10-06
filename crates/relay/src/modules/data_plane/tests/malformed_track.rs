@@ -1,11 +1,11 @@
 use moqt::wire::publish_done_status_code;
 
 use crate::modules::{
-    data_plane::tests::harness::{
+    session::session_event::EventKind,
+    test_support::relay_harness::{
         PUBLISHER_SESSION_ID, RelayHarness, fixtures::location, ordered_payload, payloads_of,
         receive_objects_until_close,
     },
-    session::session_event::EventKind,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

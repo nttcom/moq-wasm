@@ -36,8 +36,8 @@ impl SubscribeUpdate {
 mod tests {
     use super::*;
     use crate::modules::{
-        control_plane::sequences::test_fixtures::table_with_upstream,
         domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        test_support::directory_fixtures::table_with_upstream,
     };
 
     #[test]

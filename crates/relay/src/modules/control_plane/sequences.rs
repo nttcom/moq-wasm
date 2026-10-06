@@ -6,8 +6,6 @@ pub(crate) mod publish_namespace_done;
 pub(crate) mod subscribe;
 pub(crate) mod subscribe_namespace;
 pub(crate) mod subscribe_update;
-#[cfg(test)]
-pub(crate) mod test_fixtures;
 pub(crate) mod track_status;
 pub(crate) mod unsubscribe;
 pub(crate) mod unsubscribe_namespace;

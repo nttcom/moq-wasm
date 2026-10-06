@@ -5,7 +5,6 @@ use tokio::sync::oneshot;
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
-    data_plane::tests::harness::fixtures::subscription::make_subscription,
     domain::{
         pub_sub_directory::entry::PublishDoneReason, session_id::SessionId,
         session_peer::SessionPeer,
@@ -26,6 +25,7 @@ use crate::modules::{
         subscriber::Subscriber,
         subscription::{DownstreamSubscription, UpstreamSubscription},
     },
+    test_support::relay_harness::fixtures::subscription::make_subscription,
 };
 
 #[derive(Clone, Default)]

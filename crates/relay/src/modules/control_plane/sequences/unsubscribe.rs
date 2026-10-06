@@ -75,12 +75,14 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        control_plane::sequences::test_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
-            upstream_release_context,
-        },
         domain::{pub_sub_directory::entry::PublishDoneReason, track_key::TrackKey},
-        session::mocks::runner_stopped,
+        test_support::{
+            directory_fixtures::{
+                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
+                upstream_release_context,
+            },
+            mock_session::runner_stopped,
+        },
     };
 
     struct MockUnsubscribeHandler {
