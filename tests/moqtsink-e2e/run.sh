@@ -38,6 +38,8 @@ LOGS_PID=$!
 RELAY_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
 echo "Using relay URL: $RELAY_URL"
 
+PLUGIN_EXT=$([[ "$(uname -s)" == Darwin ]] && echo dylib || echo so)
+
 cargo build -p gst-plugin-moqt
-GST_PLUGIN_PATH="$ROOT_DIR/target/debug" MOQT_E2E_RELAY_URL="$RELAY_URL" \
+MOQT_E2E_PLUGIN_FILE="$ROOT_DIR/target/debug/libgstmoqt.$PLUGIN_EXT" MOQT_E2E_RELAY_URL="$RELAY_URL" \
   cargo run -p moqtsink-e2e
