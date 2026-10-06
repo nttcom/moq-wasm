@@ -9,7 +9,7 @@ use tracing::Instrument;
 use super::{Fetch, FetchTarget};
 use crate::modules::{
     control_plane::{
-        control_message_forwarder::ControlMessageForwarder,
+        control_message_forwarder::ControlMessageForwarder, sequences::session_peer,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::{
@@ -47,10 +47,12 @@ impl UpstreamFetchTask {
     }
 
     async fn forward(start: UpstreamFetchStart) {
+        let requester = session_peer(start.session_id, &start.forwarder).await;
         let Some(prepared) = Fetch::create_upstream_fetch(
             &start.table,
             &start.forwarder,
             &start.upstream_publisher_resolver,
+            requester,
             start.handler.as_ref(),
             &start.target,
         )

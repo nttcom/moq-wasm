@@ -17,10 +17,11 @@ use crate::modules::{
         route_registry::{RelayInfo, RelayRouteRegistry},
     },
     control_plane::control_message_forwarder::ControlMessageForwarder,
-    data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{session_id::SessionId, track_key::TrackKey},
+    data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
+#[derive(Clone, Copy)]
 pub(crate) struct CascadingRelayContext<'a> {
     pub(crate) route_registry: &'a dyn RelayRouteRegistry,
     pub(crate) inter_relay_connection_manager: &'a InterRelayConnectionManager,
@@ -35,6 +36,17 @@ pub(crate) async fn is_origin_client(
         .lock()
         .await
         .is_client_session(session_id)
+}
+
+pub(crate) async fn session_peer(
+    session_id: SessionId,
+    forwarder: &ControlMessageForwarder,
+) -> SessionPeer {
+    if is_origin_client(session_id, forwarder).await {
+        SessionPeer::Client
+    } else {
+        SessionPeer::Relay
+    }
 }
 
 pub(crate) async fn connect_relay(
@@ -76,6 +88,22 @@ pub(crate) async fn release_upstream(
     }
 
     stop_ingress(ingress_sender, publisher_session_id, track_key).await;
+}
+
+pub(crate) async fn start_ingress(
+    ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+    request: IngressStartRequest,
+) -> bool {
+    let track_key = request.track_key.clone();
+    let publisher_session_id = request.publisher_session_id;
+    let started = ingress_sender
+        .send(IngressCommand::Start(Box::new(request)))
+        .await
+        .is_ok();
+    if !started {
+        tracing::error!(%track_key, publisher_session_id, "failed to send ingress start request");
+    }
+    started
 }
 
 pub(crate) async fn stop_ingress(

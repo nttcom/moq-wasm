@@ -7,10 +7,7 @@ pub(crate) struct NoopRelayRouteRegistry;
 
 #[async_trait]
 impl RelayRouteRegistry for NoopRelayRouteRegistry {
-    async fn register_namespace_publisher(
-        &self,
-        _track_namespace: &str,
-    ) -> Result<(), RegisterRouteError> {
+    async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -21,11 +18,19 @@ impl RelayRouteRegistry for NoopRelayRouteRegistry {
         Ok(())
     }
 
-    async fn find_active_namespace_publisher(
+    async fn find_active_namespace_publishers(
         &self,
         _track_namespace: &str,
-    ) -> anyhow::Result<Option<RelayInfo>> {
-        Ok(None)
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn register_watched_namespace(&self, _track_namespace: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn unregister_watched_namespace(&self, _track_namespace: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 
     async fn find_namespace_publishers_by_prefix(

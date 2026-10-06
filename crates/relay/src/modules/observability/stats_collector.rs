@@ -13,10 +13,7 @@ use crate::modules::{
     cascading::inter_relay_connection_manager::InterRelayConnectionManager,
     data_plane::cache::{store::TrackCacheStore, track_cache::IngressCounters},
     domain::{
-        pub_sub_directory::{
-            DownstreamSubscriptionState, InMemoryLocalPubSubDirectory,
-            entry::UpstreamSubscriptionKey,
-        },
+        pub_sub_directory::{DownstreamSubscriptionState, InMemoryLocalPubSubDirectory},
         session_id::SessionId,
         session_peer::SessionPeer,
         track_key::TrackKey,
@@ -58,21 +55,25 @@ impl StatsCollector {
         let upstream_tracks = self.sources.directory.active_upstream_tracks();
         let ingress = self.take_ingress_counters(&upstream_tracks);
         let stats_publishers = self.stats_publishers(&upstream_tracks);
-        let track_of: HashMap<&UpstreamSubscriptionKey, &TrackKey> = upstream_tracks
-            .iter()
-            .map(|(upstream_key, track_key)| (upstream_key, track_key))
-            .collect();
+        let mut newest_publisher_of: HashMap<&TrackKey, SessionId> = HashMap::new();
+        for (publisher_session_id, track_key) in &upstream_tracks {
+            let newest = newest_publisher_of.entry(track_key).or_default();
+            *newest = (*newest).max(*publisher_session_id);
+        }
         let subscriptions = self
             .sources
             .directory
             .downstream_subscription_states()
             .into_iter()
             .map(|state| {
-                let newest_received = track_of
-                    .get(&state.upstream_key)
-                    .and_then(|track_key| ingress.get(*track_key))
+                let newest_received = ingress
+                    .get(&state.track_key)
                     .and_then(|counters| counters.last_arrival);
-                subscription_stats(state, newest_received)
+                let publisher_session_id = newest_publisher_of
+                    .get(&state.track_key)
+                    .copied()
+                    .unwrap_or_default();
+                subscription_stats(state, publisher_session_id, newest_received)
             })
             .collect();
         let occupancy = self.sources.cache_store.occupancy();
@@ -95,8 +96,12 @@ impl StatsCollector {
                 .collect(),
             tracks: upstream_tracks
                 .iter()
-                .map(|(upstream_key, track_key)| {
-                    track_stats(upstream_key, ingress.get(track_key).copied())
+                .map(|(publisher_session_id, track_key)| {
+                    track_stats(
+                        *publisher_session_id,
+                        track_key,
+                        ingress.get(track_key).copied(),
+                    )
                 })
                 .collect(),
             subscriptions,
@@ -105,7 +110,7 @@ impl StatsCollector {
 
     fn take_ingress_counters(
         &self,
-        upstream_tracks: &[(UpstreamSubscriptionKey, TrackKey)],
+        upstream_tracks: &[(SessionId, TrackKey)],
     ) -> HashMap<TrackKey, IngressCounters> {
         let track_keys: HashSet<&TrackKey> = upstream_tracks
             .iter()
@@ -120,18 +125,15 @@ impl StatsCollector {
             .collect()
     }
 
-    fn stats_publishers(
-        &self,
-        upstream_tracks: &[(UpstreamSubscriptionKey, TrackKey)],
-    ) -> HashSet<SessionId> {
+    fn stats_publishers(&self, upstream_tracks: &[(SessionId, TrackKey)]) -> HashSet<SessionId> {
         let namespace = relay_stats::track_namespace(&self.relay_id);
         upstream_tracks
             .iter()
-            .filter(|(upstream_key, _)| {
-                upstream_key.track_namespace == namespace
-                    && upstream_key.track_name == relay_stats::TRACK_NAME
+            .filter(|(_, track_key)| {
+                track_key.track_namespace == namespace
+                    && track_key.track_name == relay_stats::TRACK_NAME
             })
-            .map(|(upstream_key, _)| upstream_key.publisher_session_id)
+            .map(|(publisher_session_id, _)| *publisher_session_id)
             .collect()
     }
 }
@@ -177,13 +179,14 @@ fn session_stats(
 }
 
 fn track_stats(
-    upstream_key: &UpstreamSubscriptionKey,
+    publisher_session_id: SessionId,
+    track_key: &TrackKey,
     ingress: Option<IngressCounters>,
 ) -> TrackStats {
     TrackStats {
-        namespace: upstream_key.track_namespace.clone(),
-        name: upstream_key.track_name.clone(),
-        publisher_session_id: upstream_key.publisher_session_id,
+        namespace: track_key.track_namespace.clone(),
+        name: track_key.track_name.clone(),
+        publisher_session_id,
         bytes_received: ingress.map_or(0, |counters| counters.bytes_received),
         max_arrival_gap_since_last_snapshot_us: ingress
             .map_or(0, |counters| micros(counters.max_arrival_gap)),
@@ -192,12 +195,13 @@ fn track_stats(
 
 fn subscription_stats(
     state: DownstreamSubscriptionState,
+    publisher_session_id: SessionId,
     newest_received: Option<tokio::time::Instant>,
 ) -> SubscriptionStats {
     let DownstreamSubscriptionState {
         subscriber_session_id,
         request_id,
-        upstream_key,
+        track_key,
         delivery,
     } = state;
     let lag = match (newest_received, delivery.last_sent_received_at) {
@@ -205,9 +209,9 @@ fn subscription_stats(
         _ => Duration::ZERO,
     };
     SubscriptionStats {
-        namespace: upstream_key.track_namespace,
-        name: upstream_key.track_name,
-        publisher_session_id: upstream_key.publisher_session_id,
+        namespace: track_key.track_namespace,
+        name: track_key.track_name,
+        publisher_session_id,
         subscriber_session_id,
         request_id,
         bytes_sent: delivery.bytes_sent,
@@ -232,9 +236,7 @@ mod tests {
         domain::{
             pub_sub_directory::{
                 InMemoryLocalPubSubDirectory,
-                entry::{
-                    ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-                },
+                entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
             },
             session_id::SessionId,
             session_peer::SessionPeer,
@@ -309,24 +311,20 @@ mod tests {
             publisher_session_id: SessionId,
             namespace: &str,
             name: &str,
-        ) -> UpstreamSubscriptionKey {
-            let upstream_key = UpstreamSubscriptionKey {
-                publisher_session_id,
-                track_namespace: namespace.to_string(),
-                track_name: name.to_string(),
-            };
+        ) -> TrackKey {
+            let track_key = TrackKey::new(namespace, name);
             self.directory.register_upstream_subscription(
-                upstream_key.clone(),
+                track_key.clone(),
+                publisher_session_id,
                 ActiveUpstreamSubscription {
                     upstream_request_id: 0,
-                    track_key: TrackKey::new(namespace, name),
                     expires: None,
                     content_exists: ContentExists::False,
-                    downstream_subscriber_count: 0,
                     origin: UpstreamSubscriptionOrigin::Publish,
+                    publisher_peer: SessionPeer::Client,
                 },
             );
-            upstream_key
+            track_key
         }
     }
 
@@ -374,7 +372,7 @@ mod tests {
     async fn tracks_and_subscriptions_report_their_traffic_and_the_delivery_lag() {
         // Arrange
         let fixture = Fixture::new();
-        let upstream_key = fixture.publish(1, "app/live", "video");
+        let track_key = fixture.publish(1, "app/live", "video");
         let cache = fixture
             .cache_store
             .get_or_create(&TrackKey::new("app/live", "video"));
@@ -386,7 +384,7 @@ mod tests {
         let _ = open.insert(stream_object_with_payload(0, 1, Bytes::from_static(b"56")));
         let signals = fixture
             .directory
-            .register_downstream_subscription(9, 4, upstream_key, None)
+            .register_downstream_subscription(9, 4, SessionPeer::Client, track_key, None)
             .unwrap();
         signals
             .delivery_stats

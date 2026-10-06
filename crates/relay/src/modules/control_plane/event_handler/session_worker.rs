@@ -165,8 +165,10 @@ impl SessionWorker {
                     .handle(
                         session_id,
                         &session_span,
-                        deps.local_pub_sub_directory.as_ref(),
+                        &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
+                        &deps.ingress_sender,
+                        &deps.upstream_publisher_resolver,
                         self.cascading_relay_context(),
                         handler.as_ref(),
                     )
@@ -234,11 +236,11 @@ impl SessionWorker {
                     .handle(
                         session_id,
                         &session_span,
-                        deps.local_pub_sub_directory.as_ref(),
+                        &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
                         &deps.egress_sender,
-                        deps.upstream_publisher_resolver.as_ref(),
+                        &deps.upstream_publisher_resolver,
                         &deps.cache_store,
                         &deps.upstream_serializer,
                         handler,

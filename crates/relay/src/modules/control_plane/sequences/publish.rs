@@ -13,11 +13,10 @@ use crate::modules::{
         error_code::PublishErrorCode,
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
-            entry::{
-                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-            },
+            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
         },
         session_id::SessionId,
+        session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
@@ -56,11 +55,13 @@ impl Publish {
             track_alias = %upstream_subscription.track_alias(),
             "SequenceHandler::publish"
         );
-        let is_origin_client = super::is_origin_client(session_id, forwarder).await;
+        let publisher_peer = super::session_peer(session_id, forwarder).await;
+        let is_origin_client = publisher_peer == SessionPeer::Client;
 
         if let Err(error) = self
             .register_upstream_subscription(
                 session_id,
+                publisher_peer,
                 table,
                 ingress_sender,
                 handler.clone(),
@@ -186,46 +187,40 @@ impl Publish {
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
+        publisher_peer: SessionPeer,
         table: &InMemoryLocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
     ) -> anyhow::Result<()> {
-        let track_namespace = subscription.track_namespace().to_string();
-        let track_name = subscription.track_name().to_string();
-        let track_key = TrackKey::new(&track_namespace, &track_name);
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: session_id,
-            track_namespace,
-            track_name,
-        };
+        let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
         let active_upstream = ActiveUpstreamSubscription {
             upstream_request_id: subscription.request_id(),
-            track_key,
             expires: None,
             content_exists: subscription.content_exists(),
-            downstream_subscriber_count: 0,
             origin: UpstreamSubscriptionOrigin::Publish,
+            publisher_peer,
         };
 
         handler.accept_data_receiver().await;
 
-        if ingress_sender
-            .send(IngressCommand::Start(Box::new(IngressStartRequest {
+        if !super::start_ingress(
+            ingress_sender,
+            IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
-                track_key: active_upstream.track_key.clone(),
+                track_key: track_key.clone(),
                 subscription: subscription.clone(),
                 parent_span: Span::current(),
-            })))
-            .await
-            .is_err()
+            },
+        )
+        .await
         {
             anyhow::bail!("failed to send ingress start request");
         }
 
-        table.register_upstream_subscription(upstream_key, active_upstream);
-        table.register_publish(session_id, handler);
+        table.register_upstream_subscription(track_key, session_id, active_upstream);
+        table.register_publish(session_id, publisher_peer, handler);
         Ok(())
     }
 

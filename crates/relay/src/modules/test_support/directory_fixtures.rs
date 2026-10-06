@@ -1,19 +1,28 @@
+use std::sync::Arc;
+
 use moqt::ContentExists;
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    control_plane::control_message_forwarder::ControlMessageForwarder,
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::NoopRelayRouteRegistry,
+    },
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
-            entry::{
-                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-            },
+            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
         },
         session_id::SessionId,
+        session_peer::SessionPeer,
         track_key::TrackKey,
     },
+    session::session_repository::SessionRepository,
     test_support::mock_session::{
         RecordedControlMessages, session_repository_with_upstream_session,
     },
@@ -22,31 +31,34 @@ use crate::modules::{
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
 pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
 
-pub(crate) fn upstream_key() -> UpstreamSubscriptionKey {
-    UpstreamSubscriptionKey {
-        publisher_session_id: PUBLISHER_SESSION,
-        track_namespace: "ns".to_string(),
-        track_name: "track".to_string(),
-    }
+pub(crate) fn track_key() -> TrackKey {
+    TrackKey::new("ns", "track")
 }
 
 pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstreamSubscription {
     ActiveUpstreamSubscription {
         upstream_request_id: UPSTREAM_REQUEST_ID,
-        track_key: TrackKey::new("ns", "track"),
         expires: None,
         content_exists: ContentExists::False,
-        downstream_subscriber_count: 0,
         origin,
+        publisher_peer: SessionPeer::Client,
     }
+}
+
+pub(crate) fn upstream_track(origin: UpstreamSubscriptionOrigin) -> UpstreamTrack {
+    let mut upstream_track = UpstreamTrack::default();
+    upstream_track
+        .subscriptions
+        .insert(PUBLISHER_SESSION, active_upstream(origin));
+    upstream_track
 }
 
 pub(crate) fn table_with_upstream(
     origin: UpstreamSubscriptionOrigin,
-) -> (InMemoryLocalPubSubDirectory, UpstreamSubscriptionKey) {
+) -> (InMemoryLocalPubSubDirectory, TrackKey) {
     let table = InMemoryLocalPubSubDirectory::new();
-    table.register_upstream_subscription(upstream_key(), active_upstream(origin));
-    (table, upstream_key())
+    table.register_upstream_subscription(track_key(), PUBLISHER_SESSION, active_upstream(origin));
+    (table, track_key())
 }
 
 pub(crate) struct UpstreamReleaseContext {
@@ -70,4 +82,16 @@ pub(crate) async fn upstream_release_context(
         ingress_receiver,
         recorded,
     }
+}
+
+pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
+    let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
+    UpstreamPublisherResolver::new(
+        Arc::new(NoopRelayRouteRegistry),
+        Arc::new(InterRelayConnectionManager::new(
+            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
+            session_event_sender,
+            "unused-relay-token".to_string(),
+        )),
+    )
 }

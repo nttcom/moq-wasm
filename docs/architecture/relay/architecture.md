@@ -180,9 +180,10 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   without a token goes to `sequences::track_status`.
 - An upstream PUBLISH_DONE goes to
   `sequences::upstream_publish_done::UpstreamPublishDone`: it ends the
-  matching `ActiveUpstreamSubscription` together with its downstream
-  registrations, handing them the received status code and reason (see
-  "Egress"), and stops ingress. No UNSUBSCRIBE is sent, since the publisher
+  matching `ActiveUpstreamSubscription` and stops its ingress. When that was
+  the last upstream subscription of its track, the track's downstream
+  registrations end with it, handed the received status code and reason (see
+  "Egress"); otherwise the remaining publishers keep feeding them. No UNSUBSCRIBE is sent, since the publisher
   already ended the subscription.
 - Events for control messages without relay-side logic yet (GOAWAY,
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are
@@ -192,23 +193,29 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   a peer) and routed to the upstream publisher session's worker:
   - `MalformedTrackDetected(session_id, track_key)`, raised by the insert that
     latched the track. Handled by
-    `sequences::malformed_track::MalformedTrackCleanup`: remove the
-    `ActiveUpstreamSubscription`, send upstream UNSUBSCRIBE (§2.5 MUST), and
-    stop ingress via `IngressCommand::StopTrack`. Duplicate reports are
-    idempotent (the table entry is only found once).
+    `sequences::malformed_track::MalformedTrackCleanup`: remove every
+    `ActiveUpstreamSubscription` of the track, since the cache latch makes the
+    whole track malformed whichever publisher's object conflicted, send each
+    publisher UNSUBSCRIBE (§2.5 MUST), and stop their ingress via
+    `IngressCommand::StopTrack`. Duplicate reports are idempotent (the track
+    entry is only found once).
   - `ProtocolViolationDetected { reason }`, raised when a subgroup object
     carries an Object Status draft-14 §10.2.1.1 does not define. The worker
     closes the session with PROTOCOL_VIOLATION (`Session::close_with_error`);
     the resulting `ProtocolViolation` session event then drives the ordinary
     terminal cleanup.
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
-  `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
-  session from the pub/sub directory (which stops the egress runners of every
-  removed downstream subscription, and ends the downstream subscriptions on
-  the session's own upstream subscriptions with TRACK_ENDED, see "Egress"), forward
-  upstream UNSUBSCRIBE / stop ingress when the last downstream subscriber
-  left, withdraw namespace routes for client sessions, then drop the session
-  from the repository.
+  `cleanup_session` (idempotent) and end the worker. Cleanup: drop the session
+  from the repository, then remove it from the pub/sub directory (which stops
+  the egress runners of every removed downstream subscription, and ends with
+  TRACK_ENDED the downstream subscriptions of every track whose last upstream
+  subscription was the session's, see "Egress"), stop the session's ingress,
+  forward upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions
+  the last downstream subscriber released, and withdraw namespace routes for
+  client sessions. Leaving the repository first means an `UpstreamJoinTask`
+  adding the session to a track concurrently is either found by the directory
+  removal or, checking the repository after adding, finds the session gone
+  and removes its subscription again.
 
 ### `modules/control_plane/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message
@@ -227,25 +234,43 @@ Each sequence owns the relay-side protocol logic for one message
   to its sender).
 - `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
   registry of publish/subscribe namespaces (with `SessionPeer` so client-owned
-  Redis routes are cleaned up when the last *client* leaves), active upstream
-  subscriptions, and downstream subscriptions. `remove_session` returns everything cleanup needs.
+  Redis routes are cleaned up when the last *client* leaves), upstream tracks,
+  and downstream subscriptions. An `UpstreamTrack` holds one
+  `ActiveUpstreamSubscription` per publisher session feeding the track
+  (draft-14 §8.2) and the count of its downstream subscribers; downstream
+  subscriptions refer to the track, not to a publisher. The track lives while
+  any upstream subscription feeds it. The last downstream subscriber leaving
+  releases its SUBSCRIBE-initiated upstream subscriptions, while
+  PUBLISH-initiated ones stay until their publisher ends them. `remove_session` returns everything cleanup needs.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
   guard removes the track's entry on release unless a waiter still holds the
   mutex, so the map only holds tracks whose upstream creation is in progress.
 
 ### SUBSCRIBE sequence (the central flow)
 1. **Find-or-create upstream subscription.** Fast path: an
-   `ActiveUpstreamSubscription` already exists in the directory. Miss: take
+   `UpstreamTrack` already exists in the directory. Miss: take
    the per-track serializer lock, re-check (a sibling may have created it),
-   otherwise resolve a publisher and send upstream SUBSCRIBE, start ingress,
-   and register the upstream subscription — so concurrent subscribers to the
-   same track produce exactly one upstream subscription.
-2. **Publisher resolution** (`UpstreamPublisherResolver`): local directory
-   first (lowest publisher session id wins; session ids grow with time, so
-   the oldest publisher wins), then the route registry for a remote relay,
-   dialled via `InterRelayConnectionManager`. draft-14 §8.4.2 graceful
-   publisher switchover, where the newer session should take new
-   subscriptions during the overlap, is not implemented.
+   otherwise resolve the publishers and send upstream SUBSCRIBE to every one
+   of them at once (draft-14 §8.4). The first SUBSCRIBE_OK starts ingress,
+   registers the track and serves this SUBSCRIBE; the still pending requests
+   go to an `UpstreamJoinTask` (`sequences/subscribe/upstream_join_task.rs`),
+   started once this SUBSCRIBE's downstream subscription is registered. It
+   adds each publisher that answers later to the track while the track still
+   wants it — someone watches it, and for a relay publisher a client does —
+   and unsubscribes it otherwise (the track ended, nobody watches it any more,
+   or the publisher already feeds it). A publisher that never answers —
+   e.g. a session that died without closing and lingers until its idle
+   timeout — therefore delays nobody, and the SUBSCRIBE fails only when every
+   publisher refuses it. Concurrent subscribers to the same track produce one
+   upstream subscription per publisher.
+2. **Publisher resolution** (`UpstreamPublisherResolver`): every local client
+   publisher, newest first (session ids grow with time), and, for a SUBSCRIBE
+   from a client, every remote relay the route registry lists as publishing the
+   namespace (see "Cascading relays"). Resolution dials nothing: each upstream
+   SUBSCRIBE task reaches its relay through `InterRelayConnectionManager`
+   itself, with a 3 s connect timeout, so an unreachable relay holds back no
+   other publisher. A SUBSCRIBE from a relay is served from local client
+   publishers only.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
    and the local cache's largest location, resolved together with the upstream
    subscription (`get_or_create_upstream_subscription`). The cache is
@@ -267,6 +292,19 @@ Each sequence owns the relay-side protocol logic for one message
    only then does it reply SUBSCRIBE_ERROR TRACK_DOES_NOT_EXIST. Another
    session leaving must not fail a SUBSCRIBE that a fresh upstream can serve.
 
+### Publishers joining a received track
+draft-14 §8.4 makes a relay subscribe a publisher that announces a namespace
+whose tracks it already receives from other upstream sessions. After
+answering PUBLISH_NAMESPACE from a client session, `PublishNamespace` sends
+SUBSCRIBE to that publisher for every track of the namespace that has a
+downstream subscriber and that the publisher does not feed yet, and hands the
+requests to an `UpstreamJoinTask`, which adds the publisher once it answers.
+A PUBLISH_NAMESPACE from a relay does the same for the publishing relays the
+route registry lists, reached over the sessions `InterRelayConnectionManager`
+keeps per relay, and only for tracks a client watches (see "Cascading
+relays"). A PUBLISH for a track the relay already receives adds its publisher
+to the track the same way.
+
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
 `watch::Sender<bool>` next to its runner stop sender, starting at Forward 1
@@ -284,17 +322,24 @@ then delegate to `EgressCommand::StartFetch`, which serves the range from
 
 A range the cache cannot serve goes upstream. The worker hands it to
 `UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to
-the session's next event; the task resolves the publisher, forwards the FETCH,
-waits for its FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
-`FetchIngest`, which fills the cache and hands the range to egress. A
+the session's next event; the task forwards the FETCH, waits for its
+FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
+`FetchIngest`, which fills the cache and hands the range to egress. draft-14
+§8.4 lets the relay send it to any one publisher, so the task tries them in
+turn until one answers FETCH_OK: first the publishers whose upstream
+SUBSCRIBE for the track succeeded (known to be alive), newest first; only when
+all of them fail are the other publishers of the track resolved, and dialled,
+newest first. A FETCH_ERROR or a timeout moves on to the next; only when every
+publisher failed is the last error relayed downstream. A
 downstream session that disconnects meanwhile only makes the FETCH_OK send
 fail; egress drops a `StartFetch` for a departed session.
 
 ### TRACK_STATUS sequence
 A status query is answered from the relay's own state only. For a track with
-an `ActiveUpstreamSubscription`, TRACK_STATUS_OK carries the upstream's
+an `UpstreamTrack`, TRACK_STATUS_OK carries the newest upstream subscription's
 Expires and the Largest Location resolved as on the SUBSCRIBE fast path (the
-cache's largest location, else the upstream's Content Exists). Any other track
+cache's largest location, else the largest Content Exists of its upstream
+subscriptions). Any other track
 is answered TRACK_STATUS_ERROR `NOT_SUPPORTED (0x3)`: draft-14 §9.20 lets a
 relay without an active subscription forward the request or subscribe
 upstream (MAY), and this relay does neither.
@@ -472,7 +517,7 @@ cleanup, an upstream PUBLISH_DONE — stops the runner, and a registration remov
 coordinator got to `StartReader` yields a runner that never runs; the order in which different
 session workers touch the registration and the coordinator cannot leak a runner. Removal
 drops the sender when the subscriber ended the subscription (draft-14 §5.1: the publisher
-may destroy its state). Removal because the upstream ended — the publisher's session went
+may destroy its state). Removal because the track's last upstream ended — its publisher's session went
 away (TRACK_ENDED) or it sent PUBLISH_DONE (its status code) — sends a `PublishDoneReason`
 instead, and the runner answers it with PUBLISH_DONE carrying that status and the number
 of streams it opened, after its senders stopped (§9.12: no state is destroyed without
@@ -537,7 +582,27 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
   `SubscribeNamespace` registers the subscriber route when the first client
-  subscriber for a prefix appears.
+  subscriber for a prefix appears. Any number of relays may hold the publisher
+  route of one namespace (draft-14 §8.2), and the notification reaches every
+  subscriber relay.
+- **Watched namespaces**: a relay receiving a track for a client must learn
+  about publishers of its namespace announcing later, on any relay. Before
+  resolving the publishers of a track a client asked for, the relay registers
+  a watched-namespace route, which `find_namespace_subscribers` returns like a
+  namespace-subscriber route, so the later PUBLISH_NAMESPACE is forwarded to
+  it (see "Publishers joining a received track").
+  `WatchedNamespaceRoutes` (`cascading/watched_namespace_routes.rs`) holds
+  these routes, and `WatchedNamespaceJob` reconciles them every 5 s with the
+  namespaces the directory has a client watching, dropping a route after two
+  passes in a row without one.
+- **Split horizon**: relay-to-relay subscriptions only carry what clients
+  need. A SUBSCRIBE or FETCH from a relay is resolved to local client
+  publishers only, a relay's upstream subscription to another relay is
+  released when the last client subscriber of the track leaves, and a relay
+  subscriber left on a track no upstream subscription feeds any more ends with
+  TRACK_ENDED. Two relays both publishing and both watching a track therefore
+  subscribe each other, yet the pair never keeps the track alive once their
+  clients are gone.
 - `InterRelayConnectionManager` lazily dials the remote relay's inner endpoint
   over raw QUIC (`moqt::QUIC`, certificate verification disabled), presenting
   this relay's own JWT (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
@@ -566,7 +631,10 @@ so cache, fan-out, FETCH and authorization need no separate path.
   `InMemoryLocalPubSubDirectory::active_upstream_tracks` and
   `downstream_subscription_states`, each track cache's `IngressStats`, and
   `TrackCacheStore::occupancy`. RSS comes from `/proc/self/status` and is
-  absent elsewhere.
+  absent elsewhere. `active_upstream_tracks` lists every publisher feeding a
+  track, so a track with several publishers appears once per publisher, each
+  entry carrying the track cache's counters, and a subscription reports the
+  track's newest publisher.
 - Counters are cumulative. `IngressStats` lives in `TrackCache` and counts
   every object inserted (live or fetch fill), the subgroups closed without
   `finish`, and the longest gap between live inserts; reading it resets only
@@ -589,8 +657,10 @@ so cache, fan-out, FETCH and authorization need no separate path.
 - **Worker lifetime is the session's**: a session worker exists from the
   session's registration until its terminal event; events arriving outside
   that window are dropped by the reader.
-- **One upstream subscription per track**: enforced by the
-  `UpstreamCreationSerializer` per-track lock with a double-check.
+- **One upstream subscription per track and publisher**: creation is
+  serialized by the `UpstreamCreationSerializer` per-track lock with a
+  double-check, and a publisher answering after the track already holds its
+  subscription is unsubscribed again.
 - **SUBSCRIBE_OK matches egress**: the largest location advertised downstream
   is the same value the egress scheduler starts from.
 - **Start Location is a lower bound**: egress delivers the first group at or
@@ -603,9 +673,9 @@ so cache, fan-out, FETCH and authorization need no separate path.
 - **Egress runner lifetime is the downstream registration's**: a runner stops
   when its registered downstream subscription is removed, regardless of which
   session worker removes it or when; a downstream subscription is only ever
-  registered while its upstream subscription exists.
+  registered while its upstream track exists.
 - **An ended upstream is announced downstream**: every downstream subscription
-  removed because its upstream subscription ended receives PUBLISH_DONE, always
+  removed because its track's last upstream subscription ended receives PUBLISH_DONE, always
   after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
   also unregisters that PUBLISH, so the ended track is no longer resolved.
 - **Cache identity is the key**: a cached object is self-contained (§8.1 "MUST
@@ -624,8 +694,12 @@ so cache, fan-out, FETCH and authorization need no separate path.
 - **Cache lifetime**: a track cache lives while referenced or until TTL
   eviction empties it with `strong_count == 1`.
 - **Client-owned routes**: Redis namespace routes are registered/withdrawn
-  only for client-origin sessions; relay-learned namespaces are purged locally
+  only for client-origin sessions, and watched-namespace routes only while a
+  client watches the namespace; relay-learned namespaces are purged locally
   when the last client subscriber for the prefix leaves.
+- **Relay subscriptions serve clients**: an upstream subscription to another
+  relay only exists while a client of this relay watches the track, and a
+  relay's SUBSCRIBE is never forwarded to a third relay.
 
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —

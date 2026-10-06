@@ -50,11 +50,23 @@ impl RecordedControlMessages {
     }
 }
 
-type SubscribeAnswer = Arc<dyn Fn() -> ContentExists + Send + Sync>;
+#[derive(Clone)]
+enum SubscribeAnswer {
+    SubscribeOk(Arc<dyn Fn() -> ContentExists + Send + Sync>),
+    Never,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum FetchAnswer {
+    Never,
+    Refuse,
+    FetchOk,
+}
 
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
+    answer_fetch: FetchAnswer,
     transport_stats: moqt::TransportStats,
 }
 
@@ -63,6 +75,7 @@ impl MockUpstreamSession {
         Self {
             recorded,
             answer_subscribe: None,
+            answer_fetch: FetchAnswer::Never,
             transport_stats: moqt::TransportStats::default(),
         }
     }
@@ -124,8 +137,42 @@ pub(crate) fn mock_session_answering_subscribe(
     answer_subscribe: impl Fn() -> ContentExists + Send + Sync + 'static,
 ) -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
-        answer_subscribe: Some(Arc::new(answer_subscribe)),
-        ..MockUpstreamSession::new(RecordedControlMessages::default())
+        recorded: RecordedControlMessages::default(),
+        answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
+        answer_fetch: FetchAnswer::Never,
+        transport_stats: moqt::TransportStats::default(),
+    })
+}
+
+pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, RecordedControlMessages)
+{
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        recorded: recorded.clone(),
+        answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(|| {
+            ContentExists::False
+        }))),
+        answer_fetch: FetchAnswer::Never,
+        transport_stats: moqt::TransportStats::default(),
+    });
+    (session, recorded)
+}
+
+pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        recorded: RecordedControlMessages::default(),
+        answer_subscribe: Some(SubscribeAnswer::Never),
+        answer_fetch: FetchAnswer::Never,
+        transport_stats: moqt::TransportStats::default(),
+    })
+}
+
+pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        recorded: RecordedControlMessages::default(),
+        answer_subscribe: None,
+        answer_fetch,
+        transport_stats: moqt::TransportStats::default(),
     })
 }
 
@@ -134,20 +181,29 @@ pub(crate) async fn session_repository_with_session(
     session: Box<dyn Session>,
     verified_token: VerifiedToken,
 ) -> Arc<tokio::sync::Mutex<SessionRepository>> {
+    session_repository_with_sessions(vec![(session_id, session)], verified_token).await
+}
+
+pub(crate) async fn session_repository_with_sessions(
+    sessions: Vec<(SessionId, Box<dyn Session>)>,
+    verified_token: VerifiedToken,
+) -> Arc<tokio::sync::Mutex<SessionRepository>> {
     let mut repository = SessionRepository::new();
     let (session_event_sender, _session_event_receiver) = tokio::sync::mpsc::unbounded_channel();
-    repository
-        .add(
-            NewSession {
-                session_id,
-                session,
-                session_span: tracing::Span::none(),
-                peer: SessionPeer::Client,
-                verified_token,
-            },
-            session_event_sender,
-        )
-        .await;
+    for (session_id, session) in sessions {
+        repository
+            .add(
+                NewSession {
+                    session_id,
+                    session,
+                    session_span: tracing::Span::none(),
+                    peer: SessionPeer::Client,
+                    verified_token: verified_token.clone(),
+                },
+                session_event_sender.clone(),
+            )
+            .await;
+    }
     Arc::new(tokio::sync::Mutex::new(repository))
 }
 
@@ -172,6 +228,7 @@ impl Session for MockUpstreamSession {
         Box::new(MockUpstreamSubscriber {
             recorded: self.recorded.clone(),
             answer_subscribe: self.answer_subscribe.clone(),
+            answer_fetch: self.answer_fetch,
         })
     }
 
@@ -258,6 +315,7 @@ impl Publisher for UnansweringPublisher {
 struct MockUpstreamSubscriber {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
+    answer_fetch: FetchAnswer,
 }
 
 #[async_trait::async_trait]
@@ -268,8 +326,10 @@ impl Subscriber for MockUpstreamSubscriber {
         track_name: String,
         _option: SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
-        let Some(answer_subscribe) = &self.answer_subscribe else {
-            unimplemented!("not used by MockUpstreamSession tests")
+        let answer_subscribe = match &self.answer_subscribe {
+            Some(SubscribeAnswer::SubscribeOk(answer_subscribe)) => answer_subscribe,
+            Some(SubscribeAnswer::Never) => std::future::pending().await,
+            None => unimplemented!("not used by MockUpstreamSession tests"),
         };
         Ok(UpstreamSubscription::from(
             moqt::Subscription::SubscriberInitiated(moqt::SubscriberInitiatedSubscription {
@@ -312,10 +372,23 @@ impl Subscriber for MockUpstreamSubscriber {
         _track_namespace: String,
         _track_name: String,
         _start_location: moqt::Location,
-        _end_location: moqt::Location,
+        end_location: moqt::Location,
         _option: moqt::FetchOption,
     ) -> anyhow::Result<moqt::FetchHandle> {
-        std::future::pending().await
+        match self.answer_fetch {
+            FetchAnswer::Never => std::future::pending().await,
+            FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::wire::RequestError {
+                request_id: 0,
+                error_code: 0x4,
+                reason_phrase: "no objects".to_string(),
+            })),
+            FetchAnswer::FetchOk => Ok(moqt::FetchHandle {
+                request_id: 0,
+                group_order: GroupOrder::Ascending,
+                end_of_track: false,
+                end_location,
+            }),
+        }
     }
 
     async fn create_fetch_receiver(

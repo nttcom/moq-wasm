@@ -1,7 +1,7 @@
 pub(crate) mod entry;
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     sync::{Arc, PoisonError, RwLock},
 };
 
@@ -13,8 +13,8 @@ use crate::modules::{
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
-            RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
-            UpstreamSubscriptionOrigin,
+            ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
+            RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
         },
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -25,6 +25,7 @@ use crate::modules::{
 
 pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
+    subscriber_peer: SessionPeer,
     runner_stop_sender: oneshot::Sender<PublishDoneReason>,
     forward_sender: watch::Sender<bool>,
     delivery_stats: Arc<DeliveryStats>,
@@ -33,8 +34,14 @@ pub(crate) struct RegisteredDownstreamSubscription {
 pub(crate) struct DownstreamSubscriptionState {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) request_id: u64,
-    pub(crate) upstream_key: UpstreamSubscriptionKey,
+    pub(crate) track_key: TrackKey,
     pub(crate) delivery: DeliveryCounters,
+}
+
+pub(crate) struct RegisteredPublish {
+    publisher_session_id: SessionId,
+    publisher_peer: SessionPeer,
+    handler: Arc<dyn PublishHandler>,
 }
 
 pub(crate) struct DownstreamRunnerSignals {
@@ -97,9 +104,8 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, SessionPeer>>,
     pub(crate) subscriber_namespaces:
         DashMap<TrackNamespacePrefix, DashMap<SessionId, SessionPeer>>,
-    pub(crate) published_handlers: RwLock<Vec<(SessionId, Arc<dyn PublishHandler>)>>,
-    pub(crate) active_upstream_subscriptions:
-        DashMap<UpstreamSubscriptionKey, ActiveUpstreamSubscription>,
+    pub(crate) published_handlers: RwLock<Vec<RegisteredPublish>>,
+    pub(crate) upstream_tracks: DashMap<TrackKey, UpstreamTrack>,
     pub(crate) downstream_subscriptions:
         DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
 }
@@ -110,7 +116,7 @@ impl InMemoryLocalPubSubDirectory {
             publisher_namespaces: DashMap::new(),
             subscriber_namespaces: DashMap::new(),
             published_handlers: RwLock::new(Vec::new()),
-            active_upstream_subscriptions: DashMap::new(),
+            upstream_tracks: DashMap::new(),
             downstream_subscriptions: DashMap::new(),
         }
     }
@@ -137,7 +143,7 @@ impl InMemoryLocalPubSubDirectory {
         self.published_handlers
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .retain(|(registered_session_id, _)| *registered_session_id != session_id);
+            .retain(|published| published.publisher_session_id != session_id);
 
         let downstream_keys: Vec<_> = self
             .downstream_subscriptions
@@ -150,22 +156,26 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
 
-        let upstream_keys: Vec<_> = self
-            .active_upstream_subscriptions
+        let published_track_keys: Vec<_> = self
+            .upstream_tracks
             .iter()
             .filter_map(|entry| {
-                (entry.key().publisher_session_id == session_id).then_some(entry.key().clone())
+                entry
+                    .value()
+                    .subscriptions
+                    .contains_key(&session_id)
+                    .then(|| entry.key().clone())
             })
             .collect();
-        for upstream_key in upstream_keys {
-            let Some((active_subscription, downstream_subscriptions)) =
-                self.end_upstream(&upstream_key, PublishDoneReason::publisher_session_closed())
-            else {
+        for track_key in published_track_keys {
+            let Some((_, downstream_subscriptions)) = self.end_publisher_subscription(
+                &track_key,
+                session_id,
+                PublishDoneReason::publisher_session_closed(),
+            ) else {
                 continue;
             };
-            removed
-                .upstream_track_keys
-                .push(active_subscription.track_key);
+            removed.upstream_track_keys.push(track_key);
             removed
                 .downstream_subscriptions
                 .extend(downstream_subscriptions);
@@ -318,11 +328,20 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(session_id = %session_id)
     )]
-    pub(crate) fn register_publish(&self, session_id: SessionId, handler: Arc<dyn PublishHandler>) {
+    pub(crate) fn register_publish(
+        &self,
+        session_id: SessionId,
+        peer: SessionPeer,
+        handler: Arc<dyn PublishHandler>,
+    ) {
         self.published_handlers
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .push((session_id, handler));
+            .push(RegisteredPublish {
+                publisher_session_id: session_id,
+                publisher_peer: peer,
+                handler,
+            });
     }
 
     #[tracing::instrument(
@@ -361,7 +380,7 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
 
-        for (_, handler) in self
+        for RegisteredPublish { handler, .. } in self
             .published_handlers
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -382,68 +401,81 @@ impl InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.local_pub_sub_directory.find_active_upstream_subscription",
-        skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name)
-    )]
-    pub(crate) fn find_active_upstream_subscription(
-        &self,
-        track_namespace: &str,
-        track_name: &str,
-    ) -> Option<(UpstreamSubscriptionKey, ActiveUpstreamSubscription)> {
-        self.active_upstream_subscriptions
-            .iter()
-            .filter(|entry| {
-                entry.key().track_namespace == track_namespace
-                    && entry.key().track_name == track_name
-            })
-            .min_by_key(|entry| entry.key().publisher_session_id)
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-    }
-
-    #[tracing::instrument(
-        level = "info",
         name = "relay.local_pub_sub_directory.find_upstream_publishers",
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
+    /// Local client publishers only, oldest first: publishing relays are
+    /// found in the route registry, which lists each of them once.
     pub(crate) fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Vec<UpstreamSubscriptionKey> {
-        let publishers = DashSet::new();
+    ) -> Vec<SessionId> {
+        let mut publishers = BTreeSet::new();
         if let Some(namespace_publishers) = self.publisher_namespaces.get(track_namespace) {
-            for session in namespace_publishers.iter() {
-                publishers.insert(*session.key());
-            }
+            publishers.extend(
+                namespace_publishers
+                    .iter()
+                    .filter(|session| *session.value() == SessionPeer::Client)
+                    .map(|session| *session.key()),
+            );
         }
+        publishers.extend(
+            self.published_handlers
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .filter(|published| {
+                    published.publisher_peer == SessionPeer::Client
+                        && published.handler.track_namespace() == track_namespace
+                        && published.handler.track_name() == track_name
+                })
+                .map(|published| published.publisher_session_id),
+        );
+        publishers.into_iter().collect()
+    }
 
-        let handlers = self
-            .published_handlers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        for session_id in handlers
+    pub(crate) fn tracks_wanting_publisher(
+        &self,
+        track_namespace: &str,
+        publisher_peer: SessionPeer,
+        publisher_session_id: Option<SessionId>,
+    ) -> Vec<TrackKey> {
+        self.upstream_tracks
             .iter()
-            .filter(|(_, h)| h.track_namespace() == track_namespace && h.track_name() == track_name)
-            .map(|(session_id, _)| *session_id)
-        {
-            publishers.insert(session_id);
-        }
-        publishers
-            .into_iter()
-            .map(|publisher_session_id| UpstreamSubscriptionKey {
-                publisher_session_id,
-                track_namespace: track_namespace.to_string(),
-                track_name: track_name.to_string(),
+            .filter(|entry| {
+                let track = entry.value();
+                entry.key().track_namespace == track_namespace
+                    && track.wants(publisher_peer)
+                    && publisher_session_id
+                        .is_none_or(|publisher| !track.subscriptions.contains_key(&publisher))
             })
+            .map(|entry| entry.key().clone())
             .collect()
     }
 
-    pub(crate) fn active_upstream_tracks(&self) -> Vec<(UpstreamSubscriptionKey, TrackKey)> {
-        self.active_upstream_subscriptions
+    pub(crate) fn watched_namespaces(&self) -> HashSet<TrackNamespace> {
+        self.upstream_tracks
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().track_key.clone()))
+            .filter(|entry| entry.value().client_downstream_subscriber_count > 0)
+            .map(|entry| entry.key().track_namespace.clone())
+            .collect()
+    }
+
+    /// One entry per publisher feeding each track.
+    pub(crate) fn active_upstream_tracks(&self) -> Vec<(SessionId, TrackKey)> {
+        self.upstream_tracks
+            .iter()
+            .flat_map(|entry| {
+                let track_key = entry.key().clone();
+                entry
+                    .value()
+                    .subscriptions
+                    .keys()
+                    .map(|publisher_session_id| (*publisher_session_id, track_key.clone()))
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 
@@ -456,19 +488,16 @@ impl InMemoryLocalPubSubDirectory {
                 DownstreamSubscriptionState {
                     subscriber_session_id,
                     request_id,
-                    upstream_key: registered.subscription.upstream_key.clone(),
+                    track_key: registered.subscription.track_key.clone(),
                     delivery: registered.delivery_stats.counters(),
                 }
             })
             .collect()
     }
 
-    pub(crate) fn get_active_upstream_subscription(
-        &self,
-        key: &UpstreamSubscriptionKey,
-    ) -> Option<ActiveUpstreamSubscription> {
-        self.active_upstream_subscriptions
-            .get(key)
+    pub(crate) fn get_upstream_track(&self, track_key: &TrackKey) -> Option<UpstreamTrack> {
+        self.upstream_tracks
+            .get(track_key)
             .map(|entry| entry.value().clone())
     }
 
@@ -484,19 +513,63 @@ impl InMemoryLocalPubSubDirectory {
 
     pub(crate) fn register_upstream_subscription(
         &self,
-        key: UpstreamSubscriptionKey,
+        track_key: TrackKey,
+        publisher_session_id: SessionId,
         subscription: ActiveUpstreamSubscription,
     ) {
-        self.active_upstream_subscriptions.insert(key, subscription);
+        self.upstream_tracks
+            .entry(track_key)
+            .or_default()
+            .subscriptions
+            .insert(publisher_session_id, subscription);
     }
 
-    pub(crate) fn remove_upstream_subscription(
+    /// Returns false, adding nothing, when the track is gone, the publisher
+    /// already feeds it, or the track does not want it.
+    pub(crate) fn add_upstream_subscription_to_track(
         &self,
-        key: &UpstreamSubscriptionKey,
-    ) -> Option<ActiveUpstreamSubscription> {
-        self.active_upstream_subscriptions
-            .remove(key)
-            .map(|(_, subscription)| subscription)
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+        subscription: ActiveUpstreamSubscription,
+    ) -> bool {
+        let Some(mut track) = self.upstream_tracks.get_mut(track_key) else {
+            return false;
+        };
+        if track.subscriptions.contains_key(&publisher_session_id)
+            || !track.wants(subscription.publisher_peer)
+        {
+            return false;
+        }
+        track
+            .subscriptions
+            .insert(publisher_session_id, subscription);
+        true
+    }
+
+    pub(crate) fn has_upstream_subscription(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+        upstream_request_id: u64,
+    ) -> bool {
+        self.upstream_tracks.get(track_key).is_some_and(|track| {
+            track
+                .subscriptions
+                .get(&publisher_session_id)
+                .is_some_and(|subscription| subscription.upstream_request_id == upstream_request_id)
+        })
+    }
+
+    /// Leaves the track's downstream registrations to their subscribers: a
+    /// malformed track ends their runners on its own.
+    pub(crate) fn remove_upstream_track(
+        &self,
+        track_key: &TrackKey,
+    ) -> Vec<(SessionId, ActiveUpstreamSubscription)> {
+        self.upstream_tracks
+            .remove(track_key)
+            .map(|(_, track)| track.subscriptions.into_iter().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn end_upstream_subscription(
@@ -505,63 +578,61 @@ impl InMemoryLocalPubSubDirectory {
         upstream_request_id: u64,
         end: PublishDoneReason,
     ) -> Option<TrackKey> {
-        let upstream_key = self
-            .active_upstream_subscriptions
+        let track_key = self
+            .upstream_tracks
             .iter()
             .find(|entry| {
-                entry.key().publisher_session_id == publisher_session_id
-                    && entry.value().upstream_request_id == upstream_request_id
+                entry
+                    .value()
+                    .subscriptions
+                    .get(&publisher_session_id)
+                    .is_some_and(|subscription| {
+                        subscription.upstream_request_id == upstream_request_id
+                    })
             })
             .map(|entry| entry.key().clone())?;
-        let (active_subscription, _) = self.end_upstream(&upstream_key, end)?;
-        if active_subscription.origin == UpstreamSubscriptionOrigin::Publish {
+        let (ended_subscription, _) =
+            self.end_publisher_subscription(&track_key, publisher_session_id, end)?;
+        if ended_subscription.origin == UpstreamSubscriptionOrigin::Publish {
             self.published_handlers
                 .write()
                 .unwrap_or_else(PoisonError::into_inner)
-                .retain(|(session_id, handler)| {
-                    *session_id != publisher_session_id
-                        || handler.track_namespace() != upstream_key.track_namespace
-                        || handler.track_name() != upstream_key.track_name
+                .retain(|published| {
+                    published.publisher_session_id != publisher_session_id
+                        || published.handler.track_namespace() != track_key.track_namespace
+                        || published.handler.track_name() != track_key.track_name
                 });
         }
-        Some(active_subscription.track_key)
+        Some(track_key)
     }
 
-    fn end_upstream(
+    /// The downstream subscriptions are swept while the track entry is still
+    /// held, so a track recreated under the same key keeps its own.
+    fn end_publisher_subscription(
         &self,
-        upstream_key: &UpstreamSubscriptionKey,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
         end: PublishDoneReason,
     ) -> Option<(
         ActiveUpstreamSubscription,
         Vec<RemovedDownstreamSubscription>,
     )> {
-        let (_, active_subscription) = self.active_upstream_subscriptions.remove(upstream_key)?;
-        let downstream_keys: Vec<_> = self
-            .downstream_subscriptions
-            .iter()
-            .filter_map(|entry| {
-                (&entry.value().subscription.upstream_key == upstream_key).then_some(*entry.key())
-            })
-            .collect();
-        let mut removed = Vec::new();
-        for downstream_key in downstream_keys {
-            let Some((_, registered)) = self.downstream_subscriptions.remove(&downstream_key)
-            else {
-                continue;
-            };
-            let _ = registered.runner_stop_sender.send(end.clone());
-            removed.push(RemovedDownstreamSubscription {
-                upstream_key: upstream_key.clone(),
-                upstream_request_id: active_subscription.upstream_request_id,
-                track_key: active_subscription.track_key.clone(),
-                remaining_downstream_subscriber_count: 0,
-                upstream_origin: active_subscription.origin,
-            });
+        let Entry::Occupied(mut track) = self.upstream_tracks.entry(track_key.clone()) else {
+            return None;
+        };
+        let ended_subscription = track
+            .get_mut()
+            .subscriptions
+            .remove(&publisher_session_id)?;
+        if !track.get().subscriptions.is_empty() {
+            return Some((ended_subscription, Vec::new()));
         }
-        Some((active_subscription, removed))
+        let removed = self.end_downstream_subscriptions(track_key, end);
+        track.remove();
+        Some((ended_subscription, removed))
     }
 
-    /// Returns `None` when the upstream subscription is gone. The returned
+    /// Returns `None` when the upstream track is gone. The returned
     /// stop receiver resolves once the registration is removed, however that happens; the
     /// subscription's egress runner lives exactly until then. The forward receiver
     /// starts at Forward State 1 whatever the SUBSCRIBE asked for.
@@ -569,14 +640,18 @@ impl InMemoryLocalPubSubDirectory {
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
-        upstream_key: UpstreamSubscriptionKey,
+        subscriber_peer: SessionPeer,
+        track_key: TrackKey,
         start_location: Option<moqt::Location>,
     ) -> Option<DownstreamRunnerSignals> {
-        // The upstream entry stays locked until the registration is inserted: a concurrent removal
-        // of the upstream either finds it or makes this registration fail. Lock order is always
+        // The track entry stays locked until the registration is inserted: a concurrent removal
+        // of the track either finds it or makes this registration fail. Lock order is always
         // upstream before downstream.
-        let mut upstream = self.active_upstream_subscriptions.get_mut(&upstream_key)?;
+        let mut upstream = self.upstream_tracks.get_mut(&track_key)?;
         upstream.downstream_subscriber_count += 1;
+        if subscriber_peer == SessionPeer::Client {
+            upstream.client_downstream_subscriber_count += 1;
+        }
         let (runner_stop_sender, stop_receiver) = oneshot::channel();
         let (forward_sender, forward_receiver) = watch::channel(true);
         let delivery_stats = Arc::new(DeliveryStats::default());
@@ -584,9 +659,10 @@ impl InMemoryLocalPubSubDirectory {
             (downstream_session_id, downstream_subscribe_id),
             RegisteredDownstreamSubscription {
                 subscription: DownstreamSubscription {
-                    upstream_key,
+                    track_key,
                     start_location,
                 },
+                subscriber_peer,
                 runner_stop_sender,
                 forward_sender,
                 delivery_stats: delivery_stats.clone(),
@@ -616,6 +692,14 @@ impl InMemoryLocalPubSubDirectory {
         true
     }
 
+    /// The last downstream subscriber leaving releases the track's
+    /// SUBSCRIBE-initiated upstream subscriptions, and the last client
+    /// subscriber leaving releases those from relays: a relay's upstream
+    /// subscription only serves this relay's clients, so two relays feeding
+    /// each other never keep a track alive between them. PUBLISH-initiated
+    /// subscriptions stay until their publisher ends them. Relay subscribers
+    /// left on a track whose every upstream subscription was released end
+    /// with TRACK_ENDED.
     pub(crate) fn remove_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
@@ -624,30 +708,73 @@ impl InMemoryLocalPubSubDirectory {
         let (_, registered) = self
             .downstream_subscriptions
             .remove(&(downstream_session_id, downstream_subscribe_id))?;
-        let upstream_key = registered.subscription.upstream_key;
-        let Entry::Occupied(mut entry) = self
-            .active_upstream_subscriptions
-            .entry(upstream_key.clone())
-        else {
+        let track_key = registered.subscription.track_key;
+        let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
             return None;
         };
-        let upstream = entry.get_mut();
-        if upstream.downstream_subscriber_count > 0 {
-            upstream.downstream_subscriber_count -= 1;
+        let track = entry.get_mut();
+        track.downstream_subscriber_count = track.downstream_subscriber_count.saturating_sub(1);
+        if registered.subscriber_peer == SessionPeer::Client {
+            track.client_downstream_subscriber_count =
+                track.client_downstream_subscriber_count.saturating_sub(1);
         }
-        let removed = RemovedDownstreamSubscription {
-            upstream_key,
-            upstream_request_id: upstream.upstream_request_id,
-            track_key: upstream.track_key.clone(),
-            remaining_downstream_subscriber_count: upstream.downstream_subscriber_count,
-            upstream_origin: upstream.origin,
-        };
-        if upstream.downstream_subscriber_count == 0
-            && upstream.origin == UpstreamSubscriptionOrigin::Subscribe
-        {
+        let downstream_remains = track.downstream_subscriber_count > 0;
+        let client_remains = track.client_downstream_subscriber_count > 0;
+        let mut released_upstream_subscriptions = Vec::new();
+        if !client_remains {
+            track
+                .subscriptions
+                .retain(|publisher_session_id, subscription| {
+                    let released = subscription.origin == UpstreamSubscriptionOrigin::Subscribe
+                        && (!downstream_remains
+                            || subscription.publisher_peer == SessionPeer::Relay);
+                    if released {
+                        released_upstream_subscriptions.push(ReleasedUpstreamSubscription {
+                            publisher_session_id: *publisher_session_id,
+                            upstream_request_id: subscription.upstream_request_id,
+                        });
+                    }
+                    !released
+                });
+        }
+        if track.subscriptions.is_empty() {
+            self.end_downstream_subscriptions(
+                &track_key,
+                PublishDoneReason::publisher_session_closed(),
+            );
             entry.remove();
         }
-        Some(removed)
+        Some(RemovedDownstreamSubscription {
+            track_key,
+            released_upstream_subscriptions,
+        })
+    }
+
+    fn end_downstream_subscriptions(
+        &self,
+        track_key: &TrackKey,
+        end: PublishDoneReason,
+    ) -> Vec<RemovedDownstreamSubscription> {
+        let downstream_keys: Vec<_> = self
+            .downstream_subscriptions
+            .iter()
+            .filter_map(|entry| {
+                (&entry.value().subscription.track_key == track_key).then_some(*entry.key())
+            })
+            .collect();
+        let mut removed = Vec::new();
+        for downstream_key in downstream_keys {
+            let Some((_, registered)) = self.downstream_subscriptions.remove(&downstream_key)
+            else {
+                continue;
+            };
+            let _ = registered.runner_stop_sender.send(end.clone());
+            removed.push(RemovedDownstreamSubscription {
+                track_key: track_key.clone(),
+                released_upstream_subscriptions: Vec::new(),
+            });
+        }
+        removed
     }
 }
 
@@ -655,7 +782,7 @@ impl InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::test_support::directory_fixtures::{
-        UPSTREAM_REQUEST_ID, table_with_upstream,
+        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, table_with_upstream,
     };
     use crate::modules::test_support::mock_session::runner_stopped;
     use moqt::{ContentExists, FilterType, GroupOrder};
@@ -757,6 +884,7 @@ mod tests {
         table.register_subscribe_namespace(1, "solo/".to_string(), SessionPeer::Client);
         table.register_publish(
             1,
+            SessionPeer::Client,
             Arc::new(StubPublishHandler {
                 track_namespace: "room/member".to_string(),
                 track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
@@ -769,12 +897,10 @@ mod tests {
         let removed = table.remove_session(1);
 
         // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
-        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video");
-        let publisher_session_ids: Vec<_> = upstream_subscriptions
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        assert_eq!(publisher_session_ids, vec![2]);
+        assert_eq!(
+            table.find_upstream_publishers("room/member", "video"),
+            vec![2]
+        );
 
         let room_subscribers = table.get_namespace_subscribers("room/member");
         assert!(room_subscribers.contains(&2));
@@ -893,12 +1019,12 @@ mod tests {
             removed.publish_namespace_track_namespaces,
             vec!["room/member".to_string()]
         );
-        let publishers = table.find_upstream_publishers("room/member", "video");
-        let publisher_session_ids: Vec<_> = publishers
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        assert_eq!(publisher_session_ids, vec![2]);
+        assert!(
+            table
+                .publisher_namespaces
+                .get("room/member")
+                .is_some_and(|publishers| publishers.contains_key(&2))
+        );
     }
 
     #[test]
@@ -974,12 +1100,12 @@ mod tests {
 
         // Assert: Route cleanup is allowed while the relay publisher stays registered.
         assert!(clients_became_empty);
-        let publishers = table.find_upstream_publishers("room/member", "video");
-        let publisher_session_ids: Vec<_> = publishers
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        assert_eq!(publisher_session_ids, vec![2]);
+        assert!(
+            table
+                .publisher_namespaces
+                .get("room/member")
+                .is_some_and(|publishers| publishers.contains_key(&2))
+        );
     }
 
     #[test]
@@ -991,6 +1117,7 @@ mod tests {
         table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
         table.register_publish(
             1,
+            SessionPeer::Client,
             Arc::new(StubPublishHandler {
                 track_namespace: "room/member".to_string(),
                 track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
@@ -1000,6 +1127,7 @@ mod tests {
         );
         table.register_publish(
             2,
+            SessionPeer::Client,
             Arc::new(StubPublishHandler {
                 track_namespace: "room/member".to_string(),
                 track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
@@ -1009,12 +1137,7 @@ mod tests {
         );
 
         // Act: Find upstream publishers available for subscribe.
-        let mut upstream_publishers: Vec<_> = table
-            .find_upstream_publishers("room/member", "video")
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        upstream_publishers.sort();
+        let upstream_publishers = table.find_upstream_publishers("room/member", "video");
 
         // Assert: Keep multiple publishers regardless of whether they came from namespace or track state.
         assert_eq!(upstream_publishers, vec![1, 2]);
@@ -1023,20 +1146,25 @@ mod tests {
     #[test]
     fn register_downstream_subscription_stores_start_location() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let largest = moqt::Location {
             group_id: 5,
             object_id: 3,
         };
 
         // Act
-        let runner_signals =
-            table.register_downstream_subscription(2, 100, upstream_key.clone(), Some(largest));
+        let runner_signals = table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            track_key.clone(),
+            Some(largest),
+        );
 
         // Assert
         assert!(runner_signals.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
-        assert_eq!(sub.upstream_key, upstream_key);
+        assert_eq!(sub.track_key, track_key);
         assert_eq!(
             sub.start_location,
             Some(moqt::Location {
@@ -1049,27 +1177,32 @@ mod tests {
     #[test]
     fn register_downstream_subscription_none_start_location() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
 
         // Act
-        let runner_signals =
-            table.register_downstream_subscription(2, 100, upstream_key.clone(), None);
+        let runner_signals = table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            track_key.clone(),
+            None,
+        );
 
         // Assert
         assert!(runner_signals.is_some());
         let sub = table.get_downstream_subscription(2, 100).unwrap();
-        assert_eq!(sub.upstream_key, upstream_key);
+        assert_eq!(sub.track_key, track_key);
         assert!(sub.start_location.is_none());
     }
 
     #[test]
     fn registered_subscription_starts_forwarding() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
 
         // Act
         let signals = table
-            .register_downstream_subscription(2, 100, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
             .unwrap();
 
         // Assert
@@ -1079,9 +1212,9 @@ mod tests {
     #[test]
     fn forward_update_reaches_the_registered_runner() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
             .unwrap();
 
         // Act
@@ -1095,9 +1228,9 @@ mod tests {
     #[test]
     fn downstream_subscription_states_report_delivery() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, upstream_key.clone(), None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
             .unwrap();
         signals.delivery_stats.record_stream_reset();
 
@@ -1109,33 +1242,28 @@ mod tests {
             panic!("expected one registration, got {}", states.len());
         };
         assert_eq!((state.subscriber_session_id, state.request_id), (2, 100));
-        assert_eq!(state.upstream_key, upstream_key);
+        assert_eq!(state.track_key, track_key);
         assert_eq!(state.delivery.streams_reset, 1);
     }
 
     #[test]
-    fn active_upstream_tracks_lists_each_upstream_with_its_track() {
+    fn active_upstream_tracks_lists_each_publisher_with_its_track() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
 
         // Act
         let tracks = table.active_upstream_tracks();
 
         // Assert
-        assert_eq!(
-            tracks,
-            vec![(
-                upstream_key.clone(),
-                TrackKey::new(upstream_key.track_namespace, upstream_key.track_name)
-            )]
-        );
+        assert_eq!(tracks, vec![(PUBLISHER_SESSION, track_key)]);
     }
 
     #[test]
     fn forward_update_for_an_unknown_subscription_is_reported() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        let _signals = table.register_downstream_subscription(2, 100, upstream_key, None);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let _signals =
+            table.register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None);
 
         // Act
         let updated = table.update_downstream_forward(2, 101, false);
@@ -1147,9 +1275,9 @@ mod tests {
     #[test]
     fn publisher_disconnect_tells_the_runners_of_its_downstream_subscriptions_why() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
             .unwrap()
             .stop_receiver;
 
@@ -1166,20 +1294,21 @@ mod tests {
     #[test]
     fn publish_done_on_a_published_track_unregisters_its_publish_handler() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Publish);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Publish);
         table.register_publish(
-            upstream_key.publisher_session_id,
+            PUBLISHER_SESSION,
+            SessionPeer::Client,
             Arc::new(StubPublishHandler {
-                track_namespace: upstream_key.track_namespace.clone(),
-                track_namespace_tuple: vec![upstream_key.track_namespace.clone()],
-                track_name: upstream_key.track_name.clone(),
+                track_namespace: track_key.track_namespace.clone(),
+                track_namespace_tuple: vec![track_key.track_namespace.clone()],
+                track_name: track_key.track_name.clone(),
                 track_alias: 10,
             }),
         );
 
         // Act
         table.end_upstream_subscription(
-            upstream_key.publisher_session_id,
+            PUBLISHER_SESSION,
             UPSTREAM_REQUEST_ID,
             PublishDoneReason::publisher_session_closed(),
         );
@@ -1187,7 +1316,7 @@ mod tests {
         // Assert
         assert!(
             table
-                .find_upstream_publishers(&upstream_key.track_namespace, &upstream_key.track_name)
+                .find_upstream_publishers(&track_key.track_namespace, &track_key.track_name)
                 .is_empty()
         );
     }
@@ -1195,12 +1324,12 @@ mod tests {
     #[test]
     fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, upstream_key.clone(), None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
             .unwrap()
             .stop_receiver;
-        table.remove_upstream_subscription(&upstream_key).unwrap();
+        assert!(!table.remove_upstream_track(&track_key).is_empty());
 
         // Act
         table.remove_session(2);
@@ -1213,11 +1342,12 @@ mod tests {
     #[test]
     fn registration_for_a_removed_upstream_yields_no_runner() {
         // Arrange
-        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table.remove_session(1);
 
         // Act
-        let runner_signals = table.register_downstream_subscription(2, 100, upstream_key, None);
+        let runner_signals =
+            table.register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None);
 
         // Assert
         assert!(runner_signals.is_none());
@@ -1228,7 +1358,7 @@ mod tests {
     async fn registration_racing_publisher_removal_leaves_no_orphan() {
         for _ in 0..2000 {
             // Arrange
-            let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+            let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
             let table = Arc::new(table);
             let barrier = Arc::new(tokio::sync::Barrier::new(2));
 
@@ -1239,7 +1369,13 @@ mod tests {
                 async move {
                     barrier.wait().await;
                     table
-                        .register_downstream_subscription(2, 100, upstream_key, None)
+                        .register_downstream_subscription(
+                            2,
+                            100,
+                            SessionPeer::Client,
+                            track_key,
+                            None,
+                        )
                         .is_some()
                 }
             });
@@ -1264,9 +1400,15 @@ mod tests {
     async fn registration_racing_last_subscriber_removal_leaves_no_orphan() {
         for _ in 0..20000 {
             // Arrange
-            let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+            let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
             table
-                .register_downstream_subscription(2, 100, upstream_key.clone(), None)
+                .register_downstream_subscription(
+                    2,
+                    100,
+                    SessionPeer::Client,
+                    track_key.clone(),
+                    None,
+                )
                 .unwrap();
             let table = Arc::new(table);
             let barrier = Arc::new(tokio::sync::Barrier::new(2));
@@ -1275,11 +1417,17 @@ mod tests {
             let register = tokio::spawn({
                 let table = table.clone();
                 let barrier = barrier.clone();
-                let upstream_key = upstream_key.clone();
+                let track_key = track_key.clone();
                 async move {
                     barrier.wait().await;
                     table
-                        .register_downstream_subscription(3, 200, upstream_key, None)
+                        .register_downstream_subscription(
+                            3,
+                            200,
+                            SessionPeer::Client,
+                            track_key,
+                            None,
+                        )
                         .is_some()
                 }
             });
@@ -1294,13 +1442,11 @@ mod tests {
             let removed = remove.await.unwrap().unwrap();
 
             // Assert
-            let upstream_exists = table
-                .active_upstream_subscriptions
-                .contains_key(&upstream_key);
+            let upstream_exists = table.upstream_tracks.contains_key(&track_key);
             assert_eq!(registered, upstream_exists);
             assert_eq!(
-                removed.remaining_downstream_subscriber_count,
-                usize::from(registered)
+                removed.released_upstream_subscriptions.is_empty(),
+                registered
             );
             assert_eq!(
                 table.downstream_subscriptions.len(),
@@ -1309,37 +1455,273 @@ mod tests {
         }
     }
 
+    const SECOND_PUBLISHER_SESSION: SessionId = 3;
+    const SECOND_UPSTREAM_REQUEST_ID: u64 = 44;
+
+    fn add_second_publisher(
+        table: &InMemoryLocalPubSubDirectory,
+        track_key: &TrackKey,
+        origin: UpstreamSubscriptionOrigin,
+    ) {
+        table.register_upstream_subscription(
+            track_key.clone(),
+            SECOND_PUBLISHER_SESSION,
+            ActiveUpstreamSubscription {
+                upstream_request_id: SECOND_UPSTREAM_REQUEST_ID,
+                ..active_upstream(origin)
+            },
+        );
+    }
+
     #[test]
-    fn finds_active_upstream_subscriptions_separately_from_publishers() {
-        // Arrange: Register an active upstream subscription separately from publishers.
+    fn a_publisher_leaving_keeps_the_track_another_publisher_still_feeds() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        add_second_publisher(&table, &track_key, UpstreamSubscriptionOrigin::Subscribe);
+        let mut runner_stop_receiver = table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap()
+            .stop_receiver;
+
+        // Act
+        let removed = table.remove_session(PUBLISHER_SESSION);
+
+        // Assert
+        assert!(!runner_stopped(&mut runner_stop_receiver));
+        assert_eq!(removed.upstream_track_keys, vec![track_key.clone()]);
+        assert!(removed.downstream_subscriptions.is_empty());
+        assert_eq!(
+            table
+                .get_upstream_track(&track_key)
+                .map(|track| track.subscriptions.into_keys().collect::<Vec<_>>()),
+            Some(vec![SECOND_PUBLISHER_SESSION])
+        );
+    }
+
+    #[test]
+    fn publish_done_from_one_publisher_keeps_the_track_another_publisher_still_feeds() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        add_second_publisher(&table, &track_key, UpstreamSubscriptionOrigin::Subscribe);
+        let mut runner_stop_receiver = table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap()
+            .stop_receiver;
+
+        // Act
+        let ended = table.end_upstream_subscription(
+            SECOND_PUBLISHER_SESSION,
+            SECOND_UPSTREAM_REQUEST_ID,
+            PublishDoneReason::publisher_session_closed(),
+        );
+
+        // Assert
+        assert_eq!(ended, Some(track_key));
+        assert!(!runner_stopped(&mut runner_stop_receiver));
+    }
+
+    #[test]
+    fn the_last_subscriber_releases_every_subscribe_initiated_upstream_subscription() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        add_second_publisher(&table, &track_key, UpstreamSubscriptionOrigin::Subscribe);
+        table.register_upstream_subscription(
+            track_key.clone(),
+            4,
+            ActiveUpstreamSubscription {
+                upstream_request_id: 45,
+                ..active_upstream(UpstreamSubscriptionOrigin::Publish)
+            },
+        );
+        table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap();
+
+        // Act
+        let removed = table.remove_downstream_subscription(2, 100).unwrap();
+
+        // Assert
+        assert_eq!(
+            removed.released_upstream_subscriptions,
+            vec![
+                ReleasedUpstreamSubscription {
+                    publisher_session_id: PUBLISHER_SESSION,
+                    upstream_request_id: UPSTREAM_REQUEST_ID,
+                },
+                ReleasedUpstreamSubscription {
+                    publisher_session_id: SECOND_PUBLISHER_SESSION,
+                    upstream_request_id: SECOND_UPSTREAM_REQUEST_ID,
+                },
+            ]
+        );
+        assert_eq!(
+            table
+                .get_upstream_track(&track_key)
+                .map(|track| track.subscriptions.into_keys().collect::<Vec<_>>()),
+            Some(vec![4])
+        );
+    }
+
+    const RELAY_PUBLISHER_SESSION: SessionId = 5;
+    const RELAY_SUBSCRIBER_SESSION: SessionId = 6;
+
+    fn add_relay_publisher(table: &InMemoryLocalPubSubDirectory, track_key: &TrackKey) {
+        table.register_upstream_subscription(
+            track_key.clone(),
+            RELAY_PUBLISHER_SESSION,
+            ActiveUpstreamSubscription {
+                upstream_request_id: 46,
+                publisher_peer: SessionPeer::Relay,
+                ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
+            },
+        );
+    }
+
+    #[test]
+    fn the_last_client_subscriber_releases_the_upstream_subscriptions_from_relays() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        add_relay_publisher(&table, &track_key);
+        table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap();
+        let mut relay_runner_stop_receiver = table
+            .register_downstream_subscription(
+                RELAY_SUBSCRIBER_SESSION,
+                200,
+                SessionPeer::Relay,
+                track_key.clone(),
+                None,
+            )
+            .unwrap()
+            .stop_receiver;
+
+        // Act
+        let removed = table.remove_downstream_subscription(2, 100).unwrap();
+
+        // Assert: the client publisher keeps serving the relay subscriber
+        assert_eq!(
+            removed.released_upstream_subscriptions,
+            vec![ReleasedUpstreamSubscription {
+                publisher_session_id: RELAY_PUBLISHER_SESSION,
+                upstream_request_id: 46,
+            }]
+        );
+        assert!(!runner_stopped(&mut relay_runner_stop_receiver));
+        assert_eq!(
+            table
+                .get_upstream_track(&track_key)
+                .map(|track| track.subscriptions.into_keys().collect::<Vec<_>>()),
+            Some(vec![PUBLISHER_SESSION])
+        );
+    }
+
+    #[test]
+    fn a_relay_subscriber_left_on_a_track_fed_only_by_relays_ends_with_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        let track_key = TrackKey::new("ns", "track");
+        add_relay_publisher(&table, &track_key);
+        table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap();
+        let mut relay_runner_stop_receiver = table
+            .register_downstream_subscription(
+                RELAY_SUBSCRIBER_SESSION,
+                200,
+                SessionPeer::Relay,
+                track_key.clone(),
+                None,
+            )
+            .unwrap()
+            .stop_receiver;
+
+        // Act
+        table.remove_downstream_subscription(2, 100);
+
+        // Assert
+        assert_eq!(
+            relay_runner_stop_receiver.try_recv(),
+            Ok(PublishDoneReason::publisher_session_closed())
+        );
+        assert!(table.upstream_tracks.is_empty());
+        assert!(table.downstream_subscriptions.is_empty());
+    }
+
+    #[test]
+    fn a_relay_publisher_is_wanted_only_on_tracks_a_client_watches() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        for (track_name, subscriber_peer) in [
+            ("client_watched", SessionPeer::Client),
+            ("relay_watched", SessionPeer::Relay),
+        ] {
+            let track_key = TrackKey::new("ns", track_name);
+            table.register_upstream_subscription(
+                track_key.clone(),
+                PUBLISHER_SESSION,
+                active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+            );
+            table
+                .register_downstream_subscription(
+                    2,
+                    100 + track_name.len() as u64,
+                    subscriber_peer,
+                    track_key,
+                    None,
+                )
+                .unwrap();
+        }
+
+        // Act
+        let relay_tracks =
+            table.tracks_wanting_publisher("ns", SessionPeer::Relay, Some(RELAY_PUBLISHER_SESSION));
+        let mut client_tracks = table.tracks_wanting_publisher(
+            "ns",
+            SessionPeer::Client,
+            Some(RELAY_PUBLISHER_SESSION),
+        );
+        client_tracks.sort_by(|a, b| a.track_name.cmp(&b.track_name));
+
+        // Assert
+        assert_eq!(relay_tracks, vec![TrackKey::new("ns", "client_watched")]);
+        assert_eq!(
+            client_tracks,
+            vec![
+                TrackKey::new("ns", "client_watched"),
+                TrackKey::new("ns", "relay_watched")
+            ]
+        );
+        assert_eq!(
+            table.watched_namespaces(),
+            HashSet::from(["ns".to_string()])
+        );
+    }
+
+    #[test]
+    fn finds_the_upstream_track_separately_from_publishers() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: 1,
-            track_namespace: "room/member".to_string(),
-            track_name: "video".to_string(),
-        };
+        let track_key = TrackKey::new("room/member", "video");
         table.register_upstream_subscription(
-            upstream_key.clone(),
+            track_key.clone(),
+            1,
             ActiveUpstreamSubscription {
                 upstream_request_id: 10,
-                track_key: TrackKey::new("room/member", "video"),
-                expires: Some(30),
-                content_exists: ContentExists::False,
-                downstream_subscriber_count: 1,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
+                ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
             },
         );
 
-        // Act: Fetch the active upstream subscription and upstream publishers separately.
-        let active_subscription = table.find_active_upstream_subscription("room/member", "video");
+        // Act
+        let upstream_track = table.get_upstream_track(&track_key);
         let publisher_subscriptions = table.find_upstream_publishers("room/member", "video");
 
-        // Assert: Active subscriptions and upstream publishers are both discoverable.
+        // Assert
         assert_eq!(
-            active_subscription.map(|(key, _)| key),
-            Some(upstream_key.clone())
+            upstream_track.map(|track| track.subscriptions.into_keys().collect::<Vec<_>>()),
+            Some(vec![1])
         );
-        assert_eq!(publisher_subscriptions, vec![upstream_key]);
+        assert_eq!(publisher_subscriptions, vec![1]);
     }
 }

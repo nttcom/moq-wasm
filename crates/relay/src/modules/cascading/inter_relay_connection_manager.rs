@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 
@@ -17,6 +17,8 @@ use crate::{
         },
     },
 };
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
@@ -59,10 +61,14 @@ impl InterRelayConnectionManager {
             verify_certificate: false,
             authorization_token: Some(self.relay_token.clone()),
         })?;
-        let connecting = endpoint
-            .connect(&format!("moqt://{}:{}", relay.host, relay.port))
-            .await?;
-        let session = connecting.await?;
+        let session = tokio::time::timeout(CONNECT_TIMEOUT, async {
+            endpoint
+                .connect(&format!("moqt://{}:{}", relay.host, relay.port))
+                .await?
+                .await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out connecting relay {}", relay.relay_id))??;
         let relay_hostname = relay_hostname();
         let session_span = tracing::info_span!(
             "relay.inter_relay.session",

@@ -28,18 +28,20 @@ pub(crate) enum RegisterRouteError {
 
 #[async_trait]
 pub(crate) trait RelayRouteRegistry: Send + Sync {
-    async fn register_namespace_publisher(
-        &self,
-        track_namespace: &str,
-    ) -> Result<(), RegisterRouteError>;
+    async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()>;
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
     ) -> Result<(), RegisterRouteError>;
-    async fn find_active_namespace_publisher(
+    async fn find_active_namespace_publishers(
         &self,
         track_namespace: &str,
-    ) -> anyhow::Result<Option<RelayInfo>>;
+    ) -> anyhow::Result<Vec<RelayInfo>>;
+    /// A relay watching a namespace (receiving one of its tracks for a client)
+    /// is told about every publisher that later announces it, like a
+    /// namespace subscriber.
+    async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()>;
+    async fn unregister_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()>;
     async fn find_namespace_publishers_by_prefix(
         &self,
         track_namespace_prefix: &str,

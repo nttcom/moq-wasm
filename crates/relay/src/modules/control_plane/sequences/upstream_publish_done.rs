@@ -44,9 +44,12 @@ impl UpstreamPublishDone {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        domain::{
+            pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer,
+            track_key::TrackKey,
+        },
         test_support::directory_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
             upstream_release_context,
         },
     };
@@ -76,7 +79,8 @@ mod tests {
             .register_downstream_subscription(
                 DOWNSTREAM_SESSION,
                 DOWNSTREAM_SUBSCRIBE_ID,
-                upstream_key(),
+                SessionPeer::Client,
+                track_key(),
                 None,
             )
             .unwrap()
@@ -90,7 +94,7 @@ mod tests {
             runner_stop_receiver.try_recv(),
             Ok(PublishDoneReason::publisher_session_closed())
         );
-        assert!(ctx.table.active_upstream_subscriptions.is_empty());
+        assert!(ctx.table.upstream_tracks.is_empty());
         assert!(ctx.table.downstream_subscriptions.is_empty());
         assert!(ctx.recorded.unsubscribed_request_ids().is_empty());
         assert!(matches!(
@@ -110,7 +114,7 @@ mod tests {
         receive_publish_done(&ctx, UPSTREAM_REQUEST_ID + 1).await;
 
         // Assert
-        assert_eq!(ctx.table.active_upstream_subscriptions.len(), 1);
+        assert_eq!(ctx.table.upstream_tracks.len(), 1);
         assert!(ctx.ingress_receiver.try_recv().is_err());
     }
 }

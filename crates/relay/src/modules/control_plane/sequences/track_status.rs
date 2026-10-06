@@ -6,7 +6,7 @@ use crate::modules::{
     data_plane::cache::store::TrackCacheStore,
     domain::{
         error_code::SubscribeErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
-        session_id::SessionId,
+        session_id::SessionId, track_key::TrackKey,
     },
     session::handler::track_status::TrackStatusHandler,
 };
@@ -32,17 +32,16 @@ impl TrackStatus {
         cache_store: &TrackCacheStore,
         handler: &dyn TrackStatusHandler,
     ) {
-        let response = match table
-            .find_active_upstream_subscription(handler.track_namespace(), handler.track_name())
-        {
-            Some((_, active_upstream)) => {
-                let content_exists = match cached_largest(cache_store, &active_upstream.track_key) {
+        let track_key = TrackKey::new(handler.track_namespace(), handler.track_name());
+        let response = match table.get_upstream_track(&track_key) {
+            Some(upstream_track) => {
+                let content_exists = match cached_largest(cache_store, &track_key) {
                     Some(location) => ContentExists::True { location },
-                    None => active_upstream.content_exists,
+                    None => upstream_track.content_exists(),
                 };
                 tracing::debug!(?content_exists, "answering TRACK_STATUS");
                 handler
-                    .ok(active_upstream.expires.unwrap_or(0), content_exists)
+                    .ok(upstream_track.expires().unwrap_or(0), content_exists)
                     .await
             }
             None => {
