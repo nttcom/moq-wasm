@@ -29,6 +29,13 @@ pub(crate) struct RegisteredDownstreamSubscription {
     forward_sender: watch::Sender<bool>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TrackJoin {
+    Joined,
+    TrackGone,
+    AlreadyFed,
+}
+
 pub(crate) struct DownstreamRunnerSignals {
     pub(crate) stop_receiver: oneshot::Receiver<PublishDoneReason>,
     pub(crate) forward_receiver: watch::Receiver<bool>,
@@ -440,6 +447,38 @@ impl InMemoryLocalPubSubDirectory {
             .or_default()
             .subscriptions
             .insert(publisher_session_id, subscription);
+    }
+
+    pub(crate) fn add_upstream_subscription_to_track(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+        subscription: ActiveUpstreamSubscription,
+    ) -> TrackJoin {
+        let Some(mut track) = self.upstream_tracks.get_mut(track_key) else {
+            return TrackJoin::TrackGone;
+        };
+        if track.subscriptions.contains_key(&publisher_session_id) {
+            return TrackJoin::AlreadyFed;
+        }
+        track
+            .subscriptions
+            .insert(publisher_session_id, subscription);
+        TrackJoin::Joined
+    }
+
+    pub(crate) fn has_upstream_subscription(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+        upstream_request_id: u64,
+    ) -> bool {
+        self.upstream_tracks.get(track_key).is_some_and(|track| {
+            track
+                .subscriptions
+                .get(&publisher_session_id)
+                .is_some_and(|subscription| subscription.upstream_request_id == upstream_request_id)
+        })
     }
 
     /// Leaves the downstream registrations of a track whose last upstream

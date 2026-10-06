@@ -30,18 +30,18 @@ impl UpstreamPublisherResolver {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
+    /// Every publisher of the track, newest first (session ids grow with time).
     pub(crate) async fn resolve(
         &self,
         table: &InMemoryLocalPubSubDirectory,
         track_namespace: &str,
         track_name: &str,
-    ) -> anyhow::Result<Option<UpstreamSubscriptionKey>> {
-        if let Some(local_publisher) = table
-            .find_upstream_publishers(track_namespace, track_name)
-            .into_iter()
-            .min_by_key(|publisher| publisher.publisher_session_id)
-        {
-            return Ok(Some(local_publisher));
+    ) -> anyhow::Result<Vec<UpstreamSubscriptionKey>> {
+        let mut local_publishers = table.find_upstream_publishers(track_namespace, track_name);
+        if !local_publishers.is_empty() {
+            local_publishers
+                .sort_by_key(|publisher| std::cmp::Reverse(publisher.publisher_session_id));
+            return Ok(local_publishers);
         }
 
         let Some(relay) = self
@@ -49,7 +49,7 @@ impl UpstreamPublisherResolver {
             .find_active_namespace_publisher(track_namespace)
             .await?
         else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
 
         match self
@@ -65,11 +65,11 @@ impl UpstreamPublisherResolver {
                     track_name = %track_name,
                     "resolved remote upstream publisher"
                 );
-                Ok(Some(UpstreamSubscriptionKey {
+                Ok(vec![UpstreamSubscriptionKey {
                     publisher_session_id,
                     track_namespace: track_namespace.to_string(),
                     track_name: track_name.to_string(),
-                }))
+                }])
             }
             Err(err) => {
                 tracing::warn!(
@@ -79,7 +79,7 @@ impl UpstreamPublisherResolver {
                     track_name = %track_name,
                     "failed to connect remote upstream publisher"
                 );
-                Ok(None)
+                Ok(Vec::new())
             }
         }
     }
@@ -177,28 +177,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prefers_local_publisher_and_picks_min_session_id() {
+    async fn resolves_every_local_publisher_newest_first() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(5, "ns".to_string(), SessionPeer::Client);
         table.register_publish_namespace(3, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(5, "ns".to_string(), SessionPeer::Client);
         let resolver = make_resolver(PublisherLookup::MustNotBeCalled);
 
         // Act
         let resolved = resolver
             .resolve(&table, "ns", "track")
             .await
-            .expect("resolve should succeed")
-            .expect("local publisher should be found");
+            .expect("resolve should succeed");
 
         // Assert
-        assert_eq!(resolved.publisher_session_id, 3);
-        assert_eq!(resolved.track_namespace, "ns");
-        assert_eq!(resolved.track_name, "track");
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|publisher| publisher.publisher_session_id)
+                .collect::<Vec<_>>(),
+            vec![5, 3]
+        );
+        assert!(
+            resolved
+                .iter()
+                .all(|publisher| publisher.track_namespace == "ns"
+                    && publisher.track_name == "track")
+        );
     }
 
     #[tokio::test]
-    async fn returns_none_when_no_publisher_anywhere() {
+    async fn resolves_nothing_when_no_publisher_anywhere() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let resolver = make_resolver(PublisherLookup::NotFound);
@@ -210,7 +219,7 @@ mod tests {
             .expect("resolve should succeed");
 
         // Assert
-        assert!(resolved.is_none());
+        assert!(resolved.is_empty());
     }
 
     #[tokio::test]

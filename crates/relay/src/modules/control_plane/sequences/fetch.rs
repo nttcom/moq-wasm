@@ -183,6 +183,7 @@ impl Fetch {
         let upstream_key = match upstream_publisher_resolver
             .resolve(table, &target.track_namespace, &target.track_name)
             .await
+            .map(|publishers| publishers.into_iter().next())
         {
             Ok(Some(key)) => key,
             Ok(None) => {

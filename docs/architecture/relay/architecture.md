@@ -242,15 +242,20 @@ Each sequence owns the relay-side protocol logic for one message
 1. **Find-or-create upstream subscription.** Fast path: an
    `UpstreamTrack` already exists in the directory. Miss: take
    the per-track serializer lock, re-check (a sibling may have created it),
-   otherwise resolve a publisher and send upstream SUBSCRIBE, start ingress,
-   and register the upstream subscription — so concurrent subscribers to the
-   same track produce exactly one upstream subscription.
-2. **Publisher resolution** (`UpstreamPublisherResolver`): local directory
-   first (lowest publisher session id wins; session ids grow with time, so
-   the oldest publisher wins), then the route registry for a remote relay,
-   dialled via `InterRelayConnectionManager`. draft-14 §8.4.2 graceful
-   publisher switchover, where the newer session should take new
-   subscriptions during the overlap, is not implemented.
+   otherwise resolve the publishers and send upstream SUBSCRIBE to every one
+   of them at once (draft-14 §8.4). The first SUBSCRIBE_OK starts ingress,
+   registers the track and serves this SUBSCRIBE; the still pending requests
+   go to an `UpstreamJoinTask` (`sequences/subscribe/upstream_join_task.rs`),
+   which adds each publisher that answers later to the track (or unsubscribes
+   it when the track has ended meanwhile). A publisher that never answers —
+   e.g. a session that died without closing and lingers until its idle
+   timeout — therefore delays nobody, and the SUBSCRIBE fails only when every
+   publisher refuses it. Concurrent subscribers to the same track produce one
+   upstream subscription per publisher.
+2. **Publisher resolution** (`UpstreamPublisherResolver`): every publisher in
+   the local directory, newest first (session ids grow with time), else the
+   route registry for a remote relay, dialled via
+   `InterRelayConnectionManager`.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
    and the local cache's largest location, resolved together with the upstream
    subscription (`get_or_create_upstream_subscription`). The cache is
@@ -561,8 +566,10 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - **Worker lifetime is the session's**: a session worker exists from the
   session's registration until its terminal event; events arriving outside
   that window are dropped by the reader.
-- **One upstream subscription per track**: enforced by the
-  `UpstreamCreationSerializer` per-track lock with a double-check.
+- **One upstream subscription per track and publisher**: creation is
+  serialized by the `UpstreamCreationSerializer` per-track lock with a
+  double-check, and a publisher answering after the track already holds its
+  subscription is unsubscribed again.
 - **SUBSCRIBE_OK matches egress**: the largest location advertised downstream
   is the same value the egress scheduler starts from.
 - **Start Location is a lower bound**: egress delivers the first group at or

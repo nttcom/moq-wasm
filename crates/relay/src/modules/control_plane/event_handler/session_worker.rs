@@ -234,7 +234,7 @@ impl SessionWorker {
                     .handle(
                         session_id,
                         &session_span,
-                        deps.local_pub_sub_directory.as_ref(),
+                        &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
                         &deps.egress_sender,

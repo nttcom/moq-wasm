@@ -13,10 +13,7 @@ use crate::modules::{
     },
     domain::{
         error_code::SubscribeErrorCode,
-        pub_sub_directory::{
-            InMemoryLocalPubSubDirectory,
-            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
-        },
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
         session_id::SessionId,
         track_key::TrackKey,
     },
@@ -25,6 +22,12 @@ use crate::modules::{
 
 use moqt::ContentExists;
 use tracing::Span;
+
+pub(crate) mod upstream_join_task;
+
+use upstream_join_task::{
+    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, send_upstream_subscribes, subscribe_initiated,
+};
 
 pub(crate) struct Subscribe;
 
@@ -101,7 +104,7 @@ impl Subscribe {
         &self,
         session_id: SessionId,
         session_span: &Span,
-        table: &InMemoryLocalPubSubDirectory,
+        table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
@@ -200,7 +203,7 @@ impl Subscribe {
         session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        table: &InMemoryLocalPubSubDirectory,
+        table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
@@ -260,13 +263,13 @@ impl Subscribe {
         session_id: SessionId,
         track_namespace: &str,
         track_name: &str,
-        table: &InMemoryLocalPubSubDirectory,
+        table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Result<(TrackKey, UpstreamTrack, Option<moqt::Location>), UpstreamSubscriptionError> {
-        let upstream_key = upstream_publisher_resolver
+        let publishers = upstream_publisher_resolver
             .resolve(table, track_namespace, track_name)
             .await
             .map_err(|err| {
@@ -277,48 +280,54 @@ impl Subscribe {
                     "failed to resolve upstream publisher"
                 );
                 UpstreamSubscriptionError::PublisherNotFound
-            })?
-            .ok_or(UpstreamSubscriptionError::PublisherNotFound)?;
+            })?;
+        if publishers.is_empty() {
+            return Err(UpstreamSubscriptionError::PublisherNotFound);
+        }
 
-        let track_key = TrackKey::new(&upstream_key.track_namespace, &upstream_key.track_name);
+        let track_key = TrackKey::new(track_namespace, track_name);
         let cache_before_subscribe = cached_largest(cache_store, &track_key);
 
-        let pub_session_id = upstream_key.publisher_session_id;
-        let subscription = match forwarder
-            .subscribe(
-                pub_session_id,
-                upstream_key.track_namespace.clone(),
-                upstream_key.track_name.clone(),
-            )
-            .await
-        {
-            Ok(subscription) => subscription,
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    pub_session_id = %pub_session_id,
-                    track_namespace = %upstream_key.track_namespace,
-                    track_name = %upstream_key.track_name,
-                    "upstream SUBSCRIBE failed"
-                );
-                return Err(UpstreamSubscriptionError::SubscribeFailed(error));
+        // draft-14 §8.4: with no upstream subscription yet, every publisher is
+        // subscribed; the first to answer serves this SUBSCRIBE and the rest
+        // join the track as they answer.
+        let mut pending = send_upstream_subscribes(forwarder, publishers);
+        let mut last_error = None;
+        let (pub_session_id, subscription) = loop {
+            let Some(answered) = pending.join_next().await else {
+                return Err(UpstreamSubscriptionError::SubscribeFailed(
+                    last_error.unwrap_or_else(|| {
+                        anyhow::anyhow!("every upstream SUBSCRIBE was abandoned")
+                    }),
+                ));
+            };
+            let Ok((pub_session_id, subscribed)) = answered else {
+                continue;
+            };
+            match subscribed {
+                Ok(subscription) => break (pub_session_id, subscription),
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        pub_session_id = %pub_session_id,
+                        track_namespace = %track_namespace,
+                        track_name = %track_name,
+                        "upstream SUBSCRIBE failed"
+                    );
+                    last_error = Some(error);
+                }
             }
         };
         tracing::info!(
             pub_session_id = %pub_session_id,
-            track_namespace = %upstream_key.track_namespace,
-            track_name = %upstream_key.track_name,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
             track_alias = subscription.track_alias(),
             expires = subscription.expires().unwrap_or(0),
             "upstream subscribe ok received"
         );
 
-        let active_upstream = ActiveUpstreamSubscription {
-            upstream_request_id: subscription.request_id(),
-            expires: subscription.expires(),
-            content_exists: subscription.content_exists(),
-            origin: UpstreamSubscriptionOrigin::Subscribe,
-        };
+        let active_upstream = subscribe_initiated(&subscription);
 
         if ingress_sender
             .send(IngressCommand::Start(Box::new(IngressStartRequest {
@@ -333,8 +342,8 @@ impl Subscribe {
         {
             tracing::error!(
                 pub_session_id = %pub_session_id,
-                track_namespace = %upstream_key.track_namespace,
-                track_name = %upstream_key.track_name,
+                track_namespace = %track_namespace,
+                track_name = %track_name,
                 "failed to send ingress start request"
             );
             return Err(UpstreamSubscriptionError::IngressStartFailed);
@@ -346,10 +355,24 @@ impl Subscribe {
         );
         tracing::info!(
             pub_session_id = %pub_session_id,
-            track_namespace = %upstream_key.track_namespace,
-            track_name = %upstream_key.track_name,
+            track_namespace = %track_namespace,
+            track_name = %track_name,
             "upstream subscription registered"
         );
+        if !pending.is_empty() {
+            let _upstream_join = UpstreamJoinTask::run(
+                UpstreamJoin {
+                    track_key: track_key.clone(),
+                    subscriber_session_id: session_id,
+                    pending,
+                },
+                UpstreamJoinDeps {
+                    table: table.clone(),
+                    forwarder: forwarder.clone(),
+                    ingress_sender: ingress_sender.clone(),
+                },
+            );
+        }
 
         let upstream_largest = match active_upstream.content_exists {
             ContentExists::True { location } => Some(location),
@@ -534,13 +557,16 @@ mod tests {
     use crate::modules::cascading::route_registry::NoopRelayRouteRegistry;
     use crate::modules::data_plane::cache::track_cache::TrackCache;
     use crate::modules::domain::{
-        pub_sub_directory::InMemoryLocalPubSubDirectory, session_peer::SessionPeer,
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
+        session_peer::SessionPeer,
     };
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, active_upstream, track_key, upstream_track,
     };
     use crate::modules::test_support::mock_session::{
-        MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
+        MockSubscribeHandler, mock_session_answering_subscribe,
+        mock_session_never_answering_subscribe, session_repository_with_session,
+        session_repository_with_sessions,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
 
@@ -586,7 +612,7 @@ mod tests {
     ) -> Option<moqt::Location> {
         const SUBSCRIBER_SESSION: SessionId = 2;
 
-        let table = InMemoryLocalPubSubDirectory::new();
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(
             PUBLISHER_SESSION,
             track_key.track_namespace.clone(),
@@ -643,6 +669,131 @@ mod tests {
         };
 
         largest_location
+    }
+
+    const DEAD_PUBLISHER_SESSION: SessionId = 1;
+    const NEW_PUBLISHER_SESSION: SessionId = 3;
+
+    async fn subscribe_to_publishers(
+        publishers: Vec<(SessionId, Box<dyn crate::modules::session::Session>)>,
+    ) -> (
+        Arc<InMemoryLocalPubSubDirectory>,
+        Result<(TrackKey, UpstreamTrack, Option<moqt::Location>), UpstreamSubscriptionError>,
+    ) {
+        const SUBSCRIBER_SESSION: SessionId = 2;
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        for (publisher_session_id, _) in &publishers {
+            table.register_publish_namespace(
+                *publisher_session_id,
+                "ns".to_string(),
+                SessionPeer::Client,
+            );
+        }
+        let repository =
+            session_repository_with_sessions(publishers, VerifiedToken::full_access()).await;
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        let forwarder = ControlMessageForwarder {
+            repository: repository.clone(),
+        };
+        let resolver = UpstreamPublisherResolver::new(
+            Arc::new(NoopRelayRouteRegistry),
+            Arc::new(InterRelayConnectionManager::new(
+                repository,
+                session_event_sender,
+                "unused-relay-token".to_string(),
+            )),
+        );
+        let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(async move { while ingress_receiver.recv().await.is_some() {} });
+        let created = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            Subscribe.get_or_create_upstream_subscription(
+                SUBSCRIBER_SESSION,
+                "ns",
+                "track",
+                &table,
+                &forwarder,
+                &ingress_sender,
+                &resolver,
+                &UpstreamCreationSerializer::default(),
+                &Arc::new(TrackCacheStore::new()),
+            ),
+        )
+        .await
+        .expect("the SUBSCRIBE must not wait for a publisher that never answers");
+        (table, created)
+    }
+
+    async fn wait_track_publishers(
+        table: &InMemoryLocalPubSubDirectory,
+        expected: Vec<SessionId>,
+    ) -> Vec<SessionId> {
+        let track_key = TrackKey::new("ns", "track");
+        let publishers = || {
+            table
+                .get_upstream_track(&track_key)
+                .map(|track| track.subscriptions.into_keys().collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while publishers() != expected {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        publishers()
+    }
+
+    #[tokio::test]
+    async fn a_publisher_that_never_answers_does_not_hold_back_the_subscribe() {
+        // Arrange
+        let publishers = vec![
+            (
+                DEAD_PUBLISHER_SESSION,
+                mock_session_never_answering_subscribe(),
+            ),
+            (
+                NEW_PUBLISHER_SESSION,
+                mock_session_answering_subscribe(|| moqt::ContentExists::False),
+            ),
+        ];
+
+        // Act
+        let (table, created) = subscribe_to_publishers(publishers).await;
+
+        // Assert
+        assert!(created.is_ok());
+        assert_eq!(
+            wait_track_publishers(&table, vec![NEW_PUBLISHER_SESSION]).await,
+            vec![NEW_PUBLISHER_SESSION]
+        );
+    }
+
+    #[tokio::test]
+    async fn every_answering_publisher_feeds_the_track() {
+        // Arrange
+        let publishers = vec![
+            (
+                DEAD_PUBLISHER_SESSION,
+                mock_session_answering_subscribe(|| moqt::ContentExists::False),
+            ),
+            (
+                NEW_PUBLISHER_SESSION,
+                mock_session_answering_subscribe(|| moqt::ContentExists::False),
+            ),
+        ];
+
+        // Act
+        let (table, created) = subscribe_to_publishers(publishers).await;
+
+        // Assert
+        assert!(created.is_ok());
+        assert_eq!(
+            wait_track_publishers(&table, vec![DEAD_PUBLISHER_SESSION, NEW_PUBLISHER_SESSION])
+                .await,
+            vec![DEAD_PUBLISHER_SESSION, NEW_PUBLISHER_SESSION]
+        );
     }
 
     #[tokio::test]
