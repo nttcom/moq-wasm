@@ -1,4 +1,4 @@
-import type { SeriesTarget } from './api'
+import type { Id, SeriesTarget } from './api'
 import type { Selection, Visibility } from './selection'
 import { type Route, type Topology, relativeNamespace } from './topology'
 
@@ -38,13 +38,7 @@ function subscriptionLines(routes: Route[], metric: string): LineRef[] {
   }))
 }
 
-function trackLines(
-  topology: Topology,
-  relayId: string,
-  publisherSessionId: number,
-  visible: Visibility,
-  metric: string
-) {
+function trackLines(topology: Topology, relayId: string, publisherSessionId: Id, visible: Visibility, metric: string) {
   const snapshot = topology.relays.find((relay) => relay.id === relayId)?.snapshot
   return (snapshot?.tracks ?? [])
     .filter(
@@ -95,7 +89,7 @@ interface Direction {
 function sessionCharts(
   topology: Topology,
   relayId: string,
-  sessionId: number,
+  sessionId: Id,
   visible: Visibility,
   received: Route[],
   direction: Direction

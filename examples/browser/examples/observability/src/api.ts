@@ -7,8 +7,11 @@ export interface ProcessStats {
   cache_payload_bytes: number
 }
 
+/** 64-bit ids arrive as strings: JavaScript numbers hold 53 bits. */
+export type Id = string
+
 export interface SessionStats {
-  session_id: number
+  session_id: Id
   peer: SessionPeer
   app_id: string
   remote_address: string | null
@@ -34,7 +37,7 @@ export interface SessionStats {
 export interface TrackStats {
   namespace: string
   name: string
-  publisher_session_id: number
+  publisher_session_id: Id
   objects_received: number
   bytes_received: number
   subgroups_aborted: number
@@ -44,9 +47,9 @@ export interface TrackStats {
 export interface SubscriptionStats {
   namespace: string
   name: string
-  publisher_session_id: number
-  subscriber_session_id: number
-  request_id: number
+  publisher_session_id: Id
+  subscriber_session_id: Id
+  request_id: Id
   forward: boolean
   objects_sent: number
   bytes_sent: number
@@ -67,9 +70,9 @@ export interface RelaySnapshot {
 export type SeriesTarget =
   | { target: 'process' }
   | { target: 'relay' }
-  | { target: 'session'; session_id: number }
-  | { target: 'track'; publisher_session_id: number; namespace: string; name: string }
-  | { target: 'subscription'; subscriber_session_id: number; request_id: number }
+  | { target: 'session'; session_id: Id }
+  | { target: 'track'; publisher_session_id: Id; namespace: string; name: string }
+  | { target: 'subscription'; subscriber_session_id: Id; request_id: Id }
 
 export interface Series {
   t: number[]

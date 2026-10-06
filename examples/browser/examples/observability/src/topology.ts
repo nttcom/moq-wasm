@@ -1,4 +1,4 @@
-import type { RelaySnapshot, SessionStats, SubscriptionStats, TrackStats } from './api'
+import type { Id, RelaySnapshot, SessionStats, SubscriptionStats, TrackStats } from './api'
 
 export const OBSERVABILITY_APP_ID = 'observability'
 const MAX_RELAY_HOPS = 4
@@ -60,7 +60,7 @@ export interface Topology {
   links: Map<string, Link>
 }
 
-export const clientKey = (relayId: string, sessionId: number) => `${relayId}:${sessionId}`
+export const clientKey = (relayId: string, sessionId: Id) => `${relayId}:${sessionId}`
 export const linkKey = (from: string, to: string) => `${from}>${to}`
 export const trackKeyOf = (namespace: string, name: string) => `${namespace}/${name}`
 export const appIdOf = (namespace: string) => namespace.split('/')[0] ?? ''
@@ -95,7 +95,7 @@ class RateSource {
     return (current - previous) / elapsed
   }
 
-  previousSession(snapshot: RelaySnapshot, sessionId: number): SessionStats | undefined {
+  previousSession(snapshot: RelaySnapshot, sessionId: Id): SessionStats | undefined {
     return this.previous.get(snapshot.relay_id)?.sessions.find((session) => session.session_id === sessionId)
   }
 
@@ -139,7 +139,7 @@ class RelayIndex {
     this.byId = new Map(snapshots.map((snapshot) => [snapshot.relay_id, snapshot]))
   }
 
-  session(relayId: string, sessionId: number): SessionStats | undefined {
+  session(relayId: string, sessionId: Id): SessionStats | undefined {
     return this.byId.get(relayId)?.sessions.find((session) => session.session_id === sessionId)
   }
 
@@ -165,7 +165,7 @@ class RelayIndex {
       ?.sessions.find((session) => session.peer === 'relay' && this.peerRelayOf(relayId, session) === peerRelayId)
   }
 
-  publisherSessionOf(relayId: string, namespace: string, name: string): number | undefined {
+  publisherSessionOf(relayId: string, namespace: string, name: string): Id | undefined {
     return this.byId.get(relayId)?.tracks.find((track) => track.namespace === namespace && track.name === name)
       ?.publisher_session_id
   }
@@ -219,7 +219,7 @@ export function buildTopology(snapshots: RelaySnapshot[], previous: Map<string, 
       if (!subscriber) continue
       const hops = [linkKey(snapshot.relay_id, subscriber.key)]
       let relayId = snapshot.relay_id
-      let publisherSessionId: number | undefined = subscription.publisher_session_id
+      let publisherSessionId: Id | undefined = subscription.publisher_session_id
       let publisher: string | null = null
       for (let hop = 0; hop < MAX_RELAY_HOPS && publisherSessionId !== undefined; hop++) {
         const session = index.session(relayId, publisherSessionId)

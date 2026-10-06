@@ -1,4 +1,5 @@
 pub mod api_server;
+mod browser_json;
 pub mod clickhouse;
 pub mod config;
 pub mod latest_snapshots;

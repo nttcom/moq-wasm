@@ -15,6 +15,7 @@ use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::{
+    browser_json::snapshots_for_browser,
     clickhouse::ClickHouse,
     latest_snapshots::LatestSnapshots,
     series::{self, SeriesQuery, SeriesTarget},
@@ -114,7 +115,10 @@ async fn snapshots(
         None => state.latest.all(),
         Some(_) => snapshots_at(&state.clickhouse, number(params, "at")?).await?,
     };
-    Ok(json_response(StatusCode::OK, &snapshots))
+    Ok(json_response(
+        StatusCode::OK,
+        &snapshots_for_browser(&snapshots),
+    ))
 }
 
 pub fn series_query(params: &HashMap<String, String>) -> anyhow::Result<SeriesQuery> {
