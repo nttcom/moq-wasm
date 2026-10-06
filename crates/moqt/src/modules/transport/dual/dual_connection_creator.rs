@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::BoxedConnection;
 use std::{
     net::{Ipv6Addr, SocketAddr},
     sync::Arc,
@@ -9,7 +10,6 @@ use quinn::rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 
-use super::dual_connection::DualConnection;
 use crate::modules::transport::{
     client_crypto::{
         MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
@@ -65,8 +65,6 @@ impl DualProtocolCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for DualProtocolCreator {
-    type Connection = DualConnection;
-
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
         Self::create_client(port_num, client_crypto(verify_certificate)?)
     }
@@ -123,7 +121,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
     async fn create_new_transport(
         &self,
         target: &ConnectTarget,
-    ) -> anyhow::Result<Self::Connection> {
+    ) -> anyhow::Result<BoxedConnection> {
         let client = match &self.endpoint {
             DualEndpoint::Client(client) => client,
             DualEndpoint::Server(_) => {
@@ -145,7 +143,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
                     .inspect_err(|e| {
                         tracing::error!("failed to create connection: {:?}", e.to_string())
                     })?;
-                Ok(DualConnection::Quic(QUICConnection::new(connection)))
+                Ok(Box::new(QUICConnection::new(connection)))
             }
             ClientTransport::WebTransport => {
                 let session = client
@@ -153,14 +151,12 @@ impl TransportConnectionCreator for DualProtocolCreator {
                     .connect(target.url.clone())
                     .await
                     .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
-                Ok(DualConnection::WebTransport(Box::new(WtConnection::new(
-                    session,
-                ))))
+                Ok(Box::new(WtConnection::new(session)))
             }
         }
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
+    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
         let endpoint = match &self.endpoint {
             DualEndpoint::Server(endpoint) => endpoint,
             DualEndpoint::Client(_) => {
@@ -193,12 +189,10 @@ impl TransportConnectionCreator for DualProtocolCreator {
             let session = request.ok().await.inspect_err(|e| {
                 tracing::error!("failed to establish WebTransport session: {:?}", e)
             })?;
-            Ok(DualConnection::WebTransport(Box::new(WtConnection::new(
-                session,
-            ))))
+            Ok(Box::new(WtConnection::new(session)))
         } else if alpn.as_slice() == b"moq-00" {
             // Raw QUIC
-            Ok(DualConnection::Quic(QUICConnection::new(connection)))
+            Ok(Box::new(QUICConnection::new(connection)))
         } else {
             anyhow::bail!("Unsupported ALPN: {:?}", String::from_utf8_lossy(&alpn))
         }

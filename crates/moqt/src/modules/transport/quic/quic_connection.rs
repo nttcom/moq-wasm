@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -20,9 +21,6 @@ impl QUICConnection {
 
 #[async_trait]
 impl TransportConnection for QUICConnection {
-    type SendStream = QUICSendStream;
-    type ReceiveStream = QUICReceiveStream;
-
     async fn closed(&self) -> TransportClose {
         let error = self.connection.closed().await;
         tracing::info!("QUIC connection closed: {:?}", error);
@@ -44,36 +42,38 @@ impl TransportConnection for QUICConnection {
         tracing::info!(code, reason, "QUIC connection close requested");
     }
 
-    async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
+    async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (sender, receiver) = self.connection.open_bi().await?;
-        let send_stream = QUICSendStream {
-            send_stream: sender,
-        };
-        let receive_stream = QUICReceiveStream {
-            recv_stream: receiver,
-        };
-        Ok((send_stream, receive_stream))
+        Ok((
+            Box::new(QUICSendStream {
+                send_stream: sender,
+            }),
+            Box::new(QUICReceiveStream {
+                recv_stream: receiver,
+            }),
+        ))
     }
 
-    async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
+    async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (sender, receiver) = self.connection.accept_bi().await?;
-        let send_stream = QUICSendStream {
-            send_stream: sender,
-        };
-        let receive_stream = QUICReceiveStream {
-            recv_stream: receiver,
-        };
-        Ok((send_stream, receive_stream))
+        Ok((
+            Box::new(QUICSendStream {
+                send_stream: sender,
+            }),
+            Box::new(QUICReceiveStream {
+                recv_stream: receiver,
+            }),
+        ))
     }
 
-    async fn open_uni(&self) -> anyhow::Result<Self::SendStream> {
+    async fn open_uni(&self) -> anyhow::Result<BoxedSendStream> {
         let send_stream = self.connection.open_uni().await?;
-        Ok(QUICSendStream { send_stream })
+        Ok(Box::new(QUICSendStream { send_stream }))
     }
 
-    async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream> {
+    async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream> {
         let recv_stream = self.connection.accept_uni().await?;
-        Ok(QUICReceiveStream { recv_stream })
+        Ok(Box::new(QUICReceiveStream { recv_stream }))
     }
 
     fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {

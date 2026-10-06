@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Ok;
 use async_trait::async_trait;
 use std::{
@@ -71,8 +72,6 @@ impl QUICConnectionCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for QUICConnectionCreator {
-    type Connection = QUICConnection;
-
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
         Self::create_client(port_num, client_crypto(verify_certificate)?)
     }
@@ -97,7 +96,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
     async fn create_new_transport(
         &self,
         target: &ConnectTarget,
-    ) -> anyhow::Result<Self::Connection> {
+    ) -> anyhow::Result<BoxedConnection> {
         if target.transport != ClientTransport::Quic {
             anyhow::bail!("QUIC endpoint requires a moqt:// url, got {}", target.url);
         }
@@ -110,10 +109,10 @@ impl TransportConnectionCreator for QUICConnectionCreator {
             .await
             .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
 
-        Ok(QUICConnection::new(connection))
+        Ok(Box::new(QUICConnection::new(connection)))
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
+    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
         let incoming = self
             .endpoint
             .accept()
@@ -123,6 +122,6 @@ impl TransportConnectionCreator for QUICConnectionCreator {
             .await
             .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
 
-        Ok(QUICConnection::new(connection))
+        Ok(Box::new(QUICConnection::new(connection)))
     }
 }

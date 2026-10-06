@@ -1,13 +1,13 @@
 use std::{pin::Pin, task::Poll};
 
-use crate::{Session, TransportProtocol, modules::executor::BoxFuture};
+use crate::{Session, modules::executor::BoxFuture};
 
-pub struct Connecting<T: TransportProtocol> {
-    pub(crate) inner: BoxFuture<anyhow::Result<Session<T>>>,
+pub struct Connecting {
+    pub(crate) inner: BoxFuture<anyhow::Result<Session>>,
 }
 
-impl<T: TransportProtocol> Future for Connecting<T> {
-    type Output = anyhow::Result<Session<T>>;
+impl Future for Connecting {
+    type Output = anyhow::Result<Session>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         self.inner.as_mut().poll(cx)

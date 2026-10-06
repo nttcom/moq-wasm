@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use moqt::{
-    BROWSER, DataReceiver, Fetch as FetchData, FetchHandle, Session, StreamDataReceiver, Subgroup,
+    DataReceiver, Fetch as FetchData, FetchHandle, Session, StreamDataReceiver, Subgroup,
     Subscription, wire::SubgroupHeader,
 };
 use wasm_bindgen_futures::spawn_local;
@@ -19,7 +19,7 @@ use crate::messages::FetchStreamEndMessage;
 /// callbacks until the subscription ends.
 pub(crate) async fn read_track(
     shared: Rc<ClientShared>,
-    session: Rc<Session<BROWSER>>,
+    session: Rc<Session>,
     subscription: Subscription,
 ) {
     let receiver = match session
@@ -44,7 +44,7 @@ pub(crate) async fn read_track(
     }
 }
 
-async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataReceiver<BROWSER>) {
+async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataReceiver) {
     let mut header: Option<SubgroupHeader> = None;
     let mut last_object_id = None;
     loop {
@@ -71,7 +71,7 @@ async fn read_subgroup_stream(shared: Rc<ClientShared>, mut stream: StreamDataRe
 /// the request, not the one on the wire.
 pub(crate) async fn read_fetch(
     shared: Rc<ClientShared>,
-    session: Rc<Session<BROWSER>>,
+    session: Rc<Session>,
     request_id: u64,
     fetch_handle: FetchHandle,
 ) {

@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 use tracing::{Instrument, Span};
 
 use crate::{
-    SessionEvent, TransportProtocol,
+    SessionEvent,
     modules::executor::{self, JoinHandle},
     modules::moqt::{
         control_plane::{
@@ -31,8 +31,8 @@ use crate::{
     },
 };
 
-enum DepacketizeResult<T: TransportProtocol> {
-    SessionEvent(SessionEvent<T>),
+enum DepacketizeResult {
+    SessionEvent(SessionEvent),
     ResponseMessage(u64, ResponseMessage),
     SessionClosed,
 }
@@ -40,9 +40,9 @@ enum DepacketizeResult<T: TransportProtocol> {
 pub(crate) struct ControlMessageReceiveTask;
 
 impl ControlMessageReceiveTask {
-    pub(crate) fn run<T: TransportProtocol>(
-        mut receive_stream: BiStreamReceiver<T>,
-        session_context: Weak<SessionContext<T>>,
+    pub(crate) fn run(
+        mut receive_stream: BiStreamReceiver,
+        session_context: Weak<SessionContext>,
         receiver_span: Span,
     ) -> JoinHandle {
         executor::spawn(
@@ -125,21 +125,21 @@ impl ControlMessageReceiveTask {
         )
     }
 
-    fn resolve_message<T: TransportProtocol>(
-        session: Arc<SessionContext<T>>,
+    fn resolve_message(
+        session: Arc<SessionContext>,
         received_message: ReceivedMessage,
-    ) -> DepacketizeResult<T> {
+    ) -> DepacketizeResult {
         tracing::debug!(message = ?received_message, "Event: message_type");
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
                 tracing::debug!("Event: Subscribe");
                 let subscribe_handler = SubscribeHandler::new(session.clone(), subscribe);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::Subscribe(subscribe_handler))
+                DepacketizeResult::SessionEvent(SessionEvent::Subscribe(subscribe_handler))
             }
             ReceivedMessage::Unsubscribe(unsubscribe) => {
                 tracing::debug!("Event: Unsubscribe");
                 let unsubscribe_handler = UnsubscribeHandler::new(session.clone(), unsubscribe);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::Unsubscribe(unsubscribe_handler))
+                DepacketizeResult::SessionEvent(SessionEvent::Unsubscribe(unsubscribe_handler))
             }
             ReceivedMessage::SubscribeOk(subscribe_ok) => {
                 tracing::debug!("Event: Subscribe ok");
@@ -159,7 +159,7 @@ impl ControlMessageReceiveTask {
             ReceivedMessage::Publish(publish) => {
                 tracing::debug!("Event: Publish");
                 let publish_handler = PublishHandler::new(session.clone(), publish);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::Publish(publish_handler))
+                DepacketizeResult::SessionEvent(SessionEvent::Publish(publish_handler))
             }
             ReceivedMessage::PublishOk(publish_ok) => {
                 tracing::debug!("Event: Publish ok");
@@ -179,7 +179,7 @@ impl ControlMessageReceiveTask {
                 tracing::debug!("Event: Publish namespace");
                 let publish_namespace_handler =
                     PublishNamespaceHandler::new(session.clone(), publish_namespace);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespace(
+                DepacketizeResult::SessionEvent(SessionEvent::PublishNamespace(
                     publish_namespace_handler,
                 ))
             }
@@ -187,7 +187,7 @@ impl ControlMessageReceiveTask {
                 tracing::debug!("Event: Publish namespace done");
                 let publish_namespace_done_handler =
                     PublishNamespaceDoneHandler::new(publish_namespace_done);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespaceDone(
+                DepacketizeResult::SessionEvent(SessionEvent::PublishNamespaceDone(
                     publish_namespace_done_handler,
                 ))
             }
@@ -210,7 +210,7 @@ impl ControlMessageReceiveTask {
                 tracing::debug!("Event: Subscribe namespace");
                 let subscribe_namespace_handler =
                     SubscribeNamespaceHandler::new(session.clone(), subscribe_namespace);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::SubscribeNameSpace(
+                DepacketizeResult::SessionEvent(SessionEvent::SubscribeNameSpace(
                     subscribe_namespace_handler,
                 ))
             }
@@ -233,14 +233,14 @@ impl ControlMessageReceiveTask {
                 tracing::debug!("Event: Unsubscribe namespace");
                 let unsubscribe_namespace_handler =
                     UnsubscribeNamespaceHandler::new(unsubscribe_namespace);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::UnsubscribeNamespace(
+                DepacketizeResult::SessionEvent(SessionEvent::UnsubscribeNamespace(
                     unsubscribe_namespace_handler,
                 ))
             }
             ReceivedMessage::Fetch(fetch) => {
                 tracing::debug!("Event: Fetch");
                 let fetch_handler = FetchHandler::new(session.clone(), fetch);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::Fetch(fetch_handler))
+                DepacketizeResult::SessionEvent(SessionEvent::Fetch(fetch_handler))
             }
             ReceivedMessage::FetchOk(fetch_ok) => {
                 tracing::debug!("Event: Fetch ok");
@@ -260,57 +260,49 @@ impl ControlMessageReceiveTask {
             ReceivedMessage::SubscribeUpdate(subscribe_update) => {
                 tracing::debug!("Event: Subscribe update");
                 let subscribe_update_handler = SubscribeUpdateHandler::new(subscribe_update);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::SubscribeUpdate(
+                DepacketizeResult::SessionEvent(SessionEvent::SubscribeUpdate(
                     subscribe_update_handler,
                 ))
             }
             ReceivedMessage::PublishDone(publish_done) => {
                 tracing::debug!("Event: Publish done");
                 let publish_done_handler = PublishDoneHandler::new(publish_done);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishDone(
-                    publish_done_handler,
-                ))
+                DepacketizeResult::SessionEvent(SessionEvent::PublishDone(publish_done_handler))
             }
             ReceivedMessage::FetchCancel(fetch_cancel) => {
                 tracing::debug!("Event: Fetch cancel");
                 let fetch_cancel_handler = FetchCancelHandler::new(fetch_cancel);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::FetchCancel(
-                    fetch_cancel_handler,
-                ))
+                DepacketizeResult::SessionEvent(SessionEvent::FetchCancel(fetch_cancel_handler))
             }
             ReceivedMessage::PublishNamespaceCancel(publish_namespace_cancel) => {
                 tracing::debug!("Event: Publish namespace cancel");
                 let publish_namespace_cancel_handler =
                     PublishNamespaceCancelHandler::new(publish_namespace_cancel);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::PublishNamespaceCancel(
+                DepacketizeResult::SessionEvent(SessionEvent::PublishNamespaceCancel(
                     publish_namespace_cancel_handler,
                 ))
             }
             ReceivedMessage::GoAway(go_away) => {
                 tracing::debug!("Event: Go away");
                 let go_away_handler = GoAwayHandler::new(go_away);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::GoAway(go_away_handler))
+                DepacketizeResult::SessionEvent(SessionEvent::GoAway(go_away_handler))
             }
             ReceivedMessage::MaxRequestId(max_request_id) => {
                 tracing::debug!("Event: Max request id");
                 let max_request_id_handler = MaxRequestIdHandler::new(max_request_id);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::MaxRequestId(
-                    max_request_id_handler,
-                ))
+                DepacketizeResult::SessionEvent(SessionEvent::MaxRequestId(max_request_id_handler))
             }
             ReceivedMessage::RequestsBlocked(requests_blocked) => {
                 tracing::debug!("Event: Requests blocked");
                 let requests_blocked_handler = RequestsBlockedHandler::new(requests_blocked);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::RequestsBlocked(
+                DepacketizeResult::SessionEvent(SessionEvent::RequestsBlocked(
                     requests_blocked_handler,
                 ))
             }
             ReceivedMessage::TrackStatus(track_status) => {
                 tracing::debug!("Event: Track status");
                 let track_status_handler = TrackStatusHandler::new(session.clone(), track_status);
-                DepacketizeResult::SessionEvent(SessionEvent::<T>::TrackStatus(
-                    track_status_handler,
-                ))
+                DepacketizeResult::SessionEvent(SessionEvent::TrackStatus(track_status_handler))
             }
             ReceivedMessage::TrackStatusOk(track_status_ok) => {
                 tracing::debug!("Event: Track status ok");

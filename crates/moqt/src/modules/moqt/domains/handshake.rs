@@ -1,34 +1,30 @@
+use crate::modules::transport::transport_connection::BoxedConnection;
 use std::sync::atomic::AtomicU64;
 
 use crate::{
-    Session, TerminationErrorCode, TransportProtocol,
-    modules::{
-        moqt::{
-            control_plane::control_messages::messages::client_setup::ClientSetup,
-            data_plane::stream::{
-                bi_stream_sender::BiStreamSender, stream_receiver::BiStreamReceiver,
-            },
-            domains::{
-                session_context::SessionContext, session_context_factory::SessionContextFactory,
-            },
+    Session, TerminationErrorCode,
+    modules::moqt::{
+        control_plane::control_messages::messages::client_setup::ClientSetup,
+        data_plane::stream::{bi_stream_sender::BiStreamSender, stream_receiver::BiStreamReceiver},
+        domains::{
+            session_context::SessionContext, session_context_factory::SessionContextFactory,
         },
-        transport::transport_connection::TransportConnection,
     },
 };
 
-pub struct Handshake<T: TransportProtocol> {
+pub struct Handshake {
     pub(crate) client_setup: ClientSetup,
-    pub(crate) transport_connection: T::Connection,
-    pub(crate) send_stream: BiStreamSender<T>,
-    pub(crate) receive_stream: BiStreamReceiver<T>,
+    pub(crate) transport_connection: BoxedConnection,
+    pub(crate) send_stream: BiStreamSender,
+    pub(crate) receive_stream: BiStreamReceiver,
 }
 
-impl<T: TransportProtocol> Handshake<T> {
+impl Handshake {
     pub fn client_setup(&self) -> &ClientSetup {
         &self.client_setup
     }
 
-    pub async fn accept(mut self) -> anyhow::Result<Session<T>> {
+    pub async fn accept(mut self) -> anyhow::Result<Session> {
         SessionContextFactory::send_server_setup(&mut self.send_stream).await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(

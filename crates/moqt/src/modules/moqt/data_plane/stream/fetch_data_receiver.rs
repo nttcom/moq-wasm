@@ -1,10 +1,7 @@
-use crate::{
-    TransportProtocol,
-    modules::moqt::data_plane::{
-        codec::uni_stream_decoder::UniStreamData,
-        object::fetch::{FetchHeader, FetchObjectField},
-        stream::stream_receiver::UniStreamReceiver,
-    },
+use crate::modules::moqt::data_plane::{
+    codec::uni_stream_decoder::UniStreamData,
+    object::fetch::{FetchHeader, FetchObjectField},
+    stream::stream_receiver::UniStreamReceiver,
 };
 
 #[derive(Debug)]
@@ -15,14 +12,14 @@ pub enum Fetch {
 }
 
 #[derive(Debug)]
-pub struct FetchDataReceiver<T: TransportProtocol> {
-    stream_receiver: UniStreamReceiver<T>,
+pub struct FetchDataReceiver {
+    stream_receiver: UniStreamReceiver,
     pub request_id: u64,
     first_fetch_header: Option<FetchHeader>,
 }
 
-impl<T: TransportProtocol> FetchDataReceiver<T> {
-    pub(crate) fn new(stream: UniStreamReceiver<T>, fetch_header: FetchHeader) -> Self {
+impl FetchDataReceiver {
+    pub(crate) fn new(stream: UniStreamReceiver, fetch_header: FetchHeader) -> Self {
         let request_id = fetch_header.request_id;
         Self {
             stream_receiver: stream,

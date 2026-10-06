@@ -55,13 +55,13 @@ fn unique_namespace(label: &str) -> String {
     format!("anon/room/{}-{}-{}", label, std::process::id(), now_ms)
 }
 
-async fn new_session() -> anyhow::Result<Session<QUIC>> {
+async fn new_session() -> anyhow::Result<Session> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
     connect_to_relay(&relay_url).await
 }
 
-async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session<QUIC>> {
+async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -71,7 +71,7 @@ async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session<QUIC>> {
     connecting.await
 }
 
-async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> anyhow::Result<()> {
+async fn send_group(factory: &StreamDataSenderFactory, group_id: u64) -> anyhow::Result<()> {
     let sender = factory.next().await?;
     let header = sender.create_header(group_id, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
     let mut stream = sender.send_header(header).await?;
@@ -91,7 +91,7 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> a
 /// Runs one standalone FETCH and returns the received (group_id, object_id) in
 /// delivery order. A receive error before `Fetch::End` is propagated.
 async fn run_fetch(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     namespace: &str,
     start: Location,
     end: Location,
@@ -100,7 +100,7 @@ async fn run_fetch(
 }
 
 async fn run_fetch_with_label(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     namespace: &str,
     start: Location,
     end: Location,
@@ -110,7 +110,7 @@ async fn run_fetch_with_label(
 }
 
 async fn run_fetch_ns(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     namespace: &str,
     track_name: &str,
     start: Location,
@@ -137,7 +137,7 @@ async fn run_fetch_ns(
         )
         .await?;
     let end_location = handle.end_location;
-    let mut receiver: FetchDataReceiver<QUIC> = subscriber.accept_fetch_receiver(&handle).await?;
+    let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
@@ -189,7 +189,7 @@ async fn run_fetch_ns(
 /// Runs the Joining Fetch and returns the received (group_id, object_id) in
 /// delivery order. A receive error before `Fetch::End` is propagated.
 async fn run_joining_fetch(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     joining_request_id: u64,
     joining_start: u64,
 ) -> anyhow::Result<Vec<(u64, u64)>> {
@@ -197,7 +197,7 @@ async fn run_joining_fetch(
 }
 
 async fn run_joining_fetch_with_label(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     joining_request_id: u64,
     joining_start: u64,
     label: &str,
@@ -211,7 +211,7 @@ async fn run_joining_fetch_with_label(
     let handle = subscriber
         .fetch_relative_joining(joining_request_id, joining_start, FetchOption::default())
         .await?;
-    let mut receiver: FetchDataReceiver<QUIC> = subscriber.accept_fetch_receiver(&handle).await?;
+    let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
@@ -350,7 +350,7 @@ async fn bob(
     );
 
     let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
-    let mut factory: StreamDataReceiverFactory<QUIC> = match data_receiver {
+    let mut factory: StreamDataReceiverFactory = match data_receiver {
         DataReceiver::Stream(f) => f,
         DataReceiver::Datagram(_) => anyhow::bail!("[bob] unexpected datagram"),
     };
@@ -464,10 +464,10 @@ async fn bob(
 /// Exits on Disconnected or after serving `max_subscribes` subscriptions.
 /// Returns the session so the caller can keep it alive (keeping the namespace registered).
 async fn publisher_event_loop(
-    session: Session<QUIC>,
+    session: Session,
     label: &'static str,
     max_subscribes: usize,
-) -> anyhow::Result<Session<QUIC>> {
+) -> anyhow::Result<Session> {
     let mut served = 0;
     loop {
         match session.receive_event().await {
@@ -516,13 +516,13 @@ async fn publisher_event_loop(
 
 /// Drain a stream subscription until all objects in a given group arrive.
 async fn drain_until_group_complete(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     subscription: &moqt::Subscription,
     until_group: u64,
     label: &str,
 ) -> anyhow::Result<()> {
     let data_receiver = subscriber.accept_data_receiver(subscription).await?;
-    let mut factory: StreamDataReceiverFactory<QUIC> = match data_receiver {
+    let mut factory: StreamDataReceiverFactory = match data_receiver {
         DataReceiver::Stream(f) => f,
         DataReceiver::Datagram(_) => anyhow::bail!("[{}] unexpected datagram", label),
     };
@@ -1045,10 +1045,10 @@ async fn run_cross_relay_cold_cache_joining_fetch(
 /// holds group `GROUPS` until signalled, so the test controls exactly when the
 /// upstream largest advances past the subscribe-time largest.
 async fn live_publisher_event_loop(
-    session: Session<QUIC>,
+    session: Session,
     label: &'static str,
     group_signal_rx: tokio::sync::oneshot::Receiver<()>,
-) -> anyhow::Result<Session<QUIC>> {
+) -> anyhow::Result<Session> {
     let handler = loop {
         match session.receive_event().await {
             Ok(moqt::SessionEvent::Subscribe(handler)) => break handler,

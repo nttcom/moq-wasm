@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, SubscriberInitiatedSubscription, Subscription, TransportProtocol,
+    FilterType, GroupOrder, SubscriberInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -19,8 +19,8 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct SubscribeHandler<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+pub struct SubscribeHandler {
+    session_context: Arc<SessionContext>,
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,
@@ -31,14 +31,11 @@ pub struct SubscribeHandler<T: TransportProtocol> {
     pub filter_type: FilterType,
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
-    guard: ResponseGuard<T>,
+    guard: ResponseGuard,
 }
 
-impl<T: TransportProtocol> SubscribeHandler<T> {
-    pub(crate) fn new(
-        session_context: Arc<SessionContext<T>>,
-        subscribe_message: Subscribe,
-    ) -> Self {
+impl SubscribeHandler {
+    pub(crate) fn new(session_context: Arc<SessionContext>, subscribe_message: Subscribe) -> Self {
         let guard = ResponseGuard::new(
             session_context.clone(),
             subscribe_message.request_id,

@@ -13,7 +13,7 @@ use crate::cli::RelayArgs;
 const SUBSCRIBER_PRIORITY: u8 = 128;
 
 pub struct RelayConnection {
-    pub session: Arc<Session<QUIC>>,
+    pub session: Arc<Session>,
     _auth_token_refresh: Option<AuthTokenRefreshTask>,
 }
 
@@ -47,7 +47,7 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
 }
 
 /// Resolves once the relay ends the session, with the reason as the error.
-pub async fn session_closed(session: &Session<QUIC>) -> anyhow::Error {
+pub async fn session_closed(session: &Session) -> anyhow::Error {
     loop {
         match session.receive_event().await {
             Ok(SessionEvent::Disconnected()) => return anyhow!("session closed by the relay"),
@@ -59,10 +59,10 @@ pub async fn session_closed(session: &Session<QUIC>) -> anyhow::Error {
 }
 
 pub async fn subscribe_track(
-    session: &Session<QUIC>,
+    session: &Session,
     namespace: &str,
     name: &str,
-) -> Result<StreamDataReceiverFactory<QUIC>> {
+) -> Result<StreamDataReceiverFactory> {
     let option = SubscribeOption {
         subscriber_priority: SUBSCRIBER_PRIORITY,
         group_order: GroupOrder::Ascending,

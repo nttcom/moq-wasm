@@ -1,31 +1,28 @@
-use crate::{
-    TransportProtocol,
-    modules::moqt::{
-        control_plane::{
-            constants::{self, MOQ_TRANSPORT_VERSION},
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{
-                    client_setup::ClientSetup,
-                    parameters::{
-                        authorization_token::AuthorizationToken, setup_parameters::SetupParameter,
-                    },
-                    server_setup::ServerSetup,
+use crate::modules::moqt::{
+    control_plane::{
+        constants::{self, MOQ_TRANSPORT_VERSION},
+        control_messages::{
+            control_message_type::ControlMessageType,
+            messages::{
+                client_setup::ClientSetup,
+                parameters::{
+                    authorization_token::AuthorizationToken, setup_parameters::SetupParameter,
                 },
+                server_setup::ServerSetup,
             },
         },
-        data_plane::stream::{
-            bi_stream_sender::BiStreamSender, received_message::ReceivedMessage,
-            stream_receiver::BiStreamReceiver,
-        },
+    },
+    data_plane::stream::{
+        bi_stream_sender::BiStreamSender, received_message::ReceivedMessage,
+        stream_receiver::BiStreamReceiver,
     },
 };
 
 pub(crate) struct SessionContextFactory;
 
 impl SessionContextFactory {
-    pub(crate) async fn send_client_setup<T: TransportProtocol>(
-        send_stream: &mut BiStreamSender<T>,
+    pub(crate) async fn send_client_setup(
+        send_stream: &mut BiStreamSender,
         authorization_token: Option<&str>,
     ) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
@@ -49,8 +46,8 @@ impl SessionContextFactory {
         Ok(())
     }
 
-    pub(crate) async fn receive_server_setup<T: TransportProtocol>(
-        receive_stream: &mut BiStreamReceiver<T>,
+    pub(crate) async fn receive_server_setup(
+        receive_stream: &mut BiStreamReceiver,
     ) -> anyhow::Result<ServerSetup> {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
@@ -78,8 +75,8 @@ impl SessionContextFactory {
         }
     }
 
-    pub(crate) async fn receive_client_setup<T: TransportProtocol>(
-        receive_stream: &mut BiStreamReceiver<T>,
+    pub(crate) async fn receive_client_setup(
+        receive_stream: &mut BiStreamReceiver,
     ) -> anyhow::Result<ClientSetup> {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
@@ -107,9 +104,7 @@ impl SessionContextFactory {
         }
     }
 
-    pub(crate) async fn send_server_setup<T: TransportProtocol>(
-        send_stream: &mut BiStreamSender<T>,
-    ) -> anyhow::Result<()> {
+    pub(crate) async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<()> {
         let setup_param = SetupParameter {
             path: None,
             max_request_id: 1000,

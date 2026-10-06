@@ -1,17 +1,17 @@
 use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
 
-enum SenderInner<T: moqt::TransportProtocol> {
-    Uninitialized(moqt::SubgroupHeaderSender<T>),
-    HeaderSent(moqt::SubgroupObjectSender<T>),
+enum SenderInner {
+    Uninitialized(moqt::SubgroupHeaderSender),
+    HeaderSent(moqt::SubgroupObjectSender),
 }
 
-pub(crate) struct StreamSender<T: moqt::TransportProtocol> {
-    inner: Option<SenderInner<T>>,
+pub(crate) struct StreamSender {
+    inner: Option<SenderInner>,
     subscriber_track_alias: u64,
 }
 
-impl<T: moqt::TransportProtocol> StreamSender<T> {
-    pub(crate) fn new(inner: moqt::SubgroupHeaderSender<T>, subscriber_track_alias: u64) -> Self {
+impl StreamSender {
+    pub(crate) fn new(inner: moqt::SubgroupHeaderSender, subscriber_track_alias: u64) -> Self {
         Self {
             inner: Some(SenderInner::Uninitialized(inner)),
             subscriber_track_alias,
@@ -20,7 +20,7 @@ impl<T: moqt::TransportProtocol> StreamSender<T> {
 }
 
 #[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> DataSender for StreamSender<T> {
+impl DataSender for StreamSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         match object {
             DataObject::SubgroupObject(field) => match self.inner.as_mut() {

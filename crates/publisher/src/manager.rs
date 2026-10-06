@@ -72,9 +72,10 @@ struct ManagerState {
 
 type TrackKey = (String, String);
 
-struct BackendState<T: TransportProtocol> {
+#[derive(Default)]
+struct BackendState {
     announced_namespaces: HashSet<String>,
-    tracks: HashMap<TrackKey, TrackState<T>>,
+    tracks: HashMap<TrackKey, TrackState>,
     subscribed_tracks: HashMap<u64, TrackKey>,
     fetches: HashMap<u64, JoinHandle<()>>,
     catalogs: HashMap<String, CatalogMetadata>,
@@ -82,25 +83,11 @@ struct BackendState<T: TransportProtocol> {
     disconnected: bool,
 }
 
-impl<T: TransportProtocol> Default for BackendState<T> {
-    fn default() -> Self {
-        Self {
-            announced_namespaces: HashSet::new(),
-            tracks: HashMap::new(),
-            subscribed_tracks: HashMap::new(),
-            fetches: HashMap::new(),
-            catalogs: HashMap::new(),
-            catalog_sent_at: HashMap::new(),
-            disconnected: false,
-        }
-    }
-}
-
-impl<T: TransportProtocol> BackendState<T> {
+impl BackendState {
     /// The catalog is kept for as long as the publisher runs, because a
     /// viewer that joins a subscription the relay already holds can only
     /// obtain it by FETCH, however long ago it was published.
-    fn track_mut(&mut self, key: &TrackKey) -> &mut TrackState<T> {
+    fn track_mut(&mut self, key: &TrackKey) -> &mut TrackState {
         self.tracks.entry(key.clone()).or_insert_with(|| {
             let cache = if key.1 == CATALOG_TRACK_NAME {
                 ObjectCache::newest_only()
@@ -129,14 +116,14 @@ enum Publication {
 /// so the FETCH cache also covers the time before the track is published; the
 /// writer exists only while the publication does and is taken out of its slot
 /// for the duration of a write.
-struct TrackState<T: TransportProtocol> {
+struct TrackState {
     numbering: ObjectNumbering,
     cache: ObjectCache,
     publication: Publication,
-    writer: Option<TrackWriter<T>>,
+    writer: Option<TrackWriter>,
 }
 
-impl<T: TransportProtocol> TrackState<T> {
+impl TrackState {
     fn new(first_group_id: u64, cache: ObjectCache) -> Self {
         Self {
             numbering: ObjectNumbering::new(first_group_id),
@@ -146,7 +133,7 @@ impl<T: TransportProtocol> TrackState<T> {
         }
     }
 
-    fn publish(&mut self, writer: TrackWriter<T>) {
+    fn publish(&mut self, writer: TrackWriter) {
         self.publication = Publication::Published;
         self.writer = Some(writer);
     }
@@ -217,16 +204,16 @@ pub enum GroupBoundary {
     At(u64),
 }
 
-struct ConnectedPublisher<T: TransportProtocol> {
-    session: Arc<Session<T>>,
-    state: Arc<Mutex<BackendState<T>>>,
+struct ConnectedPublisher {
+    session: Arc<Session>,
+    state: Arc<Mutex<BackendState>>,
     ledger: StreamLedger,
     event_task: tokio::task::JoinHandle<()>,
 }
 
 enum PublisherBackend {
-    Quic(ConnectedPublisher<QUIC>),
-    WebTransport(ConnectedPublisher<WEBTRANSPORT>),
+    Quic(ConnectedPublisher),
+    WebTransport(ConnectedPublisher),
 }
 
 impl MoqtManager {
@@ -337,10 +324,10 @@ impl PublisherBackend {
         };
         match parsed.scheme() {
             "moqt" => Ok(Self::Quic(
-                ConnectedPublisher::<QUIC>::connect(&parsed, &client_config, ledger).await?,
+                ConnectedPublisher::connect::<QUIC>(&parsed, &client_config, ledger).await?,
             )),
             "https" => Ok(Self::WebTransport(
-                ConnectedPublisher::<WEBTRANSPORT>::connect(&parsed, &client_config, ledger)
+                ConnectedPublisher::connect::<WEBTRANSPORT>(&parsed, &client_config, ledger)
                     .await?,
             )),
             scheme => bail!("unsupported moqt url scheme: {scheme}"),
@@ -409,8 +396,8 @@ impl PublisherBackend {
     }
 }
 
-impl<T: TransportProtocol> ConnectedPublisher<T> {
-    async fn connect(
+impl ConnectedPublisher {
+    async fn connect<T: TransportProtocol>(
         url: &url::Url,
         client_config: &ClientConfig,
         ledger: StreamLedger,
@@ -434,8 +421,8 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     }
 
     fn spawn_event_loop(
-        session: Arc<Session<T>>,
-        state: Arc<Mutex<BackendState<T>>>,
+        session: Arc<Session>,
+        state: Arc<Mutex<BackendState>>,
         ledger: StreamLedger,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
@@ -598,9 +585,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     }
 
     async fn serve_subscribe(
-        session: &Session<T>,
-        state: &Mutex<BackendState<T>>,
-        handler: SubscribeHandler<T>,
+        session: &Session,
+        state: &Mutex<BackendState>,
+        handler: SubscribeHandler,
     ) {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
@@ -644,9 +631,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     }
 
     async fn serve_fetch(
-        session: Arc<Session<T>>,
-        state: Arc<Mutex<BackendState<T>>>,
-        handler: FetchHandler<T>,
+        session: Arc<Session>,
+        state: Arc<Mutex<BackendState>>,
+        handler: FetchHandler,
     ) {
         let request_id = handler.request_id;
         if let Err(err) = Self::respond_to_fetch(&session, &state, &handler).await {
@@ -656,9 +643,9 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     }
 
     async fn respond_to_fetch(
-        session: &Session<T>,
-        state: &Mutex<BackendState<T>>,
-        handler: &FetchHandler<T>,
+        session: &Session,
+        state: &Mutex<BackendState>,
+        handler: &FetchHandler,
     ) -> Result<()> {
         let FetchParams::Standalone {
             track_namespace,
@@ -843,7 +830,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
         Ok(())
     }
 
-    async fn publish_track(&self, state: &mut BackendState<T>, key: TrackKey) -> Result<()> {
+    async fn publish_track(&self, state: &mut BackendState, key: TrackKey) -> Result<()> {
         if state.track_mut(&key).publication != Publication::Unpublished {
             return Ok(());
         }
@@ -866,7 +853,7 @@ impl<T: TransportProtocol> ConnectedPublisher<T> {
     }
 }
 
-impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
+impl Drop for ConnectedPublisher {
     fn drop(&mut self) {
         self.event_task.abort();
     }
@@ -874,8 +861,8 @@ impl<T: TransportProtocol> Drop for ConnectedPublisher<T> {
 
 /// A writer created while a group is open waits for the next group start, so
 /// the object ids it sends equal the ids the cache assigned.
-async fn write_object<T: TransportProtocol>(
-    writer: &mut TrackWriter<T>,
+async fn write_object(
+    writer: &mut TrackWriter,
     placement: Placement,
     object: OutgoingObject,
     ledger: &StreamLedger,
@@ -1140,7 +1127,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
         // Arrange
-        let mut state = BackendState::<QUIC>::default();
+        let mut state = BackendState::default();
         state
             .catalog_sent_at
             .insert("live/test".to_string(), Instant::now());

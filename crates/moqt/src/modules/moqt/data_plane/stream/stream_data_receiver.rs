@@ -1,10 +1,7 @@
-use crate::{
-    TransportProtocol,
-    modules::moqt::data_plane::{
-        codec::uni_stream_decoder::UniStreamData,
-        object::subgroup::{SubgroupHeader, SubgroupObjectField},
-        stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
-    },
+use crate::modules::moqt::data_plane::{
+    codec::uni_stream_decoder::UniStreamData,
+    object::subgroup::{SubgroupHeader, SubgroupObjectField},
+    stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
 };
 
 #[derive(Debug)]
@@ -14,14 +11,14 @@ pub enum Subgroup {
 }
 
 #[derive(Debug)]
-pub struct StreamDataReceiver<T: TransportProtocol> {
-    stream_receiver: UniStreamReceiver<T>,
+pub struct StreamDataReceiver {
+    stream_receiver: UniStreamReceiver,
     pub track_alias: u64,
     first_subgroup_header: Option<SubgroupHeader>,
 }
 
-impl<T: TransportProtocol> StreamDataReceiver<T> {
-    pub(crate) fn new(stream: UniStreamReceiver<T>, subgroup_header: SubgroupHeader) -> Self {
+impl StreamDataReceiver {
+    pub(crate) fn new(stream: UniStreamReceiver, subgroup_header: SubgroupHeader) -> Self {
         let track_alias = subgroup_header.track_alias;
         Self {
             stream_receiver: stream,

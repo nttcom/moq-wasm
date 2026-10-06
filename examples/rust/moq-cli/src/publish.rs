@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::loc::{CAPTURE_TIMESTAMP_ID, LocExtension, to_extension_headers};
-use moqt::{PublishOption, QUIC, TrackWriter};
+use moqt::{PublishOption, TrackWriter};
 use tokio::io::AsyncReadExt;
 use tracing::info;
 
@@ -130,14 +130,14 @@ pub async fn run(args: PublishArgs) -> Result<()> {
 /// Builds the catalog once the codec is known and re-publishes it at each group
 /// boundary so subscribers that join mid-stream pick it up at the next keyframe.
 struct CatalogPublisher {
-    writer: TrackWriter<QUIC>,
+    writer: TrackWriter,
     namespace: String,
     name: String,
     payload: Option<Bytes>,
 }
 
 impl CatalogPublisher {
-    fn new(writer: TrackWriter<QUIC>, namespace: String, name: String) -> Self {
+    fn new(writer: TrackWriter, namespace: String, name: String) -> Self {
         Self {
             writer,
             namespace,

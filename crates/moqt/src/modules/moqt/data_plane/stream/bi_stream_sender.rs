@@ -1,21 +1,21 @@
+use crate::modules::transport::transport_connection::BoxedSendStream;
 use bytes::BytesMut;
 
 use crate::{
-    TransportProtocol,
     modules::{
         moqt::control_plane::control_messages::control_message_type::ControlMessageType,
-        transport::transport_send_stream::{TransportSendError, TransportSendStream},
+        transport::transport_send_stream::TransportSendError,
     },
     wire::encode_control_message,
 };
 
 #[derive(Debug)]
-pub(crate) struct BiStreamSender<T: TransportProtocol> {
-    stream_sender: tokio::sync::Mutex<T::SendStream>,
+pub(crate) struct BiStreamSender {
+    stream_sender: tokio::sync::Mutex<BoxedSendStream>,
 }
 
-impl<T: TransportProtocol> BiStreamSender<T> {
-    pub(crate) fn new(stream_sender: T::SendStream) -> Self {
+impl BiStreamSender {
+    pub(crate) fn new(stream_sender: BoxedSendStream) -> Self {
         Self {
             stream_sender: tokio::sync::Mutex::new(stream_sender),
         }

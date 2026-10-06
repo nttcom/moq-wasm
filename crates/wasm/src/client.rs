@@ -51,17 +51,17 @@ const ERROR_TIMEOUT: u64 = 0x2;
 /// request with NOT_SUPPORTED.
 #[derive(Default)]
 pub(crate) struct IncomingRequests {
-    pub(crate) publish_namespaces: HashMap<u64, PublishNamespaceHandler<BROWSER>>,
-    pub(crate) publishes: HashMap<u64, PublishHandler<BROWSER>>,
-    pub(crate) subscribes: HashMap<u64, SubscribeHandler<BROWSER>>,
-    pub(crate) track_statuses: HashMap<u64, TrackStatusHandler<BROWSER>>,
-    pub(crate) fetches: HashMap<u64, FetchHandler<BROWSER>>,
+    pub(crate) publish_namespaces: HashMap<u64, PublishNamespaceHandler>,
+    pub(crate) publishes: HashMap<u64, PublishHandler>,
+    pub(crate) subscribes: HashMap<u64, SubscribeHandler>,
+    pub(crate) track_statuses: HashMap<u64, TrackStatusHandler>,
+    pub(crate) fetches: HashMap<u64, FetchHandler>,
 }
 
 #[derive(Default)]
 pub(crate) struct ClientShared {
     in_use: Cell<bool>,
-    session: RefCell<Option<Rc<Session<BROWSER>>>>,
+    session: RefCell<Option<Rc<Session>>>,
     pub(crate) state: RefCell<ClientState>,
     pub(crate) callbacks: RefCell<Callbacks>,
     pub(crate) incoming: RefCell<IncomingRequests>,
@@ -75,9 +75,9 @@ pub(crate) struct ClientShared {
     pub(crate) fetch_requests: RefCell<HashMap<u64, u64>>,
     /// Subscriptions this client sends objects on, keyed by track alias.
     track_subscriptions: RefCell<HashMap<u64, Subscription>>,
-    stream_senders: RefCell<HashMap<WriterKey, Rc<Mutex<SubgroupObjectSender<BROWSER>>>>>,
+    stream_senders: RefCell<HashMap<WriterKey, Rc<Mutex<SubgroupObjectSender>>>>,
     stream_object_numbers: RefCell<HashMap<WriterKey, u64>>,
-    fetch_senders: RefCell<HashMap<u64, Rc<Mutex<FetchDataSender<BROWSER>>>>>,
+    fetch_senders: RefCell<HashMap<u64, Rc<Mutex<FetchDataSender>>>>,
 }
 
 impl ClientShared {
@@ -1283,7 +1283,7 @@ impl MOQTClient {
 }
 
 impl MOQTClient {
-    fn session(&self) -> Result<Rc<Session<BROWSER>>, JsValue> {
+    fn session(&self) -> Result<Rc<Session>, JsValue> {
         self.shared
             .session
             .borrow()
@@ -1315,7 +1315,7 @@ impl MOQTClient {
 
     fn finish_fetch_request(
         &self,
-        session: Rc<Session<BROWSER>>,
+        session: Rc<Session>,
         request_id: u64,
         result: anyhow::Result<FetchHandle>,
     ) {
@@ -1356,10 +1356,7 @@ impl MOQTClient {
         }
     }
 
-    async fn fetch_sender(
-        &self,
-        request_id: u64,
-    ) -> Result<Rc<Mutex<FetchDataSender<BROWSER>>>, JsValue> {
+    async fn fetch_sender(&self, request_id: u64) -> Result<Rc<Mutex<FetchDataSender>>, JsValue> {
         if !self
             .shared
             .state

@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::BoxedConnection;
 use std::{
     collections::{HashMap, VecDeque, hash_map::Entry},
     fmt,
@@ -9,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    SessionEvent, TransportProtocol,
+    SessionEvent,
     modules::{
         executor,
         moqt::{
@@ -27,9 +28,7 @@ use crate::{
             data_plane::stream::bi_stream_sender::BiStreamSender,
             runtime::dispatch::incoming_object::IncomingObject,
         },
-        transport::{
-            transport_connection::TransportConnection, transport_send_stream::TransportSendError,
-        },
+        transport::transport_send_stream::TransportSendError,
     },
 };
 
@@ -82,28 +81,28 @@ pub(crate) enum InflightRequest {
 
 const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 
-pub(crate) struct SessionContext<T: TransportProtocol> {
-    pub(crate) transport_connection: T::Connection,
-    pub(crate) send_stream: BiStreamSender<T>,
+pub(crate) struct SessionContext {
+    pub(crate) transport_connection: BoxedConnection,
+    pub(crate) send_stream: BiStreamSender,
     request_id: AtomicU64,
     track_alias: AtomicU64,
-    pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
+    pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     pub(crate) sender_map: std::sync::Mutex<HashMap<RequestId, InflightRequest>>,
     pub(crate) receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
-    object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink<T>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
+    object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject>>>,
     pub(crate) fetch_receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
 }
 
-enum ObjectSink<T: TransportProtocol> {
+enum ObjectSink {
     /// Buffers objects that arrive before the receiver is registered.
-    Buffer(VecDeque<IncomingObject<T>>),
+    Buffer(VecDeque<IncomingObject>),
     Receiver {
         request_id: RequestId,
-        sender: tokio::sync::mpsc::UnboundedSender<IncomingObject<T>>,
+        sender: tokio::sync::mpsc::UnboundedSender<IncomingObject>,
     },
     /// Draft-14 §10.1: objects of a cancelled subscription can still arrive
     /// and are discarded instead of being buffered as an unknown track alias.
@@ -111,7 +110,7 @@ enum ObjectSink<T: TransportProtocol> {
     Cancelled,
 }
 
-impl<T: TransportProtocol> ObjectSink<T> {
+impl ObjectSink {
     fn is_receiver_registered(&self) -> bool {
         matches!(self, ObjectSink::Receiver { .. })
     }
@@ -132,12 +131,12 @@ pub(crate) enum IncomingObjectNotification {
 /// gave up, but a late response must still find the entry so it triggers the
 /// registered action instead of a session close.
 #[must_use = "dropping this abandons the request in sender_map; bind it for the lifetime of the request"]
-pub(crate) struct RegisteredSender<T: TransportProtocol> {
-    session: Arc<SessionContext<T>>,
+pub(crate) struct RegisteredSender {
+    session: Arc<SessionContext>,
     request_id: RequestId,
 }
 
-impl<T: TransportProtocol> Drop for RegisteredSender<T> {
+impl Drop for RegisteredSender {
     fn drop(&mut self) {
         if let Ok(mut requests) = self.session.sender_map.lock()
             && let Some(entry) = requests.get_mut(&self.request_id)
@@ -151,12 +150,12 @@ impl<T: TransportProtocol> Drop for RegisteredSender<T> {
     }
 }
 
-impl<T: TransportProtocol> SessionContext<T> {
+impl SessionContext {
     pub(crate) fn new(
-        transport_connection: T::Connection,
-        send_stream: BiStreamSender<T>,
+        transport_connection: BoxedConnection,
+        send_stream: BiStreamSender,
         request_id: AtomicU64,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent<T>>,
+        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         Self {
             transport_connection,
@@ -192,7 +191,7 @@ impl<T: TransportProtocol> SessionContext<T> {
         request_id: RequestId,
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
         on_late_response: LateResponseAction,
-    ) -> RegisteredSender<T> {
+    ) -> RegisteredSender {
         self.sender_map.lock().expect("sender_map poisoned").insert(
             request_id,
             InflightRequest::Waiting {
@@ -209,7 +208,7 @@ impl<T: TransportProtocol> SessionContext<T> {
     pub(crate) async fn notify_incoming_object(
         &self,
         track_alias: u64,
-        incoming_object: IncomingObject<T>,
+        incoming_object: IncomingObject,
     ) -> IncomingObjectNotification {
         let mut sinks = self.object_sinks.lock().await;
         match sinks.entry(track_alias) {
@@ -253,7 +252,7 @@ impl<T: TransportProtocol> SessionContext<T> {
         request_id: RequestId,
         track_alias: u64,
     ) -> Result<(), TerminationErrorCode> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
         let mut sinks = self.object_sinks.lock().await;
 
         if sinks
@@ -296,7 +295,7 @@ impl<T: TransportProtocol> SessionContext<T> {
         }
     }
 
-    async fn cancel_track_alias(&self, sinks: &mut HashMap<u64, ObjectSink<T>>, track_alias: u64) {
+    async fn cancel_track_alias(&self, sinks: &mut HashMap<u64, ObjectSink>, track_alias: u64) {
         sinks.insert(track_alias, ObjectSink::Cancelled);
         self.receiver_map.lock().await.remove(&track_alias);
     }
@@ -438,13 +437,13 @@ impl<T: TransportProtocol> SessionContext<T> {
     }
 }
 
-impl<T: TransportProtocol> fmt::Debug for SessionContext<T> {
+impl fmt::Debug for SessionContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SessionContext").finish_non_exhaustive()
     }
 }
 
-impl<T: TransportProtocol> Drop for SessionContext<T> {
+impl Drop for SessionContext {
     fn drop(&mut self) {
         tracing::info!("SessionContext dropped.");
         // send goaway

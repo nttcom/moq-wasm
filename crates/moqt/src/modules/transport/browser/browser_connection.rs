@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use anyhow::Context;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -55,18 +56,15 @@ impl BrowserConnection {
 
     fn split_bi(
         stream: WebTransportBidirectionalStream,
-    ) -> anyhow::Result<(BrowserSendStream, BrowserReceiveStream)> {
+    ) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let send_stream = BrowserSendStream::new(stream.writable())?;
         let receive_stream = BrowserReceiveStream::new(&stream.readable())?;
-        Ok((send_stream, receive_stream))
+        Ok((Box::new(send_stream), Box::new(receive_stream)))
     }
 }
 
 #[async_trait(?Send)]
 impl TransportConnection for BrowserConnection {
-    type SendStream = BrowserSendStream;
-    type ReceiveStream = BrowserReceiveStream;
-
     async fn closed(&self) -> TransportClose {
         let close = match JsFuture::from(self.transport.closed()).await {
             Ok(close_info) => TransportClose {
@@ -96,7 +94,7 @@ impl TransportConnection for BrowserConnection {
         tracing::info!(code, reason, "WebTransport connection close requested");
     }
 
-    async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
+    async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let stream: WebTransportBidirectionalStream =
             JsFuture::from(self.transport.create_bidirectional_stream())
                 .await
@@ -105,7 +103,7 @@ impl TransportConnection for BrowserConnection {
         Self::split_bi(stream)
     }
 
-    async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
+    async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let stream = read_next(&self.incoming_bi_streams)
             .await
             .map_err(js_error)?
@@ -113,19 +111,21 @@ impl TransportConnection for BrowserConnection {
         Self::split_bi(stream.unchecked_into())
     }
 
-    async fn open_uni(&self) -> anyhow::Result<Self::SendStream> {
+    async fn open_uni(&self) -> anyhow::Result<BoxedSendStream> {
         let stream = JsFuture::from(self.transport.create_unidirectional_stream())
             .await
             .map_err(js_error)?;
-        BrowserSendStream::new(stream.unchecked_into())
+        Ok(Box::new(BrowserSendStream::new(stream.unchecked_into())?))
     }
 
-    async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream> {
+    async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream> {
         let stream = read_next(&self.incoming_uni_streams)
             .await
             .map_err(js_error)?
             .context("incoming unidirectional streams ended")?;
-        BrowserReceiveStream::new(&stream.unchecked_into())
+        Ok(Box::new(BrowserReceiveStream::new(
+            &stream.unchecked_into(),
+        )?))
     }
 
     fn send_datagram(&self, bytes: BytesMut) -> anyhow::Result<()> {

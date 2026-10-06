@@ -5,9 +5,7 @@ use tracing::info;
 
 /// MoQT に接続し、namespace を publish し、StreamDataSenderFactory を返す。
 /// subscriber が来るまでイベントループで待機する。
-pub async fn connect_and_wait_for_subscriber(
-    namespace: &str,
-) -> Result<StreamDataSenderFactory<QUIC>> {
+pub async fn connect_and_wait_for_subscriber(namespace: &str) -> Result<StreamDataSenderFactory> {
     let config = ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -27,7 +25,7 @@ pub async fn connect_and_wait_for_subscriber(
         .context("failed to publish namespace")?;
     info!(namespace, "namespace published");
 
-    let (tx, rx) = oneshot::channel::<StreamDataSenderFactory<QUIC>>();
+    let (tx, rx) = oneshot::channel::<StreamDataSenderFactory>();
     let pub_clone = publisher.clone();
 
     // イベント処理タスク

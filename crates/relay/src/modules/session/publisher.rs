@@ -42,7 +42,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> Publisher for moqt::Publisher<T> {
+impl Publisher for moqt::Publisher {
     async fn send_publish_namespace(
         &self,
         namespaces: String,

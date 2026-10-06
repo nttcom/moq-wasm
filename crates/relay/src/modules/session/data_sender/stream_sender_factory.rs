@@ -6,16 +6,13 @@ pub(crate) trait StreamSenderFactory: Send + 'static {
     -> anyhow::Result<Box<dyn DataSender>>;
 }
 
-pub(crate) struct ConcreteStreamSenderFactory<T: moqt::TransportProtocol> {
-    inner: moqt::StreamDataSenderFactory<T>,
+pub(crate) struct ConcreteStreamSenderFactory {
+    inner: moqt::StreamDataSenderFactory,
     subscriber_track_alias: u64,
 }
 
-impl<T: moqt::TransportProtocol> ConcreteStreamSenderFactory<T> {
-    pub(crate) fn new(
-        inner: moqt::StreamDataSenderFactory<T>,
-        subscriber_track_alias: u64,
-    ) -> Self {
+impl ConcreteStreamSenderFactory {
+    pub(crate) fn new(inner: moqt::StreamDataSenderFactory, subscriber_track_alias: u64) -> Self {
         Self {
             inner,
             subscriber_track_alias,
@@ -24,7 +21,7 @@ impl<T: moqt::TransportProtocol> ConcreteStreamSenderFactory<T> {
 }
 
 #[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> StreamSenderFactory for ConcreteStreamSenderFactory<T> {
+impl StreamSenderFactory for ConcreteStreamSenderFactory {
     async fn next(
         &mut self,
         priority: moqt::StreamPriority,

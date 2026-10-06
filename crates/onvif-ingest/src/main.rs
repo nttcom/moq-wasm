@@ -181,8 +181,8 @@ async fn main() -> Result<()> {
 }
 
 struct BridgeContext {
-    session: std::sync::Arc<Session<WEBTRANSPORT>>,
-    publisher: moqt::Publisher<WEBTRANSPORT>,
+    session: std::sync::Arc<Session>,
+    publisher: moqt::Publisher,
     video_codec: String,
     payload_format: rtsp_decoder::PayloadFormat,
     catalog_track: String,
@@ -193,7 +193,7 @@ struct BridgeContext {
     profile_tracks: Vec<ProfileTrack>,
     command_namespace: String,
     command_track: String,
-    command_subscriber: Option<moqt::Subscriber<WEBTRANSPORT>>,
+    command_subscriber: Option<moqt::Subscriber>,
     command_sender: std_mpsc::Sender<ptz_worker::Command>,
     command_subscribe_priority: u8,
 }
@@ -378,8 +378,8 @@ fn spawn_rtsp_bridge(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_session_event(
-    event: SessionEvent<WEBTRANSPORT>,
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    event: SessionEvent,
+    publisher: &moqt::Publisher,
     expected_namespace: &str,
     catalog_track: &str,
     expected_tracks: &HashSet<String>,
@@ -392,7 +392,7 @@ async fn handle_session_event(
     audio_publication: &mut Option<Subscription>,
     video_state: &mut VideoStreamState,
     audio_state: &mut AudioStreamState,
-    command_subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
+    command_subscriber: &mut Option<moqt::Subscriber>,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
@@ -501,8 +501,8 @@ async fn handle_session_event(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_media_subscribe_event(
-    handler: moqt::SubscribeHandler<WEBTRANSPORT>,
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    handler: moqt::SubscribeHandler,
+    publisher: &moqt::Publisher,
     expected_namespace: &str,
     catalog_track: &str,
     expected_tracks: &HashSet<String>,
@@ -623,8 +623,8 @@ async fn handle_media_subscribe_event(
 }
 
 async fn handle_command_namespace_announce(
-    handler: moqt::PublishNamespaceHandler<WEBTRANSPORT>,
-    command_subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
+    handler: moqt::PublishNamespaceHandler,
+    command_subscriber: &mut Option<moqt::Subscriber>,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
@@ -653,8 +653,8 @@ async fn handle_command_namespace_announce(
 }
 
 async fn handle_command_publish_event(
-    handler: moqt::PublishHandler<WEBTRANSPORT>,
-    command_subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
+    handler: moqt::PublishHandler,
+    command_subscriber: &mut Option<moqt::Subscriber>,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
@@ -705,7 +705,7 @@ async fn handle_command_publish_event(
 }
 
 async fn ensure_command_track_subscription(
-    command_subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
+    command_subscriber: &mut Option<moqt::Subscriber>,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
@@ -751,7 +751,7 @@ async fn ensure_command_track_subscription(
 }
 
 async fn send_video_packet(
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    publisher: &moqt::Publisher,
     state: &mut VideoStreamState,
     publication: &Subscription,
     publisher_priority: u8,
@@ -809,7 +809,7 @@ async fn send_video_packet(
 }
 
 async fn send_audio_packet(
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    publisher: &moqt::Publisher,
     state: &mut AudioStreamState,
     publication: &Subscription,
     publisher_priority: u8,
@@ -871,7 +871,7 @@ async fn send_audio_packet(
 
 #[allow(clippy::too_many_arguments)]
 async fn send_catalog(
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    publisher: &moqt::Publisher,
     publication: &Subscription,
     group_id: u64,
     publisher_priority: u8,
@@ -1104,7 +1104,7 @@ struct VideoStreamState {
     group_id: u64,
     object_id: u64,
     started: bool,
-    stream: Option<SubgroupObjectSender<WEBTRANSPORT>>,
+    stream: Option<SubgroupObjectSender>,
     last_timestamp_us: Option<u64>,
 }
 
@@ -1113,7 +1113,7 @@ struct AudioStreamState {
     group_id: u64,
     object_id: u64,
     started: bool,
-    stream: Option<SubgroupObjectSender<WEBTRANSPORT>>,
+    stream: Option<SubgroupObjectSender>,
     last_timestamp_us: Option<u64>,
     current_group_duration_us: u64,
 }
@@ -1122,7 +1122,7 @@ struct PendingGroupClose {
     track_alias: u64,
     group_id: u64,
     end_object_id: u64,
-    stream: SubgroupObjectSender<WEBTRANSPORT>,
+    stream: SubgroupObjectSender,
 }
 
 impl VideoStreamState {
@@ -1138,7 +1138,7 @@ impl VideoStreamState {
 
     async fn start_group(
         &mut self,
-        publisher: &moqt::Publisher<WEBTRANSPORT>,
+        publisher: &moqt::Publisher,
         publication: &Subscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
@@ -1196,7 +1196,7 @@ impl AudioStreamState {
 
     async fn start_group(
         &mut self,
-        publisher: &moqt::Publisher<WEBTRANSPORT>,
+        publisher: &moqt::Publisher,
         publication: &Subscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
@@ -1403,7 +1403,7 @@ struct CatalogAudioUpdate<'a> {
 }
 
 async fn maybe_send_video_catalog_update(
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    publisher: &moqt::Publisher,
     state: &mut CatalogUpdateState,
     namespace: &[String],
     profiles: &[ProfileTrack],
@@ -1446,7 +1446,7 @@ async fn maybe_send_video_catalog_update(
 }
 
 async fn maybe_send_audio_catalog_update(
-    publisher: &moqt::Publisher<WEBTRANSPORT>,
+    publisher: &moqt::Publisher,
     state: &mut CatalogUpdateState,
     namespace: &[String],
     profiles: &[ProfileTrack],
@@ -1644,7 +1644,7 @@ fn redact_rtsp_url(uri: &str) -> String {
 async fn connect_session(
     url: &str,
     client_config: &ClientConfig,
-) -> Result<std::sync::Arc<Session<WEBTRANSPORT>>> {
+) -> Result<std::sync::Arc<Session>> {
     let endpoint = Endpoint::<WEBTRANSPORT>::create_client(client_config)?;
     let connecting = endpoint
         .connect(url)
@@ -1656,7 +1656,7 @@ async fn connect_session(
 }
 
 fn spawn_command_receiver(
-    subscriber: &mut Option<moqt::Subscriber<WEBTRANSPORT>>,
+    subscriber: &mut Option<moqt::Subscriber>,
     subscription: moqt::Subscription,
     command_sender: std_mpsc::Sender<ptz_worker::Command>,
 ) -> Result<()> {

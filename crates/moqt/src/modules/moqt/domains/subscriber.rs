@@ -28,22 +28,21 @@ use crate::{
             fetch_handle::FetchHandle,
             session_context::{LateResponseAction, SessionContext},
         },
-        protocol::TransportProtocol,
         runtime::dispatch::incoming_object::IncomingObject,
     },
     wire::{RequestError, TrackStatusOk},
 };
 
-pub enum DataReceiver<T: TransportProtocol> {
-    Stream(StreamDataReceiverFactory<T>),
-    Datagram(DatagramReceiver<T>),
+pub enum DataReceiver {
+    Stream(StreamDataReceiverFactory),
+    Datagram(DatagramReceiver),
 }
 
-pub struct Subscriber<T: TransportProtocol> {
-    pub(crate) session: Arc<SessionContext<T>>,
+pub struct Subscriber {
+    pub(crate) session: Arc<SessionContext>,
 }
 
-impl<T: TransportProtocol> Subscriber<T> {
+impl Subscriber {
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.subscribe_namespace",
@@ -252,7 +251,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let request_id = self.session.get_request_id();
 
         let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+            tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
         self.session
             .fetch_notification_map
             .lock()
@@ -362,7 +361,7 @@ impl<T: TransportProtocol> Subscriber<T> {
         let request_id = self.session.get_request_id();
 
         let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<IncomingObject<T>>();
+            tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
         self.session
             .fetch_notification_map
             .lock()
@@ -534,7 +533,7 @@ impl<T: TransportProtocol> Subscriber<T> {
     pub async fn accept_fetch_receiver(
         &mut self,
         fetch_handle: &FetchHandle,
-    ) -> anyhow::Result<FetchDataReceiver<T>> {
+    ) -> anyhow::Result<FetchDataReceiver> {
         let request_id = fetch_handle.request_id;
         let mut fetch_stream_rx = self
             .session
@@ -567,7 +566,7 @@ impl<T: TransportProtocol> Subscriber<T> {
     pub async fn accept_data_receiver(
         &mut self,
         subscription: &Subscription,
-    ) -> anyhow::Result<DataReceiver<T>> {
+    ) -> anyhow::Result<DataReceiver> {
         let track_alias = subscription.track_alias();
         let mut receiver = self
             .session

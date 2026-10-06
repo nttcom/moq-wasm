@@ -47,7 +47,7 @@ const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
 const OBJECTS_PER_GROUP: u64 = 5;
 
-async fn new_session() -> anyhow::Result<Session<QUIC>> {
+async fn new_session() -> anyhow::Result<Session> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
@@ -85,7 +85,7 @@ async fn publisher(namespace: &'static str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> anyhow::Result<()> {
+async fn send_group(factory: &StreamDataSenderFactory, group_id: u64) -> anyhow::Result<()> {
     let sender = factory.next().await?;
     let header = sender.create_header(group_id, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
     let mut stream = sender.send_header(header).await?;
@@ -104,7 +104,7 @@ async fn send_group(factory: &StreamDataSenderFactory<QUIC>, group_id: u64) -> a
 
 /// Subscribes live and returns the owning session so the caller controls when
 /// the subscription (and thus the relay-side `Arc<TrackCache>`) is released.
-async fn subscribe_live(namespace: &str) -> anyhow::Result<Session<QUIC>> {
+async fn subscribe_live(namespace: &str) -> anyhow::Result<Session> {
     let session = new_session().await?;
     let mut subscriber = session.subscriber();
     subscriber
@@ -145,7 +145,7 @@ async fn fetch_group(namespace: &str, group_id: u64) -> anyhow::Result<Vec<(u64,
             FetchOption::default(),
         )
         .await?;
-    let mut receiver: FetchDataReceiver<QUIC> = subscriber.accept_fetch_receiver(&handle).await?;
+    let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {

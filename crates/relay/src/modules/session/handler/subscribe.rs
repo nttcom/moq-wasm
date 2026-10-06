@@ -28,7 +28,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> SubscribeHandler for moqt::SubscribeHandler<T> {
+impl SubscribeHandler for moqt::SubscribeHandler {
     fn subscribe_id(&self) -> u64 {
         self.request_id()
     }

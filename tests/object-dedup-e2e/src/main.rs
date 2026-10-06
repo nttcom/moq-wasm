@@ -23,7 +23,7 @@ const PUBLISHER_PRIORITY: u8 = 128;
 const GROUP_ID: u64 = 0;
 const OBJECTS_PER_GROUP: u64 = 5;
 
-async fn new_session() -> anyhow::Result<Session<QUIC>> {
+async fn new_session() -> anyhow::Result<Session> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
@@ -50,7 +50,7 @@ fn object_payload(obj_id: u64) -> String {
 }
 
 async fn send_group(
-    factory: &StreamDataSenderFactory<QUIC>,
+    factory: &StreamDataSenderFactory,
     attempt: &str,
     payload_of: impl Fn(u64) -> String,
 ) -> anyhow::Result<()> {
@@ -100,7 +100,7 @@ async fn publish_once(
 /// Runs one standalone FETCH and returns the received (group_id, object_id,
 /// payload) in delivery order.
 async fn run_fetch(
-    subscriber: &mut moqt::Subscriber<QUIC>,
+    subscriber: &mut moqt::Subscriber,
     track_name: &str,
     start: Location,
     end: Location,
@@ -114,7 +114,7 @@ async fn run_fetch(
             FetchOption::default(),
         )
         .await?;
-    let mut receiver: FetchDataReceiver<QUIC> = subscriber.accept_fetch_receiver(&handle).await?;
+    let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {

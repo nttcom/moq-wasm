@@ -1,17 +1,18 @@
-use crate::{
-    TransportProtocol,
-    modules::moqt::data_plane::{
-        object::fetch::{FetchHeader, FetchObjectField},
-        stream::stream_sender::StreamSender,
-    },
+use crate::modules::moqt::data_plane::{
+    object::fetch::{FetchHeader, FetchObjectField},
+    stream::stream_sender::StreamSender,
 };
+use crate::modules::transport::transport_connection::BoxedSendStream;
 
-pub struct FetchDataSender<T: TransportProtocol> {
-    stream_sender: StreamSender<T>,
+pub struct FetchDataSender {
+    stream_sender: StreamSender,
 }
 
-impl<T: TransportProtocol> FetchDataSender<T> {
-    pub async fn new(send_stream: T::SendStream, header: FetchHeader) -> anyhow::Result<Self> {
+impl FetchDataSender {
+    pub(crate) async fn new(
+        send_stream: BoxedSendStream,
+        header: FetchHeader,
+    ) -> anyhow::Result<Self> {
         let stream_sender = StreamSender::new(send_stream);
         let header_bytes = header.encode();
         stream_sender.send(&header_bytes).await?;

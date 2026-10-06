@@ -1,12 +1,10 @@
-use std::marker::PhantomData;
-
 use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::mpsc;
 
 use crate::{
     ExtensionHeaders, StreamDataReceiver, StreamDataReceiverFactory, Subgroup, SubgroupHeader,
-    SubgroupId, SubgroupObject, TransportProtocol,
+    SubgroupId, SubgroupObject,
     modules::executor::{self, JoinHandle},
 };
 
@@ -27,19 +25,17 @@ pub struct TrackObject {
 /// yields objects in arrival order. Ordering is only guaranteed within a
 /// subgroup (draft-14 §10.4); consumers that need cross-subgroup order use
 /// `group_id`, `subgroup_id` and `object_id`.
-pub struct TrackReader<T: TransportProtocol> {
+pub struct TrackReader {
     object_receiver: mpsc::Receiver<anyhow::Result<TrackObject>>,
     _stream_accept_task: SubgroupStreamAcceptTask,
-    _protocol: PhantomData<T>,
 }
 
-impl<T: TransportProtocol> TrackReader<T> {
-    pub fn new(factory: StreamDataReceiverFactory<T>) -> Self {
+impl TrackReader {
+    pub fn new(factory: StreamDataReceiverFactory) -> Self {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
         Self {
             object_receiver,
             _stream_accept_task: SubgroupStreamAcceptTask::run(factory, object_sender),
-            _protocol: PhantomData,
         }
     }
 
@@ -56,8 +52,8 @@ struct SubgroupStreamAcceptTask {
 }
 
 impl SubgroupStreamAcceptTask {
-    fn run<T: TransportProtocol>(
-        mut factory: StreamDataReceiverFactory<T>,
+    fn run(
+        mut factory: StreamDataReceiverFactory,
         object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
     ) -> Self {
         let join_handle = executor::spawn("Track Reader", async move {
@@ -89,8 +85,8 @@ impl Drop for SubgroupStreamAcceptTask {
     }
 }
 
-async fn read_subgroup<T: TransportProtocol>(
-    mut receiver: StreamDataReceiver<T>,
+async fn read_subgroup(
+    mut receiver: StreamDataReceiver,
     object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
 ) {
     if let Err(error) = read_subgroup_objects(&mut receiver, &object_sender).await {
@@ -98,8 +94,8 @@ async fn read_subgroup<T: TransportProtocol>(
     }
 }
 
-async fn read_subgroup_objects<T: TransportProtocol>(
-    receiver: &mut StreamDataReceiver<T>,
+async fn read_subgroup_objects(
+    receiver: &mut StreamDataReceiver,
     object_sender: &mpsc::Sender<anyhow::Result<TrackObject>>,
 ) -> anyhow::Result<()> {
     let header = match receiver.receive().await? {
@@ -150,7 +146,7 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        DUAL, ExtensionHeaders, PublishOption, StreamDataSenderFactory, SubgroupId, SubgroupObject,
+        ExtensionHeaders, PublishOption, StreamDataSenderFactory, SubgroupId, SubgroupObject,
         SubgroupObjectSender, TrackObject, TrackReader,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
@@ -162,17 +158,17 @@ mod tests {
     const NO_OBJECT_TIMEOUT: Duration = Duration::from_millis(500);
 
     async fn open_subgroup(
-        factory: &StreamDataSenderFactory<DUAL>,
+        factory: &StreamDataSenderFactory,
         group_id: u64,
         subgroup_id: SubgroupId,
-    ) -> SubgroupObjectSender<DUAL> {
+    ) -> SubgroupObjectSender {
         let uninitialized = factory.next().await.unwrap();
         let header =
             uninitialized.create_header(group_id, subgroup_id, PUBLISHER_PRIORITY, false, false);
         uninitialized.send_header(header).await.unwrap()
     }
 
-    async fn send_payload(sender: &mut SubgroupObjectSender<DUAL>, payload: &'static [u8]) {
+    async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
         let field = sender.create_object_field(
             0,
             ExtensionHeaders::default(),
@@ -181,7 +177,7 @@ mod tests {
         sender.send(field).await.unwrap();
     }
 
-    async fn collect_objects(reader: &mut TrackReader<DUAL>, count: usize) -> Vec<TrackObject> {
+    async fn collect_objects(reader: &mut TrackReader, count: usize) -> Vec<TrackObject> {
         let mut objects = Vec::new();
         while objects.len() < count {
             let object = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
@@ -211,9 +207,9 @@ mod tests {
     async fn published_track(
         name: &str,
     ) -> (
-        crate::Session<DUAL>,
-        crate::Session<DUAL>,
-        StreamDataSenderFactory<DUAL>,
+        crate::Session,
+        crate::Session,
+        StreamDataSenderFactory,
         crate::Subscription,
     ) {
         let (port, accept) = spawn_dual_server(name);

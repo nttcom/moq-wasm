@@ -8,7 +8,8 @@ use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::domains::session_context_factory::SessionContextFactory;
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::transport::connect_target::ConnectTarget;
-use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
+use crate::modules::transport::transport_connection::BoxedConnection;
+use crate::modules::transport::transport_connection::TransportClose;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -23,7 +24,7 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> SessionCreator<T> {
-    pub(crate) async fn create_new_connection(&self, url: &str) -> anyhow::Result<Connecting<T>> {
+    pub(crate) async fn create_new_connection(&self, url: &str) -> anyhow::Result<Connecting> {
         let target = ConnectTarget::parse(url)?;
         let transport_conn = self.transport_creator.create_new_transport(&target).await?;
         let authorization_token = self.authorization_token.clone();
@@ -39,7 +40,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             let context =
                 SessionContext::new(transport_conn, send_stream, AtomicU64::new(0), event_sender);
             tracing::info!("Session is created.");
-            Ok(Session::<T>::new(
+            Ok(Session::new(
                 receive_stream,
                 context,
                 event_receiver,
@@ -52,9 +53,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
     }
 
     async fn exchange_setup(
-        transport_conn: &T::Connection,
+        transport_conn: &BoxedConnection,
         authorization_token: Option<&str>,
-    ) -> anyhow::Result<(BiStreamSender<T>, BiStreamReceiver<T>, ServerSetup)> {
+    ) -> anyhow::Result<(BiStreamSender, BiStreamReceiver, ServerSetup)> {
         let (send_stream, receive_stream) = transport_conn.open_bi().await?;
         let mut send_stream = BiStreamSender::new(send_stream);
         let mut receive_stream = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
@@ -67,7 +68,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
     /// code (draft-14 §3.4). The stream error the setup exchange saw does not
     /// carry it, so the close is awaited briefly and put in front of the error.
     async fn explain_rejected_setup(
-        transport_conn: &T::Connection,
+        transport_conn: &BoxedConnection,
         error: anyhow::Error,
     ) -> anyhow::Error {
         match executor::timeout(CLOSE_REASON_TIMEOUT, transport_conn.closed()).await {
@@ -81,7 +82,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         }
     }
 
-    pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Accepting<T>> {
+    pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Accepting> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let handshake = async move {
             let (send_stream, receive_stream) = transport_conn.accept_bi().await?;

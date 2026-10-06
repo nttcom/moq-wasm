@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    TransportProtocol,
     modules::moqt::{
         control_plane::enums::{RequestId, ResponseMessage},
         domains::session_context::{RegisteredSender, SessionContext},
@@ -12,14 +11,14 @@ use crate::{
 };
 
 #[must_use = "dropping this abandons the PUBLISH_NAMESPACE; a late PUBLISH_NAMESPACE_OK is then withdrawn with PUBLISH_NAMESPACE_DONE"]
-pub struct PendingPublishNamespace<T: TransportProtocol> {
-    pub(super) session: Arc<SessionContext<T>>,
+pub struct PendingPublishNamespace {
+    pub(super) session: Arc<SessionContext>,
     pub(super) request_id: RequestId,
     pub(super) receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
-    pub(super) _registered_sender: RegisteredSender<T>,
+    pub(super) _registered_sender: RegisteredSender,
 }
 
-impl<T: TransportProtocol> PendingPublishNamespace<T> {
+impl PendingPublishNamespace {
     pub async fn accepted(self) -> anyhow::Result<()> {
         match self.session.await_response(self.receiver).await? {
             ResponseMessage::PublishNamespaceOk(request_id) if request_id == self.request_id => {

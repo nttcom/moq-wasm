@@ -17,7 +17,7 @@ optionally cascades across relays via a Redis-backed route registry.
 
 | Directory | Holds |
 | --- | --- |
-| `session/` | The session as the relay sees it: object-safe `Session` / `Publisher` / `Subscriber` traits over `moqt::Session<T>`, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
+| `session/` | The session as the relay sees it: `Session` / `Publisher` / `Subscriber` traits implemented by `moqt::Session` and by the test mocks, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
 | `domain/` | Relay vocabulary and state shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, the `*ErrorCode` enums, the pub/sub directory and its entries |
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
 | `control_plane/` | Control-message processing: `EventHandler`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
@@ -111,12 +111,12 @@ up, only later requests and the expiry follow the new token. AUTHORIZATION
 TOKEN parameters on any other message are still ignored.
 
 ### `modules/session` — the session as the relay sees it
-The relay never handles `moqt::Session<T>` generically beyond intake. `session`
-defines object-safe traits (`Session`, `Publisher`, `Subscriber`, a
-`handler::*` trait per control message whose `moqt` handler is generic over
-the transport, `subscription`, `data_receiver`, `data_sender`) implemented for
-every `T: TransportProtocol`. Everything past the repository works with
-`Box<dyn …>`; `MoqtSessionEvent` carries the non-generic `moqt` handlers
+`session` defines traits (`Session`, `Publisher`, `Subscriber`, a `handler::*`
+trait per control message, `subscription`, `data_receiver`, `data_sender`)
+implemented by the `moqt` types and by the mocks in `test_support`, so the
+relay logic is unit-tested against recorded control messages instead of a live
+transport. Everything past the repository works with `Box<dyn …>`;
+`MoqtSessionEvent` carries the `moqt` handlers without a relay-side trait
 (GOAWAY, MAX_REQUEST_ID, PUBLISH_DONE, …) as they are. The same module holds
 `SessionRepository` and the relay-wide `SessionEvent` (`session_event.rs`),
 so everything the relay knows about a session lives in one place.

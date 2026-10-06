@@ -4,27 +4,20 @@ use bytes::BytesMut;
 use tracing::{Instrument, Span};
 
 use crate::{
-    TransportProtocol,
     modules::executor::{self, JoinHandle},
-    modules::{
-        moqt::{
-            data_plane::object::object_datagram::ObjectDatagram,
-            domains::session_context::SessionContext,
-            runtime::dispatch::{
-                incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
-            },
+    modules::moqt::{
+        data_plane::object::object_datagram::ObjectDatagram,
+        domains::session_context::SessionContext,
+        runtime::dispatch::{
+            incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
         },
-        transport::transport_connection::TransportConnection,
     },
 };
 
 pub(crate) struct DatagramReceiveTask;
 
 impl DatagramReceiveTask {
-    pub(crate) fn run<T: TransportProtocol>(
-        context: Arc<SessionContext<T>>,
-        datagram_span: Span,
-    ) -> JoinHandle {
+    pub(crate) fn run(context: Arc<SessionContext>, datagram_span: Span) -> JoinHandle {
         executor::spawn(
             "Datagram Receiver",
             async move {
@@ -47,10 +40,7 @@ impl DatagramReceiveTask {
     }
 
     #[tracing::instrument(level = "info", name = "on_datagram_received", skip_all)]
-    async fn on_datagram_received<T: TransportProtocol>(
-        context: &Arc<SessionContext<T>>,
-        data: &mut BytesMut,
-    ) -> bool {
+    async fn on_datagram_received(context: &Arc<SessionContext>, data: &mut BytesMut) -> bool {
         tracing::debug!("Received datagram: {:?}", data);
         let datagram_object = match ObjectDatagram::decode(data) {
             Some(object) => object,

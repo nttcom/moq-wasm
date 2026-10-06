@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::BoxedConnection;
 use std::net::{Ipv6Addr, SocketAddr};
 
 use async_trait::async_trait;
@@ -41,8 +42,6 @@ impl WtConnectionCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for WtConnectionCreator {
-    type Connection = WtConnection;
-
     fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
         Self::create_client(port_num, client_crypto(verify_certificate)?)
     }
@@ -84,7 +83,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
     async fn create_new_transport(
         &self,
         target: &ConnectTarget,
-    ) -> anyhow::Result<Self::Connection> {
+    ) -> anyhow::Result<BoxedConnection> {
         let client = match &self.endpoint {
             WtEndpoint::Client(c) => c,
             WtEndpoint::Server(_) => {
@@ -102,10 +101,10 @@ impl TransportConnectionCreator for WtConnectionCreator {
             .await
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
 
-        Ok(WtConnection::new(session))
+        Ok(Box::new(WtConnection::new(session)))
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
+    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
         let server = match &self.endpoint {
             WtEndpoint::Server(s) => s,
             WtEndpoint::Client(_) => {
@@ -124,6 +123,6 @@ impl TransportConnectionCreator for WtConnectionCreator {
             .await
             .inspect_err(|e| tracing::error!("failed to establish session: {:?}", e))?;
 
-        Ok(WtConnection::new(session))
+        Ok(Box::new(WtConnection::new(session)))
     }
 }

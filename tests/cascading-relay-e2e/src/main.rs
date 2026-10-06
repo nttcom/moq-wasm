@@ -35,8 +35,8 @@ struct Config {
 }
 
 struct PubSubResult {
-    _publisher_session: Arc<Session<QUIC>>,
-    _subscriber_session: Arc<Session<QUIC>>,
+    _publisher_session: Arc<Session>,
+    _subscriber_session: Arc<Session>,
     subscriber_event_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -525,7 +525,7 @@ async fn run_namespace_catalog_track_scenario(
 /// Publisher event loop that answers SUBSCRIBE for the catalog and media tracks,
 /// sending a distinct payload on each so the subscriber can tell them apart.
 fn spawn_catalog_track_publisher_loop(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     media_track_name: String,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
@@ -565,7 +565,7 @@ fn spawn_catalog_track_publisher_loop(
 /// Subscriber event loop that ACKs PUBLISH_NAMESPACE and reports each discovered
 /// namespace back to the scenario through `discovered_tx`.
 fn spawn_subscriber_namespace_discovery_loop(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     discovered_tx: tokio::sync::mpsc::UnboundedSender<String>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
@@ -661,7 +661,7 @@ async fn run_ordered_objects_scenario(
 /// Publisher event loop that answers each SUBSCRIBE by sending `count` ordered
 /// objects (payload `ordered-object-{i}`) on a single subgroup stream.
 fn spawn_ordered_objects_publisher_loop(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     count: usize,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
@@ -689,7 +689,7 @@ fn spawn_ordered_objects_publisher_loop(
 /// Sends `count` objects on one subgroup stream with sequential object ids
 /// (delta 0 for the first object, 1 for each subsequent one).
 async fn send_ordered_objects(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     downstream_subscription: Subscription,
     count: usize,
 ) -> anyhow::Result<()> {
@@ -713,7 +713,7 @@ async fn send_ordered_objects(
 
 /// Subscribes and reads exactly `count` payload objects in arrival order.
 async fn subscribe_and_receive_ordered_objects(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     track_namespace: String,
     track_name: String,
     count: usize,
@@ -766,7 +766,7 @@ fn ordered_object_payload(index: usize) -> Vec<u8> {
     format!("ordered-object-{index}").into_bytes()
 }
 
-async fn connect(url: &str) -> anyhow::Result<Session<QUIC>> {
+async fn connect(url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -787,7 +787,7 @@ fn relay_socket_addr(url: &str) -> anyhow::Result<SocketAddr> {
         .context("failed to resolve relay address")
 }
 
-async fn connect_with_retry(url: &str) -> anyhow::Result<Session<QUIC>> {
+async fn connect_with_retry(url: &str) -> anyhow::Result<Session> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut last_error = None;
 
@@ -806,7 +806,7 @@ async fn connect_with_retry(url: &str) -> anyhow::Result<Session<QUIC>> {
 }
 
 fn spawn_publisher_event_loop(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     payload: &'static [u8],
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
@@ -833,7 +833,7 @@ fn spawn_publisher_event_loop(
 }
 
 async fn send_test_object(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     downstream_subscription: Subscription,
     payload: &'static [u8],
 ) -> anyhow::Result<()> {
@@ -853,7 +853,7 @@ async fn send_test_object(
 }
 
 fn spawn_subscriber_namespace_event_loop(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
         loop {
@@ -879,7 +879,7 @@ fn spawn_subscriber_namespace_event_loop(
 }
 
 async fn subscribe_and_receive_one_object(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     track_namespace: String,
     track_name: String,
 ) -> anyhow::Result<Vec<u8>> {
@@ -893,7 +893,7 @@ async fn subscribe_and_receive_one_object(
 }
 
 async fn subscribe_and_receive_one_object_after_subscribe<F, Fut>(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     track_namespace: String,
     track_name: String,
     after_subscribe: F,
@@ -916,7 +916,7 @@ where
 }
 
 async fn subscribe_and_receive_one_object_inner<F, Fut>(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     track_namespace: String,
     track_name: String,
     after_subscribe: F,
