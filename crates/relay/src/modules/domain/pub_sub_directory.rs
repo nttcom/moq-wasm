@@ -1099,7 +1099,7 @@ mod tests {
         let signals = table
             .register_downstream_subscription(2, 100, upstream_key.clone(), None)
             .unwrap();
-        signals.delivery_stats.record_stream_opened();
+        signals.delivery_stats.record_stream_reset();
 
         // Act
         let states = table.downstream_subscription_states();
@@ -1110,7 +1110,7 @@ mod tests {
         };
         assert_eq!((state.subscriber_session_id, state.request_id), (2, 100));
         assert_eq!(state.upstream_key, upstream_key);
-        assert_eq!(state.delivery.streams_opened, 1);
+        assert_eq!(state.delivery.streams_reset, 1);
     }
 
     #[test]

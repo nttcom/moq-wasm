@@ -164,7 +164,6 @@ fn session_stats(
         sent_bytes: transport.sent_bytes,
         sent_packets: transport.sent_packets,
         lost_packets: transport.lost_packets,
-        lost_bytes: transport.lost_bytes,
         cwnd: transport.cwnd,
         congestion_events: transport.congestion_events,
         sent_stream_data_blocked: transport.sent_stream_data_blocked,
@@ -212,7 +211,6 @@ fn subscription_stats(
         subscriber_session_id,
         request_id,
         bytes_sent: delivery.bytes_sent,
-        streams_opened: delivery.streams_opened,
         streams_reset: delivery.streams_reset,
         lag_behind_newest_received_us: micros(lag),
     }

@@ -20,7 +20,6 @@ async fn delivered_payload_bytes_are_counted() {
     // Assert
     let counters = egress.delivery_counters();
     let payload_bytes: usize = (0..3).map(|index| ordered_payload(index).len()).sum();
-    assert_eq!(counters.streams_opened, 1);
     assert_eq!(counters.bytes_sent, payload_bytes as u64);
     assert_eq!(counters.streams_reset, 0);
     assert!(counters.last_sent_received_at.is_some());

@@ -15,7 +15,6 @@ pub(crate) struct DeliveryStats {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DeliveryCounters {
-    pub(crate) streams_opened: u64,
     pub(crate) streams_reset: u64,
     pub(crate) bytes_sent: u64,
     pub(crate) last_sent_received_at: Option<Instant>,
@@ -46,7 +45,6 @@ impl DeliveryStats {
 
     pub(crate) fn counters(&self) -> DeliveryCounters {
         DeliveryCounters {
-            streams_opened: self.streams_opened(),
             streams_reset: self.streams_reset.load(Ordering::Relaxed),
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
             last_sent_received_at: *self
@@ -79,10 +77,10 @@ mod tests {
         stats.record_object_sent(5, received_at);
 
         // Assert
+        assert_eq!(stats.streams_opened(), 2);
         assert_eq!(
             stats.counters(),
             DeliveryCounters {
-                streams_opened: 2,
                 streams_reset: 1,
                 bytes_sent: 15,
                 last_sent_received_at: Some(received_at),

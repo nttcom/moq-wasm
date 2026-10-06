@@ -22,7 +22,6 @@ export interface SessionStats {
   sent_bytes: number
   sent_packets: number
   lost_packets: number
-  lost_bytes: number
   cwnd: number
   congestion_events: number
   sent_stream_data_blocked: number
@@ -49,7 +48,6 @@ export interface SubscriptionStats {
   subscriber_session_id: Id
   request_id: Id
   bytes_sent: number
-  streams_opened: number
   streams_reset: number
   lag_behind_newest_received_us: number
 }

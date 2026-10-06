@@ -81,7 +81,7 @@ neither is reported.
       "session_id": 7, "peer": "client", "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
       "remote_address": "203.0.113.5:50123", "local_ip": "10.0.0.2", "dialed_relay_id": null,
       "rtt_us": 12000, "current_mtu": 1452,
-      "sent_bytes": 52428800, "sent_packets": 40000, "lost_packets": 120, "lost_bytes": 160000,
+      "sent_bytes": 52428800, "sent_packets": 40000, "lost_packets": 120,
       "cwnd": 120000, "congestion_events": 3, "sent_stream_data_blocked": 0, "sent_data_blocked": 0,
       "received_stop_sending": 0, "received_bytes": 1048576, "received_stream_data_blocked": 0,
       "received_data_blocked": 0, "received_reset_stream": 0
@@ -98,7 +98,7 @@ neither is reported.
     {
       "namespace": "ac8adbc8-…/live/ch1", "name": "video", "publisher_session_id": 7,
       "subscriber_session_id": 9, "request_id": 2,
-      "bytes_sent": 1200000, "streams_opened": 30, "streams_reset": 0,
+      "bytes_sent": 1200000, "streams_reset": 0,
       "lag_behind_newest_received_us": 40000
     }
   ]

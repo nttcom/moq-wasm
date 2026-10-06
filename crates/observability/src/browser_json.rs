@@ -103,7 +103,6 @@ mod tests {
                 subscriber_session_id: 1_791_278_649_845_683_583,
                 request_id: 2,
                 bytes_sent: 4,
-                streams_opened: 5,
                 streams_reset: 0,
                 lag_behind_newest_received_us: 6,
             }],
