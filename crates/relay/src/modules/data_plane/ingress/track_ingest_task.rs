@@ -7,14 +7,16 @@ use tokio::{
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    core::data_receiver::{
-        datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiverFactory,
-    },
     data_plane::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         ingress::{datagram_reader::read_datagrams, stream_reader::accept_streams},
     },
-    session_event::SessionEvent,
+    session::{
+        data_receiver::{
+            datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiverFactory,
+        },
+        session_event::SessionEvent,
+    },
     types::{SessionId, TrackKey},
 };
 

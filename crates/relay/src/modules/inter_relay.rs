@@ -7,8 +7,10 @@ use crate::{
     modules::{
         auth::verified_token::VerifiedToken,
         route_registry::RelayInfo,
-        session_event::SessionEvent,
-        session_repository::{NewSession, SessionPeer, SessionRepository},
+        session::{
+            session_event::SessionEvent,
+            session_repository::{NewSession, SessionPeer, SessionRepository},
+        },
         types::{SessionId, generate_session_id},
     },
 };

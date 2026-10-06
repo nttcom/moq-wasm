@@ -6,13 +6,14 @@ use tracing::{Instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::modules::{
-    core::{data_receiver::receiver::DataReceiver, subscription::UpstreamSubscription},
     data_plane::{
         cache::store::TrackCacheStore,
         ingress::track_ingest_task::{IngestCommand, IngestSource, IngestStart, TrackIngestTask},
     },
-    session_event::SessionEvent,
-    session_repository::SessionRepository,
+    session::{
+        data_receiver::receiver::DataReceiver, session_event::SessionEvent,
+        session_repository::SessionRepository, subscription::UpstreamSubscription,
+    },
     types::{SessionId, TrackKey},
 };
 

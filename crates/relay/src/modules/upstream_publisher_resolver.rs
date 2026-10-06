@@ -91,7 +91,7 @@ mod tests {
     use crate::modules::{
         route_registry::{NamespaceRoute, RegisterRouteError, RelayInfo},
         sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
-        session_repository::SessionRepository,
+        session::session_repository::SessionRepository,
     };
 
     enum PublisherLookup {

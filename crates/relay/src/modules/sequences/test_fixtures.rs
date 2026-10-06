@@ -3,12 +3,12 @@ use tokio::sync::mpsc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
     data_plane::ingress::ingress_coordinator::IngressCommand,
     sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory,
         table::{ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin},
     },
+    session::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
     types::{SessionId, TrackKey},
 };
 

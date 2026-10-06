@@ -5,11 +5,11 @@ use crate::modules::{
         authorize::{Denied, Operation, authorize},
         verified_token::VerifiedToken,
     },
-    core::session_event::MoqtSessionEvent,
     enums::{
         FetchErrorCode, PublishErrorCode, PublishNamespaceErrorCode, SubscribeErrorCode,
         SubscribeNamespaceErrorCode,
     },
+    session::moqt_session_event::MoqtSessionEvent,
 };
 
 pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, Vec<String>)> {

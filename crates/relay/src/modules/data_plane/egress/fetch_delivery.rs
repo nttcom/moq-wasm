@@ -1,10 +1,10 @@
 use crate::modules::{
-    core::data_sender::fetch_sender::FetchSender,
     data_plane::{
         cache::track_cache::{FetchCursor, FetchInterrupted},
         egress::coordinator::EgressFetchRequest,
     },
     enums::FetchErrorCode,
+    session::data_sender::fetch_sender::FetchSender,
 };
 
 pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn FetchSender) {

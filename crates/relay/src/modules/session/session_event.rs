@@ -1,5 +1,5 @@
 use crate::modules::{
-    core::session_event::MoqtSessionEvent,
+    session::moqt_session_event::MoqtSessionEvent,
     types::{SessionId, TrackKey},
 };
 

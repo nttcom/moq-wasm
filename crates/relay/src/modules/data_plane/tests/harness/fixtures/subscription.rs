@@ -1,4 +1,4 @@
-use crate::modules::core::subscription::DownstreamSubscription;
+use crate::modules::session::subscription::DownstreamSubscription;
 
 pub(crate) fn make_subscription(filter_type: moqt::FilterType) -> DownstreamSubscription {
     DownstreamSubscription::from(moqt::Subscription::SubscriberInitiated(

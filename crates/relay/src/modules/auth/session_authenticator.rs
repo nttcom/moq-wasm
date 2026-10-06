@@ -11,7 +11,7 @@ use crate::{
             verified_token::VerifiedToken,
             vts_token_verifier::VtsTokenVerifier,
         },
-        session_repository::SessionPeer,
+        session::session_repository::SessionPeer,
     },
 };
 
@@ -97,7 +97,7 @@ mod tests {
             test_support::{StubOutcome, StubVerifier, app_token, client_setup, relay_token},
             verified_token::VerifiedToken,
         },
-        session_repository::SessionPeer,
+        session::session_repository::SessionPeer,
     };
 
     fn authenticator(outcome: StubOutcome) -> SessionAuthenticator {

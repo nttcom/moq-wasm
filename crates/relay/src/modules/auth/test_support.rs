@@ -21,9 +21,8 @@ use crate::{
             verified_token::{VerifiedToken, parse_namespace_path},
         },
         route_registry::NoopRelayRouteRegistry,
-        session_handler::SessionHandler,
     },
-    relay_server::server::RelayServerDeps,
+    relay_server::{server::RelayServerDeps, session_handler::SessionHandler},
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);

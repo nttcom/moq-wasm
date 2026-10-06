@@ -9,14 +9,13 @@ use tracing::Instrument;
 use super::{Fetch, FetchTarget};
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::fetch::FetchHandler,
     data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
     sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
-    session_event::SessionEvent,
+    session::{handler::fetch::FetchHandler, session_event::SessionEvent},
     types::SessionId,
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };

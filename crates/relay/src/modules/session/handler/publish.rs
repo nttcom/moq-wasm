@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use moqt::{ContentExists, FilterType, GroupOrder};
 
-use crate::modules::core::subscription::UpstreamSubscription;
+use crate::modules::session::subscription::UpstreamSubscription;
 
 pub(crate) struct SubscribeOption {
     pub(crate) subscriber_priority: u8,

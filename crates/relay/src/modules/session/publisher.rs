@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin};
 
 use async_trait::async_trait;
 
-use crate::modules::core::{
+use crate::modules::session::{
     data_sender::{
         DataSender,
         fetch_sender::FetchSender,

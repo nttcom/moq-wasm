@@ -6,9 +6,9 @@ use std::sync::{
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
-    core::{publisher::Publisher, subscription::DownstreamSubscription},
     data_plane::cache::track_cache::TrackCache,
     sequences::tables::table::PublishDoneReason,
+    session::{publisher::Publisher, subscription::DownstreamSubscription},
     types::TrackKey,
 };
 

@@ -1,7 +1,7 @@
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
-use crate::modules::core::publisher::PublishNamespaceResponse;
+use crate::modules::session::publisher::PublishNamespaceResponse;
 
 pub(super) struct PublishNamespaceResponseTask {
     _join_handle: JoinHandle<()>,

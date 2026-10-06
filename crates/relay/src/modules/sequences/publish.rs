@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     enums::PublishErrorCode,
     inter_relay::InterRelayConnectionManager,
@@ -16,6 +15,7 @@ use crate::modules::{
             },
         },
     },
+    session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
     types::{SessionId, TrackKey},
 };
 

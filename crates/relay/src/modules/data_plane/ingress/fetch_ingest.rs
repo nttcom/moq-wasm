@@ -10,8 +10,7 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
     enums::FetchErrorCode,
-    session_event::SessionEvent,
-    session_repository::SessionRepository,
+    session::{session_event::SessionEvent, session_repository::SessionRepository},
     types::{SessionId, TrackKey},
 };
 
@@ -214,7 +213,6 @@ impl FetchIngest {
 mod tests {
     use super::*;
     use crate::modules::{
-        core::mocks::session_repository_with_upstream_session,
         data_plane::{
             cache::track_cache::FetchRangeResolution,
             tests::harness::fixtures::{
@@ -222,7 +220,7 @@ mod tests {
                 location,
             },
         },
-        session_event::EventKind,
+        session::{mocks::session_repository_with_upstream_session, session_event::EventKind},
     };
     use bytes::Bytes;
     use moqt::ObjectStatus;

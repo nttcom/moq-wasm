@@ -7,12 +7,12 @@ use dashmap::{DashMap, DashSet, Entry};
 use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
-    core::handler::publish::PublishHandler,
     sequences::tables::table::{
         ActiveUpstreamSubscription, DownstreamSubscription, PeerKind, PublishDoneReason,
         RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
         UpstreamSubscriptionOrigin,
     },
+    session::handler::publish::PublishHandler,
     types::{SessionId, TrackKey, TrackNamespace, TrackNamespacePrefix},
 };
 
@@ -607,8 +607,8 @@ impl InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::core::mocks::runner_stopped;
     use crate::modules::sequences::test_fixtures::{UPSTREAM_REQUEST_ID, table_with_upstream};
+    use crate::modules::session::mocks::runner_stopped;
     use moqt::{ContentExists, FilterType, GroupOrder};
 
     #[derive(Debug)]
@@ -661,8 +661,8 @@ mod tests {
             &self,
             subscriber_priority: u8,
             filter_type: FilterType,
-        ) -> crate::modules::core::subscription::UpstreamSubscription {
-            crate::modules::core::subscription::UpstreamSubscription::from(
+        ) -> crate::modules::session::subscription::UpstreamSubscription {
+            crate::modules::session::subscription::UpstreamSubscription::from(
                 moqt::PublisherInitiatedSubscription {
                     request_id: 0,
                     track_namespace: self.track_namespace.clone(),
@@ -680,7 +680,7 @@ mod tests {
 
         async fn ok(
             &self,
-            _subscription: &crate::modules::core::subscription::UpstreamSubscription,
+            _subscription: &crate::modules::session::subscription::UpstreamSubscription,
         ) -> Result<(), moqt::TransportSendError> {
             Ok(())
         }

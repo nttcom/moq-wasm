@@ -7,11 +7,13 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     auth::{session_expiry_task::SessionExpiryTask, verified_token::VerifiedToken},
-    core::{
-        publisher::Publisher, session::Session, session_event::MoqtSessionEvent,
+    session::{
+        Session,
+        moqt_session_event::MoqtSessionEvent,
+        publisher::Publisher,
+        session_event::{EventKind, SessionEvent},
         subscriber::Subscriber,
     },
-    session_event::{EventKind, SessionEvent},
     types::SessionId,
 };
 
@@ -265,7 +267,7 @@ mod tests {
 
     use crate::modules::{
         auth::verified_token::VerifiedToken,
-        core::mocks::{
+        session::mocks::{
             RecordedControlMessages, session_repository_with_upstream_session,
             session_repository_with_upstream_session_token,
         },

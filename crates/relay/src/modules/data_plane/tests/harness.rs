@@ -6,7 +6,6 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
-    core::{data_object::DataObject, mocks::session_repository_with_session},
     data_plane::{
         cache::subgroup_key::SubgroupKey,
         cache::track_cache::{NextObject, SubgroupRun, TrackCache},
@@ -16,8 +15,10 @@ use crate::modules::{
         ingress::{stream_reader::read_stream, track_ingest_task::TrackIngest},
     },
     sequences::tables::table::PublishDoneReason,
-    session_event::SessionEvent,
-    session_repository::SessionRepository,
+    session::{
+        data_object::DataObject, mocks::session_repository_with_session,
+        session_event::SessionEvent, session_repository::SessionRepository,
+    },
     types::{SessionId, TrackKey},
 };
 

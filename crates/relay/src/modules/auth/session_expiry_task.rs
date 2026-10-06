@@ -5,7 +5,7 @@ use std::{
 
 use moqt::TerminationErrorCode;
 
-use crate::modules::core::session::Session;
+use crate::modules::session::Session;
 
 const EXPIRED_REASON: &str = "authorization token expired";
 
@@ -45,7 +45,7 @@ mod tests {
     use moqt::TerminationErrorCode;
 
     use super::SessionExpiryTask;
-    use crate::modules::core::mocks::mock_session;
+    use crate::modules::session::mocks::mock_session;
 
     #[tokio::test(start_paused = true)]
     async fn closes_the_session_when_the_token_expires() {

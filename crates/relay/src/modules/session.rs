@@ -1,7 +1,20 @@
+pub(crate) mod data_object;
+pub(crate) mod data_receiver;
+pub(crate) mod data_sender;
+pub(crate) mod handler;
+#[cfg(test)]
+pub(crate) mod mocks;
+pub(crate) mod moqt_session_event;
+pub(crate) mod publisher;
+pub(crate) mod session_event;
+pub(crate) mod session_repository;
+pub(crate) mod subscriber;
+pub(crate) mod subscription;
+
 use async_trait::async_trait;
 
-use crate::modules::core::{
-    publisher::Publisher, session_event::MoqtSessionEvent, subscriber::Subscriber,
+use crate::modules::session::{
+    moqt_session_event::MoqtSessionEvent, publisher::Publisher, subscriber::Subscriber,
 };
 
 #[async_trait]

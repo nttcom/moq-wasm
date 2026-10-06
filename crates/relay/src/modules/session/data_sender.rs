@@ -3,7 +3,7 @@ pub(crate) mod fetch_sender;
 pub(crate) mod stream_sender;
 pub(crate) mod stream_sender_factory;
 
-use crate::modules::core::data_object::DataObject;
+use crate::modules::session::data_object::DataObject;
 
 #[async_trait::async_trait]
 pub(crate) trait DataSender: 'static + Send + Sync {

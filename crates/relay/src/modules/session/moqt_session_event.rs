@@ -1,4 +1,4 @@
-use crate::modules::core::handler::{
+use crate::modules::session::handler::{
     fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
     subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
     track_status::TrackStatusHandler, unsubscribe::UnsubscribeHandler,
