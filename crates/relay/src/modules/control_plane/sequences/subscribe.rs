@@ -30,6 +30,15 @@ use tracing::Span;
 
 pub(crate) struct Subscribe;
 
+/// Another session's cleanup can remove the upstream subscription between
+/// finding it and registering on it; each attempt finds or creates it again.
+const UPSTREAM_ATTEMPTS: usize = 3;
+
+enum Acceptance {
+    Answered,
+    UpstreamGone,
+}
+
 pub(super) fn cached_largest(
     cache_store: &TrackCacheStore,
     track_key: &TrackKey,
@@ -112,56 +121,69 @@ impl Subscribe {
             "SequenceHandler::subscribe"
         );
 
-        let (upstream_key, active_upstream, largest_location) = match self
-            .get_or_create_upstream_subscription(
-                session_id,
-                track_namespace,
-                track_name,
-                table,
-                forwarder,
-                ingress_sender,
-                upstream_publisher_resolver,
-                upstream_serializer,
-                cache_store,
-            )
-            .await
-        {
-            Ok(upstream_subscription) => upstream_subscription,
-            Err(err) => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
-                    "failed to get or create upstream subscription"
-                );
-                let (code, reason_phrase) = err.subscribe_error_response();
-                if let Err(send_error) = self
-                    .response_error(handler.as_ref(), code, reason_phrase)
-                    .await
-                {
-                    tracing::error!(
-                        subscribe_id = handler.subscribe_id(),
+        for _ in 0..UPSTREAM_ATTEMPTS {
+            let (upstream_key, active_upstream, largest_location) = match self
+                .get_or_create_upstream_subscription(
+                    session_id,
+                    track_namespace,
+                    track_name,
+                    table,
+                    forwarder,
+                    ingress_sender,
+                    upstream_publisher_resolver,
+                    upstream_serializer,
+                    cache_store,
+                )
+                .await
+            {
+                Ok(upstream_subscription) => upstream_subscription,
+                Err(err) => {
+                    tracing::warn!(
+                        session_id = %session_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
-                        error = ?send_error,
-                        "failed to send SUBSCRIBE_ERROR"
+                        "failed to get or create upstream subscription"
                     );
+                    let (code, reason_phrase) = err.subscribe_error_response();
+                    if let Err(send_error) = self
+                        .response_error(handler.as_ref(), code, reason_phrase)
+                        .await
+                    {
+                        tracing::error!(
+                            subscribe_id = handler.subscribe_id(),
+                            track_namespace = %track_namespace,
+                            track_name = %track_name,
+                            error = ?send_error,
+                            "failed to send SUBSCRIBE_ERROR"
+                        );
+                    }
+                    return;
                 }
+            };
+
+            let acceptance = self
+                .accept_downstream_subscription(
+                    session_id,
+                    upstream_key,
+                    active_upstream,
+                    largest_location,
+                    table,
+                    egress_sender,
+                    cache_store,
+                    handler.as_ref(),
+                )
+                .await;
+            if let Acceptance::Answered = acceptance {
                 return;
             }
-        };
-
-        self.accept_downstream_subscription(
-            session_id,
-            upstream_key,
-            active_upstream,
-            largest_location,
-            table,
-            egress_sender,
-            cache_store,
-            handler.as_ref(),
-        )
-        .await;
+            tracing::info!(
+                subscribe_id = handler.subscribe_id(),
+                track_namespace = %track_namespace,
+                track_name = %track_name,
+                "upstream subscription ended before the downstream subscription was accepted; retrying"
+            );
+        }
+        self.response_track_gone(handler.as_ref()).await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -373,7 +395,7 @@ impl Subscribe {
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
-    ) {
+    ) -> Acceptance {
         if cache_store
             .get(&active_upstream.track_key)
             .is_some_and(|cache| cache.is_malformed())
@@ -385,7 +407,7 @@ impl Subscribe {
                     "malformed track".to_string(),
                 )
                 .await;
-            return;
+            return Acceptance::Answered;
         }
 
         let subscriber_track_alias = handler.allocate_track_alias();
@@ -407,8 +429,7 @@ impl Subscribe {
                 track_name = %upstream_key.track_name,
                 "upstream subscription removed before the downstream subscription was registered"
             );
-            self.response_track_gone(handler).await;
-            return;
+            return Acceptance::UpstreamGone;
         };
 
         let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
@@ -435,7 +456,7 @@ impl Subscribe {
                 track_name = %upstream_key.track_name,
                 "failed to send EgressStartRequest"
             );
-            return;
+            return Acceptance::Answered;
         }
         match ready_receiver.await {
             Ok(Ok(())) => {}
@@ -445,15 +466,14 @@ impl Subscribe {
                     subscribe_id = handler.subscribe_id(),
                     "failed to start egress runner"
                 );
-                return;
+                return Acceptance::Answered;
             }
             Err(_) => {
                 tracing::debug!(
                     subscribe_id = handler.subscribe_id(),
                     "downstream subscription removed before its egress runner became ready"
                 );
-                self.response_track_gone(handler).await;
-                return;
+                return Acceptance::UpstreamGone;
             }
         }
 
@@ -471,7 +491,7 @@ impl Subscribe {
                 subscriber_track_alias = subscriber_track_alias,
                 "failed to send SUBSCRIBE_OK"
             );
-            return;
+            return Acceptance::Answered;
         }
         let _ = subscribe_ok_sender.send(());
         tracing::info!(
@@ -481,6 +501,7 @@ impl Subscribe {
             subscriber_track_alias = subscriber_track_alias,
             "downstream subscribe ok sent"
         );
+        Acceptance::Answered
     }
 
     async fn response_track_gone(&self, handler: &dyn SubscribeHandler) {
@@ -715,7 +736,7 @@ mod tests {
         table: &InMemoryLocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         handler: &MockSubscribeHandler,
-    ) {
+    ) -> Acceptance {
         Subscribe
             .accept_downstream_subscription(
                 2,
@@ -727,30 +748,32 @@ mod tests {
                 &Arc::new(TrackCacheStore::new()),
                 handler,
             )
-            .await;
+            .await
+    }
+
+    fn assert_unanswered(handler: &MockSubscribeHandler) {
+        assert!(handler.subscribe_errors.lock().unwrap().is_empty());
+        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 0);
     }
 
     #[tokio::test]
-    async fn upstream_removed_before_registration_sends_subscribe_error() {
+    async fn upstream_removed_before_registration_leaves_the_subscribe_unanswered() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
         let handler = MockSubscribeHandler::default();
 
         // Act
-        accept_downstream(&table, &egress_sender, &handler).await;
+        let acceptance = accept_downstream(&table, &egress_sender, &handler).await;
 
         // Assert
-        assert_eq!(
-            *handler.subscribe_errors.lock().unwrap(),
-            vec![SubscribeErrorCode::TrackDoesNotExist as u64]
-        );
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 0);
+        assert!(matches!(acceptance, Acceptance::UpstreamGone));
+        assert_unanswered(&handler);
         assert!(egress_receiver.try_recv().is_err());
     }
 
     #[tokio::test]
-    async fn downstream_registration_removed_before_runner_readiness_sends_subscribe_error() {
+    async fn registration_removed_before_runner_readiness_leaves_the_subscribe_unanswered() {
         // Arrange
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_upstream_subscription(
@@ -772,14 +795,85 @@ mod tests {
         let handler = MockSubscribeHandler::default();
 
         // Act
-        accept_downstream(&table, &egress_sender, &handler).await;
+        let acceptance = accept_downstream(&table, &egress_sender, &handler).await;
 
         // Assert
         concurrent_cleanup.await.unwrap();
-        assert_eq!(
-            *handler.subscribe_errors.lock().unwrap(),
-            vec![SubscribeErrorCode::TrackDoesNotExist as u64]
+        assert!(matches!(acceptance, Acceptance::UpstreamGone));
+        assert_unanswered(&handler);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_whose_upstream_ends_while_it_is_accepted_is_answered_on_a_new_upstream() {
+        // Arrange: the first runner start loses its registration, as when the last other subscriber leaves
+        const SUBSCRIBER_SESSION: SessionId = 2;
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        table.register_upstream_subscription(
+            upstream_key(),
+            active_upstream(UpstreamSubscriptionOrigin::Subscribe),
         );
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 0);
+        let repository = session_repository_with_session(
+            PUBLISHER_SESSION,
+            mock_session_answering_subscribe(|| moqt::ContentExists::False),
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let (session_event_sender, _session_event_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
+        let resolver = UpstreamPublisherResolver::new(
+            Arc::new(NoopRelayRouteRegistry),
+            Arc::new(InterRelayConnectionManager::new(
+                repository.clone(),
+                session_event_sender,
+                "unused-relay-token".to_string(),
+            )),
+        );
+        let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
+        let (egress_sender, mut egress_receiver) = tokio::sync::mpsc::channel(4);
+        let egress = tokio::spawn({
+            let table = table.clone();
+            async move {
+                let mut started = 0;
+                while let Some(EgressCommand::StartReader(request)) = egress_receiver.recv().await {
+                    started += 1;
+                    if started == 1 {
+                        table.remove_downstream_subscription(
+                            request.subscriber_session_id,
+                            request.downstream_subscribe_id,
+                        );
+                    } else {
+                        let _ = request.ready_sender.send(Ok(()));
+                        return started;
+                    }
+                }
+                started
+            }
+        });
+        let handler = MockSubscribeHandler::default();
+
+        // Act
+        Subscribe
+            .handle(
+                SUBSCRIBER_SESSION,
+                &Span::none(),
+                &table,
+                &ControlMessageForwarder {
+                    repository: repository.clone(),
+                },
+                &ingress_sender,
+                &egress_sender,
+                &resolver,
+                &Arc::new(TrackCacheStore::new()),
+                &UpstreamCreationSerializer::default(),
+                Box::new(handler.clone()),
+            )
+            .await;
+        drop(egress_sender);
+
+        // Assert
+        assert_eq!(egress.await.unwrap(), 2);
+        assert!(handler.subscribe_errors.lock().unwrap().is_empty());
+        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
     }
 }

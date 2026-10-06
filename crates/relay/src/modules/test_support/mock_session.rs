@@ -325,10 +325,10 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct MockSubscribeHandler {
-    pub(crate) subscribe_ok_count: Mutex<usize>,
-    pub(crate) subscribe_errors: Mutex<Vec<u64>>,
+    pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
+    pub(crate) subscribe_errors: Arc<Mutex<Vec<u64>>>,
 }
 
 #[async_trait::async_trait]

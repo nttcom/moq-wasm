@@ -258,8 +258,11 @@ Each sequence owns the relay-side protocol logic for one message
    readiness `oneshot`, then send SUBSCRIBE_OK with the allocated track alias
    and resolved largest location — SUBSCRIBE_OK and egress start always agree.
    If a concurrent cleanup removed the upstream before registration, or the
-   registration before the runner reported readiness, reply SUBSCRIBE_ERROR
-   TRACK_DOES_NOT_EXIST instead.
+   registration before the runner reported readiness (e.g. the last other
+   subscriber left, or the publisher ended the track), the sequence goes back
+   to step 1 and finds or creates the upstream again, up to three attempts;
+   only then does it reply SUBSCRIBE_ERROR TRACK_DOES_NOT_EXIST. Another
+   session leaving must not fail a SUBSCRIBE that a fresh upstream can serve.
 
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
