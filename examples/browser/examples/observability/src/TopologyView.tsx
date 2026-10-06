@@ -22,6 +22,8 @@ interface Props {
 }
 
 const FIT_PADDING = 40
+const OVERVIEW_PADDING = 80
+const ENVIRONMENT_LABEL_HEIGHT = 12
 const MAX_ZOOM_IN = 1 / 0.6
 const MIN_VIEW_WIDTH = 150
 const MAX_VIEW_WIDTH = 8000
@@ -108,17 +110,32 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
   }, [topology, visible, selection, activeNodes])
 
   const fitTarget = useCallback(
-    (ids: string[]): ViewBox | null => {
+    (ids: string[], includeEnvironment: boolean): ViewBox | null => {
       const svg = svgRef.current
       if (!svg || ids.length === 0) return null
       const points = ids
         .map((id) => ({ point: layout.clients.get(id) ?? layout.relays.get(id), half: halfOf(topology, id) }))
         .filter((entry): entry is { point: Point; half: HalfSize } => Boolean(entry.point))
       if (points.length === 0) return null
-      const x0 = Math.min(...points.map(({ point, half }) => point.x - half.w)) - FIT_PADDING
-      const x1 = Math.max(...points.map(({ point, half }) => point.x + half.w)) + FIT_PADDING
-      const y0 = Math.min(...points.map(({ point, half }) => point.y - half.h)) - FIT_PADDING
-      const y1 = Math.max(...points.map(({ point, half }) => point.y + half.h)) + FIT_PADDING
+      const padding = includeEnvironment ? OVERVIEW_PADDING : FIT_PADDING
+      const environment = includeEnvironment
+        ? [
+            { x: CENTER.x - ENVIRONMENT_RADIUS, y: CENTER.y - ENVIRONMENT_RADIUS - ENVIRONMENT_LABEL_HEIGHT },
+            { x: CENTER.x + ENVIRONMENT_RADIUS, y: CENTER.y + ENVIRONMENT_RADIUS }
+          ]
+        : []
+      const xs = [
+        ...points.flatMap(({ point, half }) => [point.x - half.w, point.x + half.w]),
+        ...environment.map((p) => p.x)
+      ]
+      const ys = [
+        ...points.flatMap(({ point, half }) => [point.y - half.h, point.y + half.h]),
+        ...environment.map((p) => p.y)
+      ]
+      const x0 = Math.min(...xs) - padding
+      const x1 = Math.max(...xs) + padding
+      const y0 = Math.min(...ys) - padding
+      const y1 = Math.max(...ys) + padding
       const width = svg.clientWidth
       const visibleHeight = Math.max(120, svg.clientHeight - bottomInset)
       const overviewScale = Math.max(1000 / width, 840 / svg.clientHeight)
@@ -152,7 +169,10 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
     [applyViewBox]
   )
 
-  const fit = useCallback(() => animateTo(fitTarget(visibleNodeIds())), [animateTo, fitTarget, visibleNodeIds])
+  const fit = useCallback(
+    () => animateTo(fitTarget(visibleNodeIds(), !selection)),
+    [animateTo, fitTarget, visibleNodeIds, selection]
+  )
 
   const hasNodes = topology.relays.length > 0
   const selectionKey = selection ? `${selection.kind}:${selection.id}` : ''
