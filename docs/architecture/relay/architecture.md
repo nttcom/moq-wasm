@@ -277,6 +277,16 @@ Each sequence owns the relay-side protocol logic for one message
    only then does it reply SUBSCRIBE_ERROR TRACK_DOES_NOT_EXIST. Another
    session leaving must not fail a SUBSCRIBE that a fresh upstream can serve.
 
+### Publishers joining a received track
+draft-14 §8.4 makes a relay subscribe a publisher that announces a namespace
+whose tracks it already receives from other upstream sessions. After
+answering PUBLISH_NAMESPACE from a client session, `PublishNamespace` sends
+SUBSCRIBE to that publisher for every track of the namespace that has a
+downstream subscriber and that the publisher does not feed yet, and hands the
+requests to an `UpstreamJoinTask`, which adds the publisher once it answers.
+A PUBLISH for a track the relay already receives adds its publisher to the
+track the same way.
+
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
 `watch::Sender<bool>` next to its runner stop sender, starting at Forward 1

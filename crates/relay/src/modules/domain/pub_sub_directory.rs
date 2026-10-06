@@ -420,6 +420,25 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
+    pub(crate) fn tracks_awaiting_publisher(
+        &self,
+        track_namespace: &str,
+        publisher_session_id: SessionId,
+    ) -> Vec<TrackKey> {
+        self.upstream_tracks
+            .iter()
+            .filter(|entry| {
+                entry.key().track_namespace == track_namespace
+                    && entry.value().downstream_subscriber_count > 0
+                    && !entry
+                        .value()
+                        .subscriptions
+                        .contains_key(&publisher_session_id)
+            })
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
     pub(crate) fn get_upstream_track(&self, track_key: &TrackKey) -> Option<UpstreamTrack> {
         self.upstream_tracks
             .get(track_key)

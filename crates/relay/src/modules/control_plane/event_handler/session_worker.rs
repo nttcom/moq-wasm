@@ -165,8 +165,9 @@ impl SessionWorker {
                     .handle(
                         session_id,
                         &session_span,
-                        deps.local_pub_sub_directory.as_ref(),
+                        &deps.local_pub_sub_directory,
                         &deps.control_message_forwarder,
+                        &deps.ingress_sender,
                         self.cascading_relay_context(),
                         handler.as_ref(),
                     )
