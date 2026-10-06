@@ -5,7 +5,7 @@ use crate::modules::{
         authorize::{Denied, Operation, authorize},
         verified_token::VerifiedToken,
     },
-    enums::{
+    domain::error_code::{
         FetchErrorCode, PublishErrorCode, PublishNamespaceErrorCode, SubscribeErrorCode,
         SubscribeNamespaceErrorCode,
     },

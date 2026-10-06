@@ -10,17 +10,17 @@ use tokio::{
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    data_plane::{
-        cache::subgroup_key::SubgroupKey,
-        cache::track_cache::{NextObject, TrackCache, TrackMalformed},
+    data_plane::cache::{
+        subgroup_key::SubgroupKey,
+        track_cache::{NextObject, TrackCache, TrackMalformed},
     },
+    domain::track_key::TrackKey,
     session::{
         data_object::DataObject,
         data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
         publisher::Publisher,
         subscription::DownstreamSubscription,
     },
-    types::TrackKey,
 };
 
 use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};

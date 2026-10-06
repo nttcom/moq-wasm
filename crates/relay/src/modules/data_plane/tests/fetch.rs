@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::modules::{
     data_plane::tests::harness::{FetchSent, RelayHarness, fixtures::location},
-    enums::FetchErrorCode,
+    domain::error_code::FetchErrorCode,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

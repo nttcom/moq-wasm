@@ -3,7 +3,7 @@ use crate::modules::{
         cache::track_cache::{FetchCursor, FetchInterrupted},
         egress::coordinator::EgressFetchRequest,
     },
-    enums::FetchErrorCode,
+    domain::error_code::FetchErrorCode,
     session::data_sender::fetch_sender::FetchSender,
 };
 

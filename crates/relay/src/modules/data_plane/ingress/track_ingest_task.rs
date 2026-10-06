@@ -11,13 +11,13 @@ use crate::modules::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         ingress::{datagram_reader::read_datagrams, stream_reader::accept_streams},
     },
+    domain::{session_id::SessionId, track_key::TrackKey},
     session::{
         data_receiver::{
             datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiverFactory,
         },
         session_event::SessionEvent,
     },
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) enum IngestSource {

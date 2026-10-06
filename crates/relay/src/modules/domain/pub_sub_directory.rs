@@ -1,3 +1,5 @@
+pub(crate) mod entry;
+
 use std::{
     collections::HashSet,
     sync::{Arc, PoisonError, RwLock},
@@ -7,13 +9,16 @@ use dashmap::{DashMap, DashSet, Entry};
 use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
-    sequences::tables::table::{
-        ActiveUpstreamSubscription, DownstreamSubscription, PeerKind, PublishDoneReason,
-        RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
-        UpstreamSubscriptionOrigin,
+    domain::{
+        pub_sub_directory::entry::{
+            ActiveUpstreamSubscription, DownstreamSubscription, PeerKind, PublishDoneReason,
+            RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
+            UpstreamSubscriptionOrigin,
+        },
+        session_id::SessionId,
+        track_key::{TrackKey, TrackNamespace, TrackNamespacePrefix},
     },
     session::handler::publish::PublishHandler,
-    types::{SessionId, TrackKey, TrackNamespace, TrackNamespacePrefix},
 };
 
 pub(crate) struct RegisteredDownstreamSubscription {

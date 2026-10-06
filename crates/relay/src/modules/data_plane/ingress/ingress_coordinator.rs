@@ -10,11 +10,11 @@ use crate::modules::{
         cache::store::TrackCacheStore,
         ingress::track_ingest_task::{IngestCommand, IngestSource, IngestStart, TrackIngestTask},
     },
+    domain::{session_id::SessionId, track_key::TrackKey},
     session::{
         data_receiver::receiver::DataReceiver, session_event::SessionEvent,
         session_repository::SessionRepository, subscription::UpstreamSubscription,
     },
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct IngressStartRequest {

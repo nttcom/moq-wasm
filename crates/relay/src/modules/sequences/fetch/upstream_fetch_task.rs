@@ -14,9 +14,8 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
-    sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
+    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
-    types::SessionId,
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 

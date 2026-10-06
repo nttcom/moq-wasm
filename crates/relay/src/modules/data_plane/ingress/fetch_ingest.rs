@@ -9,9 +9,8 @@ use crate::modules::{
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
-    enums::FetchErrorCode,
+    domain::{error_code::FetchErrorCode, session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
-    types::{SessionId, TrackKey},
 };
 
 const DEFAULT_FETCH_FILL_TIMEOUT_SECS: u64 = 20;

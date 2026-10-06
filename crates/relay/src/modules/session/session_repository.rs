@@ -7,6 +7,7 @@ use tracing::{Instrument, Span};
 
 use crate::modules::{
     auth::{session_expiry_task::SessionExpiryTask, verified_token::VerifiedToken},
+    domain::{session_id::SessionId, session_peer::SessionPeer},
     session::{
         Session,
         moqt_session_event::MoqtSessionEvent,
@@ -14,7 +15,6 @@ use crate::modules::{
         session_event::{EventKind, SessionEvent},
         subscriber::Subscriber,
     },
-    types::SessionId,
 };
 
 pub(crate) struct SessionRepository {
@@ -36,28 +36,6 @@ pub(crate) struct NewSession {
     pub(crate) session_span: Span,
     pub(crate) peer: SessionPeer,
     pub(crate) verified_token: VerifiedToken,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SessionPeer {
-    Client,
-    Relay { relay_id: Option<String> },
-}
-
-impl SessionPeer {
-    pub(crate) fn kind(&self) -> &'static str {
-        match self {
-            Self::Client => "client",
-            Self::Relay { .. } => "relay",
-        }
-    }
-
-    pub(crate) fn relay_id(&self) -> Option<&str> {
-        match self {
-            Self::Client => None,
-            Self::Relay { relay_id } => relay_id.as_deref(),
-        }
-    }
 }
 
 fn expiry_task(

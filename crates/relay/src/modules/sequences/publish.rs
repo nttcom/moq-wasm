@@ -3,20 +3,21 @@ use std::sync::Arc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
-    enums::PublishErrorCode,
-    inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry,
-    sequences::{
-        CascadingRelayContext,
-        tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{
+    domain::{
+        error_code::PublishErrorCode,
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{
                 ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
             },
         },
+        session_id::SessionId,
+        track_key::TrackKey,
     },
+    inter_relay::InterRelayConnectionManager,
+    route_registry::RelayRouteRegistry,
+    sequences::CascadingRelayContext,
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
-    types::{SessionId, TrackKey},
 };
 
 use moqt::FilterType;

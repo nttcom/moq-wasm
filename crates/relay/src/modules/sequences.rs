@@ -6,7 +6,6 @@ pub(crate) mod publish_namespace_done;
 pub(crate) mod subscribe;
 pub(crate) mod subscribe_namespace;
 pub(crate) mod subscribe_update;
-pub(crate) mod tables;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 pub(crate) mod track_status;
@@ -18,9 +17,9 @@ pub(crate) mod upstream_serializer;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
+    domain::{session_id::SessionId, track_key::TrackKey},
     inter_relay::InterRelayConnectionManager,
     route_registry::{RelayInfo, RelayRouteRegistry},
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct CascadingRelayContext<'a> {

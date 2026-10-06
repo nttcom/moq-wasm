@@ -1,7 +1,7 @@
 use tracing::Span;
 
-use crate::modules::{
-    sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory, types::SessionId,
+use crate::modules::domain::{
+    pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
 };
 
 pub(crate) struct SubscribeUpdate;
@@ -35,8 +35,9 @@ impl SubscribeUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::sequences::{
-        tables::table::UpstreamSubscriptionOrigin, test_fixtures::table_with_upstream,
+    use crate::modules::{
+        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        sequences::test_fixtures::table_with_upstream,
     };
 
     #[test]

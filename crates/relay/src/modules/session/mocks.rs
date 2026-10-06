@@ -6,7 +6,10 @@ use tokio::sync::oneshot;
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     data_plane::tests::harness::fixtures::subscription::make_subscription,
-    sequences::tables::table::PublishDoneReason,
+    domain::{
+        pub_sub_directory::entry::PublishDoneReason, session_id::SessionId,
+        session_peer::SessionPeer,
+    },
     session::{
         Session,
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
@@ -19,11 +22,10 @@ use crate::modules::{
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
-        session_repository::{NewSession, SessionPeer, SessionRepository},
+        session_repository::{NewSession, SessionRepository},
         subscriber::Subscriber,
         subscription::{DownstreamSubscription, UpstreamSubscription},
     },
-    types::SessionId,
 };
 
 #[derive(Clone, Default)]

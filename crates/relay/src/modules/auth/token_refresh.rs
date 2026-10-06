@@ -6,7 +6,7 @@ use crate::modules::{
         token_verifier::{TokenVerifier, VerifyError},
         verified_token::VerifiedToken,
     },
-    enums::SubscribeErrorCode,
+    domain::error_code::SubscribeErrorCode,
 };
 
 #[derive(Debug)]
@@ -87,7 +87,7 @@ mod tests {
             },
             verified_token::VerifiedToken,
         },
-        enums::SubscribeErrorCode,
+        domain::error_code::SubscribeErrorCode,
     };
 
     fn jwt() -> Vec<AuthorizationToken> {

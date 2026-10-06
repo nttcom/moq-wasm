@@ -1,7 +1,9 @@
 use crate::modules::{
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PublishDoneReason},
-    types::SessionId,
+    domain::{
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
+        session_id::SessionId,
+    },
 };
 use tracing::Span;
 
@@ -42,14 +44,11 @@ impl UpstreamPublishDone {
 mod tests {
     use super::*;
     use crate::modules::{
-        sequences::{
-            tables::table::UpstreamSubscriptionOrigin,
-            test_fixtures::{
-                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
-                upstream_release_context,
-            },
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        sequences::test_fixtures::{
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
+            upstream_release_context,
         },
-        types::TrackKey,
     };
 
     const DOWNSTREAM_SESSION: SessionId = 2;

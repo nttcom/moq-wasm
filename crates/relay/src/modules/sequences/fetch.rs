@@ -16,10 +16,11 @@ use crate::modules::{
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
-    enums::FetchErrorCode,
-    sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
+    domain::{
+        error_code::FetchErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
+        session_id::SessionId, track_key::TrackKey,
+    },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
-    types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 
@@ -424,9 +425,8 @@ mod tests {
     use super::*;
     use crate::modules::{
         data_plane::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
-        sequences::{
-            tables::table::UpstreamSubscriptionOrigin, test_fixtures::table_with_upstream,
-        },
+        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        sequences::test_fixtures::table_with_upstream,
     };
 
     fn standalone_fetch_params(

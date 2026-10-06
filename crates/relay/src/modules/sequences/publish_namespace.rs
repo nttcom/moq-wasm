@@ -1,14 +1,14 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    enums::PublishNamespaceErrorCode,
+    domain::{
+        error_code::PublishNamespaceErrorCode,
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
+        session_id::SessionId,
+    },
     inter_relay::InterRelayConnectionManager,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
-    sequences::{
-        CascadingRelayContext,
-        tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
-    },
+    sequences::CascadingRelayContext,
     session::handler::publish_namespace::PublishNamespaceHandler,
-    types::SessionId,
 };
 use tracing::Span;
 
