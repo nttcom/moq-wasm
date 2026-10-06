@@ -958,7 +958,7 @@ mod tests {
     fn resolve_joining_target_no_objects_published() {
         // Arrange
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        table.register_downstream_subscription(2, 100, SessionPeer::Client, key, None);
+        table.register_downstream_subscription(2, 100, SessionPeer::Client, key, None, true);
 
         // Act
         let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
@@ -975,7 +975,14 @@ mod tests {
             object_id: 5,
         };
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        table.register_downstream_subscription(2, 100, SessionPeer::Client, key, Some(largest));
+        table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            key,
+            Some(largest),
+            true,
+        );
 
         // Act
         let target = Fetch
@@ -1011,6 +1018,7 @@ mod tests {
                 group_id: 1,
                 object_id: 1,
             }),
+            true,
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
 
@@ -1067,6 +1075,7 @@ mod tests {
                 group_id: 2,
                 object_id: 3,
             }),
+            true,
         );
 
         // Act
@@ -1118,6 +1127,7 @@ mod tests {
                 group_id: 1,
                 object_id: 1,
             }),
+            true,
         );
 
         // Act
@@ -1169,6 +1179,7 @@ mod tests {
                 group_id: 1,
                 object_id: 1,
             }),
+            true,
         );
 
         // Act

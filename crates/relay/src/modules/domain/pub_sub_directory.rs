@@ -646,7 +646,7 @@ impl InMemoryLocalPubSubDirectory {
     /// Returns `None` when the upstream track is gone. The returned
     /// stop receiver resolves once the registration is removed, however that happens; the
     /// subscription's egress runner lives exactly until then. The forward receiver
-    /// starts at Forward State 1 whatever the SUBSCRIBE asked for.
+    /// starts at `forward`.
     pub(crate) fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
@@ -654,6 +654,7 @@ impl InMemoryLocalPubSubDirectory {
         subscriber_peer: SessionPeer,
         track_key: TrackKey,
         start_location: Option<moqt::Location>,
+        forward: bool,
     ) -> Option<DownstreamRunnerSignals> {
         // The track entry stays locked until the registration is inserted: a concurrent removal
         // of the track either finds it or makes this registration fail. Lock order is always
@@ -664,7 +665,7 @@ impl InMemoryLocalPubSubDirectory {
             upstream.client_downstream_subscriber_count += 1;
         }
         let (runner_stop_sender, stop_receiver) = oneshot::channel();
-        let (forward_sender, forward_receiver) = watch::channel(true);
+        let (forward_sender, forward_receiver) = watch::channel(forward);
         let delivery_stats = Arc::new(DeliveryStats::default());
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
@@ -1069,6 +1070,7 @@ mod tests {
             SessionPeer::Client,
             track_key.clone(),
             Some(largest),
+            true,
         );
 
         // Assert
@@ -1096,6 +1098,7 @@ mod tests {
             SessionPeer::Client,
             track_key.clone(),
             None,
+            true,
         );
 
         // Assert
@@ -1112,7 +1115,7 @@ mod tests {
 
         // Act
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
             .unwrap();
 
         // Assert
@@ -1124,7 +1127,7 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
             .unwrap();
 
         // Act
@@ -1140,7 +1143,14 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap();
         signals.delivery_stats.record_stream_reset();
 
@@ -1172,8 +1182,14 @@ mod tests {
     fn forward_update_for_an_unknown_subscription_is_reported() {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        let _signals =
-            table.register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None);
+        let _signals = table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            track_key,
+            None,
+            true,
+        );
 
         // Act
         let updated = table.update_downstream_forward(2, 101, false);
@@ -1187,7 +1203,7 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
             .unwrap()
             .stop_receiver;
 
@@ -1235,7 +1251,14 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap()
             .stop_receiver;
         assert!(!table.remove_upstream_track(&track_key).is_empty());
@@ -1255,8 +1278,14 @@ mod tests {
         table.remove_session(1);
 
         // Act
-        let runner_signals =
-            table.register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None);
+        let runner_signals = table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            track_key,
+            None,
+            true,
+        );
 
         // Assert
         assert!(runner_signals.is_none());
@@ -1284,6 +1313,7 @@ mod tests {
                             SessionPeer::Client,
                             track_key,
                             None,
+                            true,
                         )
                         .is_some()
                 }
@@ -1317,6 +1347,7 @@ mod tests {
                     SessionPeer::Client,
                     track_key.clone(),
                     None,
+                    true,
                 )
                 .unwrap();
             let table = Arc::new(table);
@@ -1336,6 +1367,7 @@ mod tests {
                             SessionPeer::Client,
                             track_key,
                             None,
+                            true,
                         )
                         .is_some()
                 }
@@ -1388,7 +1420,14 @@ mod tests {
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         add_second_publisher(&table, &track_key, UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap()
             .stop_receiver;
 
@@ -1413,7 +1452,14 @@ mod tests {
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         add_second_publisher(&table, &track_key, UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap()
             .stop_receiver;
 
@@ -1443,7 +1489,14 @@ mod tests {
             },
         );
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap();
 
         // Act
@@ -1492,7 +1545,14 @@ mod tests {
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         add_relay_publisher(&table, &track_key);
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap();
         let mut relay_runner_stop_receiver = table
             .register_downstream_subscription(
@@ -1501,6 +1561,7 @@ mod tests {
                 SessionPeer::Relay,
                 track_key.clone(),
                 None,
+                true,
             )
             .unwrap()
             .stop_receiver;
@@ -1532,7 +1593,14 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         add_relay_publisher(&table, &track_key);
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap();
         let mut relay_runner_stop_receiver = table
             .register_downstream_subscription(
@@ -1541,6 +1609,7 @@ mod tests {
                 SessionPeer::Relay,
                 track_key.clone(),
                 None,
+                true,
             )
             .unwrap()
             .stop_receiver;
@@ -1578,6 +1647,7 @@ mod tests {
                     subscriber_peer,
                     track_key,
                     None,
+                    true,
                 )
                 .unwrap();
         }

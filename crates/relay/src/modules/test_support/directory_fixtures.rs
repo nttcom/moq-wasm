@@ -125,7 +125,7 @@ impl DownstreamPublishContext {
 
 pub(crate) async fn downstream_publish_context(
     table: Arc<InMemoryLocalPubSubDirectory>,
-    answer_publish: impl Fn() -> anyhow::Result<()> + Send + Sync + 'static,
+    answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
 ) -> DownstreamPublishContext {
     let (session, subscriber) = mock_session_answering_publish(answer_publish);
     let repository = session_repository_with_session(

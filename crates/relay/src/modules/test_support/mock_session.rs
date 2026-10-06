@@ -85,7 +85,7 @@ pub(crate) enum FetchAnswer {
     FetchOk,
 }
 
-type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<()> + Send + Sync>;
+type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<bool> + Send + Sync>;
 
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
@@ -206,10 +206,10 @@ pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn
     })
 }
 
-/// `answer_publish` runs when PUBLISH arrives; `Ok` answers PUBLISH_OK and
-/// `Err` stands for PUBLISH_ERROR.
+/// `answer_publish` runs when PUBLISH arrives; `Ok(forward)` answers PUBLISH_OK
+/// with that Forward State and `Err` stands for PUBLISH_ERROR.
 pub(crate) fn mock_session_answering_publish(
-    answer_publish: impl Fn() -> anyhow::Result<()> + Send + Sync + 'static,
+    answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
 ) -> (Box<dyn Session>, RecordedControlMessages) {
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
@@ -334,7 +334,7 @@ impl Publisher for MockUpstreamPublisher {
         let Some(answer_publish) = &self.answer_publish else {
             return std::future::pending().await;
         };
-        answer_publish()?;
+        let forward = answer_publish()?;
         Ok(DownstreamSubscription::from(
             moqt::Subscription::PublisherInitiated(moqt::PublisherInitiatedSubscription {
                 request_id: PUBLISH_REQUEST_ID,
@@ -344,7 +344,7 @@ impl Publisher for MockUpstreamPublisher {
                 group_order: GroupOrder::Ascending,
                 content_exists,
                 subscriber_priority: 128,
-                forward: true,
+                forward,
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
             }),

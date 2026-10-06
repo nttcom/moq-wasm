@@ -87,6 +87,13 @@ impl DownstreamSubscription {
     pub(crate) fn subscriber_priority(&self) -> u8 {
         self.inner.subscriber_priority()
     }
+
+    pub(crate) fn publish_ok_forward(&self) -> Option<bool> {
+        match &self.inner {
+            moqt::Subscription::PublisherInitiated(subscription) => Some(subscription.forward),
+            moqt::Subscription::SubscriberInitiated(_) => None,
+        }
+    }
 }
 
 impl From<moqt::Subscription> for DownstreamSubscription {

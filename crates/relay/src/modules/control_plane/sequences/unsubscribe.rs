@@ -114,6 +114,7 @@ mod tests {
                         SessionPeer::Client,
                         track_key(),
                         None,
+                        true,
                     )
                     .unwrap()
                     .stop_receiver

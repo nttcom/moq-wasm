@@ -335,7 +335,9 @@ establishes a subscription):
   PUBLISH_DONE TRACK_ENDED instead of a registration; a PUBLISH_ERROR or
   timeout registers nothing.
 
-Forward State starts at 1 whatever the PUBLISH_OK carries, as for SUBSCRIBE.
+The subscription starts at the Forward State of the PUBLISH_OK (§5.1: the
+sender of PUBLISH_OK sets it), and the forwarded PUBLISH waits for that
+PUBLISH_OK before any object is sent.
 The worker waits for each subscriber's PUBLISH_OK in turn before answering the
 publisher.
 
@@ -352,9 +354,9 @@ relay's PUBLISH_OK wait for the request timeout.
 
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
-`watch::Sender<bool>` next to its runner stop sender, starting at Forward 1
-whatever the SUBSCRIBE asked for (clients that leave Forward at 0 expect
-delivery). SUBSCRIBE_UPDATE sets it for the (session, Subscription Request ID)
+`watch::Sender<bool>` next to its runner stop sender. A SUBSCRIBE starts it at
+Forward 1 whatever the SUBSCRIBE asked for (clients that leave Forward at 0
+expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward. SUBSCRIBE_UPDATE sets it for the (session, Subscription Request ID)
 registration; an update for no registered subscription is logged and dropped.
 Start Location, End Group and Subscriber Priority are not applied, and the
 upstream subscription keeps Forward 1 so the cache keeps filling for FETCH.
@@ -584,8 +586,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   while further opens of an already scheduled run are skipped. It subscribes to open events first and then schedules every
   cached group at or after the start, so a group that ingress opened and
   closed before the scheduler existed is still delivered. While the
-  registration's Forward State is 0 it drops open events, so no subgroup opened
-  meanwhile is ever sent; streams already scheduled run to their end, and
+  registration's Forward State is 0 it drops open events, and a runner that
+  starts at Forward 0 skips that cache scan, so no subgroup opened meanwhile is
+  ever sent; streams already scheduled run to their end, and
   after Forward returns to 1 delivery resumes with the next subgroup opened. The start is a
   lower bound in both paths: group ids may begin anywhere and skip values
   (§2.3.1), so the first delivered group is the first one at or above the

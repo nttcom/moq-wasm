@@ -263,7 +263,7 @@ mod tests {
         );
         downstream_publish_context(table, move || {
             sent.lock().unwrap().push("PUBLISH");
-            Ok(())
+            Ok(true)
         })
         .await
     }

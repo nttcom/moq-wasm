@@ -67,6 +67,9 @@ impl DownstreamPublish<'_> {
             )
             .await?;
         let request_id = downstream_subscription.request_id();
+        let Some(forward) = downstream_subscription.publish_ok_forward() else {
+            bail!("PUBLISH answered without a publisher-initiated subscription");
+        };
         let subscriber_peer = super::session_peer(subscriber_session_id, self.forwarder).await;
 
         let Some(runner_signals) = self.table.register_downstream_subscription(
@@ -75,6 +78,7 @@ impl DownstreamPublish<'_> {
             subscriber_peer,
             track_key.clone(),
             largest_location,
+            forward,
         ) else {
             let track_ended = PublishDoneReason {
                 status_code: publish_done_status_code::TRACK_ENDED,
@@ -133,7 +137,7 @@ mod tests {
     }
 
     async fn context_accepting_publish() -> DownstreamPublishContext {
-        downstream_publish_context(published_table(), || Ok(())).await
+        downstream_publish_context(published_table(), || Ok(true)).await
     }
 
     async fn send_publish(ctx: &DownstreamPublishContext) -> anyhow::Result<()> {
@@ -200,6 +204,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn egress_starts_with_the_forward_state_of_the_publish_ok() {
+        // Arrange
+        let mut ctx = downstream_publish_context(published_table(), || Ok(false)).await;
+
+        // Act
+        send_publish(&ctx).await.unwrap();
+
+        // Assert
+        assert!(
+            !*take_egress_start(&mut ctx)
+                .runner_signals
+                .forward_receiver
+                .borrow()
+        );
+    }
+
+    #[tokio::test]
     async fn publisher_session_cleanup_ends_the_forwarded_publish_with_publish_done() {
         // Arrange
         let mut ctx = context_accepting_publish().await;
@@ -224,7 +245,7 @@ mod tests {
         let ended_table = table.clone();
         let mut ctx = downstream_publish_context(table, move || {
             ended_table.remove_session(PUBLISHER_SESSION);
-            Ok(())
+            Ok(true)
         })
         .await;
 
