@@ -34,7 +34,6 @@ pub(crate) struct DownstreamSubscriptionState {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) request_id: u64,
     pub(crate) upstream_key: UpstreamSubscriptionKey,
-    pub(crate) forward: bool,
     pub(crate) delivery: DeliveryCounters,
 }
 
@@ -458,7 +457,6 @@ impl InMemoryLocalPubSubDirectory {
                     subscriber_session_id,
                     request_id,
                     upstream_key: registered.subscription.upstream_key.clone(),
-                    forward: *registered.forward_sender.borrow(),
                     delivery: registered.delivery_stats.counters(),
                 }
             })
@@ -1095,14 +1093,13 @@ mod tests {
     }
 
     #[test]
-    fn downstream_subscription_states_report_forward_and_delivery() {
+    fn downstream_subscription_states_report_delivery() {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
             .register_downstream_subscription(2, 100, upstream_key.clone(), None)
             .unwrap();
         signals.delivery_stats.record_stream_opened();
-        table.update_downstream_forward(2, 100, false);
 
         // Act
         let states = table.downstream_subscription_states();
@@ -1113,7 +1110,6 @@ mod tests {
         };
         assert_eq!((state.subscriber_session_id, state.request_id), (2, 100));
         assert_eq!(state.upstream_key, upstream_key);
-        assert!(!state.forward);
         assert_eq!(state.delivery.streams_opened, 1);
     }
 

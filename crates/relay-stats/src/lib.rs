@@ -64,9 +64,7 @@ pub struct TrackStats {
     pub namespace: String,
     pub name: String,
     pub publisher_session_id: u64,
-    pub objects_received: u64,
     pub bytes_received: u64,
-    pub subgroups_aborted: u64,
     pub max_arrival_gap_since_last_snapshot_us: u64,
 }
 
@@ -77,8 +75,6 @@ pub struct SubscriptionStats {
     pub publisher_session_id: u64,
     pub subscriber_session_id: u64,
     pub request_id: u64,
-    pub forward: bool,
-    pub objects_sent: u64,
     pub bytes_sent: u64,
     pub streams_opened: u64,
     pub streams_reset: u64,
@@ -136,9 +132,7 @@ mod tests {
                 namespace: "app/live".to_string(),
                 name: "video".to_string(),
                 publisher_session_id: 7,
-                objects_received: 1,
                 bytes_received: 2,
-                subgroups_aborted: 3,
                 max_arrival_gap_since_last_snapshot_us: 4,
             }],
             subscriptions: vec![SubscriptionStats {
@@ -147,8 +141,6 @@ mod tests {
                 publisher_session_id: 7,
                 subscriber_session_id: 9,
                 request_id: 2,
-                forward: true,
-                objects_sent: 1,
                 bytes_sent: 2,
                 streams_opened: 3,
                 streams_reset: 4,

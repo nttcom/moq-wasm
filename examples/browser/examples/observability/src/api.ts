@@ -38,9 +38,7 @@ export interface TrackStats {
   namespace: string
   name: string
   publisher_session_id: Id
-  objects_received: number
   bytes_received: number
-  subgroups_aborted: number
   max_arrival_gap_since_last_snapshot_us: number
 }
 
@@ -50,8 +48,6 @@ export interface SubscriptionStats {
   publisher_session_id: Id
   subscriber_session_id: Id
   request_id: Id
-  forward: boolean
-  objects_sent: number
   bytes_sent: number
   streams_opened: number
   streams_reset: number

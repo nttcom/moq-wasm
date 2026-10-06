@@ -3,7 +3,7 @@ use crate::modules::test_support::relay_harness::{
 };
 
 #[tokio::test]
-async fn delivered_objects_and_their_payload_bytes_are_counted() {
+async fn delivered_payload_bytes_are_counted() {
     // Arrange
     let harness = RelayHarness::new();
     let mut egress = harness.start_egress(None).await;
@@ -21,7 +21,6 @@ async fn delivered_objects_and_their_payload_bytes_are_counted() {
     let counters = egress.delivery_counters();
     let payload_bytes: usize = (0..3).map(|index| ordered_payload(index).len()).sum();
     assert_eq!(counters.streams_opened, 1);
-    assert_eq!(counters.objects_sent, 3);
     assert_eq!(counters.bytes_sent, payload_bytes as u64);
     assert_eq!(counters.streams_reset, 0);
     assert!(counters.last_sent_received_at.is_some());

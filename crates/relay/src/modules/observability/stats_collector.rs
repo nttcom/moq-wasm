@@ -185,9 +185,7 @@ fn track_stats(
         namespace: upstream_key.track_namespace.clone(),
         name: upstream_key.track_name.clone(),
         publisher_session_id: upstream_key.publisher_session_id,
-        objects_received: ingress.map_or(0, |counters| counters.objects_received),
         bytes_received: ingress.map_or(0, |counters| counters.bytes_received),
-        subgroups_aborted: ingress.map_or(0, |counters| counters.subgroups_aborted),
         max_arrival_gap_since_last_snapshot_us: ingress
             .map_or(0, |counters| micros(counters.max_arrival_gap)),
     }
@@ -201,7 +199,6 @@ fn subscription_stats(
         subscriber_session_id,
         request_id,
         upstream_key,
-        forward,
         delivery,
     } = state;
     let lag = match (newest_received, delivery.last_sent_received_at) {
@@ -214,8 +211,6 @@ fn subscription_stats(
         publisher_session_id: upstream_key.publisher_session_id,
         subscriber_session_id,
         request_id,
-        forward,
-        objects_sent: delivery.objects_sent,
         bytes_sent: delivery.bytes_sent,
         streams_opened: delivery.streams_opened,
         streams_reset: delivery.streams_reset,
@@ -410,7 +405,6 @@ mod tests {
             (track.namespace.as_str(), track.name.as_str()),
             ("app/live", "video")
         );
-        assert_eq!(track.objects_received, 2);
         assert_eq!(track.bytes_received, 6);
         assert_eq!(track.max_arrival_gap_since_last_snapshot_us, 250_000);
         let [subscription] = &snapshot.subscriptions[..] else {
@@ -424,7 +418,6 @@ mod tests {
             (9, 4)
         );
         assert_eq!(subscription.publisher_session_id, 1);
-        assert_eq!(subscription.objects_sent, 1);
         assert_eq!(subscription.bytes_sent, 4);
         assert_eq!(subscription.lag_behind_newest_received_us, 250_000);
         assert_eq!(snapshot.process.cache_objects, 2);

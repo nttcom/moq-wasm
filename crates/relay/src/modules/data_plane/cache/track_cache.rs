@@ -526,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn every_received_object_is_counted_but_only_stored_ones_occupy_the_cache() {
+    fn every_received_payload_is_counted_but_only_stored_objects_occupy_the_cache() {
         // Arrange
         let cache = TrackCache::new();
         let payload = Bytes::from_static(b"12345");
@@ -538,7 +538,6 @@ mod tests {
 
         // Assert
         let counters = cache.ingress_stats().take();
-        assert_eq!(counters.objects_received, 3);
         assert_eq!(counters.bytes_received, 15);
         assert_eq!(
             cache.occupancy(),
@@ -547,19 +546,6 @@ mod tests {
                 payload_bytes: 10,
             }
         );
-    }
-
-    #[test]
-    fn only_a_subgroup_closed_without_finish_counts_as_aborted() {
-        // Arrange
-        let cache = TrackCache::new();
-
-        // Act
-        insert_closed_group(&cache, 0, &[0]);
-        insert_aborted_group(&cache, 1, &[0]);
-
-        // Assert
-        assert_eq!(cache.ingress_stats().take().subgroups_aborted, 1);
     }
 
     #[tokio::test(start_paused = true)]

@@ -90,15 +90,15 @@ neither is reported.
   "tracks": [
     {
       "namespace": "ac8adbc8-…/live/ch1", "name": "video", "publisher_session_id": 7,
-      "objects_received": 900, "bytes_received": 1234567, "subgroups_aborted": 0,
+      "bytes_received": 1234567,
       "max_arrival_gap_since_last_snapshot_us": 34000
     }
   ],
   "subscriptions": [
     {
       "namespace": "ac8adbc8-…/live/ch1", "name": "video", "publisher_session_id": 7,
-      "subscriber_session_id": 9, "request_id": 2, "forward": true,
-      "objects_sent": 880, "bytes_sent": 1200000, "streams_opened": 30, "streams_reset": 0,
+      "subscriber_session_id": 9, "request_id": 2,
+      "bytes_sent": 1200000, "streams_opened": 30, "streams_reset": 0,
       "lag_behind_newest_received_us": 40000
     }
   ]
