@@ -47,15 +47,6 @@ pub(crate) enum UpstreamSubscriptionOrigin {
     Subscribe,
 }
 
-/// Whether a session belongs to an end client or another relay.
-/// Client subscriptions own the Redis route for their prefix, so the
-/// directory tracks the kind to detect when the last client leaves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PeerKind {
-    Client,
-    Relay,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) upstream_key: UpstreamSubscriptionKey,

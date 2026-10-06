@@ -76,7 +76,7 @@ transport connection to a per-connection task owned by `SessionIntake`:
 3. `Handshake::accept()` sends SERVER_SETUP;
 4. the session is boxed as `dyn session::Session` and added to
    `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`
-   or `Relay { relay_id }` — the endpoint it arrived on) and its
+   or `Relay` — the endpoint it arrived on) and its
    `VerifiedToken`, which later requests are authorized against;
 5. for a client token (`is_relay == false`) with an `exp`, the repository
    starts a `SessionExpiryTask` that closes the session with
@@ -223,7 +223,7 @@ Each sequence owns the relay-side protocol logic for one message
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
   to its sender).
 - `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
-  registry of publish/subscribe namespaces (with `PeerKind` so client-owned
+  registry of publish/subscribe namespaces (with `SessionPeer` so client-owned
   Redis routes are cleaned up when the last *client* leaves), active upstream
   subscriptions, and downstream subscriptions. `remove_session` returns everything cleanup needs.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The

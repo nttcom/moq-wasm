@@ -116,6 +116,6 @@ impl RelayServer {
     }
 
     pub fn spawn_inner_transport<T: moqt::TransportProtocol>(&self, port: u16) -> SessionHandler {
-        self.spawn_transport::<T>(port, SessionPeer::Relay { relay_id: None })
+        self.spawn_transport::<T>(port, SessionPeer::Relay)
     }
 }

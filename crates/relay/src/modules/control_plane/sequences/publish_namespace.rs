@@ -7,9 +7,8 @@ use crate::modules::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
     domain::{
-        error_code::PublishNamespaceErrorCode,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
-        session_id::SessionId,
+        error_code::PublishNamespaceErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
+        session_id::SessionId, session_peer::SessionPeer,
     },
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
@@ -55,12 +54,12 @@ impl PublishNamespace {
             return;
         }
 
-        let peer_kind = if is_origin {
-            PeerKind::Client
+        let peer = if is_origin {
+            SessionPeer::Client
         } else {
-            PeerKind::Relay
+            SessionPeer::Relay
         };
-        table.register_publish_namespace(session_id, track_namespace.to_string(), peer_kind);
+        table.register_publish_namespace(session_id, track_namespace.to_string(), peer);
 
         if let Err(e) = handler.ok().await {
             tracing::error!("Publish Namespace Error: {:?}", e);

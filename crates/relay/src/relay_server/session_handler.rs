@@ -78,7 +78,7 @@ impl SessionIntake {
                         session_id,
                         session: Box::new(session),
                         session_span: session_span.clone(),
-                        peer: self.accepted_peer.clone(),
+                        peer: self.accepted_peer,
                         verified_token,
                     },
                     self.relay_session_event_sender.clone(),
@@ -108,14 +108,11 @@ impl SessionHandler {
                 loop {
                     let session_id = generate_session_id();
                     let session_peer = intake.accepted_peer.kind();
-                    let session_peer_relay_id =
-                        intake.accepted_peer.relay_id().unwrap_or("unknown");
                     let session_span = tracing::info_span!(
                         parent: None,
                         "relay.session",
                         session_id = session_id,
                         session_peer = session_peer,
-                        session_peer_relay_id = session_peer_relay_id,
                         relay_hostname = %relay_hostname,
                     );
                     let connecting = async {

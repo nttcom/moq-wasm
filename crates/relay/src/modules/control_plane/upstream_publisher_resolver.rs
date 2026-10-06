@@ -90,7 +90,7 @@ mod tests {
     use super::*;
     use crate::modules::{
         cascading::route_registry::{NamespaceRoute, RegisterRouteError, RelayInfo},
-        domain::pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
+        domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_peer::SessionPeer},
         session::session_repository::SessionRepository,
     };
 
@@ -180,8 +180,8 @@ mod tests {
     async fn prefers_local_publisher_and_picks_min_session_id() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_publish_namespace(5, "ns".to_string(), PeerKind::Client);
-        table.register_publish_namespace(3, "ns".to_string(), PeerKind::Client);
+        table.register_publish_namespace(5, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(3, "ns".to_string(), SessionPeer::Client);
         let resolver = make_resolver(PublisherLookup::MustNotBeCalled);
 
         // Act

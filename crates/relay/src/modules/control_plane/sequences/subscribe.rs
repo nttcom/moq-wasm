@@ -525,8 +525,8 @@ mod tests {
     use crate::modules::cascading::inter_relay_connection_manager::InterRelayConnectionManager;
     use crate::modules::cascading::route_registry::NoopRelayRouteRegistry;
     use crate::modules::data_plane::cache::track_cache::TrackCache;
-    use crate::modules::domain::pub_sub_directory::{
-        InMemoryLocalPubSubDirectory, entry::PeerKind,
+    use crate::modules::domain::{
+        pub_sub_directory::InMemoryLocalPubSubDirectory, session_peer::SessionPeer,
     };
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, active_upstream, upstream_key,
@@ -582,7 +582,7 @@ mod tests {
         table.register_publish_namespace(
             PUBLISHER_SESSION,
             track_key.track_namespace.clone(),
-            PeerKind::Client,
+            SessionPeer::Client,
         );
 
         let session = mock_session_answering_subscribe({

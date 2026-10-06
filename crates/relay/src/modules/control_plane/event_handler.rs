@@ -152,9 +152,8 @@ mod tests {
             ingress::ingress_coordinator::IngressCommand,
         },
         domain::{
-            pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
-            session_id::SessionId,
-            track_key::TrackKey,
+            pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
+            session_peer::SessionPeer, track_key::TrackKey,
         },
         session::{
             moqt_session_event::MoqtSessionEvent,
@@ -246,7 +245,7 @@ mod tests {
             self.local_pub_sub_directory.register_publish_namespace(
                 session_id,
                 track_namespace.to_string(),
-                PeerKind::Client,
+                SessionPeer::Client,
             );
         }
 
@@ -259,7 +258,7 @@ mod tests {
             self.local_pub_sub_directory.register_subscribe_namespace(
                 session_id,
                 track_namespace_prefix.to_string(),
-                PeerKind::Client,
+                SessionPeer::Client,
             );
             recorded
         }
