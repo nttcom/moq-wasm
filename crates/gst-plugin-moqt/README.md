@@ -16,7 +16,7 @@ GStreamer 1.20+ with `gst-plugins-base`, `gst-plugins-good` and
 
 ```shell
 make gst-plugin
-GST_PLUGIN_PATH=target/debug gst-inspect-1.0 moqtsink
+gst-inspect-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib moqtsink
 ```
 
 ## Element
@@ -58,7 +58,7 @@ make ffmpeg-srt-bbb-local     # or make ffmpeg-srt
 `make gst-srt-publish` runs:
 
 ```shell
-GST_PLUGIN_PATH=target/debug gst-launch-1.0 -e \
+gst-launch-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib -e \
   srtsrc uri="srt://0.0.0.0:9000?mode=listener" ! tsdemux name=demux \
   demux. ! queue ! h264parse config-interval=-1 ! moqt. \
   demux. ! queue ! aacparse ! moqt. \
