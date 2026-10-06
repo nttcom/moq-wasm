@@ -1,6 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
@@ -70,6 +71,7 @@ const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
 const djevStatus = new DjevStatusView(element('djev-status'))
+showBotOffHoursNotice(element('bot-hours'))
 
 chatInput.maxLength = MAX_CHAT_TEXT_LENGTH
 
