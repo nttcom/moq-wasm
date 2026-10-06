@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
 use crate::modules::{
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::RelayRouteRegistry,
+    },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
@@ -16,8 +20,6 @@ use crate::modules::{
         session_id::SessionId,
         track_key::TrackKey,
     },
-    inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry,
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
 

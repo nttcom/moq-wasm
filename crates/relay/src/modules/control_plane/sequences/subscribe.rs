@@ -522,6 +522,8 @@ impl Subscribe {
 mod tests {
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
+    use crate::modules::cascading::inter_relay_connection_manager::InterRelayConnectionManager;
+    use crate::modules::cascading::route_registry::NoopRelayRouteRegistry;
     use crate::modules::control_plane::sequences::test_fixtures::{
         PUBLISHER_SESSION, active_upstream, upstream_key,
     };
@@ -530,8 +532,6 @@ mod tests {
     use crate::modules::domain::pub_sub_directory::{
         InMemoryLocalPubSubDirectory, entry::PeerKind,
     };
-    use crate::modules::inter_relay::InterRelayConnectionManager;
-    use crate::modules::route_registry::NoopRelayRouteRegistry;
     use crate::modules::session::mocks::{
         MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
     };

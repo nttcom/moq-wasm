@@ -1,11 +1,11 @@
 use crate::modules::{
+    cascading::route_registry::{RegisterRouteError, RelayRouteRegistry},
     control_plane::control_message_forwarder::ControlMessageForwarder,
     domain::{
         error_code::SubscribeNamespaceErrorCode,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
         session_id::SessionId,
     },
-    route_registry::{RegisterRouteError, RelayRouteRegistry},
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
 use tracing::Span;

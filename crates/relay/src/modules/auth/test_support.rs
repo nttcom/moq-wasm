@@ -20,7 +20,7 @@ use crate::{
             token_verifier::{TokenVerifier, VerifyError},
             verified_token::{VerifiedToken, parse_namespace_path},
         },
-        route_registry::NoopRelayRouteRegistry,
+        cascading::route_registry::NoopRelayRouteRegistry,
     },
     relay_server::{server::RelayServerDeps, session_handler::SessionHandler},
 };

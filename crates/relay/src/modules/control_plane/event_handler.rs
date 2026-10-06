@@ -9,6 +9,10 @@ use crate::modules::{
         token_refresh::refresh_token,
         token_verifier::TokenVerifier,
     },
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::RelayRouteRegistry,
+    },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
@@ -35,8 +39,6 @@ use crate::modules::{
         },
         session_id::SessionId,
     },
-    inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry,
     session::{
         moqt_session_event::MoqtSessionEvent,
         session_event::{EventKind, SessionEvent},
@@ -782,6 +784,10 @@ mod tests {
             test_support::{StubOutcome, StubVerifier},
             verified_token::VerifiedToken,
         },
+        cascading::{
+            inter_relay_connection_manager::InterRelayConnectionManager,
+            route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
+        },
         control_plane::{
             control_message_forwarder::ControlMessageForwarder,
             upstream_creation_serializer::UpstreamCreationSerializer,
@@ -796,8 +802,6 @@ mod tests {
             session_id::SessionId,
             track_key::TrackKey,
         },
-        inter_relay::InterRelayConnectionManager,
-        route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         session::{
             mocks::{
                 MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
