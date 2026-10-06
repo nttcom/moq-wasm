@@ -1,11 +1,8 @@
 use std::sync::Arc;
 
-use crate::{
-    TransportProtocol,
-    modules::moqt::{
-        domains::session_context::{IncomingObjectNotification, SessionContext},
-        runtime::dispatch::incoming_object::IncomingObject,
-    },
+use crate::modules::moqt::{
+    domains::session_context::{IncomingObjectNotification, SessionContext},
+    runtime::dispatch::incoming_object::IncomingObject,
 };
 
 pub(crate) struct SubscriptionNotifier;
@@ -17,10 +14,10 @@ impl SubscriptionNotifier {
         skip_all,
         fields(track_alias = track_alias)
     )]
-    pub(crate) async fn notify<T: TransportProtocol>(
-        context: &Arc<SessionContext<T>>,
+    pub(crate) async fn notify(
+        context: &Arc<SessionContext>,
         track_alias: u64,
-        incoming_object: IncomingObject<T>,
+        incoming_object: IncomingObject,
     ) {
         match context
             .notify_incoming_object(track_alias, incoming_object)

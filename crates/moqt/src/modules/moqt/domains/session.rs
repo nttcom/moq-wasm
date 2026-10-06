@@ -15,19 +15,17 @@ use crate::modules::moqt::control_plane::control_messages::messages::server_setu
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
-use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::runtime::tasks::{
     control_message_receive_task::ControlMessageReceiveTask,
     datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
     uni_stream_receive_task::UniStreamReceiveTask,
 };
-use crate::modules::transport::transport_connection::TransportConnection;
 use crate::modules::transport::transport_stats::TransportStats;
 
-pub struct Session<T: TransportProtocol> {
-    inner: Arc<SessionContext<T>>,
+pub struct Session {
+    inner: Arc<SessionContext>,
     session_span: Span,
-    event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>>,
+    event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
     control_message_receive_task: JoinHandle,
     datagram_receive_task: JoinHandle,
     uni_stream_receive_task: JoinHandle,
@@ -35,11 +33,14 @@ pub struct Session<T: TransportProtocol> {
     server_setup: Option<ServerSetup>,
 }
 
-impl<T: TransportProtocol> Session<T> {
+impl Session {
+    // On wasm32 the browser transport is !Send, but the context is shared with
+    // the native build, where the tasks run on a multi-threaded executor.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) fn new(
-        receive_stream: BiStreamReceiver<T>,
-        inner: SessionContext<T>,
-        event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent<T>>,
+        receive_stream: BiStreamReceiver,
+        inner: SessionContext,
+        event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         server_setup: Option<ServerSetup>,
     ) -> Self {
         let inner = Arc::new(inner);
@@ -79,19 +80,19 @@ impl<T: TransportProtocol> Session<T> {
         }
     }
 
-    pub fn publisher(&self) -> Publisher<T> {
-        Publisher::<T> {
+    pub fn publisher(&self) -> Publisher {
+        Publisher {
             session: self.inner.clone(),
         }
     }
 
-    pub fn subscriber(&self) -> Subscriber<T> {
-        Subscriber::<T> {
+    pub fn subscriber(&self) -> Subscriber {
+        Subscriber {
             session: self.inner.clone(),
         }
     }
 
-    pub fn publisher_subscriber_pair(&self) -> (Publisher<T>, Subscriber<T>) {
+    pub fn publisher_subscriber_pair(&self) -> (Publisher, Subscriber) {
         (self.publisher(), self.subscriber())
     }
 
@@ -102,7 +103,7 @@ impl<T: TransportProtocol> Session<T> {
         self.inner.close_with_error(code, reason);
     }
 
-    pub async fn receive_event(&self) -> anyhow::Result<SessionEvent<T>> {
+    pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
         match self.event_receiver.lock().await.recv().await {
             Some(v) => Ok(v),
             None => bail!("Sender dropped."),
@@ -158,7 +159,7 @@ impl<T: TransportProtocol> Session<T> {
     }
 }
 
-impl<T: TransportProtocol> Drop for Session<T> {
+impl Drop for Session {
     fn drop(&mut self) {
         self.session_span.in_scope(|| {
             tracing::info!("Session dropped.");

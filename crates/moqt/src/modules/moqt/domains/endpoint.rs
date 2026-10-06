@@ -74,11 +74,11 @@ impl<T: TransportProtocol> Endpoint<T> {
     /// QUIC (default port 4433) and `https://host[:port][/path]` for
     /// WebTransport (default port 443). `QUIC` and `WEBTRANSPORT` endpoints
     /// accept only their own scheme; `DUAL` accepts both.
-    pub async fn connect(&self, url: &str) -> anyhow::Result<Connecting<T>> {
+    pub async fn connect(&self, url: &str) -> anyhow::Result<Connecting> {
         self.session_creator.create_new_connection(url).await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Accepting<T>> {
+    pub async fn accept(&mut self) -> anyhow::Result<Accepting> {
         self.session_creator.accept_new_connection().await
     }
 }

@@ -36,7 +36,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> Subscriber for moqt::Subscriber<T> {
+impl Subscriber for moqt::Subscriber {
     #[tracing::instrument(
         level = "info",
         name = "relay.subscriber.send_subscribe",

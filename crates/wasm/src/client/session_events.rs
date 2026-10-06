@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use moqt::{
-    BROWSER, FetchHandler, PublishHandler, PublishNamespaceHandler, Session, SessionEvent,
-    SubscribeHandler, TrackStatusHandler,
+    FetchHandler, PublishHandler, PublishNamespaceHandler, Session, SessionEvent, SubscribeHandler,
+    TrackStatusHandler,
     wire::{Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus},
 };
 use wasm_bindgen::JsValue;
@@ -23,7 +23,7 @@ use crate::{
 
 /// Turns the session's events into the JavaScript callbacks and parks every
 /// request handler until JavaScript answers it. Returns when the session ends.
-pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Session<BROWSER>>) {
+pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Session>) {
     while let Ok(event) = session.receive_event().await {
         match event {
             SessionEvent::PublishNamespace(handler) => on_publish_namespace(&shared, handler),
@@ -65,7 +65,7 @@ pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Ses
     shared.on_disconnected();
 }
 
-fn on_publish_namespace(shared: &ClientShared, handler: PublishNamespaceHandler<BROWSER>) {
+fn on_publish_namespace(shared: &ClientShared, handler: PublishNamespaceHandler) {
     let publish_namespace = PublishNamespace::new(
         handler.request_id(),
         handler.track_namespace_tuple.clone(),
@@ -84,7 +84,7 @@ fn on_publish_namespace(shared: &ClientShared, handler: PublishNamespaceHandler<
     );
 }
 
-fn on_publish(shared: &ClientShared, handler: PublishHandler<BROWSER>) {
+fn on_publish(shared: &ClientShared, handler: PublishHandler) {
     let publish = Publish {
         request_id: handler.request_id,
         track_namespace_tuple: handler.track_namespace_tuple.clone(),
@@ -106,7 +106,7 @@ fn on_publish(shared: &ClientShared, handler: PublishHandler<BROWSER>) {
     emit(&shared.callbacks, |c| &c.publish, &[message.into()]);
 }
 
-fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler<BROWSER>) {
+fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler) {
     let subscribe = Subscribe {
         request_id: handler.request_id(),
         track_namespace: handler.track_namespace_tuple.clone(),
@@ -143,7 +143,7 @@ fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler<BROWSER>) {
     );
 }
 
-fn on_track_status(shared: &ClientShared, handler: TrackStatusHandler<BROWSER>) {
+fn on_track_status(shared: &ClientShared, handler: TrackStatusHandler) {
     if !has_callback(&shared.callbacks, |c| &c.track_status) {
         reject_track_status(handler, RequestRejection::NotSupported);
         return;
@@ -176,14 +176,14 @@ fn on_track_status(shared: &ClientShared, handler: TrackStatusHandler<BROWSER>) 
     emit(&shared.callbacks, |c| &c.track_status, &[message.into()]);
 }
 
-fn reject_track_status(handler: TrackStatusHandler<BROWSER>, rejection: RequestRejection) {
+fn reject_track_status(handler: TrackStatusHandler, rejection: RequestRejection) {
     let (code, reason) = rejection.code_and_reason();
     spawn_local(async move {
         let _ = handler.error(code, reason.to_string()).await;
     });
 }
 
-fn on_fetch(shared: &ClientShared, handler: FetchHandler<BROWSER>) {
+fn on_fetch(shared: &ClientShared, handler: FetchHandler) {
     if !has_callback(&shared.callbacks, |c| &c.fetch) {
         reject_fetch(handler, RequestRejection::NotSupported);
         return;
@@ -206,7 +206,7 @@ fn on_fetch(shared: &ClientShared, handler: FetchHandler<BROWSER>) {
     }
 }
 
-fn reject_fetch(handler: FetchHandler<BROWSER>, rejection: RequestRejection) {
+fn reject_fetch(handler: FetchHandler, rejection: RequestRejection) {
     let (code, reason) = rejection.code_and_reason();
     spawn_local(async move {
         let _ = handler.error(code, reason.to_string()).await;

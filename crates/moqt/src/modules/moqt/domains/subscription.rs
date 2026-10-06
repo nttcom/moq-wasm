@@ -1,5 +1,5 @@
 use crate::{
-    FilterType, GroupOrder, SubscribeHandler, TransportProtocol,
+    FilterType, GroupOrder, SubscribeHandler,
     modules::moqt::control_plane::control_messages::messages::{
         parameters::content_exists::ContentExists, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
@@ -112,10 +112,7 @@ impl SubscriberInitiatedSubscription {
         }
     }
 
-    pub(crate) fn from_subscribe_handler<T: TransportProtocol>(
-        track_alias: u64,
-        handler: &SubscribeHandler<T>,
-    ) -> Self {
+    pub(crate) fn from_subscribe_handler(track_alias: u64, handler: &SubscribeHandler) -> Self {
         Self {
             request_id: handler.request_id(),
             track_namespace: handler.track_namespace.clone(),

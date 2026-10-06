@@ -24,7 +24,7 @@ pub(crate) trait Session: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> Session for moqt::Session<T> {
+impl Session for moqt::Session {
     fn as_publisher(&self) -> Box<dyn Publisher> {
         Box::new(self.publisher())
     }

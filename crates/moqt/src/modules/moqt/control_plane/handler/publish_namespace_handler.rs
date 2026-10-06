@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    TransportProtocol,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -19,17 +18,17 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct PublishNamespaceHandler<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+pub struct PublishNamespaceHandler {
+    session_context: Arc<SessionContext>,
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,
-    guard: ResponseGuard<T>,
+    guard: ResponseGuard,
 }
 
-impl<T: TransportProtocol> PublishNamespaceHandler<T> {
+impl PublishNamespaceHandler {
     pub(crate) fn new(
-        session_context: Arc<SessionContext<T>>,
+        session_context: Arc<SessionContext>,
         publish_namespace: PublishNamespace,
     ) -> Self {
         let guard = ResponseGuard::new(

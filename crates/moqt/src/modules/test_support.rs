@@ -43,9 +43,7 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
 /// Starts a DUAL server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
-pub(crate) fn spawn_dual_server_handshake(
-    name: &str,
-) -> (u16, tokio::task::JoinHandle<Handshake<DUAL>>) {
+pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
     let port = free_udp_port();
     let cert_dir = std::env::temp_dir().join(format!("moqt-test-{name}-{port}"));
     let mut server_config = write_self_signed_cert(&cert_dir);
@@ -57,7 +55,7 @@ pub(crate) fn spawn_dual_server_handshake(
 
 /// Starts a DUAL server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
-pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session<DUAL>>) {
+pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
     let (port, handshake) = spawn_dual_server_handshake(name);
     let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
     (port, accept)
@@ -79,8 +77,8 @@ pub(crate) fn dual_client() -> Endpoint<DUAL> {
 /// returns both established sessions as (client, server).
 pub(crate) async fn connect_sessions(
     url: &str,
-    accept: tokio::task::JoinHandle<Session<DUAL>>,
-) -> anyhow::Result<(Session<DUAL>, Session<DUAL>)> {
+    accept: tokio::task::JoinHandle<Session>,
+) -> anyhow::Result<(Session, Session)> {
     let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         dual_client().connect(url).await?.await
     })
@@ -89,7 +87,7 @@ pub(crate) async fn connect_sessions(
     Ok((client, server))
 }
 
-pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session<DUAL>, Session<DUAL>) {
+pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Session) {
     let (port, accept) = spawn_dual_server(name);
     connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
         .await
@@ -98,7 +96,7 @@ pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session<DUAL>,
 
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
-pub(crate) async fn accept_publish(server: &Session<DUAL>) -> Subscription {
+pub(crate) async fn accept_publish(server: &Session) -> Subscription {
     let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
         panic!("expected PUBLISH from the client");
     };
@@ -110,9 +108,9 @@ pub(crate) async fn accept_publish(server: &Session<DUAL>) -> Subscription {
 /// The data receiver resolves only once the first object has arrived, so
 /// this must run after the publisher has sent something.
 pub(crate) async fn subscribed_track_reader(
-    server: &Session<DUAL>,
+    server: &Session,
     subscription: &Subscription,
-) -> TrackReader<DUAL> {
+) -> TrackReader {
     let DataReceiver::Stream(factory) = server
         .subscriber()
         .accept_data_receiver(subscription)
@@ -124,7 +122,7 @@ pub(crate) async fn subscribed_track_reader(
     TrackReader::new(factory)
 }
 
-fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
+fn datagram_object(track_alias: u64) -> IncomingObject {
     IncomingObject::Datagram(ObjectDatagram::new(
         track_alias,
         0,
@@ -139,7 +137,7 @@ fn datagram_object(track_alias: u64) -> IncomingObject<DUAL> {
 }
 
 pub(crate) async fn notify_datagram(
-    context: &SessionContext<DUAL>,
+    context: &SessionContext,
     track_alias: u64,
 ) -> IncomingObjectNotification {
     context
@@ -148,10 +146,10 @@ pub(crate) async fn notify_datagram(
 }
 
 pub(crate) async fn register_and_take_data_receiver(
-    context: &SessionContext<DUAL>,
+    context: &SessionContext,
     request_id: u64,
     track_alias: u64,
-) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject<DUAL>> {
+) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject> {
     context
         .register_data_receiver(request_id, track_alias)
         .await

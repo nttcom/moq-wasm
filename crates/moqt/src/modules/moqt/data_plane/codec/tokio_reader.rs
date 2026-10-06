@@ -5,20 +5,20 @@ use std::{
 
 use tokio::io::{AsyncRead, ReadBuf};
 
-use crate::modules::transport::transport_receive_stream::TransportReceiveStream;
+use crate::modules::transport::transport_connection::BoxedReceiveStream;
 
 #[derive(Debug)]
-pub(crate) struct Reader<S: TransportReceiveStream> {
-    receive_stream: S,
+pub(crate) struct Reader {
+    receive_stream: BoxedReceiveStream,
 }
 
-impl<S: TransportReceiveStream> Reader<S> {
-    pub(crate) fn new(receive_stream: S) -> Self {
+impl Reader {
+    pub(crate) fn new(receive_stream: BoxedReceiveStream) -> Self {
         Self { receive_stream }
     }
 }
 
-impl<S: TransportReceiveStream> AsyncRead for Reader<S> {
+impl AsyncRead for Reader {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -49,7 +49,7 @@ mod tests {
             buf.put_slice(b"abc");
             Poll::Ready(Ok(()))
         });
-        let mut reader = Reader::new(receive_stream);
+        let mut reader = Reader::new(Box::new(receive_stream));
         let mut out = [0u8; 8];
 
         // Act
@@ -66,7 +66,7 @@ mod tests {
         receive_stream
             .expect_poll_read()
             .returning(|_, _| Poll::Ready(Err(ReadError::Closed)));
-        let mut reader = Reader::new(receive_stream);
+        let mut reader = Reader::new(Box::new(receive_stream));
         let mut out = [0u8; 8];
 
         // Act

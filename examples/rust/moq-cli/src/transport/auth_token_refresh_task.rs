@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use moqt::{QUIC, Session, wire::AuthorizationToken};
+use moqt::{Session, wire::AuthorizationToken};
 use tracing::{info, warn};
 
 use super::auth_token_file::read_auth_token;
@@ -16,7 +16,7 @@ pub struct AuthTokenRefreshTask {
 
 impl AuthTokenRefreshTask {
     pub fn run(
-        session: Arc<Session<QUIC>>,
+        session: Arc<Session>,
         token_file: PathBuf,
         app_id: String,
         current_token: String,

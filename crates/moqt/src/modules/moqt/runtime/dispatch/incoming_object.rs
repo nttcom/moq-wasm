@@ -1,19 +1,16 @@
-use crate::{
-    TransportProtocol,
-    modules::moqt::data_plane::{
-        object::{fetch::FetchHeader, object_datagram::ObjectDatagram, subgroup::SubgroupHeader},
-        stream::stream_receiver::UniStreamReceiver,
-    },
+use crate::modules::moqt::data_plane::{
+    object::{fetch::FetchHeader, object_datagram::ObjectDatagram, subgroup::SubgroupHeader},
+    stream::stream_receiver::UniStreamReceiver,
 };
 
-pub(crate) enum IncomingObject<T: TransportProtocol> {
+pub(crate) enum IncomingObject {
     StreamHeader {
-        stream: UniStreamReceiver<T>,
+        stream: UniStreamReceiver,
         header: SubgroupHeader,
     },
     Datagram(ObjectDatagram),
     Fetch {
-        stream: UniStreamReceiver<T>,
+        stream: UniStreamReceiver,
         header: FetchHeader,
     },
 }

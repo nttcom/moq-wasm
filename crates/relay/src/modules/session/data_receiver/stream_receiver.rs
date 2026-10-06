@@ -8,7 +8,7 @@ pub(crate) trait StreamReceiver: Send + Sync + 'static {
 }
 
 #[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> StreamReceiver for moqt::StreamDataReceiver<T> {
+impl StreamReceiver for moqt::StreamDataReceiver {
     async fn receive_object(&mut self) -> Result<Option<DataObject>, moqt::StreamReceiveError> {
         let object = self.receive().await?;
         Ok(object.map(|object| match object {
@@ -27,7 +27,7 @@ pub(crate) trait StreamReceiverFactory: Send + 'static {
 }
 
 #[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> StreamReceiverFactory for moqt::StreamDataReceiverFactory<T> {
+impl StreamReceiverFactory for moqt::StreamDataReceiverFactory {
     async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
         Ok(Box::new(moqt::StreamDataReceiverFactory::next(self).await?))
     }

@@ -153,7 +153,7 @@ pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<Q
 
 pub(crate) async fn spawn_relay_and_connect_client(
     token: VerifiedToken,
-) -> (RunningRelay, Session<QUIC>) {
+) -> (RunningRelay, Session) {
     let relay = spawn_relay_with_verifier(token).await;
     let endpoint = client_endpoint(Some("jwt".to_string()));
     let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {

@@ -1,11 +1,7 @@
 use std::sync::Arc;
 
-use crate::{
-    TransportProtocol,
-    modules::moqt::{
-        domains::session_context::SessionContext,
-        runtime::dispatch::incoming_object::IncomingObject,
-    },
+use crate::modules::moqt::{
+    domains::session_context::SessionContext, runtime::dispatch::incoming_object::IncomingObject,
 };
 
 pub(crate) struct FetchNotifier;
@@ -17,10 +13,10 @@ impl FetchNotifier {
         skip_all,
         fields(request_id = request_id)
     )]
-    pub(crate) async fn notify<T: TransportProtocol>(
-        context: &Arc<SessionContext<T>>,
+    pub(crate) async fn notify(
+        context: &Arc<SessionContext>,
         request_id: u64,
-        incoming_object: IncomingObject<T>,
+        incoming_object: IncomingObject,
     ) {
         // Draft-14 §9.16.3: a FETCH response is delivered on a single stream.
         let sender = context

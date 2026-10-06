@@ -69,7 +69,7 @@ async fn verify(relay_url: &str) -> Result<()> {
     expect_groups(&mut subscriber, &subscription, 1).await
 }
 
-async fn connect(relay_url: &str) -> Result<Session<QUIC>> {
+async fn connect(relay_url: &str) -> Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -78,7 +78,7 @@ async fn connect(relay_url: &str) -> Result<Session<QUIC>> {
     endpoint.connect(relay_url).await?.await
 }
 
-async fn subscribe(subscriber: &mut Subscriber<QUIC>, track: &str) -> Result<Subscription> {
+async fn subscribe(subscriber: &mut Subscriber, track: &str) -> Result<Subscription> {
     subscriber
         .subscribe(
             NAMESPACE.to_string(),
@@ -97,7 +97,7 @@ async fn subscribe(subscriber: &mut Subscriber<QUIC>, track: &str) -> Result<Sub
 /// Content Exists in the relay's SUBSCRIBE_OK proves the sink published the
 /// track before any subscriber asked for it.
 async fn subscribe_to_published_track(
-    subscriber: &mut Subscriber<QUIC>,
+    subscriber: &mut Subscriber,
     track: &str,
 ) -> Result<Subscription> {
     let wait = async {
@@ -123,7 +123,7 @@ async fn subscribe_to_published_track(
 }
 
 async fn fetch_catalog_track_names(
-    subscriber: &mut Subscriber<QUIC>,
+    subscriber: &mut Subscriber,
     catalog: &Subscription,
 ) -> Result<BTreeSet<String>> {
     let ContentExists::True { location } = catalog.content_exists() else {
@@ -168,7 +168,7 @@ async fn fetch_catalog_track_names(
 }
 
 async fn expect_groups(
-    subscriber: &mut Subscriber<QUIC>,
+    subscriber: &mut Subscriber,
     subscription: &Subscription,
     groups: usize,
 ) -> Result<()> {

@@ -1,15 +1,13 @@
+use crate::modules::transport::transport_connection::BoxedSendStream;
 use std::marker::PhantomData;
 
-use crate::{
-    TransportProtocol,
-    modules::moqt::data_plane::{
-        object::{
-            extension_headers::ExtensionHeaders,
-            subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
-        },
-        stream::stream_sender::StreamSender,
-        stream_priority::StreamPriority,
+use crate::modules::moqt::data_plane::{
+    object::{
+        extension_headers::ExtensionHeaders,
+        subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
     },
+    stream::stream_sender::StreamSender,
+    stream_priority::StreamPriority,
 };
 
 /// Typestate: header not yet sent.
@@ -17,8 +15,8 @@ pub struct Uninitialized;
 /// Typestate: header has been sent.
 pub struct HeaderSent;
 
-pub type SubgroupHeaderSender<T> = StreamDataSender<T, Uninitialized>;
-pub type SubgroupObjectSender<T> = StreamDataSender<T, HeaderSent>;
+pub type SubgroupHeaderSender = StreamDataSender<Uninitialized>;
+pub type SubgroupObjectSender = StreamDataSender<HeaderSent>;
 
 /// Handles sending data on a subgroup stream.
 ///
@@ -26,8 +24,8 @@ pub type SubgroupObjectSender<T> = StreamDataSender<T, HeaderSent>;
 /// Calling `send_header` consumes the sender and transitions it to `S = HeaderSent`.
 /// Objects can only be sent in the `HeaderSent` state, so the invariant that
 /// the header is always sent first is enforced at compile time.
-pub struct StreamDataSender<T: TransportProtocol, S = Uninitialized> {
-    stream_sender: StreamSender<T>,
+pub struct StreamDataSender<S = Uninitialized> {
+    stream_sender: StreamSender,
     track_alias: u64,
     subgroup_header: Option<SubgroupHeader>,
     _state: PhantomData<S>,
@@ -35,8 +33,8 @@ pub struct StreamDataSender<T: TransportProtocol, S = Uninitialized> {
 
 // ─── Uninitialized State ───────────────────────────────────────────────────────
 
-impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
-    pub(crate) fn new(track_alias: u64, send_stream: T::SendStream) -> Self {
+impl StreamDataSender<Uninitialized> {
+    pub(crate) fn new(track_alias: u64, send_stream: BoxedSendStream) -> Self {
         let stream_sender = StreamSender::new(send_stream);
         Self {
             stream_sender,
@@ -76,7 +74,7 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
     pub async fn send_header(
         self,
         header: SubgroupHeader,
-    ) -> anyhow::Result<StreamDataSender<T, HeaderSent>> {
+    ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
         if header.track_alias != self.track_alias {
             anyhow::bail!(
                 "track_alias mismatch: expected {}, got {}",
@@ -106,7 +104,7 @@ impl<T: TransportProtocol> StreamDataSender<T, Uninitialized> {
 
 // ─── HeaderSent State ──────────────────────────────────────────────────────────
 
-impl<T: TransportProtocol> StreamDataSender<T, HeaderSent> {
+impl StreamDataSender<HeaderSent> {
     /// Creates an object field.
     /// The `message_type` is automatically inherited from the already-sent header.
     pub fn create_object_field(

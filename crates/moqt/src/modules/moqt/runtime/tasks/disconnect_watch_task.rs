@@ -3,19 +3,16 @@ use std::sync::Arc;
 use tracing::{Instrument, Span};
 
 use crate::{
-    SessionEvent, TransportProtocol,
+    SessionEvent,
     modules::executor::{self, JoinHandle},
-    modules::{
-        moqt::domains::session_context::SessionContext,
-        transport::transport_connection::TransportConnection,
-    },
+    modules::moqt::domains::session_context::SessionContext,
 };
 
 pub(crate) struct DisconnectWatchTask;
 
 impl DisconnectWatchTask {
-    pub(crate) fn run<T: TransportProtocol>(
-        session_context: Arc<SessionContext<T>>,
+    pub(crate) fn run(
+        session_context: Arc<SessionContext>,
         close_watcher_span: Span,
     ) -> JoinHandle {
         executor::spawn(

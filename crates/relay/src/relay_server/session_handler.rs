@@ -27,12 +27,7 @@ pub(crate) struct SessionIntake {
 }
 
 impl SessionIntake {
-    async fn establish<T: TransportProtocol>(
-        &self,
-        session_id: SessionId,
-        connecting: Accepting<T>,
-        session_span: Span,
-    ) {
+    async fn establish(&self, session_id: SessionId, connecting: Accepting, session_span: Span) {
         let handshake = match connecting.await {
             Ok(handshake) => handshake,
             Err(error) => {

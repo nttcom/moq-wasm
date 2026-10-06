@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::BoxedConnection;
 use async_trait::async_trait;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::WebTransport;
@@ -12,8 +13,6 @@ pub struct BrowserConnectionCreator;
 
 #[async_trait(?Send)]
 impl TransportConnectionCreator for BrowserConnectionCreator {
-    type Connection = BrowserConnection;
-
     fn client(_port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
         anyhow::ensure!(
             verify_certificate,
@@ -40,7 +39,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
     async fn create_new_transport(
         &self,
         target: &ConnectTarget,
-    ) -> anyhow::Result<Self::Connection> {
+    ) -> anyhow::Result<BoxedConnection> {
         if target.transport != ClientTransport::WebTransport {
             anyhow::bail!(
                 "browser endpoint requires an https:// url, got {}",
@@ -49,10 +48,10 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
         }
         let transport = WebTransport::new(target.url.as_str()).map_err(js_error)?;
         JsFuture::from(transport.ready()).await.map_err(js_error)?;
-        BrowserConnection::new(transport)
+        Ok(Box::new(BrowserConnection::new(transport)?))
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<Self::Connection> {
+    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
         anyhow::bail!("the browser cannot accept connections")
     }
 }

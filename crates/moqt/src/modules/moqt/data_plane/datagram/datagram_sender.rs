@@ -1,24 +1,20 @@
 use std::sync::Arc;
 
-use crate::{
-    TransportProtocol,
-    modules::{
-        executor,
-        moqt::{
-            data_plane::object::object_datagram::ObjectDatagram,
-            domains::session_context::SessionContext,
-        },
-        transport::transport_connection::TransportConnection,
+use crate::modules::{
+    executor,
+    moqt::{
+        data_plane::object::object_datagram::ObjectDatagram,
+        domains::session_context::SessionContext,
     },
 };
 
-pub struct DatagramSender<T: TransportProtocol> {
+pub struct DatagramSender {
     pub track_alias: u64,
-    session_context: Arc<SessionContext<T>>,
+    session_context: Arc<SessionContext>,
 }
 
-impl<T: TransportProtocol> DatagramSender<T> {
-    pub(crate) fn new(track_alias: u64, session_context: Arc<SessionContext<T>>) -> Self {
+impl DatagramSender {
+    pub(crate) fn new(track_alias: u64, session_context: Arc<SessionContext>) -> Self {
         Self {
             track_alias,
             session_context,

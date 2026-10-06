@@ -1,3 +1,4 @@
+use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use async_trait::async_trait;
 
 use super::wt_receive_stream::WtReceiveStream;
@@ -18,9 +19,6 @@ impl WtConnection {
 
 #[async_trait]
 impl TransportConnection for WtConnection {
-    type SendStream = WtSendStream;
-    type ReceiveStream = WtReceiveStream;
-
     async fn closed(&self) -> TransportClose {
         let error = self.session.closed().await;
         tracing::info!("WebTransport connection closed: {:?}", error);
@@ -43,30 +41,30 @@ impl TransportConnection for WtConnection {
         tracing::info!(code, reason, "WebTransport connection close requested");
     }
 
-    async fn open_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
+    async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (send, recv) = self.session.open_bi().await?;
         Ok((
-            WtSendStream { send_stream: send },
-            WtReceiveStream { recv_stream: recv },
+            Box::new(WtSendStream { send_stream: send }),
+            Box::new(WtReceiveStream { recv_stream: recv }),
         ))
     }
 
-    async fn accept_bi(&self) -> anyhow::Result<(Self::SendStream, Self::ReceiveStream)> {
+    async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (send, recv) = self.session.accept_bi().await?;
         Ok((
-            WtSendStream { send_stream: send },
-            WtReceiveStream { recv_stream: recv },
+            Box::new(WtSendStream { send_stream: send }),
+            Box::new(WtReceiveStream { recv_stream: recv }),
         ))
     }
 
-    async fn open_uni(&self) -> anyhow::Result<Self::SendStream> {
+    async fn open_uni(&self) -> anyhow::Result<BoxedSendStream> {
         let send = self.session.open_uni().await?;
-        Ok(WtSendStream { send_stream: send })
+        Ok(Box::new(WtSendStream { send_stream: send }))
     }
 
-    async fn accept_uni(&self) -> anyhow::Result<Self::ReceiveStream> {
+    async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream> {
         let recv = self.session.accept_uni().await?;
-        Ok(WtReceiveStream { recv_stream: recv })
+        Ok(Box::new(WtReceiveStream { recv_stream: recv }))
     }
 
     fn send_datagram(&self, bytes: bytes::BytesMut) -> anyhow::Result<()> {

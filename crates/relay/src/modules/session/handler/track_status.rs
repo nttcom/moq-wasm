@@ -18,7 +18,7 @@ pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> TrackStatusHandler for moqt::TrackStatusHandler<T> {
+impl TrackStatusHandler for moqt::TrackStatusHandler {
     fn request_id(&self) -> u64 {
         self.request_id()
     }

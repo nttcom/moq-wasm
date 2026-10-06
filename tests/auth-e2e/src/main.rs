@@ -174,7 +174,7 @@ async fn wait_until_relay_accepts(url: &str, token: &str) -> anyhow::Result<()> 
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("failed to connect to {url}")))
 }
 
-async fn connect(url: &str, token: Option<&str>) -> anyhow::Result<Session<QUIC>> {
+async fn connect(url: &str, token: Option<&str>) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
@@ -377,10 +377,7 @@ fn expect_unauthorized(error: anyhow::Error, label: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-async fn send_test_object(
-    session: Arc<Session<QUIC>>,
-    subscription: Subscription,
-) -> anyhow::Result<()> {
+async fn send_test_object(session: Arc<Session>, subscription: Subscription) -> anyhow::Result<()> {
     let stream_factory = session.publisher().create_stream(&subscription);
     let uninitialized = stream_factory.next().await?;
     let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
@@ -396,7 +393,7 @@ async fn send_test_object(
 }
 
 async fn subscribe_and_receive_one_object<F, Fut>(
-    session: Arc<Session<QUIC>>,
+    session: Arc<Session>,
     track_namespace: String,
     track_name: String,
     after_subscribe: F,

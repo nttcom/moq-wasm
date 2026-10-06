@@ -40,16 +40,19 @@ modules/executor          ← task spawning, yielding and timeouts (tokio native
 
 ## Transport layer (`modules/transport`)
 
-`protocol.rs` defines the `TransportProtocol` trait with four associated types:
+`protocol.rs` defines the `TransportProtocol` trait with one associated type:
 
 ```rust
 trait TransportProtocol {
     type ConnectionCreator: TransportConnectionCreator;
-    type Connection: TransportConnection;
-    type SendStream: TransportSendStream;
-    type ReceiveStream: TransportReceiveStream;
 }
 ```
+
+The creator yields `Box<dyn TransportConnection>`, whose streams are
+`Box<dyn TransportSendStream>` / `Box<dyn TransportReceiveStream>`
+(`BoxedConnection`, `BoxedSendStream`, `BoxedReceiveStream` in
+`transport_connection.rs`), so the transport is erased as soon as a
+connection exists.
 
 Four zero-sized markers implement it; the first three are native-only:
 
@@ -60,10 +63,13 @@ Four zero-sized markers implement it; the first three are native-only:
 | `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection (`connect_with` for raw QUIC, `web_transport_quinn::Client` for WebTransport). |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
-The whole session stack is generic over `T: TransportProtocol`, so protocol
-selection is a compile-time type parameter (e.g. `Endpoint::<moqt::DUAL>`),
-not a runtime branch — except inside `DualConnection`, which wraps either
-variant behind one connection type.
+Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
+`T: TransportProtocol`, because the creator's constructors are static
+(`T::ConnectionCreator::client` / `server`). Everything an endpoint produces
+(`Connecting`, `Accepting`, `Handshake`, `Session`, the handlers and the data
+stream types) is a plain type over the boxed transport, so one process can hold
+sessions of different transports in one collection and the `DUAL` creator
+simply boxes a `QUICConnection` or a `WtConnection` per connection.
 
 Client-side helpers shared by the three creators:
 
@@ -83,20 +89,20 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 - `Endpoint::create_client(&ClientConfig)` / `create_server(&ServerConfig)`
   build a `SessionCreator` around the transport's `ConnectionCreator`.
-- `connect(url)` returns `Connecting<T>`, whose future performs the transport
+- `connect(url)` returns `Connecting`, whose future performs the transport
   handshake, opens the bidirectional control stream, and runs the whole SETUP
   exchange in `SessionContextFactory` (sends CLIENT_SETUP, awaits SERVER_SETUP,
   version `0xff00000e` = draft-14). `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
-  `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session<T>` is
+  `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session` is
   created.
-- `accept()` returns `Accepting<T>`, whose future performs the transport
+- `accept()` returns `Accepting`, whose future performs the transport
   handshake, accepts the control stream, and stops after CLIENT_SETUP is
   received (`SessionContextFactory::receive_client_setup`). It resolves to a
-  `Handshake<T>` that exposes the received `ClientSetup` so the application can
+  `Handshake` that exposes the received `ClientSetup` so the application can
   decide before SERVER_SETUP is sent:
   - `Handshake::accept()` sends SERVER_SETUP
-    (`SessionContextFactory::send_server_setup`) and creates the `Session<T>`.
+    (`SessionContextFactory::send_server_setup`) and creates the `Session`.
   - `Handshake::reject(code, reason)` closes the transport with the given
     termination code without sending SERVER_SETUP.
 
@@ -111,12 +117,12 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 | `DatagramReceiveTask` | receives datagrams, decodes `ObjectDatagram`, dispatches via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
 
-`Session::publisher()` / `subscriber()` return lightweight `Publisher<T>` /
-`Subscriber<T>` facades sharing the same `Arc<SessionContext<T>>`. Application
+`Session::publisher()` / `subscriber()` return lightweight `Publisher` /
+`Subscriber` facades sharing the same `Arc<SessionContext>`. Application
 code consumes inbound control messages through
-`Session::receive_event() -> SessionEvent<T>`.
+`Session::receive_event() -> SessionEvent`.
 `Publisher::begin_publish_namespace` returns once PUBLISH_NAMESPACE is written,
-with a `PendingPublishNamespace<T>` whose `accepted()` awaits the reply, so a
+with a `PendingPublishNamespace` whose `accepted()` awaits the reply, so a
 caller fanning out to many sessions can keep the writes ordered without
 waiting on each peer.
 
@@ -125,7 +131,7 @@ waiting on each peer.
 Applications that only need "one payload per object, one subgroup per group"
 use these facades instead of the data-plane factories directly:
 
-- `TrackWriter<T>` wraps `StreamDataSenderFactory<T>`. `start_group()` closes
+- `TrackWriter` wraps `StreamDataSenderFactory`. `start_group()` closes
   the open group (sends an `EndOfGroup` status object, then FIN) and opens the
   next one; `start_group_at(id)` opens a group with a chosen id instead, so
   the tracks of a switching set can start their groups at the same ids, and
@@ -138,7 +144,7 @@ use these facades instead of the data-plane factories directly:
   exposes where numbering continues, object ids run from 0 within each group;
   publisher priority is fixed at 128 and the subgroup id is omitted
   (`SubgroupId::None`).
-- `TrackReader<T>` wraps `StreamDataReceiverFactory<T>` and yields
+- `TrackReader` wraps `StreamDataReceiverFactory` and yields
   `TrackObject { group_id, subgroup_id, object_id, extension_headers, payload }`
   in arrival order. Subgroup streams are read **concurrently**: an accept task
   takes every new stream from the factory and spawns one reader task per
@@ -183,7 +189,7 @@ One struct owns all cross-task state:
   tuple (`track_namespace_tuple`) and as the `/`-joined string
   (`track_namespace`); the tuple is authoritative because a tuple element may
   itself contain `/`.
-- `enums.rs` — `SessionEvent<T>` (inbound requests + `Disconnected` /
+- `enums.rs` — `SessionEvent` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
   §13.1.1).
@@ -257,7 +263,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - `SubscriptionNotifier` routes incoming objects by track alias into
   `SessionContext::object_sinks`.
 - `FetchNotifier` routes FETCH streams by request id.
-- `IncomingObject<T>` is the internal envelope (`StreamHeader` / `Datagram` /
+- `IncomingObject` is the internal envelope (`StreamHeader` / `Datagram` /
   `Fetch`).
 
 ## Key invariants

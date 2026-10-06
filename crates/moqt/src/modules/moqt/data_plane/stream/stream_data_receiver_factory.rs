@@ -1,24 +1,18 @@
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{
-    TransportProtocol,
-    modules::moqt::{
-        data_plane::stream::stream_data_receiver::StreamDataReceiver,
-        runtime::dispatch::incoming_object::IncomingObject,
-    },
+use crate::modules::moqt::{
+    data_plane::stream::stream_data_receiver::StreamDataReceiver,
+    runtime::dispatch::incoming_object::IncomingObject,
 };
 
-pub struct StreamDataReceiverFactory<T: TransportProtocol> {
-    pending: Option<StreamDataReceiver<T>>,
+pub struct StreamDataReceiverFactory {
+    pending: Option<StreamDataReceiver>,
     pub track_alias: u64,
-    rest: UnboundedReceiver<IncomingObject<T>>,
+    rest: UnboundedReceiver<IncomingObject>,
 }
 
-impl<T: TransportProtocol> StreamDataReceiverFactory<T> {
-    pub(crate) fn new(
-        first: StreamDataReceiver<T>,
-        rest: UnboundedReceiver<IncomingObject<T>>,
-    ) -> Self {
+impl StreamDataReceiverFactory {
+    pub(crate) fn new(first: StreamDataReceiver, rest: UnboundedReceiver<IncomingObject>) -> Self {
         let track_alias = first.track_alias;
         Self {
             pending: Some(first),
@@ -27,7 +21,7 @@ impl<T: TransportProtocol> StreamDataReceiverFactory<T> {
         }
     }
 
-    pub async fn next(&mut self) -> anyhow::Result<StreamDataReceiver<T>> {
+    pub async fn next(&mut self) -> anyhow::Result<StreamDataReceiver> {
         if let Some(first) = self.pending.take() {
             return Ok(first);
         }

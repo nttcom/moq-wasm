@@ -4,45 +4,41 @@ use anyhow::bail;
 
 use crate::{
     DatagramSender,
-    modules::{
-        moqt::{
-            control_plane::{
-                control_messages::{
-                    control_message_type::ControlMessageType,
-                    messages::{
-                        publish::Publish, publish_done::PublishDone,
-                        publish_namespace::PublishNamespace,
-                        publish_namespace_cancel::PublishNamespaceCancel,
-                        publish_namespace_done::PublishNamespaceDone,
-                    },
-                },
-                enums::ResponseMessage,
-                options::PublishOption,
-            },
-            data_plane::{
-                object::fetch::FetchHeader,
-                stream::{
-                    fetch_data_sender::FetchDataSender,
-                    stream_data_sender_factory::StreamDataSenderFactory,
+    modules::moqt::{
+        control_plane::{
+            control_messages::{
+                control_message_type::ControlMessageType,
+                messages::{
+                    publish::Publish, publish_done::PublishDone,
+                    publish_namespace::PublishNamespace,
+                    publish_namespace_cancel::PublishNamespaceCancel,
+                    publish_namespace_done::PublishNamespaceDone,
                 },
             },
-            domains::{
-                pending_publish_namespace::PendingPublishNamespace,
-                session_context::{LateResponseAction, SessionContext},
-                subscription::{PublisherInitiatedSubscription, Subscription},
-            },
-            protocol::TransportProtocol,
+            enums::ResponseMessage,
+            options::PublishOption,
         },
-        transport::transport_connection::TransportConnection,
+        data_plane::{
+            object::fetch::FetchHeader,
+            stream::{
+                fetch_data_sender::FetchDataSender,
+                stream_data_sender_factory::StreamDataSenderFactory,
+            },
+        },
+        domains::{
+            pending_publish_namespace::PendingPublishNamespace,
+            session_context::{LateResponseAction, SessionContext},
+            subscription::{PublisherInitiatedSubscription, Subscription},
+        },
     },
     wire::RequestError,
 };
 
-pub struct Publisher<T: TransportProtocol> {
-    pub(crate) session: Arc<SessionContext<T>>,
+pub struct Publisher {
+    pub(crate) session: Arc<SessionContext>,
 }
 
-impl<T: TransportProtocol> Publisher<T> {
+impl Publisher {
     pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
         self.begin_publish_namespace(namespace)
             .await?
@@ -53,7 +49,7 @@ impl<T: TransportProtocol> Publisher<T> {
     pub async fn begin_publish_namespace(
         &self,
         namespace: String,
-    ) -> anyhow::Result<PendingPublishNamespace<T>> {
+    ) -> anyhow::Result<PendingPublishNamespace> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -196,15 +192,15 @@ impl<T: TransportProtocol> Publisher<T> {
         }
     }
 
-    pub fn create_stream(&self, subscription: &Subscription) -> StreamDataSenderFactory<T> {
+    pub fn create_stream(&self, subscription: &Subscription) -> StreamDataSenderFactory {
         StreamDataSenderFactory::new(subscription.track_alias(), self.session.clone())
     }
 
-    pub fn create_datagram(&self, subscription: &Subscription) -> DatagramSender<T> {
+    pub fn create_datagram(&self, subscription: &Subscription) -> DatagramSender {
         DatagramSender::new(subscription.track_alias(), self.session.clone())
     }
 
-    pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender<T>> {
+    pub async fn create_fetch_stream(&self, request_id: u64) -> anyhow::Result<FetchDataSender> {
         let send_stream = self.session.transport_connection.open_uni().await?;
         FetchDataSender::new(send_stream, FetchHeader::new(request_id)).await
     }

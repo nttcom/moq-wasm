@@ -6,7 +6,7 @@ pub(crate) trait FetchSender: 'static + Send + Sync {
 }
 
 #[async_trait::async_trait]
-impl<T: moqt::TransportProtocol> FetchSender for moqt::FetchDataSender<T> {
+impl FetchSender for moqt::FetchDataSender {
     async fn send(&self, object: moqt::FetchObjectField) -> anyhow::Result<()> {
         self.send(object).await
     }

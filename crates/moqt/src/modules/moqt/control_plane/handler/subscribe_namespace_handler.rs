@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    TransportProtocol,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -19,17 +18,17 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct SubscribeNamespaceHandler<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+pub struct SubscribeNamespaceHandler {
+    session_context: Arc<SessionContext>,
     request_id: u64,
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
-    guard: ResponseGuard<T>,
+    guard: ResponseGuard,
 }
 
-impl<T: TransportProtocol> SubscribeNamespaceHandler<T> {
+impl SubscribeNamespaceHandler {
     pub(crate) fn new(
-        session_context: Arc<SessionContext<T>>,
+        session_context: Arc<SessionContext>,
         subscribe_namespace: SubscribeNamespace,
     ) -> Self {
         let guard = ResponseGuard::new(

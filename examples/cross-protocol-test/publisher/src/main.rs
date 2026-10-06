@@ -3,7 +3,7 @@ mod moqt_sender;
 
 use anyhow::{Result, bail};
 use bytes::Bytes;
-use moqt::{ExtensionHeaders, QUIC, StreamDataSenderFactory, SubgroupId, SubgroupObject};
+use moqt::{ExtensionHeaders, StreamDataSenderFactory, SubgroupId, SubgroupObject};
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -74,7 +74,7 @@ async fn read_segments(tx: mpsc::Sender<Segment>) -> Result<()> {
 }
 
 async fn send_segments(
-    stream_factory: StreamDataSenderFactory<QUIC>,
+    stream_factory: StreamDataSenderFactory,
     mut rx: mpsc::Receiver<Segment>,
 ) -> Result<()> {
     let mut group_id: u64 = 0;

@@ -3,16 +3,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use crate::{
-    TransportProtocol,
-    modules::{
-        executor,
-        moqt::{
-            control_plane::control_messages::{
-                control_message_type::ControlMessageType, messages::request_error::RequestError,
-            },
-            domains::session_context::SessionContext,
+use crate::modules::{
+    executor,
+    moqt::{
+        control_plane::control_messages::{
+            control_message_type::ControlMessageType, messages::request_error::RequestError,
         },
+        domains::session_context::SessionContext,
     },
 };
 
@@ -25,16 +22,16 @@ const ERROR_NOT_SUPPORTED: u64 = 0x3;
 /// the session event would otherwise leave the requester waiting for its
 /// control timeout.
 #[derive(Debug, Clone)]
-pub(crate) struct ResponseGuard<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+pub(crate) struct ResponseGuard {
+    session_context: Arc<SessionContext>,
     request_id: u64,
     error_type: ControlMessageType,
     responded: Arc<AtomicBool>,
 }
 
-impl<T: TransportProtocol> ResponseGuard<T> {
+impl ResponseGuard {
     pub(crate) fn new(
-        session_context: Arc<SessionContext<T>>,
+        session_context: Arc<SessionContext>,
         request_id: u64,
         error_type: ControlMessageType,
     ) -> Self {
@@ -51,7 +48,7 @@ impl<T: TransportProtocol> ResponseGuard<T> {
     }
 }
 
-impl<T: TransportProtocol> Drop for ResponseGuard<T> {
+impl Drop for ResponseGuard {
     fn drop(&mut self) {
         // strong_count == 1 limits this to the last clone; a single
         // fire-and-forget send needs no owned JoinHandle.

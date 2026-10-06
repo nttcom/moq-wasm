@@ -14,7 +14,7 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> FetchHandler for moqt::FetchHandler<T> {
+impl FetchHandler for moqt::FetchHandler {
     fn request_id(&self) -> u64 {
         self.request_id
     }

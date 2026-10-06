@@ -1,20 +1,19 @@
 use anyhow::bail;
 
-use crate::TransportProtocol;
 use crate::modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
 use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
 
 #[derive(Debug)]
-pub struct DatagramReceiver<T: TransportProtocol> {
+pub struct DatagramReceiver {
     pub track_alias: u64,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>,
+    receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
     first_object_datagram: Option<ObjectDatagram>,
 }
 
-impl<T: TransportProtocol> DatagramReceiver<T> {
+impl DatagramReceiver {
     pub(crate) async fn new(
         first_object_datagram: ObjectDatagram,
-        receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject<T>>,
+        receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
     ) -> Self {
         let track_alias = first_object_datagram.track_alias;
         Self {

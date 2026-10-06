@@ -3,7 +3,7 @@ use bytes::Bytes;
 
 use crate::{
     ExtensionHeaders, ObjectStatus, StreamDataSenderFactory, SubgroupId, SubgroupObject,
-    SubgroupObjectSender, TransportProtocol,
+    SubgroupObjectSender,
 };
 
 const PUBLISHER_PRIORITY: u8 = 128;
@@ -13,16 +13,16 @@ const PUBLISHER_PRIORITY: u8 = 128;
 /// zero-length extension block).
 const EXTENSIONS_PRESENT: bool = true;
 
-pub struct TrackWriter<T: TransportProtocol> {
-    factory: StreamDataSenderFactory<T>,
+pub struct TrackWriter {
+    factory: StreamDataSenderFactory,
     first_group_id: u64,
     next_group_id: u64,
-    group: Option<GroupSender<T>>,
+    group: Option<GroupSender>,
     pending_group_gap: Option<u64>,
 }
 
-impl<T: TransportProtocol> TrackWriter<T> {
-    pub fn new(factory: StreamDataSenderFactory<T>, first_group_id: u64) -> Self {
+impl TrackWriter {
+    pub fn new(factory: StreamDataSenderFactory, first_group_id: u64) -> Self {
         Self {
             factory,
             first_group_id,
@@ -131,7 +131,7 @@ impl<T: TransportProtocol> TrackWriter<T> {
         }
     }
 
-    async fn open_group(&mut self) -> anyhow::Result<GroupSender<T>> {
+    async fn open_group(&mut self) -> anyhow::Result<GroupSender> {
         let uninitialized = self.factory.next().await?;
         let header = uninitialized.create_header(
             self.next_group_id,
@@ -146,11 +146,11 @@ impl<T: TransportProtocol> TrackWriter<T> {
     }
 }
 
-struct GroupSender<T: TransportProtocol> {
-    sender: SubgroupObjectSender<T>,
+struct GroupSender {
+    sender: SubgroupObjectSender,
 }
 
-impl<T: TransportProtocol> GroupSender<T> {
+impl GroupSender {
     async fn write_object(
         &mut self,
         payload: Bytes,

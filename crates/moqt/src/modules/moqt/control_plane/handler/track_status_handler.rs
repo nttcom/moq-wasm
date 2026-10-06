@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, TransportProtocol,
+    FilterType, GroupOrder,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -23,8 +23,8 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct TrackStatusHandler<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+pub struct TrackStatusHandler {
+    session_context: Arc<SessionContext>,
     request_id: u64,
     track_namespace: String,
     track_namespace_tuple: Vec<String>,
@@ -34,11 +34,11 @@ pub struct TrackStatusHandler<T: TransportProtocol> {
     forward: bool,
     filter_type: FilterType,
     authorization_tokens: Vec<AuthorizationToken>,
-    guard: ResponseGuard<T>,
+    guard: ResponseGuard,
 }
 
-impl<T: TransportProtocol> TrackStatusHandler<T> {
-    pub(crate) fn new(session_context: Arc<SessionContext<T>>, track_status: Subscribe) -> Self {
+impl TrackStatusHandler {
+    pub(crate) fn new(session_context: Arc<SessionContext>, track_status: Subscribe) -> Self {
         let guard = ResponseGuard::new(
             session_context.clone(),
             track_status.request_id,
@@ -138,7 +138,7 @@ impl<T: TransportProtocol> TrackStatusHandler<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ContentExists, DUAL, Location, Session, SessionEvent,
+        ContentExists, Location, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
             test_support::{connect_sessions, spawn_dual_server},
@@ -150,8 +150,8 @@ mod tests {
 
     struct TrackStatusExchange {
         request: tokio::task::JoinHandle<anyhow::Result<TrackStatusOk>>,
-        handler: TrackStatusHandler<DUAL>,
-        _server: Session<DUAL>,
+        handler: TrackStatusHandler,
+        _server: Session,
     }
 
     async fn track_status_exchange(name: &str) -> TrackStatusExchange {

@@ -3,31 +3,25 @@ use std::sync::Arc;
 use tracing::{Instrument, Span};
 
 use crate::{
-    Subgroup, TransportProtocol,
+    Subgroup,
     modules::executor::{self, JoinHandle},
-    modules::{
-        moqt::{
-            data_plane::{
-                codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
-                stream::{fetch_data_receiver::Fetch, stream_receiver::UniStreamReceiver},
-            },
-            domains::session_context::SessionContext,
-            runtime::dispatch::{
-                fetch_notifier::FetchNotifier, incoming_object::IncomingObject,
-                subscription_notifier::SubscriptionNotifier,
-            },
+    modules::moqt::{
+        data_plane::{
+            codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
+            stream::{fetch_data_receiver::Fetch, stream_receiver::UniStreamReceiver},
         },
-        transport::transport_connection::TransportConnection,
+        domains::session_context::SessionContext,
+        runtime::dispatch::{
+            fetch_notifier::FetchNotifier, incoming_object::IncomingObject,
+            subscription_notifier::SubscriptionNotifier,
+        },
     },
 };
 
 pub(crate) struct UniStreamReceiveTask;
 
 impl UniStreamReceiveTask {
-    pub(crate) fn run<T: TransportProtocol>(
-        context: Arc<SessionContext<T>>,
-        stream_span: Span,
-    ) -> JoinHandle {
+    pub(crate) fn run(context: Arc<SessionContext>, stream_span: Span) -> JoinHandle {
         executor::spawn(
             "Uni Stream Receiver",
             async move {
@@ -51,9 +45,9 @@ impl UniStreamReceiveTask {
     }
 
     #[tracing::instrument(level = "info", name = "on_stream_received", skip_all)]
-    async fn on_stream_received<T: TransportProtocol>(
-        context: &Arc<SessionContext<T>>,
-        mut stream: UniStreamReceiver<T>,
+    async fn on_stream_received(
+        context: &Arc<SessionContext>,
+        mut stream: UniStreamReceiver,
     ) -> bool {
         let stream_data = match stream.receive().await {
             Ok(Some(stream_data)) => stream_data,

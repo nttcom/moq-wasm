@@ -36,7 +36,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
 }
 
 #[async_trait]
-impl<T: moqt::TransportProtocol> PublishHandler for moqt::PublishHandler<T> {
+impl PublishHandler for moqt::PublishHandler {
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

@@ -1,30 +1,24 @@
 use std::sync::Arc;
 
-use crate::{
-    TransportProtocol,
-    modules::{
-        moqt::{
-            data_plane::stream::stream_data_sender::StreamDataSender,
-            domains::session_context::SessionContext,
-        },
-        transport::transport_connection::TransportConnection,
-    },
+use crate::modules::moqt::{
+    data_plane::stream::stream_data_sender::StreamDataSender,
+    domains::session_context::SessionContext,
 };
 
-pub struct StreamDataSenderFactory<T: TransportProtocol> {
+pub struct StreamDataSenderFactory {
     track_alias: u64,
-    session: Arc<SessionContext<T>>,
+    session: Arc<SessionContext>,
 }
 
-impl<T: TransportProtocol> StreamDataSenderFactory<T> {
-    pub(crate) fn new(track_alias: u64, session: Arc<SessionContext<T>>) -> Self {
+impl StreamDataSenderFactory {
+    pub(crate) fn new(track_alias: u64, session: Arc<SessionContext>) -> Self {
         Self {
             track_alias,
             session,
         }
     }
 
-    pub async fn next(&self) -> anyhow::Result<StreamDataSender<T>> {
+    pub async fn next(&self) -> anyhow::Result<StreamDataSender> {
         let send_stream = self.session.transport_connection.open_uni().await?;
         Ok(StreamDataSender::new(self.track_alias, send_stream))
     }

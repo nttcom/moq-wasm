@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    GroupOrder, TransportProtocol,
+    GroupOrder,
     modules::{
         moqt::{
             control_plane::{
@@ -21,16 +21,16 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct FetchHandler<T: TransportProtocol> {
-    session_context: Arc<SessionContext<T>>,
+pub struct FetchHandler {
+    session_context: Arc<SessionContext>,
     pub request_id: u64,
     pub group_order: GroupOrder,
     pub fetch: Fetch,
-    guard: ResponseGuard<T>,
+    guard: ResponseGuard,
 }
 
-impl<T: TransportProtocol> FetchHandler<T> {
-    pub(crate) fn new(session_context: Arc<SessionContext<T>>, fetch: Fetch) -> Self {
+impl FetchHandler {
+    pub(crate) fn new(session_context: Arc<SessionContext>, fetch: Fetch) -> Self {
         let request_id = fetch.request_id;
         let group_order = fetch.group_order;
         let guard = ResponseGuard::new(

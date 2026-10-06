@@ -34,7 +34,7 @@ const OBJECTS_PER_GROUP: u64 = 5;
 // proves Carol's departure did not stop Alice's ingest.
 const LATE_GROUP: u64 = 4;
 
-async fn new_session() -> anyhow::Result<Session<QUIC>> {
+async fn new_session() -> anyhow::Result<Session> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
@@ -47,7 +47,7 @@ async fn new_session() -> anyhow::Result<Session<QUIC>> {
 }
 
 async fn send_group(
-    factory: &StreamDataSenderFactory<QUIC>,
+    factory: &StreamDataSenderFactory,
     who: &str,
     group_id: u64,
 ) -> anyhow::Result<()> {
@@ -150,7 +150,7 @@ async fn bob(
     );
 
     let data_receiver = subscriber.accept_data_receiver(&subscription).await?;
-    let mut factory: StreamDataReceiverFactory<QUIC> = match data_receiver {
+    let mut factory: StreamDataReceiverFactory = match data_receiver {
         DataReceiver::Stream(f) => f,
         DataReceiver::Datagram(_) => anyhow::bail!("[bob] unexpected datagram"),
     };
