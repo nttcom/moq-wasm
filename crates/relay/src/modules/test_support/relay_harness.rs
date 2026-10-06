@@ -320,22 +320,28 @@ impl RelayHarness {
     }
 
     pub(crate) async fn wait_largest_location(&self, expected: moqt::Location) -> moqt::Location {
-        let cache = &self.ingest.cache;
-        let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
-        loop {
-            if let Some(largest) = cache.largest_location()
-                && largest >= expected
-            {
-                return largest;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "cache never reached largest location {{{}, {}}}",
-                expected.group_id,
-                expected.object_id
-            );
-            tokio::time::sleep(Duration::from_millis(1)).await;
+        wait_largest_location(&self.ingest.cache, expected).await
+    }
+}
+
+pub(crate) async fn wait_largest_location(
+    cache: &TrackCache,
+    expected: moqt::Location,
+) -> moqt::Location {
+    let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
+    loop {
+        if let Some(largest) = cache.largest_location()
+            && largest >= expected
+        {
+            return largest;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "cache never reached largest location {{{}, {}}}",
+            expected.group_id,
+            expected.object_id
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 

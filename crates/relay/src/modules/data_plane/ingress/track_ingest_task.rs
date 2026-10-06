@@ -177,16 +177,15 @@ impl Drop for TrackIngestTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-
     use crate::modules::{
         session::data_receiver::stream_receiver::StreamReceiver,
-        test_support::relay_harness::{UpstreamSubgroupStream, fixtures::location},
+        test_support::relay_harness::{
+            UpstreamSubgroupStream, fixtures::location, wait_largest_location,
+        },
     };
 
     const FIRST_PUBLISHER: SessionId = 1;
     const SECOND_PUBLISHER: SessionId = 2;
-    const CACHE_TIMEOUT: Duration = Duration::from_secs(3);
 
     struct ChannelStreamReceiverFactory {
         stream_receiver: mpsc::UnboundedReceiver<Box<dyn StreamReceiver>>,
@@ -268,20 +267,7 @@ mod tests {
         }
 
         async fn wait_largest_location(&self, expected: moqt::Location) {
-            tokio::time::timeout(CACHE_TIMEOUT, async {
-                loop {
-                    let largest = self
-                        .cache_store
-                        .get(&track_key())
-                        .and_then(|cache| cache.largest_location());
-                    if largest == Some(expected) {
-                        return;
-                    }
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            })
-            .await
-            .expect("the object should be cached");
+            wait_largest_location(&self.cache_store.get_or_create(&track_key()), expected).await;
         }
     }
 
