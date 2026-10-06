@@ -114,25 +114,11 @@ const SESSION_METRICS: &[(&str, Metric)] = &[
         },
     ),
     (
-        "mtu",
-        Metric::Max {
-            column: "current_mtu",
-            scale: 1.0,
-        },
-    ),
-    (
         "loss_percent",
         Metric::RateRatio {
             numerator: "lost_packets",
             denominator: "sent_packets",
             scale: 100.0,
-        },
-    ),
-    (
-        "lost_kbps",
-        Metric::Rate {
-            columns: &["lost_bytes"],
-            scale: BITS_PER_BYTE / 1000.0,
         },
     ),
     (
@@ -235,20 +221,6 @@ const TRACK_METRICS: &[(&str, Metric)] = &[
         },
     ),
     (
-        "objects_per_s",
-        Metric::Rate {
-            columns: &["objects_received"],
-            scale: 1.0,
-        },
-    ),
-    (
-        "aborted_subgroups_per_s",
-        Metric::Rate {
-            columns: &["subgroups_aborted"],
-            scale: 1.0,
-        },
-    ),
-    (
         "max_arrival_gap_ms",
         Metric::Max {
             column: "max_arrival_gap_since_last_snapshot_us",
@@ -263,13 +235,6 @@ const SUBSCRIPTION_METRICS: &[(&str, Metric)] = &[
         Metric::Rate {
             columns: &["bytes_sent"],
             scale: MBPS,
-        },
-    ),
-    (
-        "objects_per_s",
-        Metric::Rate {
-            columns: &["objects_sent"],
-            scale: 1.0,
         },
     ),
     (
@@ -307,13 +272,6 @@ const PROCESS_METRICS: &[(&str, Metric)] = &[
         "cache_objects",
         Metric::Max {
             column: "cache_objects",
-            scale: 1.0,
-        },
-    ),
-    (
-        "cache_tracks",
-        Metric::Max {
-            column: "cache_tracks",
             scale: 1.0,
         },
     ),
