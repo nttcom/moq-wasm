@@ -103,3 +103,22 @@ export function fetchSeries(
 ): Promise<Series> {
   return getJson('/api/series', { relay_id: relayId, ...target, from: fromMs, to: toMs, points })
 }
+
+export interface NamespaceSummary {
+  namespace: string
+  tracks: string[]
+  relays: string[]
+  first_seen_ms: number
+  last_seen_ms: number
+  subscriptions: number
+}
+
+export interface PublishedNamespaces {
+  namespaces: NamespaceSummary[]
+  subscriptions: number
+  clients: number
+}
+
+export function fetchNamespaces(fromMs: number, toMs: number, appId: string): Promise<PublishedNamespaces> {
+  return getJson('/api/namespaces', { from: fromMs, to: toMs, app_id: appId })
+}

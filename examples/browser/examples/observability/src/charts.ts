@@ -13,6 +13,7 @@ export interface ChartSpec {
   title: string
   unit: string
   lines: LineRef[]
+  totalLabel?: string
 }
 
 const UP = '↑'
@@ -125,8 +126,26 @@ function sessionCharts(
   ].filter((spec): spec is ChartSpec => spec !== null)
 }
 
+function meshCharts(topology: Topology): ChartSpec[] {
+  const relayIds = topology.relays.map((relay) => relay.id).sort()
+  const perRelay = (target: SeriesTarget, metric: string): LineRef[] =>
+    relayIds.map((relayId) => ({ label: relayId, relayId, target, metric }))
+  const process: SeriesTarget = { target: 'process' }
+  const relay: SeriesTarget = { target: 'relay' }
+  return [
+    { title: 'Egress', unit: 'Mbps', lines: perRelay(relay, 'egress_mbps'), totalLabel: 'All relays' },
+    { title: 'Ingress', unit: 'Mbps', lines: perRelay(relay, 'ingress_mbps'), totalLabel: 'All relays' },
+    { title: 'Egress loss (bitrate-weighted)', unit: '%', lines: perRelay(relay, 'egress_loss_percent') },
+    { title: 'Sessions', unit: '', lines: perRelay(relay, 'sessions'), totalLabel: 'All relays' },
+    { title: 'RSS', unit: 'MB', lines: perRelay(process, 'rss_mb') },
+    { title: 'Cache payload', unit: 'MB', lines: perRelay(process, 'cache_mb'), totalLabel: 'All relays' },
+    { title: 'Congestion events', unit: '/s', lines: perRelay(relay, 'congestion_per_s'), totalLabel: 'All relays' }
+  ]
+}
+
 export function chartSpecs(topology: Topology, selection: Selection, visible: Visibility): ChartSpec[] {
   if (!selection) return []
+  if (selection.kind === 'mesh') return meshCharts(topology)
   if (selection.kind === 'relay') return relayCharts(selection.id)
   if (selection.kind === 'client') {
     const client = topology.clients.get(selection.id)

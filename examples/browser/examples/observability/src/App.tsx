@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type RelaySnapshot, fetchSnapshots } from './api'
+import type { NamespaceSummary } from './api'
 import { ChartDrawer } from './ChartDrawer'
+import { NamespacePanel } from './NamespacePanel'
 import { layoutTopology } from './layout'
-import { formatValue } from './LineChart'
 import { type Filters, type Selection, narrowedFilters, routesOf, visibility, widenedFilters } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
 import { TopologyView } from './TopologyView'
-import { buildTopology, linkMbps, relativeNamespace } from './topology'
+import { appIdOf, buildTopology, relativeNamespace } from './topology'
 
 const POLL_MS = 1_000
 const PAST_RATE_WINDOW_MS = 2_000
@@ -51,6 +52,7 @@ export default function App() {
   const [chosenAppId, setChosenAppId] = useState('')
   const [selection, setSelection] = useState<Selection>(null)
   const [drawerClosed, setDrawerClosed] = useState(false)
+  const [namespacesOpen, setNamespacesOpen] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(() => Math.round(window.innerHeight * DEFAULT_DRAWER_SHARE))
   const [range, setRange] = useState<RangeName>('1h')
   const [atMs, setAtMs] = useState<number | null>(null)
@@ -130,12 +132,12 @@ export default function App() {
 
   useEffect(() => {
     if (!selection) return
-    const exists =
-      selection.kind === 'relay'
-        ? topology.relays.some((relay) => relay.id === selection.id)
-        : selection.kind === 'client'
-          ? visible.clients.has(selection.id)
-          : visible.links.has(selection.id)
+    const exists = {
+      mesh: () => true,
+      relay: () => topology.relays.some((relay) => relay.id === selection.id),
+      client: () => visible.clients.has(selection.id),
+      link: () => visible.links.has(selection.id)
+    }[selection.kind]()
     if (!exists) setSelection(null)
   }, [topology, visible, selection])
 
@@ -153,15 +155,18 @@ export default function App() {
     return [...prefixes].sort()
   }, [topology, filters.appId])
 
-  const egressMbps = [...topology.links.values()]
-    .filter((link) => link.kind !== 'uplink' && visible.links.has(link.key))
-    .reduce((sum, link) => sum + linkMbps(link, visible.trackKeys), 0)
-
   const focusOn = (next: Selection) => {
-    const narrowed = narrowedFilters(routesOf(topology, next, visible), filters)
-    setFilters(narrowed)
+    if (next?.kind !== 'mesh') setFilters(narrowedFilters(routesOf(topology, next, visible), filters))
     setSelection(next)
     setDrawerClosed(false)
+  }
+
+  const openNamespace = (summary: NamespaceSummary, stillPublished: boolean) => {
+    setFilters({ appId: appIdOf(summary.namespace), namespacePrefix: relativeNamespace(summary.namespace) })
+    setSelection(null)
+    if (stillPublished) setAtMs(null)
+    else seekTo(summary.last_seen_ms)
+    setNamespacesOpen(false)
   }
 
   const onBackground = () => {
@@ -172,6 +177,7 @@ export default function App() {
   const drawerOpen = Boolean(selection) && !drawerClosed
   const selectionTitle = (() => {
     if (!selection) return ''
+    if (selection.kind === 'mesh') return 'All relays'
     if (selection.kind === 'client') return topology.clients.get(selection.id)?.label ?? selection.id
     if (selection.kind === 'link') {
       const [from, to] = selection.id.split('>')
@@ -221,6 +227,12 @@ export default function App() {
             ×
           </button>
         </label>
+        <button
+          className={`panel-toggle${namespacesOpen ? ' on' : ''}`}
+          onClick={() => setNamespacesOpen(!namespacesOpen)}
+        >
+          Namespaces
+        </button>
         <div className="timeline" title="← → move 1 s, Shift + ← → move 10 s">
           <div className="ranges">
             {RANGE_NAMES.map((name) => (
@@ -249,20 +261,6 @@ export default function App() {
             {live ? 'Live' : seekLabel(atMs)}
           </button>
         </div>
-        <div className="stats">
-          <span>
-            Relays <b>{topology.relays.length}</b>
-          </span>
-          <span>
-            Clients <b>{visible.clients.size}</b>
-          </span>
-          <span>
-            Subscriptions <b>{visible.routes.length}</b>
-          </span>
-          <span>
-            Egress <b>{formatValue(egressMbps)} Mbps</b>
-          </span>
-        </div>
       </header>
       {error && <div className="banner">{error}</div>}
       <main>
@@ -282,6 +280,16 @@ export default function App() {
           <span className="warn">downlink loss 1–5%</span>
           <span className="bad">downlink loss &gt; 5%</span>
         </div>
+        {namespacesOpen && (
+          <NamespacePanel
+            spanMs={RANGES[range]}
+            toMs={nowMs}
+            live={live}
+            appId={filters.appId}
+            onPick={openNamespace}
+            onClose={() => setNamespacesOpen(false)}
+          />
+        )}
         {drawerOpen && (
           <ChartDrawer
             topology={topology}

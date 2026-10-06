@@ -1,6 +1,8 @@
 import { type Route, type Topology, relativeNamespace } from './topology'
 
-export type Selection = { kind: 'relay' | 'client' | 'link'; id: string } | null
+export type Selection = { kind: 'relay' | 'client' | 'link' | 'mesh'; id: string } | null
+
+export const MESH: Selection = { kind: 'mesh', id: 'mesh' }
 
 export interface Filters {
   appId: string
@@ -50,6 +52,7 @@ export function visibility(topology: Topology, filters: Filters): Visibility {
 
 export function routesOf(topology: Topology, selection: Selection, visible: Visibility): Route[] {
   if (!selection) return []
+  if (selection.kind === 'mesh') return visible.routes
   if (selection.kind === 'link') {
     const link = topology.links.get(selection.id)
     return visible.routes.filter((route) => link?.routes.includes(route.key))

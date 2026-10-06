@@ -173,14 +173,21 @@ out of the topology page.
   - `GET /api/snapshots` — the newest snapshot of every relay, from memory.
   - `GET /api/snapshots?at=<ms>` — each relay's last snapshot at or before
     `at`, if it published one in the 10 s before.
+  - `GET /api/namespaces?from=…&to=…[&app_id=…]` — every namespace with a
+    track in the range (from `track_stats`, at most 1000, `observability/…`
+    excluded), with its tracks, relays, first / last time seen and the
+    number of distinct client subscriptions, plus the range's totals of
+    client subscriptions and client sessions.
   - `GET /api/series?relay_id=…&target=process|relay|session|track|subscription&…&from=…&to=…&points=…`
     — the target's rows bucketed into `points` buckets (at least 1 s), with
-    counters turned into per-second rates between consecutive buckets and a
+    counters turned into per-second rates between the last samples of
+    consecutive buckets (so a partly filled newest bucket is not
+    underestimated) and a
     counter that went backwards (a restart) giving no value. `relay` sums
     every session of the relay; ratios such as loss are weighted by their
     denominators. Query values reach ClickHouse as typed query parameters.
-    A range longer than the 7-day retention or more than 300 points is
-    rejected with 400, so an anonymous caller cannot make ClickHouse scan
+    A range longer than the 7-day retention (series and namespaces) or more
+    than 300 points is rejected with 400, so an anonymous caller cannot make ClickHouse scan
     more than one retention window per request.
 
 The API has no authentication: the PoC page is published on GitHub Pages and
@@ -239,7 +246,13 @@ reference.
   the current position; stepping past now returns to live. The whole page
   (topology, colours, details) then shows the snapshot at that time, and the
   time label returns to live when clicked.
-- Totals: relays, clients, subscriptions, egress.
+- A Namespaces button opens a panel listing every Track Namespace published
+  in the header's range (`GET /api/namespaces`), newest first, searchable,
+  with its tracks, relays, first / last time seen (Live while still
+  published) and client subscriptions; its heading counts namespaces,
+  subscriptions and clients in the range, scoped to the `app_id` filter.
+  Clicking a row sets the `app_id` and namespace filters to it and moves the
+  page to its last published moment (or stays live).
 
 ### Topology
 - One circle for the hosting environment (e.g. GCP) holding the relays,
@@ -264,6 +277,10 @@ reference.
   empty space re-fits.
 
 ### Selection
+- Clicking the "Relays" label of the environment selects the whole mesh:
+  nothing is dimmed, and the drawer shows each relay's clients, ingress,
+  egress and RSS with charts of egress, ingress, loss, sessions, RSS, cache
+  and congestion per relay plus an all-relays total line.
 - Clicking a client highlights the hops of its subscriptions; clicking a
   relay, those through the relay; clicking a link draws it thick and
   highlights the full route of every subscription it carries, from the

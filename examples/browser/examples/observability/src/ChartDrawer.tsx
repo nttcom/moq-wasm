@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { type Series, fetchSeries } from './api'
 import { type ChartSpec, chartSpecs } from './charts'
-import { LineChart, formatValue } from './LineChart'
+import { type ChartLine, LineChart, formatValue } from './LineChart'
 import { type Selection, type Visibility, routesOf } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
 import { type Link, type Topology, linkMbps, relativeNamespace } from './topology'
@@ -10,6 +10,20 @@ const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
 const MIN_HEIGHT = 160
 const PALETTE = ['#85B7EB', '#5DCAA5', '#EF9F27', '#ED93B1', '#AFA9EC']
+const TOTAL_COLOR = '#e8e8e6'
+
+function withTotal(lines: ChartLine[], totalLabel: string | undefined): ChartLine[] {
+  if (!totalLabel || lines.length < 2) return lines
+  const sums = new Map<number, number>()
+  for (const line of lines) {
+    line.t.forEach((ms, index) => {
+      const value = line.v[index]
+      if (value !== null) sums.set(ms, (sums.get(ms) ?? 0) + value)
+    })
+  }
+  const t = [...sums.keys()].sort((a, b) => a - b)
+  return [...lines, { label: totalLabel, color: TOTAL_COLOR, t, v: t.map((ms) => sums.get(ms) ?? null) }]
+}
 
 interface Props {
   topology: Topology
@@ -82,6 +96,43 @@ function Details({
       .join(' → '),
     relativeNamespace(route.namespace)
   ])
+  if (selection.kind === 'mesh') {
+    const links = [...topology.links.values()].filter((link) => visible.links.has(link.key))
+    const throughput = (relayId: string, direction: 'from' | 'to') =>
+      links
+        .filter((link) => link[direction] === relayId)
+        .reduce((sum, link) => sum + linkMbps(link, visible.trackKeys), 0)
+    return (
+      <>
+        <div className="sub">
+          {topology.relays.length} relays · {visible.clients.size} clients · {visible.routes.length} subscriptions
+        </div>
+        <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
+        {topology.relays.map((relay) => (
+          <Section key={relay.id} title={relay.id}>
+            <Rows
+              rows={[
+                [
+                  'Clients',
+                  [...topology.clients.values()].filter(
+                    (client) => client.relayId === relay.id && visible.clients.has(client.key)
+                  ).length
+                ],
+                ['Ingress', mbps(throughput(relay.id, 'to'))],
+                ['Egress', mbps(throughput(relay.id, 'from'))],
+                [
+                  'RSS',
+                  relay.snapshot.process.rss_bytes === null
+                    ? '—'
+                    : `${Math.round(relay.snapshot.process.rss_bytes / 1024 / 1024)} MB`
+                ]
+              ]}
+            />
+          </Section>
+        ))}
+      </>
+    )
+  }
   if (selection.kind === 'relay') {
     const relay = topology.relays.find((candidate) => candidate.id === selection.id)
     if (!relay) return null
@@ -281,15 +332,18 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
               onHover={setHoverMs}
               markMs={markMs}
               onPick={onSeek}
-              lines={spec.lines.map((line, index) => {
-                const series = loaded.get(requestKey(line.relayId, line.target))
-                return {
-                  label: line.label,
-                  color: PALETTE[index % PALETTE.length],
-                  t: series?.t ?? [],
-                  v: series?.series[line.metric] ?? []
-                }
-              })}
+              lines={withTotal(
+                spec.lines.map((line, index) => {
+                  const series = loaded.get(requestKey(line.relayId, line.target))
+                  return {
+                    label: line.label,
+                    color: PALETTE[index % PALETTE.length],
+                    t: series?.t ?? [],
+                    v: series?.series[line.metric] ?? []
+                  }
+                }),
+                spec.totalLabel
+              )}
             />
           ))}
         </div>

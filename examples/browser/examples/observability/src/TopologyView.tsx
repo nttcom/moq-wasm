@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTER, CLIENT_HALF, ENVIRONMENT_RADIUS, type HalfSize, type Layout, type Point, RELAY_HALF } from './layout'
-import { type Selection, type Visibility, routesOf } from './selection'
+import { MESH, type Selection, type Visibility, routesOf } from './selection'
 import { type Link, type Topology, linkMbps } from './topology'
 import { healthOf } from './health'
 
@@ -91,8 +91,9 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
 
   const related = useMemo(() => routesOf(topology, selection, visible), [topology, selection, visible])
   const activeLinks = useMemo(() => new Set(related.flatMap((route) => route.hops)), [related])
+  const showsWholeMesh = !selection || selection.kind === 'mesh'
   const focusedLinks = useMemo(() => {
-    if (!selection) return new Set<string>()
+    if (!selection || selection.kind === 'mesh') return new Set<string>()
     if (selection.kind === 'link') return new Set([selection.id])
     return new Set([...visible.links].filter((key) => key.split('>').includes(selection.id)))
   }, [selection, visible])
@@ -106,8 +107,8 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
     const relays = topology.relays.map((relay) => relay.id)
     const clients = [...visible.clients]
     const all = [...relays, ...clients]
-    return selection ? all.filter((id) => activeNodes.has(id)) : all
-  }, [topology, visible, selection, activeNodes])
+    return showsWholeMesh ? all : all.filter((id) => activeNodes.has(id))
+  }, [topology, visible, showsWholeMesh, activeNodes])
 
   const fitTarget = useCallback(
     (ids: string[], includeEnvironment: boolean): ViewBox | null => {
@@ -170,7 +171,7 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
   )
 
   const fit = useCallback(
-    () => animateTo(fitTarget(visibleNodeIds(), !selection)),
+    () => animateTo(fitTarget(visibleNodeIds(), showsWholeMesh)),
     [animateTo, fitTarget, visibleNodeIds, selection]
   )
 
@@ -264,10 +265,10 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
       return
     }
     const target = event.target as Element
-    if (!target.closest('.node, .hit')) onBackground()
+    if (!target.closest('.node, .hit, .mesh-label')) onBackground()
   }
 
-  const dimmed = (active: boolean) => (selection && !active ? ' dim' : '')
+  const dimmed = (active: boolean) => (!showsWholeMesh && !active ? ' dim' : '')
 
   return (
     <div className="topology">
@@ -280,7 +281,7 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
         onPointerUp={onPointerUp}
         onClick={onBackgroundClick}
         onDoubleClick={(event) => {
-          if (!(event.target as Element).closest('.node, .hit')) fit()
+          if (!(event.target as Element).closest('.node, .hit, .mesh-label')) fit()
         }}
       >
         <defs>
@@ -300,17 +301,26 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
           ))}
         </defs>
         <circle cx={CENTER.x} cy={CENTER.y} r={ENVIRONMENT_RADIUS} className="environment" />
-        <rect
-          x={CENTER.x - 60}
-          y={CENTER.y - ENVIRONMENT_RADIUS - 10}
-          width={120}
-          height={20}
-          rx={10}
-          className="pill"
-        />
-        <text x={CENTER.x} y={CENTER.y - ENVIRONMENT_RADIUS + 4} textAnchor="middle">
-          Relays
-        </text>
+        <g
+          className={`mesh-label${selection?.kind === 'mesh' ? ' sel' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            select(MESH)
+          }}
+        >
+          <title>Show all relays</title>
+          <rect
+            x={CENTER.x - 60}
+            y={CENTER.y - ENVIRONMENT_RADIUS - 10}
+            width={120}
+            height={20}
+            rx={10}
+            className="pill"
+          />
+          <text x={CENTER.x} y={CENTER.y - ENVIRONMENT_RADIUS + 4} textAnchor="middle">
+            Relays
+          </text>
+        </g>
         <g>
           {[...topology.links.values()]
             .filter((link) => visible.links.has(link.key))
@@ -325,7 +335,7 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
                 color,
                 selection?.kind === 'link' && selection.id === link.key ? 'sel' : '',
                 focusedLinks.has(link.key) ? 'focus' : '',
-                selection && !activeLinks.has(link.key) ? 'dim' : ''
+                !showsWholeMesh && !activeLinks.has(link.key) ? 'dim' : ''
               ]
               return (
                 <path
