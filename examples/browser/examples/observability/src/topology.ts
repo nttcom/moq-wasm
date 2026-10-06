@@ -201,11 +201,7 @@ function isHiddenSession(session: SessionStats): boolean {
   return session.peer === 'stats_publisher' || session.app_id === OBSERVABILITY_APP_ID
 }
 
-function clientLabel(session: SessionStats): string {
-  const address = session.remote_address
-  if (!address) return `session ${session.session_id}`
-  return `${ipOf(address)}:${address.slice(address.lastIndexOf(':') + 1)}`
-}
+const clientLabel = (session: SessionStats) => session.remote_address ?? `session ${session.session_id}`
 
 export function buildTopology(snapshots: RelaySnapshot[], previous: Map<string, RelaySnapshot>): Topology {
   const index = new RelayIndex(snapshots)

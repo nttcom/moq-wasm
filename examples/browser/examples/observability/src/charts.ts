@@ -1,6 +1,6 @@
 import type { Id, SeriesTarget } from './api'
 import type { Selection, Visibility } from './selection'
-import { type Route, type Topology, relativeNamespace } from './topology'
+import { type Route, type Topology, relativeNamespace, trackKeyOf } from './topology'
 
 export interface LineRef {
   label: string
@@ -18,6 +18,8 @@ export interface ChartSpec {
 
 const UP = '↑'
 const DOWN = '↓'
+
+const present = (specs: (ChartSpec | null)[]) => specs.filter((spec): spec is ChartSpec => spec !== null)
 
 function chart(title: string, unit: string, lines: (LineRef | null | false)[]): ChartSpec | null {
   const present = lines.filter((line): line is LineRef => Boolean(line))
@@ -45,7 +47,7 @@ function trackLines(topology: Topology, relayId: string, publisherSessionId: Id,
     .filter(
       (track) =>
         track.publisher_session_id === publisherSessionId &&
-        (!visible.trackKeys || visible.trackKeys.has(`${track.namespace}/${track.name}`))
+        (!visible.trackKeys || visible.trackKeys.has(trackKeyOf(track.namespace, track.name)))
     )
     .map(
       (track): LineRef => ({
@@ -66,7 +68,7 @@ function relayCharts(relayId: string): ChartSpec[] {
   const process: SeriesTarget = { target: 'process' }
   const relay: SeriesTarget = { target: 'relay' }
   const line = (label: string, target: SeriesTarget, metric: string): LineRef => ({ label, relayId, target, metric })
-  return [
+  return present([
     chart('Memory', 'MB', [line('RSS', process, 'rss_mb'), line('Cache payload', process, 'cache_mb')]),
     chart('Throughput', 'Mbps', [line('Ingress', relay, 'ingress_mbps'), line('Egress', relay, 'egress_mbps')]),
     chart('Egress loss (bitrate-weighted)', '%', [line('Loss', relay, 'egress_loss_percent')]),
@@ -78,7 +80,7 @@ function relayCharts(relayId: string): ChartSpec[] {
     ]),
     chart('Streams reset by peers', '/s', [line('Resets', relay, 'peer_resets_per_s')]),
     chart('Congestion events', '/s', [line('Events', relay, 'congestion_per_s')])
-  ].filter((spec): spec is ChartSpec => spec !== null)
+  ])
 }
 
 interface Direction {
@@ -99,7 +101,7 @@ function sessionCharts(
   const session: SeriesTarget = { target: 'session', session_id: sessionId }
   const line = (label: string, metric: string): LineRef => ({ label, relayId, target: session, metric })
   const { uplink, downlink, sessionBitrate, peer } = direction
-  return [
+  return present([
     sessionBitrate
       ? chart('Bitrate', 'Mbps', [
           uplink && line(`${UP} received by relay`, 'received_mbps'),
@@ -123,7 +125,7 @@ function sessionCharts(
     ]),
     downlink ? chart('Streams reset by relay', '/s', subscriptionLines(received, 'resets_per_s')) : null,
     downlink ? chart('Delivery lag', 'ms', subscriptionLines(received, 'lag_ms')) : null
-  ].filter((spec): spec is ChartSpec => spec !== null)
+  ])
 }
 
 function meshCharts(topology: Topology): ChartSpec[] {
@@ -163,7 +165,7 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
   const { relayId, session, bySender } = link.measured
   const carried = visible.routes.filter((route) => link.routes.includes(route.key))
   if (link.kind === 'uplink') {
-    return [
+    return present([
       chart('Bitrate', 'Mbps', trackLines(topology, relayId, session.session_id, visible, 'received_mbps')),
       ...sessionCharts(topology, relayId, session.session_id, visible, [], {
         uplink: true,
@@ -171,10 +173,10 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
         sessionBitrate: false,
         peer: 'client'
       })
-    ].filter((spec): spec is ChartSpec => spec !== null)
+    ])
   }
   if (link.kind === 'downlink') {
-    return [
+    return present([
       chart('Bitrate', 'Mbps', subscriptionLines(carried, 'sent_mbps')),
       ...sessionCharts(topology, relayId, session.session_id, visible, carried, {
         uplink: false,
@@ -182,7 +184,7 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
         sessionBitrate: false,
         peer: 'client'
       })
-    ].filter((spec): spec is ChartSpec => spec !== null)
+    ])
   }
   const sender = topology.relays.find((relay) => relay.id === relayId)?.snapshot
   const carriedTracks = new Set(carried.map((route) => route.trackKey))
@@ -190,7 +192,7 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
     .filter(
       (subscription) =>
         subscription.subscriber_session_id === session.session_id &&
-        carriedTracks.has(`${subscription.namespace}/${subscription.name}`)
+        carriedTracks.has(trackKeyOf(subscription.namespace, subscription.name))
     )
     .map(
       (subscription): LineRef => ({
@@ -204,7 +206,7 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
         metric: 'sent_mbps'
       })
     )
-  return [
+  return present([
     bySender ? chart('Bitrate', 'Mbps', relayedSubscriptions) : null,
     ...sessionCharts(topology, relayId, session.session_id, visible, [], {
       uplink: !bySender,
@@ -212,5 +214,5 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
       sessionBitrate: !bySender,
       peer: 'peer relay'
     })
-  ].filter((spec): spec is ChartSpec => spec !== null)
+  ])
 }

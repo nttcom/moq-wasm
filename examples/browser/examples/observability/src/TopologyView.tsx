@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTER, CLIENT_HALF, ENVIRONMENT_RADIUS, type HalfSize, type Layout, type Point, RELAY_HALF } from './layout'
 import { MESH, type Selection, type Visibility, routesOf } from './selection'
 import { type Link, type Topology, linkMbps } from './topology'
-import { healthOf } from './health'
 
 interface ViewBox {
   x: number
@@ -53,9 +52,13 @@ function linkPath(topology: Topology, layout: Layout, link: Link): string | null
   return `M${a.x + (dx / length) * start + nx},${a.y + (dy / length) * start + ny} L${b.x - (dx / length) * end + nx},${b.y - (dy / length) * end + ny}`
 }
 
+const WARN_LOSS_PERCENT = 1
+const BAD_LOSS_PERCENT = 5
+
 function linkColorClass(link: Link): string {
   if (link.kind === 'uplink' || link.lossPercent === null) return 'up'
-  return healthOf(link.lossPercent)
+  if (link.lossPercent < WARN_LOSS_PERCENT) return 'ok'
+  return link.lossPercent <= BAD_LOSS_PERCENT ? 'warn' : 'bad'
 }
 
 const formatMegabytes = (bytes: number | null) => (bytes === null ? '—' : `${Math.round(bytes / 1024 / 1024)} MB`)
