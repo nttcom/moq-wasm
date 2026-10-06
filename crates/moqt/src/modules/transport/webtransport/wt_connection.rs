@@ -3,6 +3,7 @@ use async_trait::async_trait;
 
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
+use crate::modules::transport::transport_addresses::TransportAddresses;
 use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
 use crate::modules::transport::transport_stats::TransportStats;
 
@@ -83,5 +84,9 @@ impl TransportConnection for WtConnection {
 
     fn stats(&self) -> TransportStats {
         quinn::Connection::stats(&self.session).into()
+    }
+
+    fn addresses(&self) -> TransportAddresses {
+        TransportAddresses::from(&*self.session)
     }
 }

@@ -5,6 +5,7 @@ use bytes::BytesMut;
 
 use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
 use crate::modules::transport::quic::quic_send_stream::QUICSendStream;
+use crate::modules::transport::transport_addresses::TransportAddresses;
 use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
 use crate::modules::transport::transport_stats::TransportStats;
 
@@ -92,5 +93,9 @@ impl TransportConnection for QUICConnection {
 
     fn stats(&self) -> TransportStats {
         self.connection.stats().into()
+    }
+
+    fn addresses(&self) -> TransportAddresses {
+        (&self.connection).into()
     }
 }

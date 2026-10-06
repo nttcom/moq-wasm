@@ -20,7 +20,9 @@ use crate::modules::moqt::runtime::tasks::{
     datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
     uni_stream_receive_task::UniStreamReceiveTask,
 };
-use crate::modules::transport::transport_stats::TransportStats;
+use crate::modules::transport::{
+    transport_addresses::TransportAddresses, transport_stats::TransportStats,
+};
 
 pub struct Session {
     inner: Arc<SessionContext>,
@@ -114,6 +116,10 @@ impl Session {
         self.inner.transport_connection.stats()
     }
 
+    pub fn transport_addresses(&self) -> TransportAddresses {
+        self.inner.transport_connection.addresses()
+    }
+
     /// draft-14 §9.4. A client sends an empty URI; only a server names a new
     /// session. Fire-and-forget: the draft defines no response.
     pub async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
@@ -199,6 +205,23 @@ mod tests {
         assert!(stats.current_mtu > 0);
         assert!(stats.sent_bytes > 0);
         assert!(stats.received_bytes > 0);
+    }
+
+    #[tokio::test]
+    async fn transport_addresses_name_the_peer_of_the_quic_path() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("transport-addresses");
+        let (client, _server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+
+        // Act
+        let addresses = client.transport_addresses();
+
+        // Assert
+        let remote = addresses.remote.expect("a QUIC session knows its peer");
+        assert_eq!(remote.port(), port);
+        assert!(remote.ip().is_loopback());
     }
 
     #[tokio::test]
