@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::{
-    sync::{mpsc, oneshot, watch},
+    sync::{mpsc, oneshot},
     task::JoinSet,
 };
 use tracing::{Instrument, Span};
@@ -12,7 +12,7 @@ use crate::modules::{
         egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
     },
     domain::{
-        pub_sub_directory::entry::PublishDoneReason, session_id::SessionId, track_key::TrackKey,
+        pub_sub_directory::DownstreamRunnerSignals, session_id::SessionId, track_key::TrackKey,
     },
     session::{session_repository::SessionRepository, subscription::DownstreamSubscription},
 };
@@ -24,9 +24,8 @@ pub(crate) struct EgressStartRequest {
     pub(crate) downstream_subscription: DownstreamSubscription,
     pub(crate) parent_span: Span,
     pub(crate) ready_sender: oneshot::Sender<anyhow::Result<()>>,
-    pub(crate) runner_stop_receiver: oneshot::Receiver<PublishDoneReason>,
+    pub(crate) runner_signals: DownstreamRunnerSignals,
     pub(crate) subscribe_ok_receiver: oneshot::Receiver<()>,
-    pub(crate) forward_receiver: watch::Receiver<bool>,
     /// From LargestLocation of SUBSCRIBE_OK
     /// None means that no content has been delivered yet.
     pub(crate) largest_location: Option<moqt::Location>,
@@ -159,17 +158,13 @@ impl EgressCoordinator {
             request.downstream_subscription.clone(),
             request.ready_sender,
             request.largest_location,
-            request.forward_receiver,
+            request.runner_signals,
         );
 
-        let runner_stop_receiver = request.runner_stop_receiver;
         let subscribe_ok_receiver = request.subscribe_ok_receiver;
         runners.spawn(
             async move {
-                if let Err(e) = runner
-                    .run(runner_stop_receiver, subscribe_ok_receiver)
-                    .await
-                {
+                if let Err(e) = runner.run(subscribe_ok_receiver).await {
                     tracing::error!(?e, "egress runner finished with error");
                 }
             }
@@ -188,7 +183,10 @@ impl Drop for EgressCoordinator {
 mod tests {
     use std::time::Duration;
 
+    use tokio::sync::watch;
+
     use super::*;
+    use crate::modules::domain::pub_sub_directory::entry::PublishDoneReason;
     use crate::modules::test_support::relay_harness::{
         MockPublisherObservers, fixtures::subscription::make_subscription,
         session_repository_with_downstream_session,
@@ -242,9 +240,12 @@ mod tests {
                 downstream_subscription: make_subscription(moqt::FilterType::LargestObject),
                 parent_span: Span::none(),
                 ready_sender,
-                runner_stop_receiver,
+                runner_signals: DownstreamRunnerSignals {
+                    stop_receiver: runner_stop_receiver,
+                    forward_receiver: watch::channel(true).1,
+                    delivery_stats: Arc::default(),
+                },
                 subscribe_ok_receiver,
-                forward_receiver: watch::channel(true).1,
                 largest_location: None,
             })))
             .await

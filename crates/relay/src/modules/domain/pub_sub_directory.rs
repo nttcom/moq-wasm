@@ -10,6 +10,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
+        delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
             RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
@@ -26,11 +27,20 @@ pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     runner_stop_sender: oneshot::Sender<PublishDoneReason>,
     forward_sender: watch::Sender<bool>,
+    delivery_stats: Arc<DeliveryStats>,
+}
+
+pub(crate) struct DownstreamSubscriptionState {
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) request_id: u64,
+    pub(crate) upstream_key: UpstreamSubscriptionKey,
+    pub(crate) delivery: DeliveryCounters,
 }
 
 pub(crate) struct DownstreamRunnerSignals {
     pub(crate) stop_receiver: oneshot::Receiver<PublishDoneReason>,
     pub(crate) forward_receiver: watch::Receiver<bool>,
+    pub(crate) delivery_stats: Arc<DeliveryStats>,
 }
 
 // Client subscriptions own the Redis route for their prefix, so the
@@ -430,6 +440,29 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
+    pub(crate) fn active_upstream_tracks(&self) -> Vec<(UpstreamSubscriptionKey, TrackKey)> {
+        self.active_upstream_subscriptions
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().track_key.clone()))
+            .collect()
+    }
+
+    pub(crate) fn downstream_subscription_states(&self) -> Vec<DownstreamSubscriptionState> {
+        self.downstream_subscriptions
+            .iter()
+            .map(|entry| {
+                let (subscriber_session_id, request_id) = *entry.key();
+                let registered = entry.value();
+                DownstreamSubscriptionState {
+                    subscriber_session_id,
+                    request_id,
+                    upstream_key: registered.subscription.upstream_key.clone(),
+                    delivery: registered.delivery_stats.counters(),
+                }
+            })
+            .collect()
+    }
+
     pub(crate) fn get_active_upstream_subscription(
         &self,
         key: &UpstreamSubscriptionKey,
@@ -546,6 +579,7 @@ impl InMemoryLocalPubSubDirectory {
         upstream.downstream_subscriber_count += 1;
         let (runner_stop_sender, stop_receiver) = oneshot::channel();
         let (forward_sender, forward_receiver) = watch::channel(true);
+        let delivery_stats = Arc::new(DeliveryStats::default());
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
             RegisteredDownstreamSubscription {
@@ -555,11 +589,13 @@ impl InMemoryLocalPubSubDirectory {
                 },
                 runner_stop_sender,
                 forward_sender,
+                delivery_stats: delivery_stats.clone(),
             },
         );
         Some(DownstreamRunnerSignals {
             stop_receiver,
             forward_receiver,
+            delivery_stats,
         })
     }
 
@@ -1054,6 +1090,45 @@ mod tests {
         // Assert
         assert!(updated);
         assert!(!*signals.forward_receiver.borrow());
+    }
+
+    #[test]
+    fn downstream_subscription_states_report_delivery() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let signals = table
+            .register_downstream_subscription(2, 100, upstream_key.clone(), None)
+            .unwrap();
+        signals.delivery_stats.record_stream_reset();
+
+        // Act
+        let states = table.downstream_subscription_states();
+
+        // Assert
+        let [state] = &states[..] else {
+            panic!("expected one registration, got {}", states.len());
+        };
+        assert_eq!((state.subscriber_session_id, state.request_id), (2, 100));
+        assert_eq!(state.upstream_key, upstream_key);
+        assert_eq!(state.delivery.streams_reset, 1);
+    }
+
+    #[test]
+    fn active_upstream_tracks_lists_each_upstream_with_its_track() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+
+        // Act
+        let tracks = table.active_upstream_tracks();
+
+        // Assert
+        assert_eq!(
+            tracks,
+            vec![(
+                upstream_key.clone(),
+                TrackKey::new(upstream_key.track_namespace, upstream_key.track_name)
+            )]
+        );
     }
 
     #[test]

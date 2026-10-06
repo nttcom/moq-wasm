@@ -11,6 +11,7 @@ use crate::{
             NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
         },
         domain::session_peer::SessionPeer,
+        observability::stats_publish_task::{StatsPublishConfig, StatsPublishTask},
         session::{session_event::SessionEvent, session_repository::SessionRepository},
     },
     relay_server::{
@@ -29,7 +30,8 @@ pub struct RelayServer {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     sender: UnboundedSender<SessionEvent>,
     authenticator: Arc<SessionAuthenticator>,
-    _runtime: RelayRuntime,
+    relay_token: String,
+    runtime: RelayRuntime,
     key_path: String,
     cert_path: String,
 }
@@ -73,7 +75,7 @@ impl RelayServer {
         let (sender, runtime) = RelayRuntime::new(
             repo.clone(),
             route_registry,
-            relay_token,
+            relay_token.clone(),
             authenticator.verifier.clone(),
         );
 
@@ -81,7 +83,8 @@ impl RelayServer {
             repo,
             sender,
             authenticator: Arc::new(authenticator),
-            _runtime: runtime,
+            relay_token,
+            runtime,
             key_path: key_path.to_string(),
             cert_path: cert_path.to_string(),
         }
@@ -117,5 +120,15 @@ impl RelayServer {
 
     pub fn spawn_inner_transport<T: moqt::TransportProtocol>(&self, port: u16) -> SessionHandler {
         self.spawn_transport::<T>(port, SessionPeer::Relay)
+    }
+
+    pub fn spawn_stats_publisher(&self, relay_id: String, inner_port: u16) -> StatsPublishTask {
+        StatsPublishTask::run(
+            self.runtime.stats_collector(relay_id),
+            StatsPublishConfig {
+                inner_port,
+                relay_token: self.relay_token.clone(),
+            },
+        )
     }
 }

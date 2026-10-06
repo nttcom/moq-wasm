@@ -12,6 +12,7 @@ pub(crate) mod quic;
 pub(crate) mod read_error;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod server_transport_config;
+pub(crate) mod transport_addresses;
 pub(crate) mod transport_connection;
 pub(crate) mod transport_connection_creator;
 pub(crate) mod transport_receive_stream;

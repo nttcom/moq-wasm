@@ -6,4 +6,5 @@ pub use modules::auth::token_claims::ClaimPolicy;
 pub mod modules;
 mod relay_server;
 
+pub use modules::observability::stats_publish_task::StatsPublishTask;
 pub use relay_server::server::RelayServer;

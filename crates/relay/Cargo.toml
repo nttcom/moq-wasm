@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 moqt = { path = "../moqt" }
 auth-token = { path = "../auth-token" }
+relay-stats = { path = "../relay-stats" }
 tokio = { version = "1.52.3", features = ["full", "tracing"] }
 tracing = "0.1.44"
 async-trait = "0.1.89"
