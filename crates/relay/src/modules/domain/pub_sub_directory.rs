@@ -591,8 +591,8 @@ impl InMemoryLocalPubSubDirectory {
         Some(track_key)
     }
 
-    /// The track ends with its last upstream subscription: its downstream
-    /// subscriptions are removed and their runners told why.
+    /// The downstream subscriptions are swept while the track entry is still
+    /// held, so a track recreated under the same key keeps its own.
     fn end_publisher_subscription(
         &self,
         track_key: &TrackKey,
@@ -612,8 +612,8 @@ impl InMemoryLocalPubSubDirectory {
         if !track.get().subscriptions.is_empty() {
             return Some((ended_subscription, Vec::new()));
         }
-        track.remove();
         let removed = self.end_downstream_subscriptions(track_key, end);
+        track.remove();
         Some((ended_subscription, removed))
     }
 
@@ -720,11 +720,11 @@ impl InMemoryLocalPubSubDirectory {
                 });
         }
         if track.subscriptions.is_empty() {
-            entry.remove();
             self.end_downstream_subscriptions(
                 &track_key,
                 PublishDoneReason::publisher_session_closed(),
             );
+            entry.remove();
         }
         Some(RemovedDownstreamSubscription {
             track_key,
