@@ -54,16 +54,14 @@ impl StatsCollector {
             .dialed_relay_ids();
         let upstream_tracks = self.sources.directory.active_upstream_tracks();
         let ingress = self.take_ingress_counters(&upstream_tracks);
-        let stats_publishers = self.stats_publishers(&upstream_tracks);
         let mut newest_publisher_of: HashMap<&TrackKey, SessionId> = HashMap::new();
         for (publisher_session_id, track_key) in &upstream_tracks {
             let newest = newest_publisher_of.entry(track_key).or_default();
             *newest = (*newest).max(*publisher_session_id);
         }
-        let subscriptions = self
-            .sources
-            .directory
-            .downstream_subscription_states()
+        let subscription_states = self.sources.directory.downstream_subscription_states();
+        let stats_peers = self.stats_peers(&upstream_tracks, &subscription_states);
+        let subscriptions = subscription_states
             .into_iter()
             .map(|state| {
                 let newest_received = ingress
@@ -89,9 +87,9 @@ impl StatsCollector {
             sessions: sessions
                 .into_iter()
                 .map(|session| {
-                    let is_stats_publisher = stats_publishers.contains(&session.session_id);
+                    let stats_peer = stats_peers.get(&session.session_id).copied();
                     let dialed_relay_id = dialed_relay_ids.get(&session.session_id).cloned();
-                    session_stats(session, is_stats_publisher, dialed_relay_id)
+                    session_stats(session, stats_peer, dialed_relay_id)
                 })
                 .collect(),
             tracks: upstream_tracks
@@ -125,22 +123,31 @@ impl StatsCollector {
             .collect()
     }
 
-    fn stats_publishers(&self, upstream_tracks: &[(SessionId, TrackKey)]) -> HashSet<SessionId> {
+    fn stats_peers(
+        &self,
+        upstream_tracks: &[(SessionId, TrackKey)],
+        subscription_states: &[DownstreamSubscriptionState],
+    ) -> HashMap<SessionId, SnapshotPeer> {
         let namespace = relay_stats::track_namespace(&self.relay_id);
-        upstream_tracks
+        let is_stats_track = |track_key: &TrackKey| {
+            track_key.track_namespace == namespace
+                && track_key.track_name == relay_stats::TRACK_NAME
+        };
+        let publishers = upstream_tracks
             .iter()
-            .filter(|(_, track_key)| {
-                track_key.track_namespace == namespace
-                    && track_key.track_name == relay_stats::TRACK_NAME
-            })
-            .map(|(publisher_session_id, _)| *publisher_session_id)
-            .collect()
+            .filter(|(_, track_key)| is_stats_track(track_key))
+            .map(|(publisher_session_id, _)| (*publisher_session_id, SnapshotPeer::StatsPublisher));
+        let subscribers = subscription_states
+            .iter()
+            .filter(|state| is_stats_track(&state.track_key))
+            .map(|state| (state.subscriber_session_id, SnapshotPeer::StatsSubscriber));
+        subscribers.chain(publishers).collect()
     }
 }
 
 fn session_stats(
     session: SessionState,
-    is_stats_publisher: bool,
+    stats_peer: Option<SnapshotPeer>,
     dialed_relay_id: Option<String>,
 ) -> SessionStats {
     let SessionState {
@@ -152,11 +159,10 @@ fn session_stats(
     } = session;
     SessionStats {
         session_id,
-        peer: match peer {
-            _ if is_stats_publisher => SnapshotPeer::StatsPublisher,
+        peer: stats_peer.unwrap_or(match peer {
             SessionPeer::Client => SnapshotPeer::Client,
             SessionPeer::Relay => SnapshotPeer::Relay,
-        },
+        }),
         app_id,
         remote_address: addresses.remote.map(|address| address.to_string()),
         local_ip: addresses.local_ip.map(|ip| ip.to_string()),
@@ -329,7 +335,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sessions_carry_their_transport_stats_and_the_stats_publisher_is_marked() {
+    async fn sessions_carry_their_transport_stats_and_the_stats_sessions_are_marked() {
         // Arrange
         let fixture = Fixture::new();
         let client_transport = moqt::TransportStats {
@@ -344,25 +350,33 @@ mod tests {
         fixture
             .add_session(2, SessionPeer::Relay, moqt::TransportStats::default())
             .await;
-        fixture.publish(
+        fixture
+            .add_session(3, SessionPeer::Relay, moqt::TransportStats::default())
+            .await;
+        let stats_track = fixture.publish(
             2,
             &relay_stats::track_namespace(RELAY_ID),
             relay_stats::TRACK_NAME,
         );
+        fixture
+            .directory
+            .register_downstream_subscription(3, 0, SessionPeer::Relay, stats_track, None)
+            .unwrap();
 
         // Act
         let mut snapshot = fixture.collector().collect(1_000, Some(4_096)).await;
 
         // Assert
         snapshot.sessions.sort_by_key(|session| session.session_id);
-        let [client, publisher] = &snapshot.sessions[..] else {
-            panic!("expected two sessions, got {:?}", snapshot.sessions);
+        let [client, publisher, subscriber] = &snapshot.sessions[..] else {
+            panic!("expected three sessions, got {:?}", snapshot.sessions);
         };
         assert_eq!(client.peer, SnapshotPeer::Client);
         assert_eq!(client.rtt_us, 12_000);
         assert_eq!(client.lost_packets, 3);
         assert_eq!(client.received_reset_stream, 2);
         assert_eq!(publisher.peer, SnapshotPeer::StatsPublisher);
+        assert_eq!(subscriber.peer, SnapshotPeer::StatsSubscriber);
         assert_eq!(snapshot.relay_id, RELAY_ID);
         assert_eq!(snapshot.timestamp_ms, 1_000);
         assert_eq!(snapshot.process.rss_bytes, Some(4_096));

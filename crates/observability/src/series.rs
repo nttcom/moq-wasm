@@ -280,27 +280,34 @@ const PROCESS_METRICS: &[(&str, Metric)] = &[
 struct Plan {
     table: &'static str,
     filters: Vec<(&'static str, &'static str, String)>,
+    condition: &'static str,
     entity: Option<&'static str>,
     metrics: &'static [(&'static str, Metric)],
 }
+
+// The relay's own stats sessions carry the snapshots, not client or relay traffic.
+const TRAFFIC_PEERS: &str = " AND peer IN ('client', 'relay')";
 
 fn plan(target: &SeriesTarget) -> Plan {
     match target {
         SeriesTarget::Process => Plan {
             table: PROCESS_STATS,
             filters: vec![],
+            condition: "",
             entity: None,
             metrics: PROCESS_METRICS,
         },
         SeriesTarget::Relay => Plan {
             table: SESSION_STATS,
             filters: vec![],
+            condition: TRAFFIC_PEERS,
             entity: Some("session_id"),
             metrics: RELAY_METRICS,
         },
         SeriesTarget::Session { session_id } => Plan {
             table: SESSION_STATS,
             filters: vec![("session_id", "UInt64", session_id.to_string())],
+            condition: "",
             entity: None,
             metrics: SESSION_METRICS,
         },
@@ -319,6 +326,7 @@ fn plan(target: &SeriesTarget) -> Plan {
                 ("namespace", "String", namespace.clone()),
                 ("name", "String", name.clone()),
             ],
+            condition: "",
             entity: None,
             metrics: TRACK_METRICS,
         },
@@ -335,6 +343,7 @@ fn plan(target: &SeriesTarget) -> Plan {
                 ),
                 ("request_id", "UInt64", request_id.to_string()),
             ],
+            condition: "",
             entity: None,
             metrics: SUBSCRIPTION_METRICS,
         },
@@ -378,10 +387,11 @@ fn select_sql(database: &str, plan: &Plan) -> String {
         "SELECT intDiv(timestamp_ms, {{bucket:UInt64}}) * {{bucket:UInt64}} AS t{entity}, {columns} \
          FROM {database}.{table} \
          WHERE relay_id = {{relay_id:String}} \
-         AND timestamp_ms >= {{from:UInt64}} AND timestamp_ms <= {{to:UInt64}}{filters} \
+         AND timestamp_ms >= {{from:UInt64}} AND timestamp_ms <= {{to:UInt64}}{filters}{condition} \
          GROUP BY t{group_entity} ORDER BY t",
         columns = columns.into_iter().collect::<Vec<_>>().join(", "),
         table = plan.table,
+        condition = plan.condition,
     )
 }
 
@@ -513,10 +523,19 @@ pub async fn query(clickhouse: &ClickHouse, query: &SeriesQuery) -> anyhow::Resu
 mod tests {
     use serde_json::{Map, Value, json};
 
-    use super::{Metric, SeriesQuery, SeriesTarget, bucket_ms, compute};
+    use super::{Metric, SeriesQuery, SeriesTarget, bucket_ms, compute, plan, select_sql};
 
     fn row(value: Value) -> Map<String, Value> {
         value.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn relay_totals_leave_out_the_relays_own_stats_sessions() {
+        // Act
+        let sql = select_sql("obs", &plan(&SeriesTarget::Relay));
+
+        // Assert
+        assert!(sql.contains("AND peer IN ('client', 'relay')"), "{sql}");
     }
 
     #[test]

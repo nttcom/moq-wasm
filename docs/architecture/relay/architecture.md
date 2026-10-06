@@ -621,7 +621,8 @@ so cache, fan-out, FETCH and authorization need no separate path.
   whose Group ID is the snapshot's Unix time in milliseconds (never below
   the next id, so a clock step back cannot reuse a location). A failed
   session is retried every 5 s. The loopback session is a `SessionPeer::Relay`
-  with full access; the snapshot reports it as `stats_publisher`.
+  with full access; the snapshot reports it as `stats_publisher`, and a session
+  subscribed to the relay's own stats track as `stats_subscriber`.
 - `StatsCollector` reads, without holding any lock across an await:
   `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`
   and `transport_addresses`), `InterRelayConnectionManager::dialed_relay_ids`
