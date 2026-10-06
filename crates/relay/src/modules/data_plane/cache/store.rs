@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 
-use crate::modules::{data_plane::cache::track_cache::TrackCache, types::TrackKey};
+use crate::modules::{data_plane::cache::track_cache::TrackCache, domain::track_key::TrackKey};
 
 pub(crate) struct TrackCacheStore {
     caches: DashMap<TrackKey, Arc<TrackCache>>,

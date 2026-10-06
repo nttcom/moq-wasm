@@ -10,12 +10,12 @@ use crate::modules::{
         },
         ingress::track_ingest_task::TrackIngest,
     },
+    domain::{session_id::SessionId, track_key::TrackKey},
     session::{
         data_object::DataObject,
         data_receiver::stream_receiver::{StreamReceiver, StreamReceiverFactory},
         session_event::SessionEvent,
     },
-    types::{SessionId, TrackKey},
 };
 
 /// What the SUBGROUP_HEADER told us; the subgroup id of Type 0x12/0x13/0x1A/0x1B

@@ -201,7 +201,7 @@ Each sequence owns the relay-side protocol logic for one message
   the same subscriber. The fan-out includes the originating session when it
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
   to its sender).
-- `InMemoryLocalPubSubDirectory` (in `tables/`) — the relay's in-memory
+- `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
   registry of publish/subscribe namespaces (with `PeerKind` so client-owned
   Redis routes are cleaned up when the last *client* leaves), active upstream
   subscriptions, and downstream subscriptions. `remove_session` returns everything cleanup needs.

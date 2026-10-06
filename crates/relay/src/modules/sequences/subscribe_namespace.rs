@@ -1,10 +1,12 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    enums::SubscribeNamespaceErrorCode,
+    domain::{
+        error_code::SubscribeNamespaceErrorCode,
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
+        session_id::SessionId,
+    },
     route_registry::{RegisterRouteError, RelayRouteRegistry},
-    sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
-    types::SessionId,
 };
 use tracing::Span;
 

@@ -11,9 +11,10 @@ use crate::modules::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
     },
-    sequences::tables::table::PublishDoneReason,
+    domain::{
+        pub_sub_directory::entry::PublishDoneReason, session_id::SessionId, track_key::TrackKey,
+    },
     session::{session_repository::SessionRepository, subscription::DownstreamSubscription},
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct EgressStartRequest {

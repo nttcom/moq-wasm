@@ -6,12 +6,15 @@ use crate::{
     logging::relay_hostname,
     modules::{
         auth::verified_token::VerifiedToken,
+        domain::{
+            session_id::{SessionId, generate_session_id},
+            session_peer::SessionPeer,
+        },
         route_registry::RelayInfo,
         session::{
             session_event::SessionEvent,
-            session_repository::{NewSession, SessionPeer, SessionRepository},
+            session_repository::{NewSession, SessionRepository},
         },
-        types::{SessionId, generate_session_id},
     },
 };
 

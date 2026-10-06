@@ -4,12 +4,17 @@ use tokio::sync::mpsc;
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    sequences::tables::{
-        hashmap_table::InMemoryLocalPubSubDirectory,
-        table::{ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin},
+    domain::{
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{
+                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+            },
+        },
+        session_id::SessionId,
+        track_key::TrackKey,
     },
     session::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;

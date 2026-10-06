@@ -7,9 +7,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::modules::{
     data_plane::cache::track_cache::TrackCache,
-    sequences::tables::table::PublishDoneReason,
+    domain::{pub_sub_directory::entry::PublishDoneReason, track_key::TrackKey},
     session::{publisher::Publisher, subscription::DownstreamSubscription},
-    types::TrackKey,
 };
 
 use super::{group_sender::GroupSender, scheduler::EgressScheduler};

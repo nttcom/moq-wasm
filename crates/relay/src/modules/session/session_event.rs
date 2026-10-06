@@ -1,6 +1,6 @@
 use crate::modules::{
+    domain::{session_id::SessionId, track_key::TrackKey},
     session::moqt_session_event::MoqtSessionEvent,
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) struct SessionEvent {

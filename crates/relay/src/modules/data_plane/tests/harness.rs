@@ -7,19 +7,22 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     data_plane::{
-        cache::subgroup_key::SubgroupKey,
-        cache::track_cache::{NextObject, SubgroupRun, TrackCache},
+        cache::{
+            subgroup_key::SubgroupKey,
+            track_cache::{NextObject, SubgroupRun, TrackCache},
+        },
         egress::{
             coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
         },
         ingress::{stream_reader::read_stream, track_ingest_task::TrackIngest},
     },
-    sequences::tables::table::PublishDoneReason,
+    domain::{
+        pub_sub_directory::entry::PublishDoneReason, session_id::SessionId, track_key::TrackKey,
+    },
     session::{
         data_object::DataObject, mocks::session_repository_with_session,
         session_event::SessionEvent, session_repository::SessionRepository,
     },
-    types::{SessionId, TrackKey},
 };
 
 pub(crate) mod fixtures;

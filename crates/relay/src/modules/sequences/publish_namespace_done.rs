@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
+    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::{CascadingRelayContext, tables::hashmap_table::InMemoryLocalPubSubDirectory},
-    types::SessionId,
+    sequences::CascadingRelayContext,
 };
 use tracing::Span;
 

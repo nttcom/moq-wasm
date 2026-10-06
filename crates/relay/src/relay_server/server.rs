@@ -7,13 +7,11 @@ use crate::{
     RelayConfig,
     modules::{
         auth::session_authenticator::SessionAuthenticator,
+        domain::session_peer::SessionPeer,
         route_registry::{
             NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
         },
-        session::{
-            session_event::SessionEvent,
-            session_repository::{SessionPeer, SessionRepository},
-        },
+        session::{session_event::SessionEvent, session_repository::SessionRepository},
     },
     relay_server::{
         runtime::RelayRuntime,

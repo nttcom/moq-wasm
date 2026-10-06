@@ -1,10 +1,11 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    sequences::tables::{
-        hashmap_table::InMemoryLocalPubSubDirectory, table::UpstreamSubscriptionKey,
+    domain::{
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionKey},
+        session_id::SessionId,
+        track_key::TrackKey,
     },
-    types::{SessionId, TrackKey},
 };
 use tracing::Span;
 
@@ -51,9 +52,9 @@ impl MalformedTrackCleanup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::sequences::{
-        tables::table::UpstreamSubscriptionOrigin,
-        test_fixtures::{
+    use crate::modules::{
+        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        sequences::test_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
             upstream_release_context,
         },

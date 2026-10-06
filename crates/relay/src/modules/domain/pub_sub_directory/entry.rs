@@ -1,6 +1,6 @@
 use moqt::{ContentExists, wire::publish_done_status_code};
 
-use crate::modules::types::{SessionId, TrackKey};
+use crate::modules::domain::{session_id::SessionId, track_key::TrackKey};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct UpstreamSubscriptionKey {

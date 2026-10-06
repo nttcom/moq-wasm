@@ -1,7 +1,7 @@
 use moqt::wire::publish_done_status_code;
 
 use crate::modules::{
-    data_plane::tests::harness::RelayHarness, sequences::tables::table::PublishDoneReason,
+    data_plane::tests::harness::RelayHarness, domain::pub_sub_directory::entry::PublishDoneReason,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

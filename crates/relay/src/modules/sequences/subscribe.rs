@@ -7,18 +7,19 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
-    enums::SubscribeErrorCode,
-    sequences::{
-        tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{
+    domain::{
+        error_code::SubscribeErrorCode,
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{
                 ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
             },
         },
-        upstream_serializer::UpstreamCreationSerializer,
+        session_id::SessionId,
+        track_key::TrackKey,
     },
+    sequences::upstream_serializer::UpstreamCreationSerializer,
     session::handler::subscribe::SubscribeHandler,
-    types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 
@@ -521,11 +522,11 @@ mod tests {
     use crate::modules::auth::verified_token::VerifiedToken;
     use crate::modules::data_plane::cache::track_cache::TrackCache;
     use crate::modules::data_plane::tests::harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::domain::pub_sub_directory::{
+        InMemoryLocalPubSubDirectory, entry::PeerKind,
+    };
     use crate::modules::inter_relay::InterRelayConnectionManager;
     use crate::modules::route_registry::NoopRelayRouteRegistry;
-    use crate::modules::sequences::tables::{
-        hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind,
-    };
     use crate::modules::sequences::test_fixtures::{
         PUBLISHER_SESSION, active_upstream, upstream_key,
     };

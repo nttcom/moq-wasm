@@ -7,12 +7,12 @@ use std::sync::Arc;
 use moqt::{FilterType, GroupOrder};
 
 use crate::modules::{
+    domain::session_id::SessionId,
     session::{
         handler::publish::SubscribeOption, publisher::Publisher,
         session_repository::SessionRepository, subscriber::Subscriber,
         subscription::UpstreamSubscription,
     },
-    types::SessionId,
 };
 
 #[derive(Clone)]

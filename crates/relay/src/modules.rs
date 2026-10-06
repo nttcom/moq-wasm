@@ -1,11 +1,10 @@
 pub(crate) mod auth;
 pub(crate) mod control_message_forwarder;
 pub(crate) mod data_plane;
-pub(crate) mod enums;
+pub(crate) mod domain;
 pub(crate) mod event_handler;
 pub(crate) mod inter_relay;
 pub(crate) mod route_registry;
 pub(crate) mod sequences;
 pub(crate) mod session;
-pub(crate) mod types;
 pub(crate) mod upstream_publisher_resolver;

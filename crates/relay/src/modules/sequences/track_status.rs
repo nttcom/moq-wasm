@@ -3,10 +3,12 @@ use tracing::Span;
 
 use crate::modules::{
     data_plane::cache::store::TrackCacheStore,
-    enums::SubscribeErrorCode,
-    sequences::{subscribe::cached_largest, tables::hashmap_table::InMemoryLocalPubSubDirectory},
+    domain::{
+        error_code::SubscribeErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
+        session_id::SessionId,
+    },
+    sequences::subscribe::cached_largest,
     session::handler::track_status::TrackStatusHandler,
-    types::SessionId,
 };
 
 pub(crate) struct TrackStatus;
@@ -67,10 +69,8 @@ mod tests {
     use super::*;
     use crate::modules::{
         data_plane::tests::harness::fixtures::{cached_object::insert_closed_group, location},
-        sequences::{
-            tables::table::UpstreamSubscriptionOrigin, test_fixtures::table_with_upstream,
-        },
-        types::TrackKey,
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        sequences::test_fixtures::table_with_upstream,
     };
 
     #[derive(Debug, PartialEq)]

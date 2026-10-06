@@ -14,28 +14,23 @@ use crate::modules::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
         ingress::ingress_coordinator::IngressCommand,
     },
-    enums::SubscribeErrorCode,
+    domain::{
+        error_code::SubscribeErrorCode,
+        pub_sub_directory::{
+            InMemoryLocalPubSubDirectory,
+            entry::{PublishDoneReason, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
+        },
+        session_id::SessionId,
+    },
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
     sequences::{
-        CascadingRelayContext,
-        fetch::Fetch,
-        malformed_track::MalformedTrackCleanup,
-        publish::Publish,
-        publish_namespace::PublishNamespace,
-        publish_namespace_done::PublishNamespaceDone,
-        stop_ingress,
-        subscribe::Subscribe,
-        subscribe_namespace::SubscribeNameSpace,
-        subscribe_update::SubscribeUpdate,
-        tables::{
-            hashmap_table::InMemoryLocalPubSubDirectory,
-            table::{PublishDoneReason, RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
-        },
-        track_status::TrackStatus,
-        unsubscribe::Unsubscribe,
-        unsubscribe_namespace::UnsubscribeNamespace,
-        upstream_publish_done::UpstreamPublishDone,
+        CascadingRelayContext, fetch::Fetch, malformed_track::MalformedTrackCleanup,
+        publish::Publish, publish_namespace::PublishNamespace,
+        publish_namespace_done::PublishNamespaceDone, stop_ingress, subscribe::Subscribe,
+        subscribe_namespace::SubscribeNameSpace, subscribe_update::SubscribeUpdate,
+        track_status::TrackStatus, unsubscribe::Unsubscribe,
+        unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
         upstream_serializer::UpstreamCreationSerializer,
     },
     session::{
@@ -43,7 +38,6 @@ use crate::modules::{
         session_event::{EventKind, SessionEvent},
         session_repository::SessionRepository,
     },
-    types::SessionId,
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use moqt::ContentExists;
@@ -790,12 +784,14 @@ mod tests {
             cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
             ingress::ingress_coordinator::IngressCommand,
         },
+        domain::{
+            pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
+            session_id::SessionId,
+            track_key::TrackKey,
+        },
         inter_relay::InterRelayConnectionManager,
         route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
-        sequences::{
-            tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
-            upstream_serializer::UpstreamCreationSerializer,
-        },
+        sequences::upstream_serializer::UpstreamCreationSerializer,
         session::{
             mocks::{
                 MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
@@ -805,7 +801,6 @@ mod tests {
             session_event::{EventKind, SessionEvent},
             session_repository::SessionRepository,
         },
-        types::{SessionId, TrackKey},
         upstream_publisher_resolver::UpstreamPublisherResolver,
     };
 
