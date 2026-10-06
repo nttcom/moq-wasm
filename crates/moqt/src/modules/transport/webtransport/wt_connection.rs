@@ -73,13 +73,8 @@ impl TransportConnection for WtConnection {
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {
-        match self.session.read_datagram().await {
-            Ok(datagram) => Ok(bytes::BytesMut::from(&datagram[..])),
-            Err(e) => {
-                tracing::error!("Failed to receive datagram: {:?}", e);
-                anyhow::bail!("Failed to receive datagram: {:?}", e)
-            }
-        }
+        let datagram = self.session.read_datagram().await?;
+        Ok(bytes::BytesMut::from(&datagram[..]))
     }
 
     fn stats(&self) -> TransportStats {

@@ -36,8 +36,8 @@ impl UniStreamReceiveTask {
                             let stream = UniStreamReceiver::new(stream, UniStreamDecoder::new());
                             Self::on_stream_received(&context, stream).await;
                         }
-                        Err(_) => {
-                            tracing::error!("Failed to accept uni stream");
+                        Err(error) => {
+                            tracing::debug!(%error, "Uni Stream Receiver stopped: the session ended");
                             break;
                         }
                     }

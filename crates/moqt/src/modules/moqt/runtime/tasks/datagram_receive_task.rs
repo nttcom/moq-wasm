@@ -28,8 +28,8 @@ impl DatagramReceiveTask {
                             tracing::debug!("accepted incoming datagram");
                             Self::on_datagram_received(&context, &mut data).await;
                         }
-                        Err(_) => {
-                            tracing::error!("Failed to receive datagram");
+                        Err(error) => {
+                            tracing::debug!(%error, "Datagram Receiver stopped: the session ended");
                             break;
                         }
                     }
