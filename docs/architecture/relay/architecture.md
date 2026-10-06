@@ -10,6 +10,25 @@ sections) built on the `moqt` crate. It fans publisher tracks out to
 subscribers, caches objects per track, serves FETCH from that cache, and
 optionally cascades across relays via a Redis-backed route registry.
 
+## Module layout
+
+`src/modules/` has one directory per concern; `relay_server/` (outside
+`modules/`) owns startup, the transport accept loop and the runtime wiring.
+
+| Directory | Holds |
+| --- | --- |
+| `session/` | The session as the relay sees it: object-safe `Session` / `Publisher` / `Subscriber` traits over `moqt::Session<T>`, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
+| `domain/` | Relay vocabulary and state shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, the `*ErrorCode` enums, the pub/sub directory and its entries |
+| `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
+| `control_plane/` | Control-message processing: `EventHandler`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
+| `data_plane/` | Objects in flight: `ingress/`, `cache/`, `egress/`, and the data-plane integration tests |
+| `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
+| `test_support/` | `cfg(test)` mocks, the data-plane `RelayHarness` and directory fixtures shared across modules |
+
+Dependencies point downwards in this order: `control_plane` → `cascading`,
+`data_plane` → `session`, `auth` → `domain`. `auth` and `session` reference
+each other only through `VerifiedToken` / `SessionExpiryTask`.
+
 ## Startup path
 
 `main.rs`:
@@ -557,6 +576,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —
 e.g. reader/worker non-blocking and terminal-event handling in
 `control_plane/event_handler.rs`, largest-location resolution in `control_plane/sequences/subscribe.rs`,
-eviction refcount rules in `cache/store.rs`. Multi-process behaviour
+eviction refcount rules in `data_plane/cache/store.rs`. Shared mocks and the
+data-plane `RelayHarness` live in `test_support/`. Multi-process behaviour
 (cascading relays, cache eviction, fetch, multiple publishers, dedup) lives in
 the workspace-level `tests/*-e2e` suites, each driven by its `run.sh`.
