@@ -1,6 +1,7 @@
 import { expect, test, type Locator } from '@playwright/test'
 import {
   arrangeLiveViewerE2ESession,
+  closeLiveViewerE2ESession,
   expectVideoDecoded,
   type LiveViewerPageModel,
   rewindableSeconds,
@@ -9,7 +10,8 @@ import {
 
 test('live viewer plays the ingested stream, switches renditions and rewinds', async ({ browser }) => {
   // Arrange
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser)
+  const session = await arrangeLiveViewerE2ESession(browser)
+  const { viewer } = session
 
   try {
     // Assert
@@ -183,13 +185,14 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.seekElapsed).toHaveText('--:-- / --:--')
   } finally {
-    await context.close()
+    await closeLiveViewerE2ESession(session)
   }
 })
 
 test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }) => {
   // Arrange
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser)
+  const session = await arrangeLiveViewerE2ESession(browser)
+  const { viewer } = session
 
   try {
     // Act
@@ -276,7 +279,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
       .poll(async () => mediaProp(liveVideo, 'currentTime'), { timeout: 15_000 })
       .toBeGreaterThan(liveTimeWhileReviewing)
   } finally {
-    await context.close()
+    await closeLiveViewerE2ESession(session)
   }
 })
 
@@ -300,8 +303,8 @@ test('a second viewer joining a subscription the relay already holds gets the ca
     await expect(second.viewer.playbackStatus).toContainText('Playing')
     await expectVideoDecoded(second.viewer.video)
   } finally {
-    await second.context.close()
-    await first.context.close()
+    await closeLiveViewerE2ESession(second)
+    await closeLiveViewerE2ESession(first)
   }
 })
 
