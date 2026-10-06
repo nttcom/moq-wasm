@@ -7,10 +7,7 @@ pub(crate) struct NoopRelayRouteRegistry;
 
 #[async_trait]
 impl RelayRouteRegistry for NoopRelayRouteRegistry {
-    async fn register_namespace_publisher(
-        &self,
-        _track_namespace: &str,
-    ) -> Result<(), RegisterRouteError> {
+    async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
         Ok(())
     }
 

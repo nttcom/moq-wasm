@@ -25,51 +25,51 @@ impl WatchedNamespaceRoutes {
     }
 
     pub(crate) async fn watch(&self, track_namespace: &str) {
-        let mut registered = self.unwatched_at_last_pass.lock().await;
-        if registered.contains_key(track_namespace) {
-            registered.insert(track_namespace.to_string(), false);
+        let newly_watched = self
+            .unwatched_at_last_pass
+            .lock()
+            .await
+            .insert(track_namespace.to_string(), false)
+            .is_none();
+        if !newly_watched {
             return;
         }
-        match self
+        if let Err(err) = self
             .route_registry
             .register_watched_namespace(track_namespace)
             .await
         {
-            Ok(()) => {
-                registered.insert(track_namespace.to_string(), false);
-            }
-            Err(err) => {
-                tracing::warn!(?err, %track_namespace, "failed to register the watched namespace")
-            }
+            tracing::warn!(?err, %track_namespace, "failed to register the watched namespace");
+            self.unwatched_at_last_pass
+                .lock()
+                .await
+                .remove(track_namespace);
         }
     }
 
     pub(crate) async fn reconcile(&self, watched: &HashSet<TrackNamespace>) {
-        let newly_watched: Vec<_> = {
-            let registered = self.unwatched_at_last_pass.lock().await;
-            watched
-                .iter()
-                .filter(|track_namespace| !registered.contains_key(*track_namespace))
-                .cloned()
-                .collect()
-        };
-        for track_namespace in newly_watched {
-            self.watch(&track_namespace).await;
+        for track_namespace in watched {
+            self.watch(track_namespace).await;
         }
 
-        let mut registered = self.unwatched_at_last_pass.lock().await;
-        let mut released = Vec::new();
-        for (track_namespace, unwatched_at_last_pass) in registered.iter_mut() {
-            if watched.contains(track_namespace) {
-                *unwatched_at_last_pass = false;
-            } else if *unwatched_at_last_pass {
-                released.push(track_namespace.clone());
-            } else {
-                *unwatched_at_last_pass = true;
+        let released: Vec<TrackNamespace> = {
+            let mut registered = self.unwatched_at_last_pass.lock().await;
+            let mut released = Vec::new();
+            for (track_namespace, unwatched_at_last_pass) in registered.iter_mut() {
+                if watched.contains(track_namespace) {
+                    *unwatched_at_last_pass = false;
+                } else if *unwatched_at_last_pass {
+                    released.push(track_namespace.clone());
+                } else {
+                    *unwatched_at_last_pass = true;
+                }
             }
-        }
+            for track_namespace in &released {
+                registered.remove(track_namespace);
+            }
+            released
+        };
         for track_namespace in released {
-            registered.remove(&track_namespace);
             if let Err(err) = self
                 .route_registry
                 .unregister_watched_namespace(&track_namespace)
@@ -121,10 +121,7 @@ mod tests {
             Ok(())
         }
 
-        async fn register_namespace_publisher(
-            &self,
-            _track_namespace: &str,
-        ) -> Result<(), RegisterRouteError> {
+        async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
             unimplemented!("not used by watched namespace routes")
         }
 

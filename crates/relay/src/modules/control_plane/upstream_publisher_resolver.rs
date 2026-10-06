@@ -119,10 +119,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl RelayRouteRegistry for StubRouteRegistry {
-        async fn register_namespace_publisher(
-            &self,
-            _track_namespace: &str,
-        ) -> Result<(), RegisterRouteError> {
+        async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
             unimplemented!("not used in resolver tests")
         }
 

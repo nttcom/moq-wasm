@@ -9,7 +9,6 @@ use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 enum RouteKind {
     NamespacePublisher,
     NamespaceSubscriber,
-    WatchedNamespace,
 }
 
 impl RouteKind {
@@ -18,7 +17,7 @@ impl RouteKind {
             Self::NamespacePublisher => {
                 redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"))
             }
-            Self::NamespaceSubscriber | Self::WatchedNamespace => {
+            Self::NamespaceSubscriber => {
                 redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"))
             }
         }
@@ -218,15 +217,13 @@ impl RedisRelayRouteRegistry {
 
 #[async_trait]
 impl RelayRouteRegistry for RedisRelayRouteRegistry {
-    async fn register_namespace_publisher(
-        &self,
-        track_namespace: &str,
-    ) -> Result<(), RegisterRouteError> {
-        self.register_route(
-            RouteKind::NamespacePublisher,
-            Self::publisher_namespace_key(track_namespace),
-        )
-        .await
+    async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
+        Ok(self
+            .register_route(
+                RouteKind::NamespacePublisher,
+                Self::publisher_namespace_key(track_namespace),
+            )
+            .await?)
     }
 
     async fn register_namespace_subscriber(
@@ -249,14 +246,16 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 
     async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
+        let key = Self::watched_namespace_key(track_namespace);
+        let mut owned_routes = self.owned_routes.lock().await;
         match self
-            .register_route(
-                RouteKind::WatchedNamespace,
-                Self::watched_namespace_key(track_namespace),
-            )
+            .invoke_register_script(RouteKind::NamespaceSubscriber, &key)
             .await
         {
-            Ok(()) | Err(RegisterRouteError::Conflict) => Ok(()),
+            Ok(()) | Err(RegisterRouteError::Conflict) => {
+                owned_routes.insert(key, RouteKind::NamespaceSubscriber);
+                Ok(())
+            }
             Err(RegisterRouteError::Other(err)) => Err(err),
         }
     }

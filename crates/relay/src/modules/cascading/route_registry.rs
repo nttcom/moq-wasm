@@ -28,10 +28,7 @@ pub(crate) enum RegisterRouteError {
 
 #[async_trait]
 pub(crate) trait RelayRouteRegistry: Send + Sync {
-    async fn register_namespace_publisher(
-        &self,
-        track_namespace: &str,
-    ) -> Result<(), RegisterRouteError>;
+    async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()>;
     async fn register_namespace_subscriber(
         &self,
         track_namespace_prefix: &str,
