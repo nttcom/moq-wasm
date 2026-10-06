@@ -179,6 +179,17 @@ out of the topology page.
     counter that went backwards (a restart) giving no value. `relay` sums
     every session of the relay; ratios such as loss are weighted by their
     denominators. Query values reach ClickHouse as typed query parameters.
+    A range longer than the 7-day retention or more than 300 points is
+    rejected with 400, so an anonymous caller cannot make ClickHouse scan
+    more than one retention window per request.
+
+The API has no authentication: the PoC page is published on GitHub Pages and
+reads it from any origin. What it returns is therefore treated as public. A
+client session's address is masked before it leaves the server
+(`203.0.113.x:50123`, IPv6 keeps its first three groups); the port stays so
+cards remain distinguishable. Relay addresses stay unmasked because the page
+needs them to identify inter-relay sessions. ClickHouse keeps the unmasked
+addresses.
 
 The browser polls the server instead of subscribing over MoQT itself: one data
 path for live and history, and no relay tokens in the browser.
