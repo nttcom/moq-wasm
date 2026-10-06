@@ -91,6 +91,8 @@ test('every sample the bridge publishes while the viewer watches reaches it', as
     expect(report.video.missing).toEqual([])
     expect(report.audio.missing).toEqual([])
   } finally {
+    await page.getByTestId('live-viewer-stop-button').click()
+    await expect(page.getByTestId('live-viewer-connection-status')).toHaveText('Not connected')
     await context.close()
   }
 })

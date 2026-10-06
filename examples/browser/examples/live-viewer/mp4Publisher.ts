@@ -176,21 +176,24 @@ export class Mp4Publisher {
     return trackAliases
   }
 
+  /// The final status is reported once the session is closed, so a reader of
+  /// `Publish stopped` knows the relay has seen the publisher leave.
   private async publish(media: Mp4Media, options: Mp4PublishOptions, trackAliases: TrackAliases): Promise<void> {
+    let status: Parameters<Mp4PublisherCallbacks['onStatus']>
     try {
       const completed = await this.pace(media, options, trackAliases)
-      this.callbacks.onStatus(completed ? 'Publish finished' : 'Publish stopped', 'idle')
+      status = [completed ? 'Publish finished' : 'Publish stopped', 'idle']
     } catch (error) {
-      this.callbacks.onStatus(`Publish failed: ${getErrorMessage(error)}`, 'error')
+      status = [`Publish failed: ${getErrorMessage(error)}`, 'error']
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
-    } finally {
-      this.active = false
-      this.preview.stop()
-      media.index.free()
-      if (this.session.getConnectionStatus()) {
-        await this.session.disconnect()
-      }
     }
+    this.active = false
+    this.preview.stop()
+    media.index.free()
+    if (this.session.getConnectionStatus()) {
+      await this.session.disconnect()
+    }
+    this.callbacks.onStatus(...status)
   }
 
   /// Samples go out in decode order, each at its decode time plus the file's

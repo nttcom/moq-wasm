@@ -13,6 +13,7 @@ export interface MessagePageModel {
   page: Page
   urlInput: Locator
   connectButton: Locator
+  closeButton: Locator
   logPanel: Locator
   sendStatus: Locator
   setupButton: Locator
@@ -66,6 +67,7 @@ function createMessagePageModel(page: Page): MessagePageModel {
     page,
     urlInput: page.locator('#url'),
     connectButton: page.locator('#connectBtn'),
+    closeButton: page.locator('#closeBtn'),
     logPanel: page.locator('#logPanel'),
     sendStatus: page.locator('#send-status'),
     setupButton: page.locator('#sendSetupBtn'),

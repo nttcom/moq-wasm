@@ -179,6 +179,22 @@ export async function arrangeLiveViewerE2ESession(
   return { context, viewer: createLiveViewerPageModel(page) }
 }
 
+/// Chromium in CI keeps a closed page's WebTransport session open until the
+/// relay's idle timeout, so the page leaves the relay before it is closed:
+/// a lingering session stays a publisher or subscriber of the shared
+/// namespace for the next test.
+export async function closeLiveViewerE2ESession({ context, viewer }: LiveViewerE2ESession): Promise<void> {
+  if ((await viewer.publishStatus.innerText()).startsWith('Publishing')) {
+    await viewer.stopPublishButton.click()
+    await expect(viewer.publishStatus).toHaveText(/^Publish (stopped|finished)$/)
+  }
+  if ((await viewer.connectionStatus.innerText()).startsWith('Connected:')) {
+    await viewer.stopButton.click()
+    await expect(viewer.connectionStatus).toHaveText('Not connected')
+  }
+  await context.close()
+}
+
 export async function expectVideoDecoded(video: Locator): Promise<void> {
   await expect
     .poll(async () => video.evaluate((element) => (element as HTMLVideoElement).readyState), {

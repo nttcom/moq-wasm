@@ -2,6 +2,7 @@ import { expect, test, type Locator } from '@playwright/test'
 import {
   MP4_FIXTURE,
   arrangeLiveViewerE2ESession,
+  closeLiveViewerE2ESession,
   ensureMp4Fixture,
   expectVideoDecoded,
   liveViewerE2EConfig,
@@ -10,7 +11,7 @@ import {
   rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
-import { openMessagePage } from './message-e2e-arrange'
+import { type MessagePageModel, openMessagePage } from './message-e2e-arrange'
 
 const resolution = `${MP4_FIXTURE.width}x${MP4_FIXTURE.height}`
 /// Well under the 10 s the relay waits for a FETCH response the browser publisher never sends.
@@ -28,7 +29,8 @@ const FETCH_NAMESPACE = `${liveViewerE2EConfig.mp4Namespace}-fetch`
 test('live viewer publishes an uploaded MP4 from the browser and plays it back', async ({ browser }) => {
   // Arrange
   const fixturePath = ensureMp4Fixture('aac')
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, liveViewerE2EConfig.mp4Namespace)
+  const session = await arrangeLiveViewerE2ESession(browser, liveViewerE2EConfig.mp4Namespace)
+  const { viewer } = session
 
   try {
     // Act
@@ -108,14 +110,15 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     await expect(viewer.publishStreams).toBeHidden()
     await expect(viewer.publishPreview).toBeHidden()
   } finally {
-    await context.close()
+    await closeLiveViewerE2ESession(session)
   }
 })
 
 test('live viewer publishes the MP3 audio of an uploaded MP4 as it is', async ({ browser }) => {
   // Arrange
   const fixturePath = ensureMp4Fixture('mp3')
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, liveViewerE2EConfig.mp4Namespace)
+  const session = await arrangeLiveViewerE2ESession(browser, liveViewerE2EConfig.mp4Namespace)
+  const { viewer } = session
 
   try {
     // Act
@@ -135,14 +138,16 @@ test('live viewer publishes the MP3 audio of an uploaded MP4 as it is', async ({
     await expectVideoDecoded(viewer.video)
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
   } finally {
-    await context.close()
+    await closeLiveViewerE2ESession(session)
   }
 })
 
 test('a FETCH reaching before the relay cache is answered by the browser MP4 publisher', async ({ browser }) => {
   // Arrange
   const fixturePath = ensureMp4Fixture('aac')
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, FETCH_NAMESPACE)
+  const session = await arrangeLiveViewerE2ESession(browser, FETCH_NAMESPACE)
+  const { viewer } = session
+  let fetcher: MessagePageModel | undefined
 
   try {
     await viewer.mp4FileInput.setInputFiles(fixturePath)
@@ -150,7 +155,7 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
     await expect(viewer.publishStatus).toContainText('Publishing')
     await viewer.watchButton.click()
     await expect(viewer.playbackStatus).toContainText('Playing video')
-    const fetcher = await openMessagePage(context, liveViewerE2EConfig.moqtUrl)
+    fetcher = await openMessagePage(session.context, liveViewerE2EConfig.moqtUrl)
     await fetcher.connectButton.click()
     await expect(fetcher.logPanel).toContainText('[moqt][wt] connected')
     await fetcher.setupButton.click()
@@ -172,7 +177,8 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
     // Assert: the replayed groups match what the relay cached from the subscription
     await expect(viewer.logPanel).not.toContainText(/malformed/i)
   } finally {
-    await context.close()
+    await fetcher?.closeButton.click()
+    await closeLiveViewerE2ESession(session)
   }
 })
 
@@ -187,7 +193,8 @@ test('a paused viewer steps through still frames and resumes from the last one',
   // Arrange
   const fixturePath = ensureMp4Fixture('aac')
   const namespace = `${liveViewerE2EConfig.mp4Namespace}-paused`
-  const { context, viewer } = await arrangeLiveViewerE2ESession(browser, namespace)
+  const session = await arrangeLiveViewerE2ESession(browser, namespace)
+  const { viewer } = session
   const skipBack1Button = viewer.page.getByTestId('live-player-skip-back-1-button')
 
   try {
@@ -229,7 +236,7 @@ test('a paused viewer steps through still frames and resumes from the last one',
     await expect.poll(async () => canvasDigest(viewer.reviewCanvas), { timeout: 10_000 }).not.toBe(secondStill)
     await expect(viewer.rewindStatus).toContainText(/A\/V [+-]\d+ ms/, { timeout: 20_000 })
   } finally {
-    await context.close()
+    await closeLiveViewerE2ESession(session)
   }
 })
 
