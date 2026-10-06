@@ -10,9 +10,16 @@ use crate::modules::data_plane::{
 
 use super::{SubgroupRun, after, location};
 
+/// The live streams currently delivering one subgroup. `epoch` tells a guard
+/// opened before the subgroup last closed apart from one of the current opening.
+pub(super) struct OpenSubgroup {
+    pub(super) guards: usize,
+    pub(super) epoch: u64,
+}
+
 #[derive(Default)]
 pub(super) struct LiveGroup {
-    pub(super) open_subgroups: HashMap<SubgroupKey, usize>,
+    pub(super) open_subgroups: HashMap<SubgroupKey, OpenSubgroup>,
     pub(super) knowledge_frontier: u64,
 }
 
@@ -29,8 +36,10 @@ pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) aborted_subgroups: HashSet<SubgroupKey>,
+    pub(super) finished_subgroups: HashSet<SubgroupKey>,
     reopened_run_first_object_ids: HashMap<SubgroupKey, Vec<u64>>,
     pub(super) known_ranges: KnownRanges,
+    pub(super) next_open_epoch: u64,
 }
 
 impl Ledger {
@@ -51,6 +60,7 @@ impl Ledger {
                 || live_groups.contains_key(&group_id)
         };
         self.aborted_subgroups.retain(is_present);
+        self.finished_subgroups.retain(is_present);
         self.reopened_run_first_object_ids
             .retain(|key, _| is_present(key));
     }

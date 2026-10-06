@@ -52,7 +52,9 @@ impl IngressCoordinator {
 
         let command_runner = tokio::spawn(async move {
             let mut join_set = tokio::task::JoinSet::new();
-            let mut create_stop_senders = HashMap::<TrackKey, watch::Sender<bool>>::new();
+            let mut create_stop_senders =
+                HashMap::<(TrackKey, SessionId), (u64, watch::Sender<bool>)>::new();
+            let mut next_create_id = 0u64;
             loop {
                 tokio::select! {
                     Some(command) = command_receiver.recv() => {
@@ -81,11 +83,15 @@ impl IngressCoordinator {
                         };
                         tracing::info!(%track_key, "upstream subscriber found; spawning data receiver task");
                         let ingest_tx = ingest_tx.clone();
-                        if let Some(stop_sender) = create_stop_senders.remove(&track_key) {
+                        let publisher_session_id = command.publisher_session_id;
+                        let create_key = (track_key.clone(), publisher_session_id);
+                        if let Some((_, stop_sender)) = create_stop_senders.remove(&create_key) {
                             let _ = stop_sender.send(true);
                         }
+                        next_create_id += 1;
+                        let create_id = next_create_id;
                         let (create_stop_sender, mut create_stop_receiver) = watch::channel(false);
-                        create_stop_senders.insert(track_key.clone(), create_stop_sender);
+                        create_stop_senders.insert(create_key, (create_id, create_stop_sender));
                         let create_receiver_span = tracing::info_span!(
                             parent: &command.parent_span,
                             "relay.upstream.ingress",
@@ -110,13 +116,13 @@ impl IngressCoordinator {
                             let receiver_result = tokio::select! {
                                 _ = create_stop_receiver.changed() => {
                                     tracing::info!(%track_key, "upstream ingress stopped");
-                                    return track_key;
+                                    return (track_key, publisher_session_id, create_id);
                                 }
                                 receiver = subscriber.create_data_receiver(&subscription) => receiver,
                             };
                             let Ok(receiver) = receiver_result else {
                                 tracing::info!(%track_key, "failed to start upstream ingress");
-                                return track_key;
+                                return (track_key, publisher_session_id, create_id);
                             };
                             tracing::info!(%track_key, "upstream data receiver created");
                             let source = match receiver {
@@ -157,11 +163,11 @@ impl IngressCoordinator {
                             } else {
                                 tracing::info!(%track_key, "failed to send {kind} ingress start command");
                             }
-                            track_key
+                            (track_key, publisher_session_id, create_id)
                         }.instrument(create_receiver_span));
                         }
                         IngressCommand::StopTrack { track_key, publisher_session_id } => {
-                            if let Some(stop_sender) = create_stop_senders.remove(&track_key) {
+                            if let Some((_, stop_sender)) = create_stop_senders.remove(&(track_key.clone(), publisher_session_id)) {
                                 let _ = stop_sender.send(true);
                                 tracing::info!(%track_key, "upstream ingress stop requested");
                             }
@@ -180,8 +186,11 @@ impl IngressCoordinator {
                     }
                     Some(join_result) = join_set.join_next() => {
                         match join_result {
-                            Ok(track_key) => {
-                                create_stop_senders.remove(&track_key);
+                            Ok((track_key, publisher_session_id, create_id)) => {
+                                let create_key = (track_key.clone(), publisher_session_id);
+                                if create_stop_senders.get(&create_key).is_some_and(|(id, _)| *id == create_id) {
+                                    create_stop_senders.remove(&create_key);
+                                }
                                 tracing::debug!(%track_key, "upstream ingress task ended");
                             }
                             Err(error) => {
