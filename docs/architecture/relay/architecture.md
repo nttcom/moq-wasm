@@ -159,7 +159,9 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   message pass through (they reference an already authorized request). A
   denied request is answered with the message's `*_ERROR` carrying
   `UNAUTHORIZED (0x1)` and the sequence is never invoked.
-- `EventHandler` implements a **reader/worker** structure: the single reader
+- `EventHandler` implements a **reader/worker** structure (`event_handler.rs` is the
+  reader, `event_handler/session_worker.rs` the per-session worker,
+  `event_handler/session_cleanup.rs` the terminal cleanup): the single reader
   only dispatches to per-session unbounded channels, so a slow or blocked
   session can never head-of-line-block another. Workers process one event at a time, fully
   awaiting each sequence (including upstream round-trips) — events within a
