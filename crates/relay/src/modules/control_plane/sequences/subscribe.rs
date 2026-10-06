@@ -27,7 +27,8 @@ use tracing::Span;
 pub(crate) mod upstream_join_task;
 
 use upstream_join_task::{
-    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, send_upstream_subscribes, subscribe_initiated,
+    UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, next_answered, send_upstream_subscribes,
+    subscribe_initiated,
 };
 
 pub(crate) struct Subscribe;
@@ -119,7 +120,7 @@ impl Subscribe {
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
-        upstream_publisher_resolver: &UpstreamPublisherResolver,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
         upstream_serializer: &UpstreamCreationSerializer,
         handler: Box<dyn SubscribeHandler>,
@@ -132,11 +133,7 @@ impl Subscribe {
             track_name = %track_name,
             "SequenceHandler::subscribe"
         );
-        let requester = if super::is_origin_client(session_id, forwarder).await {
-            SessionPeer::Client
-        } else {
-            SessionPeer::Relay
-        };
+        let requester = super::session_peer(session_id, forwarder).await;
 
         for _ in 0..UPSTREAM_ATTEMPTS {
             let access = match self
@@ -235,7 +232,7 @@ impl Subscribe {
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        upstream_publisher_resolver: &UpstreamPublisherResolver,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         upstream_serializer: &UpstreamCreationSerializer,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Result<UpstreamTrackAccess, UpstreamSubscriptionError> {
@@ -307,12 +304,13 @@ impl Subscribe {
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        upstream_publisher_resolver: &UpstreamPublisherResolver,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Result<UpstreamTrackAccess, UpstreamSubscriptionError> {
         if requester == SessionPeer::Client {
             upstream_publisher_resolver
-                .watch_namespace(track_namespace)
+                .watched_namespace_routes
+                .watch(track_namespace)
                 .await;
         }
         let publishers = upstream_publisher_resolver
@@ -325,21 +323,21 @@ impl Subscribe {
         let track_key = TrackKey::new(track_namespace, track_name);
         let cache_before_subscribe = cached_largest(cache_store, &track_key);
 
-        // draft-14 §8.4: with no upstream subscription yet, every publisher is
-        // subscribed; the first to answer serves this SUBSCRIBE and the rest
-        // join the track as they answer.
-        let mut pending = send_upstream_subscribes(forwarder, publishers);
+        // draft-14 §8.4
+        let mut pending = send_upstream_subscribes(
+            upstream_publisher_resolver,
+            forwarder,
+            &track_key,
+            publishers,
+        );
         let mut last_error = None;
         let (pub_session_id, publisher_peer, subscription) = loop {
-            let Some(answered) = pending.join_next().await else {
+            let Some(answered) = next_answered(&mut pending).await else {
                 return Err(UpstreamSubscriptionError::SubscribeFailed(
                     last_error.unwrap_or_else(|| {
-                        anyhow::anyhow!("every upstream SUBSCRIBE was abandoned")
+                        anyhow::anyhow!("no upstream publisher could be reached")
                     }),
                 ));
-            };
-            let Ok(answered) = answered else {
-                continue;
             };
             match answered.subscribed {
                 Ok(subscription) => {
@@ -677,7 +675,7 @@ mod tests {
         )
         .await;
         let forwarder = ControlMessageForwarder { repository };
-        let resolver = local_publisher_resolver();
+        let resolver = Arc::new(local_publisher_resolver());
         let serializer = UpstreamCreationSerializer::default();
         let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
 
@@ -725,7 +723,7 @@ mod tests {
         let repository =
             session_repository_with_sessions(publishers, VerifiedToken::full_access()).await;
         let forwarder = ControlMessageForwarder { repository };
-        let resolver = local_publisher_resolver();
+        let resolver = Arc::new(local_publisher_resolver());
         let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move { while ingress_receiver.recv().await.is_some() {} });
         let mut created = tokio::time::timeout(
@@ -1048,7 +1046,7 @@ mod tests {
                 },
                 &ingress_sender,
                 &egress_sender,
-                &resolver,
+                &Arc::new(resolver),
                 &Arc::new(TrackCacheStore::new()),
                 &UpstreamCreationSerializer::default(),
                 Box::new(handler.clone()),

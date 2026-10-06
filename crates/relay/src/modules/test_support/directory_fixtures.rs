@@ -16,10 +16,7 @@ use crate::modules::{
     domain::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
-            entry::{
-                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-                UpstreamTrack,
-            },
+            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
         },
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -36,14 +33,6 @@ pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
 
 pub(crate) fn track_key() -> TrackKey {
     TrackKey::new("ns", "track")
-}
-
-pub(crate) fn upstream_key() -> UpstreamSubscriptionKey {
-    UpstreamSubscriptionKey {
-        publisher_session_id: PUBLISHER_SESSION,
-        track_namespace: "ns".to_string(),
-        track_name: "track".to_string(),
-    }
 }
 
 pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstreamSubscription {

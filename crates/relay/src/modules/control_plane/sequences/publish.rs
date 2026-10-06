@@ -55,16 +55,13 @@ impl Publish {
             track_alias = %upstream_subscription.track_alias(),
             "SequenceHandler::publish"
         );
-        let is_origin_client = super::is_origin_client(session_id, forwarder).await;
+        let publisher_peer = super::session_peer(session_id, forwarder).await;
+        let is_origin_client = publisher_peer == SessionPeer::Client;
 
         if let Err(error) = self
             .register_upstream_subscription(
                 session_id,
-                if is_origin_client {
-                    SessionPeer::Client
-                } else {
-                    SessionPeer::Relay
-                },
+                publisher_peer,
                 table,
                 ingress_sender,
                 handler.clone(),

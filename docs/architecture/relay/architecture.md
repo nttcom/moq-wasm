@@ -263,9 +263,11 @@ Each sequence owns the relay-side protocol logic for one message
 2. **Publisher resolution** (`UpstreamPublisherResolver`): every local client
    publisher, newest first (session ids grow with time), and, for a SUBSCRIBE
    from a client, every remote relay the route registry lists as publishing the
-   namespace, dialled via `InterRelayConnectionManager` (see "Cascading
-   relays"). A SUBSCRIBE from a relay is served from local client publishers
-   only.
+   namespace (see "Cascading relays"). Resolution dials nothing: each upstream
+   SUBSCRIBE task reaches its relay through `InterRelayConnectionManager`
+   itself, with a 3 s connect timeout, so an unreachable relay holds back no
+   other publisher. A SUBSCRIBE from a relay is served from local client
+   publishers only.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
    and the local cache's largest location, resolved together with the upstream
    subscription (`get_or_create_upstream_subscription`). The cache is
@@ -322,10 +324,10 @@ FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
 `FetchIngest`, which fills the cache and hands the range to egress. draft-14
 §8.4 lets the relay send it to any one publisher, so the task tries them in
 turn until one answers FETCH_OK: first the publishers whose upstream
-SUBSCRIBE for the track succeeded (known to be alive), newest first, then the
-other publishers of the track, newest first. A FETCH_ERROR or a timeout moves
-on to the next; only when every publisher failed is the last error relayed
-downstream. A
+SUBSCRIBE for the track succeeded (known to be alive), newest first; only when
+all of them fail are the other publishers of the track resolved, and dialled,
+newest first. A FETCH_ERROR or a timeout moves on to the next; only when every
+publisher failed is the last error relayed downstream. A
 downstream session that disconnects meanwhile only makes the FETCH_OK send
 fail; egress drops a `StartFetch` for a departed session.
 

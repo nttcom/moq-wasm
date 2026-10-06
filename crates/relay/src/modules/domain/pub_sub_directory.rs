@@ -404,16 +404,17 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
+    /// Local client publishers only: publishing relays are found in the route
+    /// registry, which lists each of them once.
     pub(crate) fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
-        peer: SessionPeer,
     ) -> Vec<UpstreamSubscriptionKey> {
         let publishers = DashSet::new();
         if let Some(namespace_publishers) = self.publisher_namespaces.get(track_namespace) {
             for session in namespace_publishers.iter() {
-                if *session.value() == peer {
+                if *session.value() == SessionPeer::Client {
                     publishers.insert(*session.key());
                 }
             }
@@ -426,7 +427,7 @@ impl InMemoryLocalPubSubDirectory {
         for session_id in handlers
             .iter()
             .filter(|published| {
-                published.publisher_peer == peer
+                published.publisher_peer == SessionPeer::Client
                     && published.handler.track_namespace() == track_namespace
                     && published.handler.track_name() == track_name
             })
@@ -444,11 +445,11 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
-    pub(crate) fn tracks_awaiting_publisher(
+    pub(crate) fn tracks_wanting_publisher(
         &self,
         track_namespace: &str,
-        publisher_session_id: SessionId,
         publisher_peer: SessionPeer,
+        publisher_session_id: Option<SessionId>,
     ) -> Vec<TrackKey> {
         self.upstream_tracks
             .iter()
@@ -456,7 +457,8 @@ impl InMemoryLocalPubSubDirectory {
                 let track = entry.value();
                 entry.key().track_namespace == track_namespace
                     && track.wants(publisher_peer)
-                    && !track.subscriptions.contains_key(&publisher_session_id)
+                    && publisher_session_id
+                        .is_none_or(|publisher| !track.subscriptions.contains_key(&publisher))
             })
             .map(|entry| entry.key().clone())
             .collect()
@@ -868,8 +870,7 @@ mod tests {
         let removed = table.remove_session(1);
 
         // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
-        let upstream_subscriptions =
-            table.find_upstream_publishers("room/member", "video", SessionPeer::Client);
+        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video");
         let publisher_session_ids: Vec<_> = upstream_subscriptions
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
@@ -993,12 +994,12 @@ mod tests {
             removed.publish_namespace_track_namespaces,
             vec!["room/member".to_string()]
         );
-        let publishers = table.find_upstream_publishers("room/member", "video", SessionPeer::Relay);
-        let publisher_session_ids: Vec<_> = publishers
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        assert_eq!(publisher_session_ids, vec![2]);
+        assert!(
+            table
+                .publisher_namespaces
+                .get("room/member")
+                .is_some_and(|publishers| publishers.contains_key(&2))
+        );
     }
 
     #[test]
@@ -1074,12 +1075,12 @@ mod tests {
 
         // Assert: Route cleanup is allowed while the relay publisher stays registered.
         assert!(clients_became_empty);
-        let publishers = table.find_upstream_publishers("room/member", "video", SessionPeer::Relay);
-        let publisher_session_ids: Vec<_> = publishers
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        assert_eq!(publisher_session_ids, vec![2]);
+        assert!(
+            table
+                .publisher_namespaces
+                .get("room/member")
+                .is_some_and(|publishers| publishers.contains_key(&2))
+        );
     }
 
     #[test]
@@ -1112,7 +1113,7 @@ mod tests {
 
         // Act: Find upstream publishers available for subscribe.
         let mut upstream_publishers: Vec<_> = table
-            .find_upstream_publishers("room/member", "video", SessionPeer::Client)
+            .find_upstream_publishers("room/member", "video")
             .into_iter()
             .map(|subscription| subscription.publisher_session_id)
             .collect();
@@ -1262,11 +1263,7 @@ mod tests {
         // Assert
         assert!(
             table
-                .find_upstream_publishers(
-                    &track_key.track_namespace,
-                    &track_key.track_name,
-                    SessionPeer::Client
-                )
+                .find_upstream_publishers(&track_key.track_namespace, &track_key.track_name)
                 .is_empty()
         );
     }
@@ -1639,9 +1636,12 @@ mod tests {
 
         // Act
         let relay_tracks =
-            table.tracks_awaiting_publisher("ns", RELAY_PUBLISHER_SESSION, SessionPeer::Relay);
-        let mut client_tracks =
-            table.tracks_awaiting_publisher("ns", RELAY_PUBLISHER_SESSION, SessionPeer::Client);
+            table.tracks_wanting_publisher("ns", SessionPeer::Relay, Some(RELAY_PUBLISHER_SESSION));
+        let mut client_tracks = table.tracks_wanting_publisher(
+            "ns",
+            SessionPeer::Client,
+            Some(RELAY_PUBLISHER_SESSION),
+        );
         client_tracks.sort_by(|a, b| a.track_name.cmp(&b.track_name));
 
         // Assert
@@ -1679,8 +1679,7 @@ mod tests {
 
         // Act
         let upstream_track = table.get_upstream_track(&track_key);
-        let publisher_subscriptions =
-            table.find_upstream_publishers("room/member", "video", SessionPeer::Client);
+        let publisher_subscriptions = table.find_upstream_publishers("room/member", "video");
 
         // Assert
         assert_eq!(

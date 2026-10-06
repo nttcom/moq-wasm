@@ -51,7 +51,7 @@ impl RelayRuntime {
         ));
         let local_pub_sub_directory = Arc::new(InMemoryLocalPubSubDirectory::new());
         let watched_namespace_job = WatchedNamespaceJob::run(
-            upstream_publisher_resolver.watched_namespace_routes(),
+            upstream_publisher_resolver.watched_namespace_routes.clone(),
             local_pub_sub_directory.clone(),
         );
         let ingress = IngressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());

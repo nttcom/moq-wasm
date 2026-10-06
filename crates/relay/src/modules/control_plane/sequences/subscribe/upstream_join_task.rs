@@ -9,16 +9,14 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::{is_origin_client, stop_ingress},
+        sequences::{session_peer, stop_ingress},
+        upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory, TrackJoin,
-            entry::{
-                ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionKey,
-                UpstreamSubscriptionOrigin,
-            },
+            entry::{ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionOrigin},
         },
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -33,40 +31,53 @@ pub(crate) struct AnsweredUpstreamSubscribe {
     pub(crate) subscribed: anyhow::Result<UpstreamSubscription>,
 }
 
-pub(crate) type PendingUpstreamSubscribes = JoinSet<AnsweredUpstreamSubscribe>;
+pub(crate) type PendingUpstreamSubscribes = JoinSet<Option<AnsweredUpstreamSubscribe>>;
 
+/// Each publisher is dialled and subscribed in its own task, so a relay that
+/// cannot be reached or a session that never answers holds back no other.
 pub(crate) fn send_upstream_subscribes(
+    resolver: &Arc<UpstreamPublisherResolver>,
     forwarder: &ControlMessageForwarder,
-    publishers: Vec<UpstreamSubscriptionKey>,
+    track_key: &TrackKey,
+    publishers: Vec<UpstreamPublisher>,
 ) -> PendingUpstreamSubscribes {
     let mut pending = JoinSet::new();
     for publisher in publishers {
+        let resolver = resolver.clone();
         let forwarder = forwarder.clone();
+        let track_key = track_key.clone();
         pending.spawn(
             async move {
-                let publisher_peer =
-                    if is_origin_client(publisher.publisher_session_id, &forwarder).await {
-                        SessionPeer::Client
-                    } else {
-                        SessionPeer::Relay
-                    };
+                let publisher_session_id = resolver.session_of(&publisher).await?;
+                let publisher_peer = session_peer(publisher_session_id, &forwarder).await;
                 let subscribed = forwarder
                     .subscribe(
-                        publisher.publisher_session_id,
-                        publisher.track_namespace,
-                        publisher.track_name,
+                        publisher_session_id,
+                        track_key.track_namespace,
+                        track_key.track_name,
                     )
                     .await;
-                AnsweredUpstreamSubscribe {
-                    publisher_session_id: publisher.publisher_session_id,
+                Some(AnsweredUpstreamSubscribe {
+                    publisher_session_id,
                     publisher_peer,
                     subscribed,
-                }
+                })
             }
             .instrument(Span::current()),
         );
     }
     pending
+}
+
+pub(crate) async fn next_answered(
+    pending: &mut PendingUpstreamSubscribes,
+) -> Option<AnsweredUpstreamSubscribe> {
+    while let Some(answered) = pending.join_next().await {
+        if let Ok(Some(answered)) = answered {
+            return Some(answered);
+        }
+    }
+    None
 }
 
 pub(crate) fn subscribe_initiated(
@@ -111,10 +122,7 @@ impl UpstreamJoinTask {
     }
 
     async fn join(mut join: UpstreamJoin, deps: UpstreamJoinDeps) {
-        while let Some(answered) = join.pending.join_next().await {
-            let Ok(answered) = answered else {
-                continue;
-            };
+        while let Some(answered) = next_answered(&mut join.pending).await {
             match answered.subscribed {
                 Ok(subscription) => {
                     join_track(
@@ -227,7 +235,8 @@ mod tests {
         auth::verified_token::VerifiedToken,
         test_support::{
             directory_fixtures::{
-                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, table_with_upstream, upstream_key,
+                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, local_publisher_resolver,
+                table_with_upstream,
             },
             mock_session::{
                 RecordedControlMessages, recorded_session_answering_subscribe,
@@ -253,11 +262,10 @@ mod tests {
         let forwarder = ControlMessageForwarder { repository };
         let (ingress_sender, ingress_receiver) = mpsc::channel(8);
         let pending = send_upstream_subscribes(
+            &Arc::new(local_publisher_resolver()),
             &forwarder,
-            vec![UpstreamSubscriptionKey {
-                publisher_session_id,
-                ..upstream_key()
-            }],
+            &TrackKey::new("ns", "track"),
+            vec![UpstreamPublisher::Session(publisher_session_id)],
         );
         let task = UpstreamJoinTask::run(
             UpstreamJoin {
@@ -399,11 +407,11 @@ mod tests {
             .remove(LATE_PUBLISHER_SESSION);
         let mut pending = JoinSet::new();
         pending.spawn(async move {
-            AnsweredUpstreamSubscribe {
+            Some(AnsweredUpstreamSubscribe {
                 publisher_session_id: LATE_PUBLISHER_SESSION,
                 publisher_peer: SessionPeer::Client,
                 subscribed: Ok(subscription),
-            }
+            })
         });
         let (ingress_sender, mut ingress_receiver) = mpsc::channel(8);
 

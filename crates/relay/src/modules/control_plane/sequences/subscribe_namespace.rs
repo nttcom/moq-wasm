@@ -3,7 +3,7 @@ use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     domain::{
         error_code::SubscribeNamespaceErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
-        session_id::SessionId, session_peer::SessionPeer,
+        session_id::SessionId,
     },
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
@@ -34,11 +34,7 @@ impl SubscribeNameSpace {
             track_namespace_prefix = %track_namespace_prefix,
             "SequenceHandler::SubscribeNamespace"
         );
-        let peer = if super::is_origin_client(session_id, forwarder).await {
-            SessionPeer::Client
-        } else {
-            SessionPeer::Relay
-        };
+        let peer = super::session_peer(session_id, forwarder).await;
         let is_first_client = table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),

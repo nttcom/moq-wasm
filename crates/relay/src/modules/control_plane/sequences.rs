@@ -18,7 +18,7 @@ use crate::modules::{
     },
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{session_id::SessionId, track_key::TrackKey},
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
 };
 
 #[derive(Clone, Copy)]
@@ -36,6 +36,17 @@ pub(crate) async fn is_origin_client(
         .lock()
         .await
         .is_client_session(session_id)
+}
+
+pub(crate) async fn session_peer(
+    session_id: SessionId,
+    forwarder: &ControlMessageForwarder,
+) -> SessionPeer {
+    if is_origin_client(session_id, forwarder).await {
+        SessionPeer::Client
+    } else {
+        SessionPeer::Relay
+    }
 }
 
 pub(crate) async fn connect_relay(

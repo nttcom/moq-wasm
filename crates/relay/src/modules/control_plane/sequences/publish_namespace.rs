@@ -15,13 +15,12 @@ use crate::modules::{
                 UpstreamJoin, UpstreamJoinDeps, UpstreamJoinTask, send_upstream_subscribes,
             },
         },
+        upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
-        error_code::PublishNamespaceErrorCode,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionKey},
-        session_id::SessionId,
-        session_peer::SessionPeer,
+        error_code::PublishNamespaceErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
+        session_id::SessionId, session_peer::SessionPeer,
     },
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
@@ -45,6 +44,7 @@ impl PublishNamespace {
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &mpsc::Sender<IngressCommand>,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn PublishNamespaceHandler,
     ) {
@@ -55,7 +55,8 @@ impl PublishNamespace {
             "SequenceHandler::PublishNamespace"
         );
 
-        let is_origin = super::is_origin_client(session_id, forwarder).await;
+        let peer = super::session_peer(session_id, forwarder).await;
+        let is_origin = peer == SessionPeer::Client;
 
         if is_origin
             && !self
@@ -69,11 +70,6 @@ impl PublishNamespace {
             return;
         }
 
-        let peer = if is_origin {
-            SessionPeer::Client
-        } else {
-            SessionPeer::Relay
-        };
         table.register_publish_namespace(session_id, track_namespace.to_string(), peer);
 
         if let Err(e) = handler.ok().await {
@@ -90,15 +86,20 @@ impl PublishNamespace {
             ingress_sender: ingress_sender.clone(),
         };
         if is_origin {
-            Self::join_tracks_awaiting_publisher(
+            Self::join_tracks_wanting_publishers(
                 session_id,
-                SessionPeer::Client,
                 track_namespace,
+                SessionPeer::Client,
+                Some(session_id),
+                vec![UpstreamPublisher::Session(session_id)],
+                upstream_publisher_resolver,
                 &join_deps,
             );
         } else {
-            Self::join_tracks_awaiting_publisher_relays(
+            Self::join_tracks_wanting_publisher_relays(
+                session_id,
                 track_namespace,
+                upstream_publisher_resolver,
                 &join_deps,
                 cascading_relay_context,
             )
@@ -120,8 +121,10 @@ impl PublishNamespace {
     /// this relay, so the publishing relays are looked up in the route
     /// registry and reached over the sessions this relay keeps per relay;
     /// subscribing over the announcing session could duplicate one of them.
-    async fn join_tracks_awaiting_publisher_relays(
+    async fn join_tracks_wanting_publisher_relays(
+        announcing_session_id: SessionId,
         track_namespace: &str,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         join_deps: &UpstreamJoinDeps,
         cascading_relay_context: CascadingRelayContext<'_>,
     ) {
@@ -136,54 +139,47 @@ impl PublishNamespace {
                 return;
             }
         };
-        for relay in relays {
-            let Some(relay_session_id) = super::connect_relay(
-                cascading_relay_context.inter_relay_connection_manager,
-                &relay,
-            )
-            .await
-            else {
-                continue;
-            };
-            Self::join_tracks_awaiting_publisher(
-                relay_session_id,
-                SessionPeer::Relay,
-                track_namespace,
-                join_deps,
-            );
-        }
+        Self::join_tracks_wanting_publishers(
+            announcing_session_id,
+            track_namespace,
+            SessionPeer::Relay,
+            None,
+            relays.into_iter().map(UpstreamPublisher::Relay).collect(),
+            upstream_publisher_resolver,
+            join_deps,
+        );
     }
 
     /// draft-14 §8.4: a publisher announcing a namespace whose tracks other
     /// publishers already feed is subscribed to each of them.
-    fn join_tracks_awaiting_publisher(
-        publisher_session_id: SessionId,
-        publisher_peer: SessionPeer,
+    fn join_tracks_wanting_publishers(
+        announcing_session_id: SessionId,
         track_namespace: &str,
+        publisher_peer: SessionPeer,
+        publisher_session_id: Option<SessionId>,
+        publishers: Vec<UpstreamPublisher>,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         join_deps: &UpstreamJoinDeps,
     ) {
-        for track_key in join_deps.table.tracks_awaiting_publisher(
+        if publishers.is_empty() {
+            return;
+        }
+        for track_key in join_deps.table.tracks_wanting_publisher(
             track_namespace,
-            publisher_session_id,
             publisher_peer,
+            publisher_session_id,
         ) {
-            tracing::info!(
-                %track_key,
-                pub_session_id = %publisher_session_id,
-                "subscribing a newly announced publisher to an active track"
-            );
+            tracing::info!(%track_key, "subscribing newly announced publishers to an active track");
             let pending = send_upstream_subscribes(
+                upstream_publisher_resolver,
                 &join_deps.forwarder,
-                vec![UpstreamSubscriptionKey {
-                    publisher_session_id,
-                    track_namespace: track_key.track_namespace.clone(),
-                    track_name: track_key.track_name.clone(),
-                }],
+                &track_key,
+                publishers.clone(),
             );
             let _upstream_join = UpstreamJoinTask::run(
                 UpstreamJoin {
+                    subscriber_session_id: announcing_session_id,
                     track_key,
-                    subscriber_session_id: publisher_session_id,
                     pending,
                 },
                 join_deps.clone(),
@@ -320,7 +316,9 @@ mod tests {
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
         session::session_repository::SessionRepository,
         test_support::{
-            directory_fixtures::{PUBLISHER_SESSION, table_with_upstream},
+            directory_fixtures::{
+                PUBLISHER_SESSION, local_publisher_resolver, table_with_upstream,
+            },
             mock_session::{
                 MockPublishNamespaceHandler, recorded_session_answering_subscribe,
                 session_repository_with_session,
@@ -352,6 +350,7 @@ mod tests {
                 table,
                 &ControlMessageForwarder { repository },
                 &ingress_sender,
+                &Arc::new(local_publisher_resolver()),
                 CascadingRelayContext {
                     route_registry: &NoopRelayRouteRegistry,
                     inter_relay_connection_manager: &inter_relay_connection_manager,
