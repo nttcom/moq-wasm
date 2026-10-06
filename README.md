@@ -30,7 +30,7 @@ connect to the cloud relay by default, so nothing needs to be installed.
 | Remote monitoring, data collection and control of robots | |
 | Remote monitoring, data collection and control of autonomous vehicles | |
 
-Publishers outside the browser: [`crates/moqt-bridge-live-ingest`](crates/moqt-bridge-live-ingest/README.md) (RTMP/SRT),
+Publishers outside the browser: [`crates/live-ingest`](crates/live-ingest/README.md) (RTMP/SRT),
 [`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) (`moqtsink`),
 [`examples/rust/moq-cli`](examples/rust/moq-cli/README.md) and the
 [pipecat bots](examples/python). Details of every browser demo are in
@@ -83,7 +83,7 @@ cargo test -p vts                # VTS
 ```mermaid
 flowchart LR
     subgraph Publishers
-        B1[Browser<br/>moqt-client-wasm]
+        B1[Browser<br/>wasm]
         LI[live-ingest<br/>RTMP / SRT]
         GS[moqtsink<br/>GStreamer]
         ON[onvif bridge]
@@ -113,11 +113,11 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 | --- | --- |
 | [`crates/moqt/`](crates/moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
 | [`crates/relay/`](crates/relay/README.md) | Relay: QUIC and WebTransport on one port, cache, FETCH, cascading, JWT auth |
-| [`crates/moqt-client-wasm/`](crates/moqt-client-wasm/README.md) | WebAssembly bindings used by the browser examples |
+| [`crates/wasm/`](crates/wasm/README.md) | WebAssembly bindings used by the browser examples |
 | [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
-| [`crates/moqt-bridge-live-ingest/`](crates/moqt-bridge-live-ingest/README.md) | RTMP and SRT ingest into MoQT |
-| [`crates/moqt-bridge-onvif/`](crates/moqt-bridge-onvif/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
-| [`crates/mediapack/`](crates/mediapack/README.md), [`media-streaming-format/`](crates/media-streaming-format/README.md), [`media-publisher/`](crates/media-publisher/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, track publishing, re-encoding |
+| [`crates/live-ingest/`](crates/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
+| [`crates/onvif-ingest/`](crates/onvif-ingest/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
+| [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`publisher/`](crates/publisher/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, track publishing, re-encoding |
 | [`crates/vts/`](crates/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
@@ -126,7 +126,7 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 Architecture documents:
 [`moqt`](docs/architecture/moqt/architecture.md),
 [`relay`](docs/architecture/relay/architecture.md),
-[`media-publisher`](docs/architecture/media-publisher/architecture.md),
+[`publisher`](docs/architecture/publisher/architecture.md),
 [Live Player](docs/architecture/browser-examples/live-player.md).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
 

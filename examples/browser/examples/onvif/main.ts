@@ -1,7 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
 import { PlayerControls } from '@player/ui/playerControls'
-import type { MOQTClient } from '../../pkg/moqt_client_wasm'
+import type { MOQTClient } from '../../pkg/moqt'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'

@@ -1150,8 +1150,8 @@ dependencies = [
  "anyhow",
  "bytes",
  "gstreamer",
- "media-publisher",
  "mediapack",
+ "publisher",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1784,6 +1784,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "live-ingest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "mediapack",
+ "moqt",
+ "publisher",
+ "rml_rtmp",
+ "srt-tokio",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "transcode",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1811,30 +1830,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
-]
-
-[[package]]
-name = "media-publisher"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "media-streaming-format",
- "mediapack",
- "moqt",
- "serde_json",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "media-streaming-format"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1904,9 +1899,9 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "media-streaming-format",
  "mediapack",
  "moqt",
+ "msf",
  "serde_json",
  "tokio",
  "tracing",
@@ -1937,80 +1932,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "moqt-bridge-live-ingest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "futures",
- "media-publisher",
- "mediapack",
- "moqt",
- "rml_rtmp",
- "srt-tokio",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "transcode",
-]
-
-[[package]]
-name = "moqt-bridge-onvif"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "clap",
- "env_logger",
- "ffmpeg-next",
- "log",
- "media-streaming-format",
- "mediapack",
- "moqt",
- "rand 0.10.2",
- "reqwest",
- "roxmltree",
- "serde",
- "serde_json",
- "sha1",
- "time",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "moqt-client-wasm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "console_error_panic_hook",
- "futures",
- "js-sys",
- "media-streaming-format",
- "mediapack",
- "moqt",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "moqtsink-e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "media-streaming-format",
  "moqt",
+ "msf",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "msf"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2158,6 +2097,31 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "onvif-ingest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "clap",
+ "env_logger",
+ "ffmpeg-next",
+ "log",
+ "mediapack",
+ "moqt",
+ "msf",
+ "rand 0.10.2",
+ "reqwest",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha1",
+ "time",
+ "tokio",
+ "url",
+]
 
 [[package]]
 name = "opaque-debug"
@@ -2474,6 +2438,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "publisher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "mediapack",
+ "moqt",
+ "msf",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3940,6 +3920,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen",
+]
+
+[[package]]
+name = "wasm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "console_error_panic_hook",
+ "futures",
+ "js-sys",
+ "mediapack",
+ "moqt",
+ "msf",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

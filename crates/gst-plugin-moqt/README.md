@@ -2,7 +2,7 @@
 
 GStreamer plugin with a `moqtsink` element that publishes H.264 video and AAC
 audio into a MoQT relay. It produces the tracks described in
-[`crates/media-publisher`](../media-publisher/README.md), so the
+[`crates/publisher`](../publisher/README.md), so the
 [Live Viewer](../../examples/browser/examples/live-viewer/README.md) plays and
 rewinds them like a `live-ingest` stream.
 
@@ -45,7 +45,7 @@ Behaviour:
 - Connects and publishes when the pipeline goes to PAUSED, so a wrong relay URL fails the pipeline start.
 - Buffers about three seconds of media in a queue drained by a background task; the streaming thread never waits for the relay.
 - When the relay does not keep up, drops media until the next keyframe fits and logs the dropped counts at WARN. The pipeline fails only when the relay connection is lost.
-- Logs through `tracing` at `info`; set `RUST_LOG` to change it (e.g. `RUST_LOG=media_publisher=debug`).
+- Logs through `tracing` at `info`; set `RUST_LOG` to change it (e.g. `RUST_LOG=publisher=debug`).
 
 ## SRT to MoQT
 

@@ -1,5 +1,5 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
-import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt_client_wasm'
+import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'

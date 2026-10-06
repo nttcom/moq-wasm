@@ -1,7 +1,7 @@
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import type { LocHeader } from '../../../../utils/media/loc'
-import type { MOQTClient } from '../../../../pkg/moqt_client_wasm'
+import type { MOQTClient } from '../../../../pkg/moqt'
 import type { PublisherSession } from './publisherSession'
 import { type CameraId, type VideoSource } from '../types/monitoring'
 

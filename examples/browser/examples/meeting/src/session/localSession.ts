@@ -3,7 +3,7 @@ import {
   PublishNamespaceMessage,
   RequestErrorMessage,
   SubscribeOkMessage
-} from '../../../../pkg/moqt_client_wasm'
+} from '../../../../pkg/moqt'
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'

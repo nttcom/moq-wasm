@@ -68,7 +68,7 @@ async function main() {
       [
         "run",
         "-p",
-        "moqt-bridge-live-ingest",
+        "live-ingest",
         "--",
         "--rtmp-addr",
         rtmpAddress,

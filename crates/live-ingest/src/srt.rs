@@ -1,0 +1,164 @@
+use anyhow::{Context, Result};
+use futures::{FutureExt, StreamExt};
+use mediapack::mpegts;
+use publisher::MoqtManager;
+use srt_tokio::{ConnectionRequest, SrtListener, options::ByteCount};
+use tokio::task;
+
+use crate::ingest_publisher::{IngestOptions, IngestPublisher};
+
+const DEFAULT_NAMESPACE: &str = "anon/srt/live";
+/// A keyframe arrives as a burst of several hundred kilobytes in a few
+/// milliseconds; srt-tokio's default 64 KiB socket buffer overflows whenever
+/// the reader is not scheduled at once, and the lost datagrams are rarely
+/// recovered before their delivery time.
+const UDP_RECEIVE_BUFFER: ByteCount = ByteCount(4 * 1024 * 1024);
+const ACCESS_CONTROL_PREFIX: &str = "#!::";
+
+pub async fn run_srt_listener(addr: String, options: IngestOptions) -> Result<()> {
+    let (_listener, mut incoming) = SrtListener::builder()
+        .set(|options| options.connect.udp_recv_buffer_size = UDP_RECEIVE_BUFFER)
+        .bind(addr.as_str())
+        .await
+        .with_context(|| format!("bind SRT listener on {addr}"))?;
+    tracing::info!(%addr, "SRT listener started");
+    while let Some(request) = incoming.incoming().next().await {
+        task::spawn(handle_request(request, options.clone()));
+    }
+    Ok(())
+}
+
+async fn handle_request(request: ConnectionRequest, options: IngestOptions) {
+    let stream_id = request.stream_id().map(ToString::to_string);
+    let namespace = namespace_from_stream_id(stream_id.as_deref());
+    let remote = request.remote();
+    tracing::info!(%remote, ?stream_id, namespace = %namespace.join("/"), "SRT publisher connected");
+    match publish(request, &options, namespace).await {
+        Ok(summary) => tracing::info!(
+            %remote,
+            packets = summary.packets,
+            discontinuities = summary.discontinuities,
+            rx_loss = summary.rx_loss,
+            rx_dropped = summary.rx_dropped,
+            rx_retransmit = summary.rx_retransmit,
+            "SRT stream ended"
+        ),
+        Err(err) => tracing::warn!(%remote, ?err, "SRT publisher failed"),
+    }
+}
+
+struct StreamSummary {
+    packets: u64,
+    discontinuities: u64,
+    rx_loss: u64,
+    rx_dropped: u64,
+    rx_retransmit: u64,
+}
+
+async fn publish(
+    request: ConnectionRequest,
+    options: &IngestOptions,
+    namespace: Vec<String>,
+) -> Result<StreamSummary> {
+    let remote = request.remote();
+    let mut socket = request.accept(None).await?;
+    let mut demuxer = mpegts::Demuxer::new();
+    let moqt = MoqtManager::new(options.moqt.clone());
+    let _registration = options
+        .stats
+        .as_ref()
+        .map(|registry| registry.register(format!("srt {remote} {}", namespace.join("/")), &moqt));
+    let mut publisher = IngestPublisher::new(moqt, namespace, options.transcode);
+    let mut packets = 0_u64;
+    let mut discontinuities = 0_u64;
+    while let Some(packet) = socket.next().await {
+        let (_, data) = packet?;
+        packets += 1;
+        for event in demuxer.push(&data)? {
+            publisher.push(event)?;
+        }
+        if demuxer.discontinuities() > discontinuities {
+            discontinuities = demuxer.discontinuities();
+            tracing::warn!(
+                discontinuities,
+                "transport stream lost packets; frames are dropped until the next keyframe"
+            );
+        }
+    }
+    for event in demuxer.finish()? {
+        publisher.push(event)?;
+    }
+    let statistics = socket.statistics().next().now_or_never().flatten();
+    Ok(StreamSummary {
+        packets,
+        discontinuities,
+        rx_loss: statistics.as_ref().map_or(0, |stats| stats.rx_loss_data),
+        rx_dropped: statistics.as_ref().map_or(0, |stats| stats.rx_dropped_data),
+        rx_retransmit: statistics
+            .as_ref()
+            .map_or(0, |stats| stats.rx_retransmit_data),
+    })
+}
+
+fn namespace_from_stream_id(stream_id: Option<&str>) -> Vec<String> {
+    let resource = match stream_id {
+        Some(control) if control.starts_with(ACCESS_CONTROL_PREFIX) => control
+            .strip_prefix(ACCESS_CONTROL_PREFIX)
+            .and_then(|fields| fields.split(',').find_map(|field| field.strip_prefix("r=")))
+            .unwrap_or(DEFAULT_NAMESPACE),
+        Some(plain) => plain,
+        None => DEFAULT_NAMESPACE,
+    };
+    let parts: Vec<String> = resource
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if parts.is_empty() {
+        namespace_from_stream_id(Some(DEFAULT_NAMESPACE))
+    } else {
+        parts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_srt_access_control_resource() {
+        // Arrange
+        let stream_id = "#!::r=live/camera-1,m=publish";
+
+        // Act
+        let namespace = namespace_from_stream_id(Some(stream_id));
+
+        // Assert
+        assert_eq!(namespace, ["live", "camera-1"]);
+    }
+
+    #[test]
+    fn accepts_plain_stream_id() {
+        // Arrange
+        let stream_id = "live/camera-2";
+
+        // Act
+        let namespace = namespace_from_stream_id(Some(stream_id));
+
+        // Assert
+        assert_eq!(namespace, ["live", "camera-2"]);
+    }
+
+    #[test]
+    fn falls_back_when_stream_id_is_missing_or_empty() {
+        // Arrange / Act
+        let missing = namespace_from_stream_id(None);
+        let empty = namespace_from_stream_id(Some(""));
+        let without_resource = namespace_from_stream_id(Some("#!::m=publish"));
+
+        // Assert
+        assert_eq!(missing, ["anon", "srt", "live"]);
+        assert_eq!(empty, ["anon", "srt", "live"]);
+        assert_eq!(without_resource, ["anon", "srt", "live"]);
+    }
+}

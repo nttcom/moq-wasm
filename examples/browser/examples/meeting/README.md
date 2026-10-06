@@ -44,4 +44,4 @@ Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
 
 ## Stack
 
-React 19, TypeScript, Tailwind CSS, shadcn/ui, Vite, `crates/moqt-client-wasm`.
+React 19, TypeScript, Tailwind CSS, shadcn/ui, Vite, `crates/wasm`.

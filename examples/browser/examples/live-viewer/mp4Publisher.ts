@@ -10,7 +10,7 @@ import init, {
   Mp4Index,
   type Mp4SampleTable,
   type Mp4VideoTrack
-} from '../../pkg/moqt_client_wasm'
+} from '../../pkg/moqt'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import {

@@ -17,15 +17,15 @@ on:
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
-      - "crates/moqt-client-wasm/**"
-      - "crates/moqt-bridge-live-ingest/**"
+      - "crates/wasm/**"
+      - "crates/live-ingest/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - "crates/relay/**"
       - "crates/moqt/**"
       - "crates/mediapack/**"
-      - "crates/media-streaming-format/**"
-      - "crates/media-publisher/**"
+      - "crates/msf/**"
+      - "crates/publisher/**"
       - "crates/transcode/**"
       - "crates/vts/**"
       - "tests/auth-e2e/**"
@@ -58,15 +58,15 @@ on:
       - "examples/browser/**"
       - "examples/python/moq-chat-moderation/**"
       - "examples/python/moq-camera-detection/**"
-      - "crates/moqt-client-wasm/**"
-      - "crates/moqt-bridge-live-ingest/**"
+      - "crates/wasm/**"
+      - "crates/live-ingest/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - "crates/relay/**"
       - "crates/moqt/**"
       - "crates/mediapack/**"
-      - "crates/media-streaming-format/**"
-      - "crates/media-publisher/**"
+      - "crates/msf/**"
+      - "crates/publisher/**"
       - "crates/transcode/**"
       - "crates/vts/**"
       - "tests/auth-e2e/**"
@@ -143,79 +143,79 @@ jobs:
 
             while IFS= read -r path; do
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|README.md|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-media-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|crates/moqt-client-wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|README.md|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-media-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   media=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-message-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|crates/moqt-client-wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-message-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   message=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-chat-moderation/*|crates/moqt-client-wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-chat-moderation/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   chat_moderation=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-camera-detection/*|crates/moqt-client-wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|examples/python/moq-camera-detection/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   camera_detection=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|crates/moqt-client-wasm/*|crates/moqt-bridge-live-ingest/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/*|crates/wasm/*|crates/live-ingest/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|crates/moqt-client-wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/*|crates/wasm/*|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   meeting=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|tests/cascading-relay-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|tests/cascading-relay-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(cascading-relay)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|tests/cache-eviction-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|tests/cache-eviction-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(cache-eviction)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|tests/fetch-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|tests/fetch-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(fetch)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|tests/multiple-publishers-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|tests/multiple-publishers-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(multiple-publishers)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/gst-plugin-moqt/*|tests/moqtsink-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/gst-plugin-moqt/*|tests/moqtsink-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(moqtsink)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|tests/object-dedup-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|tests/object-dedup-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(object-dedup)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/media-streaming-format/*|crates/media-publisher/*|crates/transcode/*|crates/vts/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|crates/relay/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/publisher/*|crates/transcode/*|crates/vts/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(auth)
                   ;;
               esac
@@ -391,7 +391,7 @@ jobs:
         # differently, which would recompile the dependencies at run time.
         run: |
           cargo build -p relay
-          cargo build -p moqt-bridge-live-ingest
+          cargo build -p live-ingest
 
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium

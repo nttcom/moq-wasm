@@ -30,4 +30,4 @@ Producers and consumers:
   can pass the signed payload through unchanged while the relay reads only
   the fields above.
 - Dependencies are limited to `serde`, `serde_json`, `base64` and `anyhow` so
-  the crate can be used from `moqt-client-wasm`.
+  the crate can be used from `wasm`.

@@ -264,7 +264,7 @@ as the catalog and LOC tracks `live-ingest` produces, plus the media timeline,
 so the viewer and the rewind work unchanged. No CMAF siblings are published.
 
 - Demuxing uses the progressive MP4 index of `crates/mediapack`
-  (`mp4::Mp4Index`) through `crates/moqt-client-wasm`: only `moov` is handed to wasm and
+  (`mp4::Mp4Index`) through `crates/wasm`: only `moov` is handed to wasm and
   samples are read with `File.slice`, so the file never sits in memory whole.
 - Video must be H.264. `mediapack` converts AVCC samples to Annex-B and puts
   the SPS / PPS from `avcC` before every keyframe, so the catalog carries no

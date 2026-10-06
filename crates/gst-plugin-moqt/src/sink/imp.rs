@@ -4,8 +4,8 @@ use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::{glib, prelude::*, subclass::prelude::*};
-use media_publisher::{MediaPublisher, MoqtManager, MoqtTarget};
 use mediapack::{AudioSample, MediaEvent, Timestamp};
+use publisher::{MediaPublisher, MoqtManager, MoqtTarget};
 use tokio::runtime::Runtime;
 
 use crate::media_input::{VideoInput, audio_config};

@@ -1,6 +1,6 @@
 import { getErrorMessage } from '../../examples/media/common'
 import { type TrackContext, observedObjectHandler } from './trackContext'
-import type { SubscribeOkMessage } from '../../pkg/moqt_client_wasm'
+import type { SubscribeOkMessage } from '../../pkg/moqt'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 

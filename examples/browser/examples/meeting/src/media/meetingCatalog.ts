@@ -1,4 +1,4 @@
-import { parse_msf_catalog_json } from '../../../../pkg/moqt_client_wasm'
+import { parse_msf_catalog_json } from '../../../../pkg/moqt'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,

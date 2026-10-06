@@ -1,5 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../../pkg/moqt_client_wasm'
+import { parse_msf_catalog_json } from '../../../pkg/moqt'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
 import { LocLive, formatLiveStats } from '@player/locLive'

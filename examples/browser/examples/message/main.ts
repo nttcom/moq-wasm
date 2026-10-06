@@ -8,7 +8,7 @@ import {
   SubgroupHeaderMessage,
   SubgroupObjectMessage,
   SubscribeOkMessage
-} from '../../pkg/moqt_client_wasm'
+} from '../../pkg/moqt'
 import { GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { configureRelayUrlControls } from '../../utils/relayPresets'
 
