@@ -8,6 +8,7 @@ ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
+GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
 .PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats gst-plugin gst-srt-publish onvif ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
@@ -55,7 +56,7 @@ gst-plugin:
 # Listens for SRT (MPEG-TS) on GST_SRT_ADDR and publishes it under GST_NAMESPACE.
 gst-srt-publish: gst-plugin
 	@echo "Using MoQT relay URL: $(GST_MOQT_URL)"
-	GST_PLUGIN_PATH=target/debug gst-launch-1.0 -e \
+	gst-launch-1.0 --gst-plugin-load=$(GST_PLUGIN_FILE) -e \
 		srtsrc uri="srt://$(GST_SRT_ADDR)?mode=listener" ! tsdemux name=demux \
 		demux. ! queue ! h264parse config-interval=-1 ! moqt. \
 		demux. ! queue ! aacparse ! moqt. \
