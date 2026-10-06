@@ -10,14 +10,6 @@ services:
       timeout: 3s
       retries: 10
 
-  redisinsight:
-    image: redis/redisinsight:3.6.0@sha256:aa21bbd198455b4ad964f76782db951155aa0d712321f599972d1525f031f0e6
-    ports:
-      - "5540:5540"
-    depends_on:
-      redis:
-        condition: service_healthy
-
   relay-common:
     image: moqt-relay:local
     build:
