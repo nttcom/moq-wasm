@@ -25,7 +25,9 @@ async fn main() -> Result<()> {
         .try_init()
         .ok();
     let relay_url = env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.into());
-    let mut sink = spawn_moqtsink(&relay_url)?;
+    let plugin_file =
+        env::var("MOQT_E2E_PLUGIN_FILE").context("MOQT_E2E_PLUGIN_FILE is not set")?;
+    let mut sink = spawn_moqtsink(&plugin_file, &relay_url)?;
     tokio::select! {
         result = verify(&relay_url) => result,
         status = sink.wait() => Err(anyhow::anyhow!("gst-launch exited early: {:?}", status?)),
@@ -34,7 +36,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn spawn_moqtsink(relay_url: &str) -> Result<Child> {
+fn spawn_moqtsink(plugin_file: &str, relay_url: &str) -> Result<Child> {
     let pipeline = format!(
         "moqtsink name=moqt relay-url={relay_url} namespace={NAMESPACE} \
          videotestsrc is-live=true ! video/x-raw,width=320,height=180,framerate=30/1 \
@@ -44,6 +46,7 @@ fn spawn_moqtsink(relay_url: &str) -> Result<Child> {
          ! aacparse ! moqt.audio"
     );
     Command::new("gst-launch-1.0")
+        .arg(format!("--gst-plugin-load={plugin_file}"))
         .args(pipeline.split_whitespace())
         .kill_on_drop(true)
         .spawn()
