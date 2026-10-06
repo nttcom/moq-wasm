@@ -99,3 +99,47 @@ services:
         condition: service_healthy
       vts:
         condition: service_started
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
+    environment:
+      CLICKHOUSE_USER: observability
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "observability", "--password", "${CLICKHOUSE_PASSWORD:-observability}", "--query", "SELECT 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  observability:
+    image: moqt-observability:local
+    build:
+      context: .
+      dockerfile: crates/observability/Dockerfile
+    environment:
+      OBSERVABILITY_RELAYS: relay-a=moqt://relay-a:444,relay-b=moqt://relay-b:444
+      # The relay token opens the inner endpoint without expiring; see docs/architecture/observability/architecture.md.
+      OBSERVABILITY_AUTH_TOKEN: ${AUTH_RELAY_TOKEN:-eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4}
+      OBSERVABILITY_INSECURE: "1"
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: observability
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-observability}
+    ports:
+      - "8095:8095"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      relay-a:
+        condition: service_started
+      relay-b:
+        condition: service_started
+
+volumes:
+  clickhouse-data:
