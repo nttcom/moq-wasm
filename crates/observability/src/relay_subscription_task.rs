@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use anyhow::{Context, bail};
-use moqt::{DataReceiver, FilterType, GroupOrder, SubscribeOption, TrackReader};
+use moqt::{
+    DataReceiver, FilterType, GroupOrder, Session, SessionEvent, SubscribeOption, TrackReader,
+};
 use relay_stats::RelaySnapshot;
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -81,8 +83,13 @@ async fn receive_snapshots(
     };
     tracing::info!(relay_id = %relay.relay_id, url = %relay.url, "subscribed to relay stats");
     let mut reader = TrackReader::new(factory);
+    let mut closed = std::pin::pin!(session_closed(&session));
     loop {
-        match reader.next_object().await {
+        let next = tokio::select! {
+            next = reader.next_object() => next,
+            reason = &mut closed => return Err(reason),
+        };
+        match next {
             Ok(Some(object)) => match RelaySnapshot::from_json(&object.payload) {
                 Ok(snapshot) => snapshot_sender.send(snapshot).await?,
                 Err(error) => {
@@ -93,6 +100,19 @@ async fn receive_snapshots(
             Err(error) => {
                 tracing::warn!(?error, relay_id = %relay.relay_id, "a snapshot group failed")
             }
+        }
+    }
+}
+
+async fn session_closed(session: &Session) -> anyhow::Error {
+    loop {
+        match session.receive_event().await {
+            Ok(SessionEvent::Disconnected()) => {
+                return anyhow::anyhow!("the relay closed the session");
+            }
+            Ok(SessionEvent::ProtocolViolation()) => return anyhow::anyhow!("protocol violation"),
+            Ok(_) => {}
+            Err(error) => return error.context("session event loop failed"),
         }
     }
 }
