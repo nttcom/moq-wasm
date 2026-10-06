@@ -1,4 +1,4 @@
-use crate::modules::core::{data_object::DataObject, data_sender::DataSender};
+use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
 
 enum SenderInner<T: moqt::TransportProtocol> {
     Uninitialized(moqt::SubgroupHeaderSender<T>),

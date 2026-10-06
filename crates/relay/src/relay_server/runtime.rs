@@ -17,8 +17,7 @@ use crate::modules::{
         tables::hashmap_table::InMemoryLocalPubSubDirectory,
         upstream_serializer::UpstreamCreationSerializer,
     },
-    session_event::SessionEvent,
-    session_repository::SessionRepository,
+    session::{session_event::SessionEvent, session_repository::SessionRepository},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 

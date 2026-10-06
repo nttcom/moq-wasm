@@ -10,15 +10,15 @@ use tokio::{
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    core::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::track_cache::{NextObject, TrackCache, TrackMalformed},
+    },
+    session::{
         data_object::DataObject,
         data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
         publisher::Publisher,
         subscription::DownstreamSubscription,
-    },
-    data_plane::{
-        cache::subgroup_key::SubgroupKey,
-        cache::track_cache::{NextObject, TrackCache, TrackMalformed},
     },
     types::TrackKey,
 };

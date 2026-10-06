@@ -7,13 +7,12 @@ use tokio::{
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    core::subscription::DownstreamSubscription,
     data_plane::{
         cache::{store::TrackCacheStore, track_cache::TrackCache},
         egress::{fetch_delivery::deliver_fetch, runner::EgressRunner},
     },
     sequences::tables::table::PublishDoneReason,
-    session_repository::SessionRepository,
+    session::{session_repository::SessionRepository, subscription::DownstreamSubscription},
     types::{SessionId, TrackKey},
 };
 

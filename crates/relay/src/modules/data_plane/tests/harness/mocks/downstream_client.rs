@@ -1,13 +1,13 @@
 use tokio::sync::mpsc;
 
-use crate::modules::core::{
+use crate::modules::session::{
+    Session,
     data_object::DataObject,
     data_sender::{
         DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
     },
+    moqt_session_event::MoqtSessionEvent,
     publisher::{PublishNamespaceResponse, Publisher},
-    session::Session,
-    session_event::MoqtSessionEvent,
     subscriber::Subscriber,
     subscription::DownstreamSubscription,
 };

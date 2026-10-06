@@ -1,4 +1,4 @@
-use crate::modules::core::data_object::DataObject;
+use crate::modules::session::data_object::DataObject;
 
 #[async_trait::async_trait]
 pub(crate) trait StreamReceiver: Send + Sync + 'static {

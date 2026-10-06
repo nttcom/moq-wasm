@@ -10,7 +10,6 @@ use crate::modules::{
         token_verifier::TokenVerifier,
     },
     control_message_forwarder::ControlMessageForwarder,
-    core::session_event::MoqtSessionEvent,
     data_plane::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
         ingress::ingress_coordinator::IngressCommand,
@@ -39,8 +38,11 @@ use crate::modules::{
         upstream_publish_done::UpstreamPublishDone,
         upstream_serializer::UpstreamCreationSerializer,
     },
-    session_event::{EventKind, SessionEvent},
-    session_repository::SessionRepository,
+    session::{
+        moqt_session_event::MoqtSessionEvent,
+        session_event::{EventKind, SessionEvent},
+        session_repository::SessionRepository,
+    },
     types::SessionId,
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
@@ -784,13 +786,6 @@ mod tests {
             verified_token::VerifiedToken,
         },
         control_message_forwarder::ControlMessageForwarder,
-        core::{
-            mocks::{
-                MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
-                mock_new_session,
-            },
-            session_event::MoqtSessionEvent,
-        },
         data_plane::{
             cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
             ingress::ingress_coordinator::IngressCommand,
@@ -801,8 +796,15 @@ mod tests {
             tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
             upstream_serializer::UpstreamCreationSerializer,
         },
-        session_event::{EventKind, SessionEvent},
-        session_repository::SessionRepository,
+        session::{
+            mocks::{
+                MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
+                mock_new_session,
+            },
+            moqt_session_event::MoqtSessionEvent,
+            session_event::{EventKind, SessionEvent},
+            session_repository::SessionRepository,
+        },
         types::{SessionId, TrackKey},
         upstream_publisher_resolver::UpstreamPublisherResolver,
     };

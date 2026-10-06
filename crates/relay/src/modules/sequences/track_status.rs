@@ -2,10 +2,10 @@ use moqt::ContentExists;
 use tracing::Span;
 
 use crate::modules::{
-    core::handler::track_status::TrackStatusHandler,
     data_plane::cache::store::TrackCacheStore,
     enums::SubscribeErrorCode,
     sequences::{subscribe::cached_largest, tables::hashmap_table::InMemoryLocalPubSubDirectory},
+    session::handler::track_status::TrackStatusHandler,
     types::SessionId,
 };
 

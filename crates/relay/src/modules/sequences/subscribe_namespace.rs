@@ -1,9 +1,9 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::subscribe_namespace::SubscribeNamespaceHandler,
     enums::SubscribeNamespaceErrorCode,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
     sequences::tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},
+    session::handler::subscribe_namespace::SubscribeNamespaceHandler,
     types::SessionId,
 };
 use tracing::Span;

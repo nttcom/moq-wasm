@@ -5,7 +5,7 @@ use crate::modules::{
         PUBLISHER_SESSION_ID, RelayHarness, fixtures::location, ordered_payload, payloads_of,
         receive_objects_until_close,
     },
-    session_event::EventKind,
+    session::session_event::EventKind,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

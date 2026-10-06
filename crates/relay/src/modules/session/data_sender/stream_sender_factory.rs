@@ -1,4 +1,4 @@
-use crate::modules::core::{data_sender::DataSender, data_sender::stream_sender::StreamSender};
+use crate::modules::session::{data_sender::DataSender, data_sender::stream_sender::StreamSender};
 
 #[async_trait::async_trait]
 pub(crate) trait StreamSenderFactory: Send + 'static {

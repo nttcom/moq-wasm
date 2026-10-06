@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::subscribe::SubscribeHandler,
     data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
@@ -18,6 +17,7 @@ use crate::modules::{
         },
         upstream_serializer::UpstreamCreationSerializer,
     },
+    session::handler::subscribe::SubscribeHandler,
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };
@@ -519,9 +519,6 @@ impl Subscribe {
 mod tests {
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
-    use crate::modules::core::mocks::{
-        MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
-    };
     use crate::modules::data_plane::cache::track_cache::TrackCache;
     use crate::modules::data_plane::tests::harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::inter_relay::InterRelayConnectionManager;
@@ -531,6 +528,9 @@ mod tests {
     };
     use crate::modules::sequences::test_fixtures::{
         PUBLISHER_SESSION, active_upstream, upstream_key,
+    };
+    use crate::modules::session::mocks::{
+        MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
     };
 
     fn append_one_object(cache: &TrackCache, group_id: u64) {

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::modules::core::data_object::DataObject;
+use crate::modules::session::data_object::DataObject;
 
 use super::harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery,

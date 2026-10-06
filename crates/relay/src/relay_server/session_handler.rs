@@ -7,8 +7,10 @@ use crate::{
     logging::relay_hostname,
     modules::{
         auth::session_authenticator::SessionAuthenticator,
-        session_event::SessionEvent,
-        session_repository::{NewSession, SessionPeer, SessionRepository},
+        session::{
+            session_event::SessionEvent,
+            session_repository::{NewSession, SessionPeer, SessionRepository},
+        },
         types::{SessionId, generate_session_id},
     },
 };

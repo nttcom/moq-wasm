@@ -1,10 +1,10 @@
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::unsubscribe::UnsubscribeHandler,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     sequences::tables::{
         hashmap_table::InMemoryLocalPubSubDirectory, table::UpstreamSubscriptionOrigin,
     },
+    session::handler::unsubscribe::UnsubscribeHandler,
     types::SessionId,
 };
 use tracing::Span;
@@ -75,12 +75,12 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        core::mocks::runner_stopped,
         sequences::tables::table::PublishDoneReason,
         sequences::test_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
             upstream_release_context,
         },
+        session::mocks::runner_stopped,
         types::TrackKey,
     };
 

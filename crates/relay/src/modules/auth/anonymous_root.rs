@@ -2,8 +2,9 @@ use async_trait::async_trait;
 
 use crate::modules::{
     auth::verified_token::{ANONYMOUS_APP_ID, VerifiedToken},
-    core::{
-        handler::subscribe_namespace::SubscribeNamespaceHandler, session_event::MoqtSessionEvent,
+    session::{
+        handler::subscribe_namespace::SubscribeNamespaceHandler,
+        moqt_session_event::MoqtSessionEvent,
     },
 };
 
@@ -78,9 +79,9 @@ mod tests {
     use super::{scope_anonymous_root_prefix, scope_anonymous_root_subscription};
     use crate::modules::{
         auth::{test_support::app_token, verified_token::VerifiedToken},
-        core::{
+        session::{
             handler::subscribe_namespace::SubscribeNamespaceHandler,
-            session_event::MoqtSessionEvent,
+            moqt_session_event::MoqtSessionEvent,
         },
     };
 

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use moqt::{ObjectStatus, SubgroupId};
 
-use crate::modules::core::data_object::DataObject;
+use crate::modules::session::data_object::DataObject;
 
 pub(crate) fn ordered_payload(index: usize) -> Bytes {
     Bytes::from(format!("ordered-object-{index}"))

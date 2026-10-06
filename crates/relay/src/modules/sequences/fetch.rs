@@ -9,7 +9,6 @@ use tracing::Span;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
-    core::handler::fetch::FetchHandler,
     data_plane::{
         cache::{
             store::TrackCacheStore,
@@ -19,7 +18,7 @@ use crate::modules::{
     },
     enums::FetchErrorCode,
     sequences::tables::hashmap_table::InMemoryLocalPubSubDirectory,
-    session_event::SessionEvent,
+    session::{handler::fetch::FetchHandler, session_event::SessionEvent},
     types::{SessionId, TrackKey},
     upstream_publisher_resolver::UpstreamPublisherResolver,
 };

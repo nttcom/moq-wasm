@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::modules::core::{
+use crate::modules::session::{
     data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
     handler::publish::SubscribeOption,
     subscription::UpstreamSubscription,

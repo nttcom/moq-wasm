@@ -1,11 +1,13 @@
 use crate::modules::{
-    core::{data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver},
     data_plane::{
         cache::subgroup_key::SubgroupKey,
         cache::{cached_object::CachedObject, track_cache::OpenSubgroupGuard},
         ingress::track_ingest_task::TrackIngest,
     },
-    session_event::SessionEvent,
+    session::{
+        data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver,
+        session_event::SessionEvent,
+    },
 };
 
 pub(super) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn DatagramReceiver>) {

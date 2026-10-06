@@ -42,7 +42,7 @@ optionally cascades across relays via a Redis-backed route registry.
 ## Control plane
 
 ### Session intake
-`SessionHandler` runs one accept loop per endpoint and hands every accepted
+`SessionHandler` (`relay_server/session_handler.rs`) runs one accept loop per endpoint and hands every accepted
 transport connection to a per-connection task owned by `SessionIntake`:
 
 1. await the `moqt::Accepting` future → `Handshake` (CLIENT_SETUP received,
@@ -55,7 +55,7 @@ transport connection to a per-connection task owned by `SessionIntake`:
    `Handshake::reject` with `UNAUTHORIZED` (rejected token, endpoint mismatch)
    or `INTERNAL_ERROR` (VTS unreachable);
 3. `Handshake::accept()` sends SERVER_SETUP;
-4. the session is boxed as `dyn core::session::Session` and added to
+4. the session is boxed as `dyn session::Session` and added to
    `SessionRepository` as a `NewSession` carrying its `SessionPeer` (`Client`
    or `Relay { relay_id }` — the endpoint it arrived on) and its
    `VerifiedToken`, which later requests are authorized against;
@@ -91,14 +91,16 @@ no retroactive effect: publishes and subscriptions already established stay
 up, only later requests and the expiry follow the new token. AUTHORIZATION
 TOKEN parameters on any other message are still ignored.
 
-### `modules/core` — transport-erased `moqt` facade
-The relay never handles `moqt::Session<T>` generically beyond intake. `core`
+### `modules/session` — the session as the relay sees it
+The relay never handles `moqt::Session<T>` generically beyond intake. `session`
 defines object-safe traits (`Session`, `Publisher`, `Subscriber`, a
 `handler::*` trait per control message whose `moqt` handler is generic over
 the transport, `subscription`, `data_receiver`, `data_sender`) implemented for
 every `T: TransportProtocol`. Everything past the repository works with
 `Box<dyn …>`; `MoqtSessionEvent` carries the non-generic `moqt` handlers
-(GOAWAY, MAX_REQUEST_ID, PUBLISH_DONE, …) as they are.
+(GOAWAY, MAX_REQUEST_ID, PUBLISH_DONE, …) as they are. The same module holds
+`SessionRepository` and the relay-wide `SessionEvent` (`session_event.rs`),
+so everything the relay knows about a session lives in one place.
 
 ### Event pipeline
 

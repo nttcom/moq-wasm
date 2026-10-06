@@ -3,10 +3,6 @@ use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    core::{
-        data_object::DataObject,
-        data_receiver::stream_receiver::{StreamReceiver, StreamReceiverFactory},
-    },
     data_plane::{
         cache::{
             cached_object::{CachedObject, SubgroupHeaderFields},
@@ -14,7 +10,11 @@ use crate::modules::{
         },
         ingress::track_ingest_task::TrackIngest,
     },
-    session_event::SessionEvent,
+    session::{
+        data_object::DataObject,
+        data_receiver::stream_receiver::{StreamReceiver, StreamReceiverFactory},
+        session_event::SessionEvent,
+    },
     types::{SessionId, TrackKey},
 };
 
@@ -272,7 +272,7 @@ mod tests {
                 },
             },
         },
-        session_event::EventKind,
+        session::session_event::EventKind,
     };
 
     fn payload(object_id_delta: u64) -> DataObject {

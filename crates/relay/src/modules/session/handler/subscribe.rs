@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use moqt::{ContentExists, FilterType, GroupOrder};
 
-use crate::modules::core::subscription::DownstreamSubscription;
+use crate::modules::session::subscription::DownstreamSubscription;
 
 #[async_trait]
 pub(crate) trait SubscribeHandler: 'static + Send + Sync {

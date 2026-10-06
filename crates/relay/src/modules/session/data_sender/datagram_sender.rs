@@ -1,4 +1,4 @@
-use crate::modules::core::{data_object::DataObject, data_sender::DataSender};
+use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
 
 #[async_trait::async_trait]
 impl<T: moqt::TransportProtocol> DataSender for moqt::DatagramSender<T> {

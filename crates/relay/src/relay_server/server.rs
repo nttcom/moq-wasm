@@ -3,7 +3,6 @@ use std::sync::Arc;
 use moqt::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::relay_server::runtime::RelayRuntime;
 use crate::{
     RelayConfig,
     modules::{
@@ -11,9 +10,14 @@ use crate::{
         route_registry::{
             NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
         },
-        session_event::SessionEvent,
+        session::{
+            session_event::SessionEvent,
+            session_repository::{SessionPeer, SessionRepository},
+        },
+    },
+    relay_server::{
+        runtime::RelayRuntime,
         session_handler::{SessionHandler, SessionIntake},
-        session_repository::{SessionPeer, SessionRepository},
     },
 };
 

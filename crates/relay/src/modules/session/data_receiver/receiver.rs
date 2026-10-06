@@ -1,4 +1,4 @@
-use crate::modules::core::data_receiver::{
+use crate::modules::session::data_receiver::{
     datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiverFactory,
 };
 

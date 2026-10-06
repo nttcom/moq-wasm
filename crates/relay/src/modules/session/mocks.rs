@@ -5,7 +5,10 @@ use tokio::sync::oneshot;
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
-    core::{
+    data_plane::tests::harness::fixtures::subscription::make_subscription,
+    sequences::tables::table::PublishDoneReason,
+    session::{
+        Session,
         data_receiver::{fetch_receiver::UpstreamFetchReceiver, receiver::DataReceiver},
         data_sender::{
             DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
@@ -14,15 +17,12 @@ use crate::modules::{
             fetch::FetchHandler, publish::SubscribeOption,
             publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
         },
+        moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
-        session::Session,
-        session_event::MoqtSessionEvent,
+        session_repository::{NewSession, SessionPeer, SessionRepository},
         subscriber::Subscriber,
         subscription::{DownstreamSubscription, UpstreamSubscription},
     },
-    data_plane::tests::harness::fixtures::subscription::make_subscription,
-    sequences::tables::table::PublishDoneReason,
-    session_repository::{NewSession, SessionPeer, SessionRepository},
     types::SessionId,
 };
 
