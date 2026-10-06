@@ -14,7 +14,18 @@ const SUBSCRIBER_PRIORITY: u8 = 128;
 
 pub struct RelayConnection {
     pub session: Arc<Session>,
-    _auth_token_refresh: Option<AuthTokenRefreshTask>,
+    auth_token_refresh: Option<AuthTokenRefreshTask>,
+    endpoint: Endpoint<QUIC>,
+}
+
+impl RelayConnection {
+    /// Every other handle to the session (publishers, track writers, clones of
+    /// `session`) must already be dropped, or the wait never ends.
+    pub async fn close(self) {
+        drop(self.auth_token_refresh);
+        drop(self.session);
+        self.endpoint.wait_idle().await;
+    }
 }
 
 pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConnection> {
@@ -42,7 +53,8 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
     };
     Ok(RelayConnection {
         session,
-        _auth_token_refresh: auth_token_refresh,
+        auth_token_refresh,
+        endpoint,
     })
 }
 

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::loc::{CAPTURE_TIMESTAMP_ID, LocExtension, to_extension_headers};
-use moqt::{PublishOption, TrackWriter};
+use moqt::{PublishOption, Session, TrackWriter};
 use tokio::io::AsyncReadExt;
 use tracing::info;
 
@@ -26,10 +26,15 @@ pub async fn run(args: PublishArgs) -> Result<()> {
         anyhow::bail!("--container cmaf is not implemented yet");
     }
 
-    let track = &args.track;
-    let connection = connect_relay(&args.relay, track.app_id()).await?;
+    let connection = connect_relay(&args.relay, args.track.app_id()).await?;
+    let result = publish_stdin(&connection.session, &args).await;
+    connection.close().await;
+    result
+}
 
-    let publisher = connection.session.publisher();
+async fn publish_stdin(session: &Session, args: &PublishArgs) -> Result<()> {
+    let track = &args.track;
+    let publisher = session.publisher();
     let subscription = publisher
         .publish(
             track.namespace.clone(),
@@ -65,7 +70,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     let mut framer = AnnexBFramer::new(args.codec.clone());
 
     let mut reader = tokio::io::stdin();
-    let mut closed = std::pin::pin!(session_closed(&connection.session));
+    let mut closed = std::pin::pin!(session_closed(session));
     let mut read_buf = vec![0u8; READ_BUFFER_BYTES];
     let mut frame_index: u64 = 0;
     // Wall-clock time of the frame timeline's zero point, set on the first frame.
@@ -121,7 +126,7 @@ pub async fn run(args: PublishArgs) -> Result<()> {
     info!(frames = frame_index, groups, "publish done");
 
     // Let the relay drain in-flight stream data before the QUIC session is
-    // dropped on return; otherwise trailing objects are truncated.
+    // closed; otherwise trailing objects are truncated.
     tokio::time::sleep(DRAIN_BEFORE_CLOSE).await;
 
     Ok(())
