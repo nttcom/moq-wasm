@@ -95,6 +95,13 @@ impl PublishNamespace {
                 upstream_publisher_resolver,
                 &join_deps,
             );
+            self.notify_remote_subscribers(
+                track_namespace,
+                forwarder,
+                cascading_relay_context.route_registry,
+                cascading_relay_context.inter_relay_connection_manager,
+            )
+            .await;
         } else {
             Self::join_tracks_wanting_publisher_relays(
                 session_id,
@@ -102,16 +109,6 @@ impl PublishNamespace {
                 upstream_publisher_resolver,
                 &join_deps,
                 cascading_relay_context,
-            )
-            .await;
-        }
-
-        if is_origin {
-            self.notify_remote_subscribers(
-                track_namespace,
-                forwarder,
-                cascading_relay_context.route_registry,
-                cascading_relay_context.inter_relay_connection_manager,
             )
             .await;
         }
@@ -320,7 +317,7 @@ mod tests {
                 PUBLISHER_SESSION, local_publisher_resolver, table_with_upstream,
             },
             mock_session::{
-                MockPublishNamespaceHandler, recorded_session_answering_subscribe,
+                MockPublishNamespaceHandler, mock_session_answering_subscribe,
                 session_repository_with_session,
             },
         },
@@ -329,10 +326,9 @@ mod tests {
     const ANNOUNCING_PUBLISHER: SessionId = 3;
 
     async fn announce(table: &Arc<InMemoryLocalPubSubDirectory>) -> mpsc::Receiver<IngressCommand> {
-        let (session, _recorded) = recorded_session_answering_subscribe();
         let repository = session_repository_with_session(
             ANNOUNCING_PUBLISHER,
-            session,
+            mock_session_answering_subscribe(|| moqt::ContentExists::False),
             VerifiedToken::full_access(),
         )
         .await;

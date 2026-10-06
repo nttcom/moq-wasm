@@ -6,13 +6,6 @@ use crate::modules::domain::{
     session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct UpstreamSubscriptionKey {
-    pub(crate) publisher_session_id: SessionId,
-    pub(crate) track_namespace: String,
-    pub(crate) track_name: String,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveUpstreamSubscription {
     pub(crate) upstream_request_id: u64,

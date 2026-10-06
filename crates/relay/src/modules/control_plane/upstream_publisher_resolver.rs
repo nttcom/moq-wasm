@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, sync::Arc};
+use std::sync::Arc;
 
 use crate::modules::{
     cascading::{
@@ -56,14 +56,10 @@ impl UpstreamPublisherResolver {
         track_name: &str,
         requester: SessionPeer,
     ) -> Vec<UpstreamPublisher> {
-        let mut local_publishers: Vec<SessionId> = table
+        let mut publishers: Vec<UpstreamPublisher> = table
             .find_upstream_publishers(track_namespace, track_name)
             .into_iter()
-            .map(|publisher| publisher.publisher_session_id)
-            .collect();
-        local_publishers.sort_by_key(|publisher_session_id| Reverse(*publisher_session_id));
-        let mut publishers: Vec<UpstreamPublisher> = local_publishers
-            .into_iter()
+            .rev()
             .map(UpstreamPublisher::Session)
             .collect();
         if requester == SessionPeer::Relay {
@@ -99,93 +95,20 @@ impl UpstreamPublisherResolver {
 mod tests {
     use super::*;
     use crate::modules::{
-        cascading::route_registry::{NamespaceRoute, RegisterRouteError, RelayInfo},
         domain::{
             pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
             session_peer::SessionPeer,
         },
         session::session_repository::SessionRepository,
+        test_support::stub_route_registry::{PublisherLookup, StubRouteRegistry},
     };
-
-    enum PublisherLookup {
-        NotFound,
-        Fails,
-        MustNotBeCalled,
-    }
-
-    struct StubRouteRegistry {
-        lookup: PublisherLookup,
-    }
-
-    #[async_trait::async_trait]
-    impl RelayRouteRegistry for StubRouteRegistry {
-        async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn register_namespace_subscriber(
-            &self,
-            _track_namespace_prefix: &str,
-        ) -> Result<(), RegisterRouteError> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn find_active_namespace_publishers(
-            &self,
-            _track_namespace: &str,
-        ) -> anyhow::Result<Vec<RelayInfo>> {
-            match self.lookup {
-                PublisherLookup::NotFound => Ok(Vec::new()),
-                PublisherLookup::Fails => Err(anyhow::anyhow!("route registry down")),
-                PublisherLookup::MustNotBeCalled => {
-                    panic!("a relay requester must not be routed to another relay")
-                }
-            }
-        }
-
-        async fn register_watched_namespace(&self, _track_namespace: &str) -> anyhow::Result<()> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn unregister_watched_namespace(&self, _track_namespace: &str) -> anyhow::Result<()> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn find_namespace_publishers_by_prefix(
-            &self,
-            _track_namespace_prefix: &str,
-        ) -> anyhow::Result<Vec<NamespaceRoute>> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn unregister_namespace_publisher(
-            &self,
-            _track_namespace: &str,
-        ) -> anyhow::Result<()> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn unregister_namespace_subscriber(
-            &self,
-            _track_namespace_prefix: &str,
-        ) -> anyhow::Result<()> {
-            unimplemented!("not used in resolver tests")
-        }
-
-        async fn find_namespace_subscribers(
-            &self,
-            _track_namespace: &str,
-        ) -> anyhow::Result<Vec<RelayInfo>> {
-            unimplemented!("not used in resolver tests")
-        }
-    }
 
     fn make_resolver(lookup: PublisherLookup) -> UpstreamPublisherResolver {
         let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
         let (session_event_sender, _session_event_receiver) =
             tokio::sync::mpsc::unbounded_channel();
         UpstreamPublisherResolver::new(
-            Arc::new(StubRouteRegistry { lookup }),
+            Arc::new(StubRouteRegistry::new(lookup)),
             Arc::new(InterRelayConnectionManager::new(
                 repository,
                 session_event_sender,

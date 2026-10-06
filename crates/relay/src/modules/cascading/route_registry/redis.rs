@@ -7,16 +7,14 @@ use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 
 #[derive(Clone, Copy)]
 enum RouteKind {
-    NamespacePublisher,
+    Upsert,
     NamespaceSubscriber,
 }
 
 impl RouteKind {
     fn register_script(self) -> redis::Script {
         match self {
-            Self::NamespacePublisher => {
-                redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"))
-            }
+            Self::Upsert => redis::Script::new(include_str!("scripts/upsert_route.lua")),
             Self::NamespaceSubscriber => {
                 redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"))
             }
@@ -220,7 +218,7 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
         Ok(self
             .register_route(
-                RouteKind::NamespacePublisher,
+                RouteKind::Upsert,
                 Self::publisher_namespace_key(track_namespace),
             )
             .await?)
@@ -246,18 +244,12 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 
     async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
-        let key = Self::watched_namespace_key(track_namespace);
-        let mut owned_routes = self.owned_routes.lock().await;
-        match self
-            .invoke_register_script(RouteKind::NamespaceSubscriber, &key)
-            .await
-        {
-            Ok(()) | Err(RegisterRouteError::Conflict) => {
-                owned_routes.insert(key, RouteKind::NamespaceSubscriber);
-                Ok(())
-            }
-            Err(RegisterRouteError::Other(err)) => Err(err),
-        }
+        Ok(self
+            .register_route(
+                RouteKind::Upsert,
+                Self::watched_namespace_key(track_namespace),
+            )
+            .await?)
     }
 
     async fn unregister_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {

@@ -370,23 +370,18 @@ impl Subscribe {
 
         let active_upstream = subscribe_initiated(&subscription, publisher_peer);
 
-        if ingress_sender
-            .send(IngressCommand::Start(Box::new(IngressStartRequest {
+        if !super::start_ingress(
+            ingress_sender,
+            IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: pub_session_id,
                 track_key: track_key.clone(),
                 subscription,
                 parent_span: Span::current(),
-            })))
-            .await
-            .is_err()
+            },
+        )
+        .await
         {
-            tracing::error!(
-                pub_session_id = %pub_session_id,
-                track_namespace = %track_namespace,
-                track_name = %track_name,
-                "failed to send ingress start request"
-            );
             return Err(UpstreamSubscriptionError::IngressStartFailed);
         }
         table.register_upstream_subscription(

@@ -1,7 +1,7 @@
 pub(crate) mod entry;
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     sync::{Arc, PoisonError, RwLock},
 };
 
@@ -13,8 +13,7 @@ use crate::modules::{
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
             ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
-            RemovedSessionSubscriptions, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-            UpstreamTrack,
+            RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
         },
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -404,45 +403,35 @@ impl InMemoryLocalPubSubDirectory {
         skip_all,
         fields(track_namespace = %track_namespace, track_name = %track_name)
     )]
-    /// Local client publishers only: publishing relays are found in the route
-    /// registry, which lists each of them once.
+    /// Local client publishers only, oldest first: publishing relays are
+    /// found in the route registry, which lists each of them once.
     pub(crate) fn find_upstream_publishers(
         &self,
         track_namespace: &str,
         track_name: &str,
-    ) -> Vec<UpstreamSubscriptionKey> {
-        let publishers = DashSet::new();
+    ) -> Vec<SessionId> {
+        let mut publishers = BTreeSet::new();
         if let Some(namespace_publishers) = self.publisher_namespaces.get(track_namespace) {
-            for session in namespace_publishers.iter() {
-                if *session.value() == SessionPeer::Client {
-                    publishers.insert(*session.key());
-                }
-            }
+            publishers.extend(
+                namespace_publishers
+                    .iter()
+                    .filter(|session| *session.value() == SessionPeer::Client)
+                    .map(|session| *session.key()),
+            );
         }
-
-        let handlers = self
-            .published_handlers
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        for session_id in handlers
-            .iter()
-            .filter(|published| {
-                published.publisher_peer == SessionPeer::Client
-                    && published.handler.track_namespace() == track_namespace
-                    && published.handler.track_name() == track_name
-            })
-            .map(|published| published.publisher_session_id)
-        {
-            publishers.insert(session_id);
-        }
-        publishers
-            .into_iter()
-            .map(|publisher_session_id| UpstreamSubscriptionKey {
-                publisher_session_id,
-                track_namespace: track_namespace.to_string(),
-                track_name: track_name.to_string(),
-            })
-            .collect()
+        publishers.extend(
+            self.published_handlers
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .filter(|published| {
+                    published.publisher_peer == SessionPeer::Client
+                        && published.handler.track_namespace() == track_namespace
+                        && published.handler.track_name() == track_name
+                })
+                .map(|published| published.publisher_session_id),
+        );
+        publishers.into_iter().collect()
     }
 
     pub(crate) fn tracks_wanting_publisher(
@@ -755,7 +744,7 @@ impl InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, table_with_upstream,
+        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, table_with_upstream,
     };
     use crate::modules::test_support::mock_session::runner_stopped;
     use moqt::{ContentExists, FilterType, GroupOrder};
@@ -870,12 +859,10 @@ mod tests {
         let removed = table.remove_session(1);
 
         // Assert: Remove only session 1 state while keeping other publishers in the same namespace.
-        let upstream_subscriptions = table.find_upstream_publishers("room/member", "video");
-        let publisher_session_ids: Vec<_> = upstream_subscriptions
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        assert_eq!(publisher_session_ids, vec![2]);
+        assert_eq!(
+            table.find_upstream_publishers("room/member", "video"),
+            vec![2]
+        );
 
         let room_subscribers = table.get_namespace_subscribers("room/member");
         assert!(room_subscribers.contains(&2));
@@ -1112,12 +1099,7 @@ mod tests {
         );
 
         // Act: Find upstream publishers available for subscribe.
-        let mut upstream_publishers: Vec<_> = table
-            .find_upstream_publishers("room/member", "video")
-            .into_iter()
-            .map(|subscription| subscription.publisher_session_id)
-            .collect();
-        upstream_publishers.sort();
+        let upstream_publishers = table.find_upstream_publishers("room/member", "video");
 
         // Assert: Keep multiple publishers regardless of whether they came from namespace or track state.
         assert_eq!(upstream_publishers, vec![1, 2]);
@@ -1415,10 +1397,7 @@ mod tests {
             SECOND_PUBLISHER_SESSION,
             ActiveUpstreamSubscription {
                 upstream_request_id: SECOND_UPSTREAM_REQUEST_ID,
-                expires: None,
-                content_exists: ContentExists::False,
-                origin,
-                publisher_peer: SessionPeer::Client,
+                ..active_upstream(origin)
             },
         );
     }
@@ -1480,10 +1459,7 @@ mod tests {
             4,
             ActiveUpstreamSubscription {
                 upstream_request_id: 45,
-                expires: None,
-                content_exists: ContentExists::False,
-                origin: UpstreamSubscriptionOrigin::Publish,
-                publisher_peer: SessionPeer::Client,
+                ..active_upstream(UpstreamSubscriptionOrigin::Publish)
             },
         );
         table
@@ -1524,10 +1500,8 @@ mod tests {
             RELAY_PUBLISHER_SESSION,
             ActiveUpstreamSubscription {
                 upstream_request_id: 46,
-                expires: None,
-                content_exists: ContentExists::False,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
                 publisher_peer: SessionPeer::Relay,
+                ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
             },
         );
     }
@@ -1615,13 +1589,7 @@ mod tests {
             table.register_upstream_subscription(
                 track_key.clone(),
                 PUBLISHER_SESSION,
-                ActiveUpstreamSubscription {
-                    upstream_request_id: UPSTREAM_REQUEST_ID,
-                    expires: None,
-                    content_exists: ContentExists::False,
-                    origin: UpstreamSubscriptionOrigin::Subscribe,
-                    publisher_peer: SessionPeer::Client,
-                },
+                active_upstream(UpstreamSubscriptionOrigin::Subscribe),
             );
             table
                 .register_downstream_subscription(
@@ -1670,10 +1638,7 @@ mod tests {
             1,
             ActiveUpstreamSubscription {
                 upstream_request_id: 10,
-                expires: Some(30),
-                content_exists: ContentExists::False,
-                origin: UpstreamSubscriptionOrigin::Subscribe,
-                publisher_peer: SessionPeer::Client,
+                ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
             },
         );
 
@@ -1686,13 +1651,6 @@ mod tests {
             upstream_track.map(|track| track.subscriptions.into_keys().collect::<Vec<_>>()),
             Some(vec![1])
         );
-        assert_eq!(
-            publisher_subscriptions,
-            vec![UpstreamSubscriptionKey {
-                publisher_session_id: 1,
-                track_namespace: "room/member".to_string(),
-                track_name: "video".to_string(),
-            }]
-        );
+        assert_eq!(publisher_subscriptions, vec![1]);
     }
 }

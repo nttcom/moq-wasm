@@ -9,7 +9,7 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::{session_peer, stop_ingress},
+        sequences::{session_peer, start_ingress, stop_ingress},
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
@@ -182,19 +182,18 @@ async fn join_track(
         }
         return;
     }
-    if deps
-        .ingress_sender
-        .send(IngressCommand::Start(Box::new(IngressStartRequest {
+    if !start_ingress(
+        &deps.ingress_sender,
+        IngressStartRequest {
             subscriber_session_id,
             publisher_session_id,
             track_key: track_key.clone(),
             subscription,
             parent_span: Span::current(),
-        })))
-        .await
-        .is_err()
+        },
+    )
+    .await
     {
-        tracing::error!(%track_key, "failed to send ingress start request");
         return;
     }
     if !deps

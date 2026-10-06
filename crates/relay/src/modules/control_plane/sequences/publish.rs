@@ -204,16 +204,17 @@ impl Publish {
 
         handler.accept_data_receiver().await;
 
-        if ingress_sender
-            .send(IngressCommand::Start(Box::new(IngressStartRequest {
+        if !super::start_ingress(
+            ingress_sender,
+            IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
                 track_key: track_key.clone(),
                 subscription: subscription.clone(),
                 parent_span: Span::current(),
-            })))
-            .await
-            .is_err()
+            },
+        )
+        .await
         {
             anyhow::bail!("failed to send ingress start request");
         }

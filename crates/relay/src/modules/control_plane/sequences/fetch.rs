@@ -610,16 +610,7 @@ mod tests {
         let target = Fetch
             .resolve_fetch_target(
                 2,
-                standalone_fetch_params(
-                    moqt::Location {
-                        group_id: 0,
-                        object_id: 0,
-                    },
-                    moqt::Location {
-                        group_id: 1,
-                        object_id: 0,
-                    },
-                ),
+                standalone_fetch_params(location(0, 0), location(1, 0)),
                 &table,
             )
             .unwrap();

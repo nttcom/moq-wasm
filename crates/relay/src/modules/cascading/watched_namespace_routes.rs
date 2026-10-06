@@ -83,89 +83,11 @@ impl WatchedNamespaceRoutes {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
-    use async_trait::async_trait;
-
     use super::*;
-    use crate::modules::cascading::route_registry::{
-        NamespaceRoute, RegisterRouteError, RelayInfo,
-    };
+    use crate::modules::test_support::stub_route_registry::{PublisherLookup, StubRouteRegistry};
 
-    #[derive(Default)]
-    struct RecordingRouteRegistry {
-        calls: Mutex<Vec<String>>,
-    }
-
-    impl RecordingRouteRegistry {
-        fn calls(&self) -> Vec<String> {
-            self.calls.lock().unwrap().clone()
-        }
-    }
-
-    #[async_trait]
-    impl RelayRouteRegistry for RecordingRouteRegistry {
-        async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(format!("register {track_namespace}"));
-            Ok(())
-        }
-
-        async fn unregister_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(format!("unregister {track_namespace}"));
-            Ok(())
-        }
-
-        async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
-            unimplemented!("not used by watched namespace routes")
-        }
-
-        async fn register_namespace_subscriber(
-            &self,
-            _track_namespace_prefix: &str,
-        ) -> Result<(), RegisterRouteError> {
-            unimplemented!("not used by watched namespace routes")
-        }
-
-        async fn find_active_namespace_publishers(
-            &self,
-            _track_namespace: &str,
-        ) -> anyhow::Result<Vec<RelayInfo>> {
-            unimplemented!("not used by watched namespace routes")
-        }
-
-        async fn find_namespace_publishers_by_prefix(
-            &self,
-            _track_namespace_prefix: &str,
-        ) -> anyhow::Result<Vec<NamespaceRoute>> {
-            unimplemented!("not used by watched namespace routes")
-        }
-
-        async fn unregister_namespace_publisher(
-            &self,
-            _track_namespace: &str,
-        ) -> anyhow::Result<()> {
-            unimplemented!("not used by watched namespace routes")
-        }
-
-        async fn unregister_namespace_subscriber(
-            &self,
-            _track_namespace_prefix: &str,
-        ) -> anyhow::Result<()> {
-            unimplemented!("not used by watched namespace routes")
-        }
-
-        async fn find_namespace_subscribers(
-            &self,
-            _track_namespace: &str,
-        ) -> anyhow::Result<Vec<RelayInfo>> {
-            unimplemented!("not used by watched namespace routes")
-        }
+    fn recording_registry() -> Arc<StubRouteRegistry> {
+        Arc::new(StubRouteRegistry::new(PublisherLookup::NotFound))
     }
 
     fn watched(track_namespaces: &[&str]) -> HashSet<TrackNamespace> {
@@ -175,24 +97,27 @@ mod tests {
     #[tokio::test]
     async fn a_namespace_is_unregistered_after_two_passes_without_a_watcher() {
         // Arrange
-        let registry = Arc::new(RecordingRouteRegistry::default());
+        let registry = recording_registry();
         let routes = WatchedNamespaceRoutes::new(registry.clone());
         routes.watch("ns").await;
 
         // Act
         routes.reconcile(&watched(&[])).await;
-        let after_first_pass = registry.calls();
+        let after_first_pass = registry.watched_namespace_calls();
         routes.reconcile(&watched(&[])).await;
 
         // Assert
         assert_eq!(after_first_pass, vec!["register ns"]);
-        assert_eq!(registry.calls(), vec!["register ns", "unregister ns"]);
+        assert_eq!(
+            registry.watched_namespace_calls(),
+            vec!["register ns", "unregister ns"]
+        );
     }
 
     #[tokio::test]
     async fn a_watcher_seen_between_passes_keeps_the_namespace_registered() {
         // Arrange
-        let registry = Arc::new(RecordingRouteRegistry::default());
+        let registry = recording_registry();
         let routes = WatchedNamespaceRoutes::new(registry.clone());
         routes.watch("ns").await;
 
@@ -202,19 +127,19 @@ mod tests {
         routes.reconcile(&watched(&[])).await;
 
         // Assert
-        assert_eq!(registry.calls(), vec!["register ns"]);
+        assert_eq!(registry.watched_namespace_calls(), vec!["register ns"]);
     }
 
     #[tokio::test]
     async fn a_watched_namespace_found_by_a_pass_is_registered() {
         // Arrange
-        let registry = Arc::new(RecordingRouteRegistry::default());
+        let registry = recording_registry();
         let routes = WatchedNamespaceRoutes::new(registry.clone());
 
         // Act
         routes.reconcile(&watched(&["ns"])).await;
 
         // Assert
-        assert_eq!(registry.calls(), vec!["register ns"]);
+        assert_eq!(registry.watched_namespace_calls(), vec!["register ns"]);
     }
 }
