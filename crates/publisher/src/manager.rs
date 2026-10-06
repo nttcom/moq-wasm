@@ -11,9 +11,9 @@ use mediapack::{
     aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
 };
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
-    FetchObjectField, GroupOrder, PublishOption, QUIC, Session, SessionEvent, SubscribeHandler,
-    TrackWriter, TransportSendError, TransportStats, WEBTRANSPORT, wire::FetchParams,
+    ClientConfig, ContentExists, DUAL, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
+    FetchObjectField, GroupOrder, PublishOption, Session, SessionEvent, SubscribeHandler,
+    TerminationErrorCode, TrackWriter, TransportSendError, TransportStats, wire::FetchParams,
 };
 use msf::{
     Catalog, Track,
@@ -204,6 +204,7 @@ pub enum GroupBoundary {
 }
 
 struct ConnectedPublisher {
+    endpoint: Endpoint<DUAL>,
     session: Arc<Session>,
     state: Arc<Mutex<BackendState>>,
     ledger: StreamLedger,
@@ -286,6 +287,15 @@ impl MoqtManager {
 
     /// `None` until the relay session exists; the lock is also held for the
     /// whole connect, so a caller during it sees `None` as well.
+    /// Returns once the CONNECTION_CLOSE has been sent; exiting before that
+    /// leaves the relay to end the session only after its idle timeout.
+    pub async fn close(&self) {
+        let backend = self.inner.lock().await.backend.clone();
+        if let Some(backend) = backend {
+            backend.close().await;
+        }
+    }
+
     pub fn transport_stats(&self) -> Option<TransportStats> {
         let backend = self.inner.try_lock().ok()?.backend.clone()?;
         Some(backend.transport_stats())
@@ -310,37 +320,33 @@ impl MoqtManager {
 
 impl ConnectedPublisher {
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
-        let parsed = url::Url::parse(&target.url).context("parse moqt url")?;
-        let client_config = ClientConfig {
+        let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
             port: 0,
             verify_certificate: false,
             authorization_token: target.auth_token.clone(),
-        };
-        let connecting = match parsed.scheme() {
-            "moqt" => {
-                Endpoint::<QUIC>::create_client(&client_config)?
-                    .connect(parsed.as_str())
-                    .await
-            }
-            "https" => {
-                Endpoint::<WEBTRANSPORT>::create_client(&client_config)?
-                    .connect(parsed.as_str())
-                    .await
-            }
-            scheme => bail!("unsupported moqt url scheme: {scheme}"),
-        }
-        .context("connect moqt transport")?;
+        })?;
+        let connecting = endpoint
+            .connect(&target.url)
+            .await
+            .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
 
         let state = Arc::new(Mutex::new(BackendState::default()));
         let event_task = Self::spawn_event_loop(session.clone(), state.clone(), ledger.clone());
 
         Ok(Self {
+            endpoint,
             session,
             state,
             ledger,
             event_task,
         })
+    }
+
+    async fn close(&self) {
+        self.session
+            .close_with_error(TerminationErrorCode::NoError, "");
+        self.endpoint.wait_idle().await;
     }
 
     fn transport_stats(&self) -> TransportStats {
