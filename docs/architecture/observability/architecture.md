@@ -1,8 +1,8 @@
 # `observability` Architecture
 
 ## Status
-Design proposal (PoC). Nothing below is implemented yet; update this file in
-the same change as each implementation step.
+Living document (PoC). Update this file in the same change whenever the design
+intent, module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
 An admin view of the relay mesh: per-session network statistics, per-track /
@@ -27,7 +27,7 @@ flowchart LR
   end
   R -- SUBSCRIBE --> O[observability server]
   O -- "INSERT JSONEachRow (HTTP)" --> CH[(ClickHouse)]
-  B[browser topology page] -- "GET /snapshots" --> O
+  B[browser topology page] -- "GET /api/snapshots, /api/series" --> O
   O -- SELECT --> CH
 ```
 
@@ -50,10 +50,10 @@ time *t* is the snapshot at *t*.
 
 ### Snapshot payload
 
-Counters are cumulative since the session / subscription started; rates are
-derived from consecutive rows at query time, so a lost snapshot loses no
-traffic. Fields marked *gauge* are the value at snapshot time (or the maximum
-over the last period) instead.
+The type is `relay_stats::RelaySnapshot` (`crates/relay-stats`). Counters are
+cumulative since the session, track cache or subscription started; rates are
+derived from consecutive snapshots, so a lost snapshot loses no traffic.
+`…_since_last_snapshot_…` and `lag_…` fields are gauges.
 
 All statistics are measured on the relay; clients report nothing. A browser
 client could not anyway: the wasm transport's `stats()` returns
@@ -64,109 +64,70 @@ client session differently:
 | Direction | Observable on the relay | Not observable |
 | --- | --- | --- |
 | Downlink (relay → client, also relay → relay) | bitrate, loss, lost bytes, cwnd, congestion events, relay blocked by the client's flow-control window, STOP_SENDING from the client, streams the relay reset, delivery lag per subscription | — |
-| Uplink (client → relay) | bitrate, client blocked by the relay's flow-control window, streams the client reset, aborted subgroups, maximum object arrival gap per track, missing datagram objects | packet loss, cwnd |
-| Both | RTT, minimum RTT, path MTU | — |
+| Uplink (client → relay) | bitrate, client blocked by the relay's flow-control window, streams the client reset, aborted subgroups, maximum object arrival gap per track | packet loss, cwnd |
+| Both | RTT, path MTU, remote address | — |
 
-An inter-relay session is reported by both relays, each for its own sending
-direction, so both directions of a relay → relay link are fully observed.
+quinn 0.11.16 has no minimum RTT, and object id gaps prove nothing about
+loss (draft-14 §11.3 Prior Object ID Gap lets a publisher skip ids), so
+neither is reported.
 
 ```json
 {
   "relay_id": "relay-a",
   "timestamp_ms": 1791262800000,
-  "process": {
-    "rss_bytes": 123456789,
-    "cache_tracks": 12,
-    "cache_objects": 3456,
-    "cache_payload_bytes": 98765432
-  },
+  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432 },
   "sessions": [
     {
-      "session_id": 7,
-      "peer": "client",
-      "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
-      "rtt_us": 12000,
-      "min_rtt_us": 9000,
-      "current_mtu": 1452,
-      "sent_bytes": 52428800,
-      "sent_packets": 40000,
-      "lost_packets": 120,
-      "lost_bytes": 160000,
-      "cwnd": 120000,
-      "congestion_events": 3,
-      "sent_stream_data_blocked": 0,
-      "sent_data_blocked": 0,
-      "received_stop_sending": 0,
-      "received_bytes": 1048576,
-      "received_stream_data_blocked": 0,
-      "received_data_blocked": 0,
-      "received_reset_stream": 0
+      "session_id": 7, "peer": "client", "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
+      "remote_address": "203.0.113.5:50123", "local_ip": "10.0.0.2", "dialed_relay_id": null,
+      "rtt_us": 12000, "current_mtu": 1452,
+      "sent_bytes": 52428800, "sent_packets": 40000, "lost_packets": 120, "lost_bytes": 160000,
+      "cwnd": 120000, "congestion_events": 3, "sent_stream_data_blocked": 0, "sent_data_blocked": 0,
+      "received_stop_sending": 0, "received_bytes": 1048576, "received_stream_data_blocked": 0,
+      "received_data_blocked": 0, "received_reset_stream": 0
     }
   ],
   "tracks": [
     {
-      "namespace": "live/ch1",
-      "name": "video",
-      "publisher_session_id": 7,
-      "objects_received": 900,
-      "bytes_received": 1234567,
-      "subgroups_aborted": 0,
-      "datagram_objects_missing": 0,
-      "max_arrival_gap_us": 34000
+      "namespace": "ac8adbc8-…/live/ch1", "name": "video", "publisher_session_id": 7,
+      "objects_received": 900, "bytes_received": 1234567, "subgroups_aborted": 0,
+      "max_arrival_gap_since_last_snapshot_us": 34000
     }
   ],
   "subscriptions": [
     {
-      "namespace": "live/ch1",
-      "name": "video",
-      "subscriber_session_id": 9,
-      "request_id": 2,
-      "forward": true,
-      "objects_sent": 880,
-      "bytes_sent": 1200000,
-      "streams_opened": 30,
-      "streams_reset": 0,
-      "delivery_lag_us": 40000
+      "namespace": "ac8adbc8-…/live/ch1", "name": "video", "publisher_session_id": 7,
+      "subscriber_session_id": 9, "request_id": 2, "forward": true,
+      "objects_sent": 880, "bytes_sent": 1200000, "streams_opened": 30, "streams_reset": 0,
+      "lag_behind_newest_received_us": 40000
     }
   ]
 }
 ```
 
-- `sessions` come from `SessionRepository` (`Session::transport_stats()`,
-  `SessionPeer`, `VerifiedToken::app_id`). quinn exposes statistics per
-  connection only, so there is no per-QUIC-stream entry. `TransportStats`
-  (`crates/moqt`) gains the fields above that it does not carry yet, all read
-  from quinn's `ConnectionStats`: `min_rtt`, `current_mtu`, `lost_bytes`,
-  `udp_tx.bytes` / `udp_rx.bytes`, and the received `STREAM_DATA_BLOCKED`,
-  `DATA_BLOCKED`, `RESET_STREAM` and `STOP_SENDING` frame counts. The wasm
-  transport keeps returning the default.
-- `tracks` come from the active upstream subscriptions plus counters kept by
-  the track's ingest: objects and bytes received, subgroups that ended
-  without a FIN, datagram object ids skipped within a group, and the
-  *gauge* `max_arrival_gap_us` — the longest interval between two
-  consecutive objects of the track since the previous snapshot. Stream data
-  is retransmitted, so uplink loss shows up as arrival gaps rather than as
+- `peer` is `client` or `relay` from the endpoint the session arrived on, and
+  `stats_publisher` for the relay's own loopback session.
+- `dialed_relay_id` is set on an inter-relay session this relay dialed. The
+  accepting relay only sees a relay token, so consumers identify the far end
+  of an accepted relay session by matching its remote IP with the dialer's
+  `local_ip`. This needs every relay on its own IP (true on GCP and in
+  docker compose, not for several relays on one host).
+- `max_arrival_gap_since_last_snapshot_us` is the longest interval between two
+  live objects of the track since the previous snapshot. Stream data is
+  retransmitted, so uplink loss shows up as arrival gaps rather than as
   missing objects.
-- `subscriptions` come from the downstream registrations plus counters kept
-  by each `EgressRunner`, and the *gauge* `delivery_lag_us`: snapshot time
-  minus the cache `received_at` of the object the subscription sent last,
-  i.e. how far behind the relay's live edge the subscriber is. It is a time,
-  not a group count, because group ids may be wall-clock values with gaps.
+- `lag_behind_newest_received_us` is the newest object the track received
+  minus the newest object the subscription sent, both by the relay's receive
+  time. It is a time, not a group count, because group ids may be wall-clock
+  values with gaps.
 - `rss_bytes` is `VmRSS` from `/proc/self/status` on Linux and absent
   elsewhere. glibc keeps freed memory, so RSS alone overstates live memory;
   the cache figures tell whether growth is held by the cache.
 
-## Relay side (`crates/relay`, new `modules/observability/`)
+## Relay side (`crates/relay`, `modules/observability/`)
 
-- `StatsCollector` builds a snapshot from `SessionRepository`, the pub/sub
-  directory, `TrackCacheStore` and the ingress / egress counters.
-- `StatsPublishTask` (owns its `JoinHandle`) dials the relay's own inner
-  endpoint with `AUTH_RELAY_TOKEN`, sends PUBLISH for
-  `observability/<RELAY_ID>` / `network_stats`, and writes one group per
-  second. The relay then treats the snapshot track like any published track:
-  cache, fan-out, FETCH and authorization need no new code path.
-- The loopback session appears in its own snapshot as a `relay` peer; the
-  task reports its local address so the collector can mark it `self`.
+`docs/architecture/relay/architecture.md` ("Observability") describes the
+collector, the loopback `StatsPublishTask` and where each counter lives.
 
 Alternative considered: registering an in-process publisher directly in the
 pub/sub directory and writing into `TrackCache`. It saves one loopback QUIC
@@ -178,57 +139,68 @@ the loopback session wins.
 Cascading is not used for observability: the server connects to each relay
 directly, so losing inter-relay routing does not hide the relays it affects.
 
-## Observability server (`crates/observability`, new binary)
+## Observability server (`crates/observability`)
 
-- Configuration: `OBSERVABILITY_RELAYS` — comma-separated `RELAY_ID=URL`
-  pairs; `OBSERVABILITY_TOKEN` — client JWT with `app_id` = `observability`
-  and a `subscribe` claim, so the existing `authorize` rule (first namespace
-  element = `app_id`) restricts the track to holders of that token;
-  `CLICKHOUSE_URL`; `OBSERVABILITY_HTTP_PORT`.
-- One `RelaySubscriptionTask` per relay: connect, SUBSCRIBE
-  `observability/<RELAY_ID>` / `network_stats` with the Largest Object
-  filter, and reconnect with backoff when the session ends.
-- `SnapshotWriter`: splits each snapshot into rows and inserts them over the
-  ClickHouse HTTP interface (`INSERT … FORMAT JSONEachRow`, `async_insert=1`),
-  using `reqwest`, which the workspace already depends on.
-- HTTP API (`hyper`, as in `vts`):
-  - `GET /snapshots/latest` — the newest snapshot of every relay (live view,
-    polled every second).
-  - `GET /snapshots?from=…&to=…` — snapshots in a time range (history scrub).
-  - `GET /series?kind=session|track|subscription|process&key=…&from=…&to=…`
-    — one entity's time series for the chart drawer.
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OBSERVABILITY_RELAYS` | required | Comma-separated `RELAY_ID=URL` pairs, e.g. `relay-a=moqt://relay-a:444` |
+| `OBSERVABILITY_AUTH_TOKEN` | none | JWT presented in CLIENT_SETUP |
+| `OBSERVABILITY_INSECURE` | unset | Any value disables relay certificate verification |
+| `CLICKHOUSE_URL` | `http://127.0.0.1:8123` | ClickHouse HTTP interface |
+| `CLICKHOUSE_DATABASE` | `observability` | Created at startup with its tables |
+| `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | none | Basic auth |
+| `OBSERVABILITY_HTTP_PORT` | `8095` | API port |
+
+The recommended deployment connects to each relay's inner endpoint with
+`AUTH_RELAY_TOKEN`: relay tokens do not expire and have full access, while a
+client token (`app_id` = `observability`, `subscribe` claim) would be capped
+by the relay's `AUTH_MAX_TOKEN_TTL_SECONDS` and the server does not refresh
+tokens. Sessions authenticated with an `observability` client token are left
+out of the topology page.
+
+- `RelaySubscriptionTask` (one per relay): connect, SUBSCRIBE
+  `observability/<RELAY_ID>` / `network_stats` with Next Group Start, decode
+  each object and send it to the ingest task; reconnect 5 s after the session
+  or track ends.
+- `SnapshotIngestTask`: keeps the newest snapshot per relay in
+  `LatestSnapshots` and writes every snapshot to ClickHouse
+  (`snapshot_rows::store`).
+- `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
+  - `GET /api/snapshots` — the newest snapshot of every relay, from memory.
+  - `GET /api/snapshots?at=<ms>` — each relay's last snapshot at or before
+    `at`, if it published one in the 10 s before.
+  - `GET /api/series?relay_id=…&target=process|relay|session|track|subscription&…&from=…&to=…&points=…`
+    — the target's rows bucketed into `points` buckets (at least 1 s), with
+    counters turned into per-second rates between consecutive buckets and a
+    counter that went backwards (a restart) giving no value. `relay` sums
+    every session of the relay; ratios such as loss are weighted by their
+    denominators. Query values reach ClickHouse as typed query parameters.
 
 The browser polls the server instead of subscribing over MoQT itself: one data
 path for live and history, and no relay tokens in the browser.
 
 ## Storage (ClickHouse, self-hosted)
 
-One table per snapshot section, all with the same lifecycle:
+`schema.rs` creates five MergeTree tables, all keyed by `relay_id` and
+`timestamp_ms` with `ts DateTime64(3, 'UTC')` derived from it:
 
-```sql
-CREATE TABLE session_stats (
-  ts DateTime64(3),
-  relay_id LowCardinality(String),
-  session_id UInt64,
-  peer LowCardinality(String),
-  app_id LowCardinality(String),
-  rtt_us UInt64, cwnd UInt64,
-  sent_packets UInt64, lost_packets UInt64, congestion_events UInt64,
-  sent_stream_data_blocked UInt64, sent_data_blocked UInt64
-) ENGINE = MergeTree
-PARTITION BY toYYYYMMDD(ts)
-ORDER BY (relay_id, session_id, ts)
-TTL toDateTime(ts) + INTERVAL 7 DAY
-SETTINGS ttl_only_drop_parts = 1;
-```
+| Table | Rows per snapshot | Extra key |
+| --- | --- | --- |
+| `snapshots` | 1 (the raw JSON, for `?at=`) | — |
+| `process_stats` | 1 | — |
+| `session_stats` | one per session | `session_id` |
+| `track_stats` | one per track | `publisher_session_id, namespace, name` |
+| `subscription_stats` | one per subscription | `subscriber_session_id, request_id` |
 
-`process_stats`, `track_stats` and `subscription_stats` follow the same
-pattern. Rows older than 7 days are dropped by TTL a whole day partition at a
-time; there is no capacity-based deletion. Expected volume at the target
-scale is a few hundred rows per second.
+Every table is `PARTITION BY toYYYYMMDD(ts)` with
+`TTL toDateTime(ts) + INTERVAL 7 DAY` and `ttl_only_drop_parts = 1`, so old
+data leaves a whole day partition at a time; there is no capacity-based
+deletion. Inserts use `async_insert` and `input_format_skip_unknown_fields`,
+so a field added to `relay-stats` is ignored until a column exists for it.
+Tables are created with `IF NOT EXISTS` and never altered: a new column needs
+an `ALTER TABLE` (or a fresh database) by hand.
 
-ClickHouse runs as a `docker-compose.yml` service next to the relays; the
-DDL lives in `crates/observability/schema.sql` and is applied at startup.
+ClickHouse runs as a `docker-compose.yml` service next to the relays.
 
 ## Browser page (`examples/browser/examples/observability`)
 
@@ -317,19 +289,19 @@ link shows only the filtered tracks it carries). Transport figures — RTT,
 loss, cwnd, congestion, flow-control and reset counts — exist per QUIC
 connection only, so they stay whole-session, and the details column says so.
 
+A route is built backwards from each subscription of a client: the track's
+publisher session on that relay is either a client (the original publisher)
+or an inter-relay session, whose far relay is found as described under
+"Snapshot payload" and searched for the same track, up to four relays deep.
+Bitrates come from consecutive snapshots of the same relay, so the page keeps
+the previous snapshot per relay and only advances it when the relay's
+timestamp moved.
+
 Rendered as SVG with React. Links are per hop, not per subscription, so
 their number grows with the session count (about 100 client links at the
 target scale) rather than with publisher × subscriber pairs.
 
-## Implementation steps (stacked PRs)
+## Dependencies
 
-1. `relay`: ingress / egress object and byte counters.
-2. `relay`: `StatsCollector` + `StatsPublishTask` publishing `network_stats`.
-3. `observability`: subscribe to the relays and write to ClickHouse
-   (crate, schema, docker-compose service).
-4. `observability`: HTTP API.
-5. `examples/browser`: the topology page.
-
-The new crate's dependencies get ADRs under `docs/architecture/observability/`
-(`reqwest`, `hyper`). The browser page needs no new package: the layout is a
-fixed ring computed in the page.
+The crate's dependencies have ADRs in this directory (`reqwest.md`,
+`hyper.md`). The browser page needs no new package.
