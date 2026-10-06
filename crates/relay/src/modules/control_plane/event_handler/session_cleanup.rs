@@ -1,0 +1,99 @@
+use super::WorkerDeps;
+use crate::modules::{
+    control_plane::sequences::{
+        publish_namespace_done::PublishNamespaceDone, stop_ingress,
+        unsubscribe_namespace::UnsubscribeNamespace,
+    },
+    domain::{
+        pub_sub_directory::entry::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
+        session_id::SessionId,
+    },
+};
+
+/// Idempotent: safe to call when the session is already absent.
+pub(super) async fn cleanup_session(session_id: SessionId, deps: &WorkerDeps) {
+    let removed = deps.local_pub_sub_directory.remove_session(session_id);
+    cleanup_removed_session(session_id, removed, deps).await;
+    deps.control_message_forwarder
+        .repository
+        .lock()
+        .await
+        .remove(session_id);
+}
+
+async fn cleanup_removed_session(
+    removed_session_id: SessionId,
+    removed: RemovedSessionSubscriptions,
+    deps: &WorkerDeps,
+) {
+    let table = deps.local_pub_sub_directory.as_ref();
+    let forwarder = &deps.control_message_forwarder;
+
+    for removed_downstream in removed.downstream_subscriptions {
+        if removed_downstream.remaining_downstream_subscriber_count == 0
+            && removed_downstream.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
+        {
+            if removed_downstream.upstream_key.publisher_session_id != removed_session_id
+                && let Err(err) = forwarder
+                    .unsubscribe(
+                        removed_downstream.upstream_key.publisher_session_id,
+                        removed_downstream.upstream_request_id,
+                    )
+                    .await
+            {
+                tracing::debug!(
+                    ?err,
+                    upstream_session_id = removed_downstream.upstream_key.publisher_session_id,
+                    request_id = removed_downstream.upstream_request_id,
+                    "failed to forward upstream unsubscribe during session cleanup"
+                );
+            }
+
+            stop_ingress(
+                &deps.ingress_sender,
+                removed_downstream.upstream_key.publisher_session_id,
+                &removed_downstream.track_key,
+            )
+            .await;
+        }
+    }
+
+    for track_key in removed.upstream_track_keys {
+        stop_ingress(&deps.ingress_sender, removed_session_id, &track_key).await;
+    }
+
+    if forwarder
+        .repository
+        .lock()
+        .await
+        .is_client_session(removed_session_id)
+    {
+        for track_namespace_prefix in removed.subscribe_namespace_prefixes {
+            UnsubscribeNamespace::cleanup_empty_namespace_subscription(
+                &track_namespace_prefix,
+                table,
+                forwarder,
+                deps.route_registry.as_ref(),
+                deps.inter_relay_connection_manager.as_ref(),
+            )
+            .await;
+        }
+
+        for track_namespace in removed.publish_namespace_track_namespaces {
+            PublishNamespaceDone::notify_local_subscribers(
+                removed_session_id,
+                &track_namespace,
+                table,
+                forwarder,
+            )
+            .await;
+            PublishNamespaceDone::withdraw_namespace_publication(
+                &track_namespace,
+                forwarder,
+                deps.route_registry.as_ref(),
+                deps.inter_relay_connection_manager.as_ref(),
+            )
+            .await;
+        }
+    }
+}
