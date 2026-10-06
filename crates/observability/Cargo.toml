@@ -1,0 +1,16 @@
+[package]
+name = "observability"
+version = "0.1.0"
+edition = "2024"
+description = "Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP"
+
+[dependencies]
+anyhow = "1.0.102"
+moqt = { path = "../moqt" }
+relay-stats = { path = "../relay-stats" }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

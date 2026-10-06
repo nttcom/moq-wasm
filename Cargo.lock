@@ -2083,6 +2083,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moqt",
+ "relay-stats",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

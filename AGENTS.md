@@ -34,6 +34,7 @@ Application and integration components (draft reference is normally not required
 | `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `crates/auth-token` | Claims of the client JWT, shared by `relay` (reads them from the VTS) and `vts` (signs them) |
 | `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
+| `crates/observability` | Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP |
 | `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
 | `examples/` | Usage examples and test clients |
 
