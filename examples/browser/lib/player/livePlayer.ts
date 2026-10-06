@@ -354,9 +354,13 @@ export class LivePlayer {
     session.start()
   }
 
+  /// The live picture showed nothing while delivery was paused for the review,
+  /// so a skip right after going live measures from the live edge until a new
+  /// live frame has been shown.
   goLive(): void {
     this.review?.end()
     this.review = undefined
+    this.locLive.shownCaptureMicros = undefined
     this.resumeLiveForward()
     this.locReview.clearFrameIds()
     this.context.observer.clearPlayhead('fetch')
