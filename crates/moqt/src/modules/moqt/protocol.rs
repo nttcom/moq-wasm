@@ -1,5 +1,11 @@
 use std::fmt::Debug;
 
+#[cfg(target_arch = "wasm32")]
+use crate::modules::transport::browser::{
+    browser_connection::BrowserConnection, browser_connection_creator::BrowserConnectionCreator,
+    browser_receive_stream::BrowserReceiveStream, browser_send_stream::BrowserSendStream,
+};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::modules::transport::{
     dual::{
         dual_connection::DualConnection, dual_connection_creator::DualProtocolCreator,
@@ -9,14 +15,15 @@ use crate::modules::transport::{
         quic_connection::QUICConnection, quic_connection_creator::QUICConnectionCreator,
         quic_receive_stream::QUICReceiveStream, quic_send_stream::QUICSendStream,
     },
-    transport_connection::TransportConnection,
-    transport_connection_creator::TransportConnectionCreator,
-    transport_receive_stream::TransportReceiveStream,
-    transport_send_stream::TransportSendStream,
     webtransport::{
         wt_connection::WtConnection, wt_connection_creator::WtConnectionCreator,
         wt_receive_stream::WtReceiveStream, wt_send_stream::WtSendStream,
     },
+};
+use crate::modules::transport::{
+    transport_connection::TransportConnection,
+    transport_connection_creator::TransportConnectionCreator,
+    transport_receive_stream::TransportReceiveStream, transport_send_stream::TransportSendStream,
 };
 
 // Prevent `TransportConnectionCreator` from public
@@ -29,10 +36,12 @@ pub trait TransportProtocol: 'static + Debug {
 }
 
 // The protocol name should be all upper case.
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(warnings)]
 #[derive(Debug)]
 pub struct QUIC;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl TransportProtocol for QUIC {
     type ConnectionCreator = QUICConnectionCreator;
     type Connection = QUICConnection;
@@ -40,10 +49,12 @@ impl TransportProtocol for QUIC {
     type ReceiveStream = QUICReceiveStream;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(warnings)]
 #[derive(Debug)]
 pub struct WEBTRANSPORT;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl TransportProtocol for WEBTRANSPORT {
     type ConnectionCreator = WtConnectionCreator;
     type Connection = WtConnection;
@@ -51,13 +62,28 @@ impl TransportProtocol for WEBTRANSPORT {
     type ReceiveStream = WtReceiveStream;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(warnings)]
 #[derive(Debug)]
 pub struct DUAL;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl TransportProtocol for DUAL {
     type ConnectionCreator = DualProtocolCreator;
     type Connection = DualConnection;
     type SendStream = DualSendStream;
     type ReceiveStream = DualReceiveStream;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+#[derive(Debug)]
+pub struct BROWSER;
+
+#[cfg(target_arch = "wasm32")]
+impl TransportProtocol for BROWSER {
+    type ConnectionCreator = BrowserConnectionCreator;
+    type Connection = BrowserConnection;
+    type SendStream = BrowserSendStream;
+    type ReceiveStream = BrowserReceiveStream;
 }

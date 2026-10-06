@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use super::dual_receive_stream::DualReceiveStream;
 use super::dual_send_stream::DualSendStream;
+use crate::modules::transport::transport_connection::TransportClose;
 use crate::modules::transport::{
     quic::quic_connection::QUICConnection, transport_connection::TransportConnection,
     transport_stats::TransportStats, webtransport::wt_connection::WtConnection,
@@ -82,7 +83,7 @@ impl TransportConnection for DualConnection {
         }
     }
 
-    async fn closed(&self) {
+    async fn closed(&self) -> TransportClose {
         match self {
             DualConnection::Quic(c) => c.closed().await,
             DualConnection::WebTransport(c) => c.closed().await,

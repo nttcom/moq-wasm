@@ -4,7 +4,7 @@ use bytes::BytesMut;
 
 use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
 use crate::modules::transport::quic::quic_send_stream::QUICSendStream;
-use crate::modules::transport::transport_connection::TransportConnection;
+use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
 use crate::modules::transport::transport_stats::TransportStats;
 
 #[derive(Debug)]
@@ -23,9 +23,19 @@ impl TransportConnection for QUICConnection {
     type SendStream = QUICSendStream;
     type ReceiveStream = QUICReceiveStream;
 
-    async fn closed(&self) {
-        let reason = self.connection.closed().await;
-        tracing::info!("QUIC connection closed: {:?}", reason);
+    async fn closed(&self) -> TransportClose {
+        let error = self.connection.closed().await;
+        tracing::info!("QUIC connection closed: {:?}", error);
+        match error {
+            quinn::ConnectionError::ApplicationClosed(close) => TransportClose {
+                code: u32::try_from(close.error_code.into_inner()).ok(),
+                reason: String::from_utf8_lossy(&close.reason).into_owned(),
+            },
+            other => TransportClose {
+                code: None,
+                reason: other.to_string(),
+            },
+        }
     }
 
     fn close(&self, code: u32, reason: &str) {

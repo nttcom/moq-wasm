@@ -1,6 +1,9 @@
 # wasm
 
 WebAssembly bindings that expose `moqt` to the browser over WebTransport.
+`MOQTClient` runs `moqt::Endpoint::<BROWSER>` (the session stack of
+`crates/moqt` on the browser's WebTransport API) and maps its requests,
+responses and objects onto the JavaScript callback API in `src/client.rs`.
 `examples/browser` consumes the generated package from `examples/browser/pkg`.
 
 ```shell

@@ -4,6 +4,7 @@ use tracing::{Instrument, Span};
 
 use crate::{
     SessionEvent, TransportProtocol,
+    modules::executor::{self, JoinHandle},
     modules::moqt::{
         control_plane::{
             constants::TerminationErrorCode,
@@ -43,10 +44,9 @@ impl ControlMessageReceiveTask {
         mut receive_stream: BiStreamReceiver<T>,
         session_context: Weak<SessionContext<T>>,
         receiver_span: Span,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
-            .name("Control Message Receiver")
-            .spawn(
+    ) -> JoinHandle {
+        executor::spawn(
+            "Control Message Receiver",
                 async move {
                     loop {
                         if let Some(session) = session_context.upgrade() {
@@ -121,9 +121,8 @@ impl ControlMessageReceiveTask {
                         }
                     }
                 }
-                .instrument(receiver_span),
-            )
-            .unwrap()
+            .instrument(receiver_span),
+        )
     }
 
     fn resolve_message<T: TransportProtocol>(

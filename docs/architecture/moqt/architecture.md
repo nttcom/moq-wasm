@@ -7,8 +7,8 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 The `moqt` crate is the core implementation of Media over QUIC Transport
 (draft-ietf-moq-transport-14). Every other crate in the workspace depends on it:
-`relay` builds a server on top of it, `crates/wasm` reuses its message codecs,
-and the bridges/examples use its client API.
+`relay` builds a server on top of it, `crates/wasm` runs its client session in
+the browser, and the bridges/examples use its client API natively.
 
 ## Layering
 
@@ -24,12 +24,15 @@ modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL m
         │
         ▼
 modules/transport         ← transport abstraction + quinn/web-transport-quinn impls
+modules/executor          ← task spawning, yielding and timeouts (tokio natively, wasm-bindgen-futures on wasm32)
 ```
 
-- `lib.rs` re-exports the session-level API. Everything except the message
-  codecs is `#[cfg(not(target_arch = "wasm32"))]`; on wasm32 only
-  `control_plane` and `data_plane` compile, which is what `crates/wasm`
-  consumes.
+- `lib.rs` re-exports the session-level API. The whole stack compiles for
+  `wasm32` as well; the quinn-based transports and their markers
+  (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`
+  and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
+  `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
+  API; it also uses the message codecs for the JavaScript message types.
 - `wire.rs` re-exports raw control-message structs, framing helpers
   (`encode_control_message` / `take_control_message`), and data-plane object
   types for consumers that need direct wire access (the relay uses
@@ -48,13 +51,14 @@ trait TransportProtocol {
 }
 ```
 
-Three zero-sized markers implement it:
+Four zero-sized markers implement it; the first three are native-only:
 
 | Marker | Implementation | Notes |
 | --- | --- | --- |
 | `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection (`connect_with` for raw QUIC, `web_transport_quinn::Client` for WebTransport). |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 The whole session stack is generic over `T: TransportProtocol`, so protocol
 selection is a compile-time type parameter (e.g. `Endpoint::<moqt::DUAL>`),
@@ -98,8 +102,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 ### `Session` and its background tasks
 
-`Session::new` spawns four tasks (all named via `tokio::task::Builder`, all
-aborted in `Drop`):
+`Session::new` spawns four tasks (all named, all aborted in `Drop`):
 
 | Task | Role |
 | --- | --- |
@@ -292,6 +295,15 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Session teardown**: dropping `Session` aborts all four background tasks;
   the control task's `Weak` reference guarantees it never keeps the context
   alive.
+- **No direct runtime calls in the session stack**: `modules/moqt` spawns,
+  yields and bounds waits only through `modules/executor` (`spawn`,
+  `try_spawn`, `yield_now`, `timeout`); `tokio::sync` channels and locks are
+  used directly. `modules/transport` is the only other place that touches
+  tokio I/O. `executor/native.rs` is the tokio implementation,
+  `executor/browser.rs` the `spawn_local` one; the executor also defines
+  `MaybeSend` / `MaybeSync` / `BoxFuture`, which are `Send` / `Sync` bounds
+  natively and empty on wasm32 because JavaScript values cannot cross
+  threads. The transport traits and `async_trait` attributes use them.
 
 ## Testing conventions
 Unit tests live in `#[cfg(test)] mod tests` inside the module under test

@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use thiserror::Error;
 
+use crate::modules::executor::{MaybeSend, MaybeSync};
+
 #[derive(Debug, Error)]
 pub enum TransportSendError {
     #[error("sending stopped by peer: error {code}")]
@@ -26,8 +28,9 @@ pub enum TransportSendError {
 }
 
 #[cfg_attr(test, mockall::automock)]
-#[async_trait]
-pub(crate) trait TransportSendStream: Send + Sync + 'static + Debug {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub(crate) trait TransportSendStream: MaybeSend + MaybeSync + 'static + Debug {
     async fn send(&mut self, buffer: &BytesMut) -> Result<(), TransportSendError>;
     async fn close(&mut self) -> Result<(), TransportSendError>;
     async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError>;

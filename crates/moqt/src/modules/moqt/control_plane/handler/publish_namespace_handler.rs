@@ -46,6 +46,10 @@ impl<T: TransportProtocol> PublishNamespaceHandler<T> {
         }
     }
 
+    pub fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
     pub async fn ok(&self) -> Result<(), TransportSendError> {
         self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {

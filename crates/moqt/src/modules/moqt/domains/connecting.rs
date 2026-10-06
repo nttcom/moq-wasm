@@ -1,9 +1,9 @@
 use std::{pin::Pin, task::Poll};
 
-use crate::{Session, TransportProtocol};
+use crate::{Session, TransportProtocol, modules::executor::BoxFuture};
 
 pub struct Connecting<T: TransportProtocol> {
-    pub(crate) inner: Pin<Box<dyn Future<Output = anyhow::Result<Session<T>>> + Send>>,
+    pub(crate) inner: BoxFuture<anyhow::Result<Session<T>>>,
 }
 
 impl<T: TransportProtocol> Future for Connecting<T> {

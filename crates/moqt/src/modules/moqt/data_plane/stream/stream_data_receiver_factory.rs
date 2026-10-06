@@ -33,7 +33,7 @@ impl<T: TransportProtocol> StreamDataReceiverFactory<T> {
         }
         match self.rest.recv().await {
             Some(IncomingObject::StreamHeader { stream, header }) => {
-                Ok(StreamDataReceiver::new(stream, header).await?)
+                Ok(StreamDataReceiver::new(stream, header))
             }
             Some(IncomingObject::Datagram(_)) => {
                 anyhow::bail!("Expected StreamHeader but got Datagram")

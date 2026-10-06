@@ -4,6 +4,7 @@ use tracing::{Instrument, Span};
 
 use crate::{
     Subgroup, TransportProtocol,
+    modules::executor::{self, JoinHandle},
     modules::{
         moqt::{
             data_plane::{
@@ -26,30 +27,27 @@ impl UniStreamReceiveTask {
     pub(crate) fn run<T: TransportProtocol>(
         context: Arc<SessionContext<T>>,
         stream_span: Span,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::task::Builder::new()
-            .name("Uni Stream Receiver")
-            .spawn(
-                async move {
-                    tracing::debug!("Uni Stream Receiver started");
-                    loop {
-                        match context.transport_connection.accept_uni().await {
-                            Ok(stream) => {
-                                tracing::debug!("accepted incoming uni stream");
-                                let stream =
-                                    UniStreamReceiver::new(stream, UniStreamDecoder::new());
-                                Self::on_stream_received(&context, stream).await;
-                            }
-                            Err(_) => {
-                                tracing::error!("Failed to accept uni stream");
-                                break;
-                            }
+    ) -> JoinHandle {
+        executor::spawn(
+            "Uni Stream Receiver",
+            async move {
+                tracing::debug!("Uni Stream Receiver started");
+                loop {
+                    match context.transport_connection.accept_uni().await {
+                        Ok(stream) => {
+                            tracing::debug!("accepted incoming uni stream");
+                            let stream = UniStreamReceiver::new(stream, UniStreamDecoder::new());
+                            Self::on_stream_received(&context, stream).await;
+                        }
+                        Err(_) => {
+                            tracing::error!("Failed to accept uni stream");
+                            break;
                         }
                     }
                 }
-                .instrument(stream_span),
-            )
-            .unwrap()
+            }
+            .instrument(stream_span),
+        )
     }
 
     #[tracing::instrument(level = "info", name = "on_stream_received", skip_all)]

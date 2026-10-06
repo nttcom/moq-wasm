@@ -21,16 +21,13 @@ pub struct StreamDataReceiver<T: TransportProtocol> {
 }
 
 impl<T: TransportProtocol> StreamDataReceiver<T> {
-    pub(crate) async fn new(
-        stream: UniStreamReceiver<T>,
-        subgroup_header: SubgroupHeader,
-    ) -> anyhow::Result<Self> {
+    pub(crate) fn new(stream: UniStreamReceiver<T>, subgroup_header: SubgroupHeader) -> Self {
         let track_alias = subgroup_header.track_alias;
-        Ok(Self {
+        Self {
             stream_receiver: stream,
             track_alias,
             first_subgroup_header: Some(subgroup_header),
-        })
+        }
     }
 
     /// Returns `Ok(None)` when the peer finished the stream normally (FIN).

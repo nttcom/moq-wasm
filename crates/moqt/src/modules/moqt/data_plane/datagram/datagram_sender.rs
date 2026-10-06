@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     TransportProtocol,
     modules::{
+        executor,
         moqt::{
             data_plane::object::object_datagram::ObjectDatagram,
             domains::session_context::SessionContext,
@@ -30,7 +31,7 @@ impl<T: TransportProtocol> DatagramSender<T> {
             .session_context
             .transport_connection
             .send_datagram(bytes);
-        tokio::task::yield_now().await;
+        executor::yield_now().await;
         result
     }
 }

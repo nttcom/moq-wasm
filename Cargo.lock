@@ -1916,6 +1916,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "futures",
+ "js-sys",
  "mockall",
  "num_enum",
  "quinn",
@@ -1928,6 +1930,9 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "web-transport-quinn",
 ]
 
@@ -3929,7 +3934,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "console_error_panic_hook",
- "futures",
  "js-sys",
  "mediapack",
  "moqt",
@@ -3937,9 +3941,9 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

@@ -1,14 +1,13 @@
 use std::marker::PhantomData;
 
 use bytes::Bytes;
-use tokio::{
-    sync::mpsc,
-    task::{JoinHandle, JoinSet},
-};
+use futures::{StreamExt, stream::FuturesUnordered};
+use tokio::sync::mpsc;
 
 use crate::{
     ExtensionHeaders, StreamDataReceiver, StreamDataReceiverFactory, Subgroup, SubgroupHeader,
     SubgroupId, SubgroupObject, TransportProtocol,
+    modules::executor::{self, JoinHandle},
 };
 
 /// Bounds how far a reader task runs ahead of `next_object()`; a full channel
@@ -24,10 +23,10 @@ pub struct TrackObject {
     pub payload: Bytes,
 }
 
-/// Reads every subgroup stream of one track concurrently and yields objects in
-/// arrival order. Ordering is only guaranteed within a subgroup (draft-14
-/// §10.4); consumers that need cross-subgroup order use `group_id`,
-/// `subgroup_id` and `object_id`.
+/// Reads every subgroup stream of one track concurrently, inside one task, and
+/// yields objects in arrival order. Ordering is only guaranteed within a
+/// subgroup (draft-14 §10.4); consumers that need cross-subgroup order use
+/// `group_id`, `subgroup_id` and `object_id`.
 pub struct TrackReader<T: TransportProtocol> {
     object_receiver: mpsc::Receiver<anyhow::Result<TrackObject>>,
     _stream_accept_task: SubgroupStreamAcceptTask,
@@ -53,7 +52,7 @@ impl<T: TransportProtocol> TrackReader<T> {
 }
 
 struct SubgroupStreamAcceptTask {
-    join_handle: JoinHandle<()>,
+    join_handle: JoinHandle,
 }
 
 impl SubgroupStreamAcceptTask {
@@ -61,21 +60,24 @@ impl SubgroupStreamAcceptTask {
         mut factory: StreamDataReceiverFactory<T>,
         object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
     ) -> Self {
-        let join_handle = tokio::spawn(async move {
-            let mut subgroup_readers = JoinSet::new();
+        let join_handle = executor::spawn("Track Reader", async move {
+            let mut subgroup_readers = FuturesUnordered::new();
             loop {
-                match factory.next().await {
-                    Ok(receiver) => {
-                        subgroup_readers.spawn(read_subgroup(receiver, object_sender.clone()));
-                    }
-                    Err(error) => {
-                        tracing::debug!(%error, "track ended");
-                        break;
-                    }
+                tokio::select! {
+                    accepted = factory.next() => match accepted {
+                        Ok(receiver) => {
+                            subgroup_readers.push(read_subgroup(receiver, object_sender.clone()));
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "track ended");
+                            break;
+                        }
+                    },
+                    Some(()) = subgroup_readers.next() => {}
                 }
             }
             drop(object_sender);
-            while subgroup_readers.join_next().await.is_some() {}
+            while subgroup_readers.next().await.is_some() {}
         });
         Self { join_handle }
     }

@@ -5,11 +5,14 @@ use std::sync::{
 
 use crate::{
     TransportProtocol,
-    modules::moqt::{
-        control_plane::control_messages::{
-            control_message_type::ControlMessageType, messages::request_error::RequestError,
+    modules::{
+        executor,
+        moqt::{
+            control_plane::control_messages::{
+                control_message_type::ControlMessageType, messages::request_error::RequestError,
+            },
+            domains::session_context::SessionContext,
         },
-        domains::session_context::SessionContext,
     },
 };
 
@@ -55,13 +58,10 @@ impl<T: TransportProtocol> Drop for ResponseGuard<T> {
         if self.responded.load(Ordering::Relaxed) || Arc::strong_count(&self.responded) > 1 {
             return;
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
         let session_context = self.session_context.clone();
         let request_id = self.request_id;
         let error_type = self.error_type;
-        runtime.spawn(async move {
+        executor::try_spawn("Unhandled Request Rejecter", async move {
             let err = RequestError {
                 request_id,
                 error_code: ERROR_NOT_SUPPORTED,
