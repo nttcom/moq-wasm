@@ -4,14 +4,14 @@ import { ChartDrawer } from './ChartDrawer'
 import { layoutTopology } from './layout'
 import { formatValue } from './LineChart'
 import { type Filters, type Selection, narrowedFilters, routesOf, visibility, widenedFilters } from './selection'
+import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
 import { TopologyView } from './TopologyView'
 import { buildTopology, linkMbps, relativeNamespace } from './topology'
 
 const POLL_MS = 1_000
 const PAST_RATE_WINDOW_MS = 2_000
-const SEEK_SPAN_MS = 7 * 86_400_000
 const SEEK_STEP_MS = 1_000
-const SEEK_STEPS = SEEK_SPAN_MS / SEEK_STEP_MS
+const COARSE_STEP_MS = 10_000
 const DEFAULT_DRAWER_SHARE = 0.45
 
 const byRelay = (snapshots: RelaySnapshot[]) => new Map(snapshots.map((snapshot) => [snapshot.relay_id, snapshot]))
@@ -31,8 +31,17 @@ function advancedPrevious(
 }
 
 function seekLabel(atMs: number): string {
-  return new Date(atMs).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return new Date(atMs).toLocaleString([], {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
+
+const handlesArrowKeys = (target: EventTarget | null) =>
+  target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)
 
 export default function App() {
   const [snapshots, setSnapshots] = useState<RelaySnapshot[]>([])
@@ -43,12 +52,33 @@ export default function App() {
   const [selection, setSelection] = useState<Selection>(null)
   const [drawerClosed, setDrawerClosed] = useState(false)
   const [drawerHeight, setDrawerHeight] = useState(() => Math.round(window.innerHeight * DEFAULT_DRAWER_SHARE))
-  const [seekStep, setSeekStep] = useState(SEEK_STEPS)
+  const [range, setRange] = useState<RangeName>('1h')
+  const [atMs, setAtMs] = useState<number | null>(null)
   const [nowMs, setNowMs] = useState(Date.now())
   const latestRef = useRef<RelaySnapshot[]>([])
 
-  const live = seekStep === SEEK_STEPS
-  const atMs = nowMs - (SEEK_STEPS - seekStep) * SEEK_STEP_MS
+  const live = atMs === null
+  const windowStartMs = nowMs - RANGES[range]
+  const seekTo = (ms: number) =>
+    setAtMs(ms >= nowMs - SEEK_STEP_MS ? null : Math.round(Math.max(nowMs - RANGES[range], ms)))
+  const stepBy = (deltaMs: number) => seekTo((atMs ?? nowMs) + deltaMs)
+  const changeRange = (next: RangeName) => {
+    setRange(next)
+    if (atMs !== null) setAtMs(Math.max(nowMs - RANGES[next], atMs))
+  }
+
+  const stepByRef = useRef(stepBy)
+  stepByRef.current = stepBy
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (handlesArrowKeys(event.target) || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return
+      event.preventDefault()
+      const step = event.shiftKey ? COARSE_STEP_MS : SEEK_STEP_MS
+      stepByRef.current(event.key === 'ArrowLeft' ? -step : step)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   useEffect(() => {
     if (!live) return
@@ -75,9 +105,9 @@ export default function App() {
   }, [live])
 
   useEffect(() => {
-    if (live) return
+    if (atMs === null) return
     let stopped = false
-    const target = Math.round(atMs)
+    const target = atMs
     Promise.all([fetchSnapshots(target), fetchSnapshots(target - PAST_RATE_WINDOW_MS)])
       .then(([current, before]) => {
         if (stopped) return
@@ -92,7 +122,7 @@ export default function App() {
     return () => {
       stopped = true
     }
-  }, [live, atMs])
+  }, [atMs])
 
   const topology = useMemo(() => buildTopology(snapshots, previous), [snapshots, previous])
   const layout = useMemo(() => layoutTopology(topology), [topology])
@@ -191,18 +221,30 @@ export default function App() {
             ×
           </button>
         </label>
-        <div className="timeline" title="Seek back up to 7 days">
-          <span>7d ago</span>
+        <div className="timeline" title="← → move 1 s, Shift + ← → move 10 s">
+          <div className="ranges">
+            {RANGE_NAMES.map((name) => (
+              <button key={name} className={name === range ? 'on' : ''} onClick={() => changeRange(name)}>
+                {name}
+              </button>
+            ))}
+          </div>
+          <button className="step" aria-label="Back 10 seconds" onClick={() => stepBy(-COARSE_STEP_MS)}>
+            −10s
+          </button>
           <input
             type="range"
             min={0}
-            max={SEEK_STEPS}
+            max={RANGES[range] / SEEK_STEP_MS}
             step={1}
-            value={seekStep}
+            value={((atMs ?? nowMs) - windowStartMs) / SEEK_STEP_MS}
             aria-label="Snapshot time"
-            onChange={(event) => setSeekStep(Number(event.target.value))}
+            onChange={(event) => seekTo(windowStartMs + Number(event.target.value) * SEEK_STEP_MS)}
           />
-          <button className={`live${live ? '' : ' past'}`} onClick={() => setSeekStep(SEEK_STEPS)}>
+          <button className="step" aria-label="Forward 10 seconds" onClick={() => stepBy(COARSE_STEP_MS)}>
+            +10s
+          </button>
+          <button className={`live${live ? '' : ' past'}`} onClick={() => setAtMs(null)}>
             <i />
             {live ? 'Live' : seekLabel(atMs)}
           </button>
@@ -246,7 +288,11 @@ export default function App() {
             selection={selection}
             visible={visible}
             title={selectionTitle}
-            endMs={live ? nowMs : atMs}
+            range={range}
+            onRangeChange={changeRange}
+            windowEndMs={nowMs}
+            markMs={atMs}
+            onSeek={seekTo}
             height={drawerHeight}
             onResize={setDrawerHeight}
             onClose={() => setDrawerClosed(true)}

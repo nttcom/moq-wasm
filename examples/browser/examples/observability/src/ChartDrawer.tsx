@@ -3,15 +3,9 @@ import { type Series, fetchSeries } from './api'
 import { type ChartSpec, chartSpecs } from './charts'
 import { LineChart, formatValue } from './LineChart'
 import { type Selection, type Visibility, routesOf } from './selection'
+import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
 import { type Link, type Topology, linkMbps, relativeNamespace } from './topology'
 
-const RANGES: Record<string, number> = {
-  '15m': 15 * 60_000,
-  '1h': 3_600_000,
-  '6h': 6 * 3_600_000,
-  '1d': 86_400_000,
-  '7d': 7 * 86_400_000
-}
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
 const MIN_HEIGHT = 160
@@ -22,7 +16,11 @@ interface Props {
   selection: Selection
   visible: Visibility
   title: string
-  endMs: number
+  range: RangeName
+  onRangeChange: (range: RangeName) => void
+  windowEndMs: number
+  markMs: number | null
+  onSeek: (ms: number) => void
   height: number
   onResize: (height: number) => void
   onClose: () => void
@@ -75,7 +73,7 @@ function Details({
   selection,
   visible,
   namespacePrefix
-}: Omit<Props, 'title' | 'endMs' | 'height' | 'onResize' | 'onClose'> & { namespacePrefix: string }) {
+}: Pick<Props, 'topology' | 'selection' | 'visible'> & { namespacePrefix: string }) {
   if (!selection) return null
   const routes = routesOf(topology, selection, visible)
   const routeRows = routes.map((route): [ReactNode, ReactNode] => [
@@ -193,8 +191,8 @@ function Details({
 }
 
 export function ChartDrawer(props: Props & { namespacePrefix: string }) {
-  const { topology, selection, visible, title, endMs, height, onResize, onClose, namespacePrefix } = props
-  const [range, setRange] = useState('1h')
+  const { topology, selection, visible, title, range, onRangeChange, windowEndMs, markMs, onSeek } = props
+  const { height, onResize, onClose, namespacePrefix } = props
   const [loaded, setLoaded] = useState<Map<string, Series>>(new Map())
   const [hoverMs, setHoverMs] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -208,7 +206,7 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
     return unique
   }, [specs])
   const requestSignature = [...requests.keys()].sort().join(';')
-  const fetchEndMs = Math.floor(endMs / LIVE_REFRESH_MS) * LIVE_REFRESH_MS
+  const fetchEndMs = Math.floor(windowEndMs / LIVE_REFRESH_MS) * LIVE_REFRESH_MS
   const fromMs = fetchEndMs - RANGES[range]
 
   useEffect(() => {
@@ -257,8 +255,8 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
         <small>{hoverMs === null ? 'latest' : new Date(hoverMs).toLocaleString()}</small>
         {error && <small className="error">{error}</small>}
         <div className="ranges">
-          {Object.keys(RANGES).map((name) => (
-            <button key={name} className={name === range ? 'on' : ''} onClick={() => setRange(name)}>
+          {RANGE_NAMES.map((name) => (
+            <button key={name} className={name === range ? 'on' : ''} onClick={() => onRangeChange(name)}>
               {name}
             </button>
           ))}
@@ -281,6 +279,8 @@ export function ChartDrawer(props: Props & { namespacePrefix: string }) {
               toMs={fetchEndMs}
               hoverMs={hoverMs}
               onHover={setHoverMs}
+              markMs={markMs}
+              onPick={onSeek}
               lines={spec.lines.map((line, index) => {
                 const series = loaded.get(requestKey(line.relayId, line.target))
                 return {

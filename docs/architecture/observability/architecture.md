@@ -221,9 +221,13 @@ reference.
   namespace element equal the session's `app_id`, so no subscription crosses
   `app_id`s and the `app_id` filter is exact. The page filters the snapshot
   it already holds; the API takes no filter parameter.
-- Time slider seeking up to the 7-day retention back; the whole page (topology,
-  colours, details, chart range end) then shows the snapshot at that time,
-  and its label returns to live when clicked.
+- Time controls: a range selector (15 min / 1 h / 6 h / 1 d / 7 d, 1 h by
+  default) shared with the chart drawer, and a slider spanning that range
+  up to now in 1 s steps — a 7-day slider would move about an hour per
+  pixel. −10 s / +10 s buttons and ← / → (1 s, Shift for 10 s) step from
+  the current position; stepping past now returns to live. The whole page
+  (topology, colours, details) then shows the snapshot at that time, and the
+  time label returns to live when clicked.
 - Totals: relays, clients, subscriptions, egress.
 
 ### Topology
@@ -281,10 +285,10 @@ the viewport by default, resizable by dragging its top edge) and holds:
   one card, delivery lag per subscription in another), fed by
   `GET /series`. Every metric of the direction table above appears; a
   relay's charts are its process figures and its ingress / egress totals
-  (bitrate-weighted egress loss, summed counts). A range selector picks
-  15 min / 1 h / 6 h / 1 d / 7 d ending at the time slider, and hovering any
-  card moves a shared crosshair that shows every card's value at that
-  instant. The grid keeps its scrollbar gutter, so resizing the drawer never
+  (bitrate-weighted egress loss, summed counts). The charts cover the header's
+  range up to now and mark the selected past time with a vertical line;
+  hovering any card moves a shared crosshair that shows every card's value
+  at that instant, and clicking a card moves the whole page to that time. The grid keeps its scrollbar gutter, so resizing the drawer never
   changes the column count.
 
 With a Track Namespace filter, bitrates and track lists count only the

@@ -13,6 +13,8 @@ interface Props {
   toMs: number
   hoverMs: number | null
   onHover: (ms: number | null) => void
+  markMs: number | null
+  onPick: (ms: number) => void
 }
 
 const WIDTH = 300
@@ -52,7 +54,7 @@ function valueAt(line: ChartLine, ms: number | null): number | null {
   return best
 }
 
-export function LineChart({ title, unit, lines, fromMs, toMs, hoverMs, onHover }: Props) {
+export function LineChart({ title, unit, lines, fromMs, toMs, hoverMs, onHover, markMs, onPick }: Props) {
   const span = Math.max(1, toMs - fromMs)
   const values = lines.flatMap((line) => line.v.filter((value): value is number => value !== null))
   const max = niceMax(Math.max(0, ...values) * 1.1)
@@ -74,14 +76,14 @@ export function LineChart({ title, unit, lines, fromMs, toMs, hoverMs, onHover }
     return result
   }
 
-  const onMove = (event: React.MouseEvent<SVGRectElement>) => {
-    const svg = event.currentTarget.ownerSVGElement
-    const matrix = svg?.getScreenCTM()
-    if (!matrix) return
+  const timeAt = (event: React.MouseEvent<SVGRectElement>): number | null => {
+    const matrix = event.currentTarget.ownerSVGElement?.getScreenCTM()
+    if (!matrix) return null
     const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
     const ratio = Math.min(1, Math.max(0, (point.x - MARGIN.left) / PLOT_WIDTH))
-    onHover(fromMs + ratio * span)
+    return fromMs + ratio * span
   }
+  const markX = markMs === null ? null : Math.min(xOf(toMs), Math.max(xOf(fromMs), xOf(markMs)))
 
   return (
     <div className="chart">
@@ -126,6 +128,7 @@ export function LineChart({ title, unit, lines, fromMs, toMs, hoverMs, onHover }
             />
           ))
         )}
+        {markX !== null && <line x1={markX} x2={markX} y1={MARGIN.top} y2={HEIGHT - MARGIN.bottom} className="mark" />}
         {hoverMs !== null && (
           <line x1={xOf(hoverMs)} x2={xOf(hoverMs)} y1={MARGIN.top} y2={HEIGHT - MARGIN.bottom} className="cross" />
         )}
@@ -135,8 +138,12 @@ export function LineChart({ title, unit, lines, fromMs, toMs, hoverMs, onHover }
           width={PLOT_WIDTH}
           height={PLOT_HEIGHT}
           className="hover"
-          onMouseMove={onMove}
+          onMouseMove={(event) => onHover(timeAt(event))}
           onMouseLeave={() => onHover(null)}
+          onClick={(event) => {
+            const ms = timeAt(event)
+            if (ms !== null) onPick(ms)
+          }}
         />
       </svg>
       <div className="chart-legend">

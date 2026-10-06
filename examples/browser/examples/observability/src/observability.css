@@ -566,7 +566,31 @@ main {
 
 .plot .hover {
   fill: transparent;
-  cursor: crosshair;
+  cursor: pointer;
+}
+
+.plot .mark {
+  stroke: var(--warn);
+  stroke-width: 1.5;
+}
+
+.timeline .ranges {
+  margin-left: 0;
+}
+
+.timeline .step {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.timeline .step:hover {
+  border-color: #3a3a3a;
+  color: var(--text);
 }
 
 .chart-legend {
