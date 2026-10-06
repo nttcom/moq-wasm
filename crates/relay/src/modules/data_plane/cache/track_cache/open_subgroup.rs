@@ -89,6 +89,7 @@ impl TrackCache {
             let group_id = key.group_id();
             if !finished {
                 ledger.aborted_subgroups.insert(key);
+                self.ingress_stats.record_aborted_subgroup();
             }
             let group_aborted = ledger.is_group_aborted(group_id);
             let Some(live) = ledger.live_groups.get_mut(&group_id) else {

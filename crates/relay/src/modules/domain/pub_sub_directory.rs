@@ -10,6 +10,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
+        delivery_stats::DeliveryStats,
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
             RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
@@ -26,11 +27,13 @@ pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     runner_stop_sender: oneshot::Sender<PublishDoneReason>,
     forward_sender: watch::Sender<bool>,
+    delivery_stats: Arc<DeliveryStats>,
 }
 
 pub(crate) struct DownstreamRunnerSignals {
     pub(crate) stop_receiver: oneshot::Receiver<PublishDoneReason>,
     pub(crate) forward_receiver: watch::Receiver<bool>,
+    pub(crate) delivery_stats: Arc<DeliveryStats>,
 }
 
 // Client subscriptions own the Redis route for their prefix, so the
@@ -546,6 +549,7 @@ impl InMemoryLocalPubSubDirectory {
         upstream.downstream_subscriber_count += 1;
         let (runner_stop_sender, stop_receiver) = oneshot::channel();
         let (forward_sender, forward_receiver) = watch::channel(true);
+        let delivery_stats = Arc::new(DeliveryStats::default());
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
             RegisteredDownstreamSubscription {
@@ -555,11 +559,13 @@ impl InMemoryLocalPubSubDirectory {
                 },
                 runner_stop_sender,
                 forward_sender,
+                delivery_stats: delivery_stats.clone(),
             },
         );
         Some(DownstreamRunnerSignals {
             stop_receiver,
             forward_receiver,
+            delivery_stats,
         })
     }
 

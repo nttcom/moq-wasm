@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::Arc;
 
 use tokio::{
     sync::{Mutex, mpsc},
@@ -14,7 +11,7 @@ use crate::modules::{
         subgroup_key::SubgroupKey,
         track_cache::{NextObject, TrackCache, TrackMalformed},
     },
-    domain::track_key::TrackKey,
+    domain::{delivery_stats::DeliveryStats, track_key::TrackKey},
     session::{
         data_object::DataObject,
         data_sender::{DataSender, stream_sender_factory::StreamSenderFactory},
@@ -36,7 +33,7 @@ pub(crate) struct GroupSender {
     publisher: Arc<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     receiver: mpsc::Receiver<GroupSendTask>,
-    opened_stream_count: Arc<AtomicU64>,
+    delivery_stats: Arc<DeliveryStats>,
     group_sequence: GroupSequence,
 }
 
@@ -47,7 +44,7 @@ struct StreamSendTask {
     object_id: u64,
     cache: Arc<TrackCache>,
     factory: SharedStreamSenderFactory,
-    opened_stream_count: Arc<AtomicU64>,
+    delivery_stats: Arc<DeliveryStats>,
     subscriber_priority: u8,
     group_order: moqt::GroupOrder,
     group_sequence: u64,
@@ -60,7 +57,7 @@ impl GroupSender {
         publisher: Arc<dyn Publisher>,
         downstream_subscription: DownstreamSubscription,
         receiver: mpsc::Receiver<GroupSendTask>,
-        opened_stream_count: Arc<AtomicU64>,
+        delivery_stats: Arc<DeliveryStats>,
     ) -> Self {
         Self {
             track_key,
@@ -68,7 +65,7 @@ impl GroupSender {
             publisher,
             downstream_subscription,
             receiver,
-            opened_stream_count,
+            delivery_stats,
             group_sequence: GroupSequence::new(),
         }
     }
@@ -111,7 +108,7 @@ impl GroupSender {
                                     object_id: task.object_id,
                                     cache: self.cache.clone(),
                                     factory,
-                                    opened_stream_count: self.opened_stream_count.clone(),
+                                    delivery_stats: self.delivery_stats.clone(),
                                     subscriber_priority,
                                     group_order,
                                     group_sequence,
@@ -126,6 +123,7 @@ impl GroupSender {
                                 task,
                                 self.cache.clone(),
                                 sender,
+                                self.delivery_stats.clone(),
                             ));
                         }
                     }
@@ -190,7 +188,7 @@ impl GroupSender {
                 return (0, "open_failed");
             }
         };
-        task.opened_stream_count.fetch_add(1, Ordering::AcqRel);
+        task.delivery_stats.record_stream_opened();
 
         // The header is regenerated from the object's canonical properties;
         // extensions are always declared present so no later object can lose
@@ -225,6 +223,8 @@ impl GroupSender {
                 tracing::error!(object_id, "failed to send subgroup object");
                 return (object_count, "send_object_failed");
             }
+            task.delivery_stats
+                .record_object_sent(object.payload.len(), object.received_at);
             object_count += 1;
             prev_sent_object_id = Some(object_id);
             next = match task
@@ -245,6 +245,7 @@ impl GroupSender {
         if matches!(next, NextObject::Aborted) {
             // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
             // may be missing objects, so the downstream stream is reset.
+            task.delivery_stats.record_stream_reset();
             if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
                 tracing::warn!(?error, "failed to reset egress stream sender");
             }
@@ -262,6 +263,7 @@ impl GroupSender {
         task: GroupSendTask,
         cache: Arc<TrackCache>,
         mut sender: Box<dyn DataSender>,
+        delivery_stats: Arc<DeliveryStats>,
     ) {
         let mut cursor = task.object_id;
         while let Ok(NextObject::Object(object)) = cache
@@ -283,6 +285,7 @@ impl GroupSender {
             {
                 return;
             }
+            delivery_stats.record_object_sent(object.payload.len(), object.received_at);
             cursor = object_id.saturating_add(1);
         }
     }

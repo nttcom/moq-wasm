@@ -2,10 +2,20 @@ use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 
-use crate::modules::{data_plane::cache::track_cache::TrackCache, domain::track_key::TrackKey};
+use crate::modules::{
+    data_plane::cache::track_cache::{CacheOccupancy, TrackCache},
+    domain::track_key::TrackKey,
+};
 
 pub(crate) struct TrackCacheStore {
     caches: DashMap<TrackKey, Arc<TrackCache>>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StoreOccupancy {
+    pub(crate) tracks: u64,
+    pub(crate) objects: u64,
+    pub(crate) payload_bytes: u64,
 }
 
 impl TrackCacheStore {
@@ -25,6 +35,31 @@ impl TrackCacheStore {
             .entry(track_key.clone())
             .or_insert_with(|| Arc::new(TrackCache::new()))
             .clone()
+    }
+
+    pub(crate) fn occupancy(&self) -> StoreOccupancy {
+        let caches: Vec<Arc<TrackCache>> = self
+            .caches
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        caches.iter().fold(
+            StoreOccupancy {
+                tracks: caches.len() as u64,
+                ..StoreOccupancy::default()
+            },
+            |total, cache| {
+                let CacheOccupancy {
+                    objects,
+                    payload_bytes,
+                } = cache.occupancy();
+                StoreOccupancy {
+                    objects: total.objects + objects,
+                    payload_bytes: total.payload_bytes + payload_bytes,
+                    ..total
+                }
+            },
+        )
     }
 
     pub(crate) fn evict(&self, ttl: Duration) {
@@ -93,6 +128,27 @@ mod tests {
         tokio::time::advance(Duration::from_secs(31)).await;
         store.evict(ttl);
         assert!(store.get(&key).is_none());
+    }
+
+    #[test]
+    fn occupancy_sums_every_cached_track() {
+        // Arrange
+        let store = TrackCacheStore::new();
+        insert_closed_group(&store.get_or_create(&TrackKey::new("ns", "a")), 0, &[0, 1]);
+        insert_closed_group(&store.get_or_create(&TrackKey::new("ns", "b")), 0, &[0]);
+
+        // Act
+        let occupancy = store.occupancy();
+
+        // Assert
+        assert_eq!(
+            occupancy,
+            StoreOccupancy {
+                tracks: 2,
+                objects: 3,
+                payload_bytes: 3 * b"payload".len() as u64,
+            }
+        );
     }
 
     #[tokio::test]

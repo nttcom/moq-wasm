@@ -26,10 +26,12 @@ fn after(at: moqt::Location) -> moqt::Location {
 }
 
 mod fetch_cursor;
+mod ingress_stats;
 mod ledger;
 mod open_subgroup;
 
 pub(crate) use fetch_cursor::FetchCursor;
+pub(crate) use ingress_stats::IngressStats;
 use ledger::Ledger;
 pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, SubgroupRun};
 
@@ -41,6 +43,14 @@ pub(crate) struct TrackCache {
     malformed: AtomicBool,
     malformed_notify: Notify,
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
+    ingress_stats: IngressStats,
+    payload_bytes: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CacheOccupancy {
+    pub(crate) objects: u64,
+    pub(crate) payload_bytes: u64,
 }
 
 impl TrackCache {
@@ -53,6 +63,19 @@ impl TrackCache {
             malformed: AtomicBool::new(false),
             malformed_notify: Notify::new(),
             subgroup_opened_sender: broadcast::channel(256).0,
+            ingress_stats: IngressStats::default(),
+            payload_bytes: AtomicU64::new(0),
+        }
+    }
+
+    pub(crate) fn ingress_stats(&self) -> &IngressStats {
+        &self.ingress_stats
+    }
+
+    pub(crate) fn occupancy(&self) -> CacheOccupancy {
+        CacheOccupancy {
+            objects: self.read().objects.len() as u64,
+            payload_bytes: self.payload_bytes.load(AtomicOrdering::Relaxed),
         }
     }
 
@@ -99,6 +122,7 @@ impl TrackCache {
     }
 
     fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        self.ingress_stats.record_live_arrival(object.received_at);
         let registers_knowledge =
             matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
         self.insert_with_knowledge(object, registers_knowledge)
@@ -112,6 +136,8 @@ impl TrackCache {
         if self.is_malformed() {
             return Err(TrackMalformed);
         }
+        let payload_bytes = object.payload.len();
+        self.ingress_stats.record_object(payload_bytes);
         let at = object.location;
         let mut ledger = self.write();
         let inserted = match ledger.objects.entry(at) {
@@ -132,6 +158,8 @@ impl TrackCache {
             }
             Entry::Vacant(slot) => {
                 slot.insert(Arc::new(object));
+                self.payload_bytes
+                    .fetch_add(payload_bytes as u64, AtomicOrdering::Relaxed);
                 true
             }
         };
@@ -165,13 +193,17 @@ impl TrackCache {
         let removed_count = {
             let mut ledger = self.write();
             let mut removed = Vec::new();
+            let mut removed_payload_bytes = 0u64;
             ledger.objects.retain(|location, object| {
                 let keep = object.received_at.elapsed() <= ttl;
                 if !keep {
                     removed.push(*location);
+                    removed_payload_bytes += object.payload.len() as u64;
                 }
                 keep
             });
+            self.payload_bytes
+                .fetch_sub(removed_payload_bytes, AtomicOrdering::Relaxed);
             for &at in &removed {
                 ledger.known_ranges.remove_range(at, after(at));
             }
@@ -491,6 +523,88 @@ mod tests {
             ]
         );
         assert!(cache.subgroup_runs_in_group(1).is_empty());
+    }
+
+    #[test]
+    fn every_received_object_is_counted_but_only_stored_ones_occupy_the_cache() {
+        // Arrange
+        let cache = TrackCache::new();
+        let payload = Bytes::from_static(b"12345");
+
+        // Act
+        let _ = cache.insert_live(stream_object_with_payload(0, 0, payload.clone()));
+        let _ = cache.insert_live(stream_object_with_payload(0, 0, payload.clone()));
+        let _ = cache.insert(stream_object_with_payload(0, 1, payload));
+
+        // Assert
+        let counters = cache.ingress_stats().take();
+        assert_eq!(counters.objects_received, 3);
+        assert_eq!(counters.bytes_received, 15);
+        assert_eq!(
+            cache.occupancy(),
+            CacheOccupancy {
+                objects: 2,
+                payload_bytes: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn only_a_subgroup_closed_without_finish_counts_as_aborted() {
+        // Arrange
+        let cache = TrackCache::new();
+
+        // Act
+        insert_closed_group(&cache, 0, &[0]);
+        insert_aborted_group(&cache, 1, &[0]);
+
+        // Assert
+        assert_eq!(cache.ingress_stats().take().subgroups_aborted, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn arrival_gap_is_measured_between_live_inserts_only() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        tokio::time::advance(Duration::from_millis(200)).await;
+        let _ = cache.insert(stream_object(0, 1));
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        // Act
+        let _ = cache.insert_live(stream_object(0, 2));
+
+        // Assert
+        assert_eq!(
+            cache.ingress_stats().take().max_arrival_gap,
+            Duration::from_millis(300)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eviction_releases_the_payload_bytes_of_removed_objects() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object_with_payload(0, 0, Bytes::from_static(b"old")));
+        tokio::time::advance(Duration::from_secs(6)).await;
+        let _ = cache.insert_live(stream_object_with_payload(
+            0,
+            1,
+            Bytes::from_static(b"fresh"),
+        ));
+        tokio::time::advance(Duration::from_secs(5)).await;
+
+        // Act
+        cache.evict(Duration::from_secs(10));
+
+        // Assert
+        assert_eq!(
+            cache.occupancy(),
+            CacheOccupancy {
+                objects: 1,
+                payload_bytes: 5,
+            }
+        );
     }
 
     #[tokio::test(start_paused = true)]
