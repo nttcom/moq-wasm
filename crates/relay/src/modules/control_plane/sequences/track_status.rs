@@ -2,12 +2,12 @@ use moqt::ContentExists;
 use tracing::Span;
 
 use crate::modules::{
+    control_plane::sequences::subscribe::cached_largest,
     data_plane::cache::store::TrackCacheStore,
     domain::{
         error_code::SubscribeErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
         session_id::SessionId,
     },
-    sequences::subscribe::cached_largest,
     session::handler::track_status::TrackStatusHandler,
 };
 
@@ -68,9 +68,9 @@ mod tests {
 
     use super::*;
     use crate::modules::{
+        control_plane::sequences::test_fixtures::table_with_upstream,
         data_plane::tests::harness::fixtures::{cached_object::insert_closed_group, location},
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
-        sequences::test_fixtures::table_with_upstream,
     };
 
     #[derive(Debug, PartialEq)]

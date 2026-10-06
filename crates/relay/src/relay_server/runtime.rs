@@ -4,19 +4,21 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
     auth::token_verifier::TokenVerifier,
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        event_handler::{EventHandler, WorkerDeps},
+        upstream_creation_serializer::UpstreamCreationSerializer,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::{
         cache::{eviction_job::spawn_cache_eviction_job, store::TrackCacheStore},
         egress::coordinator::EgressCoordinator,
         ingress::ingress_coordinator::IngressCoordinator,
     },
     domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-    event_handler::{EventHandler, WorkerDeps},
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::upstream_serializer::UpstreamCreationSerializer,
     session::{session_event::SessionEvent, session_repository::SessionRepository},
-    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 
 pub(crate) struct RelayRuntime {

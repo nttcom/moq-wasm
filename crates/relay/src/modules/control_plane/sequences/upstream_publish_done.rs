@@ -44,11 +44,11 @@ impl UpstreamPublishDone {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
-        sequences::test_fixtures::{
+        control_plane::sequences::test_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
             upstream_release_context,
         },
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
     };
 
     const DOWNSTREAM_SESSION: SessionId = 2;

@@ -186,7 +186,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   left, withdraw namespace routes for client sessions, then drop the session
   from the repository.
 
-### `modules/sequences` — one struct per control message
+### `modules/control_plane/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message
 (`publish`, `subscribe`, `subscribe_update`, `fetch`, `track_status`,
 `publish_namespace`, `publish_namespace_done`, `subscribe_namespace`,
@@ -256,7 +256,7 @@ then delegate to `EgressCommand::StartFetch`, which serves the range from
 `TrackCache` over a new uni stream (see "Fetch delivery" under "Egress").
 
 A range the cache cannot serve goes upstream. The worker hands it to
-`UpstreamFetchTask` (`sequences/fetch/upstream_fetch_task.rs`) and moves on to
+`UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to
 the session's next event; the task resolves the publisher, forwards the FETCH,
 waits for its FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
 `FetchIngest`, which fills the cache and hands the range to egress. A
@@ -556,7 +556,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —
 e.g. reader/worker non-blocking and terminal-event handling in
-`event_handler.rs`, largest-location resolution in `sequences/subscribe.rs`,
+`control_plane/event_handler.rs`, largest-location resolution in `control_plane/sequences/subscribe.rs`,
 eviction refcount rules in `cache/store.rs`. Multi-process behaviour
 (cascading relays, cache eviction, fetch, multiple publishers, dedup) lives in
 the workspace-level `tests/*-e2e` suites, each driven by its `run.sh`.

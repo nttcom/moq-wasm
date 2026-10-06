@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
+    },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::CascadingRelayContext,
 };
 use tracing::Span;
 

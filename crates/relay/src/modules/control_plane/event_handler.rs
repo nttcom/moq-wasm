@@ -9,7 +9,20 @@ use crate::modules::{
         token_refresh::refresh_token,
         token_verifier::TokenVerifier,
     },
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        sequences::{
+            CascadingRelayContext, fetch::Fetch, malformed_track::MalformedTrackCleanup,
+            publish::Publish, publish_namespace::PublishNamespace,
+            publish_namespace_done::PublishNamespaceDone, stop_ingress, subscribe::Subscribe,
+            subscribe_namespace::SubscribeNameSpace, subscribe_update::SubscribeUpdate,
+            track_status::TrackStatus, unsubscribe::Unsubscribe,
+            unsubscribe_namespace::UnsubscribeNamespace,
+            upstream_publish_done::UpstreamPublishDone,
+        },
+        upstream_creation_serializer::UpstreamCreationSerializer,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
         ingress::ingress_coordinator::IngressCommand,
@@ -24,21 +37,11 @@ use crate::modules::{
     },
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::{
-        CascadingRelayContext, fetch::Fetch, malformed_track::MalformedTrackCleanup,
-        publish::Publish, publish_namespace::PublishNamespace,
-        publish_namespace_done::PublishNamespaceDone, stop_ingress, subscribe::Subscribe,
-        subscribe_namespace::SubscribeNameSpace, subscribe_update::SubscribeUpdate,
-        track_status::TrackStatus, unsubscribe::Unsubscribe,
-        unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
-        upstream_serializer::UpstreamCreationSerializer,
-    },
     session::{
         moqt_session_event::MoqtSessionEvent,
         session_event::{EventKind, SessionEvent},
         session_repository::SessionRepository,
     },
-    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 use moqt::ContentExists;
 use tracing::{Instrument, Span};
@@ -779,7 +782,11 @@ mod tests {
             test_support::{StubOutcome, StubVerifier},
             verified_token::VerifiedToken,
         },
-        control_message_forwarder::ControlMessageForwarder,
+        control_plane::{
+            control_message_forwarder::ControlMessageForwarder,
+            upstream_creation_serializer::UpstreamCreationSerializer,
+            upstream_publisher_resolver::UpstreamPublisherResolver,
+        },
         data_plane::{
             cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
             ingress::ingress_coordinator::IngressCommand,
@@ -791,7 +798,6 @@ mod tests {
         },
         inter_relay::InterRelayConnectionManager,
         route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
-        sequences::upstream_serializer::UpstreamCreationSerializer,
         session::{
             mocks::{
                 MockFetchHandler, MockPublishNamespaceHandler, RecordedControlMessages,
@@ -801,7 +807,6 @@ mod tests {
             session_event::{EventKind, SessionEvent},
             session_repository::SessionRepository,
         },
-        upstream_publisher_resolver::UpstreamPublisherResolver,
     };
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(3);

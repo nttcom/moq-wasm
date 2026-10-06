@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        upstream_creation_serializer::UpstreamCreationSerializer,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressStartRequest},
@@ -18,9 +22,7 @@ use crate::modules::{
         session_id::SessionId,
         track_key::TrackKey,
     },
-    sequences::upstream_serializer::UpstreamCreationSerializer,
     session::handler::subscribe::SubscribeHandler,
-    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 
 use moqt::ContentExists;
@@ -520,6 +522,9 @@ impl Subscribe {
 mod tests {
     use super::*;
     use crate::modules::auth::verified_token::VerifiedToken;
+    use crate::modules::control_plane::sequences::test_fixtures::{
+        PUBLISHER_SESSION, active_upstream, upstream_key,
+    };
     use crate::modules::data_plane::cache::track_cache::TrackCache;
     use crate::modules::data_plane::tests::harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::domain::pub_sub_directory::{
@@ -527,9 +532,6 @@ mod tests {
     };
     use crate::modules::inter_relay::InterRelayConnectionManager;
     use crate::modules::route_registry::NoopRelayRouteRegistry;
-    use crate::modules::sequences::test_fixtures::{
-        PUBLISHER_SESSION, active_upstream, upstream_key,
-    };
     use crate::modules::session::mocks::{
         MockSubscribeHandler, mock_session_answering_subscribe, session_repository_with_session,
     };

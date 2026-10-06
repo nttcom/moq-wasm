@@ -1,5 +1,7 @@
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
+    },
     domain::{
         error_code::PublishNamespaceErrorCode,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
@@ -7,7 +9,6 @@ use crate::modules::{
     },
     inter_relay::InterRelayConnectionManager,
     route_registry::{RegisterRouteError, RelayRouteRegistry},
-    sequences::CascadingRelayContext,
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
 use tracing::Span;
