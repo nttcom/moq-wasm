@@ -15,7 +15,7 @@ use crate::modules::{
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
         pub_sub_directory::{
-            InMemoryLocalPubSubDirectory, TrackJoin,
+            InMemoryLocalPubSubDirectory,
             entry::{ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionOrigin},
         },
         session_id::SessionId,
@@ -158,14 +158,13 @@ async fn join_track(
     subscription: UpstreamSubscription,
 ) {
     let upstream_request_id = active_upstream.upstream_request_id;
-    let join = deps.table.add_upstream_subscription_to_track(
+    let joined = deps.table.add_upstream_subscription_to_track(
         track_key,
         publisher_session_id,
         active_upstream,
     );
-    if join != TrackJoin::Joined {
+    if !joined {
         tracing::info!(
-            ?join,
             pub_session_id = %publisher_session_id,
             %track_key,
             "unsubscribing a publisher the track does not take"

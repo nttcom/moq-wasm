@@ -27,10 +27,6 @@ impl MalformedTrackCleanup {
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
     ) {
         let released = table.remove_upstream_track(track_key);
-        if released.is_empty() {
-            tracing::debug!("upstream subscriptions already removed");
-            return;
-        }
         // draft-14 §2.5: the cache latch makes the whole track malformed, so
         // every publisher's subscription is ended, not only the reporting one.
         for (publisher_session_id, subscription) in released {

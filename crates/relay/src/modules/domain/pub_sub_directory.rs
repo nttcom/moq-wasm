@@ -29,14 +29,6 @@ pub(crate) struct RegisteredDownstreamSubscription {
     forward_sender: watch::Sender<bool>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum TrackJoin {
-    Joined,
-    TrackGone,
-    AlreadyFed,
-    NotWanted,
-}
-
 pub(crate) struct RegisteredPublish {
     publisher_session_id: SessionId,
     publisher_peer: SessionPeer,
@@ -490,25 +482,26 @@ impl InMemoryLocalPubSubDirectory {
             .insert(publisher_session_id, subscription);
     }
 
+    /// Returns false, adding nothing, when the track is gone, the publisher
+    /// already feeds it, or the track does not want it.
     pub(crate) fn add_upstream_subscription_to_track(
         &self,
         track_key: &TrackKey,
         publisher_session_id: SessionId,
         subscription: ActiveUpstreamSubscription,
-    ) -> TrackJoin {
+    ) -> bool {
         let Some(mut track) = self.upstream_tracks.get_mut(track_key) else {
-            return TrackJoin::TrackGone;
+            return false;
         };
-        if track.subscriptions.contains_key(&publisher_session_id) {
-            return TrackJoin::AlreadyFed;
-        }
-        if !track.wants(subscription.publisher_peer) {
-            return TrackJoin::NotWanted;
+        if track.subscriptions.contains_key(&publisher_session_id)
+            || !track.wants(subscription.publisher_peer)
+        {
+            return false;
         }
         track
             .subscriptions
             .insert(publisher_session_id, subscription);
-        TrackJoin::Joined
+        true
     }
 
     pub(crate) fn has_upstream_subscription(
