@@ -17,6 +17,7 @@ interface Props {
   visible: Visibility
   selection: Selection
   bottomInset: number
+  leftInset: number
   onSelect: (selection: Selection) => void
   onBackground: () => void
 }
@@ -69,7 +70,16 @@ function labelOf(namespaces: string[]): string {
   return namespaces.length > 1 ? `${namespaces[0]} +${namespaces.length - 1}` : namespaces[0]
 }
 
-export function TopologyView({ topology, layout, visible, selection, bottomInset, onSelect, onBackground }: Props) {
+export function TopologyView({
+  topology,
+  layout,
+  visible,
+  selection,
+  bottomInset,
+  leftInset,
+  onSelect,
+  onBackground
+}: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [viewBox, setViewBox] = useState<ViewBox>({ x: -500, y: -420, w: 1000, h: 840 })
   const viewBoxRef = useRef(viewBox)
@@ -138,14 +148,20 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
       const y0 = Math.min(...ys) - padding
       const y1 = Math.max(...ys) + padding
       const width = svg.clientWidth
+      const visibleWidth = Math.max(120, width - leftInset)
       const visibleHeight = Math.max(120, svg.clientHeight - bottomInset)
       const overviewScale = Math.max(1000 / width, 840 / svg.clientHeight)
-      const scale = Math.max((x1 - x0) / width, (y1 - y0) / visibleHeight, overviewScale / MAX_ZOOM_IN)
+      const scale = Math.max((x1 - x0) / visibleWidth, (y1 - y0) / visibleHeight, overviewScale / MAX_ZOOM_IN)
       const w = width * scale
       const h = svg.clientHeight * scale
-      return { x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - (visibleHeight * scale) / 2, w, h }
+      return {
+        x: (x0 + x1) / 2 - (leftInset + visibleWidth / 2) * scale,
+        y: (y0 + y1) / 2 - (visibleHeight * scale) / 2,
+        w,
+        h
+      }
     },
-    [layout, topology, bottomInset]
+    [layout, topology, bottomInset, leftInset]
   )
 
   const animateTo = useCallback(
@@ -179,7 +195,7 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
   const selectionKey = selection ? `${selection.kind}:${selection.id}` : ''
   useEffect(() => {
     if (hasNodes) fit()
-  }, [selectionKey, hasNodes, bottomInset > 0])
+  }, [selectionKey, hasNodes, bottomInset > 0, leftInset > 0])
 
   const zoomAt = useCallback(
     (factor: number, clientX: number, clientY: number) => {
@@ -214,7 +230,9 @@ export function TopologyView({ topology, layout, visible, selection, bottomInset
 
   const zoomFromCenter = (factor: number) => {
     const rect = svgRef.current?.getBoundingClientRect()
-    if (rect) zoomAt(factor, rect.left + rect.width / 2, rect.top + (rect.height - bottomInset) / 2)
+    if (rect) {
+      zoomAt(factor, rect.left + (rect.width + leftInset) / 2, rect.top + (rect.height - bottomInset) / 2)
+    }
   }
 
   const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { type NamespaceSummary, type PublishedNamespaces, fetchNamespaces } from './api'
 import { appIdOf, relativeNamespace } from './topology'
 
+export const NAMESPACE_PANEL_WIDTH = 420
 const LIVE_REFRESH_MS = 10_000
 const LIVE_TOLERANCE_MS = 3_000
 
@@ -53,7 +54,11 @@ export function NamespacePanel({ spanMs, toMs, live, appId, onPick, onClose }: P
   const stillPublished = (summary: NamespaceSummary) => live && summary.last_seen_ms >= queryToMs - LIVE_TOLERANCE_MS
 
   return (
-    <section className="namespace-panel" aria-label="Published Track Namespaces">
+    <section
+      className="namespace-panel"
+      style={{ width: NAMESPACE_PANEL_WIDTH }}
+      aria-label="Published Track Namespaces"
+    >
       <div className="panel-head">
         <b>Namespaces</b>
         <button className="close" aria-label="Close namespaces" onClick={onClose}>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { type RelaySnapshot, fetchSnapshots } from './api'
 import type { NamespaceSummary } from './api'
 import { ChartDrawer } from './ChartDrawer'
-import { NamespacePanel } from './NamespacePanel'
+import { NAMESPACE_PANEL_WIDTH, NamespacePanel } from './NamespacePanel'
 import { layoutTopology } from './layout'
 import { type Filters, type Selection, narrowedFilters, routesOf, visibility, widenedFilters } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
@@ -270,10 +270,17 @@ export default function App() {
           visible={visible}
           selection={selection}
           bottomInset={drawerOpen ? drawerHeight : 0}
+          leftInset={namespacesOpen ? NAMESPACE_PANEL_WIDTH : 0}
           onSelect={focusOn}
           onBackground={onBackground}
         />
-        <div className="legend" style={{ bottom: (drawerOpen ? drawerHeight : 0) + 12 }}>
+        <div
+          className="legend"
+          style={{
+            bottom: (drawerOpen ? drawerHeight : 0) + 12,
+            left: (namespacesOpen ? NAMESPACE_PANEL_WIDTH : 0) + 16
+          }}
+        >
           <span className="focus">shown in charts</span>
           <span className="up">uplink</span>
           <span className="ok">downlink loss &lt; 1%</span>
