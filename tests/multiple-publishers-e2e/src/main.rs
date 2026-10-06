@@ -6,8 +6,16 @@
 //! and deduplicates, so Bob must receive every object exactly once, and
 //! Carol's departure must not stop Alice's later groups.
 //!
+//! The `handover` scenarios then check that a subscription survives its
+//! publishers coming and going: a killed publisher does not hold back a new
+//! SUBSCRIBE, and a publisher announcing the namespace later takes over when
+//! the first one leaves, on the same relay and, when
+//! `MOQT_E2E_RELAY_B_URL` names a second relay, across relays.
+//!
 //! Run a relay on localhost:4433, then `cargo run -p multiple-publishers-e2e`
-//! from the repo root. Bob asserts both and prints a summary.
+//! from the repo root. It prints `multiple publishers e2e passed` on success.
+
+mod handover;
 
 use std::collections::HashMap;
 use std::env;
@@ -216,7 +224,31 @@ async fn main() -> anyhow::Result<()> {
         .with_line_number(true)
         .try_init()
         .ok();
+    let relay_url =
+        env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
 
+    let args: Vec<String> = env::args().collect();
+    if let [_, flag, track_namespace] = args.as_slice()
+        && flag == handover::SERVE_NAMESPACE_ARG
+    {
+        return handover::serve_namespace_forever(&relay_url, track_namespace).await;
+    }
+
+    run_redundant_publishers_scenario().await?;
+    handover::run_killed_publisher_scenario(&relay_url).await?;
+    handover::run_handover_scenario(&relay_url, &relay_url, "handover").await?;
+    match env::var("MOQT_E2E_RELAY_B_URL") {
+        Ok(relay_b_url) => {
+            handover::run_handover_scenario(&relay_url, &relay_b_url, "cross-relay-handover")
+                .await?
+        }
+        Err(_) => tracing::info!("MOQT_E2E_RELAY_B_URL not set; skipping the cross-relay scenario"),
+    }
+    println!("multiple publishers e2e passed");
+    Ok(())
+}
+
+async fn run_redundant_publishers_scenario() -> anyhow::Result<()> {
     let (alice_ready_tx, alice_ready_rx) = oneshot::channel::<()>();
     let (carol_go_tx, carol_go_rx) = oneshot::channel::<()>();
     let (done_tx, done_rx) = oneshot::channel::<()>();
