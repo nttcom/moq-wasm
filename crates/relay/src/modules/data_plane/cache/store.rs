@@ -2,10 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 
-use crate::modules::{
-    data_plane::cache::track_cache::{CacheOccupancy, TrackCache},
-    domain::track_key::TrackKey,
-};
+use crate::modules::{data_plane::cache::track_cache::TrackCache, domain::track_key::TrackKey};
 
 pub(crate) struct TrackCacheStore {
     caches: DashMap<TrackKey, Arc<TrackCache>>,
@@ -43,23 +40,16 @@ impl TrackCacheStore {
             .iter()
             .map(|entry| entry.value().clone())
             .collect();
-        caches.iter().fold(
-            StoreOccupancy {
-                tracks: caches.len() as u64,
-                ..StoreOccupancy::default()
-            },
-            |total, cache| {
-                let CacheOccupancy {
-                    objects,
-                    payload_bytes,
-                } = cache.occupancy();
-                StoreOccupancy {
-                    objects: total.objects + objects,
-                    payload_bytes: total.payload_bytes + payload_bytes,
-                    ..total
-                }
-            },
-        )
+        let mut total = StoreOccupancy {
+            tracks: caches.len() as u64,
+            ..StoreOccupancy::default()
+        };
+        for cache in &caches {
+            let occupancy = cache.occupancy();
+            total.objects += occupancy.objects;
+            total.payload_bytes += occupancy.payload_bytes;
+        }
+        total
     }
 
     pub(crate) fn evict(&self, ttl: Duration) {
