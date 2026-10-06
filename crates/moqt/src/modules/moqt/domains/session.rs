@@ -196,6 +196,9 @@ mod tests {
         assert!(stats.cwnd > 0);
         assert!(!stats.rtt.is_zero());
         assert_eq!(stats.lost_packets, 0);
+        assert!(stats.current_mtu > 0);
+        assert!(stats.sent_bytes > 0);
+        assert!(stats.received_bytes > 0);
     }
 
     #[tokio::test]
