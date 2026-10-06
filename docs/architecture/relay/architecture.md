@@ -190,10 +190,12 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   a peer) and routed to the upstream publisher session's worker:
   - `MalformedTrackDetected(session_id, track_key)`, raised by the insert that
     latched the track. Handled by
-    `sequences::malformed_track::MalformedTrackCleanup`: remove the
-    `ActiveUpstreamSubscription`, send upstream UNSUBSCRIBE (§2.5 MUST), and
-    stop ingress via `IngressCommand::StopTrack`. Duplicate reports are
-    idempotent (the table entry is only found once).
+    `sequences::malformed_track::MalformedTrackCleanup`: remove every
+    `ActiveUpstreamSubscription` of the track, since the cache latch makes the
+    whole track malformed whichever publisher's object conflicted, send each
+    publisher UNSUBSCRIBE (§2.5 MUST), and stop their ingress via
+    `IngressCommand::StopTrack`. Duplicate reports are idempotent (the track
+    entry is only found once).
   - `ProtocolViolationDetected { reason }`, raised when a subgroup object
     carries an Object Status draft-14 §10.2.1.1 does not define. The worker
     closes the session with PROTOCOL_VIOLATION (`Session::close_with_error`);

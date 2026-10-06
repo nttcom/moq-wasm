@@ -536,25 +536,16 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
-    /// Leaves the downstream registrations of a track whose last upstream
-    /// subscription this removes to their subscribers: a malformed track ends
-    /// their runners on its own.
-    pub(crate) fn remove_upstream_subscription(
+    /// Leaves the track's downstream registrations to their subscribers: a
+    /// malformed track ends their runners on its own.
+    pub(crate) fn remove_upstream_track(
         &self,
-        key: &UpstreamSubscriptionKey,
-    ) -> Option<ActiveUpstreamSubscription> {
-        let track_key = TrackKey::new(&key.track_namespace, &key.track_name);
-        let Entry::Occupied(mut track) = self.upstream_tracks.entry(track_key) else {
-            return None;
-        };
-        let removed = track
-            .get_mut()
-            .subscriptions
-            .remove(&key.publisher_session_id);
-        if track.get().subscriptions.is_empty() {
-            track.remove();
-        }
-        removed
+        track_key: &TrackKey,
+    ) -> Vec<(SessionId, ActiveUpstreamSubscription)> {
+        self.upstream_tracks
+            .remove(track_key)
+            .map(|(_, track)| track.subscriptions.into_iter().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn end_upstream_subscription(
@@ -764,7 +755,7 @@ impl InMemoryLocalPubSubDirectory {
 mod tests {
     use super::*;
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, table_with_upstream, upstream_key,
+        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, table_with_upstream,
     };
     use crate::modules::test_support::mock_session::runner_stopped;
     use moqt::{ContentExists, FilterType, GroupOrder};
@@ -1290,7 +1281,7 @@ mod tests {
             .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
             .unwrap()
             .stop_receiver;
-        table.remove_upstream_subscription(&upstream_key()).unwrap();
+        assert!(!table.remove_upstream_track(&track_key).is_empty());
 
         // Act
         table.remove_session(2);
