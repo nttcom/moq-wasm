@@ -9,11 +9,11 @@
 //! The `handover` scenarios then check that a subscription survives its
 //! publishers coming and going: a killed publisher does not hold back a new
 //! SUBSCRIBE, and a publisher announcing the namespace later takes over when
-//! the first one leaves, on the same relay and, when
-//! `MOQT_E2E_RELAY_B_URL` names a second relay, across relays.
+//! the first one leaves, on the same relay and across relays.
 //!
-//! Run a relay on localhost:4433, then `cargo run -p multiple-publishers-e2e`
-//! from the repo root. It prints `multiple publishers e2e passed` on success.
+//! Run relays on localhost:4433 and localhost:4434 sharing a route registry
+//! (`run.sh` starts both), then `cargo run -p multiple-publishers-e2e` from the
+//! repo root. It prints `multiple publishers e2e passed` on success.
 
 mod handover;
 
@@ -29,6 +29,7 @@ use moqt::{
 use tokio::sync::oneshot;
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
+const DEFAULT_RELAY_B_URL: &str = "moqt://127.0.0.1:4434";
 const NAMESPACE: &str = "anon/room/main";
 const TRACK_NAME: &str = "data";
 const PUBLISHER_PRIORITY: u8 = 128;
@@ -39,20 +40,21 @@ const OBJECTS_PER_GROUP: u64 = 5;
 // proves Carol's departure did not stop Alice's ingest.
 const LATE_GROUP: u64 = 4;
 
-fn object_payload(group_id: u64, object_id: u64) -> String {
+pub(crate) fn object_payload(group_id: u64, object_id: u64) -> String {
     format!("g{group_id}:o{object_id}")
 }
 
-async fn new_session() -> anyhow::Result<Session> {
-    let relay_url =
-        env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
+fn relay_url() -> String {
+    env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string())
+}
+
+async fn connect(relay_url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
         port: 0,
         verify_certificate: false,
         authorization_token: None,
     })?;
-    let connecting = endpoint.connect(&relay_url).await?;
-    connecting.await
+    endpoint.connect(relay_url).await?.await
 }
 
 async fn send_group(
@@ -80,7 +82,7 @@ async fn alice(
     ready_tx: oneshot::Sender<()>,
     done_rx: oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let session = new_session().await?;
+    let session = connect(&relay_url()).await?;
     let publisher = session.publisher();
     let subscription = publisher
         .publish(
@@ -107,7 +109,7 @@ async fn carol(go_rx: oneshot::Receiver<()>) -> anyhow::Result<()> {
     // Give Alice's ingress a moment to be the established writer before joining.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let session = new_session().await?;
+    let session = connect(&relay_url()).await?;
     let publisher = session.publisher();
     let subscription = match publisher
         .publish(
@@ -139,7 +141,7 @@ async fn bob(
 ) -> anyhow::Result<()> {
     let _ = alice_ready_rx.await;
 
-    let session = new_session().await?;
+    let session = connect(&relay_url()).await?;
     let mut subscriber = session.subscriber();
     let subscription = subscriber
         .subscribe(
@@ -224,8 +226,9 @@ async fn main() -> anyhow::Result<()> {
         .with_line_number(true)
         .try_init()
         .ok();
-    let relay_url =
-        env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
+    let relay_url = relay_url();
+    let relay_b_url =
+        env::var("MOQT_E2E_RELAY_B_URL").unwrap_or_else(|_| DEFAULT_RELAY_B_URL.to_string());
 
     let args: Vec<String> = env::args().collect();
     if let [_, flag, track_namespace] = args.as_slice()
@@ -237,13 +240,7 @@ async fn main() -> anyhow::Result<()> {
     run_redundant_publishers_scenario().await?;
     handover::run_killed_publisher_scenario(&relay_url).await?;
     handover::run_handover_scenario(&relay_url, &relay_url, "handover").await?;
-    match env::var("MOQT_E2E_RELAY_B_URL") {
-        Ok(relay_b_url) => {
-            handover::run_handover_scenario(&relay_url, &relay_b_url, "cross-relay-handover")
-                .await?
-        }
-        Err(_) => tracing::info!("MOQT_E2E_RELAY_B_URL not set; skipping the cross-relay scenario"),
-    }
+    handover::run_handover_scenario(&relay_url, &relay_b_url, "cross-relay-handover").await?;
     println!("multiple publishers e2e passed");
     Ok(())
 }

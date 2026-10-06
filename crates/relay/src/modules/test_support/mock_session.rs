@@ -56,9 +56,8 @@ enum SubscribeAnswer {
     Never,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) enum FetchAnswer {
-    #[default]
     Never,
     Refuse,
     FetchOk,
@@ -146,7 +145,6 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
     (session, recorded)
 }
 
-/// Like a publisher session that died without closing: SUBSCRIBE is never answered.
 pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
         recorded: RecordedControlMessages::default(),

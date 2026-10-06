@@ -22,9 +22,8 @@ pub(crate) struct ActiveUpstreamSubscription {
     pub(crate) publisher_peer: SessionPeer,
 }
 
-/// A track the relay receives, keyed by the publisher session of each
-/// upstream subscription that feeds it (draft-14 §8.2). Session ids grow with
-/// time, so the last entry is the newest publisher.
+/// draft-14 §8.2. Session ids grow with time, so the last subscription is the
+/// newest publisher's.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UpstreamTrack {
     pub(crate) subscriptions: BTreeMap<SessionId, ActiveUpstreamSubscription>,

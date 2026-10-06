@@ -11,11 +11,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{connect, object_payload};
 use anyhow::{Context as _, bail};
 use moqt::{
-    ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject, SubscribeOption,
-    Subscription,
+    ContentExists, DataReceiver, ExtensionHeaders, FilterType, GroupOrder, Session, SessionEvent,
+    Subgroup, SubgroupId, SubgroupObject, SubscribeOption, Subscription,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -33,15 +33,6 @@ const OBJECTS_PER_GROUP: u64 = 3;
 const SUBSCRIBE_DEADLINE: Duration = Duration::from_secs(3);
 const GROUPS_AFTER_HANDOVER: usize = 5;
 
-async fn connect(relay_url: &str) -> anyhow::Result<Session> {
-    let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
-        verify_certificate: false,
-        authorization_token: None,
-    })?;
-    endpoint.connect(relay_url).await?.await
-}
-
 fn current_group_id() -> u64 {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -50,12 +41,6 @@ fn current_group_id() -> u64 {
     millis / GROUP_INTERVAL.as_millis() as u64
 }
 
-fn object_payload(group_id: u64, object_id: u64) -> String {
-    format!("g{group_id}:o{object_id}")
-}
-
-/// A publisher that announces a namespace and answers every SUBSCRIBE with
-/// the clock-driven groups until its session ends.
 pub(crate) struct NamespacePublisher {
     session: Arc<Session>,
     event_loop: JoinHandle<anyhow::Result<()>>,
@@ -137,7 +122,6 @@ pub(crate) async fn serve_namespace_forever(
     std::future::pending().await
 }
 
-/// Collects the groups of `TRACK_NAME` in arrival order.
 struct ClockSubscriber {
     _session: Arc<Session>,
     group_receiver: mpsc::UnboundedReceiver<u64>,
