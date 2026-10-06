@@ -1,4 +1,4 @@
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::BytesMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::{
@@ -7,7 +7,7 @@ use crate::modules::{
 };
 
 #[derive(Debug, Clone, TryFromPrimitive, IntoPrimitive)]
-#[repr(u8)]
+#[repr(u64)]
 enum FilterTypeValue {
     LatestGroup = 0x01,
     LatestObject = 0x02,
@@ -48,7 +48,10 @@ impl FilterType {
     }
 
     pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let value = FilterTypeValue::try_from(bytes.get_u8()).ok()?;
+        let filter_type_value = bytes.try_get_varint().log_context("filter type").ok()?;
+        let value = FilterTypeValue::try_from(filter_type_value)
+            .log_context("filter type value")
+            .ok()?;
         match value {
             FilterTypeValue::LatestObject => Some(FilterType::LargestObject),
             FilterTypeValue::LatestGroup => Some(FilterType::NextGroupStart),
@@ -73,15 +76,15 @@ impl FilterType {
         let mut payload = BytesMut::new();
         match self {
             FilterType::LargestObject => {
-                payload.put_u8(FilterTypeValue::LatestObject as u8);
+                payload.put_varint(FilterTypeValue::LatestObject.into());
                 payload
             }
             FilterType::NextGroupStart => {
-                payload.put_u8(FilterTypeValue::LatestGroup as u8);
+                payload.put_varint(FilterTypeValue::LatestGroup.into());
                 payload
             }
             FilterType::AbsoluteStart { location } => {
-                payload.put_u8(FilterTypeValue::AbsoluteStart as u8);
+                payload.put_varint(FilterTypeValue::AbsoluteStart.into());
                 let bytes = location.encode();
                 payload.unsplit(bytes);
                 payload
@@ -90,7 +93,7 @@ impl FilterType {
                 location,
                 end_group,
             } => {
-                payload.put_u8(FilterTypeValue::AbsoluteRange as u8);
+                payload.put_varint(FilterTypeValue::AbsoluteRange.into());
                 let bytes = location.encode();
                 payload.unsplit(bytes);
                 payload.put_varint(*end_group);
@@ -110,6 +113,49 @@ mod tests {
             group_id,
             object_id,
         }
+    }
+
+    fn decode(payload: &[u8]) -> Option<FilterType> {
+        FilterType::decode(&mut std::io::Cursor::new(payload))
+    }
+
+    #[test]
+    fn defined_filter_types_round_trip() {
+        // Arrange
+        let filter_types = [
+            FilterType::LargestObject,
+            FilterType::NextGroupStart,
+            FilterType::AbsoluteStart {
+                location: location(2, 7),
+            },
+            FilterType::AbsoluteRange {
+                location: location(2, 7),
+                end_group: 300,
+            },
+        ];
+
+        for filter_type in filter_types {
+            // Act
+            let decoded = decode(&filter_type.encode());
+
+            // Assert
+            assert_eq!(decoded, Some(filter_type));
+        }
+    }
+
+    #[test]
+    fn payload_truncated_before_filter_type_is_rejected() {
+        // Act / Assert
+        assert_eq!(decode(&[]), None);
+    }
+
+    #[test]
+    fn unknown_multi_byte_filter_type_is_rejected() {
+        // Arrange: 0x40 0xFA is the two-byte varint 250
+        let payload = [0x40, 0xFA];
+
+        // Act / Assert
+        assert_eq!(decode(&payload), None);
     }
 
     #[test]
