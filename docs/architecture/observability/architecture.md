@@ -109,9 +109,13 @@ neither is reported.
   `stats_publisher` for the relay's own loopback session.
 - `dialed_relay_id` is set on an inter-relay session this relay dialed. The
   accepting relay only sees a relay token, so consumers identify the far end
-  of an accepted relay session by matching its remote IP with the dialer's
-  `local_ip`. This needs every relay on its own IP (true on GCP and in
-  docker compose, not for several relays on one host).
+  of an accepted relay session by its remote IP: a relay's addresses are the
+  non-loopback `local_ip` of the sessions it accepted and the address other
+  relays dialed it at. (`local_ip` is empty on a dialed session: quinn does
+  not report it for a client endpoint bound to `0.0.0.0`.) This needs every
+  relay on its own IP and nothing else connecting from a relay's IP (true on
+  GCP and in docker compose, not for several relays, or a relay and the
+  observability server, on one host).
 - `max_arrival_gap_since_last_snapshot_us` is the longest interval between two
   live objects of the track since the previous snapshot. Stream data is
   retransmitted, so uplink loss shows up as arrival gaps rather than as

@@ -84,6 +84,7 @@ interface Direction {
   uplink: boolean
   downlink: boolean
   sessionBitrate: boolean
+  peer: 'client' | 'peer relay'
 }
 
 function sessionCharts(
@@ -96,7 +97,7 @@ function sessionCharts(
 ): ChartSpec[] {
   const session: SeriesTarget = { target: 'session', session_id: sessionId }
   const line = (label: string, metric: string): LineRef => ({ label, relayId, target: session, metric })
-  const { uplink, downlink, sessionBitrate } = direction
+  const { uplink, downlink, sessionBitrate, peer } = direction
   return [
     sessionBitrate
       ? chart('Bitrate', 'Mbps', [
@@ -112,10 +113,10 @@ function sessionCharts(
       ? chart('Max object arrival gap', 'ms', trackLines(topology, relayId, sessionId, visible, 'max_arrival_gap_ms'))
       : null,
     chart('Flow-control blocked', '/s', [
-      uplink && line(`${UP} client by relay window`, 'peer_blocked_per_s'),
-      downlink && line(`${DOWN} relay by client window`, 'relay_blocked_per_s')
+      uplink && line(`${UP} ${peer} by relay window`, 'peer_blocked_per_s'),
+      downlink && line(`${DOWN} relay by ${peer} window`, 'relay_blocked_per_s')
     ]),
-    chart('Stream signals from client', '/s', [
+    chart(`Stream signals from ${peer}`, '/s', [
       uplink && line(`${UP} RESET_STREAM`, 'peer_resets_per_s'),
       downlink && line(`${DOWN} STOP_SENDING`, 'stop_sending_per_s')
     ]),
@@ -134,7 +135,8 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
     return sessionCharts(topology, client.relayId, client.session.session_id, visible, received, {
       uplink: client.trackCount > 0,
       downlink: received.length > 0,
-      sessionBitrate: true
+      sessionBitrate: true,
+      peer: 'client'
     })
   }
   const link = topology.links.get(selection.id)
@@ -147,7 +149,8 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
       ...sessionCharts(topology, relayId, session.session_id, visible, [], {
         uplink: true,
         downlink: false,
-        sessionBitrate: false
+        sessionBitrate: false,
+        peer: 'client'
       })
     ].filter((spec): spec is ChartSpec => spec !== null)
   }
@@ -157,7 +160,8 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
       ...sessionCharts(topology, relayId, session.session_id, visible, carried, {
         uplink: false,
         downlink: true,
-        sessionBitrate: false
+        sessionBitrate: false,
+        peer: 'client'
       })
     ].filter((spec): spec is ChartSpec => spec !== null)
   }
@@ -186,7 +190,8 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
     ...sessionCharts(topology, relayId, session.session_id, visible, [], {
       uplink: !bySender,
       downlink: bySender,
-      sessionBitrate: !bySender
+      sessionBitrate: !bySender,
+      peer: 'peer relay'
     })
   ].filter((spec): spec is ChartSpec => spec !== null)
 }

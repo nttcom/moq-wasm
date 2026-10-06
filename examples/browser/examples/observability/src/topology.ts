@@ -132,11 +132,31 @@ class RateSource {
   }
 }
 
+const isLoopback = (ip: string) => ip === '127.0.0.1' || ip === '::1'
+
 class RelayIndex {
   readonly byId: Map<string, RelaySnapshot>
+  private readonly addressesOf = new Map<string, Set<string>>()
 
   constructor(snapshots: RelaySnapshot[]) {
     this.byId = new Map(snapshots.map((snapshot) => [snapshot.relay_id, snapshot]))
+    for (const snapshot of snapshots) {
+      for (const session of snapshot.sessions) {
+        const local = normalizeIp(session.local_ip)
+        if (local && !isLoopback(local)) this.addressOf(snapshot.relay_id).add(local)
+        const dialed = ipOf(session.remote_address)
+        if (session.dialed_relay_id && dialed) this.addressOf(session.dialed_relay_id).add(dialed)
+      }
+    }
+  }
+
+  private addressOf(relayId: string): Set<string> {
+    let addresses = this.addressesOf.get(relayId)
+    if (!addresses) {
+      addresses = new Set()
+      this.addressesOf.set(relayId, addresses)
+    }
+    return addresses
   }
 
   session(relayId: string, sessionId: Id): SessionStats | undefined {
@@ -146,23 +166,29 @@ class RelayIndex {
   peerRelayOf(relayId: string, session: SessionStats): string | null {
     if (session.dialed_relay_id) return session.dialed_relay_id
     const remoteIp = ipOf(session.remote_address)
-    for (const [otherId, other] of this.byId) {
-      if (otherId === relayId) continue
-      const dialer = other.sessions.find(
-        (candidate) =>
-          candidate.peer === 'relay' &&
-          candidate.dialed_relay_id === relayId &&
-          normalizeIp(candidate.local_ip) === remoteIp
-      )
-      if (dialer) return otherId
+    if (!remoteIp) return null
+    for (const [otherId, addresses] of this.addressesOf) {
+      if (otherId !== relayId && addresses.has(remoteIp)) return otherId
     }
     return null
   }
 
-  sessionTowards(relayId: string, peerRelayId: string): SessionStats | undefined {
-    return this.byId
-      .get(relayId)
-      ?.sessions.find((session) => session.peer === 'relay' && this.peerRelayOf(relayId, session) === peerRelayId)
+  private sessionsTowards(relayId: string, peerRelayId: string): SessionStats[] {
+    return (this.byId.get(relayId)?.sessions ?? []).filter(
+      (session) => session.peer === 'relay' && this.peerRelayOf(relayId, session) === peerRelayId
+    )
+  }
+
+  senderSessionTowards(relayId: string, peerRelayId: string): SessionStats | undefined {
+    const candidates = this.sessionsTowards(relayId, peerRelayId)
+    const subscribers = new Set(this.byId.get(relayId)?.subscriptions.map((sub) => sub.subscriber_session_id))
+    return candidates.find((session) => subscribers.has(session.session_id)) ?? candidates[0]
+  }
+
+  receiverSessionTowards(relayId: string, peerRelayId: string): SessionStats | undefined {
+    const candidates = this.sessionsTowards(relayId, peerRelayId)
+    const publishers = new Set(this.byId.get(relayId)?.tracks.map((track) => track.publisher_session_id))
+    return candidates.find((session) => publishers.has(session.session_id)) ?? candidates[0]
   }
 
   publisherSessionOf(relayId: string, namespace: string, name: string): Id | undefined {
@@ -314,7 +340,7 @@ function describeLink(
       lossPercent: rates.lossPercent(snapshot, subscriber.session)
     }
   }
-  const sender = index.sessionTowards(from, to)
+  const sender = index.senderSessionTowards(from, to)
   const senderSnapshot = index.byId.get(from)
   if (sender && senderSnapshot) {
     for (const subscription of senderSnapshot.subscriptions) {
@@ -332,7 +358,7 @@ function describeLink(
       lossPercent: rates.lossPercent(senderSnapshot, sender)
     }
   }
-  const receiver = index.sessionTowards(to, from)
+  const receiver = index.receiverSessionTowards(to, from)
   const receiverSnapshot = index.byId.get(to)
   if (receiver && receiverSnapshot) {
     for (const track of receiverSnapshot.tracks) {

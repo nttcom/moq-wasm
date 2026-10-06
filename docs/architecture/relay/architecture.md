@@ -550,8 +550,8 @@ so cache, fan-out, FETCH and authorization need no separate path.
   `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`
   and `transport_addresses`), `InterRelayConnectionManager::dialed_relay_ids`
   (the relay at the other end of each session this relay dialed; an accepted
-  inter-relay session is matched by the consumer through the dialer's
-  `local_ip`),
+  inter-relay session is matched by the consumer through the relays' known
+  addresses, see `docs/architecture/observability/architecture.md`),
   `InMemoryLocalPubSubDirectory::active_upstream_tracks` and
   `downstream_subscription_states`, each track cache's `IngressStats`, and
   `TrackCacheStore::occupancy`. RSS comes from `/proc/self/status` and is
