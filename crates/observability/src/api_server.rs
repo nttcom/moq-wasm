@@ -18,11 +18,14 @@ use crate::{
     browser_json::snapshots_for_browser,
     clickhouse::ClickHouse,
     latest_snapshots::LatestSnapshots,
+    schema::RETENTION_DAYS,
     series::{self, SeriesQuery, SeriesTarget},
     snapshot_history::snapshots_at,
 };
 
 const DEFAULT_POINTS: u64 = 90;
+const MAX_POINTS: u64 = 300;
+const MAX_SPAN_MS: u64 = RETENTION_DAYS as u64 * 86_400_000;
 
 pub struct ApiState {
     pub latest: LatestSnapshots,
@@ -139,17 +142,29 @@ pub fn series_query(params: &HashMap<String, String>) -> anyhow::Result<SeriesQu
         },
         other => anyhow::bail!("unknown series target {other:?}"),
     };
+    let from_ms = number(params, "from")?;
+    let to_ms = number(params, "to")?;
+    let points = params
+        .get("points")
+        .map(|points| points.parse())
+        .transpose()
+        .context("query parameter points is not a number")?
+        .unwrap_or(DEFAULT_POINTS);
+    anyhow::ensure!(from_ms <= to_ms, "from is after to");
+    anyhow::ensure!(
+        to_ms - from_ms <= MAX_SPAN_MS,
+        "a series spans at most {RETENTION_DAYS} days"
+    );
+    anyhow::ensure!(
+        (1..=MAX_POINTS).contains(&points),
+        "points must be between 1 and {MAX_POINTS}"
+    );
     Ok(SeriesQuery {
         relay_id: required(params, "relay_id")?.to_string(),
         target,
-        from_ms: number(params, "from")?,
-        to_ms: number(params, "to")?,
-        points: params
-            .get("points")
-            .map(|points| points.parse())
-            .transpose()
-            .context("query parameter points is not a number")?
-            .unwrap_or(DEFAULT_POINTS),
+        from_ms,
+        to_ms,
+        points,
     })
 }
 
@@ -216,6 +231,37 @@ mod tests {
             }
         );
         assert_eq!(query.points, 90);
+    }
+
+    fn process_series(from: &str, to: &str, points: &str) -> HashMap<String, String> {
+        params(&[
+            ("relay_id", "relay-a"),
+            ("target", "process"),
+            ("from", from),
+            ("to", to),
+            ("points", points),
+        ])
+    }
+
+    #[test]
+    fn a_series_longer_than_the_retention_is_rejected() {
+        // Act / Assert
+        assert!(series_query(&process_series("0", "604800000", "90")).is_ok());
+        assert!(series_query(&process_series("0", "604800001", "90")).is_err());
+    }
+
+    #[test]
+    fn more_points_than_the_maximum_are_rejected() {
+        // Act / Assert
+        assert!(series_query(&process_series("0", "60000", "300")).is_ok());
+        assert!(series_query(&process_series("0", "60000", "301")).is_err());
+        assert!(series_query(&process_series("0", "60000", "0")).is_err());
+    }
+
+    #[test]
+    fn a_range_ending_before_it_starts_is_rejected() {
+        // Act / Assert
+        assert!(series_query(&process_series("60000", "0", "90")).is_err());
     }
 
     #[test]
