@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>MoQ Observability mockup</title>
+<style>
+  :root { color-scheme: dark; --bg:#141414; --panel:#1c1c1c; --line:#2e2e2e; --text:#e8e8e6; --muted:#9a9a96; --ok:#5DCAA5; --warn:#EF9F27; --bad:#E24B4A; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--text); font: 13px/1.4 -apple-system, "Helvetica Neue", sans-serif; }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; font-weight:500; margin:0; }
+  .timeline { display:flex; align-items:center; gap:8px; color:var(--muted); }
+  .timeline input { width:180px; accent-color:#85B7EB; }
+  .live { display:flex; align-items:center; gap:6px; color:var(--ok); background:none; border:none; font:inherit; cursor:pointer; padding:0; min-width:118px; }
+  .live.past { color:var(--warn); }
+  .live.past i { background:var(--warn); animation:none; }
+  .live i { width:8px; height:8px; border-radius:50%; background:var(--ok); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity:.3 } }
+  .filter { color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .filter input { width:150px; background:#2a2a2a; color:var(--text); border:1px solid #3a3a3a; border-radius:6px; padding:3px 8px; font:inherit; }
+  .filter input.active { border-color:#85B7EB; }
+  .filter button { background:none; border:none; color:var(--muted); font-size:15px; cursor:pointer; padding:0 2px; }
+  .filter select { background:#2a2a2a; color:var(--text); border:1px solid #3a3a3a; border-radius:6px; padding:3px 8px; font:inherit; }
+  .stats { margin-left:auto; display:flex; gap:20px; color:var(--muted); }
+  .stats b { color:var(--text); font-weight:500; }
+  main { display:flex; flex:1; min-height:0; position:relative; }
+  #graph { flex:1; min-width:0; height:100%; background-image: radial-gradient(#262626 1px, transparent 1px); background-size: 18px 18px; }
+  .zoom { position:absolute; top:12px; right:16px; display:flex; flex-direction:column; border:1px solid #3a3a3a; border-radius:6px; overflow:hidden; background:#1c1c1c; }
+  .zoom button { width:30px; height:28px; background:none; border:none; color:var(--text); font-size:15px; cursor:pointer; }
+  .zoom button + button { border-top:1px solid #3a3a3a; }
+  .zoom button:hover { background:#2a2a2a; }
+  .drawer-body { display:flex; flex:1; min-height:0; }
+  .details { width:300px; flex:none; overflow-y:auto; padding:10px 16px; border-right:1px solid var(--line); }
+  .details .sub { color:var(--muted); margin-bottom:6px; }
+  .details .section:first-of-type { margin-top:8px; }
+  .section { margin-top:14px; padding:8px 0 4px; border-top:1px solid var(--line); font-weight:500; display:flex; justify-content:space-between; }
+  .section small { color:#85B7EB; font-weight:400; }
+  .note { color:var(--muted); font-size:11px; margin-bottom:4px; }
+  .m { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:8px; padding:3px 0; }
+  .m .name { color:var(--muted); }
+  .m .val { text-align:right; font-weight:500; }
+  .rows div { display:flex; justify-content:space-between; padding:3px 0; color:var(--muted); }
+  .rows span:first-child { color:var(--text); }
+  main { --drawer-h:45vh; }
+  .drawer { position:absolute; left:0; right:0; bottom:0; height:var(--drawer-h); background:rgba(20,20,20,.97); border-top:1px solid #3a3a3a; display:none; flex-direction:column; }
+  main.drawer-open .drawer { display:flex; }
+  main.drawer-open .legend { bottom:calc(var(--drawer-h) + 12px); }
+  .drawer-grip { height:8px; cursor:ns-resize; display:flex; justify-content:center; align-items:center; flex:none; }
+  .drawer-grip::before { content:""; width:40px; height:3px; border-radius:2px; background:#4a4a4a; }
+  .drawer-grip:hover::before, main.resizing .drawer-grip::before { background:#85B7EB; }
+  main.resizing { cursor:ns-resize; user-select:none; }
+  .drawer-head { display:flex; align-items:center; gap:12px; padding:8px 16px; border-bottom:1px solid var(--line); }
+  .drawer-head small { color:var(--muted); }
+  #ranges { margin-left:auto; display:flex; gap:2px; }
+  #ranges button, #drawer-close { background:none; border:1px solid transparent; color:var(--muted); border-radius:6px; padding:2px 8px; font:inherit; cursor:pointer; }
+  #ranges button.on { border-color:#3a3a3a; background:#2a2a2a; color:var(--text); }
+  #drawer-close { font-size:16px; }
+  .charts { flex:1; align-content:start; display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:10px; padding:10px 16px 14px; overflow-y:auto; scrollbar-gutter:stable; }
+  .chart { background:#1c1c1c; border:1px solid var(--line); border-radius:8px; padding:8px 10px 6px; }
+  .chart-head { display:flex; justify-content:space-between; font-weight:500; margin-bottom:2px; }
+  .chart-head small { color:var(--muted); font-weight:400; }
+  .plot { width:100%; height:auto; display:block; }
+  .plot .axis { fill:var(--muted); font-size:9px; }
+  .plot .cross { stroke:#9a9a96; stroke-dasharray:2 2; }
+  .plot .hover { fill:transparent; cursor:crosshair; }
+  .chart-legend { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px; color:var(--muted); }
+  .chart-legend i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; }
+  .chart-legend b { color:var(--text); font-weight:500; margin-left:6px; }
+  .legend { position:absolute; left:16px; bottom:12px; display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); pointer-events:none; }
+  .legend span::before { content:""; display:inline-block; width:18px; height:0; border-top:2px dashed currentColor; margin-right:6px; vertical-align:middle; }
+  #graph { cursor:grab; touch-action:none; }
+  #graph.panning { cursor:grabbing; }
+  .node { cursor:pointer; }
+  .node .box { fill:#252525; stroke:#4a4a4a; }
+  .node.sel .box { stroke:#85B7EB; stroke-width:2; }
+  .relay .box { fill:#2b2b2b; stroke:#555; }
+  .relay .unit { fill:#1e1e1e; stroke:#4a4a4a; }
+  .relay .vent { stroke:#444; stroke-width:1; }
+  .relay .led { animation: blink 1.6s infinite; }
+  @keyframes blink { 50% { opacity:.35 } }
+  .flow { fill:none; stroke-width:1.6; stroke-dasharray:5 5; animation: flow linear infinite; transition: opacity .2s; pointer-events:none; }
+  .flow.sel { stroke-width:3; }
+  .flow.focus { stroke:#85B7EB; stroke-width:2.4; marker-end:url(#arrow-focus); }
+  .flow.focus.sel { stroke-width:3.2; }
+  .hit { fill:none; stroke:transparent; stroke-width:14; cursor:pointer; }
+  .dim { opacity:.1; }
+  .node { transition: opacity .2s; }
+  .node.dim { opacity:.3; }
+  .hidden { display:none; }
+  @keyframes flow { to { stroke-dashoffset:-20; } }
+  text { fill:var(--text); font-size:11px; }
+  text.muted { fill:var(--muted); font-size:10px; }
+  .pill { fill:#3a3a3a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MoQ Observability</h1>
+  <label class="filter">App <select id="app-filter"></select></label>
+  <label class="filter">Track Namespace <input id="ns-filter" list="ns-options" placeholder="prefix, e.g. room1" autocomplete="off" /><datalist id="ns-options"></datalist><button id="ns-clear" aria-label="Clear namespace filter">×</button></label>
+  <div class="timeline" title="Seek back up to 7 days">
+    <span>7d ago</span>
+    <input id="seek" type="range" min="0" max="100" value="100" step="1" aria-label="Snapshot time" />
+    <button id="live" class="live"><i></i><span id="seek-label">Live</span></button>
+  </div>
+  <div class="stats">
+    <span>Relays <b>3</b></span>
+    <span>Clients <b id="s-clients"></b></span>
+    <span>Subscriptions <b id="s-subs"></b></span>
+    <span>Egress <b>48.2 Mbps</b></span>
+  </div>
+</header>
+<main>
+  <svg id="graph" viewBox="0 0 1000 840" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <marker id="arrow-focus" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#85B7EB"/></marker>
+      <marker id="arrow-up" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#888780"/></marker>
+      <marker id="arrow-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5DCAA5"/></marker>
+      <marker id="arrow-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#EF9F27"/></marker>
+      <marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#E24B4A"/></marker>
+    </defs>
+    <g id="env"></g>
+    <g id="flows"></g>
+    <g id="hits"></g>
+    <g id="nodes"></g>
+  </svg>
+  <div class="legend">
+    <span style="color:#85B7EB">shown in charts</span>
+    <span style="color:#888780">uplink</span>
+    <span style="color:var(--ok)">downlink loss &lt; 1%</span>
+    <span style="color:var(--warn)">downlink loss 1–5%</span>
+    <span style="color:var(--bad)">downlink loss &gt; 5%</span>
+  </div>
+  <div class="zoom" role="group" aria-label="Zoom">
+    <button id="zoom-in" aria-label="Zoom in">+</button>
+    <button id="zoom-out" aria-label="Zoom out">−</button>
+    <button id="zoom-fit" aria-label="Fit to view" title="Fit to view">⤢</button>
+  </div>
+  <section class="drawer" aria-label="Charts">
+    <div class="drawer-grip" id="drawer-grip" title="Drag to resize"></div>
+    <div class="drawer-head"><b id="drawer-title"></b><small id="drawer-time">latest</small><div id="ranges"></div><button id="drawer-close" aria-label="Close charts">×</button></div>
+    <div class="drawer-body"><div id="details" class="details"></div><div id="charts" class="charts"></div></div>
+  </section>
+</main>
+<script>
+const center = { x: 500, y: 420 }, envR = 230, clientR = 345, relayHalf = { w: 62, h: 50 };
+const LIVE = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e", MEET = "9f1c2a3b-4d5e-4f60-8a7b-1c2d3e4f5a6b", CAM = "5b7e0d12-8c4f-4a39-b1e6-2f9a7c3d8e01";
+const apps = { [LIVE]: "live streaming", [MEET]: "meeting", [CAM]: "camera monitoring" };
+const relays = [
+  { id: "relay-a", x: 415, y: 340, rss: 412, cache: 96, cacheObjects: 5120, tracks: 4 },
+  { id: "relay-b", x: 595, y: 345, rss: 288, cache: 41, cacheObjects: 2210, tracks: 9 },
+  { id: "relay-c", x: 505, y: 515, rss: 190, cache: 22, cacheObjects: 1180, tracks: 2 },
+];
+const clients = [
+  { id: "camera-03", app: CAM, relay: "relay-a", angle: 172, rtt: 12, loss: 0.0 },
+  { id: "viewer-a3", app: LIVE, relay: "relay-a", angle: 192, rtt: 41, loss: 2.4 },
+  { id: "viewer-a2", app: LIVE, relay: "relay-a", angle: 212, rtt: 35, loss: 0.8 },
+  { id: "viewer-a1", app: LIVE, relay: "relay-a", angle: 232, rtt: 22, loss: 0.1 },
+  { id: "ingest-01", app: LIVE, relay: "relay-a", angle: 254, rtt: 18, loss: 0.2 },
+  { id: "alice", app: MEET, relay: "relay-b", angle: 286, rtt: 24, loss: 0.3 },
+  { id: "bob", app: MEET, relay: "relay-b", angle: 306, rtt: 31, loss: 0.6 },
+  { id: "carol", app: MEET, relay: "relay-b", angle: 326, rtt: 58, loss: 3.1, upTrouble: true },
+  { id: "dave", app: MEET, relay: "relay-b", angle: 346, rtt: 27, loss: 0.4 },
+  { id: "viewer-b1", app: LIVE, relay: "relay-b", angle: 8, rtt: 48, loss: 6.2 },
+  { id: "viewer-c1", app: LIVE, relay: "relay-c", angle: 62, rtt: 29, loss: 0.5 },
+  { id: "viewer-c2", app: LIVE, relay: "relay-c", angle: 86, rtt: 33, loss: 0.9 },
+  { id: "viewer-c3", app: LIVE, relay: "relay-c", angle: 110, rtt: 52, loss: 1.8 },
+  { id: "monitor", app: CAM, relay: "relay-c", angle: 134, rtt: 21, loss: 0.2 },
+];
+const tracks = [
+  { publisher: "ingest-01", namespace: "live/ch1", names: ["video", "audio"] },
+  { publisher: "camera-03", namespace: "site1/cam3", names: ["video"] },
+  { publisher: "alice", namespace: "room1/alice", names: ["video", "audio"] },
+  { publisher: "bob", namespace: "room1/bob", names: ["video", "audio"] },
+  { publisher: "carol", namespace: "room1/carol", names: ["video", "audio"] },
+  { publisher: "dave", namespace: "room1/dave", names: ["video", "audio"] },
+];
+const subscriptions = [
+  ["ingest-01", "viewer-a1", 4.1], ["ingest-01", "viewer-a2", 4.1], ["ingest-01", "viewer-a3", 2.0],
+  ["ingest-01", "viewer-b1", 1.2], ["ingest-01", "viewer-c1", 4.1], ["ingest-01", "viewer-c2", 4.1], ["ingest-01", "viewer-c3", 2.2],
+  ["camera-03", "monitor", 2.5],
+  ["alice", "bob", 1.5], ["alice", "carol", 1.0], ["alice", "dave", 1.5],
+  ["bob", "alice", 1.5], ["bob", "carol", 1.0], ["bob", "dave", 1.5],
+  ["carol", "alice", 1.4], ["carol", "bob", 1.4], ["carol", "dave", 1.1],
+  ["dave", "alice", 1.5], ["dave", "bob", 1.5], ["dave", "carol", 1.4],
+];
+
+const ns = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent && parent.appendChild(e); return e; };
+const txt = (parent, x, y, s, cls, anchor = "middle") => { const t = el("text", { x, y, "text-anchor": anchor }, parent); if (cls) t.setAttribute("class", cls); t.textContent = s; return t; };
+const health = loss => loss < 1 ? "ok" : loss <= 5 ? "warn" : "bad";
+const color = { ok: "#5DCAA5", warn: "#EF9F27", bad: "#E24B4A", up: "#888780" };
+const relayById = Object.fromEntries(relays.map(r => [r.id, r]));
+const clientById = Object.fromEntries(clients.map(c => [c.id, c]));
+const trackOf = id => tracks.find(t => t.publisher === id);
+const lagOf = sub => clientById[sub[1]].loss > 5 ? 2 : clientById[sub[1]].loss > 2 ? 1 : 0;
+for (const c of clients) {
+  const t = c.angle * Math.PI / 180;
+  c.x = center.x + clientR * Math.cos(t);
+  c.y = center.y + clientR * Math.sin(t);
+  const own = trackOf(c.id);
+  c.published = own ? [own.namespace] : [];
+  c.subscribed = [...new Set(subscriptions.filter(s => s[1] === c.id).map(s => trackOf(s[0]).namespace))];
+  c.trackCount = own ? own.names.length : 0;
+}
+
+const filter = document.getElementById("app-filter");
+const nsFilter = document.getElementById("ns-filter");
+let manualApp = "";
+const elements = ns => ns.split("/").filter(Boolean);
+const nsMatches = ns => { const prefix = elements(nsFilter.value); return elements(ns).slice(0, prefix.length).join("/") === prefix.join("/"); };
+const commonPrefix = list => list.reduce((acc, ns) => { const e = elements(ns); let i = 0; while (i < acc.length && acc[i] === e[i]) i++; return acc.slice(0, i); }, elements(list[0] || ""));
+filter.innerHTML = `<option value="">All apps</option>` + Object.keys(apps).map(id => `<option value="${id}">${id.slice(0, 8)}… ${apps[id]}</option>`).join("");
+
+const env = document.getElementById("env");
+el("circle", { cx: center.x, cy: center.y, r: envR, fill: "#1f1f1f", stroke: "#333" }, env);
+el("rect", { x: center.x - 80, y: center.y - envR - 10, width: 160, height: 20, rx: 10, class: "pill" }, env);
+txt(env, center.x, center.y - envR + 4, "GCP · asia-northeast1");
+txt(env, 120, 70, "Internet", "muted", "start");
+
+const links = new Map();
+function addLink(from, to, mbps, sub) {
+  const key = `${from}>${to}`;
+  if (!links.has(key)) links.set(key, { key, from, to, mbps: 0, subs: new Set() });
+  const link = links.get(key);
+  link.subs.add(sub);
+  link.byPublisher = { ...link.byPublisher, [subscriptions[sub][0]]: Math.max(link.byPublisher?.[subscriptions[sub][0]] || 0, mbps) };
+  link.mbps = Object.values(link.byPublisher).reduce((a, b) => a + b, 0);
+}
+subscriptions.forEach(([pub, sub, mbps], i) => {
+  const pr = clientById[pub].relay, sr = clientById[sub].relay;
+  addLink(pub, pr, mbps, i);
+  if (pr !== sr) addLink(pr, sr, mbps, i);
+  addLink(sr, sub, mbps, i);
+});
+const hopsOf = i => {
+  const [pub, sub] = subscriptions[i], pr = clientById[pub].relay, sr = clientById[sub].relay;
+  return pr === sr ? [`${pub}>${pr}`, `${sr}>${sub}`] : [`${pub}>${pr}`, `${pr}>${sr}`, `${sr}>${sub}`];
+};
+const carriedSubs = (link, subs) => [...link.subs].filter(i => subs.has(i));
+const kindOf = link => clientById[link.from] ? "uplink" : clientById[link.to] ? "downlink" : "inter-relay";
+
+const pos = id => clientById[id] || relayById[id];
+const flows = document.getElementById("flows"), hits = document.getElementById("hits");
+for (const link of links.values()) {
+  const a = pos(link.from), b = pos(link.to);
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+  const nx = -dy / len * 4, ny = dx / len * 4;
+  const half = id => relayById[id] ? relayHalf : { w: 50, h: 22 };
+  const edge = id => Math.min(half(id).w / Math.abs(dx / len || 1e-9), half(id).h / Math.abs(dy / len || 1e-9));
+  const startPad = edge(link.from) + 2, endPad = edge(link.to) + 6;
+  const d = `M${a.x + dx / len * startPad + nx},${a.y + dy / len * startPad + ny} L${b.x - dx / len * endPad + nx},${b.y - dy / len * endPad + ny}`;
+  const kind = kindOf(link);
+  const h = kind === "uplink" ? "up" : kind === "downlink" ? health(clientById[link.to].loss) : "ok";
+  link.path = el("path", { d, class: "flow", stroke: color[h], "marker-end": `url(#arrow-${h})` }, flows);
+  link.path.style.animationDuration = `${(3 / link.mbps).toFixed(2)}s`;
+  link.hit = el("path", { d, class: "hit" }, hits);
+  link.hit.addEventListener("click", () => focusOn(link.key));
+}
+
+const nodes = document.getElementById("nodes");
+const nodeEls = {};
+for (const r of relays) {
+  const g = el("g", { class: "node relay" }, nodes);
+  const { w, h } = relayHalf;
+  el("rect", { class: "box", x: r.x - w, y: r.y - h, width: w * 2, height: h * 2, rx: 6 }, g);
+  ["#5DCAA5", "#85B7EB"].forEach((ledColor, i) => {
+    const uy = r.y - h + 8 + i * 17;
+    el("rect", { class: "unit", x: r.x - w + 8, y: uy, width: w * 2 - 16, height: 13, rx: 2 }, g);
+    for (let v = 0; v < 6; v++) el("line", { class: "vent", x1: r.x - w + 16 + v * 6, y1: uy + 3, x2: r.x - w + 16 + v * 6, y2: uy + 10 }, g);
+    el("circle", { class: "led", cx: r.x + w - 24, cy: uy + 6.5, r: 2.2, fill: ledColor, style: `animation-delay:${i * 0.5}s` }, g);
+    el("circle", { cx: r.x + w - 16, cy: uy + 6.5, r: 2.2, fill: "#555" }, g);
+  });
+  txt(g, r.x, r.y + 8, r.id);
+  txt(g, r.x, r.y + 24, `RSS ${r.rss} MB`, "muted");
+  txt(g, r.x, r.y + 38, `cache ${r.cache} MB`, "muted");
+  g.addEventListener("click", () => focusOn(r.id));
+  nodeEls[r.id] = g;
+}
+const label = list => list.length > 1 ? `${list[0]} +${list.length - 1}` : list[0] || "";
+for (const c of clients) {
+  const g = el("g", { class: "node", transform: `translate(${c.x - 50},${c.y - 22})` }, nodes);
+  el("rect", { class: "box", width: 100, height: 44, rx: 6 }, g);
+  txt(g, 10, 18, c.id, null, "start");
+  txt(g, 10, 33, label(c.published.length ? c.published : c.subscribed), "muted", "start");
+  if (c.trackCount) {
+    el("circle", { cx: 86, cy: 16, r: 8, fill: "#e8e8e6" }, g);
+    txt(g, 86, 20, c.trackCount, null).setAttribute("style", "fill:#141414;font-weight:500");
+  }
+  g.addEventListener("click", () => focusOn(c.id));
+  nodeEls[c.id] = g;
+}
+
+const section = (title, direction) => `<div class="section"><span>${title}</span><small>${direction}</small></div>`;
+
+function upStats(c) {
+  const own = trackOf(c.id);
+  if (!own) return null;
+  const visible = visibleSubs();
+  const out = subscriptions.filter((s, i) => s[0] === c.id && visible.has(i));
+  if (!out.length) return null;
+  const t = !!c.upTrouble;
+  return { own, out, mbps: Math.max(...out.map(e => e[2])), gapMs: t ? 180 : 34, blocked: t ? 3 : 0, resets: t ? 2 : 0 };
+}
+function downStats(c) {
+  const visible = visibleSubs();
+  const inn = subscriptions.filter((s, i) => s[1] === c.id && visible.has(i));
+  if (!inn.length) return null;
+  const mbps = inn.reduce((s, e) => s + e[2], 0), h = health(c.loss), severe = c.loss > 5;
+  return { inn, mbps, loss: c.loss, lostKBps: mbps * c.loss * 1.25, cwndKB: c.rtt * 3.1, congestion: h !== "ok" ? 4 : 0, blocked: severe ? 2 : 0, stopSending: 0, resets: severe ? 1 : 0 };
+}
+const sum = (list, f) => list.reduce((acc, x) => acc + f(x), 0);
+function visibleMbps(link) {
+  const byPublisher = {};
+  for (const i of carriedSubs(link, visibleSubs())) { const [pub, , mbps] = subscriptions[i]; byPublisher[pub] = Math.max(byPublisher[pub] || 0, mbps); }
+  return sum(Object.values(byPublisher), v => v);
+}
+const scopeNote = () => nsFilter.value ? `<div class="note">Bitrate and tracks: <b>${nsFilter.value}</b> only. RTT, loss, cwnd and the other transport figures cover the whole session.</div>` : "";
+function relayTotals(r) {
+  const visible = [...links.values()].filter(l => !l.path.classList.contains("hidden"));
+  const attached = clients.filter(c => c.relay === r.id && !nodeEls[c.id].classList.contains("hidden"));
+  const ups = attached.map(upStats).filter(Boolean), downs = attached.map(downStats).filter(Boolean);
+  const fromRelays = visible.filter(l => l.to === r.id && relayById[l.from]), toRelays = visible.filter(l => l.from === r.id && relayById[l.to]);
+  const upClients = sum(ups, u => u.mbps), upRelays = sum(fromRelays, visibleMbps);
+  const downClients = sum(downs, d => d.mbps), downRelays = sum(toRelays, visibleMbps);
+  const downTotal = downClients + downRelays;
+  return {
+    attached, ups, downs, fromRelays, toRelays, upClients, upRelays, downClients, downRelays, downTotal,
+    loss: downTotal ? sum(downs, d => d.mbps * d.loss) / downTotal : 0,
+    lostKBps: sum(downs, d => d.lostKBps),
+    congestion: sum(downs, d => d.congestion),
+    downBlocked: sum(downs, d => d.blocked),
+    stopSending: sum(downs, d => d.stopSending),
+    downResets: sum(downs, d => d.resets),
+    lagging: sum(downs, d => d.inn.filter(lagOf).length),
+    upBlocked: sum(ups, u => u.blocked),
+    upResets: sum(ups, u => u.resets),
+    gappyTracks: sum(ups, u => u.gapMs > 100 ? u.own.names.length : 0),
+  };
+}
+function routeSection(link) {
+  const routes = carriedSubs(link, visibleSubs()).map(i => { const hops = hopsOf(i); return { path: [hops[0].split(">")[0], ...hops.map(h => h.split(">")[1])].join(" → "), namespace: trackOf(subscriptions[i][0]).namespace }; });
+  return section("Routes: original publisher → subscriber", `${routes.length}`)
+    + `<div class="rows">${routes.map(r => `<div><span>${r.path}</span><span>${r.namespace}</span></div>`).join("")}</div>`;
+}
+
+const rows = items => `<div class="rows">${items.map(([left, right = ""]) => `<div><span>${left}</span><span>${right}</span></div>`).join("")}</div>`;
+const lagText = e => lagOf(e) ? `<b style="color:var(--warn)">lag ${lagOf(e) * 900} ms</b>` : "lag 40 ms";
+function uplinkDetails(c) {
+  const u = upStats(c);
+  return u ? section("↑ Publishes", `${c.id} → ${c.relay}`) + rows([...u.own.names.map(n => [`${u.own.namespace} / ${n}`]), ["Subscribers", u.out.length]]) : "";
+}
+function downlinkDetails(c) {
+  const d = downStats(c);
+  return d ? section("↓ Receives", `${c.relay} → ${c.id}`) + rows(d.inn.map(e => [trackOf(e[0]).namespace, lagText(e)])) : "";
+}
+function details(id) {
+  const link = links.get(id);
+  if (relayById[id]) {
+    const r = relayById[id], t = relayTotals(r), mbps = v => `${v.toFixed(1)} Mbps`;
+    return `<div class="sub">GCP · asia-northeast1</div>` + scopeNote()
+      + section("Ingress", `received by ${r.id}`) + rows([[`from clients (${t.ups.length})`, mbps(t.upClients)], ...t.fromRelays.map(l => [`from ${l.from}`, mbps(visibleMbps(l))])])
+      + section("Egress", `sent by ${r.id}`) + rows([[`to clients (${t.downs.length})`, mbps(t.downClients)], ...t.toRelays.map(l => [`to ${l.to}`, mbps(visibleMbps(l))])])
+      + section("Clients", `${t.attached.length}`) + rows(t.attached.map(c => [c.id, `${c.rtt} ms · ${c.loss.toFixed(1)} %`]));
+  }
+  if (!link) {
+    const c = clientById[id];
+    return `<div class="sub">via ${c.relay} · path MTU 1452 B<br>app ${c.app}</div>` + scopeNote() + uplinkDetails(c) + downlinkDetails(c);
+  }
+  const kind = kindOf(link);
+  const routes = carriedSubs(link, visibleSubs()).map(i => { const hops = hopsOf(i); return [[hops[0].split(">")[0], ...hops.map(h => h.split(">")[1])].join(" → "), trackOf(subscriptions[i][0]).namespace]; });
+  const routeSection = section("Routes", `${routes.length}`) + rows(routes);
+  if (kind === "inter-relay") {
+    const byNamespace = {};
+    for (const i of carriedSubs(link, visibleSubs())) (byNamespace[trackOf(subscriptions[i][0]).namespace] ||= []).push(i);
+    return `<div class="sub">Inter-relay session · measured by ${link.from} (sender)</div>` + scopeNote()
+      + section("Tracks carried", `${Object.keys(byNamespace).length}`) + rows(Object.entries(byNamespace).map(([name, subs]) => [name, `${subs.length} subscriber${subs.length > 1 ? "s" : ""}`]))
+      + routeSection;
+  }
+  const c = clientById[kind === "uplink" ? link.from : link.to];
+  return `<div class="sub">${kind === "uplink" ? "Uplink" : "Downlink"} · app ${c.app}</div>` + scopeNote()
+    + (kind === "uplink" ? uplinkDetails(c) : downlinkDetails(c)) + routeSection;
+}
+let selected = null;
+const visibleSubs = () => new Set(subscriptions.map((s, i) => [s, i]).filter(([s]) => (!filter.value || clientById[s[0]].app === filter.value) && nsMatches(trackOf(s[0]).namespace)).map(([, i]) => i));
+function subsOf(id) {
+  const link = links.get(id);
+  if (link) return [...link.subs];
+  return subscriptions.map((s, i) => [s, i]).filter(([s]) => s[0] === id || s[1] === id || clientById[s[0]].relay === id || clientById[s[1]].relay === id).map(([, i]) => i);
+}
+function focusOn(id) {
+  const visible = visibleSubs();
+  const subs = subsOf(id).filter(i => visible.has(i));
+  const appsOf = [...new Set(subs.map(i => clientById[subscriptions[i][0]].app))];
+  if (appsOf.length === 1) filter.value = appsOf[0];
+  nsFilter.value = commonPrefix(subs.map(i => trackOf(subscriptions[i][0]).namespace)).join("/");
+  selected = id;
+  applyFilter();
+}
+function resetFocus() {
+  const prefix = elements(nsFilter.value);
+  if (prefix.length) nsFilter.value = prefix.slice(0, -1).join("/");
+  else filter.value = filter.value === manualApp ? "" : manualApp;
+  selected = null;
+  applyFilter();
+}
+function select(id) {
+  selected = id;
+  const subs = visibleSubs();
+  const link = links.get(id);
+  for (const k in nodeEls) nodeEls[k].classList.toggle("sel", k === id);
+  const related = new Set([...subs].filter(i => { const s = subscriptions[i]; return s[0] === id || s[1] === id || clientById[s[0]].relay === id || clientById[s[1]].relay === id; }));
+  const route = link ? new Set(carriedSubs(link, subs).flatMap(hopsOf)) : null;
+  for (const l of links.values()) {
+    l.path.classList.toggle("dim", link ? !route.has(l.key) : ![...l.subs].some(i => related.has(i)));
+    l.path.classList.toggle("sel", l === link);
+    l.path.classList.toggle("focus", link ? l === link : l.from === id || l.to === id);
+  }
+  const activeNodes = new Set([id]);
+  for (const l of links.values()) if (!l.path.classList.contains("dim") && !l.path.classList.contains("hidden")) activeNodes.add(l.from).add(l.to);
+  for (const k in nodeEls) nodeEls[k].classList.toggle("dim", !activeNodes.has(k));
+  openDrawer(id);
+  autoFocus();
+}
+function applyFilter() {
+  const app = filter.value;
+  const subs = visibleSubs();
+  const involved = new Set([...subs].flatMap(i => subscriptions[i].slice(0, 2)));
+  for (const c of clients) nodeEls[c.id].classList.toggle("hidden", !!app && c.app !== app || !!nsFilter.value && !involved.has(c.id));
+  nsFilter.classList.toggle("active", !!nsFilter.value);
+  const prefixes = new Set(tracks.filter(t => !app || clientById[t.publisher].app === app).flatMap(t => elements(t.namespace).map((_, i, e) => e.slice(0, i + 1).join("/"))));
+  document.getElementById("ns-options").innerHTML = [...prefixes].sort().map(p => `<option value="${p}">`).join("");
+  for (const l of links.values()) {
+    const hide = ![...l.subs].some(i => subs.has(i));
+    l.path.classList.toggle("hidden", hide);
+    l.hit.classList.toggle("hidden", hide);
+  }
+  const shown = clients.filter(c => !nodeEls[c.id].classList.contains("hidden"));
+  document.getElementById("s-clients").textContent = shown.length;
+  document.getElementById("s-subs").textContent = subs.size;
+  const hiddenNode = nodeEls[selected]?.classList.contains("hidden");
+  const hiddenLink = links.get(selected)?.path.classList.contains("hidden");
+  if (hiddenNode || hiddenLink) selected = null;
+  selected ? select(selected) : clearSelection();
+}
+function clearSelection() {
+  selected = null;
+  for (const k in nodeEls) nodeEls[k].classList.remove("sel", "dim");
+  for (const l of links.values()) l.path.classList.remove("sel", "dim", "focus");
+  closeDrawer();
+  autoFocus();
+}
+const graph = document.getElementById("graph");
+const viewBox = { x: 0, y: 0, w: 1000, h: 840 };
+const applyViewBox = () => graph.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+let pan = null;
+graph.addEventListener("pointerdown", event => {
+  if (event.button !== 0) return;
+  pan = { startX: event.clientX, startY: event.clientY, x: viewBox.x, y: viewBox.y, moved: false, id: event.pointerId };
+});
+graph.addEventListener("pointermove", event => {
+  if (!pan) return;
+  const dx = event.clientX - pan.startX, dy = event.clientY - pan.startY;
+  if (!pan.moved && Math.hypot(dx, dy) < 4) return;
+  if (!pan.moved) { pan.moved = true; graph.setPointerCapture(pan.id); graph.classList.add("panning"); }
+  const scale = Math.max(viewBox.w / graph.clientWidth, viewBox.h / graph.clientHeight);
+  viewBox.x = pan.x - dx * scale;
+  viewBox.y = pan.y - dy * scale;
+  applyViewBox();
+});
+graph.addEventListener("pointerup", () => {
+  graph.classList.remove("panning");
+  if (pan?.moved) graph.addEventListener("click", event => event.stopPropagation(), { capture: true, once: true });
+  pan = null;
+});
+function boxOf(ids) {
+  const half = id => relayById[id] ? relayHalf : { w: 50, h: 22 };
+  const xs = ids.flatMap(id => [pos(id).x - half(id).w, pos(id).x + half(id).w]), ys = ids.flatMap(id => [pos(id).y - half(id).h, pos(id).y + half(id).h]);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
+function fitView(ids) {
+  const box = boxOf(ids), pad = 40;
+  const drawer = document.querySelector("main").classList.contains("drawer-open") ? document.querySelector(".drawer").offsetHeight : 0;
+  const width = graph.clientWidth, visible = Math.max(120, graph.clientHeight - drawer);
+  const fitScale = Math.max((box.x1 - box.x0 + pad * 2) / width, (box.y1 - box.y0 + pad * 2) / visible);
+  const scale = Math.max(fitScale, Math.max(1000 / width, 840 / graph.clientHeight) * 0.6);
+  const w = width * scale, h = graph.clientHeight * scale;
+  return { x: (box.x0 + box.x1) / 2 - w / 2, y: (box.y0 + box.y1) / 2 - visible * scale / 2, w, h };
+}
+let viewAnimation = null;
+function animateView(target, duration = 350) {
+  cancelAnimationFrame(viewAnimation);
+  const from = { ...viewBox }, start = performance.now();
+  const step = now => {
+    const t = Math.min(1, (now - start) / duration), e = 1 - (1 - t) ** 3;
+    for (const k of ["x", "y", "w", "h"]) viewBox[k] = from[k] + (target[k] - from[k]) * e;
+    applyViewBox();
+    if (t < 1) viewAnimation = requestAnimationFrame(step);
+  };
+  viewAnimation = requestAnimationFrame(step);
+}
+const visibleNodeIds = () => Object.keys(nodeEls).filter(k => !nodeEls[k].classList.contains("hidden") && !nodeEls[k].classList.contains("dim"));
+const autoFocus = () => animateView(fitView(visibleNodeIds()));
+function zoomAt(factor, clientX, clientY) {
+  cancelAnimationFrame(viewAnimation);
+  const p = new DOMPoint(clientX, clientY).matrixTransform(graph.getScreenCTM().inverse());
+  const w = Math.min(6000, Math.max(150, viewBox.w * factor)), applied = w / viewBox.w;
+  viewBox.x = p.x - (p.x - viewBox.x) * applied;
+  viewBox.y = p.y - (p.y - viewBox.y) * applied;
+  viewBox.w = w;
+  viewBox.h *= applied;
+  applyViewBox();
+}
+graph.addEventListener("wheel", event => {
+  event.preventDefault();
+  zoomAt(Math.exp(event.deltaY * (event.ctrlKey ? 0.01 : 0.0015)), event.clientX, event.clientY);
+}, { passive: false });
+const zoomFromCenter = factor => { const r = graph.getBoundingClientRect(); zoomAt(factor, r.left + r.width / 2, r.top + (r.height - (document.querySelector("main").classList.contains("drawer-open") ? document.querySelector(".drawer").offsetHeight : 0)) / 2); };
+document.getElementById("zoom-in").addEventListener("click", () => zoomFromCenter(1 / 1.25));
+document.getElementById("zoom-out").addEventListener("click", () => zoomFromCenter(1.25));
+document.getElementById("zoom-fit").addEventListener("click", autoFocus);
+graph.addEventListener("dblclick", event => {
+  if (!event.target.closest(".node, .hit")) autoFocus();
+});
+document.getElementById("graph").addEventListener("click", event => {
+  if (!event.target.closest(".node, .hit")) resetFocus();
+});
+const seek = document.getElementById("seek"), liveButton = document.getElementById("live");
+function showSeek() {
+  const past = Number(seek.value) < 100;
+  const at = new Date(Date.now() - (100 - Number(seek.value)) * 7 * 864e3);
+  liveButton.classList.toggle("past", past);
+  document.getElementById("seek-label").textContent = past ? at.toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "Live";
+}
+seek.addEventListener("input", showSeek);
+liveButton.addEventListener("click", () => { seek.value = 100; showSeek(); });
+const palette = ["#85B7EB", "#5DCAA5", "#EF9F27", "#ED93B1", "#AFA9EC"];
+const ranges = { "15m": 15 * 60e3, "1h": 3600e3, "6h": 6 * 3600e3, "1d": 864e5, "7d": 7 * 864e5 };
+const POINTS = 90;
+let range = "1h", drawerSelection = null, chartState = null;
+const hash = str => [...str].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);
+function series(key, base, spread, spiky) {
+  let seed = hash(key), smooth = 0;
+  const rand = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  return Array.from({ length: POINTS }, (_, i) => {
+    smooth = smooth * 0.8 + (rand() - 0.5) * 0.9;
+    const spike = spiky && (i % 29 > 24) ? spread * 3 * rand() : 0;
+    return Math.max(0, base + smooth * spread + spike);
+  });
+}
+const s = (name, base, spread = base * 0.15, spiky = false) => ({ name, base, spread, spiky });
+function chartSpecs(id) {
+  const link = links.get(id);
+  if (relayById[id]) {
+    const r = relayById[id], t = relayTotals(r);
+    return [
+      { title: "Memory", unit: "MB", series: [s("RSS", r.rss), s("Cache payload", r.cache)] },
+      { title: "Throughput", unit: "Mbps", series: [s("Ingress", t.upClients + t.upRelays), s("Egress", t.downTotal)] },
+      { title: "Egress loss (bitrate-weighted)", unit: "%", series: [s("Loss", t.loss, t.loss * 0.5 + 0.2, t.loss > 1)] },
+      { title: "Sessions", unit: "", series: [s("Sessions", t.attached.length + t.fromRelays.length + t.toRelays.length, 1)] },
+      { title: "Cache objects", unit: "", series: [s("Objects", r.cacheObjects)] },
+      { title: "Flow-control blocked", unit: "/s", series: [s("Clients by relay window", t.upBlocked, t.upBlocked, true), s("Relay by peer windows", t.downBlocked, t.downBlocked, true)] },
+      { title: "Stream resets", unit: "/s", series: [s("By clients", t.upResets, t.upResets, true), s("By relay", t.downResets, t.downResets, true)] },
+      { title: "Subscriptions lagging > 500 ms", unit: "", series: [s("Lagging", t.lagging, t.lagging * 0.5, t.lagging > 0)] },
+    ];
+  }
+  if (link && kindOf(link) === "inter-relay") {
+    return [
+      { title: nsFilter.value ? `Bitrate (${nsFilter.value})` : "Bitrate", unit: "Mbps", series: [s("Sent", visibleMbps(link))] },
+      { title: "RTT", unit: "ms", series: [s("RTT", 2, 0.4), s("min RTT", 1.6, 0.1)] },
+      { title: "Loss", unit: "%", series: [s("Loss", 0.05, 0.05)] },
+      { title: "cwnd", unit: "KB", series: [s("cwnd", 1840)] },
+      { title: "Congestion events", unit: "/s", series: [s("Events", 0, 0.2)] },
+    ];
+  }
+  const c = clientById[link ? (kindOf(link) === "uplink" ? link.from : link.to) : id];
+  const showUp = !link || kindOf(link) === "uplink", showDown = !link || kindOf(link) === "downlink";
+  const u = showUp ? upStats(c) : null, d = showDown ? downStats(c) : null;
+  const specs = [
+    { title: nsFilter.value ? `Bitrate (${nsFilter.value})` : "Bitrate", unit: "Mbps", series: [u && s(`↑ ${c.id} → ${c.relay}`, u.mbps, u.mbps * 0.15, !!c.upTrouble), d && s(`↓ ${c.relay} → ${c.id}`, d.mbps)] },
+    { title: "RTT", unit: "ms", series: [s("RTT", c.rtt, c.rtt * 0.25, c.rtt > 50), s("min RTT", c.rtt * 0.7, 1)] },
+  ];
+  if (d) specs.push(
+    { title: "Downlink loss", unit: "%", series: [s("Loss", d.loss, d.loss * 0.4 + 0.1, d.loss > 1)] },
+    { title: "cwnd", unit: "KB", series: [s("cwnd", d.cwndKB, d.cwndKB * 0.3)] },
+    { title: "Congestion events", unit: "/s", series: [s("Events", d.congestion, d.congestion * 0.6, d.congestion > 0)] },
+  );
+  if (u) specs.push({ title: "Max object arrival gap", unit: "ms", series: [s("Gap", u.gapMs, u.gapMs * 0.3, u.gapMs > 100)] });
+  specs.push(
+    { title: "Flow-control blocked", unit: "/s", series: [u && s("↑ client by relay window", u.blocked, u.blocked, u.blocked > 0), d && s("↓ relay by client window", d.blocked, d.blocked, d.blocked > 0)] },
+    { title: "Stream resets", unit: "/s", series: [u && s("↑ by client", u.resets, u.resets, u.resets > 0), d && s("↓ by relay", d.resets, d.resets, d.resets > 0)] },
+  );
+  if (d) specs.push({ title: "Delivery lag", unit: "ms", series: d.inn.map(e => s(trackOf(e[0]).namespace, lagOf(e) ? lagOf(e) * 900 : 40, lagOf(e) ? 300 : 8, lagOf(e) > 0)) });
+  return specs.map(spec => ({ ...spec, series: spec.series.filter(Boolean) }));
+}
+const niceMax = v => { if (v <= 0) return 1; const e = 10 ** Math.floor(Math.log10(v)); return [1, 2, 2.5, 5, 10].map(f => f * e).find(x => x >= v); };
+const fmt = v => v === 0 ? "0" : v >= 100 ? Math.round(v).toLocaleString() : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+const W = 300, H = 120, ML = 36, MR = 6, MT = 6, MB = 18;
+function timeLabel(t) {
+  const d = new Date(t);
+  return ranges[range] >= 864e5 ? `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:00` : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function chartSvg(spec, times) {
+  const max = niceMax(Math.max(...spec.series.flatMap(x => x.values)) * 1.1);
+  const xOf = i => ML + i / (POINTS - 1) * (W - ML - MR), yOf = v => MT + (1 - v / max) * (H - MT - MB);
+  const grid = [0, 0.5, 1].map(f => `<line x1="${ML}" x2="${W - MR}" y1="${yOf(max * f)}" y2="${yOf(max * f)}" stroke="#2e2e2e"/><text x="${ML - 4}" y="${yOf(max * f) + 3}" text-anchor="end" class="axis">${fmt(max * f)}</text>`).join("");
+  const ticks = [0, 30, 60, 89].map(i => `<text x="${xOf(i)}" y="${H - 4}" text-anchor="${i === 0 ? "start" : i === 89 ? "end" : "middle"}" class="axis">${timeLabel(times[i])}</text>`).join("");
+  const lines = spec.series.map((x, k) => `<polyline fill="none" stroke="${palette[k % palette.length]}" stroke-width="1.5" points="${x.values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ")}"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" class="plot">${grid}${ticks}${lines}<line class="cross" y1="${MT}" y2="${H - MB}" x1="-10" x2="-10"/><rect class="hover" x="${ML}" y="${MT}" width="${W - ML - MR}" height="${H - MT - MB}"/></svg>`;
+}
+function renderCharts() {
+  if (!drawerSelection) return;
+  const end = Date.now() - (100 - Number(seek.value)) * 7 * 864e3, step = ranges[range] / (POINTS - 1);
+  const times = Array.from({ length: POINTS }, (_, i) => end - (POINTS - 1 - i) * step);
+  const specs = chartSpecs(drawerSelection).map(spec => ({ ...spec, series: spec.series.map(x => ({ ...x, values: series(`${drawerSelection}|${spec.title}|${x.name}|${range}`, x.base, x.spread, x.spiky) })) }));
+  chartState = { specs, times };
+  document.getElementById("charts").innerHTML = specs.map((spec, n) => `<div class="chart">
+    <div class="chart-head"><span>${spec.title}</span><small>${spec.unit}</small></div>
+    ${chartSvg(spec, times)}
+    <div class="chart-legend" data-chart="${n}">${spec.series.map((x, k) => `<span><i style="background:${palette[k % palette.length]}"></i>${x.name}<b>${fmt(x.values[POINTS - 1])}</b></span>`).join("")}</div>
+  </div>`).join("");
+  document.getElementById("drawer-time").textContent = "latest";
+}
+function showIndex(index) {
+  const x = index === null ? -10 : ML + index / (POINTS - 1) * (W - ML - MR);
+  document.querySelectorAll("#charts .cross").forEach(line => { line.setAttribute("x1", x); line.setAttribute("x2", x); });
+  document.querySelectorAll("#charts .chart-legend").forEach(legend => {
+    const spec = chartState.specs[legend.dataset.chart];
+    legend.querySelectorAll("b").forEach((b, k) => { b.textContent = fmt(spec.series[k].values[index ?? POINTS - 1]); });
+  });
+  document.getElementById("drawer-time").textContent = index === null ? "latest" : new Date(chartState.times[index]).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+document.getElementById("charts").addEventListener("mousemove", event => {
+  const svg = event.target.closest("svg.plot");
+  if (!svg) return;
+  const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  showIndex(Math.max(0, Math.min(POINTS - 1, Math.round((point.x - ML) / (W - ML - MR) * (POINTS - 1)))));
+});
+document.getElementById("charts").addEventListener("mouseleave", () => showIndex(null));
+function openDrawer(id) {
+  drawerSelection = id;
+  const link = links.get(id);
+  document.getElementById("drawer-title").textContent = link ? `${link.from} → ${link.to}` : id;
+  document.querySelector("main").classList.add("drawer-open");
+  document.getElementById("details").innerHTML = details(id);
+  renderCharts();
+}
+function closeDrawer() {
+  drawerSelection = null;
+  document.querySelector("main").classList.remove("drawer-open");
+}
+document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+document.getElementById("drawer-grip").addEventListener("pointerdown", event => {
+  const main = document.querySelector("main"), grip = event.currentTarget;
+  const bottom = main.getBoundingClientRect().bottom, maxHeight = main.clientHeight - 60;
+  grip.setPointerCapture(event.pointerId);
+  main.classList.add("resizing");
+  const move = e => main.style.setProperty("--drawer-h", `${Math.round(Math.max(160, Math.min(maxHeight, bottom - e.clientY)))}px`);
+  const up = () => { main.classList.remove("resizing"); grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); };
+  grip.addEventListener("pointermove", move);
+  grip.addEventListener("pointerup", up);
+});
+document.getElementById("ranges").innerHTML = Object.keys(ranges).map(r => `<button data-range="${r}" class="${r === range ? "on" : ""}">${r}</button>`).join("");
+document.getElementById("ranges").addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  range = button.dataset.range;
+  document.querySelectorAll("#ranges button").forEach(b => b.classList.toggle("on", b === button));
+  renderCharts();
+});
+seek.addEventListener("input", renderCharts);
+filter.addEventListener("change", () => { manualApp = filter.value; applyFilter(); });
+nsFilter.addEventListener("input", applyFilter);
+document.getElementById("ns-clear").addEventListener("click", () => { nsFilter.value = ""; applyFilter(); });
+applyFilter();
+</script>
+</body>
+</html>
