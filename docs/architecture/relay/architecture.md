@@ -372,10 +372,14 @@ per-request authorization gate under "Event pipeline".
   error, task abort) drops it, which marks the subgroup aborted: its group is
   not declared complete (draft-14 §10.4.2) and egress resets, rather than
   FINs, the downstream stream (§10.4.3). Publishers of one track send the
-  same objects (§2.1), so when several publishers deliver a stream subgroup the
-  first FIN completes it for all of them and later streams for it only add
-  duplicates; it is aborted only when its last stream ends without a FIN. A
-  datagram group stays open until every publisher has moved on from it. A later live stream for an aborted,
+  same objects (§2.1), so when several publishers deliver a stream subgroup, the
+  FIN of a stream that delivered it from the earliest object any of its
+  streams started at completes it for all of them, and later streams for it
+  only add duplicates. A stream that joined later started mid-subgroup and
+  proves nothing below its first object, so its FIN only closes that stream;
+  the subgroup is aborted when its last stream ends without a completing FIN.
+  A datagram group stays open until every publisher has moved on from it, and
+  is aborted only when none of them moved on cleanly. A later live stream for an aborted,
   no-longer-open subgroup (e.g. a new upstream subscription after the
   previous one was cancelled) reopens it as the next `SubgroupRun`: the abort
   mark is cleared so the new stream's FIN or reset decides the tail again, and
@@ -557,7 +561,8 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   neither path requires the start group id itself to exist.
 - **Every publisher is ingested**: one reader set per track and publisher,
   all inserting into the track's single cache; a publisher's stop ends only
-  its own readers, and the first FIN of a stream subgroup completes it.
+  its own readers, and only a FIN covering a stream subgroup from its
+  earliest received object completes it.
 - **Egress runner lifetime is the downstream registration's**: a runner stops
   when its registered downstream subscription is removed, regardless of which
   session worker removes it or when; a downstream subscription is only ever
