@@ -7,7 +7,12 @@ use crate::modules::{
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::{CascadingRelayContext, downstream_publish::DownstreamPublish},
+        sequences::{
+            CascadingRelayContext,
+            downstream_publish::{
+                DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
+            },
+        },
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
@@ -44,7 +49,7 @@ impl Publish {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        downstream_publish: &DownstreamPublish<'_>,
+        downstream_publish: &DownstreamPublish,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: Box<dyn PublishHandler>,
     ) {
@@ -124,13 +129,12 @@ impl Publish {
     )]
     async fn notify_namespace_subscribers(
         &self,
-        downstream_publish: &DownstreamPublish<'_>,
+        downstream_publish: &DownstreamPublish,
         cascading_relay_context: CascadingRelayContext<'_>,
         track_key: &TrackKey,
         is_origin_client: bool,
     ) {
-        self.notify_local_namespace_subscribers(downstream_publish, track_key)
-            .await;
+        self.notify_local_namespace_subscribers(downstream_publish, track_key);
 
         if is_origin_client {
             self.notify_remote_subscribers(
@@ -149,29 +153,20 @@ impl Publish {
         skip_all,
         fields(track_key = %track_key)
     )]
-    async fn notify_local_namespace_subscribers(
+    fn notify_local_namespace_subscribers(
         &self,
-        downstream_publish: &DownstreamPublish<'_>,
+        downstream_publish: &DownstreamPublish,
         track_key: &TrackKey,
     ) {
         let subscriber_session_ids = downstream_publish
             .table
             .get_namespace_subscribers(&track_key.track_namespace);
         for subscriber_session_id in subscriber_session_ids {
-            match downstream_publish
-                .send(subscriber_session_id, track_key)
-                .await
-            {
-                Ok(()) => tracing::info!(
-                    subscriber_session_id = %subscriber_session_id,
-                    "forwarded PUBLISH to namespace subscriber"
-                ),
-                Err(error) => tracing::warn!(
-                    ?error,
-                    subscriber_session_id = %subscriber_session_id,
-                    "failed to forward PUBLISH to namespace subscriber"
-                ),
-            }
+            let _publish_task = DownstreamPublishTask::run(
+                downstream_publish.clone(),
+                subscriber_session_id,
+                track_key.clone(),
+            );
         }
     }
 
@@ -229,7 +224,7 @@ impl Publish {
     )]
     async fn notify_remote_subscribers(
         &self,
-        downstream_publish: &DownstreamPublish<'_>,
+        downstream_publish: &DownstreamPublish,
         track_key: &TrackKey,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
@@ -252,19 +247,16 @@ impl Publish {
                 continue;
             };
 
-            match downstream_publish.send(session_id, track_key).await {
-                Ok(()) => tracing::info!(
-                    relay_id = %relay.relay_id,
-                    session_id = session_id,
-                    "forwarded PUBLISH to remote relay"
-                ),
-                Err(error) => tracing::warn!(
-                    ?error,
-                    relay_id = %relay.relay_id,
-                    session_id = session_id,
-                    "failed to forward PUBLISH to remote relay"
-                ),
-            }
+            tracing::info!(
+                relay_id = %relay.relay_id,
+                session_id = session_id,
+                "forwarding PUBLISH to remote relay"
+            );
+            let _publish_task = DownstreamPublishTask::run(
+                downstream_publish.clone(),
+                session_id,
+                track_key.clone(),
+            );
         }
     }
 }

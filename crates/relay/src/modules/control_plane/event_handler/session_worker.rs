@@ -93,12 +93,12 @@ impl SessionWorker {
         }
     }
 
-    fn downstream_publish(&self) -> DownstreamPublish<'_> {
+    fn downstream_publish(&self) -> DownstreamPublish {
         DownstreamPublish {
-            table: self.deps.local_pub_sub_directory.as_ref(),
-            forwarder: &self.deps.control_message_forwarder,
-            egress_sender: &self.deps.egress_sender,
-            cache_store: self.deps.cache_store.as_ref(),
+            table: self.deps.local_pub_sub_directory.clone(),
+            forwarder: self.deps.control_message_forwarder.clone(),
+            egress_sender: self.deps.egress_sender.clone(),
+            cache_store: self.deps.cache_store.clone(),
         }
     }
 

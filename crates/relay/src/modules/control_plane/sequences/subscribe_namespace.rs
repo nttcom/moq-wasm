@@ -2,7 +2,9 @@ use crate::modules::{
     cascading::route_registry::{RegisterRouteError, RelayRouteRegistry},
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
-        sequences::downstream_publish::DownstreamPublish,
+        sequences::downstream_publish::{
+            DownstreamPublish, downstream_publish_task::DownstreamPublishTask,
+        },
     },
     domain::{
         error_code::SubscribeNamespaceErrorCode,
@@ -30,7 +32,7 @@ impl SubscribeNameSpace {
         session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
-        downstream_publish: &DownstreamPublish<'_>,
+        downstream_publish: &DownstreamPublish,
         route_registry: &dyn RelayRouteRegistry,
         handler: &dyn SubscribeNamespaceHandler,
     ) {
@@ -123,7 +125,7 @@ impl SubscribeNameSpace {
         session_id: SessionId,
         track_namespace_prefix: &str,
         forwarder: &ControlMessageForwarder,
-        downstream_publish: &DownstreamPublish<'_>,
+        downstream_publish: &DownstreamPublish,
     ) {
         let publications = downstream_publish
             .table
@@ -131,12 +133,11 @@ impl SubscribeNameSpace {
         for publication in publications {
             match publication {
                 MatchingPublication::Track(track_key) => {
-                    match downstream_publish.send(session_id, &track_key).await {
-                        Ok(()) => tracing::info!(track_key = %track_key, "forwarded PUBLISH"),
-                        Err(error) => {
-                            tracing::warn!(?error, track_key = %track_key, "failed to forward PUBLISH")
-                        }
-                    }
+                    let _publish_task = DownstreamPublishTask::run(
+                        downstream_publish.clone(),
+                        session_id,
+                        track_key,
+                    );
                 }
                 MatchingPublication::Namespace(track_namespace) => {
                     if forwarder
@@ -208,7 +209,10 @@ impl SubscribeNameSpace {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use super::*;
     use crate::modules::{
@@ -268,7 +272,10 @@ mod tests {
         .await
     }
 
-    async fn subscribe_namespace(ctx: &DownstreamPublishContext, sent: SentMessages) {
+    async fn subscribe_namespace_until_publish_accepted(
+        ctx: &mut DownstreamPublishContext,
+        sent: SentMessages,
+    ) {
         SubscribeNameSpace
             .handle(
                 NAMESPACE_SUBSCRIBER_SESSION,
@@ -280,16 +287,19 @@ mod tests {
                 &MockSubscribeNamespaceHandler { sent },
             )
             .await;
+        tokio::time::timeout(Duration::from_secs(3), ctx.egress_receiver.recv())
+            .await
+            .expect("the accepted PUBLISH should start an egress reader");
     }
 
     #[tokio::test]
     async fn subscribe_namespace_ok_is_sent_before_existing_publishes() {
         // Arrange
         let sent = SentMessages::default();
-        let ctx = context_with_published_track(sent.clone()).await;
+        let mut ctx = context_with_published_track(sent.clone()).await;
 
         // Act
-        subscribe_namespace(&ctx, sent.clone()).await;
+        subscribe_namespace_until_publish_accepted(&mut ctx, sent.clone()).await;
 
         // Assert
         assert_eq!(
@@ -303,10 +313,10 @@ mod tests {
     {
         // Arrange
         let sent = SentMessages::default();
-        let ctx = context_with_published_track(sent.clone()).await;
+        let mut ctx = context_with_published_track(sent.clone()).await;
 
         // Act
-        subscribe_namespace(&ctx, sent).await;
+        subscribe_namespace_until_publish_accepted(&mut ctx, sent).await;
 
         // Assert
         let registered = ctx

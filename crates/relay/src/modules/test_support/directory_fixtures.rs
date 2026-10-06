@@ -108,17 +108,17 @@ pub(crate) struct DownstreamPublishContext {
     pub(crate) forwarder: ControlMessageForwarder,
     pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
     pub(crate) egress_receiver: mpsc::Receiver<EgressCommand>,
-    pub(crate) cache_store: TrackCacheStore,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
     pub(crate) subscriber: RecordedControlMessages,
 }
 
 impl DownstreamPublishContext {
-    pub(crate) fn downstream_publish(&self) -> DownstreamPublish<'_> {
+    pub(crate) fn downstream_publish(&self) -> DownstreamPublish {
         DownstreamPublish {
-            table: &self.table,
-            forwarder: &self.forwarder,
-            egress_sender: &self.egress_sender,
-            cache_store: &self.cache_store,
+            table: self.table.clone(),
+            forwarder: self.forwarder.clone(),
+            egress_sender: self.egress_sender.clone(),
+            cache_store: self.cache_store.clone(),
         }
     }
 }
@@ -140,7 +140,7 @@ pub(crate) async fn downstream_publish_context(
         forwarder: ControlMessageForwarder { repository },
         egress_sender,
         egress_receiver,
-        cache_store: TrackCacheStore::new(),
+        cache_store: Arc::new(TrackCacheStore::new()),
         subscriber,
     }
 }
