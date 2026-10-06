@@ -22,7 +22,7 @@ struct Settings {
 
 struct Started {
     publisher: MediaPublisher,
-    _runtime: Runtime,
+    runtime: Runtime,
     video: VideoInput,
 }
 
@@ -270,14 +270,16 @@ impl MoqtSink {
         };
         *self.started.lock().expect("started lock") = Some(Started {
             publisher,
-            _runtime: runtime,
+            runtime,
             video: VideoInput::default(),
         });
         Ok(())
     }
 
     fn stop(&self) {
-        self.started.lock().expect("started lock").take();
+        if let Some(started) = self.started.lock().expect("started lock").take() {
+            started.runtime.block_on(started.publisher.moqt().close());
+        }
         self.pads.lock().expect("pads lock").ended.clear();
     }
 

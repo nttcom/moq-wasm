@@ -92,7 +92,7 @@ mod tests {
         assert!(queued.is_ok());
         let err = failed.unwrap_err();
         assert!(
-            format!("{err:#}").contains("unsupported moqt url scheme: ftp"),
+            format!("{err:#}").contains(r#"unsupported connect url scheme "ftp""#),
             "{err:#}"
         );
     }
