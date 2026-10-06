@@ -320,9 +320,9 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::modules::data_plane::{
-        cache::subgroup_key::SubgroupKey,
-        tests::harness::fixtures::cached_object::{
+    use crate::modules::{
+        data_plane::cache::subgroup_key::SubgroupKey,
+        test_support::relay_harness::fixtures::cached_object::{
             datagram_object, insert_aborted_group, insert_closed_group, open_group, stream_key,
             stream_object, stream_object_in_subgroup, stream_object_with_payload,
         },
@@ -672,9 +672,9 @@ mod fetch_tests {
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::modules::data_plane::{
-        cache::subgroup_key::SubgroupKey,
-        tests::harness::fixtures::cached_object::{
+    use crate::modules::{
+        data_plane::cache::subgroup_key::SubgroupKey,
+        test_support::relay_harness::fixtures::cached_object::{
             datagram_object, fetch_all, insert_closed_group, open_group, status_object, stream_key,
             stream_object, stream_object_in_subgroup,
         },

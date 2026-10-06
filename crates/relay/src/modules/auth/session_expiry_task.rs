@@ -45,7 +45,7 @@ mod tests {
     use moqt::TerminationErrorCode;
 
     use super::SessionExpiryTask;
-    use crate::modules::session::mocks::mock_session;
+    use crate::modules::test_support::mock_session::mock_session;
 
     #[tokio::test(start_paused = true)]
     async fn closes_the_session_when_the_token_expires() {

@@ -60,7 +60,7 @@ impl TrackCacheStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::data_plane::tests::harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
     use std::time::Duration;
 
     #[tokio::test(start_paused = true)]

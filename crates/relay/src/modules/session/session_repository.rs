@@ -245,7 +245,7 @@ mod tests {
 
     use crate::modules::{
         auth::verified_token::VerifiedToken,
-        session::mocks::{
+        test_support::mock_session::{
             RecordedControlMessages, session_repository_with_upstream_session,
             session_repository_with_upstream_session_token,
         },

@@ -14,7 +14,9 @@ use crate::modules::{
         session_id::SessionId,
         track_key::TrackKey,
     },
-    session::mocks::{RecordedControlMessages, session_repository_with_upstream_session},
+    test_support::mock_session::{
+        RecordedControlMessages, session_repository_with_upstream_session,
+    },
 };
 
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;

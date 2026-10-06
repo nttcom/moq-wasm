@@ -20,9 +20,9 @@ use crate::modules::{
         pub_sub_directory::entry::PublishDoneReason, session_id::SessionId, track_key::TrackKey,
     },
     session::{
-        data_object::DataObject, mocks::session_repository_with_session,
-        session_event::SessionEvent, session_repository::SessionRepository,
+        data_object::DataObject, session_event::SessionEvent, session_repository::SessionRepository,
     },
+    test_support::mock_session::session_repository_with_session,
 };
 
 pub(crate) mod fixtures;

@@ -68,9 +68,11 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        control_plane::sequences::test_fixtures::table_with_upstream,
-        data_plane::tests::harness::fixtures::{cached_object::insert_closed_group, location},
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        test_support::{
+            directory_fixtures::table_with_upstream,
+            relay_harness::fixtures::{cached_object::insert_closed_group, location},
+        },
     };
 
     #[derive(Debug, PartialEq)]

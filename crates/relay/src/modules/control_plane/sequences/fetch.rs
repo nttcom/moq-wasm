@@ -426,9 +426,11 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::modules::{
-        control_plane::sequences::test_fixtures::table_with_upstream,
-        data_plane::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
         domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        test_support::{
+            directory_fixtures::table_with_upstream,
+            relay_harness::fixtures::cached_object::{insert_closed_group, open_group},
+        },
     };
 
     fn standalone_fetch_params(

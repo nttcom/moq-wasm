@@ -189,7 +189,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::modules::data_plane::tests::harness::{
+    use crate::modules::test_support::relay_harness::{
         MockPublisherObservers, fixtures::subscription::make_subscription,
         session_repository_with_downstream_session,
     };

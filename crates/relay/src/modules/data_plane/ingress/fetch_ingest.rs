@@ -212,14 +212,15 @@ impl FetchIngest {
 mod tests {
     use super::*;
     use crate::modules::{
-        data_plane::{
-            cache::track_cache::FetchRangeResolution,
-            tests::harness::fixtures::{
+        data_plane::cache::track_cache::FetchRangeResolution,
+        session::session_event::EventKind,
+        test_support::{
+            mock_session::session_repository_with_upstream_session,
+            relay_harness::fixtures::{
                 cached_object::{status_object, stream_object, stream_object_with_payload},
                 location,
             },
         },
-        session::{mocks::session_repository_with_upstream_session, session_event::EventKind},
     };
     use bytes::Bytes;
     use moqt::ObjectStatus;

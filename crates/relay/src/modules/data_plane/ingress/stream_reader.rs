@@ -257,22 +257,19 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        data_plane::{
-            cache::subgroup_key::SubgroupKey,
-            cache::track_cache::NextObject,
-            tests::harness::{
-                PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
-                fixtures::{
-                    cached_object::stream_key,
-                    data_object::{
-                        make_header, make_header_with, make_payload_object, make_raw_status_object,
-                        make_status_object,
-                    },
-                    location,
+        data_plane::cache::{subgroup_key::SubgroupKey, track_cache::NextObject},
+        session::session_event::EventKind,
+        test_support::relay_harness::{
+            PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
+            fixtures::{
+                cached_object::stream_key,
+                data_object::{
+                    make_header, make_header_with, make_payload_object, make_raw_status_object,
+                    make_status_object,
                 },
+                location,
             },
         },
-        session::session_event::EventKind,
     };
 
     fn payload(object_id_delta: u64) -> DataObject {

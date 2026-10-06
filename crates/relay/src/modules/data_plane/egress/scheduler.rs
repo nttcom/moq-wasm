@@ -192,7 +192,7 @@ impl EgressScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::data_plane::tests::harness::fixtures::{
+    use crate::modules::test_support::relay_harness::fixtures::{
         cached_object::{insert_aborted_group, insert_closed_group, stream_key},
         location,
     };
