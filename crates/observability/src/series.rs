@@ -389,7 +389,8 @@ pub fn bucket_ms(query: &SeriesQuery) -> u64 {
 }
 
 fn select_sql(database: &str, plan: &Plan) -> String {
-    let mut columns: BTreeSet<String> = BTreeSet::new();
+    let mut columns: BTreeSet<String> =
+        BTreeSet::from(["max(timestamp_ms) AS sampled_ms".to_string()]);
     for (_, metric) in plan.metrics {
         for counter in metric.counters() {
             columns.insert(format!("max({counter}) AS {counter}"));
@@ -438,12 +439,18 @@ fn entity_of(row: &Map<String, Value>) -> u64 {
     row.get("entity").and_then(Value::as_u64).unwrap_or(0)
 }
 
+fn sampled_at(row: &Map<String, Value>) -> Option<u64> {
+    row.get("sampled_ms")
+        .and_then(Value::as_u64)
+        .or_else(|| bucket_of(row))
+}
+
 fn rate(
     previous: &Map<String, Value>,
     current: &Map<String, Value>,
     columns: &[&str],
 ) -> Option<f64> {
-    let elapsed_s = (bucket_of(current)? as f64 - bucket_of(previous)? as f64) / 1000.0;
+    let elapsed_s = (sampled_at(current)? as f64 - sampled_at(previous)? as f64) / 1000.0;
     if elapsed_s <= 0.0 {
         return None;
     }
@@ -575,6 +582,28 @@ mod tests {
         // Assert
         assert_eq!(series.t, vec![0, 2_000]);
         assert_eq!(series.series["sent"], vec![None, Some(2_000.0)]);
+    }
+
+    #[test]
+    fn a_partly_filled_bucket_is_divided_by_the_time_it_actually_covers() {
+        // Arrange
+        let rows = vec![
+            row(json!({ "t": 0, "sampled_ms": 39_000, "sent_bytes": 39_000 })),
+            row(json!({ "t": 40_000, "sampled_ms": 44_000, "sent_bytes": 44_000 })),
+        ];
+        let metrics = [(
+            "sent",
+            Metric::Rate {
+                columns: &["sent_bytes"],
+                scale: 1.0,
+            },
+        )];
+
+        // Act / Assert
+        assert_eq!(
+            compute(&rows, &metrics).series["sent"],
+            vec![None, Some(1_000.0)]
+        );
     }
 
     #[test]
