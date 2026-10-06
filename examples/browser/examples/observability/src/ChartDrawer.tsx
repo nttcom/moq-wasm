@@ -4,7 +4,7 @@ import { type ChartSpec, chartSpecs } from './charts'
 import { type ChartLine, LineChart, formatValue } from './LineChart'
 import { type Selection, type Visibility, routesOf } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
-import { type Link, type Topology, linkMbps, relativeNamespace } from './topology'
+import { type Link, type Topology, isStatsSession, linkMbps, relativeNamespace } from './topology'
 
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
@@ -146,7 +146,9 @@ function Details({
     )
     return (
       <>
-        <div className="sub">{relay.snapshot.sessions.length} sessions</div>
+        <div className="sub">
+          {relay.snapshot.sessions.filter((session) => !isStatsSession(session)).length} sessions
+        </div>
         <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
         <Section title="Ingress" direction={`received by ${relay.id}`}>
           <Rows

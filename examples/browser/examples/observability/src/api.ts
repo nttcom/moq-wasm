@@ -1,4 +1,4 @@
-export type SessionPeer = 'client' | 'relay' | 'stats_publisher'
+export type SessionPeer = 'client' | 'relay' | 'stats_publisher' | 'stats_subscriber'
 
 export interface ProcessStats {
   rss_bytes: number | null

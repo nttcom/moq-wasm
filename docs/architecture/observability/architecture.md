@@ -105,8 +105,11 @@ neither is reported.
 }
 ```
 
-- `peer` is `client` or `relay` from the endpoint the session arrived on, and
-  `stats_publisher` for the relay's own loopback session.
+- `peer` is `client` or `relay` from the endpoint the session arrived on,
+  `stats_publisher` for the relay's own loopback session, and `stats_subscriber`
+  for a session subscribed to the relay's own stats track (the observability
+  server, which presents the relay token). The page hides both stats peers, and
+  the relay totals in `/api/series` count only `client` and `relay` sessions.
 - `dialed_relay_id` is set on an inter-relay session this relay dialed. The
   accepting relay only sees a relay token, so consumers identify the far end
   of an accepted relay session by its remote IP: a relay's addresses are the

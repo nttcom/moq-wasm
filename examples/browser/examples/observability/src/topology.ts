@@ -1,6 +1,5 @@
 import type { Id, RelaySnapshot, SessionStats, SubscriptionStats, TrackStats } from './api'
 
-export const OBSERVABILITY_APP_ID = 'observability'
 const MAX_RELAY_HOPS = 4
 const BITS_PER_BYTE = 8
 const MEGA = 1_000_000
@@ -197,8 +196,8 @@ class RelayIndex {
   }
 }
 
-function isHiddenSession(session: SessionStats): boolean {
-  return session.peer === 'stats_publisher' || session.app_id === OBSERVABILITY_APP_ID
+export function isStatsSession(session: SessionStats): boolean {
+  return session.peer === 'stats_publisher' || session.peer === 'stats_subscriber'
 }
 
 const clientLabel = (session: SessionStats) => session.remote_address ?? `session ${session.session_id}`
@@ -209,7 +208,7 @@ export function buildTopology(snapshots: RelaySnapshot[], previous: Map<string, 
   const clients = new Map<string, ClientNode>()
   for (const snapshot of snapshots) {
     for (const session of snapshot.sessions) {
-      if (session.peer !== 'client' || isHiddenSession(session)) continue
+      if (session.peer !== 'client') continue
       const key = clientKey(snapshot.relay_id, session.session_id)
       clients.set(key, {
         key,
@@ -245,7 +244,7 @@ export function buildTopology(snapshots: RelaySnapshot[], previous: Map<string, 
       let publisher: string | null = null
       for (let hop = 0; hop < MAX_RELAY_HOPS && publisherSessionId !== undefined; hop++) {
         const session = index.session(relayId, publisherSessionId)
-        if (!session || isHiddenSession(session)) break
+        if (!session || isStatsSession(session)) break
         if (session.peer === 'client') {
           publisher = clientKey(relayId, publisherSessionId)
           hops.unshift(linkKey(publisher, relayId))
