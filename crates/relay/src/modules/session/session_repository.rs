@@ -30,6 +30,13 @@ struct SessionEntry {
     _event_forward_task: SessionEventForwardTask,
 }
 
+pub(crate) struct SessionState {
+    pub(crate) session_id: SessionId,
+    pub(crate) peer: SessionPeer,
+    pub(crate) app_id: String,
+    pub(crate) transport: moqt::TransportStats,
+}
+
 pub(crate) struct NewSession {
     pub(crate) session_id: SessionId,
     pub(crate) session: Box<dyn Session>,
@@ -159,6 +166,18 @@ impl SessionRepository {
         self.sessions
             .get(&session_id)
             .map(|entry| entry.session.as_publisher())
+    }
+
+    pub(crate) fn session_states(&self) -> Vec<SessionState> {
+        self.sessions
+            .iter()
+            .map(|(session_id, entry)| SessionState {
+                session_id: *session_id,
+                peer: entry.peer,
+                app_id: entry.verified_token.app_id.clone(),
+                transport: entry.session.transport_stats(),
+            })
+            .collect()
     }
 
     pub(crate) fn close_with_protocol_violation(&self, session_id: SessionId, reason: &str) {

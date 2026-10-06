@@ -20,10 +20,14 @@ use crate::modules::{
         ingress::ingress_coordinator::IngressCoordinator,
     },
     domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
+    observability::stats_collector::StatsCollector,
     session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
 pub(crate) struct RelayRuntime {
+    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
+    cache_store: Arc<TrackCacheStore>,
     _ingress: IngressCoordinator,
     _egress: EgressCoordinator,
     _manager: EventHandler,
@@ -48,6 +52,7 @@ impl RelayRuntime {
             route_registry.clone(),
             inter_relay_connection_manager.clone(),
         ));
+        let local_pub_sub_directory = Arc::new(InMemoryLocalPubSubDirectory::new());
         let ingress = IngressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
         let egress = EgressCoordinator::new(repo.clone(), cache_store.clone());
         let manager = EventHandler::run(
@@ -56,9 +61,9 @@ impl RelayRuntime {
                 control_message_forwarder: ControlMessageForwarder {
                     repository: repo.clone(),
                 },
-                repo,
+                repo: repo.clone(),
                 relay_event_sender: sender.clone(),
-                local_pub_sub_directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
+                local_pub_sub_directory: local_pub_sub_directory.clone(),
                 ingress_sender: ingress.sender(),
                 egress_sender: egress.sender(),
                 route_registry,
@@ -73,11 +78,23 @@ impl RelayRuntime {
         (
             sender,
             Self {
+                repo,
+                local_pub_sub_directory,
+                cache_store,
                 _ingress: ingress,
                 _egress: egress,
                 _manager: manager,
                 _evict_job: evict_job,
             },
+        )
+    }
+
+    pub(crate) fn stats_collector(&self, relay_id: String) -> StatsCollector {
+        StatsCollector::new(
+            relay_id,
+            self.repo.clone(),
+            self.local_pub_sub_directory.clone(),
+            self.cache_store.clone(),
         )
     }
 }

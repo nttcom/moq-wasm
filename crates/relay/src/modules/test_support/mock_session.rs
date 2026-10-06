@@ -55,6 +55,7 @@ type SubscribeAnswer = Arc<dyn Fn() -> ContentExists + Send + Sync>;
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
+    transport_stats: moqt::TransportStats,
 }
 
 impl MockUpstreamSession {
@@ -62,8 +63,18 @@ impl MockUpstreamSession {
         Self {
             recorded,
             answer_subscribe: None,
+            transport_stats: moqt::TransportStats::default(),
         }
     }
+}
+
+pub(crate) fn mock_session_with_transport_stats(
+    transport_stats: moqt::TransportStats,
+) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        transport_stats,
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
+    })
 }
 
 pub(crate) fn mock_session() -> (Arc<dyn Session>, RecordedControlMessages) {
@@ -113,8 +124,8 @@ pub(crate) fn mock_session_answering_subscribe(
     answer_subscribe: impl Fn() -> ContentExists + Send + Sync + 'static,
 ) -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
-        recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(Arc::new(answer_subscribe)),
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
     })
 }
 
@@ -174,6 +185,10 @@ impl Session for MockUpstreamSession {
             .lock()
             .unwrap()
             .push((code, reason.to_string()));
+    }
+
+    fn transport_stats(&self) -> moqt::TransportStats {
+        self.transport_stats
     }
 }
 

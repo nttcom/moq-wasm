@@ -221,4 +221,8 @@ impl Session for MockDownstreamSession {
     }
 
     fn close(&self, _code: moqt::TerminationErrorCode, _reason: &str) {}
+
+    fn transport_stats(&self) -> moqt::TransportStats {
+        moqt::TransportStats::default()
+    }
 }

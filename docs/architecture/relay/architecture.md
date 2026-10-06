@@ -23,10 +23,12 @@ optionally cascades across relays via a Redis-backed route registry.
 | `control_plane/` | Control-message processing: `EventHandler`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
 | `data_plane/` | Objects in flight: `ingress/`, `cache/`, `egress/`, and the data-plane integration tests |
 | `cascading/` | Relay-to-relay: `RelayRouteRegistry` (Redis / no-op) and `InterRelayConnectionManager` |
+| `observability/` | `StatsCollector` (snapshot of sessions, tracks, subscriptions and process memory) and `StatsPublishTask`, which publishes it once per second |
 | `test_support/` | `cfg(test)` mocks, the data-plane `RelayHarness` and directory fixtures shared across modules |
 
 Dependencies point downwards in this order: `control_plane` → `cascading`,
-`data_plane` → `session`, `auth` → `domain`. `auth` and `session` reference
+`data_plane` → `session`, `auth` → `domain`. `observability` only reads
+`session`, `data_plane` and `domain` state. `auth` and `session` reference
 each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 ## Startup path
@@ -47,6 +49,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
    - `spawn_client_transport::<moqt::DUAL>(port)` — client-facing endpoint
      accepting both WebTransport and raw QUIC on one port.
    - `spawn_inner_transport::<moqt::QUIC>(inner_port)` — inter-relay endpoint.
+   - `spawn_stats_publisher(relay_id, inner_port)` — see "Observability".
 
 `RelayServer` (in `relay_server/`) wires two long-lived pieces:
 
@@ -530,6 +533,36 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   session as `SessionPeer::Relay` with `VerifiedToken::full_access()`, reusing
   it afterwards. From then on the remote relay behaves like any upstream
   publisher session.
+
+## Observability (`modules/observability`)
+
+The relay publishes its own statistics as an ordinary MoQT track,
+`observability/<RELAY_ID>` / `network_stats` (format: `crates/relay-stats`),
+so cache, fan-out, FETCH and authorization need no separate path.
+
+- `StatsPublishTask` dials the relay's own inner endpoint over loopback QUIC
+  with `AUTH_RELAY_TOKEN`, sends PUBLISH, and writes one group per second
+  whose Group ID is the snapshot's Unix time in milliseconds (never below
+  the next id, so a clock step back cannot reuse a location). A failed
+  session is retried every 5 s. The loopback session is a `SessionPeer::Relay`
+  with full access; the snapshot reports it as `stats_publisher`.
+- `StatsCollector` reads, without holding any lock across an await:
+  `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`),
+  `InMemoryLocalPubSubDirectory::active_upstream_tracks` and
+  `downstream_subscription_states`, each track cache's `IngressStats`, and
+  `TrackCacheStore::occupancy`. RSS comes from `/proc/self/status` and is
+  absent elsewhere.
+- Counters are cumulative. `IngressStats` lives in `TrackCache` and counts
+  every object inserted (live or fetch fill), the subgroups closed without
+  `finish`, and the longest gap between live inserts; reading it resets only
+  that gap. `DeliveryStats` belongs to the downstream registration (it also
+  supplies PUBLISH_DONE's stream count) and counts the streams, objects,
+  bytes and resets egress sent, plus the `received_at` of the newest object
+  sent, from which the collector derives how far the subscriber trails the
+  newest object the track received.
+- QUIC statistics are per connection and describe what the relay sent, so a
+  client's uplink shows no loss or cwnd; the received flow-control and
+  reset frame counts are its uplink signals.
 
 ## Key invariants
 

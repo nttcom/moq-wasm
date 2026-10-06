@@ -31,7 +31,7 @@ mod ledger;
 mod open_subgroup;
 
 pub(crate) use fetch_cursor::FetchCursor;
-pub(crate) use ingress_stats::IngressStats;
+pub(crate) use ingress_stats::{IngressCounters, IngressStats};
 use ledger::Ledger;
 pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, SubgroupRun};
 

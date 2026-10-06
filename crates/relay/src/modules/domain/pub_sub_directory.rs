@@ -10,7 +10,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
-        delivery_stats::DeliveryStats,
+        delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
             RemovedDownstreamSubscription, RemovedSessionSubscriptions, UpstreamSubscriptionKey,
@@ -28,6 +28,14 @@ pub(crate) struct RegisteredDownstreamSubscription {
     runner_stop_sender: oneshot::Sender<PublishDoneReason>,
     forward_sender: watch::Sender<bool>,
     delivery_stats: Arc<DeliveryStats>,
+}
+
+pub(crate) struct DownstreamSubscriptionState {
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) request_id: u64,
+    pub(crate) upstream_key: UpstreamSubscriptionKey,
+    pub(crate) forward: bool,
+    pub(crate) delivery: DeliveryCounters,
 }
 
 pub(crate) struct DownstreamRunnerSignals {
@@ -429,6 +437,30 @@ impl InMemoryLocalPubSubDirectory {
                 publisher_session_id,
                 track_namespace: track_namespace.to_string(),
                 track_name: track_name.to_string(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn active_upstream_tracks(&self) -> Vec<(UpstreamSubscriptionKey, TrackKey)> {
+        self.active_upstream_subscriptions
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().track_key.clone()))
+            .collect()
+    }
+
+    pub(crate) fn downstream_subscription_states(&self) -> Vec<DownstreamSubscriptionState> {
+        self.downstream_subscriptions
+            .iter()
+            .map(|entry| {
+                let (subscriber_session_id, request_id) = *entry.key();
+                let registered = entry.value();
+                DownstreamSubscriptionState {
+                    subscriber_session_id,
+                    request_id,
+                    upstream_key: registered.subscription.upstream_key.clone(),
+                    forward: *registered.forward_sender.borrow(),
+                    delivery: registered.delivery_stats.counters(),
+                }
             })
             .collect()
     }
@@ -1060,6 +1092,47 @@ mod tests {
         // Assert
         assert!(updated);
         assert!(!*signals.forward_receiver.borrow());
+    }
+
+    #[test]
+    fn downstream_subscription_states_report_forward_and_delivery() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let signals = table
+            .register_downstream_subscription(2, 100, upstream_key.clone(), None)
+            .unwrap();
+        signals.delivery_stats.record_stream_opened();
+        table.update_downstream_forward(2, 100, false);
+
+        // Act
+        let states = table.downstream_subscription_states();
+
+        // Assert
+        let [state] = &states[..] else {
+            panic!("expected one registration, got {}", states.len());
+        };
+        assert_eq!((state.subscriber_session_id, state.request_id), (2, 100));
+        assert_eq!(state.upstream_key, upstream_key);
+        assert!(!state.forward);
+        assert_eq!(state.delivery.streams_opened, 1);
+    }
+
+    #[test]
+    fn active_upstream_tracks_lists_each_upstream_with_its_track() {
+        // Arrange
+        let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+
+        // Act
+        let tracks = table.active_upstream_tracks();
+
+        // Assert
+        assert_eq!(
+            tracks,
+            vec![(
+                upstream_key.clone(),
+                TrackKey::new(upstream_key.track_namespace, upstream_key.track_name)
+            )]
+        );
     }
 
     #[test]
