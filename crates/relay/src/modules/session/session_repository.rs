@@ -35,6 +35,7 @@ pub(crate) struct SessionState {
     pub(crate) peer: SessionPeer,
     pub(crate) app_id: String,
     pub(crate) transport: moqt::TransportStats,
+    pub(crate) addresses: moqt::TransportAddresses,
 }
 
 pub(crate) struct NewSession {
@@ -176,6 +177,7 @@ impl SessionRepository {
                 peer: entry.peer,
                 app_id: entry.verified_token.app_id.clone(),
                 transport: entry.session.transport_stats(),
+                addresses: entry.session.transport_addresses(),
             })
             .collect()
     }

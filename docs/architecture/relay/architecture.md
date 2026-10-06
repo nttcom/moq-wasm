@@ -547,7 +547,11 @@ so cache, fan-out, FETCH and authorization need no separate path.
   session is retried every 5 s. The loopback session is a `SessionPeer::Relay`
   with full access; the snapshot reports it as `stats_publisher`.
 - `StatsCollector` reads, without holding any lock across an await:
-  `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`),
+  `SessionRepository::session_states` (peer, `app_id`, `Session::transport_stats`
+  and `transport_addresses`), `InterRelayConnectionManager::dialed_relay_ids`
+  (the relay at the other end of each session this relay dialed; an accepted
+  inter-relay session is matched by the consumer through the dialer's
+  `local_ip`),
   `InMemoryLocalPubSubDirectory::active_upstream_tracks` and
   `downstream_subscription_states`, each track cache's `IngressStats`, and
   `TrackCacheStore::occupancy`. RSS comes from `/proc/self/status` and is

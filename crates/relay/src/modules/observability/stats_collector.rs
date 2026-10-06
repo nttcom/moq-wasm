@@ -10,6 +10,7 @@ use relay_stats::{
 };
 
 use crate::modules::{
+    cascading::inter_relay_connection_manager::InterRelayConnectionManager,
     data_plane::cache::{store::TrackCacheStore, track_cache::IngressCounters},
     domain::{
         pub_sub_directory::{
@@ -23,11 +24,16 @@ use crate::modules::{
     session::session_repository::{SessionRepository, SessionState},
 };
 
+pub(crate) struct StatsSources {
+    pub(crate) repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    pub(crate) directory: Arc<InMemoryLocalPubSubDirectory>,
+    pub(crate) cache_store: Arc<TrackCacheStore>,
+    pub(crate) inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+}
+
 pub(crate) struct StatsCollector {
     relay_id: String,
-    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-    directory: Arc<InMemoryLocalPubSubDirectory>,
-    cache_store: Arc<TrackCacheStore>,
+    sources: StatsSources,
 }
 
 fn micros(duration: Duration) -> u64 {
@@ -35,18 +41,8 @@ fn micros(duration: Duration) -> u64 {
 }
 
 impl StatsCollector {
-    pub(crate) fn new(
-        relay_id: String,
-        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
-        directory: Arc<InMemoryLocalPubSubDirectory>,
-        cache_store: Arc<TrackCacheStore>,
-    ) -> Self {
-        Self {
-            relay_id,
-            repo,
-            directory,
-            cache_store,
-        }
+    pub(crate) fn new(relay_id: String, sources: StatsSources) -> Self {
+        Self { relay_id, sources }
     }
 
     pub(crate) fn relay_id(&self) -> &str {
@@ -54,8 +50,12 @@ impl StatsCollector {
     }
 
     pub(crate) async fn collect(&self, timestamp_ms: u64, rss_bytes: Option<u64>) -> RelaySnapshot {
-        let sessions = self.repo.lock().await.session_states();
-        let upstream_tracks = self.directory.active_upstream_tracks();
+        let sessions = self.sources.repo.lock().await.session_states();
+        let dialed_relay_ids = self
+            .sources
+            .inter_relay_connection_manager
+            .dialed_relay_ids();
+        let upstream_tracks = self.sources.directory.active_upstream_tracks();
         let ingress = self.take_ingress_counters(&upstream_tracks);
         let stats_publishers = self.stats_publishers(&upstream_tracks);
         let track_of: HashMap<&UpstreamSubscriptionKey, &TrackKey> = upstream_tracks
@@ -63,6 +63,7 @@ impl StatsCollector {
             .map(|(upstream_key, track_key)| (upstream_key, track_key))
             .collect();
         let subscriptions = self
+            .sources
             .directory
             .downstream_subscription_states()
             .into_iter()
@@ -74,7 +75,7 @@ impl StatsCollector {
                 subscription_stats(state, newest_received)
             })
             .collect();
-        let occupancy = self.cache_store.occupancy();
+        let occupancy = self.sources.cache_store.occupancy();
         RelaySnapshot {
             relay_id: self.relay_id.clone(),
             timestamp_ms,
@@ -88,7 +89,8 @@ impl StatsCollector {
                 .into_iter()
                 .map(|session| {
                     let is_stats_publisher = stats_publishers.contains(&session.session_id);
-                    session_stats(session, is_stats_publisher)
+                    let dialed_relay_id = dialed_relay_ids.get(&session.session_id).cloned();
+                    session_stats(session, is_stats_publisher, dialed_relay_id)
                 })
                 .collect(),
             tracks: upstream_tracks
@@ -112,7 +114,7 @@ impl StatsCollector {
         track_keys
             .into_iter()
             .filter_map(|track_key| {
-                let cache = self.cache_store.get(track_key)?;
+                let cache = self.sources.cache_store.get(track_key)?;
                 Some((track_key.clone(), cache.ingress_stats().take()))
             })
             .collect()
@@ -134,12 +136,17 @@ impl StatsCollector {
     }
 }
 
-fn session_stats(session: SessionState, is_stats_publisher: bool) -> SessionStats {
+fn session_stats(
+    session: SessionState,
+    is_stats_publisher: bool,
+    dialed_relay_id: Option<String>,
+) -> SessionStats {
     let SessionState {
         session_id,
         peer,
         app_id,
         transport,
+        addresses,
     } = session;
     SessionStats {
         session_id,
@@ -149,6 +156,9 @@ fn session_stats(session: SessionState, is_stats_publisher: bool) -> SessionStat
             SessionPeer::Relay => SnapshotPeer::Relay,
         },
         app_id,
+        remote_address: addresses.remote.map(|address| address.to_string()),
+        local_ip: addresses.local_ip.map(|ip| ip.to_string()),
+        dialed_relay_id,
         rtt_us: micros(transport.rtt),
         current_mtu: transport.current_mtu,
         sent_bytes: transport.sent_bytes,
@@ -221,9 +231,10 @@ mod tests {
     use moqt::ContentExists;
     use relay_stats::SessionPeer as SnapshotPeer;
 
-    use super::StatsCollector;
+    use super::{StatsCollector, StatsSources};
     use crate::modules::{
         auth::verified_token::VerifiedToken,
+        cascading::inter_relay_connection_manager::InterRelayConnectionManager,
         data_plane::cache::store::TrackCacheStore,
         domain::{
             pub_sub_directory::{
@@ -261,11 +272,19 @@ mod tests {
         }
 
         fn collector(&self) -> StatsCollector {
+            let (session_event_sender, _) = tokio::sync::mpsc::unbounded_channel();
             StatsCollector::new(
                 RELAY_ID.to_string(),
-                self.repo.clone(),
-                self.directory.clone(),
-                self.cache_store.clone(),
+                StatsSources {
+                    repo: self.repo.clone(),
+                    directory: self.directory.clone(),
+                    cache_store: self.cache_store.clone(),
+                    inter_relay_connection_manager: Arc::new(InterRelayConnectionManager::new(
+                        self.repo.clone(),
+                        session_event_sender,
+                        "relay-token".to_string(),
+                    )),
+                },
             )
         }
 

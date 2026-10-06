@@ -225,4 +225,8 @@ impl Session for MockDownstreamSession {
     fn transport_stats(&self) -> moqt::TransportStats {
         moqt::TransportStats::default()
     }
+
+    fn transport_addresses(&self) -> moqt::TransportAddresses {
+        moqt::TransportAddresses::default()
+    }
 }

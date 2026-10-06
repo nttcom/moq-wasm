@@ -190,6 +190,10 @@ impl Session for MockUpstreamSession {
     fn transport_stats(&self) -> moqt::TransportStats {
         self.transport_stats
     }
+
+    fn transport_addresses(&self) -> moqt::TransportAddresses {
+        moqt::TransportAddresses::default()
+    }
 }
 
 struct UnansweringPublisher {

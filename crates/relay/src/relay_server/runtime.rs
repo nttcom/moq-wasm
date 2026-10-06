@@ -20,7 +20,7 @@ use crate::modules::{
         ingress::ingress_coordinator::IngressCoordinator,
     },
     domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-    observability::stats_collector::StatsCollector,
+    observability::stats_collector::{StatsCollector, StatsSources},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
@@ -28,6 +28,7 @@ pub(crate) struct RelayRuntime {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
     cache_store: Arc<TrackCacheStore>,
+    inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
     _ingress: IngressCoordinator,
     _egress: EgressCoordinator,
     _manager: EventHandler,
@@ -67,7 +68,7 @@ impl RelayRuntime {
                 ingress_sender: ingress.sender(),
                 egress_sender: egress.sender(),
                 route_registry,
-                inter_relay_connection_manager,
+                inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                 upstream_publisher_resolver,
                 cache_store: cache_store.clone(),
                 upstream_serializer: UpstreamCreationSerializer::default(),
@@ -81,6 +82,7 @@ impl RelayRuntime {
                 repo,
                 local_pub_sub_directory,
                 cache_store,
+                inter_relay_connection_manager,
                 _ingress: ingress,
                 _egress: egress,
                 _manager: manager,
@@ -92,9 +94,12 @@ impl RelayRuntime {
     pub(crate) fn stats_collector(&self, relay_id: String) -> StatsCollector {
         StatsCollector::new(
             relay_id,
-            self.repo.clone(),
-            self.local_pub_sub_directory.clone(),
-            self.cache_store.clone(),
+            StatsSources {
+                repo: self.repo.clone(),
+                directory: self.local_pub_sub_directory.clone(),
+                cache_store: self.cache_store.clone(),
+                inter_relay_connection_manager: self.inter_relay_connection_manager.clone(),
+            },
         )
     }
 }

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
 
@@ -37,6 +37,13 @@ impl InterRelayConnectionManager {
             relay_token,
             sessions: DashMap::new(),
         }
+    }
+
+    pub(crate) fn dialed_relay_ids(&self) -> HashMap<SessionId, String> {
+        self.sessions
+            .iter()
+            .map(|entry| (*entry.value(), entry.key().clone()))
+            .collect()
     }
 
     pub(crate) async fn get_or_connect(&self, relay: &RelayInfo) -> anyhow::Result<SessionId> {
