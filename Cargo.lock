@@ -2769,6 +2769,7 @@ dependencies = [
  "opentelemetry_sdk",
  "rcgen",
  "redis",
+ "relay-stats",
  "reqwest",
  "serde",
  "serde_json",
@@ -2777,6 +2778,15 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "relay-stats"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
