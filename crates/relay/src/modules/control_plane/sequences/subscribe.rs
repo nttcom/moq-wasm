@@ -15,6 +15,7 @@ use crate::modules::{
         error_code::SubscribeErrorCode,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
         session_id::SessionId,
+        session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::handler::subscribe::SubscribeHandler,
@@ -121,11 +122,17 @@ impl Subscribe {
             track_name = %track_name,
             "SequenceHandler::subscribe"
         );
+        let requester = if super::is_origin_client(session_id, forwarder).await {
+            SessionPeer::Client
+        } else {
+            SessionPeer::Relay
+        };
 
         for _ in 0..UPSTREAM_ATTEMPTS {
             let (track_key, upstream_track, largest_location) = match self
                 .get_or_create_upstream_subscription(
                     session_id,
+                    requester,
                     track_namespace,
                     track_name,
                     table,
@@ -165,6 +172,7 @@ impl Subscribe {
             let acceptance = self
                 .accept_downstream_subscription(
                     session_id,
+                    requester,
                     track_key,
                     upstream_track,
                     largest_location,
@@ -201,6 +209,7 @@ impl Subscribe {
     async fn get_or_create_upstream_subscription(
         &self,
         session_id: SessionId,
+        requester: SessionPeer,
         track_namespace: &str,
         track_name: &str,
         table: &Arc<InMemoryLocalPubSubDirectory>,
@@ -236,6 +245,7 @@ impl Subscribe {
 
         self.create_upstream_subscription(
             session_id,
+            requester,
             track_namespace,
             track_name,
             table,
@@ -261,6 +271,7 @@ impl Subscribe {
     async fn create_upstream_subscription(
         &self,
         session_id: SessionId,
+        requester: SessionPeer,
         track_namespace: &str,
         track_name: &str,
         table: &Arc<InMemoryLocalPubSubDirectory>,
@@ -269,18 +280,14 @@ impl Subscribe {
         upstream_publisher_resolver: &UpstreamPublisherResolver,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Result<(TrackKey, UpstreamTrack, Option<moqt::Location>), UpstreamSubscriptionError> {
+        if requester == SessionPeer::Client {
+            upstream_publisher_resolver
+                .watch_namespace(track_namespace)
+                .await;
+        }
         let publishers = upstream_publisher_resolver
-            .resolve(table, track_namespace, track_name)
-            .await
-            .map_err(|err| {
-                tracing::warn!(
-                    ?err,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
-                    "failed to resolve upstream publisher"
-                );
-                UpstreamSubscriptionError::PublisherNotFound
-            })?;
+            .resolve(table, track_namespace, track_name, requester)
+            .await;
         if publishers.is_empty() {
             return Err(UpstreamSubscriptionError::PublisherNotFound);
         }
@@ -293,7 +300,7 @@ impl Subscribe {
         // join the track as they answer.
         let mut pending = send_upstream_subscribes(forwarder, publishers);
         let mut last_error = None;
-        let (pub_session_id, subscription) = loop {
+        let (pub_session_id, publisher_peer, subscription) = loop {
             let Some(answered) = pending.join_next().await else {
                 return Err(UpstreamSubscriptionError::SubscribeFailed(
                     last_error.unwrap_or_else(|| {
@@ -301,15 +308,21 @@ impl Subscribe {
                     }),
                 ));
             };
-            let Ok((pub_session_id, subscribed)) = answered else {
+            let Ok(answered) = answered else {
                 continue;
             };
-            match subscribed {
-                Ok(subscription) => break (pub_session_id, subscription),
+            match answered.subscribed {
+                Ok(subscription) => {
+                    break (
+                        answered.publisher_session_id,
+                        answered.publisher_peer,
+                        subscription,
+                    );
+                }
                 Err(error) => {
                     tracing::warn!(
                         %error,
-                        pub_session_id = %pub_session_id,
+                        pub_session_id = %answered.publisher_session_id,
                         track_namespace = %track_namespace,
                         track_name = %track_name,
                         "upstream SUBSCRIBE failed"
@@ -327,7 +340,7 @@ impl Subscribe {
             "upstream subscribe ok received"
         );
 
-        let active_upstream = subscribe_initiated(&subscription);
+        let active_upstream = subscribe_initiated(&subscription, publisher_peer);
 
         if ingress_sender
             .send(IngressCommand::Start(Box::new(IngressStartRequest {
@@ -398,6 +411,7 @@ impl Subscribe {
     async fn accept_downstream_subscription(
         &self,
         session_id: SessionId,
+        subscriber_peer: SessionPeer,
         track_key: TrackKey,
         upstream_track: UpstreamTrack,
         largest_location: Option<moqt::Location>,
@@ -430,6 +444,7 @@ impl Subscribe {
         let Some(runner_signals) = table.register_downstream_subscription(
             session_id,
             handler.subscribe_id(),
+            subscriber_peer,
             track_key.clone(),
             largest_location,
         ) else {
@@ -643,6 +658,7 @@ mod tests {
         let Ok((_, _, largest_location)) = Subscribe
             .get_or_create_upstream_subscription(
                 SUBSCRIBER_SESSION,
+                SessionPeer::Client,
                 &track_key.track_namespace,
                 &track_key.track_name,
                 &table,
@@ -688,6 +704,7 @@ mod tests {
             std::time::Duration::from_secs(1),
             Subscribe.get_or_create_upstream_subscription(
                 SUBSCRIBER_SESSION,
+                SessionPeer::Client,
                 "ns",
                 "track",
                 &table,
@@ -856,6 +873,7 @@ mod tests {
         Subscribe
             .accept_downstream_subscription(
                 2,
+                SessionPeer::Client,
                 track_key(),
                 upstream_track(UpstreamSubscriptionOrigin::Subscribe),
                 None,

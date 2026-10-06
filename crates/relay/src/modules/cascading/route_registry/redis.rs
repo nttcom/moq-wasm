@@ -9,6 +9,7 @@ use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 enum RouteKind {
     NamespacePublisher,
     NamespaceSubscriber,
+    WatchedNamespace,
 }
 
 impl RouteKind {
@@ -17,7 +18,7 @@ impl RouteKind {
             Self::NamespacePublisher => {
                 redis::Script::new(include_str!("scripts/register_namespace_publisher.lua"))
             }
-            Self::NamespaceSubscriber => {
+            Self::NamespaceSubscriber | Self::WatchedNamespace => {
                 redis::Script::new(include_str!("scripts/register_namespace_subscriber.lua"))
             }
         }
@@ -203,6 +204,10 @@ impl RedisRelayRouteRegistry {
         format!("route:subscriber:namespace:{track_namespace_prefix}")
     }
 
+    fn watched_namespace_key(track_namespace: &str) -> String {
+        format!("route:subscriber:watched:{track_namespace}")
+    }
+
     fn now_millis() -> u128 {
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -235,15 +240,30 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         .await
     }
 
-    async fn find_active_namespace_publisher(
+    async fn find_active_namespace_publishers(
         &self,
         track_namespace: &str,
-    ) -> anyhow::Result<Option<RelayInfo>> {
-        Ok(self
-            .find_active_routes(Self::publisher_namespace_key(track_namespace))
-            .await?
-            .into_iter()
-            .next())
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        self.find_active_routes(Self::publisher_namespace_key(track_namespace))
+            .await
+    }
+
+    async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
+        match self
+            .register_route(
+                RouteKind::WatchedNamespace,
+                Self::watched_namespace_key(track_namespace),
+            )
+            .await
+        {
+            Ok(()) | Err(RegisterRouteError::Conflict) => Ok(()),
+            Err(RegisterRouteError::Other(err)) => Err(err),
+        }
+    }
+
+    async fn unregister_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {
+        self.unregister_route(&Self::watched_namespace_key(track_namespace))
+            .await
     }
 
     async fn find_namespace_publishers_by_prefix(
@@ -295,6 +315,7 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         let parts: Vec<&str> = track_namespace.split('/').collect();
         let keys: Vec<String> = (1..=parts.len())
             .map(|i| Self::subscriber_namespace_key(&parts[..i].join("/")))
+            .chain([Self::watched_namespace_key(track_namespace)])
             .collect();
 
         let script = redis::Script::new(include_str!("scripts/find_namespace_subscribers.lua"));

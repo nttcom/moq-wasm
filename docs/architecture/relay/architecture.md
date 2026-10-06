@@ -252,10 +252,12 @@ Each sequence owns the relay-side protocol logic for one message
    timeout — therefore delays nobody, and the SUBSCRIBE fails only when every
    publisher refuses it. Concurrent subscribers to the same track produce one
    upstream subscription per publisher.
-2. **Publisher resolution** (`UpstreamPublisherResolver`): every publisher in
-   the local directory, newest first (session ids grow with time), else the
-   route registry for a remote relay, dialled via
-   `InterRelayConnectionManager`.
+2. **Publisher resolution** (`UpstreamPublisherResolver`): every local client
+   publisher, newest first (session ids grow with time), and, for a SUBSCRIBE
+   from a client, every remote relay the route registry lists as publishing the
+   namespace, dialled via `InterRelayConnectionManager` (see "Cascading
+   relays"). A SUBSCRIBE from a relay is served from local client publishers
+   only.
 3. **Largest Object resolution**: max of the upstream SUBSCRIBE_OK location
    and the local cache's largest location, resolved together with the upstream
    subscription (`get_or_create_upstream_subscription`). The cache is
@@ -284,8 +286,11 @@ answering PUBLISH_NAMESPACE from a client session, `PublishNamespace` sends
 SUBSCRIBE to that publisher for every track of the namespace that has a
 downstream subscriber and that the publisher does not feed yet, and hands the
 requests to an `UpstreamJoinTask`, which adds the publisher once it answers.
-A PUBLISH for a track the relay already receives adds its publisher to the
-track the same way.
+A PUBLISH_NAMESPACE from a relay does the same for the publishing relays the
+route registry lists, reached over the sessions `InterRelayConnectionManager`
+keeps per relay, and only for tracks a client watches (see "Cascading
+relays"). A PUBLISH for a track the relay already receives adds its publisher
+to the track the same way.
 
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
@@ -564,7 +569,27 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
   `SubscribeNamespace` registers the subscriber route when the first client
-  subscriber for a prefix appears.
+  subscriber for a prefix appears. Any number of relays may hold the publisher
+  route of one namespace (draft-14 §8.2), and the notification reaches every
+  subscriber relay.
+- **Watched namespaces**: a relay receiving a track for a client must learn
+  about publishers of its namespace announcing later, on any relay. Before
+  resolving the publishers of a track a client asked for, the relay registers
+  a watched-namespace route, which `find_namespace_subscribers` returns like a
+  namespace-subscriber route, so the later PUBLISH_NAMESPACE is forwarded to
+  it (see "Publishers joining a received track").
+  `WatchedNamespaceRoutes` (`cascading/watched_namespace_routes.rs`) holds
+  these routes, and `WatchedNamespaceJob` reconciles them every 5 s with the
+  namespaces the directory has a client watching, dropping a route after two
+  passes in a row without one.
+- **Split horizon**: relay-to-relay subscriptions only carry what clients
+  need. A SUBSCRIBE or FETCH from a relay is resolved to local client
+  publishers only, a relay's upstream subscription to another relay is
+  released when the last client subscriber of the track leaves, and a relay
+  subscriber left on a track no upstream subscription feeds any more ends with
+  TRACK_ENDED. Two relays both publishing and both watching a track therefore
+  subscribe each other, yet the pair never keeps the track alive once their
+  clients are gone.
 - `InterRelayConnectionManager` lazily dials the remote relay's inner endpoint
   over raw QUIC (`moqt::QUIC`, certificate verification disabled), presenting
   this relay's own JWT (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
@@ -619,8 +644,12 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - **Cache lifetime**: a track cache lives while referenced or until TTL
   eviction empties it with `strong_count == 1`.
 - **Client-owned routes**: Redis namespace routes are registered/withdrawn
-  only for client-origin sessions; relay-learned namespaces are purged locally
+  only for client-origin sessions, and watched-namespace routes only while a
+  client watches the namespace; relay-learned namespaces are purged locally
   when the last client subscriber for the prefix leaves.
+- **Relay subscriptions serve clients**: an upstream subscription to another
+  relay only exists while a client of this relay watches the track, and a
+  relay's SUBSCRIBE is never forwarded to a third relay.
 
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —

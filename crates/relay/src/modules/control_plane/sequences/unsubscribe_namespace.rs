@@ -127,11 +127,11 @@ impl UnsubscribeNamespace {
         let mut relay_ids = HashSet::new();
         let mut relays = Vec::new();
         for namespace_route in namespace_routes {
-            let relay = match route_registry
-                .find_active_namespace_publisher(&namespace_route.track_namespace)
+            let publisher_relays = match route_registry
+                .find_active_namespace_publishers(&namespace_route.track_namespace)
                 .await
             {
-                Ok(relay) => relay,
+                Ok(publisher_relays) => publisher_relays,
                 Err(err) => {
                     tracing::warn!(
                         ?err,
@@ -142,10 +142,10 @@ impl UnsubscribeNamespace {
                 }
             };
 
-            if let Some(relay) = relay
-                && relay_ids.insert(relay.relay_id.clone())
-            {
-                relays.push(relay);
+            for relay in publisher_relays {
+                if relay_ids.insert(relay.relay_id.clone()) {
+                    relays.push(relay);
+                }
             }
         }
 

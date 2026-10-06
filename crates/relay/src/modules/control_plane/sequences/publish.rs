@@ -16,6 +16,7 @@ use crate::modules::{
             entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
         },
         session_id::SessionId,
+        session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
@@ -59,6 +60,11 @@ impl Publish {
         if let Err(error) = self
             .register_upstream_subscription(
                 session_id,
+                if is_origin_client {
+                    SessionPeer::Client
+                } else {
+                    SessionPeer::Relay
+                },
                 table,
                 ingress_sender,
                 handler.clone(),
@@ -184,6 +190,7 @@ impl Publish {
     async fn register_upstream_subscription(
         &self,
         session_id: SessionId,
+        publisher_peer: SessionPeer,
         table: &InMemoryLocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
         handler: Arc<dyn PublishHandler>,
@@ -195,6 +202,7 @@ impl Publish {
             expires: None,
             content_exists: subscription.content_exists(),
             origin: UpstreamSubscriptionOrigin::Publish,
+            publisher_peer,
         };
 
         handler.accept_data_receiver().await;
@@ -214,7 +222,7 @@ impl Publish {
         }
 
         table.register_upstream_subscription(track_key, session_id, active_upstream);
-        table.register_publish(session_id, handler);
+        table.register_publish(session_id, publisher_peer, handler);
         Ok(())
     }
 

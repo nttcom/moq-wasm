@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::{RegisterRouteError, RelayRouteRegistry},
+        route_registry::RelayRouteRegistry,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -84,14 +84,28 @@ impl PublishNamespace {
         self.notify_to_subscribers(track_namespace, table, forwarder)
             .await;
 
+        let join_deps = UpstreamJoinDeps {
+            table: table.clone(),
+            forwarder: forwarder.clone(),
+            ingress_sender: ingress_sender.clone(),
+        };
         if is_origin {
             Self::join_tracks_awaiting_publisher(
                 session_id,
+                SessionPeer::Client,
                 track_namespace,
-                table,
-                forwarder,
-                ingress_sender,
+                &join_deps,
             );
+        } else {
+            Self::join_tracks_awaiting_publisher_relays(
+                track_namespace,
+                &join_deps,
+                cascading_relay_context,
+            )
+            .await;
+        }
+
+        if is_origin {
             self.notify_remote_subscribers(
                 track_namespace,
                 forwarder,
@@ -102,23 +116,64 @@ impl PublishNamespace {
         }
     }
 
+    /// A relay forwards a PUBLISH_NAMESPACE on whatever session it holds to
+    /// this relay, so the publishing relays are looked up in the route
+    /// registry and reached over the sessions this relay keeps per relay;
+    /// subscribing over the announcing session could duplicate one of them.
+    async fn join_tracks_awaiting_publisher_relays(
+        track_namespace: &str,
+        join_deps: &UpstreamJoinDeps,
+        cascading_relay_context: CascadingRelayContext<'_>,
+    ) {
+        let relays = match cascading_relay_context
+            .route_registry
+            .find_active_namespace_publishers(track_namespace)
+            .await
+        {
+            Ok(relays) => relays,
+            Err(err) => {
+                tracing::warn!(?err, %track_namespace, "failed to find publisher relays to join");
+                return;
+            }
+        };
+        for relay in relays {
+            let Some(relay_session_id) = super::connect_relay(
+                cascading_relay_context.inter_relay_connection_manager,
+                &relay,
+            )
+            .await
+            else {
+                continue;
+            };
+            Self::join_tracks_awaiting_publisher(
+                relay_session_id,
+                SessionPeer::Relay,
+                track_namespace,
+                join_deps,
+            );
+        }
+    }
+
     /// draft-14 §8.4: a publisher announcing a namespace whose tracks other
     /// publishers already feed is subscribed to each of them.
     fn join_tracks_awaiting_publisher(
         publisher_session_id: SessionId,
+        publisher_peer: SessionPeer,
         track_namespace: &str,
-        table: &Arc<InMemoryLocalPubSubDirectory>,
-        forwarder: &ControlMessageForwarder,
-        ingress_sender: &mpsc::Sender<IngressCommand>,
+        join_deps: &UpstreamJoinDeps,
     ) {
-        for track_key in table.tracks_awaiting_publisher(track_namespace, publisher_session_id) {
+        for track_key in join_deps.table.tracks_awaiting_publisher(
+            track_namespace,
+            publisher_session_id,
+            publisher_peer,
+        ) {
             tracing::info!(
                 %track_key,
                 pub_session_id = %publisher_session_id,
                 "subscribing a newly announced publisher to an active track"
             );
             let pending = send_upstream_subscribes(
-                forwarder,
+                &join_deps.forwarder,
                 vec![UpstreamSubscriptionKey {
                     publisher_session_id,
                     track_namespace: track_key.track_namespace.clone(),
@@ -131,11 +186,7 @@ impl PublishNamespace {
                     subscriber_session_id: publisher_session_id,
                     pending,
                 },
-                UpstreamJoinDeps {
-                    table: table.clone(),
-                    forwarder: forwarder.clone(),
-                    ingress_sender: ingress_sender.clone(),
-                },
+                join_deps.clone(),
             );
         }
     }
@@ -182,30 +233,24 @@ impl PublishNamespace {
         track_namespace: &str,
         handler: &dyn PublishNamespaceHandler,
     ) -> bool {
-        match route_registry
+        let Err(err) = route_registry
             .register_namespace_publisher(track_namespace)
             .await
+        else {
+            return true;
+        };
+        tracing::warn!(?err, track_namespace = %track_namespace, "failed to register namespace route");
+        if handler
+            .error(
+                PublishNamespaceErrorCode::InternalError as u64,
+                "failed to register the namespace route".to_string(),
+            )
+            .await
+            .is_err()
         {
-            Ok(()) => true,
-            Err(RegisterRouteError::Conflict) => {
-                tracing::warn!(track_namespace = %track_namespace, "namespace already has an active publisher");
-                match handler
-                    .error(
-                        PublishNamespaceErrorCode::InternalError as u64,
-                        "namespace already published".to_string(),
-                    )
-                    .await
-                {
-                    Ok(_) => tracing::info!("sent `PUBLISH_NAMESPACE_ERROR` ok"),
-                    Err(_) => tracing::error!("failed to send `PUBLISH_NAMESPACE_ERROR`"),
-                }
-                false
-            }
-            Err(err) => {
-                tracing::warn!(?err, track_namespace = %track_namespace, "failed to register namespace route");
-                false
-            }
+            tracing::error!("failed to send `PUBLISH_NAMESPACE_ERROR`");
         }
+        false
     }
 
     #[tracing::instrument(
@@ -235,26 +280,7 @@ impl PublishNamespace {
                 return;
             }
         };
-        let publisher_relay_id = match route_registry
-            .find_active_namespace_publisher(track_namespace)
-            .await
-        {
-            Ok(relay) => relay.map(|r| r.relay_id),
-            Err(err) => {
-                tracing::warn!(
-                    ?err,
-                    track_namespace = %track_namespace,
-                    "failed to find namespace publisher routes"
-                );
-                None
-            }
-        };
-
         for relay in routes {
-            if publisher_relay_id.as_deref() == Some(relay.relay_id.as_str()) {
-                continue;
-            }
-
             let Some(session_id) =
                 super::connect_relay(inter_relay_connection_manager, &relay).await
             else {
@@ -342,7 +368,7 @@ mod tests {
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let table = Arc::new(table);
         table
-            .register_downstream_subscription(2, 100, track_key.clone(), None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
             .unwrap();
 
         // Act

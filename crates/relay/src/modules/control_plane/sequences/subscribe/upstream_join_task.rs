@@ -7,7 +7,10 @@ use tokio::{
 use tracing::{Instrument, Span};
 
 use crate::modules::{
-    control_plane::{control_message_forwarder::ControlMessageForwarder, sequences::stop_ingress},
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        sequences::{is_origin_client, stop_ingress},
+    },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
         pub_sub_directory::{
@@ -17,13 +20,19 @@ use crate::modules::{
             },
         },
         session_id::SessionId,
+        session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::subscription::UpstreamSubscription,
 };
 
-pub(crate) type PendingUpstreamSubscribes =
-    JoinSet<(SessionId, anyhow::Result<UpstreamSubscription>)>;
+pub(crate) struct AnsweredUpstreamSubscribe {
+    pub(crate) publisher_session_id: SessionId,
+    pub(crate) publisher_peer: SessionPeer,
+    pub(crate) subscribed: anyhow::Result<UpstreamSubscription>,
+}
+
+pub(crate) type PendingUpstreamSubscribes = JoinSet<AnsweredUpstreamSubscribe>;
 
 pub(crate) fn send_upstream_subscribes(
     forwarder: &ControlMessageForwarder,
@@ -34,6 +43,12 @@ pub(crate) fn send_upstream_subscribes(
         let forwarder = forwarder.clone();
         pending.spawn(
             async move {
+                let publisher_peer =
+                    if is_origin_client(publisher.publisher_session_id, &forwarder).await {
+                        SessionPeer::Client
+                    } else {
+                        SessionPeer::Relay
+                    };
                 let subscribed = forwarder
                     .subscribe(
                         publisher.publisher_session_id,
@@ -41,7 +56,11 @@ pub(crate) fn send_upstream_subscribes(
                         publisher.track_name,
                     )
                     .await;
-                (publisher.publisher_session_id, subscribed)
+                AnsweredUpstreamSubscribe {
+                    publisher_session_id: publisher.publisher_session_id,
+                    publisher_peer,
+                    subscribed,
+                }
             }
             .instrument(Span::current()),
         );
@@ -51,12 +70,14 @@ pub(crate) fn send_upstream_subscribes(
 
 pub(crate) fn subscribe_initiated(
     subscription: &UpstreamSubscription,
+    publisher_peer: SessionPeer,
 ) -> ActiveUpstreamSubscription {
     ActiveUpstreamSubscription {
         upstream_request_id: subscription.request_id(),
         expires: subscription.expires(),
         content_exists: subscription.content_exists(),
         origin: UpstreamSubscriptionOrigin::Subscribe,
+        publisher_peer,
     }
 }
 
@@ -66,6 +87,7 @@ pub(crate) struct UpstreamJoin {
     pub(crate) pending: PendingUpstreamSubscribes,
 }
 
+#[derive(Clone)]
 pub(crate) struct UpstreamJoinDeps {
     pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
     pub(crate) forwarder: ControlMessageForwarder,
@@ -89,23 +111,24 @@ impl UpstreamJoinTask {
 
     async fn join(mut join: UpstreamJoin, deps: UpstreamJoinDeps) {
         while let Some(answered) = join.pending.join_next().await {
-            let Ok((publisher_session_id, subscribed)) = answered else {
+            let Ok(answered) = answered else {
                 continue;
             };
-            match subscribed {
+            match answered.subscribed {
                 Ok(subscription) => {
                     join_track(
                         &deps,
                         &join.track_key,
-                        publisher_session_id,
+                        answered.publisher_session_id,
                         join.subscriber_session_id,
+                        subscribe_initiated(&subscription, answered.publisher_peer),
                         subscription,
                     )
                     .await;
                 }
                 Err(error) => tracing::warn!(
                     %error,
-                    pub_session_id = %publisher_session_id,
+                    pub_session_id = %answered.publisher_session_id,
                     track_key = %join.track_key,
                     "upstream SUBSCRIBE of an additional publisher failed"
                 ),
@@ -122,9 +145,9 @@ async fn join_track(
     track_key: &TrackKey,
     publisher_session_id: SessionId,
     subscriber_session_id: SessionId,
+    active_upstream: ActiveUpstreamSubscription,
     subscription: UpstreamSubscription,
 ) {
-    let active_upstream = subscribe_initiated(&subscription);
     let upstream_request_id = active_upstream.upstream_request_id;
     match deps.table.add_upstream_subscription_to_track(
         track_key,

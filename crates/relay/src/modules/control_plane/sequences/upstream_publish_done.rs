@@ -44,7 +44,10 @@ impl UpstreamPublishDone {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, track_key::TrackKey},
+        domain::{
+            pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer,
+            track_key::TrackKey,
+        },
         test_support::directory_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
             upstream_release_context,
@@ -76,6 +79,7 @@ mod tests {
             .register_downstream_subscription(
                 DOWNSTREAM_SESSION,
                 DOWNSTREAM_SUBSCRIBE_ID,
+                SessionPeer::Client,
                 track_key(),
                 None,
             )

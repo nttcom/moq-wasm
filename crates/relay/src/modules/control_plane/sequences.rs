@@ -21,6 +21,7 @@ use crate::modules::{
     domain::{session_id::SessionId, track_key::TrackKey},
 };
 
+#[derive(Clone, Copy)]
 pub(crate) struct CascadingRelayContext<'a> {
     pub(crate) route_registry: &'a dyn RelayRouteRegistry,
     pub(crate) inter_relay_connection_manager: &'a InterRelayConnectionManager,

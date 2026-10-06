@@ -21,7 +21,7 @@ use crate::modules::{
     },
     domain::{
         error_code::FetchErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
-        session_id::SessionId, track_key::TrackKey,
+        session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
     },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
@@ -172,10 +172,12 @@ impl Fetch {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
+        requester: SessionPeer,
         handler: &dyn FetchHandler,
         target: &FetchTarget,
     ) -> Option<PreparedUpstreamFetch> {
-        let publishers = Self::fetch_publishers(table, upstream_publisher_resolver, target).await;
+        let publishers =
+            Self::fetch_publishers(table, upstream_publisher_resolver, requester, target).await;
         if publishers.is_empty() {
             tracing::warn!(
                 track_namespace = %target.track_namespace,
@@ -250,29 +252,36 @@ impl Fetch {
     async fn fetch_publishers(
         table: &InMemoryLocalPubSubDirectory,
         upstream_publisher_resolver: &UpstreamPublisherResolver,
+        requester: SessionPeer,
         target: &FetchTarget,
     ) -> Vec<SessionId> {
         let mut publishers: Vec<SessionId> = table
             .get_upstream_track(&target.track_key)
-            .map(|track| track.subscriptions.into_keys().rev().collect())
+            .map(|track| {
+                track
+                    .subscriptions
+                    .into_iter()
+                    .rev()
+                    .filter(|(_, subscription)| {
+                        requester == SessionPeer::Client
+                            || subscription.publisher_peer == SessionPeer::Client
+                    })
+                    .map(|(publisher_session_id, _)| publisher_session_id)
+                    .collect()
+            })
             .unwrap_or_default();
-        match upstream_publisher_resolver
-            .resolve(table, &target.track_namespace, &target.track_name)
+        for publisher in upstream_publisher_resolver
+            .resolve(
+                table,
+                &target.track_namespace,
+                &target.track_name,
+                requester,
+            )
             .await
         {
-            Ok(resolved) => {
-                for publisher in resolved {
-                    if !publishers.contains(&publisher.publisher_session_id) {
-                        publishers.push(publisher.publisher_session_id);
-                    }
-                }
+            if !publishers.contains(&publisher.publisher_session_id) {
+                publishers.push(publisher.publisher_session_id);
             }
-            Err(err) => tracing::warn!(
-                err = %format!("{err:#}"),
-                track_namespace = %target.track_namespace,
-                track_name = %target.track_name,
-                "Failed to resolve upstream publishers for fetch"
-            ),
         }
         publishers
     }
@@ -504,8 +513,13 @@ mod tests {
         };
 
         // Act
-        let publishers =
-            Fetch::fetch_publishers(&table, &local_publisher_resolver(), &target).await;
+        let publishers = Fetch::fetch_publishers(
+            &table,
+            &local_publisher_resolver(),
+            SessionPeer::Client,
+            &target,
+        )
+        .await;
 
         // Assert
         assert_eq!(publishers, vec![3, 1, 5]);
@@ -560,6 +574,7 @@ mod tests {
             &table,
             &ControlMessageForwarder { repository },
             &local_publisher_resolver(),
+            SessionPeer::Client,
             &MockFetchHandler,
             &target,
         )
@@ -897,7 +912,7 @@ mod tests {
     fn resolve_joining_target_no_objects_published() {
         // Arrange
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        table.register_downstream_subscription(2, 100, key, None);
+        table.register_downstream_subscription(2, 100, SessionPeer::Client, key, None);
 
         // Act
         let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
@@ -914,7 +929,7 @@ mod tests {
             object_id: 5,
         };
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        table.register_downstream_subscription(2, 100, key, Some(largest));
+        table.register_downstream_subscription(2, 100, SessionPeer::Client, key, Some(largest));
 
         // Act
         let target = Fetch
@@ -944,6 +959,7 @@ mod tests {
         table.register_downstream_subscription(
             2,
             100,
+            SessionPeer::Client,
             upstream_key,
             Some(moqt::Location {
                 group_id: 1,
@@ -999,6 +1015,7 @@ mod tests {
         table.register_downstream_subscription(
             2,
             100,
+            SessionPeer::Client,
             upstream_key,
             Some(moqt::Location {
                 group_id: 2,
@@ -1049,6 +1066,7 @@ mod tests {
         table.register_downstream_subscription(
             2,
             100,
+            SessionPeer::Client,
             upstream_key,
             Some(moqt::Location {
                 group_id: 1,
@@ -1099,6 +1117,7 @@ mod tests {
         table.register_downstream_subscription(
             2,
             100,
+            SessionPeer::Client,
             upstream_key,
             Some(moqt::Location {
                 group_id: 1,

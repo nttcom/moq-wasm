@@ -36,7 +36,7 @@ impl SubscribeUpdate {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::directory_fixtures::table_with_upstream,
     };
 
@@ -45,7 +45,7 @@ mod tests {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None)
             .unwrap();
 
         // Act
@@ -60,7 +60,7 @@ mod tests {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None)
             .unwrap();
 
         // Act

@@ -22,6 +22,7 @@ use crate::modules::{
             },
         },
         session_id::SessionId,
+        session_peer::SessionPeer,
         track_key::TrackKey,
     },
     session::session_repository::SessionRepository,
@@ -51,6 +52,7 @@ pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstr
         expires: None,
         content_exists: ContentExists::False,
         origin,
+        publisher_peer: SessionPeer::Client,
     }
 }
 

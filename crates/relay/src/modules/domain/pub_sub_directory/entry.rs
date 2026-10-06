@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use moqt::{ContentExists, wire::publish_done_status_code};
 
-use crate::modules::domain::{session_id::SessionId, track_key::TrackKey};
+use crate::modules::domain::{
+    session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct UpstreamSubscriptionKey {
@@ -17,6 +19,7 @@ pub(crate) struct ActiveUpstreamSubscription {
     pub(crate) expires: Option<u64>,
     pub(crate) content_exists: ContentExists,
     pub(crate) origin: UpstreamSubscriptionOrigin,
+    pub(crate) publisher_peer: SessionPeer,
 }
 
 /// A track the relay receives, keyed by the publisher session of each
@@ -26,6 +29,7 @@ pub(crate) struct ActiveUpstreamSubscription {
 pub(crate) struct UpstreamTrack {
     pub(crate) subscriptions: BTreeMap<SessionId, ActiveUpstreamSubscription>,
     pub(crate) downstream_subscriber_count: usize,
+    pub(crate) client_downstream_subscriber_count: usize,
 }
 
 impl UpstreamTrack {
@@ -92,7 +96,7 @@ pub(crate) struct ReleasedUpstreamSubscription {
 }
 
 /// `released_upstream_subscriptions` lists the SUBSCRIBE-initiated upstream
-/// subscriptions the removal left without a downstream subscriber.
+/// subscriptions the removal left without the downstream subscriber they need.
 #[derive(Clone, Debug)]
 pub(crate) struct RemovedDownstreamSubscription {
     pub(crate) track_key: TrackKey,

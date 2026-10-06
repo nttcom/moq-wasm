@@ -9,7 +9,7 @@ use tracing::Instrument;
 use super::{Fetch, FetchTarget};
 use crate::modules::{
     control_plane::{
-        control_message_forwarder::ControlMessageForwarder,
+        control_message_forwarder::ControlMessageForwarder, sequences::is_origin_client,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::{
@@ -17,7 +17,10 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
         ingress::fetch_ingest::{FetchIngest, FetchIngestStart},
     },
-    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
+    domain::{
+        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
+        session_peer::SessionPeer,
+    },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
 
@@ -47,10 +50,16 @@ impl UpstreamFetchTask {
     }
 
     async fn forward(start: UpstreamFetchStart) {
+        let requester = if is_origin_client(start.session_id, &start.forwarder).await {
+            SessionPeer::Client
+        } else {
+            SessionPeer::Relay
+        };
         let Some(prepared) = Fetch::create_upstream_fetch(
             &start.table,
             &start.forwarder,
             &start.upstream_publisher_resolver,
+            requester,
             start.handler.as_ref(),
             &start.target,
         )

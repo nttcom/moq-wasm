@@ -71,6 +71,7 @@ mod tests {
     use crate::modules::{
         domain::{
             pub_sub_directory::entry::{PublishDoneReason, UpstreamSubscriptionOrigin},
+            session_peer::SessionPeer,
             track_key::TrackKey,
         },
         test_support::{
@@ -107,7 +108,13 @@ mod tests {
             .map(|(session_id, subscribe_id)| {
                 upstream
                     .table
-                    .register_downstream_subscription(*session_id, *subscribe_id, track_key(), None)
+                    .register_downstream_subscription(
+                        *session_id,
+                        *subscribe_id,
+                        SessionPeer::Client,
+                        track_key(),
+                        None,
+                    )
                     .unwrap()
                     .stop_receiver
             })

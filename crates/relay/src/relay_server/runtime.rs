@@ -6,7 +6,7 @@ use crate::modules::{
     auth::token_verifier::TokenVerifier,
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::RelayRouteRegistry,
+        route_registry::RelayRouteRegistry, watched_namespace_job::WatchedNamespaceJob,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -28,6 +28,7 @@ pub(crate) struct RelayRuntime {
     _egress: EgressCoordinator,
     _manager: EventHandler,
     _evict_job: tokio::task::JoinHandle<()>,
+    _watched_namespace_job: WatchedNamespaceJob,
 }
 
 impl RelayRuntime {
@@ -48,6 +49,11 @@ impl RelayRuntime {
             route_registry.clone(),
             inter_relay_connection_manager.clone(),
         ));
+        let local_pub_sub_directory = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let watched_namespace_job = WatchedNamespaceJob::run(
+            upstream_publisher_resolver.watched_namespace_routes(),
+            local_pub_sub_directory.clone(),
+        );
         let ingress = IngressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
         let egress = EgressCoordinator::new(repo.clone(), cache_store.clone());
         let manager = EventHandler::run(
@@ -58,7 +64,7 @@ impl RelayRuntime {
                 },
                 repo,
                 relay_event_sender: sender.clone(),
-                local_pub_sub_directory: Arc::new(InMemoryLocalPubSubDirectory::new()),
+                local_pub_sub_directory,
                 ingress_sender: ingress.sender(),
                 egress_sender: egress.sender(),
                 route_registry,
@@ -77,6 +83,7 @@ impl RelayRuntime {
                 _egress: egress,
                 _manager: manager,
                 _evict_job: evict_job,
+                _watched_namespace_job: watched_namespace_job,
             },
         )
     }
