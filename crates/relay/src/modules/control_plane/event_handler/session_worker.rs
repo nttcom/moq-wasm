@@ -13,11 +13,11 @@ use crate::modules::{
         verified_token::VerifiedToken,
     },
     control_plane::sequences::{
-        CascadingRelayContext, fetch::Fetch, malformed_track::MalformedTrackCleanup,
-        publish::Publish, publish_namespace::PublishNamespace,
-        publish_namespace_done::PublishNamespaceDone, subscribe::Subscribe,
-        subscribe_namespace::SubscribeNameSpace, subscribe_update::SubscribeUpdate,
-        track_status::TrackStatus, unsubscribe::Unsubscribe,
+        CascadingRelayContext, downstream_publish::DownstreamPublish, fetch::Fetch,
+        malformed_track::MalformedTrackCleanup, publish::Publish,
+        publish_namespace::PublishNamespace, publish_namespace_done::PublishNamespaceDone,
+        subscribe::Subscribe, subscribe_namespace::SubscribeNameSpace,
+        subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
     domain::{
@@ -90,6 +90,15 @@ impl SessionWorker {
         CascadingRelayContext {
             route_registry: self.deps.route_registry.as_ref(),
             inter_relay_connection_manager: self.deps.inter_relay_connection_manager.as_ref(),
+        }
+    }
+
+    fn downstream_publish(&self) -> DownstreamPublish<'_> {
+        DownstreamPublish {
+            table: self.deps.local_pub_sub_directory.as_ref(),
+            forwarder: &self.deps.control_message_forwarder,
+            egress_sender: &self.deps.egress_sender,
+            cache_store: self.deps.cache_store.as_ref(),
         }
     }
 
@@ -195,6 +204,7 @@ impl SessionWorker {
                         &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
+                        &self.downstream_publish(),
                         deps.route_registry.as_ref(),
                         handler.as_ref(),
                     )
@@ -225,6 +235,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
+                        &self.downstream_publish(),
                         self.cascading_relay_context(),
                         handler,
                     )

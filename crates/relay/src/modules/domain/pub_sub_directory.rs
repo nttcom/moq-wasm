@@ -12,8 +12,8 @@ use crate::modules::{
     domain::{
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
-            ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
-            ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
+            ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
+            PublishDoneReason, ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
             RemovedSessionSubscriptions, UpstreamSubscriptionOrigin, UpstreamTrack,
         },
         session_id::SessionId,
@@ -365,18 +365,18 @@ impl InMemoryLocalPubSubDirectory {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.local_pub_sub_directory.get_subscribers",
+        name = "relay.local_pub_sub_directory.matching_publications",
         skip_all,
         fields(track_namespace_prefix = %track_namespace_prefix)
     )]
-    pub(crate) fn get_subscribers(
+    pub(crate) fn matching_publications(
         &self,
         track_namespace_prefix: &str,
-    ) -> HashSet<(String, Option<(String, u64)>)> {
-        let mut filtered = HashSet::new();
+    ) -> HashSet<MatchingPublication> {
+        let mut matching = HashSet::new();
         for entry in self.publisher_namespaces.iter() {
             if entry.key().starts_with(track_namespace_prefix) {
-                filtered.insert((entry.key().clone(), None));
+                matching.insert(MatchingPublication::Namespace(entry.key().clone()));
             }
         }
 
@@ -390,13 +390,13 @@ impl InMemoryLocalPubSubDirectory {
                 .track_namespace()
                 .starts_with(track_namespace_prefix)
             {
-                filtered.insert((
-                    handler.track_namespace().to_string(),
-                    Some((handler.track_name().to_string(), handler.track_alias())),
-                ));
+                matching.insert(MatchingPublication::Track(TrackKey::new(
+                    handler.track_namespace(),
+                    handler.track_name(),
+                )));
             }
         }
-        filtered
+        matching
     }
 
     #[tracing::instrument(
@@ -509,6 +509,17 @@ impl InMemoryLocalPubSubDirectory {
         self.downstream_subscriptions
             .get(&(downstream_session_id, downstream_subscribe_id))
             .map(|entry| entry.value().subscription.clone())
+    }
+
+    pub(crate) fn has_downstream_subscription_to_track(
+        &self,
+        downstream_session_id: SessionId,
+        track_key: &TrackKey,
+    ) -> bool {
+        self.downstream_subscriptions.iter().any(|entry| {
+            entry.key().0 == downstream_session_id
+                && &entry.value().subscription.track_key == track_key
+        })
     }
 
     pub(crate) fn register_upstream_subscription(

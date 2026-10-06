@@ -1,8 +1,12 @@
 use crate::modules::{
     cascading::route_registry::{RegisterRouteError, RelayRouteRegistry},
-    control_plane::control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        sequences::downstream_publish::DownstreamPublish,
+    },
     domain::{
-        error_code::SubscribeNamespaceErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
+        error_code::SubscribeNamespaceErrorCode,
+        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::MatchingPublication},
         session_id::SessionId,
     },
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
@@ -19,12 +23,14 @@ impl SubscribeNameSpace {
         parent = session_span,
         fields(session_id = %session_id)
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
         session_span: &Span,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
+        downstream_publish: &DownstreamPublish<'_>,
         route_registry: &dyn RelayRouteRegistry,
         handler: &dyn SubscribeNamespaceHandler,
     ) {
@@ -48,8 +54,13 @@ impl SubscribeNameSpace {
             table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
             return;
         }
-        self.broadcast_to_subscribers(session_id, track_namespace_prefix, forwarder, table)
-            .await;
+        self.forward_matching_publications(
+            session_id,
+            track_namespace_prefix,
+            forwarder,
+            downstream_publish,
+        )
+        .await;
         self.notify_remote_publish_namespaces(
             session_id,
             track_namespace_prefix,
@@ -102,43 +113,44 @@ impl SubscribeNameSpace {
 
     #[tracing::instrument(
         level = "info",
-        name = "relay.sequence.subscribe_namespace.broadcast_to_subscribers",
+        name = "relay.sequence.subscribe_namespace.forward_matching_publications",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
     )]
-    async fn broadcast_to_subscribers(
+    async fn forward_matching_publications(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
         forwarder: &ControlMessageForwarder,
-        table: &InMemoryLocalPubSubDirectory,
+        downstream_publish: &DownstreamPublish<'_>,
     ) {
-        let filtered = table.get_subscribers(track_namespace_prefix);
-        for (track_namespace, published_track) in filtered {
-            if let Some((track_name, _)) = published_track {
-                if forwarder
-                    .publish(session_id, track_namespace.clone(), track_name)
-                    .await
-                {
-                    tracing::info!(
-                        "Forwarded PUBLISH '{}' to session:{}",
-                        track_namespace,
-                        session_id
-                    )
-                } else {
-                    tracing::warn!("Failed to forward PUBLISH: {}", session_id);
+        let publications = downstream_publish
+            .table
+            .matching_publications(track_namespace_prefix);
+        for publication in publications {
+            match publication {
+                MatchingPublication::Track(track_key) => {
+                    match downstream_publish.send(session_id, &track_key).await {
+                        Ok(()) => tracing::info!(track_key = %track_key, "forwarded PUBLISH"),
+                        Err(error) => {
+                            tracing::warn!(?error, track_key = %track_key, "failed to forward PUBLISH")
+                        }
+                    }
                 }
-            } else if forwarder
-                .publish_namespace(session_id, track_namespace.clone())
-                .await
-            {
-                tracing::info!(
-                    "Forwarded PUBLISH_NAMESPACE '{}' to {}",
-                    track_namespace,
-                    session_id
-                );
-            } else {
-                tracing::error!("Failed to forward PUBLISH_NAMESPACE");
+                MatchingPublication::Namespace(track_namespace) => {
+                    if forwarder
+                        .publish_namespace(session_id, track_namespace.clone())
+                        .await
+                    {
+                        tracing::info!(
+                            "Forwarded PUBLISH_NAMESPACE '{}' to {}",
+                            track_namespace,
+                            session_id
+                        );
+                    } else {
+                        tracing::error!("Failed to forward PUBLISH_NAMESPACE");
+                    }
+                }
             }
         }
     }
@@ -190,5 +202,100 @@ impl SubscribeNameSpace {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::modules::{
+        cascading::route_registry::NoopRelayRouteRegistry,
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
+        test_support::{
+            directory_fixtures::{
+                DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
+                downstream_publish_context, table_with_upstream, track_key,
+            },
+            mock_session::{MockPublishHandler, PUBLISH_REQUEST_ID},
+        },
+    };
+
+    type SentMessages = Arc<Mutex<Vec<&'static str>>>;
+
+    struct MockSubscribeNamespaceHandler {
+        sent: SentMessages,
+    }
+
+    #[async_trait::async_trait]
+    impl SubscribeNamespaceHandler for MockSubscribeNamespaceHandler {
+        fn track_namespace_prefix(&self) -> &str {
+            "ns"
+        }
+
+        fn track_namespace_prefix_tuple(&self) -> &[String] {
+            &[]
+        }
+
+        async fn ok(&self) -> Result<(), moqt::TransportSendError> {
+            self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_OK");
+            Ok(())
+        }
+
+        async fn error(
+            &self,
+            _code: u64,
+            _reason_phrase: String,
+        ) -> Result<(), moqt::TransportSendError> {
+            self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_ERROR");
+            Ok(())
+        }
+    }
+
+    async fn context_with_published_track(sent: SentMessages) -> DownstreamPublishContext {
+        let table = Arc::new(table_with_upstream(UpstreamSubscriptionOrigin::Publish).0);
+        table.register_publish(
+            PUBLISHER_SESSION,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new("ns", "track", 0)),
+        );
+        downstream_publish_context(table, move || {
+            sent.lock().unwrap().push("PUBLISH");
+            Ok(())
+        })
+        .await
+    }
+
+    async fn subscribe_namespace(ctx: &DownstreamPublishContext, sent: SentMessages) {
+        SubscribeNameSpace
+            .handle(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                &Span::none(),
+                &ctx.table,
+                &ctx.forwarder,
+                &ctx.downstream_publish(),
+                &NoopRelayRouteRegistry,
+                &MockSubscribeNamespaceHandler { sent },
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn existing_publish_accepted_by_a_new_namespace_subscriber_is_a_downstream_subscription()
+    {
+        // Arrange
+        let sent = SentMessages::default();
+        let ctx = context_with_published_track(sent.clone()).await;
+
+        // Act
+        subscribe_namespace(&ctx, sent).await;
+
+        // Assert
+        let registered = ctx
+            .table
+            .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
+            .expect("PUBLISH_OK should register a downstream subscription");
+        assert_eq!(registered.track_key, track_key());
     }
 }

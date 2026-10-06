@@ -4,14 +4,16 @@ use publish_namespace_response_task::PublishNamespaceResponseTask;
 
 use std::sync::Arc;
 
-use moqt::{FilterType, GroupOrder};
+use moqt::{ContentExists, FilterType, GroupOrder};
 
 use crate::modules::{
-    domain::session_id::SessionId,
+    domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
     session::{
-        handler::publish::SubscribeOption, publisher::Publisher,
-        session_repository::SessionRepository, subscriber::Subscriber,
-        subscription::UpstreamSubscription,
+        handler::publish::SubscribeOption,
+        publisher::Publisher,
+        session_repository::SessionRepository,
+        subscriber::Subscriber,
+        subscription::{DownstreamSubscription, UpstreamSubscription},
     },
 };
 
@@ -95,22 +97,36 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
-    ) -> bool {
-        let Some(publisher) = self.publisher(session_id).await else {
-            return false;
-        };
-        publisher
-            .send_publish(track_namespace.clone(), track_name)
+        content_exists: ContentExists,
+    ) -> anyhow::Result<DownstreamSubscription> {
+        let publisher = self
+            .publisher(session_id)
             .await
-            .inspect(|_| {
-                tracing::info!(
-                    "Forwarded PUBLISH '{}' to session:{}",
-                    track_namespace,
-                    session_id
-                )
-            })
-            .inspect_err(|_| tracing::error!("Failed to send publish namespace"))
-            .is_ok()
+            .ok_or_else(|| anyhow::anyhow!("No publisher"))?;
+        publisher
+            .send_publish(track_namespace, track_name, content_exists)
+            .await
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.control_message_forwarder.publish_done",
+        skip_all,
+        fields(session_id = %session_id, request_id = %request_id)
+    )]
+    pub(crate) async fn publish_done(
+        &self,
+        session_id: SessionId,
+        request_id: u64,
+        reason: PublishDoneReason,
+    ) -> anyhow::Result<()> {
+        let publisher = self
+            .publisher(session_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No publisher"))?;
+        publisher
+            .send_publish_done(request_id, reason.status_code, 0, reason.error_reason)
+            .await
     }
 
     #[tracing::instrument(

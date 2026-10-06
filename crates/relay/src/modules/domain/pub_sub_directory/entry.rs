@@ -84,6 +84,12 @@ pub(crate) enum UpstreamSubscriptionOrigin {
     Subscribe,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum MatchingPublication {
+    Namespace(String),
+    Track(TrackKey),
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) track_key: TrackKey,

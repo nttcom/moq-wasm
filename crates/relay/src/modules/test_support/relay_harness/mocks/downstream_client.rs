@@ -121,6 +121,7 @@ impl Publisher for MockPublisher {
         &self,
         _track_namespace: String,
         _track_name: String,
+        _content_exists: moqt::ContentExists,
     ) -> anyhow::Result<DownstreamSubscription> {
         unreachable!("not used by the egress path under test")
     }
