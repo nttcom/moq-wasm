@@ -26,7 +26,7 @@ impl AsyncRead for Reader {
     ) -> Poll<std::io::Result<()>> {
         self.receive_stream
             .poll_read(cx, buf)
-            .map_err(|e| std::io::Error::other(format!("read error: {:?}", e)))
+            .map_err(std::io::Error::other)
     }
 }
 
@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_wraps_transport_error_in_io_error() {
+    async fn read_keeps_the_transport_error_inside_the_io_error() {
         // Arrange
         let mut receive_stream = MockTransportReceiveStream::new();
         receive_stream
@@ -73,6 +73,11 @@ mod tests {
         let error = reader.read(&mut out).await.unwrap_err();
 
         // Assert
-        assert_eq!(error.to_string(), "read error: Closed");
+        assert_eq!(
+            error
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<ReadError>()),
+            Some(&ReadError::Closed)
+        );
     }
 }
