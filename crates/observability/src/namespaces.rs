@@ -7,8 +7,6 @@ use crate::{
     schema::{SESSION_STATS, SUBSCRIPTION_STATS, TRACK_STATS},
 };
 
-const OBSERVABILITY_NAMESPACE_PREFIX: &str = "observability/";
-const OBSERVABILITY_APP_ID: &str = "observability";
 const MAX_NAMESPACES: u64 = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,9 +55,9 @@ pub async fn published_namespaces(
         ("app", query.app_id.clone().unwrap_or_default()),
         (
             "excluded_prefix",
-            OBSERVABILITY_NAMESPACE_PREFIX.to_string(),
+            format!("{}/", relay_stats::NAMESPACE_ROOT),
         ),
-        ("excluded_app", OBSERVABILITY_APP_ID.to_string()),
+        ("excluded_app", relay_stats::NAMESPACE_ROOT.to_string()),
         ("limit", MAX_NAMESPACES.to_string()),
     ];
     let range = "timestamp_ms >= {from:UInt64} AND timestamp_ms <= {to:UInt64}";
