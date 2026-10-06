@@ -67,6 +67,7 @@ pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
     answer_fetch: FetchAnswer,
+    transport_stats: moqt::TransportStats,
 }
 
 impl MockUpstreamSession {
@@ -75,8 +76,18 @@ impl MockUpstreamSession {
             recorded,
             answer_subscribe: None,
             answer_fetch: FetchAnswer::Never,
+            transport_stats: moqt::TransportStats::default(),
         }
     }
+}
+
+pub(crate) fn mock_session_with_transport_stats(
+    transport_stats: moqt::TransportStats,
+) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        transport_stats,
+        ..MockUpstreamSession::new(RecordedControlMessages::default())
+    })
 }
 
 pub(crate) fn mock_session() -> (Arc<dyn Session>, RecordedControlMessages) {
@@ -129,6 +140,7 @@ pub(crate) fn mock_session_answering_subscribe(
         recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
         answer_fetch: FetchAnswer::Never,
+        transport_stats: moqt::TransportStats::default(),
     })
 }
 
@@ -141,6 +153,7 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
             ContentExists::False
         }))),
         answer_fetch: FetchAnswer::Never,
+        transport_stats: moqt::TransportStats::default(),
     });
     (session, recorded)
 }
@@ -150,6 +163,7 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
         recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(SubscribeAnswer::Never),
         answer_fetch: FetchAnswer::Never,
+        transport_stats: moqt::TransportStats::default(),
     })
 }
 
@@ -158,6 +172,7 @@ pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn
         recorded: RecordedControlMessages::default(),
         answer_subscribe: None,
         answer_fetch,
+        transport_stats: moqt::TransportStats::default(),
     })
 }
 
@@ -227,6 +242,14 @@ impl Session for MockUpstreamSession {
             .lock()
             .unwrap()
             .push((code, reason.to_string()));
+    }
+
+    fn transport_stats(&self) -> moqt::TransportStats {
+        self.transport_stats
+    }
+
+    fn transport_addresses(&self) -> moqt::TransportAddresses {
+        moqt::TransportAddresses::default()
     }
 }
 

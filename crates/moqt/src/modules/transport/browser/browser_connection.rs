@@ -17,6 +17,7 @@ use super::{
     js_value::{js_error, read_next},
 };
 use crate::modules::transport::{
+    transport_addresses::TransportAddresses,
     transport_connection::{TransportClose, TransportConnection},
     transport_stats::TransportStats,
 };
@@ -152,6 +153,10 @@ impl TransportConnection for BrowserConnection {
 
     fn stats(&self) -> TransportStats {
         TransportStats::default()
+    }
+
+    fn addresses(&self) -> TransportAddresses {
+        TransportAddresses::default()
     }
 }
 

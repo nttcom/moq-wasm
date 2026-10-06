@@ -486,9 +486,8 @@ impl Subscribe {
                 downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
                 parent_span: Span::current(),
                 ready_sender,
-                runner_stop_receiver: runner_signals.stop_receiver,
+                runner_signals,
                 subscribe_ok_receiver,
-                forward_receiver: runner_signals.forward_receiver,
                 largest_location,
             })))
             .await

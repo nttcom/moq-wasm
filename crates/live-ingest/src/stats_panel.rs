@@ -266,6 +266,7 @@ mod tests {
             sent_stream_data_blocked,
             sent_data_blocked: 0,
             received_max_stream_data: 7,
+            ..TransportStats::default()
         }
     }
 

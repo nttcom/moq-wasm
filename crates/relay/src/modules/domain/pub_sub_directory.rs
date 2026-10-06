@@ -10,6 +10,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
+        delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, PublishDoneReason,
             ReleasedUpstreamSubscription, RemovedDownstreamSubscription,
@@ -27,6 +28,14 @@ pub(crate) struct RegisteredDownstreamSubscription {
     subscriber_peer: SessionPeer,
     runner_stop_sender: oneshot::Sender<PublishDoneReason>,
     forward_sender: watch::Sender<bool>,
+    delivery_stats: Arc<DeliveryStats>,
+}
+
+pub(crate) struct DownstreamSubscriptionState {
+    pub(crate) subscriber_session_id: SessionId,
+    pub(crate) request_id: u64,
+    pub(crate) track_key: TrackKey,
+    pub(crate) delivery: DeliveryCounters,
 }
 
 pub(crate) struct RegisteredPublish {
@@ -38,6 +47,7 @@ pub(crate) struct RegisteredPublish {
 pub(crate) struct DownstreamRunnerSignals {
     pub(crate) stop_receiver: oneshot::Receiver<PublishDoneReason>,
     pub(crate) forward_receiver: watch::Receiver<bool>,
+    pub(crate) delivery_stats: Arc<DeliveryStats>,
 }
 
 // Client subscriptions own the Redis route for their prefix, so the
@@ -453,6 +463,38 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
+    /// One entry per publisher feeding each track.
+    pub(crate) fn active_upstream_tracks(&self) -> Vec<(SessionId, TrackKey)> {
+        self.upstream_tracks
+            .iter()
+            .flat_map(|entry| {
+                let track_key = entry.key().clone();
+                entry
+                    .value()
+                    .subscriptions
+                    .keys()
+                    .map(|publisher_session_id| (*publisher_session_id, track_key.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub(crate) fn downstream_subscription_states(&self) -> Vec<DownstreamSubscriptionState> {
+        self.downstream_subscriptions
+            .iter()
+            .map(|entry| {
+                let (subscriber_session_id, request_id) = *entry.key();
+                let registered = entry.value();
+                DownstreamSubscriptionState {
+                    subscriber_session_id,
+                    request_id,
+                    track_key: registered.subscription.track_key.clone(),
+                    delivery: registered.delivery_stats.counters(),
+                }
+            })
+            .collect()
+    }
+
     pub(crate) fn get_upstream_track(&self, track_key: &TrackKey) -> Option<UpstreamTrack> {
         self.upstream_tracks
             .get(track_key)
@@ -612,6 +654,7 @@ impl InMemoryLocalPubSubDirectory {
         }
         let (runner_stop_sender, stop_receiver) = oneshot::channel();
         let (forward_sender, forward_receiver) = watch::channel(true);
+        let delivery_stats = Arc::new(DeliveryStats::default());
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
             RegisteredDownstreamSubscription {
@@ -622,11 +665,13 @@ impl InMemoryLocalPubSubDirectory {
                 subscriber_peer,
                 runner_stop_sender,
                 forward_sender,
+                delivery_stats: delivery_stats.clone(),
             },
         );
         Some(DownstreamRunnerSignals {
             stop_receiver,
             forward_receiver,
+            delivery_stats,
         })
     }
 
@@ -1178,6 +1223,39 @@ mod tests {
         // Assert
         assert!(updated);
         assert!(!*signals.forward_receiver.borrow());
+    }
+
+    #[test]
+    fn downstream_subscription_states_report_delivery() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        let signals = table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap();
+        signals.delivery_stats.record_stream_reset();
+
+        // Act
+        let states = table.downstream_subscription_states();
+
+        // Assert
+        let [state] = &states[..] else {
+            panic!("expected one registration, got {}", states.len());
+        };
+        assert_eq!((state.subscriber_session_id, state.request_id), (2, 100));
+        assert_eq!(state.track_key, track_key);
+        assert_eq!(state.delivery.streams_reset, 1);
+    }
+
+    #[test]
+    fn active_upstream_tracks_lists_each_publisher_with_its_track() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+
+        // Act
+        let tracks = table.active_upstream_tracks();
+
+        // Assert
+        assert_eq!(tracks, vec![(PUBLISHER_SESSION, track_key)]);
     }
 
     #[test]
