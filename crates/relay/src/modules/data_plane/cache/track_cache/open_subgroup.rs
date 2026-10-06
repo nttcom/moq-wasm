@@ -168,11 +168,9 @@ impl TrackCache {
             };
             open.guards -= 1;
             let is_stream = matches!(key, SubgroupKey::Stream { .. });
-            let covers_earliest_object = match (first_object_id, open.earliest_first_object_id) {
-                (_, None) => true,
-                (None, Some(_)) => false,
-                (Some(first), Some(earliest)) => first <= earliest,
-            };
+            let covers_earliest_object = open
+                .earliest_first_object_id
+                .is_none_or(|earliest| first_object_id.is_some_and(|first| first <= earliest));
             let finishes_every_stream = finished && is_stream && covers_earliest_object;
             if finished && !is_stream {
                 open.any_finished = true;
