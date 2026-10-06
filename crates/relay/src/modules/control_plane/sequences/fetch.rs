@@ -8,7 +8,10 @@ use moqt::wire::FetchParams;
 use tracing::Span;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::{
         cache::{
             store::TrackCacheStore,
@@ -21,7 +24,6 @@ use crate::modules::{
         session_id::SessionId, track_key::TrackKey,
     },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
-    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 
 pub(crate) struct Fetch;
@@ -424,9 +426,9 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::modules::{
+        control_plane::sequences::test_fixtures::table_with_upstream,
         data_plane::tests::harness::fixtures::cached_object::{insert_closed_group, open_group},
         domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
-        sequences::test_fixtures::table_with_upstream,
     };
 
     fn standalone_fetch_params(

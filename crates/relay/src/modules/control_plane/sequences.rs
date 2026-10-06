@@ -12,10 +12,9 @@ pub(crate) mod track_status;
 pub(crate) mod unsubscribe;
 pub(crate) mod unsubscribe_namespace;
 pub(crate) mod upstream_publish_done;
-pub(crate) mod upstream_serializer;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{session_id::SessionId, track_key::TrackKey},
     inter_relay::InterRelayConnectionManager,

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
+    },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
         error_code::PublishErrorCode,
@@ -16,7 +18,6 @@ use crate::modules::{
     },
     inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
-    sequences::CascadingRelayContext,
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
 

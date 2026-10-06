@@ -1,5 +1,5 @@
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionKey},
@@ -53,11 +53,11 @@ impl MalformedTrackCleanup {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
-        sequences::test_fixtures::{
+        control_plane::sequences::test_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
             upstream_release_context,
         },
+        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
     };
 
     async fn run_cleanup(ctx: &UpstreamReleaseContext) {

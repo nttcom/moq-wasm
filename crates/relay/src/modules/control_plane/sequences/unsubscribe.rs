@@ -1,5 +1,5 @@
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
@@ -75,11 +75,11 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::PublishDoneReason, track_key::TrackKey},
-        sequences::test_fixtures::{
+        control_plane::sequences::test_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
             upstream_release_context,
         },
+        domain::{pub_sub_directory::entry::PublishDoneReason, track_key::TrackKey},
         session::mocks::runner_stopped,
     };
 

@@ -2,7 +2,7 @@ use moqt::ContentExists;
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
         pub_sub_directory::{

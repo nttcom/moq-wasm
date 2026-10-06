@@ -8,7 +8,10 @@ use tracing::Instrument;
 
 use super::{Fetch, FetchTarget};
 use crate::modules::{
-    control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::{
         cache::store::TrackCacheStore,
         egress::coordinator::{EgressCommand, EgressFetchRequest},
@@ -16,7 +19,6 @@ use crate::modules::{
     },
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
-    upstream_publisher_resolver::UpstreamPublisherResolver,
 };
 
 pub(super) struct UpstreamFetchStart {
