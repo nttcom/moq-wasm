@@ -73,7 +73,10 @@ export interface Series {
   series: Record<string, (number | null)[]>
 }
 
-const API_BASE = new URLSearchParams(window.location.search).get('api') ?? 'http://localhost:8095'
+const LOCAL_HOSTS = ['localhost', '127.0.0.1']
+const API_BASE = LOCAL_HOSTS.includes(window.location.hostname)
+  ? 'http://localhost:8095'
+  : 'https://observability.moqt.research.skyway.io'
 
 async function getJson<T>(path: string, params: Record<string, string | number>): Promise<T> {
   const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))

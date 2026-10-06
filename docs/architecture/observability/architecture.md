@@ -227,7 +227,9 @@ ClickHouse runs as a `docker-compose.yml` service next to the relays.
 ## Browser page (`examples/browser/examples/observability`)
 
 A dark, full-width topology view of live connections and subscriptions with a
-chart drawer for the selection.
+chart drawer for the selection. Served from `localhost` it reads the local
+stack's API on port 8095; anywhere else, the deployed
+`https://observability.moqt.research.skyway.io`.
 
 ### Header
 - `app_id` selector and Track Namespace prefix filter. The prefix covers the
