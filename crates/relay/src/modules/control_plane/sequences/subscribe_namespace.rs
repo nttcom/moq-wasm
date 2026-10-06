@@ -54,6 +54,10 @@ impl SubscribeNameSpace {
             table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
             return;
         }
+        if let Err(e) = handler.ok().await {
+            tracing::error!("Subscribe Namespace Error: {:?}", e);
+            return;
+        }
         self.forward_matching_publications(
             session_id,
             track_namespace_prefix,
@@ -68,9 +72,6 @@ impl SubscribeNameSpace {
             route_registry,
         )
         .await;
-        if let Err(e) = handler.ok().await {
-            tracing::error!("Subscribe Namespace Error: {:?}", e);
-        }
     }
 
     #[tracing::instrument(
@@ -279,6 +280,22 @@ mod tests {
                 &MockSubscribeNamespaceHandler { sent },
             )
             .await;
+    }
+
+    #[tokio::test]
+    async fn subscribe_namespace_ok_is_sent_before_existing_publishes() {
+        // Arrange
+        let sent = SentMessages::default();
+        let ctx = context_with_published_track(sent.clone()).await;
+
+        // Act
+        subscribe_namespace(&ctx, sent.clone()).await;
+
+        // Assert
+        assert_eq!(
+            *sent.lock().unwrap(),
+            vec!["SUBSCRIBE_NAMESPACE_OK", "PUBLISH"]
+        );
     }
 
     #[tokio::test]

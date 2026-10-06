@@ -339,6 +339,17 @@ Forward State starts at 1 whatever the PUBLISH_OK carries, as for SUBSCRIBE.
 The worker waits for each subscriber's PUBLISH_OK in turn before answering the
 publisher.
 
+### SUBSCRIBE_NAMESPACE sequence
+Register the prefix (and, for the first client subscriber of the prefix, its
+Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward what already
+matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
+`PublishNamespaceResponseTask`), a `DownstreamPublish` for each published
+track (one per publisher session), then PUBLISH_NAMESPACE for remote
+namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards
+the existing messages once the subscription succeeded; a subscriber that
+handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise hold the
+relay's PUBLISH_OK wait for the request timeout.
+
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
 `watch::Sender<bool>` next to its runner stop sender, starting at Forward 1
