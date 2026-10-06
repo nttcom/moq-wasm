@@ -93,7 +93,7 @@ export class PlayerControls {
     })
     seekbar.addEventListener('input', () => {
       this.seeking = true
-      this.renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max))
+      this.renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max), true)
     })
     seekbar.addEventListener('change', () => {
       this.seeking = false
@@ -233,7 +233,7 @@ export class PlayerControls {
     seekbar.valueAsNumber = anchor
     this.renderReplayableWindow(seek.replayableStartSeconds, latest)
     this.renderReviewProgress(reviewing, anchor, playhead, latest)
-    this.renderSeekPosition(anchor, playhead, latest)
+    this.renderSeekPosition(anchor, playhead, latest, !reviewing)
   }
 
   private renderReviewProgress(reviewing: boolean, anchor: number, playhead: number, latest: number): void {
@@ -271,9 +271,12 @@ export class PlayerControls {
     this.player.seek(captureSeconds * MICROS_PER_SECOND)
   }
 
-  private renderSeekPosition(anchor: number, playhead: number, latest: number): void {
+  /// A review that has caught up with the live edge is still a review, so
+  /// `LIVE` is shown only while live; a drag previews the position it would
+  /// land on, and releasing at the end goes live.
+  private renderSeekPosition(anchor: number, playhead: number, latest: number, live: boolean): void {
     const behind = Math.max(0, latest - playhead)
-    this.part('seek-position').textContent = behind < 0.1 ? 'LIVE' : `-${behind.toFixed(1)}s`
+    this.part('seek-position').textContent = live && behind < 0.1 ? 'LIVE' : `-${behind.toFixed(1)}s`
     const thumbBehind = Math.max(0, latest - anchor)
     this.seekbar.setAttribute(
       'aria-valuetext',
