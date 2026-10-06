@@ -17,6 +17,9 @@ use crate::{
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Well below quinn's 30 s default idle timeout, so a peer that is only
+/// detected as gone through the idle timeout fails the wait.
+const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) fn free_udp_port() -> u16 {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -85,6 +88,14 @@ pub(crate) async fn connect_sessions(
     .await??;
     let server = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept).await??;
     Ok((client, server))
+}
+
+pub(crate) async fn receive_disconnected(session: &Session) -> anyhow::Result<()> {
+    tokio::time::timeout(DISCONNECT_TIMEOUT, async {
+        while !matches!(session.receive_event().await?, SessionEvent::Disconnected()) {}
+        anyhow::Ok(())
+    })
+    .await?
 }
 
 pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Session) {

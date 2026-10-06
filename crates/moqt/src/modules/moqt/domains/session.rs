@@ -182,7 +182,8 @@ mod tests {
     use crate::{
         SessionEvent,
         modules::test_support::{
-            connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
+            connect_sessions, receive_disconnected, spawn_connected_dual_sessions,
+            spawn_dual_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
@@ -242,6 +243,18 @@ mod tests {
             Some(MOQ_TRANSPORT_VERSION)
         );
         assert!(server.server_setup().is_none());
+    }
+
+    #[tokio::test]
+    async fn dropping_the_client_session_disconnects_the_server_session() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-drop").await;
+
+        // Act
+        drop(client);
+
+        // Assert
+        receive_disconnected(&server).await.unwrap();
     }
 
     #[tokio::test]

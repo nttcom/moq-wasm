@@ -300,7 +300,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   stream with queued data only after that stream's next frame.
 - **Session teardown**: dropping `Session` aborts all four background tasks;
   the control task's `Weak` reference guarantees it never keeps the context
-  alive.
+  alive. The transport closes (code 0) once the last handle to the context
+  (`Session`, `Publisher`, `Subscriber`, stream writers) is gone, but the
+  CONNECTION_CLOSE is sent by quinn's background driver: a process must
+  await `Endpoint::wait_idle()` before exiting, or the peer only notices
+  through its idle timeout.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
   yields and bounds waits only through `modules/executor` (`spawn`,
   `try_spawn`, `yield_now`, `timeout`); `tokio::sync` channels and locks are

@@ -197,6 +197,14 @@ impl TransportConnectionCreator for DualProtocolCreator {
             anyhow::bail!("Unsupported ALPN: {:?}", String::from_utf8_lossy(&alpn))
         }
     }
+
+    async fn wait_idle(&self) {
+        let endpoint = match &self.endpoint {
+            DualEndpoint::Server(endpoint) => endpoint,
+            DualEndpoint::Client(client) => &client.endpoint,
+        };
+        endpoint.wait_idle().await;
+    }
 }
 
 #[cfg(test)]

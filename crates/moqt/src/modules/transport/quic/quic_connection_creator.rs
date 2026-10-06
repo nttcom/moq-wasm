@@ -124,4 +124,8 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 
         Ok(Box::new(QUICConnection::new(connection)))
     }
+
+    async fn wait_idle(&self) {
+        self.endpoint.wait_idle().await;
+    }
 }

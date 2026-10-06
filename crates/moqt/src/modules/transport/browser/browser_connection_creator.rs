@@ -54,4 +54,6 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
     async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
         anyhow::bail!("the browser cannot accept connections")
     }
+
+    async fn wait_idle(&self) {}
 }

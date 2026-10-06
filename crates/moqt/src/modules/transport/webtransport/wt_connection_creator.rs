@@ -24,6 +24,7 @@ enum WtEndpoint {
 
 pub struct WtConnectionCreator {
     endpoint: WtEndpoint,
+    quic_endpoint: quinn::Endpoint,
 }
 
 impl WtConnectionCreator {
@@ -35,7 +36,11 @@ impl WtConnectionCreator {
             endpoint.local_addr()?
         );
         Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Client(web_transport_quinn::Client::new(endpoint, client_config)),
+            endpoint: WtEndpoint::Client(web_transport_quinn::Client::new(
+                endpoint.clone(),
+                client_config,
+            )),
+            quic_endpoint: endpoint,
         })
     }
 }
@@ -76,6 +81,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         tracing::info!("Server ready! for WebTransport port: {}", port_num);
 
         Ok(WtConnectionCreator {
+            quic_endpoint: quinn::Endpoint::clone(&server),
             endpoint: WtEndpoint::Server(tokio::sync::Mutex::new(server)),
         })
     }
@@ -124,5 +130,9 @@ impl TransportConnectionCreator for WtConnectionCreator {
             .inspect_err(|e| tracing::error!("failed to establish session: {:?}", e))?;
 
         Ok(Box::new(WtConnection::new(session)))
+    }
+
+    async fn wait_idle(&self) {
+        self.quic_endpoint.wait_idle().await;
     }
 }
