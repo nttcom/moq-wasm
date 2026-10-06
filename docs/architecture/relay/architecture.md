@@ -294,9 +294,15 @@ then delegate to `EgressCommand::StartFetch`, which serves the range from
 
 A range the cache cannot serve goes upstream. The worker hands it to
 `UpstreamFetchTask` (`control_plane/sequences/fetch/upstream_fetch_task.rs`) and moves on to
-the session's next event; the task resolves the publisher, forwards the FETCH,
-waits for its FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
-`FetchIngest`, which fills the cache and hands the range to egress. A
+the session's next event; the task forwards the FETCH, waits for its
+FETCH_OK, replies FETCH_OK (or FETCH_ERROR) downstream and starts
+`FetchIngest`, which fills the cache and hands the range to egress. draft-14
+§8.4 lets the relay send it to any one publisher, so the task tries them in
+turn until one answers FETCH_OK: first the publishers whose upstream
+SUBSCRIBE for the track succeeded (known to be alive), newest first, then the
+other publishers of the track, newest first. A FETCH_ERROR or a timeout moves
+on to the next; only when every publisher failed is the last error relayed
+downstream. A
 downstream session that disconnects meanwhile only makes the FETCH_OK send
 fail; egress drops a `StartFetch` for a departed session.
 

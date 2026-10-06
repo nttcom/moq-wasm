@@ -56,9 +56,18 @@ enum SubscribeAnswer {
     Never,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) enum FetchAnswer {
+    #[default]
+    Never,
+    Refuse,
+    FetchOk,
+}
+
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
+    answer_fetch: FetchAnswer,
 }
 
 impl MockUpstreamSession {
@@ -66,6 +75,7 @@ impl MockUpstreamSession {
         Self {
             recorded,
             answer_subscribe: None,
+            answer_fetch: FetchAnswer::Never,
         }
     }
 }
@@ -119,6 +129,7 @@ pub(crate) fn mock_session_answering_subscribe(
     Box::new(MockUpstreamSession {
         recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
+        answer_fetch: FetchAnswer::Never,
     })
 }
 
@@ -130,6 +141,7 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
         answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(|| {
             ContentExists::False
         }))),
+        answer_fetch: FetchAnswer::Never,
     });
     (session, recorded)
 }
@@ -139,6 +151,15 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
     Box::new(MockUpstreamSession {
         recorded: RecordedControlMessages::default(),
         answer_subscribe: Some(SubscribeAnswer::Never),
+        answer_fetch: FetchAnswer::Never,
+    })
+}
+
+pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn Session> {
+    Box::new(MockUpstreamSession {
+        recorded: RecordedControlMessages::default(),
+        answer_subscribe: None,
+        answer_fetch,
     })
 }
 
@@ -194,6 +215,7 @@ impl Session for MockUpstreamSession {
         Box::new(MockUpstreamSubscriber {
             recorded: self.recorded.clone(),
             answer_subscribe: self.answer_subscribe.clone(),
+            answer_fetch: self.answer_fetch,
         })
     }
 
@@ -272,6 +294,7 @@ impl Publisher for UnansweringPublisher {
 struct MockUpstreamSubscriber {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
+    answer_fetch: FetchAnswer,
 }
 
 #[async_trait::async_trait]
@@ -328,10 +351,23 @@ impl Subscriber for MockUpstreamSubscriber {
         _track_namespace: String,
         _track_name: String,
         _start_location: moqt::Location,
-        _end_location: moqt::Location,
+        end_location: moqt::Location,
         _option: moqt::FetchOption,
     ) -> anyhow::Result<moqt::FetchHandle> {
-        std::future::pending().await
+        match self.answer_fetch {
+            FetchAnswer::Never => std::future::pending().await,
+            FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::wire::RequestError {
+                request_id: 0,
+                error_code: 0x4,
+                reason_phrase: "no objects".to_string(),
+            })),
+            FetchAnswer::FetchOk => Ok(moqt::FetchHandle {
+                request_id: 0,
+                group_order: GroupOrder::Ascending,
+                end_of_track: false,
+                end_location,
+            }),
+        }
     }
 
     async fn create_fetch_receiver(

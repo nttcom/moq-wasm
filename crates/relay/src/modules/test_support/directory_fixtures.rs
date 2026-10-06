@@ -1,8 +1,17 @@
+use std::sync::Arc;
+
 use moqt::ContentExists;
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    control_plane::control_message_forwarder::ControlMessageForwarder,
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::NoopRelayRouteRegistry,
+    },
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        upstream_publisher_resolver::UpstreamPublisherResolver,
+    },
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
         pub_sub_directory::{
@@ -15,6 +24,7 @@ use crate::modules::{
         session_id::SessionId,
         track_key::TrackKey,
     },
+    session::session_repository::SessionRepository,
     test_support::mock_session::{
         RecordedControlMessages, session_repository_with_upstream_session,
     },
@@ -81,4 +91,16 @@ pub(crate) async fn upstream_release_context(
         ingress_receiver,
         recorded,
     }
+}
+
+pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
+    let (session_event_sender, _session_event_receiver) = mpsc::unbounded_channel();
+    UpstreamPublisherResolver::new(
+        Arc::new(NoopRelayRouteRegistry),
+        Arc::new(InterRelayConnectionManager::new(
+            Arc::new(tokio::sync::Mutex::new(SessionRepository::new())),
+            session_event_sender,
+            "unused-relay-token".to_string(),
+        )),
+    )
 }

@@ -561,7 +561,7 @@ mod tests {
         session_peer::SessionPeer,
     };
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, active_upstream, track_key, upstream_track,
+        PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_track,
     };
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, mock_session_answering_subscribe,
@@ -635,19 +635,8 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        let (session_event_sender, _session_event_receiver) =
-            tokio::sync::mpsc::unbounded_channel();
-        let forwarder = ControlMessageForwarder {
-            repository: repository.clone(),
-        };
-        let resolver = UpstreamPublisherResolver::new(
-            Arc::new(NoopRelayRouteRegistry),
-            Arc::new(InterRelayConnectionManager::new(
-                repository.clone(),
-                session_event_sender,
-                "unused-relay-token".to_string(),
-            )),
-        );
+        let forwarder = ControlMessageForwarder { repository };
+        let resolver = local_publisher_resolver();
         let serializer = UpstreamCreationSerializer::default();
         let (ingress_sender, _ingress_receiver) = tokio::sync::mpsc::channel(4);
 
@@ -691,19 +680,8 @@ mod tests {
         }
         let repository =
             session_repository_with_sessions(publishers, VerifiedToken::full_access()).await;
-        let (session_event_sender, _session_event_receiver) =
-            tokio::sync::mpsc::unbounded_channel();
-        let forwarder = ControlMessageForwarder {
-            repository: repository.clone(),
-        };
-        let resolver = UpstreamPublisherResolver::new(
-            Arc::new(NoopRelayRouteRegistry),
-            Arc::new(InterRelayConnectionManager::new(
-                repository,
-                session_event_sender,
-                "unused-relay-token".to_string(),
-            )),
-        );
+        let forwarder = ControlMessageForwarder { repository };
+        let resolver = local_publisher_resolver();
         let (ingress_sender, mut ingress_receiver) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move { while ingress_receiver.recv().await.is_some() {} });
         let created = tokio::time::timeout(

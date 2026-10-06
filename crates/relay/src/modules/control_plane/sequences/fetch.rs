@@ -175,88 +175,106 @@ impl Fetch {
         handler: &dyn FetchHandler,
         target: &FetchTarget,
     ) -> Option<PreparedUpstreamFetch> {
-        let fetch_option = moqt::FetchOption {
-            subscriber_priority: moqt::FetchOption::default().subscriber_priority,
-            group_order: handler.group_order(),
-        };
+        let publishers = Self::fetch_publishers(table, upstream_publisher_resolver, target).await;
+        if publishers.is_empty() {
+            tracing::warn!(
+                track_namespace = %target.track_namespace,
+                track_name = %target.track_name,
+                "No upstream publisher found for fetch"
+            );
+            let _ = handler
+                .error(
+                    FetchErrorCode::TrackDoesNotExist as u64,
+                    FetchError::TrackNotFound.reason().to_string(),
+                )
+                .await;
+            return None;
+        }
 
-        let upstream_key = match upstream_publisher_resolver
+        let mut last_error = None;
+        for publisher_session_id in publishers {
+            match forwarder
+                .fetch(
+                    publisher_session_id,
+                    target.track_namespace.clone(),
+                    target.track_name.clone(),
+                    target.start_location,
+                    target.end_location,
+                    moqt::FetchOption {
+                        subscriber_priority: moqt::FetchOption::default().subscriber_priority,
+                        group_order: handler.group_order(),
+                    },
+                )
+                .await
+            {
+                Ok(handle) => {
+                    tracing::info!(
+                        pub_session_id = publisher_session_id,
+                        track_namespace = %target.track_namespace,
+                        track_name = %target.track_name,
+                        upstream_request_id = handle.request_id,
+                        "Upstream FETCH_OK received; starting cache fill"
+                    );
+                    return Some(PreparedUpstreamFetch {
+                        handle,
+                        upstream_publisher_session_id: publisher_session_id,
+                    });
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        err = %format!("{err:#}"),
+                        pub_session_id = publisher_session_id,
+                        track_namespace = %target.track_namespace,
+                        track_name = %target.track_name,
+                        "Upstream FETCH failed"
+                    );
+                    last_error = Some(err);
+                }
+            }
+        }
+
+        let (error_code, reason) = last_error
+            .map(|err| Self::upstream_fetch_error_response(&err))
+            .unwrap_or((
+                FetchErrorCode::InternalError as u64,
+                "Internal relay error".to_string(),
+            ));
+        let _ = handler.error(error_code, reason).await;
+        None
+    }
+
+    /// draft-14 §8.4 lets the relay send an upstream FETCH to any matching
+    /// publisher. A publisher that answered SUBSCRIBE for the track is known
+    /// to be alive, so those come first, newest first, then the remaining
+    /// publishers of the track, newest first.
+    async fn fetch_publishers(
+        table: &InMemoryLocalPubSubDirectory,
+        upstream_publisher_resolver: &UpstreamPublisherResolver,
+        target: &FetchTarget,
+    ) -> Vec<SessionId> {
+        let mut publishers: Vec<SessionId> = table
+            .get_upstream_track(&target.track_key)
+            .map(|track| track.subscriptions.into_keys().rev().collect())
+            .unwrap_or_default();
+        match upstream_publisher_resolver
             .resolve(table, &target.track_namespace, &target.track_name)
             .await
-            .map(|publishers| publishers.into_iter().next())
         {
-            Ok(Some(key)) => key,
-            Ok(None) => {
-                tracing::warn!(
-                    track_namespace = %target.track_namespace,
-                    track_name = %target.track_name,
-                    "No upstream publisher found for fetch"
-                );
-                let _ = handler
-                    .error(
-                        FetchErrorCode::TrackDoesNotExist as u64,
-                        FetchError::TrackNotFound.reason().to_string(),
-                    )
-                    .await;
-                return None;
+            Ok(resolved) => {
+                for publisher in resolved {
+                    if !publishers.contains(&publisher.publisher_session_id) {
+                        publishers.push(publisher.publisher_session_id);
+                    }
+                }
             }
-            Err(err) => {
-                // Display with alternate ({:#}) keeps the error chain but not the
-                // backtrace: these are expected request-scoped failures.
-                tracing::warn!(
-                    err = %format!("{err:#}"),
-                    track_namespace = %target.track_namespace,
-                    track_name = %target.track_name,
-                    "Failed to resolve upstream publisher for fetch"
-                );
-                let _ = handler
-                    .error(
-                        FetchErrorCode::InternalError as u64,
-                        "Internal relay error".to_string(),
-                    )
-                    .await;
-                return None;
-            }
-        };
-
-        let handle = match forwarder
-            .fetch(
-                upstream_key.publisher_session_id,
-                upstream_key.track_namespace.clone(),
-                upstream_key.track_name.clone(),
-                target.start_location,
-                target.end_location,
-                fetch_option,
-            )
-            .await
-        {
-            Ok(pair) => pair,
-            Err(err) => {
-                tracing::warn!(
-                    err = %format!("{err:#}"),
-                    pub_session_id = upstream_key.publisher_session_id,
-                    track_namespace = %target.track_namespace,
-                    track_name = %target.track_name,
-                    "Upstream FETCH failed"
-                );
-                let (error_code, reason) = Self::upstream_fetch_error_response(&err);
-                let _ = handler.error(error_code, reason).await;
-                return None;
-            }
-        };
-
-        tracing::info!(
-            pub_session_id = upstream_key.publisher_session_id,
-            track_namespace = %target.track_namespace,
-            track_name = %target.track_name,
-            upstream_request_id = handle.request_id,
-            "Upstream FETCH_OK received; starting cache fill"
-        );
-
-        Some(PreparedUpstreamFetch {
-            handle,
-            upstream_publisher_session_id: upstream_key.publisher_session_id,
-        })
+            Err(err) => tracing::warn!(
+                err = %format!("{err:#}"),
+                track_namespace = %target.track_namespace,
+                track_name = %target.track_name,
+                "Failed to resolve upstream publishers for fetch"
+            ),
+        }
+        publishers
     }
 
     fn upstream_fetch_error_response(error: &anyhow::Error) -> (u64, String) {
@@ -428,9 +446,14 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        auth::verified_token::VerifiedToken,
+        domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::{
-            directory_fixtures::table_with_upstream,
+            directory_fixtures::{active_upstream, local_publisher_resolver, table_with_upstream},
+            mock_session::{
+                FetchAnswer, MockFetchHandler, mock_session_answering_fetch,
+                session_repository_with_sessions,
+            },
             relay_harness::fixtures::cached_object::{insert_closed_group, open_group},
         },
     };
@@ -445,6 +468,108 @@ mod tests {
             start_location,
             end_location,
         }
+    }
+
+    #[tokio::test]
+    async fn fetch_goes_first_to_publishers_that_answered_subscribe_newest_first() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        for publisher_session_id in [1, 3, 5] {
+            table.register_publish_namespace(
+                publisher_session_id,
+                "ns".to_string(),
+                SessionPeer::Client,
+            );
+        }
+        let track_key = TrackKey::new("ns", "track");
+        for publisher_session_id in [1, 3] {
+            table.register_upstream_subscription(
+                track_key.clone(),
+                publisher_session_id,
+                active_upstream(UpstreamSubscriptionOrigin::Subscribe),
+            );
+        }
+        let target = FetchTarget {
+            track_key,
+            track_namespace: "ns".to_string(),
+            track_name: "track".to_string(),
+            start_location: moqt::Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            end_location: moqt::Location {
+                group_id: 1,
+                object_id: 0,
+            },
+        };
+
+        // Act
+        let publishers =
+            Fetch::fetch_publishers(&table, &local_publisher_resolver(), &target).await;
+
+        // Assert
+        assert_eq!(publishers, vec![3, 1, 5]);
+    }
+
+    #[tokio::test]
+    async fn fetch_refused_by_the_newest_publisher_goes_to_the_next() {
+        // Arrange
+        const REFUSING_PUBLISHER: SessionId = 5;
+        const ANSWERING_PUBLISHER: SessionId = 3;
+        let table = InMemoryLocalPubSubDirectory::new();
+        for publisher_session_id in [ANSWERING_PUBLISHER, REFUSING_PUBLISHER] {
+            table.register_publish_namespace(
+                publisher_session_id,
+                "ns".to_string(),
+                SessionPeer::Client,
+            );
+        }
+        let repository = session_repository_with_sessions(
+            vec![
+                (
+                    REFUSING_PUBLISHER,
+                    mock_session_answering_fetch(FetchAnswer::Refuse),
+                ),
+                (
+                    ANSWERING_PUBLISHER,
+                    mock_session_answering_fetch(FetchAnswer::FetchOk),
+                ),
+            ],
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let target = Fetch
+            .resolve_fetch_target(
+                2,
+                standalone_fetch_params(
+                    moqt::Location {
+                        group_id: 0,
+                        object_id: 0,
+                    },
+                    moqt::Location {
+                        group_id: 1,
+                        object_id: 0,
+                    },
+                ),
+                &table,
+            )
+            .unwrap();
+
+        // Act
+        let prepared = Fetch::create_upstream_fetch(
+            &table,
+            &ControlMessageForwarder { repository },
+            &local_publisher_resolver(),
+            &MockFetchHandler,
+            &target,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(
+            prepared.map(|prepared| prepared.upstream_publisher_session_id),
+            Some(ANSWERING_PUBLISHER)
+        );
     }
 
     #[test]
