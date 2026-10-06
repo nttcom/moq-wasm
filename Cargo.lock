@@ -2087,6 +2087,9 @@ name = "observability"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "moqt",
  "relay-stats",
  "reqwest",

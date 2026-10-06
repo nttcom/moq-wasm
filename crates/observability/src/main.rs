@@ -1,6 +1,7 @@
 use std::future;
 
 use observability::{
+    api_server::{ApiServer, ApiState},
     clickhouse::ClickHouse,
     config::ObservabilityConfig,
     latest_snapshots::LatestSnapshots,
@@ -8,7 +9,7 @@ use observability::{
     schema,
     snapshot_ingest_task::SnapshotIngestTask,
 };
-use tokio::sync::mpsc;
+use tokio::{net::TcpListener, sync::mpsc};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 const SNAPSHOT_QUEUE: usize = 64;
@@ -45,7 +46,13 @@ async fn main() -> anyhow::Result<()> {
             )
         })
         .collect();
-    tracing::info!(relays = config.relays.len(), "observability started");
+    let listener = TcpListener::bind(("0.0.0.0", config.http_port)).await?;
+    let _api = ApiServer::run(listener, ApiState { latest, clickhouse });
+    tracing::info!(
+        relays = config.relays.len(),
+        http_port = config.http_port,
+        "observability started"
+    );
 
     future::pending().await
 }

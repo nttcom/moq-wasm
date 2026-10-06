@@ -51,8 +51,22 @@ impl ClickHouse {
         .map(drop)
     }
 
-    pub async fn select<T: DeserializeOwned>(&self, sql: &str) -> anyhow::Result<Vec<T>> {
-        let body = self.post(&[], format!("{sql} FORMAT JSONEachRow")).await?;
+    pub async fn select<T: DeserializeOwned>(
+        &self,
+        sql: &str,
+        params: &[(&str, String)],
+    ) -> anyhow::Result<Vec<T>> {
+        let params: Vec<(String, &str)> = params
+            .iter()
+            .map(|(name, value)| (format!("param_{name}"), value.as_str()))
+            .collect();
+        let params: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(name, value)| (name.as_str(), *value))
+            .collect();
+        let body = self
+            .post(&params, format!("{sql} FORMAT JSONEachRow"))
+            .await?;
         body.lines()
             .filter(|line| !line.is_empty())
             .map(|line| {

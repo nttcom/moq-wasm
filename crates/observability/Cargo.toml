@@ -6,6 +6,9 @@ description = "Subscribes to every relay's stats track, stores the snapshots in 
 
 [dependencies]
 anyhow = "1.0.102"
+http-body-util = "0.1.4"
+hyper = { version = "1.10.1", features = ["http1", "server"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
 moqt = { path = "../moqt" }
 relay-stats = { path = "../relay-stats" }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
