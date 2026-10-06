@@ -11,12 +11,12 @@ use crate::modules::{
     },
     control_message_forwarder::ControlMessageForwarder,
     core::session_event::MoqtSessionEvent,
-    enums::SubscribeErrorCode,
-    inter_relay::InterRelayConnectionManager,
-    relay::{
+    data_plane::{
         cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
         ingress::ingress_coordinator::IngressCommand,
     },
+    enums::SubscribeErrorCode,
+    inter_relay::InterRelayConnectionManager,
     route_registry::RelayRouteRegistry,
     sequences::{
         CascadingRelayContext,
@@ -791,11 +791,11 @@ mod tests {
             },
             session_event::MoqtSessionEvent,
         },
-        inter_relay::InterRelayConnectionManager,
-        relay::{
+        data_plane::{
             cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
             ingress::ingress_coordinator::IngressCommand,
         },
+        inter_relay::InterRelayConnectionManager,
         route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         sequences::{
             tables::{hashmap_table::InMemoryLocalPubSubDirectory, table::PeerKind},

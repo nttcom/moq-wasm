@@ -17,8 +17,8 @@ pub(crate) mod upstream_serializer;
 
 use crate::modules::{
     control_message_forwarder::ControlMessageForwarder,
+    data_plane::ingress::ingress_coordinator::IngressCommand,
     inter_relay::InterRelayConnectionManager,
-    relay::ingress::ingress_coordinator::IngressCommand,
     route_registry::{RelayInfo, RelayRouteRegistry},
     types::{SessionId, TrackKey},
 };

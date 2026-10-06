@@ -3,8 +3,8 @@ use tracing::Span;
 
 use crate::modules::{
     core::handler::track_status::TrackStatusHandler,
+    data_plane::cache::store::TrackCacheStore,
     enums::SubscribeErrorCode,
-    relay::cache::store::TrackCacheStore,
     sequences::{subscribe::cached_largest, tables::hashmap_table::InMemoryLocalPubSubDirectory},
     types::SessionId,
 };
@@ -66,7 +66,7 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        relay::tests::harness::fixtures::{cached_object::insert_closed_group, location},
+        data_plane::tests::harness::fixtures::{cached_object::insert_closed_group, location},
         sequences::{
             tables::table::UpstreamSubscriptionOrigin, test_fixtures::table_with_upstream,
         },

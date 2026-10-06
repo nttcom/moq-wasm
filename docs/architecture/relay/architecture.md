@@ -319,7 +319,7 @@ per-request authorization gate under "Event pipeline".
 ### Shared state
 - `TrackCacheStore` — `DashMap<TrackKey, Arc<TrackCache>>`.
 
-### Ingress (`modules/relay/ingress`)
+### Ingress (`modules/data_plane/ingress`)
 `IngressCoordinator` consumes `IngressCommand::{Start, StopTrack}`:
 
 - On `Start`, it obtains the upstream session's `Subscriber`, creates the data
@@ -365,7 +365,7 @@ per-request authorization gate under "Event pipeline".
   `FetchIngest` bails on the latch and sends upstream FETCH_CANCEL for its
   own fetch.
 
-### Cache (`modules/relay/cache`)
+### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
   location, forwarding preference (subgroup id or datagram), publisher
   priority, status, extension headers, payload, and its own `received_at`.
@@ -422,7 +422,7 @@ per-request authorization gate under "Event pipeline".
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.
 
-### Egress (`modules/relay/egress`)
+### Egress (`modules/data_plane/egress`)
 `EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
 command: each registered downstream subscription in the pub/sub directory owns the
 `oneshot::Sender<PublishDoneReason>` whose receiver `EgressRunner::run` selects on (biased,
