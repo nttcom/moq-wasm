@@ -18,6 +18,7 @@ use crate::{
     browser_json::snapshots_for_browser,
     clickhouse::ClickHouse,
     latest_snapshots::LatestSnapshots,
+    namespaces::{NamespaceQuery, published_namespaces},
     schema::RETENTION_DAYS,
     series::{self, SeriesQuery, SeriesTarget},
     snapshot_history::snapshots_at,
@@ -88,6 +89,7 @@ async fn handle(
     let response = match (request.method(), request.uri().path()) {
         (&Method::GET, "/api/snapshots") => snapshots(&state, &params).await,
         (&Method::GET, "/api/series") => series(&state, &params).await,
+        (&Method::GET, "/api/namespaces") => namespaces(&state, &params).await,
         (&Method::GET, "/healthz") => Ok(json_response(StatusCode::OK, &json!({ "status": "ok" }))),
         _ => Ok(error_response(StatusCode::NOT_FOUND, "not_found")),
     };
@@ -124,6 +126,34 @@ async fn snapshots(
     ))
 }
 
+fn time_range(params: &HashMap<String, String>) -> anyhow::Result<(u64, u64)> {
+    let from_ms = number(params, "from")?;
+    let to_ms = number(params, "to")?;
+    anyhow::ensure!(from_ms <= to_ms, "from is after to");
+    anyhow::ensure!(
+        to_ms - from_ms <= MAX_SPAN_MS,
+        "a range spans at most {RETENTION_DAYS} days"
+    );
+    Ok((from_ms, to_ms))
+}
+
+async fn namespaces(
+    state: &ApiState,
+    params: &HashMap<String, String>,
+) -> anyhow::Result<JsonResponse> {
+    let (from_ms, to_ms) = time_range(params)?;
+    let query = NamespaceQuery {
+        from_ms,
+        to_ms,
+        app_id: params
+            .get("app_id")
+            .filter(|app_id| !app_id.is_empty())
+            .cloned(),
+    };
+    let namespaces = published_namespaces(&state.clickhouse, &query).await?;
+    Ok(json_response(StatusCode::OK, &namespaces))
+}
+
 pub fn series_query(params: &HashMap<String, String>) -> anyhow::Result<SeriesQuery> {
     let target = match required(params, "target")? {
         "process" => SeriesTarget::Process,
@@ -142,19 +172,13 @@ pub fn series_query(params: &HashMap<String, String>) -> anyhow::Result<SeriesQu
         },
         other => anyhow::bail!("unknown series target {other:?}"),
     };
-    let from_ms = number(params, "from")?;
-    let to_ms = number(params, "to")?;
+    let (from_ms, to_ms) = time_range(params)?;
     let points = params
         .get("points")
         .map(|points| points.parse())
         .transpose()
         .context("query parameter points is not a number")?
         .unwrap_or(DEFAULT_POINTS);
-    anyhow::ensure!(from_ms <= to_ms, "from is after to");
-    anyhow::ensure!(
-        to_ms - from_ms <= MAX_SPAN_MS,
-        "a series spans at most {RETENTION_DAYS} days"
-    );
     anyhow::ensure!(
         (1..=MAX_POINTS).contains(&points),
         "points must be between 1 and {MAX_POINTS}"
