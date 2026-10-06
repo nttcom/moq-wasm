@@ -2,9 +2,8 @@ use crate::modules::{
     cascading::route_registry::{RegisterRouteError, RelayRouteRegistry},
     control_plane::control_message_forwarder::ControlMessageForwarder,
     domain::{
-        error_code::SubscribeNamespaceErrorCode,
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
-        session_id::SessionId,
+        error_code::SubscribeNamespaceErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
+        session_id::SessionId, session_peer::SessionPeer,
     },
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
@@ -35,15 +34,15 @@ impl SubscribeNameSpace {
             track_namespace_prefix = %track_namespace_prefix,
             "SequenceHandler::SubscribeNamespace"
         );
-        let peer_kind = if super::is_origin_client(session_id, forwarder).await {
-            PeerKind::Client
+        let peer = if super::is_origin_client(session_id, forwarder).await {
+            SessionPeer::Client
         } else {
-            PeerKind::Relay
+            SessionPeer::Relay
         };
         let is_first_client = table.register_subscribe_namespace(
             session_id,
             track_namespace_prefix.to_string(),
-            peer_kind,
+            peer,
         );
         if is_first_client
             && !self

@@ -40,7 +40,7 @@ impl SessionAuthenticator {
         client_setup: &ClientSetup,
         accepted_peer: &SessionPeer,
     ) -> Result<VerifiedToken, Rejected> {
-        let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay { .. });
+        let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay);
         let token = match extract_token(&client_setup.setup_parameters.authorization_token) {
             Ok(token) => token,
             Err(TokenParameterError::Missing) if !relay_endpoint => {
@@ -132,10 +132,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(
-                &client_setup(vec![]),
-                &SessionPeer::Relay { relay_id: None },
-            )
+            .authenticate(&client_setup(vec![]), &SessionPeer::Relay)
             .await
             .unwrap_err();
 
@@ -196,7 +193,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(&setup_with_jwt(), &SessionPeer::Relay { relay_id: None })
+            .authenticate(&setup_with_jwt(), &SessionPeer::Relay)
             .await
             .unwrap_err();
 
