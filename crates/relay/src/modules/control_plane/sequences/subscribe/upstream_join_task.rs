@@ -16,7 +16,8 @@ use crate::modules::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory, TrackJoin,
             entry::{
-                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+                ActiveUpstreamSubscription, PublishDoneReason, UpstreamSubscriptionKey,
+                UpstreamSubscriptionOrigin,
             },
         },
         session_id::SessionId,
@@ -195,6 +196,21 @@ async fn join_track(
         stop_ingress(&deps.ingress_sender, publisher_session_id, track_key).await;
         return;
     }
+    let publisher_session_gone = !deps
+        .forwarder
+        .repository
+        .lock()
+        .await
+        .has_session(publisher_session_id);
+    if publisher_session_gone {
+        deps.table.end_upstream_subscription(
+            publisher_session_id,
+            upstream_request_id,
+            PublishDoneReason::publisher_session_closed(),
+        );
+        stop_ingress(&deps.ingress_sender, publisher_session_id, track_key).await;
+        return;
+    }
     tracing::info!(
         pub_session_id = %publisher_session_id,
         %track_key,
@@ -349,6 +365,80 @@ mod tests {
             &TrackKey::new("ns", "track"),
             LATE_PUBLISHER_SESSION,
             LATE_UPSTREAM_REQUEST_ID
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_publisher_whose_session_ended_while_answering_is_not_kept_on_the_track() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        table
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .unwrap();
+        let table = Arc::new(table);
+        let (session, _recorded) = recorded_session_answering_subscribe();
+        let repository = session_repository_with_session(
+            LATE_PUBLISHER_SESSION,
+            session,
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let forwarder = ControlMessageForwarder { repository };
+        let subscription = forwarder
+            .subscribe(
+                LATE_PUBLISHER_SESSION,
+                "ns".to_string(),
+                "track".to_string(),
+            )
+            .await
+            .unwrap();
+        forwarder
+            .repository
+            .lock()
+            .await
+            .remove(LATE_PUBLISHER_SESSION);
+        let mut pending = JoinSet::new();
+        pending.spawn(async move {
+            AnsweredUpstreamSubscribe {
+                publisher_session_id: LATE_PUBLISHER_SESSION,
+                publisher_peer: SessionPeer::Client,
+                subscribed: Ok(subscription),
+            }
+        });
+        let (ingress_sender, mut ingress_receiver) = mpsc::channel(8);
+
+        // Act
+        let task = UpstreamJoinTask::run(
+            UpstreamJoin {
+                track_key: track_key.clone(),
+                subscriber_session_id: 2,
+                pending,
+            },
+            UpstreamJoinDeps {
+                table: table.clone(),
+                forwarder,
+                ingress_sender,
+            },
+        );
+        tokio::time::timeout(Duration::from_secs(1), task._join_handle)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert!(!table.has_upstream_subscription(
+            &track_key,
+            LATE_PUBLISHER_SESSION,
+            LATE_UPSTREAM_REQUEST_ID
+        ));
+        assert!(matches!(
+            ingress_receiver.try_recv(),
+            Ok(IngressCommand::Start(_))
+        ));
+        assert!(matches!(
+            ingress_receiver.try_recv(),
+            Ok(IngressCommand::StopTrack { publisher_session_id, .. })
+                if publisher_session_id == LATE_PUBLISHER_SESSION
         ));
     }
 }

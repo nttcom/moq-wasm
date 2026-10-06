@@ -202,14 +202,17 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
     the resulting `ProtocolViolation` session event then drives the ordinary
     terminal cleanup.
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
-  `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
-  session from the pub/sub directory (which stops the egress runners of every
-  removed downstream subscription, and ends with TRACK_ENDED the downstream
-  subscriptions of every track whose last upstream subscription was the
-  session's, see "Egress"), stop the session's ingress, forward
-  upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions the last
-  downstream subscriber released, withdraw namespace routes for client sessions, then drop the session
-  from the repository.
+  `cleanup_session` (idempotent) and end the worker. Cleanup: drop the session
+  from the repository, then remove it from the pub/sub directory (which stops
+  the egress runners of every removed downstream subscription, and ends with
+  TRACK_ENDED the downstream subscriptions of every track whose last upstream
+  subscription was the session's, see "Egress"), stop the session's ingress,
+  forward upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions
+  the last downstream subscriber released, and withdraw namespace routes for
+  client sessions. Leaving the repository first means an `UpstreamJoinTask`
+  adding the session to a track concurrently is either found by the directory
+  removal or, checking the repository after adding, finds the session gone
+  and removes its subscription again.
 
 ### `modules/control_plane/sequences` — one struct per control message
 Each sequence owns the relay-side protocol logic for one message

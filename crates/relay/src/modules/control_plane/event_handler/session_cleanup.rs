@@ -7,19 +7,23 @@ use crate::modules::{
     domain::{pub_sub_directory::entry::RemovedSessionSubscriptions, session_id::SessionId},
 };
 
-/// Idempotent: safe to call when the session is already absent.
+/// Idempotent: safe to call when the session is already absent. The session
+/// leaves the repository before the directory, so a publisher joining a track
+/// concurrently either is found by `remove_session` or finds its session gone.
 pub(super) async fn cleanup_session(session_id: SessionId, deps: &WorkerDeps) {
+    let was_client = {
+        let mut repository = deps.control_message_forwarder.repository.lock().await;
+        let was_client = repository.is_client_session(session_id);
+        repository.remove(session_id);
+        was_client
+    };
     let removed = deps.local_pub_sub_directory.remove_session(session_id);
-    cleanup_removed_session(session_id, removed, deps).await;
-    deps.control_message_forwarder
-        .repository
-        .lock()
-        .await
-        .remove(session_id);
+    cleanup_removed_session(session_id, was_client, removed, deps).await;
 }
 
 async fn cleanup_removed_session(
     removed_session_id: SessionId,
+    was_client: bool,
     removed: RemovedSessionSubscriptions,
     deps: &WorkerDeps,
 ) {
@@ -54,12 +58,7 @@ async fn cleanup_removed_session(
         stop_ingress(&deps.ingress_sender, removed_session_id, &track_key).await;
     }
 
-    if forwarder
-        .repository
-        .lock()
-        .await
-        .is_client_session(removed_session_id)
-    {
+    if was_client {
         for track_namespace_prefix in removed.subscribe_namespace_prefixes {
             UnsubscribeNamespace::cleanup_empty_namespace_subscription(
                 &track_namespace_prefix,
