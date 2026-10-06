@@ -9,6 +9,7 @@ use crate::modules::{
             InMemoryLocalPubSubDirectory,
             entry::{
                 ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
+                UpstreamTrack,
             },
         },
         session_id::SessionId,
@@ -22,6 +23,10 @@ use crate::modules::{
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
 pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
 
+pub(crate) fn track_key() -> TrackKey {
+    TrackKey::new("ns", "track")
+}
+
 pub(crate) fn upstream_key() -> UpstreamSubscriptionKey {
     UpstreamSubscriptionKey {
         publisher_session_id: PUBLISHER_SESSION,
@@ -33,20 +38,26 @@ pub(crate) fn upstream_key() -> UpstreamSubscriptionKey {
 pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstreamSubscription {
     ActiveUpstreamSubscription {
         upstream_request_id: UPSTREAM_REQUEST_ID,
-        track_key: TrackKey::new("ns", "track"),
         expires: None,
         content_exists: ContentExists::False,
-        downstream_subscriber_count: 0,
         origin,
     }
 }
 
+pub(crate) fn upstream_track(origin: UpstreamSubscriptionOrigin) -> UpstreamTrack {
+    let mut upstream_track = UpstreamTrack::default();
+    upstream_track
+        .subscriptions
+        .insert(PUBLISHER_SESSION, active_upstream(origin));
+    upstream_track
+}
+
 pub(crate) fn table_with_upstream(
     origin: UpstreamSubscriptionOrigin,
-) -> (InMemoryLocalPubSubDirectory, UpstreamSubscriptionKey) {
+) -> (InMemoryLocalPubSubDirectory, TrackKey) {
     let table = InMemoryLocalPubSubDirectory::new();
-    table.register_upstream_subscription(upstream_key(), active_upstream(origin));
-    (table, upstream_key())
+    table.register_upstream_subscription(track_key(), PUBLISHER_SESSION, active_upstream(origin));
+    (table, track_key())
 }
 
 pub(crate) struct UpstreamReleaseContext {

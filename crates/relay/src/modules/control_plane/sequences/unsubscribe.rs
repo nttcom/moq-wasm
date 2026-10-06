@@ -1,10 +1,7 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
-    domain::{
-        pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
-        session_id::SessionId,
-    },
+    domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
     session::handler::unsubscribe::UnsubscribeHandler,
 };
 use tracing::Span;
@@ -47,21 +44,18 @@ impl Unsubscribe {
         tracing::info!(
             session_id = %session_id,
             subscribe_id = %subscribe_id,
-            upstream_session_id = %removed.upstream_key.publisher_session_id,
-            track_namespace = %removed.upstream_key.track_namespace,
-            track_name = %removed.upstream_key.track_name,
-            remaining_downstream_subscriber_count = removed.remaining_downstream_subscriber_count,
+            track_namespace = %removed.track_key.track_namespace,
+            track_name = %removed.track_key.track_name,
+            released_upstream_subscriptions = removed.released_upstream_subscriptions.len(),
             "downstream unsubscribe processed"
         );
 
-        if removed.remaining_downstream_subscriber_count == 0
-            && removed.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
-        {
+        for released in removed.released_upstream_subscriptions {
             super::release_upstream(
                 forwarder,
                 ingress_sender,
-                removed.upstream_key.publisher_session_id,
-                removed.upstream_request_id,
+                released.publisher_session_id,
+                released.upstream_request_id,
                 &removed.track_key,
             )
             .await;
@@ -75,10 +69,13 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        domain::{pub_sub_directory::entry::PublishDoneReason, track_key::TrackKey},
+        domain::{
+            pub_sub_directory::entry::{PublishDoneReason, UpstreamSubscriptionOrigin},
+            track_key::TrackKey,
+        },
         test_support::{
             directory_fixtures::{
-                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, upstream_key,
+                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
                 upstream_release_context,
             },
             mock_session::runner_stopped,
@@ -110,12 +107,7 @@ mod tests {
             .map(|(session_id, subscribe_id)| {
                 upstream
                     .table
-                    .register_downstream_subscription(
-                        *session_id,
-                        *subscribe_id,
-                        upstream_key(),
-                        None,
-                    )
+                    .register_downstream_subscription(*session_id, *subscribe_id, track_key(), None)
                     .unwrap()
                     .stop_receiver
             })

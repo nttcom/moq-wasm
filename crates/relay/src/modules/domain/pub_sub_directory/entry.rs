@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use moqt::{ContentExists, wire::publish_done_status_code};
 
 use crate::modules::domain::{session_id::SessionId, track_key::TrackKey};
@@ -12,11 +14,40 @@ pub(crate) struct UpstreamSubscriptionKey {
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveUpstreamSubscription {
     pub(crate) upstream_request_id: u64,
-    pub(crate) track_key: TrackKey,
     pub(crate) expires: Option<u64>,
     pub(crate) content_exists: ContentExists,
-    pub(crate) downstream_subscriber_count: usize,
     pub(crate) origin: UpstreamSubscriptionOrigin,
+}
+
+/// A track the relay receives, keyed by the publisher session of each
+/// upstream subscription that feeds it (draft-14 §8.2). Session ids grow with
+/// time, so the last entry is the newest publisher.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UpstreamTrack {
+    pub(crate) subscriptions: BTreeMap<SessionId, ActiveUpstreamSubscription>,
+    pub(crate) downstream_subscriber_count: usize,
+}
+
+impl UpstreamTrack {
+    pub(crate) fn content_exists(&self) -> ContentExists {
+        self.subscriptions
+            .values()
+            .filter_map(|subscription| match subscription.content_exists {
+                ContentExists::True { location } => Some(location),
+                ContentExists::False => None,
+            })
+            .max()
+            .map_or(ContentExists::False, |location| ContentExists::True {
+                location,
+            })
+    }
+
+    pub(crate) fn expires(&self) -> Option<u64> {
+        self.subscriptions
+            .values()
+            .next_back()
+            .and_then(|subscription| subscription.expires)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,18 +80,23 @@ pub(crate) enum UpstreamSubscriptionOrigin {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
-    pub(crate) upstream_key: UpstreamSubscriptionKey,
+    pub(crate) track_key: TrackKey,
     /// The subscription's start location: the Largest Object Location at subscribe time.
     pub(crate) start_location: Option<moqt::Location>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReleasedUpstreamSubscription {
+    pub(crate) publisher_session_id: SessionId,
+    pub(crate) upstream_request_id: u64,
+}
+
+/// `released_upstream_subscriptions` lists the SUBSCRIBE-initiated upstream
+/// subscriptions the removal left without a downstream subscriber.
 #[derive(Clone, Debug)]
 pub(crate) struct RemovedDownstreamSubscription {
-    pub(crate) upstream_key: UpstreamSubscriptionKey,
-    pub(crate) upstream_request_id: u64,
     pub(crate) track_key: TrackKey,
-    pub(crate) remaining_downstream_subscriber_count: usize,
-    pub(crate) upstream_origin: UpstreamSubscriptionOrigin,
+    pub(crate) released_upstream_subscriptions: Vec<ReleasedUpstreamSubscription>,
 }
 
 #[derive(Clone, Debug, Default)]

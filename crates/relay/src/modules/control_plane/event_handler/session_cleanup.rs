@@ -4,10 +4,7 @@ use crate::modules::{
         publish_namespace_done::PublishNamespaceDone, stop_ingress,
         unsubscribe_namespace::UnsubscribeNamespace,
     },
-    domain::{
-        pub_sub_directory::entry::{RemovedSessionSubscriptions, UpstreamSubscriptionOrigin},
-        session_id::SessionId,
-    },
+    domain::{pub_sub_directory::entry::RemovedSessionSubscriptions, session_id::SessionId},
 };
 
 /// Idempotent: safe to call when the session is already absent.
@@ -30,28 +27,23 @@ async fn cleanup_removed_session(
     let forwarder = &deps.control_message_forwarder;
 
     for removed_downstream in removed.downstream_subscriptions {
-        if removed_downstream.remaining_downstream_subscriber_count == 0
-            && removed_downstream.upstream_origin == UpstreamSubscriptionOrigin::Subscribe
-        {
-            if removed_downstream.upstream_key.publisher_session_id != removed_session_id
+        for released in removed_downstream.released_upstream_subscriptions {
+            if released.publisher_session_id != removed_session_id
                 && let Err(err) = forwarder
-                    .unsubscribe(
-                        removed_downstream.upstream_key.publisher_session_id,
-                        removed_downstream.upstream_request_id,
-                    )
+                    .unsubscribe(released.publisher_session_id, released.upstream_request_id)
                     .await
             {
                 tracing::debug!(
                     ?err,
-                    upstream_session_id = removed_downstream.upstream_key.publisher_session_id,
-                    request_id = removed_downstream.upstream_request_id,
+                    upstream_session_id = released.publisher_session_id,
+                    request_id = released.upstream_request_id,
                     "failed to forward upstream unsubscribe during session cleanup"
                 );
             }
 
             stop_ingress(
                 &deps.ingress_sender,
-                removed_downstream.upstream_key.publisher_session_id,
+                released.publisher_session_id,
                 &removed_downstream.track_key,
             )
             .await;

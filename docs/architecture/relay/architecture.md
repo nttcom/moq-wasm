@@ -177,9 +177,10 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   without a token goes to `sequences::track_status`.
 - An upstream PUBLISH_DONE goes to
   `sequences::upstream_publish_done::UpstreamPublishDone`: it ends the
-  matching `ActiveUpstreamSubscription` together with its downstream
-  registrations, handing them the received status code and reason (see
-  "Egress"), and stops ingress. No UNSUBSCRIBE is sent, since the publisher
+  matching `ActiveUpstreamSubscription` and stops its ingress. When that was
+  the last upstream subscription of its track, the track's downstream
+  registrations end with it, handed the received status code and reason (see
+  "Egress"); otherwise the remaining publishers keep feeding them. No UNSUBSCRIBE is sent, since the publisher
   already ended the subscription.
 - Events for control messages without relay-side logic yet (GOAWAY,
   MAX_REQUEST_ID, REQUESTS_BLOCKED, PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are
@@ -201,10 +202,11 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
 - Terminal events (`Disconnected` / `ProtocolViolation`) trigger
   `cleanup_session` (idempotent) and end the worker. Cleanup: remove the
   session from the pub/sub directory (which stops the egress runners of every
-  removed downstream subscription, and ends the downstream subscriptions on
-  the session's own upstream subscriptions with TRACK_ENDED, see "Egress"), forward
-  upstream UNSUBSCRIBE / stop ingress when the last downstream subscriber
-  left, withdraw namespace routes for client sessions, then drop the session
+  removed downstream subscription, and ends with TRACK_ENDED the downstream
+  subscriptions of every track whose last upstream subscription was the
+  session's, see "Egress"), stop the session's ingress, forward
+  upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions the last
+  downstream subscriber released, withdraw namespace routes for client sessions, then drop the session
   from the repository.
 
 ### `modules/control_plane/sequences` — one struct per control message
@@ -224,15 +226,21 @@ Each sequence owns the relay-side protocol logic for one message
   to its sender).
 - `InMemoryLocalPubSubDirectory` (`domain/pub_sub_directory.rs`) — the relay's in-memory
   registry of publish/subscribe namespaces (with `SessionPeer` so client-owned
-  Redis routes are cleaned up when the last *client* leaves), active upstream
-  subscriptions, and downstream subscriptions. `remove_session` returns everything cleanup needs.
+  Redis routes are cleaned up when the last *client* leaves), upstream tracks,
+  and downstream subscriptions. An `UpstreamTrack` holds one
+  `ActiveUpstreamSubscription` per publisher session feeding the track
+  (draft-14 §8.2) and the count of its downstream subscribers; downstream
+  subscriptions refer to the track, not to a publisher. The track lives while
+  any upstream subscription feeds it. The last downstream subscriber leaving
+  releases its SUBSCRIBE-initiated upstream subscriptions, while
+  PUBLISH-initiated ones stay until their publisher ends them. `remove_session` returns everything cleanup needs.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
   guard removes the track's entry on release unless a waiter still holds the
   mutex, so the map only holds tracks whose upstream creation is in progress.
 
 ### SUBSCRIBE sequence (the central flow)
 1. **Find-or-create upstream subscription.** Fast path: an
-   `ActiveUpstreamSubscription` already exists in the directory. Miss: take
+   `UpstreamTrack` already exists in the directory. Miss: take
    the per-track serializer lock, re-check (a sibling may have created it),
    otherwise resolve a publisher and send upstream SUBSCRIBE, start ingress,
    and register the upstream subscription — so concurrent subscribers to the
@@ -289,9 +297,10 @@ fail; egress drops a `StartFetch` for a departed session.
 
 ### TRACK_STATUS sequence
 A status query is answered from the relay's own state only. For a track with
-an `ActiveUpstreamSubscription`, TRACK_STATUS_OK carries the upstream's
+an `UpstreamTrack`, TRACK_STATUS_OK carries the newest upstream subscription's
 Expires and the Largest Location resolved as on the SUBSCRIBE fast path (the
-cache's largest location, else the upstream's Content Exists). Any other track
+cache's largest location, else the largest Content Exists of its upstream
+subscriptions). Any other track
 is answered TRACK_STATUS_ERROR `NOT_SUPPORTED (0x3)`: draft-14 §9.20 lets a
 relay without an active subscription forward the request or subscribe
 upstream (MAY), and this relay does neither.
@@ -469,7 +478,7 @@ cleanup, an upstream PUBLISH_DONE — stops the runner, and a registration remov
 coordinator got to `StartReader` yields a runner that never runs; the order in which different
 session workers touch the registration and the coordinator cannot leak a runner. Removal
 drops the sender when the subscriber ended the subscription (draft-14 §5.1: the publisher
-may destroy its state). Removal because the upstream ended — the publisher's session went
+may destroy its state). Removal because the track's last upstream ended — its publisher's session went
 away (TRACK_ENDED) or it sent PUBLISH_DONE (its status code) — sends a `PublishDoneReason`
 instead, and the runner answers it with PUBLISH_DONE carrying that status and the number
 of streams it opened, after its senders stopped (§9.12: no state is destroyed without
@@ -566,9 +575,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
 - **Egress runner lifetime is the downstream registration's**: a runner stops
   when its registered downstream subscription is removed, regardless of which
   session worker removes it or when; a downstream subscription is only ever
-  registered while its upstream subscription exists.
+  registered while its upstream track exists.
 - **An ended upstream is announced downstream**: every downstream subscription
-  removed because its upstream subscription ended receives PUBLISH_DONE, always
+  removed because its track's last upstream subscription ended receives PUBLISH_DONE, always
   after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
   also unregisters that PUBLISH, so the ended track is no longer resolved.
 - **Cache identity is the key**: a cached object is self-contained (§8.1 "MUST

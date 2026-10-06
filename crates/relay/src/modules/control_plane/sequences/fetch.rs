@@ -386,12 +386,13 @@ impl Fetch {
             return Err(FetchError::UnknownJoiningRequestId);
         };
 
-        let Some(active_upstream) =
-            table.get_active_upstream_subscription(&downstream_sub.upstream_key)
-        else {
+        if table
+            .get_upstream_track(&downstream_sub.track_key)
+            .is_none()
+        {
             tracing::warn!("Joined subscription has no active upstream subscription");
             return Err(FetchError::TrackNotFound);
-        };
+        }
 
         let Some(largest) = downstream_sub.start_location else {
             tracing::warn!("Joining fetch: no objects published at subscribe time");
@@ -406,9 +407,9 @@ impl Fetch {
             return Err(FetchError::InvalidRange);
         }
         Ok(FetchTarget {
-            track_key: active_upstream.track_key,
-            track_namespace: downstream_sub.upstream_key.track_namespace,
-            track_name: downstream_sub.upstream_key.track_name,
+            track_namespace: downstream_sub.track_key.track_namespace.clone(),
+            track_name: downstream_sub.track_key.track_name.clone(),
+            track_key: downstream_sub.track_key,
             start_location,
             end_location: Self::location_after_largest(largest),
         })

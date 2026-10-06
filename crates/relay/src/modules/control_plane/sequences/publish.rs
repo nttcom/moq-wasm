@@ -13,9 +13,7 @@ use crate::modules::{
         error_code::PublishErrorCode,
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
-            entry::{
-                ActiveUpstreamSubscription, UpstreamSubscriptionKey, UpstreamSubscriptionOrigin,
-            },
+            entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
         },
         session_id::SessionId,
         track_key::TrackKey,
@@ -191,20 +189,11 @@ impl Publish {
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
     ) -> anyhow::Result<()> {
-        let track_namespace = subscription.track_namespace().to_string();
-        let track_name = subscription.track_name().to_string();
-        let track_key = TrackKey::new(&track_namespace, &track_name);
-        let upstream_key = UpstreamSubscriptionKey {
-            publisher_session_id: session_id,
-            track_namespace,
-            track_name,
-        };
+        let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
         let active_upstream = ActiveUpstreamSubscription {
             upstream_request_id: subscription.request_id(),
-            track_key,
             expires: None,
             content_exists: subscription.content_exists(),
-            downstream_subscriber_count: 0,
             origin: UpstreamSubscriptionOrigin::Publish,
         };
 
@@ -214,7 +203,7 @@ impl Publish {
             .send(IngressCommand::Start(Box::new(IngressStartRequest {
                 subscriber_session_id: session_id,
                 publisher_session_id: session_id,
-                track_key: active_upstream.track_key.clone(),
+                track_key: track_key.clone(),
                 subscription: subscription.clone(),
                 parent_span: Span::current(),
             })))
@@ -224,7 +213,7 @@ impl Publish {
             anyhow::bail!("failed to send ingress start request");
         }
 
-        table.register_upstream_subscription(upstream_key, active_upstream);
+        table.register_upstream_subscription(track_key, session_id, active_upstream);
         table.register_publish(session_id, handler);
         Ok(())
     }
