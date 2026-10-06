@@ -13,8 +13,7 @@ use mediapack::{
 use moqt::{
     ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FetchHandler, FetchObject,
     FetchObjectField, GroupOrder, PublishOption, QUIC, Session, SessionEvent, SubscribeHandler,
-    TrackWriter, TransportProtocol, TransportSendError, TransportStats, WEBTRANSPORT,
-    wire::FetchParams,
+    TrackWriter, TransportSendError, TransportStats, WEBTRANSPORT, wire::FetchParams,
 };
 use msf::{
     Catalog, Track,
@@ -67,7 +66,7 @@ pub struct MoqtManager {
 
 #[derive(Default)]
 struct ManagerState {
-    backend: Option<Arc<PublisherBackend>>,
+    backend: Option<Arc<ConnectedPublisher>>,
 }
 
 type TrackKey = (String, String);
@@ -211,11 +210,6 @@ struct ConnectedPublisher {
     event_task: tokio::task::JoinHandle<()>,
 }
 
-enum PublisherBackend {
-    Quic(ConnectedPublisher),
-    WebTransport(ConnectedPublisher),
-}
-
 impl MoqtManager {
     pub fn new(target: Option<MoqtTarget>) -> Self {
         Self {
@@ -297,11 +291,11 @@ impl MoqtManager {
         Some(backend.transport_stats())
     }
 
-    async fn ensure_backend(&self, target: &MoqtTarget) -> Result<Arc<PublisherBackend>> {
+    async fn ensure_backend(&self, target: &MoqtTarget) -> Result<Arc<ConnectedPublisher>> {
         let mut guard = self.inner.lock().await;
         if guard.backend.is_none() {
             guard.backend = Some(Arc::new(
-                PublisherBackend::connect(target, self.ledger.clone()).await?,
+                ConnectedPublisher::connect(target, self.ledger.clone()).await?,
             ));
         }
         let backend = guard
@@ -314,7 +308,7 @@ impl MoqtManager {
     }
 }
 
-impl PublisherBackend {
+impl ConnectedPublisher {
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let parsed = url::Url::parse(&target.url).context("parse moqt url")?;
         let client_config = ClientConfig {
@@ -322,91 +316,20 @@ impl PublisherBackend {
             verify_certificate: false,
             authorization_token: target.auth_token.clone(),
         };
-        match parsed.scheme() {
-            "moqt" => Ok(Self::Quic(
-                ConnectedPublisher::connect::<QUIC>(&parsed, &client_config, ledger).await?,
-            )),
-            "https" => Ok(Self::WebTransport(
-                ConnectedPublisher::connect::<WEBTRANSPORT>(&parsed, &client_config, ledger)
-                    .await?,
-            )),
+        let connecting = match parsed.scheme() {
+            "moqt" => {
+                Endpoint::<QUIC>::create_client(&client_config)?
+                    .connect(parsed.as_str())
+                    .await
+            }
+            "https" => {
+                Endpoint::<WEBTRANSPORT>::create_client(&client_config)?
+                    .connect(parsed.as_str())
+                    .await
+            }
             scheme => bail!("unsupported moqt url scheme: {scheme}"),
         }
-    }
-
-    async fn setup_namespace(&self, namespace: &[String]) -> Result<()> {
-        match self {
-            Self::Quic(publisher) => publisher.setup_namespace(namespace).await,
-            Self::WebTransport(publisher) => publisher.setup_namespace(namespace).await,
-        }
-    }
-
-    fn transport_stats(&self) -> TransportStats {
-        match self {
-            Self::Quic(publisher) => publisher.session.transport_stats(),
-            Self::WebTransport(publisher) => publisher.session.transport_stats(),
-        }
-    }
-
-    async fn send_object(
-        &self,
-        namespace: &[String],
-        track_name: &str,
-        object: OutgoingObject,
-    ) -> Result<bool> {
-        match self {
-            Self::Quic(publisher) => publisher.send_object(namespace, track_name, object).await,
-            Self::WebTransport(publisher) => {
-                publisher.send_object(namespace, track_name, object).await
-            }
-        }
-    }
-
-    async fn update_video_catalog(
-        &self,
-        namespace: &[String],
-        track_name: &str,
-        info: VideoTrackInfo,
-    ) -> Result<()> {
-        match self {
-            Self::Quic(publisher) => {
-                publisher
-                    .update_video_catalog(namespace, track_name, info)
-                    .await
-            }
-            Self::WebTransport(publisher) => {
-                publisher
-                    .update_video_catalog(namespace, track_name, info)
-                    .await
-            }
-        }
-    }
-
-    async fn update_audio_catalog(
-        &self,
-        namespace: &[String],
-        config: AudioSpecificConfig,
-    ) -> Result<()> {
-        match self {
-            Self::Quic(publisher) => publisher.update_audio_catalog(namespace, config).await,
-            Self::WebTransport(publisher) => {
-                publisher.update_audio_catalog(namespace, config).await
-            }
-        }
-    }
-}
-
-impl ConnectedPublisher {
-    async fn connect<T: TransportProtocol>(
-        url: &url::Url,
-        client_config: &ClientConfig,
-        ledger: StreamLedger,
-    ) -> Result<Self> {
-        let endpoint = Endpoint::<T>::create_client(client_config)?;
-        let connecting = endpoint
-            .connect(url.as_str())
-            .await
-            .context("connect moqt transport")?;
+        .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
 
         let state = Arc::new(Mutex::new(BackendState::default()));
@@ -418,6 +341,10 @@ impl ConnectedPublisher {
             ledger,
             event_task,
         })
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        self.session.transport_stats()
     }
 
     fn spawn_event_loop(
