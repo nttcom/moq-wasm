@@ -784,93 +784,7 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, table_with_upstream,
     };
-    use crate::modules::test_support::mock_session::runner_stopped;
-    use moqt::{ContentExists, FilterType, GroupOrder};
-
-    #[derive(Debug)]
-    struct StubPublishHandler {
-        track_namespace: String,
-        track_namespace_tuple: Vec<String>,
-        track_name: String,
-        track_alias: u64,
-    }
-
-    #[async_trait::async_trait]
-    impl PublishHandler for StubPublishHandler {
-        fn track_namespace(&self) -> &str {
-            &self.track_namespace
-        }
-
-        fn track_namespace_tuple(&self) -> &[String] {
-            &self.track_namespace_tuple
-        }
-
-        fn track_name(&self) -> &str {
-            &self.track_name
-        }
-
-        fn track_alias(&self) -> u64 {
-            self.track_alias
-        }
-
-        fn _group_order(&self) -> GroupOrder {
-            GroupOrder::Ascending
-        }
-
-        fn _content_exists(&self) -> ContentExists {
-            ContentExists::False
-        }
-
-        fn _forward(&self) -> bool {
-            true
-        }
-
-        fn _delivery_timeout(&self) -> Option<u64> {
-            None
-        }
-
-        fn _max_cache_duration(&self) -> Option<u64> {
-            None
-        }
-
-        fn subscription(
-            &self,
-            subscriber_priority: u8,
-            filter_type: FilterType,
-        ) -> crate::modules::session::subscription::UpstreamSubscription {
-            crate::modules::session::subscription::UpstreamSubscription::from(
-                moqt::PublisherInitiatedSubscription {
-                    request_id: 0,
-                    track_namespace: self.track_namespace.clone(),
-                    track_name: self.track_name.clone(),
-                    track_alias: self.track_alias,
-                    group_order: GroupOrder::Ascending,
-                    content_exists: ContentExists::False,
-                    subscriber_priority,
-                    forward: true,
-                    filter_type,
-                    delivery_timeout: None,
-                },
-            )
-        }
-
-        async fn ok(
-            &self,
-            _subscription: &crate::modules::session::subscription::UpstreamSubscription,
-        ) -> Result<(), moqt::TransportSendError> {
-            Ok(())
-        }
-
-        async fn accept_data_receiver(&self) {}
-
-        async fn error(
-            &self,
-            _code: u64,
-            _reason_phrase: String,
-        ) -> Result<(), moqt::TransportSendError> {
-            Ok(())
-        }
-    }
+    use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
 
     #[test]
     fn remove_session_cleans_up_all_session_scoped_entries() {
@@ -885,12 +799,7 @@ mod tests {
         table.register_publish(
             1,
             SessionPeer::Client,
-            Arc::new(StubPublishHandler {
-                track_namespace: "room/member".to_string(),
-                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                track_name: "video".to_string(),
-                track_alias: 10,
-            }),
+            Arc::new(MockPublishHandler::new("room/member", "video", 10)),
         );
 
         // Act: Remove all state associated with session 1.
@@ -1118,22 +1027,12 @@ mod tests {
         table.register_publish(
             1,
             SessionPeer::Client,
-            Arc::new(StubPublishHandler {
-                track_namespace: "room/member".to_string(),
-                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                track_name: "video".to_string(),
-                track_alias: 10,
-            }),
+            Arc::new(MockPublishHandler::new("room/member", "video", 10)),
         );
         table.register_publish(
             2,
             SessionPeer::Client,
-            Arc::new(StubPublishHandler {
-                track_namespace: "room/member".to_string(),
-                track_namespace_tuple: vec!["room".to_string(), "member".to_string()],
-                track_name: "video".to_string(),
-                track_alias: 20,
-            }),
+            Arc::new(MockPublishHandler::new("room/member", "video", 20)),
         );
 
         // Act: Find upstream publishers available for subscribe.
@@ -1298,12 +1197,11 @@ mod tests {
         table.register_publish(
             PUBLISHER_SESSION,
             SessionPeer::Client,
-            Arc::new(StubPublishHandler {
-                track_namespace: track_key.track_namespace.clone(),
-                track_namespace_tuple: vec![track_key.track_namespace.clone()],
-                track_name: track_key.track_name.clone(),
-                track_alias: 10,
-            }),
+            Arc::new(MockPublishHandler::new(
+                &track_key.track_namespace,
+                &track_key.track_name,
+                10,
+            )),
         );
 
         // Act

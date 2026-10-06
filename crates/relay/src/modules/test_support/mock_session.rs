@@ -16,8 +16,10 @@ use crate::modules::{
             DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
         },
         handler::{
-            fetch::FetchHandler, publish::SubscribeOption,
-            publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
+            fetch::FetchHandler,
+            publish::{PublishHandler, SubscribeOption},
+            publish_namespace::PublishNamespaceHandler,
+            subscribe::SubscribeHandler,
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
@@ -529,6 +531,100 @@ impl FetchHandler for MockFetchHandler {
     }
 
     async fn error(&self, _code: u64, _reason: String) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct MockPublishHandler {
+    track_namespace: String,
+    track_namespace_tuple: Vec<String>,
+    track_name: String,
+    track_alias: u64,
+}
+
+impl MockPublishHandler {
+    pub(crate) fn new(track_namespace: &str, track_name: &str, track_alias: u64) -> Self {
+        Self {
+            track_namespace: track_namespace.to_string(),
+            track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
+            track_name: track_name.to_string(),
+            track_alias,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl PublishHandler for MockPublishHandler {
+    fn track_namespace(&self) -> &str {
+        &self.track_namespace
+    }
+
+    fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
+    }
+
+    fn track_name(&self) -> &str {
+        &self.track_name
+    }
+
+    fn track_alias(&self) -> u64 {
+        self.track_alias
+    }
+
+    fn _group_order(&self) -> GroupOrder {
+        GroupOrder::Ascending
+    }
+
+    fn _content_exists(&self) -> ContentExists {
+        ContentExists::False
+    }
+
+    fn _forward(&self) -> bool {
+        true
+    }
+
+    fn _delivery_timeout(&self) -> Option<u64> {
+        None
+    }
+
+    fn _max_cache_duration(&self) -> Option<u64> {
+        None
+    }
+
+    fn subscription(
+        &self,
+        subscriber_priority: u8,
+        filter_type: FilterType,
+    ) -> UpstreamSubscription {
+        UpstreamSubscription::from(moqt::PublisherInitiatedSubscription {
+            request_id: 0,
+            track_namespace: self.track_namespace.clone(),
+            track_name: self.track_name.clone(),
+            track_alias: self.track_alias,
+            group_order: GroupOrder::Ascending,
+            content_exists: ContentExists::False,
+            subscriber_priority,
+            forward: true,
+            filter_type,
+            delivery_timeout: None,
+        })
+    }
+
+    async fn ok(
+        &self,
+        _subscription: &UpstreamSubscription,
+    ) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+
+    async fn accept_data_receiver(&self) {}
+
+    async fn error(
+        &self,
+        _code: u64,
+        _reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }
 }
