@@ -1,18 +1,15 @@
-//! Manual e2e for the single-writer (first-writer-wins) guard.
+//! Manual e2e for two publishers of one track (draft-14 §8.2).
 //!
 //! Alice publishes a track and Bob subscribes to it (data flows). Carol then
-//! publishes the *same* Full Track Name. The relay keeps Alice as the writer and
-//! ignores Carol, so Bob must only ever receive Alice's objects. Payloads are
-//! tagged with the publisher name so Bob can tell them apart.
-//!
-//! Carol also disconnects after publishing. Because Carol shares Alice's Full
-//! Track Name, a buggy relay would tear down Alice's ingest on Carol's cleanup;
-//! Bob must keep receiving Alice's later groups regardless.
+//! publishes the *same* Full Track Name with the same objects, as a redundant
+//! publisher would, and disconnects after sending them. The relay ingests both
+//! and deduplicates, so Bob must receive every object exactly once, and
+//! Carol's departure must not stop Alice's later groups.
 //!
 //! Run a relay on localhost:4433, then `cargo run -p multiple-publishers-e2e`
-//! from the repo root. Bob asserts `carol == 0`, that Alice keeps flowing after
-//! Carol leaves, and prints a summary.
+//! from the repo root. Bob asserts both and prints a summary.
 
+use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
 
@@ -33,6 +30,10 @@ const OBJECTS_PER_GROUP: u64 = 5;
 // Alice sends this group only after Carol has joined and left, so receiving it
 // proves Carol's departure did not stop Alice's ingest.
 const LATE_GROUP: u64 = 4;
+
+fn object_payload(group_id: u64, object_id: u64) -> String {
+    format!("g{group_id}:o{object_id}")
+}
 
 async fn new_session() -> anyhow::Result<Session> {
     let relay_url =
@@ -55,7 +56,7 @@ async fn send_group(
     let header = sender.create_header(group_id, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
     let mut stream = sender.send_header(header).await?;
     for obj_id in 0..OBJECTS_PER_GROUP {
-        let payload = format!("{}:g{}:o{}", who, group_id, obj_id);
+        let payload = object_payload(group_id, obj_id);
         let obj = stream.create_object_field(
             0,
             ExtensionHeaders::default(),
@@ -114,12 +115,12 @@ async fn carol(go_rx: oneshot::Receiver<()>) -> anyhow::Result<()> {
             return Ok(());
         }
     };
-    tracing::info!("[carol] publish ok; relay should ignore this writer (first-writer-wins)");
+    tracing::info!("[carol] publish ok");
     let factory = publisher.create_stream(&subscription);
     for group_id in 0..CAROL_GROUPS {
         send_group(&factory, "carol", group_id).await?;
     }
-    tracing::info!("[carol] sent its groups (expected to be ignored)");
+    tracing::info!("[carol] sent its groups");
     Ok(())
 }
 
@@ -155,13 +156,10 @@ async fn bob(
         DataReceiver::Datagram(_) => anyhow::bail!("[bob] unexpected datagram"),
     };
 
-    let mut alice_count = 0u64;
-    let mut carol_count = 0u64;
-    let mut max_alice_group = 0u64;
+    let mut received = HashMap::<String, u64>::new();
+    let mut max_group = 0u64;
     let mut carol_go_tx = Some(carol_go_tx);
 
-    // Collect for a bounded window so Carol's (ignored) objects have time to leak
-    // through if the single-writer guard ever regressed.
     let collect = async {
         loop {
             let mut stream = match factory.next().await {
@@ -171,24 +169,14 @@ async fn bob(
             loop {
                 match stream.receive().await {
                     Ok(Some(Subgroup::Header(h))) => {
-                        tracing::info!("[bob] live group {}", h.group_id)
+                        tracing::info!("[bob] live group {}", h.group_id);
+                        max_group = max_group.max(h.group_id);
                     }
                     Ok(Some(Subgroup::Object(field))) => {
                         if let SubgroupObject::Payload { data, .. } = field.subgroup_object {
                             let payload = String::from_utf8_lossy(&data).to_string();
-                            if payload.starts_with("carol:") {
-                                carol_count += 1;
-                            } else {
-                                alice_count += 1;
-                                if let Some(g) = payload
-                                    .strip_prefix("alice:g")
-                                    .and_then(|s| s.split(':').next())
-                                    .and_then(|s| s.parse::<u64>().ok())
-                                {
-                                    max_alice_group = max_alice_group.max(g);
-                                }
-                            }
                             tracing::info!("[bob] recv {}", payload);
+                            *received.entry(payload).or_default() += 1;
                             if let Some(tx) = carol_go_tx.take() {
                                 let _ = tx.send(());
                             }
@@ -201,23 +189,22 @@ async fn bob(
     };
     let _ = tokio::time::timeout(Duration::from_secs(6), collect).await;
 
+    let duplicated: Vec<_> = received.iter().filter(|(_, count)| **count > 1).collect();
     tracing::info!(
-        "[bob] received alice={} carol={} max_alice_group={}",
-        alice_count,
-        carol_count,
-        max_alice_group
-    );
-    assert_eq!(
-        carol_count, 0,
-        "carol's objects must not reach subscribers (first-writer-wins)"
+        "[bob] received {} objects, max_group={}, duplicated={:?}",
+        received.len(),
+        max_group,
+        duplicated
     );
     assert!(
-        max_alice_group >= LATE_GROUP,
-        "alice must keep flowing after carol leaves: max group {} < {}",
-        max_alice_group,
-        LATE_GROUP
+        duplicated.is_empty(),
+        "every object must reach the subscriber once: {duplicated:?}"
     );
-    tracing::info!("[bob] OK: first-writer-wins holds and alice keeps flowing");
+    assert!(
+        max_group >= LATE_GROUP,
+        "alice must keep flowing after carol leaves: max group {max_group} < {LATE_GROUP}"
+    );
+    tracing::info!("[bob] OK: objects deduplicated and alice keeps flowing");
     let _ = done_tx.send(());
     Ok(())
 }

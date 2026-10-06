@@ -352,18 +352,19 @@ per-request authorization gate under "Event pipeline".
 `IngressCoordinator` consumes `IngressCommand::{Start, StopTrack}`:
 
 - On `Start`, it obtains the upstream session's `Subscriber`, creates the data
-  receiver (cancellable via a per-track `watch` stop channel), and hands it to
+  receiver (cancellable via a `watch` stop channel per track and publisher), and hands it to
   `TrackIngestTask` as an `IngestSource` (subgroup-stream factory or datagram
   receiver).
-- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track and
-  source kind: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
+- `TrackIngestTask` (`track_ingest_task.rs`) runs one task per track,
+  publisher and source kind: `accept_streams` (`stream_reader.rs`) spawns a `read_stream`
   per accepted subgroup stream, `read_datagrams` (`datagram_reader.rs`) reads
-  the datagram receiver. Every reader of a track shares one `TrackIngest`
+  the datagram receiver. Every reader of one publisher's track shares one `TrackIngest`
   (track key, publisher, cache, session-event sender, stop receiver).
-  **First-publisher-wins** per track and kind: a second publisher on an
-  active track is ignored (draft-14 §8.2 multiple-publisher dedup is a known
-  TODO), and only the owning publisher's `Stop` tears the readers down.
-  Stream readers outlive their accept loop until the track's stop sender is
+  **Every publisher is ingested** (draft-14 §8.2): all publishers of a track
+  insert into the same `TrackCache`, whose §8.1 duplicate handling
+  deduplicates them. A second `Start` for a publisher already ingesting the
+  track is ignored, and a publisher's `Stop` tears down only its own readers.
+  Stream readers outlive their accept loop until their stop sender is
   signalled or dropped.
 - Readers convert every wire object into a canonical `CachedObject` and insert
   it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
@@ -373,7 +374,15 @@ per-request authorization gate under "Event pipeline".
   object `finish`es the guard; every other end (RESET_STREAM, stop, decode
   error, task abort) drops it, which marks the subgroup aborted: its group is
   not declared complete (draft-14 §10.4.2) and egress resets, rather than
-  FINs, the downstream stream (§10.4.3). A later live stream for an aborted,
+  FINs, the downstream stream (§10.4.3). Publishers of one track send the
+  same objects (§2.1), so when several publishers deliver a stream subgroup, the
+  FIN of a stream that delivered it from the earliest object any of its
+  streams started at completes it for all of them, and later streams for it
+  only add duplicates. A stream that joined later started mid-subgroup and
+  proves nothing below its first object, so its FIN only closes that stream;
+  the subgroup is aborted when its last stream ends without a completing FIN.
+  A datagram group stays open until every publisher has moved on from it, and
+  is aborted only when none of them moved on cleanly. A later live stream for an aborted,
   no-longer-open subgroup (e.g. a new upstream subscription after the
   previous one was cancelled) reopens it as the next `SubgroupRun`: the abort
   mark is cleared so the new stream's FIN or reset decides the tail again, and
@@ -408,9 +417,11 @@ per-request authorization gate under "Event pipeline".
 - `TrackCache` (`track_cache.rs` + `track_cache/{ledger,open_subgroup}.rs`) is one
   track-level ledger behind a `std::sync::RwLock` that is never held across an
   await: `objects: BTreeMap<Location, Arc<CachedObject>>` (stream and datagram
-  objects together, so identity is the key, never an entry), `open_subgroups:
-  HashMap<SubgroupKey, usize>` (live-ingest reference counts — the only
-  non-data state), and `KnownRanges` (§9.2.1.3 / §9.16 unknown-status
+  objects together, so identity is the key, never an entry), `open_subgroups`
+  (per subgroup, the number of live streams delivering it and the epoch of
+  that opening, so a stream that outlived the subgroup's close cannot close a
+  later opening — the only non-data state besides the aborted / finished
+  marks), and `KnownRanges` (§9.2.1.3 / §9.16 unknown-status
   semantics). One `Notify` per track wakes every waiter on insert, open and
   close; waiters re-check the ledger under a single read guard, so there is no
   check-order race between "object present" and "subgroup closed".
@@ -585,8 +596,10 @@ so cache, fan-out, FETCH and authorization need no separate path.
 - **Start Location is a lower bound**: egress delivers the first group at or
   above the start whether it arrives as an open event or is already cached;
   neither path requires the start group id itself to exist.
-- **First-publisher-wins ingress**: one active reader per track; stop is
-  owner-checked.
+- **Every publisher is ingested**: one reader set per track and publisher,
+  all inserting into the track's single cache; a publisher's stop ends only
+  its own readers, and only a FIN covering a stream subgroup from its
+  earliest received object completes it.
 - **Egress runner lifetime is the downstream registration's**: a runner stops
   when its registered downstream subscription is removed, regardless of which
   session worker removes it or when; a downstream subscription is only ever

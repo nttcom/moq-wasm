@@ -1,24 +1,41 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
-    cache::{cached_object::CachedObject, track_cache::ledger::Ledger},
+    cache::{
+        cached_object::CachedObject,
+        track_cache::ledger::{Ledger, OpenSubgroup},
+    },
 };
 
 use super::{TrackCache, TrackMalformed, location};
+
+const FINISHED_SUBGROUP_EPOCH: u64 = 0;
 
 /// Live-ingest ownership of one subgroup; dropping it closes the subgroup so
 /// every exit path of a reader closes exactly once. Only `finish` marks the
 /// subgroup complete (upstream FIN or End of Group); a plain drop — reset,
 /// stop, decode error, task abort — leaves its tail unknown (draft-14 §10.4.3).
+/// Every publisher of a track sends the same objects (§2.1), so the FIN of a
+/// stream that delivered the subgroup from its earliest object seen completes
+/// it for all streams. A stream that joined later started mid-subgroup and
+/// proves nothing below its first object, so its FIN only closes itself. The
+/// subgroup is aborted when its last stream ends without such a FIN.
 pub(crate) struct OpenSubgroupGuard<'a> {
     cache: &'a TrackCache,
     key: SubgroupKey,
+    epoch: u64,
+    first_object_id: OnceLock<u64>,
     finished: bool,
 }
 
 impl OpenSubgroupGuard<'_> {
     pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        let object_id = object.location.object_id;
+        if self.first_object_id.set(object_id).is_ok() {
+            self.cache
+                .record_stream_start(self.key, self.epoch, object_id);
+        }
         self.cache.insert_live(object)
     }
 
@@ -29,7 +46,12 @@ impl OpenSubgroupGuard<'_> {
 
 impl Drop for OpenSubgroupGuard<'_> {
     fn drop(&mut self) {
-        self.cache.close_subgroup(self.key, self.finished);
+        self.cache.close_subgroup(
+            self.key,
+            self.epoch,
+            self.first_object_id.get().copied(),
+            self.finished,
+        );
     }
 }
 
@@ -60,59 +82,122 @@ impl NextObject {
 }
 
 impl TrackCache {
+    /// A stream subgroup some publisher already finished stays finished: a later
+    /// stream for it only re-delivers objects that are already complete.
     pub(crate) fn open_subgroup(&self, key: SubgroupKey) -> OpenSubgroupGuard<'_> {
-        let run = {
-            let mut ledger = self.write();
+        let (run, epoch) = {
+            let mut guard = self.write();
+            let ledger: &mut Ledger = &mut guard;
+            if ledger.finished_subgroups.contains(&key) {
+                return OpenSubgroupGuard {
+                    cache: self,
+                    key,
+                    epoch: FINISHED_SUBGROUP_EPOCH,
+                    first_object_id: OnceLock::new(),
+                    finished: false,
+                };
+            }
             ledger.start_run_if_reopening_aborted(key);
-            *ledger
+            let next_open_epoch = &mut ledger.next_open_epoch;
+            let open = ledger
                 .live_groups
                 .entry(key.group_id())
                 .or_default()
                 .open_subgroups
                 .entry(key)
-                .or_default() += 1;
-            ledger.latest_run(key)
+                .or_insert_with(|| {
+                    *next_open_epoch += 1;
+                    OpenSubgroup {
+                        guards: 0,
+                        epoch: *next_open_epoch,
+                        earliest_first_object_id: None,
+                        any_finished: false,
+                    }
+                });
+            open.guards += 1;
+            let epoch = open.epoch;
+            (ledger.latest_run(key), epoch)
         };
         self.notify.notify_waiters();
         let _ = self.subgroup_opened_sender.send(run);
         OpenSubgroupGuard {
             cache: self,
             key,
+            epoch,
+            first_object_id: OnceLock::new(),
             finished: false,
         }
     }
 
-    fn close_subgroup(&self, key: SubgroupKey, finished: bool) {
+    fn record_stream_start(&self, key: SubgroupKey, epoch: u64, first_object_id: u64) {
+        let mut ledger = self.write();
+        let Some(open) = ledger
+            .live_groups
+            .get_mut(&key.group_id())
+            .and_then(|live| live.open_subgroups.get_mut(&key))
+            .filter(|open| open.epoch == epoch)
+        else {
+            return;
+        };
+        open.earliest_first_object_id = Some(
+            open.earliest_first_object_id
+                .map_or(first_object_id, |earliest| earliest.min(first_object_id)),
+        );
+    }
+
+    fn close_subgroup(
+        &self,
+        key: SubgroupKey,
+        epoch: u64,
+        first_object_id: Option<u64>,
+        finished: bool,
+    ) {
         {
             let mut guard = self.write();
             let ledger: &mut Ledger = &mut guard;
             let group_id = key.group_id();
-            if !finished {
-                ledger.aborted_subgroups.insert(key);
-            }
-            let group_aborted = ledger.is_group_aborted(group_id);
             let Some(live) = ledger.live_groups.get_mut(&group_id) else {
                 return;
             };
-            let Some(open_count) = live.open_subgroups.get_mut(&key) else {
+            let Some(open) = live
+                .open_subgroups
+                .get_mut(&key)
+                .filter(|open| open.epoch == epoch)
+            else {
                 return;
             };
-            *open_count -= 1;
-            if *open_count > 0 {
+            open.guards -= 1;
+            let is_stream = matches!(key, SubgroupKey::Stream { .. });
+            let covers_earliest_object = open
+                .earliest_first_object_id
+                .is_none_or(|earliest| first_object_id.is_some_and(|first| first <= earliest));
+            let finishes_every_stream = finished && is_stream && covers_earliest_object;
+            if finished && !is_stream {
+                open.any_finished = true;
+            }
+            if open.guards > 0 && !finishes_every_stream {
                 return;
             }
+            let completed = finishes_every_stream || open.any_finished;
             live.open_subgroups.remove(&key);
-            let group_complete = matches!(key, SubgroupKey::Stream { .. })
-                && !live.has_open_stream()
-                && !group_aborted;
-            if group_complete {
-                ledger.known_ranges.insert(
-                    location(group_id, live.knowledge_frontier),
-                    location(group_id, 0),
-                );
-            }
+            let stream_group_closed =
+                matches!(key, SubgroupKey::Stream { .. }) && !live.has_open_stream();
+            let knowledge_frontier = live.knowledge_frontier;
             if live.open_subgroups.is_empty() {
                 ledger.live_groups.remove(&group_id);
+            }
+            if finishes_every_stream {
+                ledger.finished_subgroups.insert(key);
+            }
+            if !completed {
+                ledger.aborted_subgroups.insert(key);
+            }
+            let group_complete = stream_group_closed && !ledger.is_group_aborted(group_id);
+            if group_complete {
+                ledger.known_ranges.insert(
+                    location(group_id, knowledge_frontier),
+                    location(group_id, 0),
+                );
             }
         }
         self.notify.notify_waiters();
@@ -362,21 +447,23 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reopening_a_finished_subgroup_continues_its_run() {
+    #[tokio::test]
+    async fn a_stream_opening_a_finished_subgroup_leaves_it_finished() {
         // Arrange
         let cache = TrackCache::new();
         open_group(&cache, 0, &[0]).finish();
         let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
         // Act
-        let _reopened = cache.open_subgroup(stream_key(0));
+        let late = cache.open_subgroup(stream_key(0));
+        drop(late);
         // Assert
-        assert_eq!(
-            subgroup_opened_receiver
-                .try_recv()
-                .map(|run| run.generation),
-            Ok(0)
-        );
+        assert!(subgroup_opened_receiver.try_recv().is_err());
+        assert!(matches!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .await,
+            Ok(NextObject::Finished)
+        ));
     }
 
     #[tokio::test]
@@ -423,14 +510,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subgroup_stays_open_until_every_live_stream_closes() {
-        // Arrange: two upstream streams deliver the same subgroup (§8.2)
+    async fn the_first_publisher_to_finish_a_subgroup_finishes_it_for_all() {
+        // Arrange: two publishers deliver the same subgroup (§8.2)
         let cache = TrackCache::new();
-        let first = cache.open_subgroup(stream_key(0));
-        let second = cache.open_subgroup(stream_key(0));
+        let first = open_group(&cache, 0, &[0]);
+        let _second = cache.open_subgroup(stream_key(0));
         // Act
         first.finish();
-        // Assert: still open, so a waiter would keep waiting
+        // Assert
+        assert!(matches!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .await,
+            Ok(NextObject::Finished)
+        ));
+        assert!(cache.covers(location(0, 0), location(0, 1)));
+    }
+
+    #[tokio::test]
+    async fn a_publisher_resetting_a_subgroup_another_still_delivers_does_not_abort_it() {
+        // Arrange
+        let cache = TrackCache::new();
+        let reset = cache.open_subgroup(stream_key(0));
+        let remaining = cache.open_subgroup(stream_key(0));
+        // Act
+        drop(reset);
+        // Assert: still open, so a waiter keeps waiting
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
@@ -439,13 +544,132 @@ mod tests {
             .await
             .is_err()
         );
-        second.finish();
+        remaining.finish();
         assert!(matches!(
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 0, 0)
                 .await,
             Ok(NextObject::Finished)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_stream_for_a_finished_subgroup_still_caches_its_objects() {
+        // Arrange
+        let cache = TrackCache::new();
+        open_group(&cache, 0, &[0]).finish();
+        let late = cache.open_subgroup(stream_key(0));
+        // Act
+        let _ = late.insert(stream_object(0, 1));
+        // Assert
+        assert_eq!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .await
+                .unwrap()
+                .unwrap()
+                .location
+                .object_id,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lagging_publisher_resetting_a_finished_subgroup_does_not_abort_it() {
+        // Arrange
+        let cache = TrackCache::new();
+        let finishing = open_group(&cache, 0, &[0]);
+        let lagging = cache.open_subgroup(stream_key(0));
+        finishing.finish();
+        // Act
+        drop(lagging);
+        // Assert
+        assert!(matches!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .await,
+            Ok(NextObject::Finished)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_joined_mid_subgroup_does_not_finish_it_for_an_earlier_stream() {
+        // Arrange
+        let cache = TrackCache::new();
+        let earlier = cache.open_subgroup(stream_key(0));
+        let _ = earlier.insert(stream_object(0, 0));
+        let _ = earlier.insert(stream_object(0, 1));
+        let joined_later = cache.open_subgroup(stream_key(0));
+        let _ = joined_later.insert(stream_object(0, 3));
+        // Act
+        joined_later.finish();
+        // Assert: the earlier stream is still delivering, so the subgroup is not finished
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, 4)
+            )
+            .await
+            .is_err()
+        );
+        drop(earlier);
+    }
+
+    #[tokio::test]
+    async fn a_mid_subgroup_fin_after_the_earlier_stream_reset_leaves_the_subgroup_aborted() {
+        // Arrange
+        let cache = TrackCache::new();
+        let earlier = cache.open_subgroup(stream_key(0));
+        let _ = earlier.insert(stream_object(0, 0));
+        let joined_later = cache.open_subgroup(stream_key(0));
+        let _ = joined_later.insert(stream_object(0, 3));
+        drop(earlier);
+        // Act
+        joined_later.finish();
+        // Assert: object 2 was never received by any stream
+        assert!(matches!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 4)
+                .await,
+            Ok(NextObject::Aborted)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_datagram_group_one_publisher_finished_is_not_aborted_by_another_leaving() {
+        // Arrange
+        let cache = TrackCache::new();
+        let key = SubgroupKey::Datagram { group_id: 0 };
+        let moved_on = cache.open_subgroup(key);
+        let leaving = cache.open_subgroup(key);
+        moved_on.finish();
+        // Act
+        drop(leaving);
+        // Assert
+        assert!(matches!(
+            cache.next_subgroup_object_or_wait(key, 0, 0).await,
+            Ok(NextObject::Finished)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_datagram_group_stays_open_until_every_publisher_moves_on() {
+        // Arrange
+        let cache = TrackCache::new();
+        let key = SubgroupKey::Datagram { group_id: 0 };
+        let first = cache.open_subgroup(key);
+        let _second = cache.open_subgroup(key);
+        // Act
+        first.finish();
+        // Assert
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                cache.next_subgroup_object_or_wait(key, 0, 0)
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[test]

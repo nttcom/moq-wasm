@@ -40,6 +40,6 @@ LOGS_PID=$!
 RELAY_URL="$(node scripts/resolve-local-relay-url.mjs moqt://127.0.0.1:4433)"
 echo "Using relay URL: $RELAY_URL"
 
-# Bob asserts the first-writer-wins guard and panics on violation, so a non-zero
+# Bob asserts deduplicated delivery and panics on violation, so a non-zero
 # exit is the only failure signal needed.
 MOQT_E2E_RELAY_URL="$RELAY_URL" cargo run -p multiple-publishers-e2e
