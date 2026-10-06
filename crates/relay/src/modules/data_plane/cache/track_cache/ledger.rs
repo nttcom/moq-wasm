@@ -10,11 +10,13 @@ use crate::modules::data_plane::{
 
 use super::{SubgroupRun, after, location};
 
-/// The live streams currently delivering one subgroup. `epoch` tells a guard
-/// opened before the subgroup last closed apart from one of the current opening.
+/// `epoch` tells a guard opened before the subgroup last closed apart from one
+/// of the current opening.
 pub(super) struct OpenSubgroup {
     pub(super) guards: usize,
     pub(super) epoch: u64,
+    pub(super) earliest_first_object_id: Option<u64>,
+    pub(super) any_finished: bool,
 }
 
 #[derive(Default)]

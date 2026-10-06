@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
@@ -16,18 +16,26 @@ const FINISHED_SUBGROUP_EPOCH: u64 = 0;
 /// every exit path of a reader closes exactly once. Only `finish` marks the
 /// subgroup complete (upstream FIN or End of Group); a plain drop — reset,
 /// stop, decode error, task abort — leaves its tail unknown (draft-14 §10.4.3).
-/// Every publisher of a track sends the same objects (§2.1), so the first
-/// stream to finish a subgroup completes it for all of them; the subgroup is
-/// aborted only when its last stream ends without finishing.
+/// Every publisher of a track sends the same objects (§2.1), so the FIN of a
+/// stream that delivered the subgroup from its earliest object seen completes
+/// it for all streams. A stream that joined later started mid-subgroup and
+/// proves nothing below its first object, so its FIN only closes itself. The
+/// subgroup is aborted when its last stream ends without such a FIN.
 pub(crate) struct OpenSubgroupGuard<'a> {
     cache: &'a TrackCache,
     key: SubgroupKey,
     epoch: u64,
+    first_object_id: OnceLock<u64>,
     finished: bool,
 }
 
 impl OpenSubgroupGuard<'_> {
     pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        let object_id = object.location.object_id;
+        if self.first_object_id.set(object_id).is_ok() {
+            self.cache
+                .record_stream_start(self.key, self.epoch, object_id);
+        }
         self.cache.insert_live(object)
     }
 
@@ -38,8 +46,12 @@ impl OpenSubgroupGuard<'_> {
 
 impl Drop for OpenSubgroupGuard<'_> {
     fn drop(&mut self) {
-        self.cache
-            .close_subgroup(self.key, self.epoch, self.finished);
+        self.cache.close_subgroup(
+            self.key,
+            self.epoch,
+            self.first_object_id.get().copied(),
+            self.finished,
+        );
     }
 }
 
@@ -81,6 +93,7 @@ impl TrackCache {
                     cache: self,
                     key,
                     epoch: FINISHED_SUBGROUP_EPOCH,
+                    first_object_id: OnceLock::new(),
                     finished: false,
                 };
             }
@@ -97,6 +110,8 @@ impl TrackCache {
                     OpenSubgroup {
                         guards: 0,
                         epoch: *next_open_epoch,
+                        earliest_first_object_id: None,
+                        any_finished: false,
                     }
                 });
             open.guards += 1;
@@ -109,11 +124,34 @@ impl TrackCache {
             cache: self,
             key,
             epoch,
+            first_object_id: OnceLock::new(),
             finished: false,
         }
     }
 
-    fn close_subgroup(&self, key: SubgroupKey, epoch: u64, finished: bool) {
+    fn record_stream_start(&self, key: SubgroupKey, epoch: u64, first_object_id: u64) {
+        let mut ledger = self.write();
+        let Some(open) = ledger
+            .live_groups
+            .get_mut(&key.group_id())
+            .and_then(|live| live.open_subgroups.get_mut(&key))
+            .filter(|open| open.epoch == epoch)
+        else {
+            return;
+        };
+        open.earliest_first_object_id = Some(
+            open.earliest_first_object_id
+                .map_or(first_object_id, |earliest| earliest.min(first_object_id)),
+        );
+    }
+
+    fn close_subgroup(
+        &self,
+        key: SubgroupKey,
+        epoch: u64,
+        first_object_id: Option<u64>,
+        finished: bool,
+    ) {
         {
             let mut guard = self.write();
             let ledger: &mut Ledger = &mut guard;
@@ -129,10 +167,20 @@ impl TrackCache {
                 return;
             };
             open.guards -= 1;
-            let finishes_every_stream = finished && matches!(key, SubgroupKey::Stream { .. });
+            let is_stream = matches!(key, SubgroupKey::Stream { .. });
+            let covers_earliest_object = match (first_object_id, open.earliest_first_object_id) {
+                (_, None) => true,
+                (None, Some(_)) => false,
+                (Some(first), Some(earliest)) => first <= earliest,
+            };
+            let finishes_every_stream = finished && is_stream && covers_earliest_object;
+            if finished && !is_stream {
+                open.any_finished = true;
+            }
             if open.guards > 0 && !finishes_every_stream {
                 return;
             }
+            let completed = finishes_every_stream || open.any_finished;
             live.open_subgroups.remove(&key);
             let stream_group_closed =
                 matches!(key, SubgroupKey::Stream { .. }) && !live.has_open_stream();
@@ -143,7 +191,7 @@ impl TrackCache {
             if finishes_every_stream {
                 ledger.finished_subgroups.insert(key);
             }
-            if !finished {
+            if !completed {
                 ledger.aborted_subgroups.insert(key);
             }
             let group_complete = stream_group_closed && !ledger.is_group_aborted(group_id);
@@ -542,6 +590,66 @@ mod tests {
             cache
                 .next_subgroup_object_or_wait(stream_key(0), 0, 1)
                 .await,
+            Ok(NextObject::Finished)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_joined_mid_subgroup_does_not_finish_it_for_an_earlier_stream() {
+        // Arrange
+        let cache = TrackCache::new();
+        let earlier = cache.open_subgroup(stream_key(0));
+        let _ = earlier.insert(stream_object(0, 0));
+        let _ = earlier.insert(stream_object(0, 1));
+        let joined_later = cache.open_subgroup(stream_key(0));
+        let _ = joined_later.insert(stream_object(0, 3));
+        // Act
+        joined_later.finish();
+        // Assert: the earlier stream is still delivering, so the subgroup is not finished
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, 4)
+            )
+            .await
+            .is_err()
+        );
+        drop(earlier);
+    }
+
+    #[tokio::test]
+    async fn a_mid_subgroup_fin_after_the_earlier_stream_reset_leaves_the_subgroup_aborted() {
+        // Arrange
+        let cache = TrackCache::new();
+        let earlier = cache.open_subgroup(stream_key(0));
+        let _ = earlier.insert(stream_object(0, 0));
+        let joined_later = cache.open_subgroup(stream_key(0));
+        let _ = joined_later.insert(stream_object(0, 3));
+        drop(earlier);
+        // Act
+        joined_later.finish();
+        // Assert: object 2 was never received by any stream
+        assert!(matches!(
+            cache
+                .next_subgroup_object_or_wait(stream_key(0), 0, 4)
+                .await,
+            Ok(NextObject::Aborted)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_datagram_group_one_publisher_finished_is_not_aborted_by_another_leaving() {
+        // Arrange
+        let cache = TrackCache::new();
+        let key = SubgroupKey::Datagram { group_id: 0 };
+        let moved_on = cache.open_subgroup(key);
+        let leaving = cache.open_subgroup(key);
+        moved_on.finish();
+        // Act
+        drop(leaving);
+        // Assert
+        assert!(matches!(
+            cache.next_subgroup_object_or_wait(key, 0, 0).await,
             Ok(NextObject::Finished)
         ));
     }
