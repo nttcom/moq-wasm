@@ -227,8 +227,7 @@ ClickHouse runs as a `docker-compose.yml` service next to the relays.
 ## Browser page (`examples/browser/examples/observability`)
 
 A dark, full-width topology view of live connections and subscriptions with a
-chart drawer for the selection; `mockup.html` in this directory is the
-reference.
+chart drawer for the selection.
 
 ### Header
 - `app_id` selector and Track Namespace prefix filter. The prefix covers the
