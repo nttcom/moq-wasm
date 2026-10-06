@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use crate::modules::{
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::RelayRouteRegistry,
+    },
     domain::pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionKey},
-    inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry,
 };
 
 pub(crate) struct UpstreamPublisherResolver {
@@ -87,8 +89,8 @@ impl UpstreamPublisherResolver {
 mod tests {
     use super::*;
     use crate::modules::{
+        cascading::route_registry::{NamespaceRoute, RegisterRouteError, RelayInfo},
         domain::pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
-        route_registry::{NamespaceRoute, RegisterRouteError, RelayInfo},
         session::session_repository::SessionRepository,
     };
 

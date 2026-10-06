@@ -4,6 +4,10 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
     auth::token_verifier::TokenVerifier,
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::RelayRouteRegistry,
+    },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         event_handler::{EventHandler, WorkerDeps},
@@ -16,8 +20,6 @@ use crate::modules::{
         ingress::ingress_coordinator::IngressCoordinator,
     },
     domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-    inter_relay::InterRelayConnectionManager,
-    route_registry::RelayRouteRegistry,
     session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 

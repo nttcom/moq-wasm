@@ -1,4 +1,8 @@
 use crate::modules::{
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::{RegisterRouteError, RelayRouteRegistry},
+    },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
@@ -7,8 +11,6 @@ use crate::modules::{
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PeerKind},
         session_id::SessionId,
     },
-    inter_relay::InterRelayConnectionManager,
-    route_registry::{RegisterRouteError, RelayRouteRegistry},
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
 use tracing::Span;

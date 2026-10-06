@@ -14,11 +14,13 @@ pub(crate) mod unsubscribe_namespace;
 pub(crate) mod upstream_publish_done;
 
 use crate::modules::{
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::{RelayInfo, RelayRouteRegistry},
+    },
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{session_id::SessionId, track_key::TrackKey},
-    inter_relay::InterRelayConnectionManager,
-    route_registry::{RelayInfo, RelayRouteRegistry},
 };
 
 pub(crate) struct CascadingRelayContext<'a> {

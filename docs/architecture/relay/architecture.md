@@ -487,7 +487,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   MALFORMED_TRACK / INTERNAL_ERROR when the cursor reports `Malformed` /
   `Incomplete`.
 
-## Cascading relays (`route_registry`, `inter_relay`)
+## Cascading relays (`modules/cascading`)
 
 - `RelayRouteRegistry` trait: `NoopRelayRouteRegistry` (single-relay, no
   `REDIS_URL`) or `RedisRelayRouteRegistry` (relay info hash and

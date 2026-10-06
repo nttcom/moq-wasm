@@ -6,11 +6,11 @@ use crate::{
     logging::relay_hostname,
     modules::{
         auth::verified_token::VerifiedToken,
+        cascading::route_registry::RelayInfo,
         domain::{
             session_id::{SessionId, generate_session_id},
             session_peer::SessionPeer,
         },
-        route_registry::RelayInfo,
         session::{
             session_event::SessionEvent,
             session_repository::{NewSession, SessionRepository},
