@@ -1,3 +1,4 @@
+pub(crate) mod downstream_publish;
 pub(crate) mod fetch;
 pub(crate) mod malformed_track;
 pub(crate) mod publish;

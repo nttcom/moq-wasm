@@ -305,11 +305,58 @@ keeps per relay, and only for tracks a client watches (see "Cascading
 relays"). A PUBLISH for a track the relay already receives adds its publisher
 to the track the same way.
 
+### PUBLISH sequence
+1. Add the publisher to the track's `UpstreamTrack` as an
+   `ActiveUpstreamSubscription` of origin `Publish` (it survives without
+   downstream subscribers), register the PUBLISH for namespace lookups, and
+   start ingress.
+2. Forward PUBLISH to every local session whose SUBSCRIBE_NAMESPACE prefix
+   matches (draft-14 §8.4) and, for a client-origin PUBLISH, to every remote
+   relay holding a namespace-subscriber route, dialled via
+   `InterRelayConnectionManager`.
+3. PUBLISH_OK to the publisher.
+
+Each forward in step 2 is a `DownstreamPublish`
+(`control_plane/sequences/downstream_publish.rs`), which treats the forwarded
+PUBLISH as a downstream subscription of the track (§5.1: a PUBLISH_OK
+establishes a subscription):
+- a subscriber that already has a downstream subscription to the track, e.g.
+  from the PUBLISH of an earlier publisher of it, gets no second PUBLISH;
+- the PUBLISH advertises the Largest Location resolved like a fresh
+  SUBSCRIBE (max of the cache and the track's Content Exists), and the egress
+  runner starts from the same location;
+- on PUBLISH_OK the subscription is registered under the forwarded PUBLISH's
+  Request ID with the receiving session's `SessionPeer` — so UNSUBSCRIBE,
+  SUBSCRIBE_UPDATE and the split-horizon counts treat it like a SUBSCRIBE —
+  and `EgressCommand::StartReader` starts its runner with the parameters of
+  the PUBLISH_OK. The runner's acknowledgement signal is already resolved,
+  since the PUBLISH_OK has been received;
+- a track that ended before the PUBLISH_OK arrived is answered with
+  PUBLISH_DONE TRACK_ENDED instead of a registration; a PUBLISH_ERROR or
+  timeout registers nothing.
+
+The subscription starts at the Forward State of the PUBLISH_OK (§5.1: the
+sender of PUBLISH_OK sets it), and the forwarded PUBLISH waits for that
+PUBLISH_OK before any object is sent.
+The worker waits for each subscriber's PUBLISH_OK in turn before answering the
+publisher.
+
+### SUBSCRIBE_NAMESPACE sequence
+Register the prefix (and, for the first client subscriber of the prefix, its
+Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward what already
+matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
+`PublishNamespaceResponseTask`), a `DownstreamPublish` for each published
+track (one per publisher session), then PUBLISH_NAMESPACE for remote
+namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards
+the existing messages once the subscription succeeded; a subscriber that
+handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise hold the
+relay's PUBLISH_OK wait for the request timeout.
+
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
-`watch::Sender<bool>` next to its runner stop sender, starting at Forward 1
-whatever the SUBSCRIBE asked for (clients that leave Forward at 0 expect
-delivery). SUBSCRIBE_UPDATE sets it for the (session, Subscription Request ID)
+`watch::Sender<bool>` next to its runner stop sender. A SUBSCRIBE starts it at
+Forward 1 whatever the SUBSCRIBE asked for (clients that leave Forward at 0
+expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward. SUBSCRIBE_UPDATE sets it for the (session, Subscription Request ID)
 registration; an update for no registered subscription is logged and dropped.
 Start Location, End Group and Subscriber Priority are not applied, and the
 upstream subscription keeps Forward 1 so the cache keeps filling for FETCH.
@@ -524,7 +571,8 @@ of streams it opened, after its senders stopped (§9.12: no state is destroyed w
 PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRACK. The
 runner sends PUBLISH_DONE only once the subscribe sequence signals that SUBSCRIBE_OK went
 out (`subscribe_ok_receiver`), so it never precedes SUBSCRIBE_OK; a runner stopped before
-readiness drops it, the SUBSCRIBE fails with SUBSCRIBE_ERROR and no PUBLISH_DONE is sent. The
+readiness drops it, the SUBSCRIBE fails with SUBSCRIBE_ERROR and no PUBLISH_DONE is sent. A
+forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been received. The
 coordinator keeps the runner tasks in a `JoinSet`, reaping each one as it
 finishes (including runners that end on their own, e.g. on a malformed track)
 and aborting the rest when it shuts down. `EgressRunner` splits into:
@@ -538,8 +586,9 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   while further opens of an already scheduled run are skipped. It subscribes to open events first and then schedules every
   cached group at or after the start, so a group that ingress opened and
   closed before the scheduler existed is still delivered. While the
-  registration's Forward State is 0 it drops open events, so no subgroup opened
-  meanwhile is ever sent; streams already scheduled run to their end, and
+  registration's Forward State is 0 it drops open events, and a runner that
+  starts at Forward 0 skips that cache scan, so no subgroup opened meanwhile is
+  ever sent; streams already scheduled run to their end, and
   after Forward returns to 1 delivery resumes with the next subgroup opened. The start is a
   lower bound in both paths: group ids may begin anywhere and skip values
   (§2.3.1), so the first delivered group is the first one at or above the
@@ -609,6 +658,15 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   session as `SessionPeer::Relay` with `VerifiedToken::full_access()`, reusing
   it afterwards. From then on the remote relay behaves like any upstream
   publisher session.
+- A client's PUBLISH reaches every remote relay `find_namespace_subscribers`
+  returns (namespace-subscriber and watched-namespace routes) as a
+  `DownstreamPublish` on the dialled session (see "PUBLISH sequence"). The
+  remote relay adds the dialling session to the track as a relay publisher of
+  origin `Publish` and forwards the PUBLISH to its own namespace subscribers
+  the same way. Objects flow because the forward is a downstream subscription
+  of the origin relay's track, and the remote relay's upstream subscription
+  ends with the PUBLISH_DONE the origin relay sends once its track ends; the
+  inter-relay session itself stays up.
 
 ## Observability (`modules/observability`)
 
@@ -679,6 +737,9 @@ so cache, fan-out, FETCH and authorization need no separate path.
   removed because its track's last upstream subscription ended receives PUBLISH_DONE, always
   after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
   also unregisters that PUBLISH, so the ended track is no longer resolved.
+- **A forwarded PUBLISH is a downstream subscription**: every PUBLISH the
+  relay sends and the receiver accepts is registered and served by an egress
+  runner like a SUBSCRIBE, so it carries objects and ends with PUBLISH_DONE.
 - **Cache identity is the key**: a cached object is self-contained (§8.1 "MUST
   store all properties"); nothing in the cache refers to an entry by handle,
   so eviction can never orphan a header or resurrect a partial entry.

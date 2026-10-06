@@ -360,7 +360,7 @@ mod tests {
         );
         fixture
             .directory
-            .register_downstream_subscription(3, 0, SessionPeer::Relay, stats_track, None)
+            .register_downstream_subscription(3, 0, SessionPeer::Relay, stats_track, None, true)
             .unwrap();
 
         // Act
@@ -398,7 +398,7 @@ mod tests {
         let _ = open.insert(stream_object_with_payload(0, 1, Bytes::from_static(b"56")));
         let signals = fixture
             .directory
-            .register_downstream_subscription(9, 4, SessionPeer::Client, track_key, None)
+            .register_downstream_subscription(9, 4, SessionPeer::Client, track_key, None, true)
             .unwrap();
         signals
             .delivery_stats

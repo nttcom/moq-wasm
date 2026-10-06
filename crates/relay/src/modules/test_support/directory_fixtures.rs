@@ -4,15 +4,20 @@ use moqt::ContentExists;
 use tokio::sync::mpsc;
 
 use crate::modules::{
+    auth::verified_token::VerifiedToken,
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
         route_registry::NoopRelayRouteRegistry,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
+        sequences::downstream_publish::DownstreamPublish,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
-    data_plane::ingress::ingress_coordinator::IngressCommand,
+    data_plane::{
+        cache::store::TrackCacheStore, egress::coordinator::EgressCommand,
+        ingress::ingress_coordinator::IngressCommand,
+    },
     domain::{
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
@@ -24,11 +29,13 @@ use crate::modules::{
     },
     session::session_repository::SessionRepository,
     test_support::mock_session::{
-        RecordedControlMessages, session_repository_with_upstream_session,
+        RecordedControlMessages, mock_session_answering_publish, session_repository_with_session,
+        session_repository_with_upstream_session,
     },
 };
 
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
+pub(crate) const NAMESPACE_SUBSCRIBER_SESSION: SessionId = 2;
 pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
 
 pub(crate) fn track_key() -> TrackKey {
@@ -94,4 +101,46 @@ pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
             "unused-relay-token".to_string(),
         )),
     )
+}
+
+pub(crate) struct DownstreamPublishContext {
+    pub(crate) table: Arc<InMemoryLocalPubSubDirectory>,
+    pub(crate) forwarder: ControlMessageForwarder,
+    pub(crate) egress_sender: mpsc::Sender<EgressCommand>,
+    pub(crate) egress_receiver: mpsc::Receiver<EgressCommand>,
+    pub(crate) cache_store: TrackCacheStore,
+    pub(crate) subscriber: RecordedControlMessages,
+}
+
+impl DownstreamPublishContext {
+    pub(crate) fn downstream_publish(&self) -> DownstreamPublish<'_> {
+        DownstreamPublish {
+            table: &self.table,
+            forwarder: &self.forwarder,
+            egress_sender: &self.egress_sender,
+            cache_store: &self.cache_store,
+        }
+    }
+}
+
+pub(crate) async fn downstream_publish_context(
+    table: Arc<InMemoryLocalPubSubDirectory>,
+    answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
+) -> DownstreamPublishContext {
+    let (session, subscriber) = mock_session_answering_publish(answer_publish);
+    let repository = session_repository_with_session(
+        NAMESPACE_SUBSCRIBER_SESSION,
+        session,
+        VerifiedToken::full_access(),
+    )
+    .await;
+    let (egress_sender, egress_receiver) = mpsc::channel(8);
+    DownstreamPublishContext {
+        table,
+        forwarder: ControlMessageForwarder { repository },
+        egress_sender,
+        egress_receiver,
+        cache_store: TrackCacheStore::new(),
+        subscriber,
+    }
 }

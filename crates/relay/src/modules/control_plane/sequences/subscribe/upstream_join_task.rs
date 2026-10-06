@@ -330,7 +330,7 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
             .unwrap();
         let table = Arc::new(table);
 
@@ -379,7 +379,14 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap();
         let table = Arc::new(table);
         let (session, _recorded) = recorded_session_answering_subscribe();

@@ -363,7 +363,14 @@ mod tests {
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let table = Arc::new(table);
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key.clone(), None)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key.clone(),
+                None,
+                true,
+            )
             .unwrap();
 
         // Act

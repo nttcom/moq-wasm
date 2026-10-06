@@ -45,7 +45,7 @@ mod tests {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None, true)
             .unwrap();
 
         // Act
@@ -60,7 +60,7 @@ mod tests {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None)
+            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None, true)
             .unwrap();
 
         // Act

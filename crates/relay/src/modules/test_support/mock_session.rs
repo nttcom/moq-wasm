@@ -16,8 +16,10 @@ use crate::modules::{
             DataSender, fetch_sender::FetchSender, stream_sender_factory::StreamSenderFactory,
         },
         handler::{
-            fetch::FetchHandler, publish::SubscribeOption,
-            publish_namespace::PublishNamespaceHandler, subscribe::SubscribeHandler,
+            fetch::FetchHandler,
+            publish::{PublishHandler, SubscribeOption},
+            publish_namespace::PublishNamespaceHandler,
+            subscribe::SubscribeHandler,
         },
         moqt_session_event::MoqtSessionEvent,
         publisher::{PublishNamespaceResponse, Publisher},
@@ -28,12 +30,24 @@ use crate::modules::{
     test_support::relay_harness::fixtures::subscription::make_subscription,
 };
 
+pub(crate) const PUBLISH_REQUEST_ID: u64 = 8;
+pub(crate) const PUBLISH_TRACK_ALIAS: u64 = 3;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SentPublish {
+    pub(crate) track_namespace: String,
+    pub(crate) track_name: String,
+    pub(crate) content_exists: ContentExists,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct RecordedControlMessages {
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
+    publishes: Arc<Mutex<Vec<SentPublish>>>,
+    publish_dones: Arc<Mutex<Vec<(u64, u64)>>>,
 }
 
 impl RecordedControlMessages {
@@ -47,6 +61,14 @@ impl RecordedControlMessages {
 
     pub(crate) fn publish_namespaces(&self) -> Vec<String> {
         self.publish_namespaces.lock().unwrap().clone()
+    }
+
+    pub(crate) fn publishes(&self) -> Vec<SentPublish> {
+        self.publishes.lock().unwrap().clone()
+    }
+
+    pub(crate) fn publish_dones(&self) -> Vec<(u64, u64)> {
+        self.publish_dones.lock().unwrap().clone()
     }
 }
 
@@ -63,11 +85,14 @@ pub(crate) enum FetchAnswer {
     FetchOk,
 }
 
+type PublishAnswer = Arc<dyn Fn() -> anyhow::Result<bool> + Send + Sync>;
+
 pub(crate) struct MockUpstreamSession {
     recorded: RecordedControlMessages,
     answer_subscribe: Option<SubscribeAnswer>,
     answer_fetch: FetchAnswer,
     transport_stats: moqt::TransportStats,
+    answer_publish: Option<PublishAnswer>,
 }
 
 impl MockUpstreamSession {
@@ -77,6 +102,7 @@ impl MockUpstreamSession {
             answer_subscribe: None,
             answer_fetch: FetchAnswer::Never,
             transport_stats: moqt::TransportStats::default(),
+            answer_publish: None,
         }
     }
 }
@@ -141,6 +167,7 @@ pub(crate) fn mock_session_answering_subscribe(
         answer_subscribe: Some(SubscribeAnswer::SubscribeOk(Arc::new(answer_subscribe))),
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
+        answer_publish: None,
     })
 }
 
@@ -154,6 +181,7 @@ pub(crate) fn recorded_session_answering_subscribe() -> (Box<dyn Session>, Recor
         }))),
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
+        answer_publish: None,
     });
     (session, recorded)
 }
@@ -164,6 +192,7 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
         answer_subscribe: Some(SubscribeAnswer::Never),
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
+        answer_publish: None,
     })
 }
 
@@ -173,7 +202,21 @@ pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn
         answer_subscribe: None,
         answer_fetch,
         transport_stats: moqt::TransportStats::default(),
+        answer_publish: None,
     })
+}
+
+/// `answer_publish` runs when PUBLISH arrives; `Ok(forward)` answers PUBLISH_OK
+/// with that Forward State and `Err` stands for PUBLISH_ERROR.
+pub(crate) fn mock_session_answering_publish(
+    answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        answer_publish: Some(Arc::new(answer_publish)),
+        ..MockUpstreamSession::new(recorded.clone())
+    });
+    (session, recorded)
 }
 
 pub(crate) async fn session_repository_with_session(
@@ -219,8 +262,9 @@ pub(crate) fn runner_stopped(
 #[async_trait::async_trait]
 impl Session for MockUpstreamSession {
     fn as_publisher(&self) -> Box<dyn Publisher> {
-        Box::new(UnansweringPublisher {
+        Box::new(MockUpstreamPublisher {
             recorded: self.recorded.clone(),
+            answer_publish: self.answer_publish.clone(),
         })
     }
 
@@ -253,12 +297,13 @@ impl Session for MockUpstreamSession {
     }
 }
 
-struct UnansweringPublisher {
+struct MockUpstreamPublisher {
     recorded: RecordedControlMessages,
+    answer_publish: Option<PublishAnswer>,
 }
 
 #[async_trait::async_trait]
-impl Publisher for UnansweringPublisher {
+impl Publisher for MockUpstreamPublisher {
     async fn send_publish_namespace(
         &self,
         namespaces: String,
@@ -277,20 +322,48 @@ impl Publisher for UnansweringPublisher {
 
     async fn send_publish(
         &self,
-        _track_namespace: String,
-        _track_name: String,
+        track_namespace: String,
+        track_name: String,
+        content_exists: ContentExists,
     ) -> anyhow::Result<DownstreamSubscription> {
-        unimplemented!("not used by MockUpstreamSession tests")
+        self.recorded.publishes.lock().unwrap().push(SentPublish {
+            track_namespace: track_namespace.clone(),
+            track_name: track_name.clone(),
+            content_exists,
+        });
+        let Some(answer_publish) = &self.answer_publish else {
+            return std::future::pending().await;
+        };
+        let forward = answer_publish()?;
+        Ok(DownstreamSubscription::from(
+            moqt::Subscription::PublisherInitiated(moqt::PublisherInitiatedSubscription {
+                request_id: PUBLISH_REQUEST_ID,
+                track_namespace,
+                track_name,
+                track_alias: PUBLISH_TRACK_ALIAS,
+                group_order: GroupOrder::Ascending,
+                content_exists,
+                subscriber_priority: 128,
+                forward,
+                filter_type: FilterType::LargestObject,
+                delivery_timeout: None,
+            }),
+        ))
     }
 
     async fn send_publish_done(
         &self,
-        _request_id: u64,
-        _status_code: u64,
+        request_id: u64,
+        status_code: u64,
         _stream_count: u64,
         _error_reason: String,
     ) -> anyhow::Result<()> {
-        unimplemented!("not used by MockUpstreamSession tests")
+        self.recorded
+            .publish_dones
+            .lock()
+            .unwrap()
+            .push((request_id, status_code));
+        Ok(())
     }
 
     fn new_stream_factory(
@@ -529,6 +602,100 @@ impl FetchHandler for MockFetchHandler {
     }
 
     async fn error(&self, _code: u64, _reason: String) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct MockPublishHandler {
+    track_namespace: String,
+    track_namespace_tuple: Vec<String>,
+    track_name: String,
+    track_alias: u64,
+}
+
+impl MockPublishHandler {
+    pub(crate) fn new(track_namespace: &str, track_name: &str, track_alias: u64) -> Self {
+        Self {
+            track_namespace: track_namespace.to_string(),
+            track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
+            track_name: track_name.to_string(),
+            track_alias,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl PublishHandler for MockPublishHandler {
+    fn track_namespace(&self) -> &str {
+        &self.track_namespace
+    }
+
+    fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
+    }
+
+    fn track_name(&self) -> &str {
+        &self.track_name
+    }
+
+    fn track_alias(&self) -> u64 {
+        self.track_alias
+    }
+
+    fn _group_order(&self) -> GroupOrder {
+        GroupOrder::Ascending
+    }
+
+    fn _content_exists(&self) -> ContentExists {
+        ContentExists::False
+    }
+
+    fn _forward(&self) -> bool {
+        true
+    }
+
+    fn _delivery_timeout(&self) -> Option<u64> {
+        None
+    }
+
+    fn _max_cache_duration(&self) -> Option<u64> {
+        None
+    }
+
+    fn subscription(
+        &self,
+        subscriber_priority: u8,
+        filter_type: FilterType,
+    ) -> UpstreamSubscription {
+        UpstreamSubscription::from(moqt::PublisherInitiatedSubscription {
+            request_id: 0,
+            track_namespace: self.track_namespace.clone(),
+            track_name: self.track_name.clone(),
+            track_alias: self.track_alias,
+            group_order: GroupOrder::Ascending,
+            content_exists: ContentExists::False,
+            subscriber_priority,
+            forward: true,
+            filter_type,
+            delivery_timeout: None,
+        })
+    }
+
+    async fn ok(
+        &self,
+        _subscription: &UpstreamSubscription,
+    ) -> Result<(), moqt::TransportSendError> {
+        Ok(())
+    }
+
+    async fn accept_data_receiver(&self) {}
+
+    async fn error(
+        &self,
+        _code: u64,
+        _reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }
 }

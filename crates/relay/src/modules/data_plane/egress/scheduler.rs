@@ -84,7 +84,9 @@ impl EgressScheduler {
         let mut scheduled = HashMap::<SubgroupKey, GroupSendTask>::new();
 
         let start = resolve_start_location(&self.filter_type, &self.largest_location);
-        self.schedule_cached_objects(&start, &mut scheduled).await;
+        if *self.forward_receiver.borrow() {
+            self.schedule_cached_objects(&start, &mut scheduled).await;
+        }
         let mut progress = StartLocationProgress {
             start_group_id: start.group_id,
             start_object_id: Some(start.object_id),
@@ -213,6 +215,15 @@ mod tests {
         filter_type: FilterType,
         largest_location: Option<moqt::Location>,
     ) -> RunningScheduler {
+        start_scheduler_with_forward(cache, filter_type, largest_location, true).await
+    }
+
+    async fn start_scheduler_with_forward(
+        cache: Arc<TrackCache>,
+        filter_type: FilterType,
+        largest_location: Option<moqt::Location>,
+        forward: bool,
+    ) -> RunningScheduler {
         let (task_sender, task_receiver) = mpsc::channel(16);
         let (ready_sender, ready_receiver) = oneshot::channel();
         let scheduler = EgressScheduler::new(
@@ -221,7 +232,7 @@ mod tests {
             GroupOrder::Ascending,
             task_sender,
             largest_location,
-            watch::channel(true).1,
+            watch::channel(forward).1,
         );
         let handle = tokio::spawn(scheduler.run(ready_sender));
         ready_receiver
@@ -258,6 +269,20 @@ mod tests {
                 object_id: 1
             }
         );
+    }
+
+    #[tokio::test]
+    async fn forward_zero_at_start_schedules_no_cached_group() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        insert_closed_group(&cache, 1, &[0]);
+
+        // Act
+        let mut scheduler =
+            start_scheduler_with_forward(cache, FilterType::LargestObject, None, false).await;
+
+        // Assert
+        assert!(scheduler.task_receiver.try_recv().is_err());
     }
 
     // Subscriptions only deliver newly published or received objects;

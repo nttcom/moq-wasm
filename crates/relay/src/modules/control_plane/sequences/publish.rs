@@ -6,7 +6,8 @@ use crate::modules::{
         route_registry::RelayRouteRegistry,
     },
     control_plane::{
-        control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
+        control_message_forwarder::ControlMessageForwarder,
+        sequences::{CascadingRelayContext, downstream_publish::DownstreamPublish},
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
@@ -43,6 +44,7 @@ impl Publish {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        downstream_publish: &DownstreamPublish<'_>,
         cascading_relay_context: CascadingRelayContext<'_>,
         handler: Box<dyn PublishHandler>,
     ) {
@@ -89,12 +91,14 @@ impl Publish {
             return;
         }
 
+        let track_key = TrackKey::new(
+            upstream_subscription.track_namespace(),
+            upstream_subscription.track_name(),
+        );
         self.notify_namespace_subscribers(
-            session_id,
-            forwarder,
-            table,
+            downstream_publish,
             cascading_relay_context,
-            &upstream_subscription,
+            &track_key,
             is_origin_client,
         )
         .await;
@@ -116,25 +120,22 @@ impl Publish {
         level = "info",
         name = "relay.sequence.publish.notify_namespace_subscribers",
         skip_all,
-        fields(publisher_session_id = %publisher_session_id, track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
+        fields(track_key = %track_key)
     )]
     async fn notify_namespace_subscribers(
         &self,
-        publisher_session_id: SessionId,
-        forwarder: &ControlMessageForwarder,
-        table: &InMemoryLocalPubSubDirectory,
+        downstream_publish: &DownstreamPublish<'_>,
         cascading_relay_context: CascadingRelayContext<'_>,
-        subscription: &UpstreamSubscription,
+        track_key: &TrackKey,
         is_origin_client: bool,
     ) {
-        self.notify_local_namespace_subscribers(forwarder, table, subscription)
+        self.notify_local_namespace_subscribers(downstream_publish, track_key)
             .await;
 
         if is_origin_client {
             self.notify_remote_subscribers(
-                subscription.track_namespace(),
-                subscription.track_name(),
-                forwarder,
+                downstream_publish,
+                track_key,
                 cascading_relay_context.route_registry,
                 cascading_relay_context.inter_relay_connection_manager,
             )
@@ -146,34 +147,30 @@ impl Publish {
         level = "info",
         name = "relay.sequence.publish.notify_local_namespace_subscribers",
         skip_all,
-        fields(track_namespace = %subscription.track_namespace(), track_name = %subscription.track_name())
+        fields(track_key = %track_key)
     )]
     async fn notify_local_namespace_subscribers(
         &self,
-        forwarder: &ControlMessageForwarder,
-        table: &InMemoryLocalPubSubDirectory,
-        subscription: &UpstreamSubscription,
+        downstream_publish: &DownstreamPublish<'_>,
+        track_key: &TrackKey,
     ) {
-        let track_namespace = subscription.track_namespace().to_string();
-        let track_name = subscription.track_name().to_string();
-
-        let combined = table.get_namespace_subscribers(&track_namespace);
-        for subscriber_session_id in combined {
-            if forwarder
-                .publish(
-                    subscriber_session_id,
-                    track_namespace.clone(),
-                    track_name.clone(),
-                )
+        let subscriber_session_ids = downstream_publish
+            .table
+            .get_namespace_subscribers(&track_key.track_namespace);
+        for subscriber_session_id in subscriber_session_ids {
+            match downstream_publish
+                .send(subscriber_session_id, track_key)
                 .await
             {
-                tracing::info!(
-                    "Sent publish '{}' to {}",
-                    track_namespace,
-                    subscriber_session_id
-                );
-            } else {
-                tracing::warn!("Failed to send publish: {}", subscriber_session_id);
+                Ok(()) => tracing::info!(
+                    subscriber_session_id = %subscriber_session_id,
+                    "forwarded PUBLISH to namespace subscriber"
+                ),
+                Err(error) => tracing::warn!(
+                    ?error,
+                    subscriber_session_id = %subscriber_session_id,
+                    "failed to forward PUBLISH to namespace subscriber"
+                ),
             }
         }
     }
@@ -228,28 +225,22 @@ impl Publish {
         level = "info",
         name = "relay.sequence.publish.notify_remote_subscribers",
         skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name)
+        fields(track_key = %track_key)
     )]
     async fn notify_remote_subscribers(
         &self,
-        track_namespace: &str,
-        track_name: &str,
-        forwarder: &ControlMessageForwarder,
+        downstream_publish: &DownstreamPublish<'_>,
+        track_key: &TrackKey,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
         let routes = match route_registry
-            .find_namespace_subscribers(track_namespace)
+            .find_namespace_subscribers(&track_key.track_namespace)
             .await
         {
             Ok(routes) => routes,
             Err(err) => {
-                tracing::warn!(
-                    ?err,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
-                    "failed to find remote publish subscribers"
-                );
+                tracing::warn!(?err, "failed to find remote publish subscribers");
                 return;
             }
         };
@@ -261,29 +252,18 @@ impl Publish {
                 continue;
             };
 
-            if forwarder
-                .publish(
-                    session_id,
-                    track_namespace.to_string(),
-                    track_name.to_string(),
-                )
-                .await
-            {
-                tracing::info!(
+            match downstream_publish.send(session_id, track_key).await {
+                Ok(()) => tracing::info!(
                     relay_id = %relay.relay_id,
                     session_id = session_id,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
                     "forwarded PUBLISH to remote relay"
-                );
-            } else {
-                tracing::warn!(
+                ),
+                Err(error) => tracing::warn!(
+                    ?error,
                     relay_id = %relay.relay_id,
                     session_id = session_id,
-                    track_namespace = %track_namespace,
-                    track_name = %track_name,
                     "failed to forward PUBLISH to remote relay"
-                );
+                ),
             }
         }
     }

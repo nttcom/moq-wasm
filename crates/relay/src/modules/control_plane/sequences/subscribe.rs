@@ -37,6 +37,9 @@ pub(crate) struct Subscribe;
 /// finding it and registering on it; each attempt finds or creates it again.
 const UPSTREAM_ATTEMPTS: usize = 3;
 
+/// Clients that leave Forward at 0 in SUBSCRIBE still expect delivery.
+const INITIAL_FORWARD: bool = true;
+
 enum Acceptance {
     Answered,
     UpstreamGone,
@@ -466,6 +469,7 @@ impl Subscribe {
             subscriber_peer,
             track_key.clone(),
             largest_location,
+            INITIAL_FORWARD,
         ) else {
             tracing::debug!(
                 subscribe_id = handler.subscribe_id(),
@@ -745,6 +749,7 @@ mod tests {
                     SessionPeer::Client,
                     access.track_key.clone(),
                     None,
+                    true,
                 )
                 .unwrap();
             if let Some(late_publishers) = access.late_publishers.take() {
