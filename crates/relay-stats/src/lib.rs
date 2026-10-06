@@ -32,6 +32,7 @@ pub enum SessionPeer {
     Client,
     Relay,
     StatsPublisher,
+    StatsSubscriber,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
