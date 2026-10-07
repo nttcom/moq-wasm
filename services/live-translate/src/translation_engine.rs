@@ -1,0 +1,48 @@
+use tokio::sync::mpsc;
+
+use crate::{
+    echo_translation::EchoTranslation, gemini::GeminiTranslation, target_language::TargetLanguage,
+};
+
+pub(crate) enum TranslationOutput {
+    ConnectionStarted,
+    Audio(Vec<i16>),
+}
+
+#[derive(Clone)]
+pub(crate) enum TranslationEngine {
+    Gemini { api_key: String },
+    Echo,
+}
+
+pub(crate) enum RunningTranslation {
+    Gemini { _translation: GeminiTranslation },
+    Echo { _translation: EchoTranslation },
+}
+
+impl TranslationEngine {
+    pub(crate) fn start(
+        &self,
+        language: &'static TargetLanguage,
+        pcm_receiver: mpsc::Receiver<Vec<i16>>,
+        translated_sender: mpsc::Sender<TranslationOutput>,
+    ) -> RunningTranslation {
+        match self {
+            Self::Gemini { api_key } => RunningTranslation::Gemini {
+                _translation: GeminiTranslation::run(
+                    api_key.clone(),
+                    language.code,
+                    pcm_receiver,
+                    translated_sender,
+                ),
+            },
+            Self::Echo => RunningTranslation::Echo {
+                _translation: EchoTranslation::run(
+                    language.gemini_delay,
+                    pcm_receiver,
+                    translated_sender,
+                ),
+            },
+        }
+    }
+}

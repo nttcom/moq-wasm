@@ -45,6 +45,7 @@ Application and integration components (draft reference is normally not required
 | `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
 | `services/token-mint` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under |
 | `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
+| `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate` with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
