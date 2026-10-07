@@ -29,6 +29,7 @@ examples/browser/examples/*/dist/*
 log/*
 
 /.env
+/.env.live-translate
 services/vts/apps.json
 test-results
 
