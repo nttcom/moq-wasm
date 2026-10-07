@@ -170,8 +170,8 @@ out of the topology page.
   each object and send it to the ingest task; reconnect 5 s after the session
   or track ends.
 - `SnapshotIngestTask`: keeps the newest snapshot per relay in
-  `LatestSnapshots` and writes every snapshot to ClickHouse
-  (`snapshot_rows::store`).
+  `LatestSnapshots` and writes the snapshots of every ten seconds to ClickHouse
+  in one insert per table (`snapshot_rows::store`).
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
   - `GET /api/snapshots` — the newest snapshot of every relay, from memory.
   - `GET /api/snapshots?at=<ms>` — each relay's last snapshot at or before
@@ -220,11 +220,13 @@ path for live and history, and no relay tokens in the browser.
 Every table is `PARTITION BY toYYYYMMDD(ts)` with
 `TTL toDateTime(ts) + INTERVAL 7 DAY` and `ttl_only_drop_parts = 1`, so old
 data leaves a whole day partition at a time; there is no capacity-based
-deletion. Inserts use `async_insert` with a fixed one-second window
-(`async_insert_busy_timeout_max_ms = 1000`, adaptive timeout off), so the
-relays' once-per-second snapshots land as one part per table per second
-instead of a part per insert, and `input_format_skip_unknown_fields`, so a
-field added to `relay-stats` is ignored until a column exists for it.
+deletion. The ingest task buffers snapshots for ten seconds and writes each
+table with one insert per flush: ClickHouse turns every insert into a part
+and merges it into its partition, and a part per relay snapshot kept the
+merges busy on the observability VM's single shared core. The live view is
+updated as each snapshot arrives, so only the history lags by up to the
+flush interval. Inserts set `input_format_skip_unknown_fields`, so a field
+added to `relay-stats` is ignored until a column exists for it.
 Tables are created with `IF NOT EXISTS` and never altered: a new column needs
 an `ALTER TABLE` (or a fresh database) by hand.
 

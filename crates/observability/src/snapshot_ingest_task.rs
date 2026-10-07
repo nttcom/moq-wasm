@@ -1,12 +1,18 @@
+use std::time::Duration;
+
 use relay_stats::RelaySnapshot;
 use tokio::{
     sync::mpsc,
     task::{JoinHandle, JoinSet},
+    time::MissedTickBehavior,
 };
 
 use crate::{clickhouse::ClickHouse, latest_snapshots::LatestSnapshots, snapshot_rows};
 
-const MAX_STORES_IN_FLIGHT: usize = 16;
+// ClickHouse turns every insert into a part and merges it into its partition, so the
+// relays' once-per-second snapshots are written as one insert per table per flush.
+const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
+const MAX_STORES_IN_FLIGHT: usize = 4;
 
 pub struct SnapshotIngestTask {
     join_handle: JoinHandle<()>,
@@ -20,18 +26,33 @@ impl SnapshotIngestTask {
     ) -> Self {
         let join_handle = tokio::spawn(async move {
             let mut stores = JoinSet::new();
-            while let Some(snapshot) = snapshot_receiver.recv().await {
-                latest.update(snapshot.clone());
-                if stores.len() >= MAX_STORES_IN_FLIGHT {
-                    stores.join_next().await;
-                }
-                let clickhouse = clickhouse.clone();
-                stores.spawn(async move {
-                    if let Err(error) = snapshot_rows::store(&clickhouse, &snapshot).await {
-                        tracing::warn!(?error, relay_id = %snapshot.relay_id, "snapshot was not stored");
+            let mut batch = Vec::new();
+            let mut flush = tokio::time::interval(FLUSH_INTERVAL);
+            flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    snapshot = snapshot_receiver.recv() => {
+                        let Some(snapshot) = snapshot else { break };
+                        latest.update(snapshot.clone());
+                        batch.push(snapshot);
                     }
-                });
-                while stores.try_join_next().is_some() {}
+                    _ = flush.tick() => {
+                        if batch.is_empty() {
+                            continue;
+                        }
+                        if stores.len() >= MAX_STORES_IN_FLIGHT {
+                            stores.join_next().await;
+                        }
+                        let snapshots = std::mem::take(&mut batch);
+                        let clickhouse = clickhouse.clone();
+                        stores.spawn(async move {
+                            if let Err(error) = snapshot_rows::store(&clickhouse, &snapshots).await {
+                                tracing::warn!(?error, snapshots = snapshots.len(), "snapshots were not stored");
+                            }
+                        });
+                        while stores.try_join_next().is_some() {}
+                    }
+                }
             }
         });
         Self { join_handle }

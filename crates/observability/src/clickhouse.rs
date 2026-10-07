@@ -41,13 +41,6 @@ impl ClickHouse {
         self.post(
             &[
                 ("query", query.as_str()),
-                ("async_insert", "1"),
-                ("wait_for_async_insert", "1"),
-                // Every relay inserts into each table once per second. A fixed one-second
-                // window folds those inserts into one part per table per second; the adaptive
-                // window shrinks under frequent inserts to about one part per insert.
-                ("async_insert_use_adaptive_busy_timeout", "0"),
-                ("async_insert_busy_timeout_max_ms", "1000"),
                 ("input_format_skip_unknown_fields", "1"),
             ],
             body,

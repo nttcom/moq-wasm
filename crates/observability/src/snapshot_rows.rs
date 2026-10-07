@@ -21,29 +21,41 @@ struct SnapshotRow<'a> {
     payload: String,
 }
 
-fn rows<'a, T>(snapshot: &'a RelaySnapshot, stats: &'a [T]) -> Vec<Row<'a, T>> {
-    stats
+fn rows<'a, T>(
+    snapshots: &'a [RelaySnapshot],
+    stats_of: impl Fn(&'a RelaySnapshot) -> &'a [T],
+) -> Vec<Row<'a, T>> {
+    snapshots
         .iter()
-        .map(|stats| Row {
-            relay_id: &snapshot.relay_id,
-            timestamp_ms: snapshot.timestamp_ms,
-            stats,
+        .flat_map(|snapshot| {
+            stats_of(snapshot).iter().map(|stats| Row {
+                relay_id: &snapshot.relay_id,
+                timestamp_ms: snapshot.timestamp_ms,
+                stats,
+            })
         })
         .collect()
 }
 
-pub async fn store(clickhouse: &ClickHouse, snapshot: &RelaySnapshot) -> anyhow::Result<()> {
-    let snapshot_row = [SnapshotRow {
-        relay_id: &snapshot.relay_id,
-        timestamp_ms: snapshot.timestamp_ms,
-        payload: String::from_utf8(snapshot.to_json())?,
-    }];
-    let process_rows = rows(snapshot, std::slice::from_ref(&snapshot.process));
-    let session_rows = rows(snapshot, &snapshot.sessions);
-    let track_rows = rows(snapshot, &snapshot.tracks);
-    let subscription_rows = rows(snapshot, &snapshot.subscriptions);
+pub async fn store(clickhouse: &ClickHouse, snapshots: &[RelaySnapshot]) -> anyhow::Result<()> {
+    let snapshot_rows = snapshots
+        .iter()
+        .map(|snapshot| {
+            Ok(SnapshotRow {
+                relay_id: &snapshot.relay_id,
+                timestamp_ms: snapshot.timestamp_ms,
+                payload: String::from_utf8(snapshot.to_json())?,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let process_rows = rows(snapshots, |snapshot| {
+        std::slice::from_ref(&snapshot.process)
+    });
+    let session_rows = rows(snapshots, |snapshot| &snapshot.sessions);
+    let track_rows = rows(snapshots, |snapshot| &snapshot.tracks);
+    let subscription_rows = rows(snapshots, |snapshot| &snapshot.subscriptions);
     tokio::try_join!(
-        clickhouse.insert(SNAPSHOTS, &snapshot_row),
+        clickhouse.insert(SNAPSHOTS, &snapshot_rows),
         clickhouse.insert(PROCESS_STATS, &process_rows),
         clickhouse.insert(SESSION_STATS, &session_rows),
         clickhouse.insert(TRACK_STATS, &track_rows),
@@ -59,14 +71,12 @@ mod tests {
 
     use super::rows;
 
-    #[test]
-    fn a_row_carries_the_snapshot_key_next_to_the_flattened_stats() {
-        // Arrange
-        let snapshot = RelaySnapshot {
-            relay_id: "relay-a".to_string(),
-            timestamp_ms: 42,
+    fn snapshot(relay_id: &str, timestamp_ms: u64, rss_bytes: u64) -> RelaySnapshot {
+        RelaySnapshot {
+            relay_id: relay_id.to_string(),
+            timestamp_ms,
             process: ProcessStats {
-                rss_bytes: Some(1),
+                rss_bytes: Some(rss_bytes),
                 cache_tracks: 2,
                 cache_objects: 3,
                 cache_payload_bytes: 4,
@@ -74,10 +84,18 @@ mod tests {
             sessions: vec![],
             tracks: vec![],
             subscriptions: vec![],
-        };
+        }
+    }
+
+    #[test]
+    fn a_row_carries_the_snapshot_key_next_to_the_flattened_stats() {
+        // Arrange
+        let snapshots = [snapshot("relay-a", 42, 1)];
 
         // Act
-        let rows = rows(&snapshot, std::slice::from_ref(&snapshot.process));
+        let rows = rows(&snapshots, |snapshot| {
+            std::slice::from_ref(&snapshot.process)
+        });
 
         // Assert
         assert_eq!(
@@ -91,5 +109,23 @@ mod tests {
                 "cache_payload_bytes": 4,
             }])
         );
+    }
+
+    #[test]
+    fn every_snapshot_in_a_batch_keys_its_own_rows() {
+        // Arrange
+        let snapshots = [snapshot("relay-a", 1, 10), snapshot("relay-b", 2, 20)];
+
+        // Act
+        let rows = rows(&snapshots, |snapshot| {
+            std::slice::from_ref(&snapshot.process)
+        });
+
+        // Assert
+        let keys: Vec<(&str, u64, Option<u64>)> = rows
+            .iter()
+            .map(|row| (row.relay_id, row.timestamp_ms, row.stats.rss_bytes))
+            .collect();
+        assert_eq!(keys, [("relay-a", 1, Some(10)), ("relay-b", 2, Some(20))]);
     }
 }
