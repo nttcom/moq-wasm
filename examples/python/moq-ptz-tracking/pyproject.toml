@@ -1,0 +1,16 @@
+[project]
+name = "moq-ptz-tracking"
+version = "0.1.0"
+description = "pipecat bot that pans and tilts an ONVIF camera toward a target found by djev-run"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.11",
+    "av>=14",
+    "pipecat-ai[moq]>=1.12",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

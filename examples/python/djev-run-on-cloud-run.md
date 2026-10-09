@@ -1,12 +1,12 @@
 # djev-run を Cloud Run にデプロイする
 
-MoQ Chat Moderation（`moq-chat-moderation`）と MoQ Camera Detection（`moq-camera-detection`）の bot が呼ぶ判定サーバです。
-どちらも [djev-run](https://github.com/taeold/djev-run) を Cloud Run の GPU で動かします。
+MoQ Chat Moderation（`moq-chat-moderation`）、MoQ Camera Detection（`moq-camera-detection`）と MoQ PTZ Tracking（`moq-ptz-tracking`）の bot が呼ぶ判定サーバです。
+どれも [djev-run](https://github.com/taeold/djev-run) を Cloud Run の GPU で動かします。
 
 | サービス | 用途 | 呼び出し先 |
 | --- | --- | --- |
 | `djev-dgemma` | チャットの暴言判定（テキスト、確率付き） | `/v1/systemone` |
-| `djev-vision` | カメラ映像への質問（画像、選択肢の番号） | `/v1/chat/completions` |
+| `djev-vision` | カメラ映像への質問・追従する対象の位置（画像、選択肢の番号） | `/v1/chat/completions` |
 
 基本の手順は djev-run の README の
 [Deploy on Google Cloud Run](https://github.com/taeold/djev-run/tree/2f6e6b9b455eec27dcdc0a4cb71a3fafdec6acc8#deploy-on-google-cloud-run)
