@@ -495,15 +495,13 @@ async fn handle_session_event(
                 .await;
             Ok(None)
         }
-        SessionEvent::Fetch(_) => {
-            todo!()
-        }
         event @ (SessionEvent::GoAway(_)
         | SessionEvent::MaxRequestId(_)
         | SessionEvent::RequestsBlocked(_)
         | SessionEvent::PublishNamespaceCancel(_)
         | SessionEvent::PublishDone(_)
         | SessionEvent::SubscribeUpdate(_)
+        | SessionEvent::Fetch(_)
         | SessionEvent::FetchCancel(_)
         | SessionEvent::TrackStatus(_)) => {
             log::warn!("Unhandled inbound control message: {event:?}");
