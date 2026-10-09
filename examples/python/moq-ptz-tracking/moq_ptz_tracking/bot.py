@@ -100,42 +100,32 @@ async def follow_prompts(client: moq.Client, latest_target: LatestTarget):
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
-class GroupSampler:
-    def __init__(self, latest_target: LatestTarget, worker: PipelineWorker):
-        self._latest_target = latest_target
-        self._worker = worker
-        self._next_sample_at = 0.0
-
-    async def forward(self, group: moq.GroupConsumer):
-        decoder = GroupDecoder()
-        object_id = 0
-        while (frame := await group.read_frame()) is not None:
-            picture = await asyncio.to_thread(decoder.decode, frame.payload)
-            decoded_at = time.monotonic()
-            target = self._latest_target.target
-            if picture is not None and target is not None and decoded_at >= self._next_sample_at:
-                self._next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
-                jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
-                await self._worker.queue_frame(
-                    CameraPicture(
-                        jpeg=jpeg,
-                        location=(group.sequence, object_id),
-                        decoded_at=decoded_at,
-                        target=target,
-                    )
-                )
-            object_id += 1
-
-
 async def forward_video(client: moq.Client, video_track: str, latest_target: LatestTarget, worker: PipelineWorker):
     try:
         camera = await client.announced_broadcast(CAMERA_BROADCAST_PATH)
         async with await camera.subscribe_track(video_track) as video:
             logger.info(f"watching {CAMERA_BROADCAST_PATH}/{video_track}")
-            sampler = GroupSampler(latest_target, worker)
+            next_sample_at = 0.0
             async for group in video:
                 try:
-                    await sampler.forward(group)
+                    decoder = GroupDecoder()
+                    object_id = 0
+                    while (frame := await group.read_frame()) is not None:
+                        picture = await asyncio.to_thread(decoder.decode, frame.payload)
+                        decoded_at = time.monotonic()
+                        target = latest_target.target
+                        if picture is not None and target is not None and decoded_at >= next_sample_at:
+                            next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
+                            jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
+                            await worker.queue_frame(
+                                CameraPicture(
+                                    jpeg=jpeg,
+                                    location=(group.sequence, object_id),
+                                    decoded_at=decoded_at,
+                                    target=target,
+                                )
+                            )
+                        object_id += 1
                 except moq.Error as error:
                     # The relay starts a subscriber that joins mid-group at the object after Largest
                     # Object (draft-14 §9.7), and the moq library refuses a group that does not start
