@@ -94,6 +94,52 @@
         gap: 0.35rem;
       }
 
+      .flow.hub {
+        display: grid;
+        grid-template-areas:
+          '. . browser . . . .'
+          '. . browser-link . . . .'
+          'camera camera-link relay bot-link bot djev-link djev';
+        justify-content: center;
+        justify-items: center;
+      }
+
+      .hub-browser {
+        grid-area: browser;
+      }
+
+      .hub-browser-link {
+        grid-area: browser-link;
+      }
+
+      .hub-camera {
+        grid-area: camera;
+      }
+
+      .hub-camera-link {
+        grid-area: camera-link;
+      }
+
+      .hub-relay {
+        grid-area: relay;
+      }
+
+      .hub-bot-link {
+        grid-area: bot-link;
+      }
+
+      .hub-bot {
+        grid-area: bot;
+      }
+
+      .hub-djev-link {
+        grid-area: djev-link;
+      }
+
+      .hub-djev {
+        grid-area: djev;
+      }
+
       .card-head {
         display: flex;
         flex-wrap: wrap;
@@ -593,20 +639,24 @@
               <h3>MoQ PTZ Tracking</h3>
               <p>指定した対象を PTZ カメラで追う</p>
             </div>
-            <p class="flow">
-              <span class="node"
+            <p class="flow hub">
+              <span class="node hub-browser"
+                ><svg><use href="#icon-monitor" /></svg>Browser</span
+              >
+              <span class="link hub-browser-link">↕</span>
+              <span class="node hub-camera"
                 ><svg><use href="#icon-cctv" /></svg>PTZ Camera</span
               >
-              <span class="link">↔</span>
-              <span class="node relay"
+              <span class="link hub-camera-link">↔</span>
+              <span class="node relay hub-relay"
                 ><svg><use href="#icon-server" /></svg>Relay</span
               >
-              <span class="link">↔</span>
-              <span class="node"
+              <span class="link hub-bot-link">↔</span>
+              <span class="node hub-bot"
                 ><svg><use href="#icon-workflow" /></svg>pipecat</span
               >
-              <span class="link">↔</span>
-              <span class="node cloud"
+              <span class="link hub-djev-link">↔</span>
+              <span class="node cloud hub-djev"
                 ><svg><use href="#icon-brain-circuit" /></svg>djev-run</span
               >
             </p>
