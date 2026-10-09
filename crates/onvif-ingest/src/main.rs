@@ -12,7 +12,8 @@ use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use onvif_ingest::{
     app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker,
     rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
-    rtsp_source, soap_client,
+    rtsp_source::{self, now_micros},
+    soap_client,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -80,9 +81,9 @@ struct MoqtArgs {
     #[arg(long, default_value = "avc1.640028")]
     video_codec: String,
 
-    /// Payload format to send over MoQ: annexb or avcc
-    #[arg(long, default_value = "annexb")]
-    payload_format: String,
+    /// Payload format to send over MoQ
+    #[arg(long, value_enum, default_value = "annexb")]
+    payload_format: rtsp_source::PayloadFormat,
 
     /// Dump the first keyframe AnnexB payload for ffprobe (default: /tmp/moqt-onvif-keyframe.h264)
     #[arg(
@@ -149,21 +150,11 @@ async fn main() -> Result<()> {
         command_namespace
     );
 
-    let payload_format = match rtsp_source::PayloadFormat::parse(&args.payload_format) {
-        Some(format) => format,
-        None => {
-            log::warn!(
-                "unknown payload format '{}', fallback to annexb",
-                args.payload_format
-            );
-            rtsp_source::PayloadFormat::AnnexB
-        }
-    };
     run_moqt_bridge(BridgeContext {
         session,
         publisher,
         video_codec: args.video_codec,
-        payload_format,
+        payload_format: args.payload_format,
         catalog_track,
         expected_tracks,
         publisher_priority: args.publisher_priority,
@@ -1707,13 +1698,6 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     duration.as_millis() as u64
-}
-
-fn now_micros() -> u64 {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    duration.as_micros() as u64
 }
 
 fn init_logger() {
