@@ -141,3 +141,17 @@ jobs:
         working-directory: examples/browser
       - name: Check code formatting
         run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" --ignore-path examples/browser/.prettierignore
+  browser-unit-test:
+    runs-on: ubuntu-latest
+    container:
+      image: cimg/node:21.6.2@sha256:c95ae0b7d9bc23abf5dd8a7794c79ba480660f71f07ba9d5a95309d18644ac5d
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Install dependencies
+        run: npm ci
+        working-directory: examples/browser
+      - name: Run browser unit tests
+        run: npm test
+        working-directory: examples/browser
