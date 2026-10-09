@@ -557,7 +557,10 @@ per-request authorization gate under "Event pipeline".
   `FetchInterrupted::Malformed`.
 - Eviction job (`eviction_job.rs`): every `RELAY_CACHE_EVICT_INTERVAL_SECS`
   (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (60 s) and release
-  knowledge exactly for the removed locations; a `TrackCache` entry is removed
+  knowledge exactly for the removed locations. While live ingest runs, the
+  object at the track's largest location is kept past the TTL: a late
+  subscriber is answered Content Exists from the cache (§9.8) and fetches that
+  object, so a sparse track such as a catalog stays joinable; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.
 
