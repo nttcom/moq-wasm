@@ -1,7 +1,7 @@
 use std::{
     collections::btree_map::Entry,
     sync::{
-        Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
     },
     time::Duration,
@@ -42,6 +42,9 @@ pub(crate) struct TrackCache {
     eviction_generation: AtomicU64,
     malformed: AtomicBool,
     malformed_notify: Notify,
+    /// draft-14 §10: a track has a single Forwarding Preference. Only live
+    /// objects fix it, because it does not apply to fetches (§9.16).
+    track_is_datagram: OnceLock<bool>,
     subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
     ingress_stats: IngressStats,
     payload_bytes: AtomicU64,
@@ -62,6 +65,7 @@ impl TrackCache {
             eviction_generation: AtomicU64::new(0),
             malformed: AtomicBool::new(false),
             malformed_notify: Notify::new(),
+            track_is_datagram: OnceLock::new(),
             subgroup_opened_sender: broadcast::channel(256).0,
             ingress_stats: IngressStats::default(),
             payload_bytes: AtomicU64::new(0),
@@ -122,6 +126,11 @@ impl TrackCache {
     }
 
     fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        let is_datagram = object.is_datagram();
+        if *self.track_is_datagram.get_or_init(|| is_datagram) != is_datagram {
+            self.mark_malformed();
+            return Err(TrackMalformed);
+        }
         self.ingress_stats.record_live_arrival(object.received_at);
         let registers_knowledge =
             matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
@@ -433,6 +442,59 @@ mod tests {
     }
 
     #[test]
+    fn live_datagram_on_a_subgroup_track_is_malformed() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        // Act
+        let outcome = cache.insert_live(datagram_object(1, 0));
+        // Assert
+        assert_eq!(outcome, Err(TrackMalformed));
+        assert!(cache.is_malformed());
+        assert!(!cache.read().objects.contains_key(&location(1, 0)));
+    }
+
+    #[test]
+    fn live_subgroup_object_on_a_datagram_track_is_malformed() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(datagram_object(0, 0));
+        // Act
+        let outcome = cache.insert_live(stream_object(1, 0));
+        // Assert
+        assert_eq!(outcome, Err(TrackMalformed));
+        assert!(cache.is_malformed());
+    }
+
+    #[test]
+    fn live_datagram_does_not_relabel_a_live_object_whose_subgroup_id_is_its_object_id() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object_in_subgroup(0, 0, 0));
+        // Act
+        let outcome = cache.insert_live(datagram_object(0, 0));
+        // Assert
+        assert_eq!(outcome, Err(TrackMalformed));
+        let cached = cache.read().objects.get(&location(0, 0)).cloned().unwrap();
+        assert_eq!(
+            cached.forwarding,
+            ForwardingPreference::Subgroup { subgroup_id: 0 }
+        );
+    }
+
+    #[test]
+    fn fetched_objects_do_not_fix_the_forwarding_preference() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert(stream_object(0, 0));
+        // Act
+        let outcome = cache.insert_live(datagram_object(1, 0));
+        // Assert
+        assert_eq!(outcome, Ok(()));
+        assert!(!cache.is_malformed());
+    }
+
+    #[test]
     fn live_datagram_upgrades_the_fetched_copy_to_datagram_forwarding() {
         // Arrange: a fetch fill stored the datagram object first (§10.4.4 shape)
         let cache = TrackCache::new();
@@ -500,9 +562,8 @@ mod tests {
         let cache = TrackCache::new();
         insert_closed_group(&cache, 0, &[0, 5]);
         insert_closed_group(&cache, 2, &[0, 3]);
-        let _ = cache.insert_live(datagram_object(2, 4));
-        // Act / Assert: datagram objects count too
-        assert_eq!(cache.largest_location(), Some(location(2, 4)));
+        // Act / Assert
+        assert_eq!(cache.largest_location(), Some(location(2, 3)));
     }
 
     #[test]
@@ -1106,7 +1167,7 @@ mod fetch_tests {
     async fn fetch_objects_includes_datagram_objects_with_object_id_as_subgroup_id() {
         // Arrange
         let cache = TrackCache::new();
-        insert_closed_group(&cache, 0, &[0]);
+        let _ = cache.insert_live(datagram_object(0, 0));
         let _ = cache.insert_live(datagram_object(0, 1));
         // Act
         let objects = fetch(&cache, location(0, 0), location(0, 2)).await;

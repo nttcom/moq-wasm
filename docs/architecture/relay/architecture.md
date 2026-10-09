@@ -496,8 +496,15 @@ per-request authorization gate under "Event pipeline".
   publisher's upstream subscription switched between subgroup streams and
   datagrams (`accept_streams`, `read_datagrams`). That reader is always
   present to report `MalformedTrackDetected` into the event pipeline — no
-  standing watcher is needed. Two publishers that use different forwarding
-  preferences for one track are not detected unless their objects conflict. Downstream, `EgressRunner` watches the same
+  standing watcher is needed. Across publishers, the cache holds one track-level
+  forwarding preference (§10, §2.5 condition 9): the first live object fixes
+  Subgroup or Datagram, and a live object of the other kind sets the malformed
+  latch, so two publishers that use different forwarding preferences for one
+  track are detected without any location collision. FETCH objects never fix or
+  violate it because the preference does not apply to fetches (§9.16); the only
+  remaining relabel is a fetched copy (subgroup id = object id, §10.4.4) that
+  a live datagram on a Datagram track later duplicates, so datagram egress
+  finds it. Downstream, `EgressRunner` watches the same
   latch and terminates subscriptions with PUBLISH_DONE(MALFORMED_TRACK);
   `FetchIngest` bails on the latch and sends upstream FETCH_CANCEL for its
   own fetch.
