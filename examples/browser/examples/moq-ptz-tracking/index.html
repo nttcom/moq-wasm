@@ -12,6 +12,18 @@
     <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
       <symbol
+        id="icon-monitor"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol
         id="icon-server"
         viewBox="0 0 24 24"
         fill="none"
@@ -78,20 +90,24 @@
         <div class="setup-routes">
           <details class="setup-panel setup-toggle" open>
             <summary>
-              <h3 class="setup-flow">
-                <span class="setup-node setup-node-local"
+              <h3 class="setup-flow setup-hub">
+                <span class="setup-node setup-node-local hub-browser"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>このページ</small></span
+                >
+                <span class="setup-arrow hub-browser-link" aria-hidden="true">↕</span>
+                <span class="setup-node setup-node-local hub-camera"
                   ><svg aria-hidden="true"><use href="#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
                 >
-                <span class="setup-arrow" aria-hidden="true">↔</span>
-                <span class="setup-node setup-node-local"
+                <span class="setup-arrow hub-camera-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local hub-relay"
                   ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
                 >
-                <span class="setup-arrow" aria-hidden="true">↔</span>
-                <span class="setup-node setup-node-local"
+                <span class="setup-arrow hub-bot-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local hub-bot"
                   ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
                 >
-                <span class="setup-arrow" aria-hidden="true">↔</span>
-                <span class="setup-node setup-node-cloud"
+                <span class="setup-arrow hub-djev-link" aria-hidden="true">↕</span>
+                <span class="setup-node setup-node-cloud hub-djev"
                   ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
                 >
               </h3>

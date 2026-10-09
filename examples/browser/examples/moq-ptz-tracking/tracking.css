@@ -45,3 +45,51 @@
   color: #92400e;
   background: #fef3c7;
 }
+
+.setup-hub {
+  display: grid;
+  grid-template-areas:
+    '. . browser . .'
+    '. . browser-link . .'
+    'camera camera-link relay bot-link bot'
+    '. . . . djev-link'
+    '. . . . djev';
+  justify-content: start;
+  justify-items: center;
+}
+
+.hub-browser {
+  grid-area: browser;
+}
+
+.hub-browser-link {
+  grid-area: browser-link;
+}
+
+.hub-camera {
+  grid-area: camera;
+}
+
+.hub-camera-link {
+  grid-area: camera-link;
+}
+
+.hub-relay {
+  grid-area: relay;
+}
+
+.hub-bot-link {
+  grid-area: bot-link;
+}
+
+.hub-bot {
+  grid-area: bot;
+}
+
+.hub-djev-link {
+  grid-area: djev-link;
+}
+
+.hub-djev {
+  grid-area: djev;
+}
