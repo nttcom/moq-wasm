@@ -98,7 +98,7 @@ impl TrackCache {
         self.malformed.load(AtomicOrdering::Acquire)
     }
 
-    fn mark_malformed(&self) {
+    pub(crate) fn mark_malformed(&self) {
         self.malformed.store(true, AtomicOrdering::Release);
         self.malformed_notify.notify_waiters();
     }
