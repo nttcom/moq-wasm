@@ -24,6 +24,7 @@ use tokio::sync::mpsc;
 
 const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
 const DEFAULT_AUDIO_PACKET_DURATION_US: u64 = 20_000;
+const NO_EXPIRY: u64 = 0;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Bridge ONVIF PTZ and RTSP media over MoQ")]
@@ -535,7 +536,7 @@ async fn handle_media_subscribe_event(
             handler.request_id()
         );
         let alias = handler
-            .ok(1_000_000, ContentExists::False)
+            .ok(NO_EXPIRY, ContentExists::False)
             .await
             .context("send SUBSCRIBE_OK for catalog")?;
         log::info!(
@@ -591,7 +592,7 @@ async fn handle_media_subscribe_event(
     }
 
     let should_start_rtsp = selected_profile_index.is_none();
-    let alias = handler.ok(1_000_000, ContentExists::False).await?;
+    let alias = handler.ok(NO_EXPIRY, ContentExists::False).await?;
     let publication = handler.into_subscription(alias);
     if let Some(selected_index) = selected_profile_index {
         debug_assert_eq!(*selected_index, profile_index);
@@ -688,7 +689,7 @@ async fn handle_command_publish_event(
         .ok(
             command_subscribe_priority,
             FilterType::NextGroupStart,
-            1_000_000,
+            NO_EXPIRY,
         )
         .await
         .context("accept command publish")?;
