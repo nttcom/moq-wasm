@@ -14,7 +14,7 @@ RUN cargo chef cook --release -p vts --recipe-path recipe.json
 COPY . .
 RUN cargo build --release -p vts
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:b0ae8e989418b458e0f25489bc3be523718938a2b70864cc0f6a00af1ddbd985
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
 
 WORKDIR /app
 COPY --from=builder /workspace/target/release/vts /workspace/target/release/vts-mint /usr/local/bin/
