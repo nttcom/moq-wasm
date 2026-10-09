@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoQ PTZ Tracking</title>
+    <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="../media/setup-guide.css" />
+    <link rel="stylesheet" href="./tracking.css" />
+  </head>
+  <body>
+    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
+      <symbol
+        id="icon-monitor"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol
+        id="icon-server"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol
+        id="icon-workflow"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+      <symbol
+        id="icon-cloud"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
+      </symbol>
+      <symbol
+        id="icon-cctv"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M16.75 12h3.632a1 1 0 0 1 .894 1.447l-2.034 4.069a1 1 0 0 1-1.708.134l-2.124-2.97" />
+        <path
+          d="M17.106 9.053a1 1 0 0 1 .447 1.341l-3.106 6.211a1 1 0 0 1-1.342.447L3.61 12.3a2.92 2.92 0 0 1-1.3-3.91L3.69 5.6a2.92 2.92 0 0 1 3.92-1.3z"
+        />
+        <path d="M2 19h3.76a2 2 0 0 0 1.8-1.1L9 15" />
+        <path d="M2 21v-4" />
+        <path d="M7 9h.01" />
+      </symbol>
+    </svg>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <h1>MoQ PTZ Tracking</h1>
+          <p>指定した対象が中央に来るよう、pipecat の bot が djev-vision で PTZ カメラを動かす</p>
+        </div>
+      </header>
+      <details class="card setup-toggle">
+        <summary>
+          <h2>使い方</h2>
+        </summary>
+        <p class="hint">Cloud Run の djev-vision は停止後の最初の判定に約 3 分かかります</p>
+        <div class="setup-routes">
+          <details class="setup-panel setup-toggle" open>
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps" start="0">
+              <li>
+                <h4>djev-run を Cloud Run にデプロイする</h4>
+                <p class="hint">
+                  <a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md"
+                    target="_blank"
+                    rel="noopener"
+                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/djev-run-on-cloud-run.md</a
+                  >
+                </p>
+              </li>
+              <li>
+                <h4>relay を起動する</h4>
+                <p class="hint">各コマンドは別々のターミナルで実行します</p>
+                <pre><code>make relay</code></pre>
+              </li>
+              <li>
+                <h4>PTZ カメラを配信する</h4>
+                <p class="hint">.env に ONVIF_IP・ONVIF_USERNAME・ONVIF_PASSWORD を設定します</p>
+                <pre><code>make onvif</code></pre>
+              </li>
+              <li>
+                <h4>pipecat bot を起動する</h4>
+                <pre><code>cd examples/python/moq-ptz-tracking
+uv run python -m moq_ptz_tracking.bot --insecure \
+  --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
+  --gcloud-auth --pan-step -0.1</code></pre>
+                <p class="hint">
+                  gcloud のアカウントに roles/run.invoker が必要です。--pan-step -0.1 は Tapo
+                  などパンが逆向きのカメラ用です
+                </p>
+              </li>
+              <li>
+                <h4>追従する対象を指定する</h4>
+                <p class="hint">
+                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a のまま Join します
+                </p>
+              </li>
+            </ol>
+          </details>
+        </div>
+      </details>
+      <div class="tracking-layout">
+        <section class="card stack">
+          <h2>Relay</h2>
+          <label for="url">Relay URL:</label>
+          <input type="url" id="url" data-testid="ptz-tracking-url-input" />
+          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <div class="button-row">
+            <button type="button" id="joinBtn" data-testid="ptz-tracking-join-button">Join</button>
+            <button type="button" id="leaveBtn" data-testid="ptz-tracking-leave-button" disabled>Leave</button>
+          </div>
+          <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
+          <span id="tracker-status" class="status-dot" data-state="idle">bot 未接続</span>
+          <span id="djev-status" class="status-dot" data-state="review" data-testid="ptz-tracking-djev-status"></span>
+        </section>
+        <section class="card stack">
+          <h2>Camera</h2>
+          <form id="targetForm" class="target-form" novalidate>
+            <label for="target">追従する対象</label>
+            <input
+              type="text"
+              id="target"
+              value="人"
+              maxlength="100"
+              autocomplete="off"
+              data-testid="ptz-tracking-target-input"
+            />
+            <button type="submit" data-testid="ptz-tracking-start-button">追従</button>
+            <button type="button" id="stopBtn" data-testid="ptz-tracking-stop-button" disabled>停止</button>
+          </form>
+          <div class="tracking-result">
+            <span id="position" class="position-badge" data-position="pending" data-testid="ptz-tracking-position"
+              >停止中</span
+            >
+            <span id="move" class="hint" data-testid="ptz-tracking-move"></span>
+          </div>
+          <div id="stage"></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

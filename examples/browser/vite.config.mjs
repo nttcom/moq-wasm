@@ -40,6 +40,7 @@ export default defineConfig({
         'live-viewer': resolve(__dirname, 'examples/live-viewer/index.html'),
         'moq-chat-moderation': resolve(__dirname, 'examples/moq-chat-moderation/index.html'),
         'moq-camera-detection': resolve(__dirname, 'examples/moq-camera-detection/index.html'),
+        'moq-ptz-tracking': resolve(__dirname, 'examples/moq-ptz-tracking/index.html'),
         observability: resolve(__dirname, 'examples/observability/index.html')
       }
     }
