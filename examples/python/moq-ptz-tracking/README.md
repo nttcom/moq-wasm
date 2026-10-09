@@ -33,16 +33,18 @@ sequenceDiagram
   動く前の画像で判定して同じ方向へ動かしすぎないためです。デコードから 2 秒以上たった画像は判定しません。
 - 判定中にページが対象を変えたり追従を止めたりした場合、その判定ではカメラを動かしません。
 
-1 回に動かす量は `--pan-step`（既定 0.1）と `--tilt-step`（既定 0.2）で、カメラの RelativeMove の座標系での値です。
+1 回に動かす量は `--pan-step`（既定 0.3）と `--tilt-step`（既定 0.3）で、カメラの RelativeMove の座標系での値です。
 カメラによって 1 あたりの角度が違うので、行き過ぎるなら小さく、届かないなら大きくします。1 回の移動を中央のマスの
-半分（画面の 1/6）より小さくしておくと、中央を挟んで行ったり来たりしません。正のパンで左に回るカメラでは負の値を指定します。
+幅（画面の 1/3）より小さくしておくと、中央を挟んで行ったり来たりしません。正のパンで左に回るカメラでは負の値を指定します。
 
 Tapo C2xx（2304x1296）で測った値:
 
 | コマンド | 視野の動き |
 | --- | --- |
-| パン 0.1 | 画面幅の約 9%、左へ（逆向きなので `--pan-step -0.1` を指定する） |
+| パン 0.1 | 画面幅の約 9%、左へ（逆向きなので `--pan-step` は負の値にする） |
 | チルト 0.1 | 画面の高さの約 3%、上へ |
+
+このカメラは 0.3 未満の RelativeMove ではモーターが空回りする音がするので、0.3 以上を指定します。
 
 ## 起動
 
@@ -69,10 +71,10 @@ ONVIF カメラは手元のネットワークにあるため、relay・`onvif-in
    cd examples/python/moq-ptz-tracking
    uv run python -m moq_ptz_tracking.bot --insecure \
      --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
-     --gcloud-auth --pan-step -0.1
+     --gcloud-auth --pan-step -0.3
    ```
 
-   `--pan-step -0.1` は Tapo のようにパンが逆向きのカメラ用の指定です。`--insecure` は手元の relay の自己署名証明書を検証しない指定です。djev-vision の認証とコールドスタート（約 3 分）は
+   `--pan-step -0.3` は Tapo のようにパンが逆向きのカメラ用の指定です。`--insecure` は手元の relay の自己署名証明書を検証しない指定です。djev-vision の認証とコールドスタート（約 3 分）は
    [moq-camera-detection](../moq-camera-detection/README.md#djev-vision) と同じです。
 
 4. ページを開く

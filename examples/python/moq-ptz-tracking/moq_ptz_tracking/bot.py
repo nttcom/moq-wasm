@@ -50,13 +50,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pan-step",
         type=float,
-        default=0.1,
+        default=0.3,
         help="RelativeMove pan for a target one grid column off center; negative for a flipped camera",
     )
     parser.add_argument(
         "--tilt-step",
         type=float,
-        default=0.2,
+        default=0.3,
         help="RelativeMove tilt for a target one grid row off center; negative for a flipped camera",
     )
     auth = parser.add_mutually_exclusive_group()

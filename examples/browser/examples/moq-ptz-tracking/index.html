@@ -135,9 +135,9 @@
                 <pre><code>cd examples/python/moq-ptz-tracking
 uv run python -m moq_ptz_tracking.bot --insecure \
   --djev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/chat/completions" \
-  --gcloud-auth --pan-step -0.1</code></pre>
+  --gcloud-auth --pan-step -0.3</code></pre>
                 <p class="hint">
-                  gcloud のアカウントに roles/run.invoker が必要です。--pan-step -0.1 は Tapo
+                  gcloud のアカウントに roles/run.invoker が必要です。--pan-step -0.3 は Tapo
                   などパンが逆向きのカメラ用です
                 </p>
               </li>
