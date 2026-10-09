@@ -49,11 +49,9 @@
 .setup-hub {
   display: grid;
   grid-template-areas:
-    '. . browser . .'
-    '. . browser-link . .'
-    'camera camera-link relay bot-link bot'
-    '. . . . djev-link'
-    '. . . . djev';
+    '. . browser . . . .'
+    '. . browser-link . . . .'
+    'camera camera-link relay bot-link bot djev-link djev';
   justify-content: start;
   justify-items: center;
 }
