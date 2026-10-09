@@ -1622,8 +1622,6 @@ async fn connect_session(
     ))
 }
 
-/// Dropped once the command track ends or its publisher sends PUBLISH_DONE, so
-/// the next publisher to announce the namespace is subscribed again.
 struct CommandReceiver {
     request_id: u64,
     join_handle: tokio::task::JoinHandle<()>,
