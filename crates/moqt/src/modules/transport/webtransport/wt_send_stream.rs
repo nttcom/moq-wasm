@@ -47,14 +47,31 @@ fn webtransport_write_error_to_transport_send_error(
         web_transport_quinn::WriteError::Stopped(code) => TransportSendError::Stopped {
             code: u64::from(code),
         },
-        web_transport_quinn::WriteError::InvalidStopped(code) => {
-            TransportSendError::InvalidStopped {
-                code: code.into_inner(),
-            }
-        }
+        // A peer's quinn RecvStream sends STOP_SENDING(0) without the WebTransport code mapping
+        // when dropped, so a code outside the WebTransport range is still a STOP_SENDING.
+        web_transport_quinn::WriteError::InvalidStopped(code) => TransportSendError::Stopped {
+            code: code.into_inner(),
+        },
         web_transport_quinn::WriteError::SessionError(error) => TransportSendError::SessionError {
             reason: error.to_string(),
         },
         web_transport_quinn::WriteError::ClosedStream => TransportSendError::ClosedStream,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_sending_outside_webtransport_code_range_is_stopped_by_peer() {
+        // Arrange
+        let error = web_transport_quinn::WriteError::InvalidStopped(quinn::VarInt::from_u32(0));
+
+        // Act
+        let mapped = webtransport_write_error_to_transport_send_error(error);
+
+        // Assert
+        assert!(matches!(mapped, TransportSendError::Stopped { code: 0 }));
     }
 }

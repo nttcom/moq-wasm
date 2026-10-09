@@ -508,7 +508,7 @@ impl ConnectedPublisher {
             track.writer = Some(writer);
         }
         match result {
-            Err(error) if is_stopped_by_peer(&error) => {
+            Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
                 tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped a subgroup; the track resumes at the next group");
                 self.ledger.finish(&key.1);
                 Ok(false)
@@ -753,7 +753,7 @@ impl ConnectedPublisher {
             .open(CATALOG_TRACK_NAME, placement.location.group_id);
         self.ledger.add_object(CATALOG_TRACK_NAME, payload.len());
         match writer.write_group(payload).await {
-            Err(error) if is_stopped_by_peer(&error) => {
+            Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
                 tracing::info!(namespace = %namespace_path, "subscriber stopped the catalog group");
             }
             result => result.context("send catalog group")?,
@@ -996,15 +996,6 @@ fn channel_config_label(channels: u8) -> String {
     }
 }
 
-fn is_stopped_by_peer(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<TransportSendError>(),
-            Some(TransportSendError::Stopped { .. } | TransportSendError::InvalidStopped { .. })
-        )
-    })
-}
-
 pub(crate) fn now_unix() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1122,20 +1113,5 @@ mod tests {
             audio_cmaf.init_data,
             track_named(&catalog, "audio").init_data
         );
-    }
-
-    #[test]
-    fn detects_stop_sending_through_context_layers() {
-        // Arrange
-        let stopped = anyhow::Error::new(TransportSendError::InvalidStopped { code: 0 })
-            .context("send subgroup object");
-        let lost = anyhow::Error::new(TransportSendError::ConnectionLost {
-            reason: "timeout".into(),
-        })
-        .context("send subgroup object");
-
-        // Act / Assert
-        assert!(is_stopped_by_peer(&stopped));
-        assert!(!is_stopped_by_peer(&lost));
     }
 }
