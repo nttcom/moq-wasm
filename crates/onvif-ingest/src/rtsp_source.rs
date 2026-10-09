@@ -7,7 +7,6 @@ use gstreamer_app::{AppSink, AppSinkCallbacks};
 use mediapack::aac::AudioSpecificConfig;
 use mediapack::h264::{annexb_to_avcc, AvcDecoderConfigurationRecord, ParameterSetTracker};
 use std::sync::mpsc::Sender;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender as TokioSender;
 
@@ -23,20 +22,11 @@ const AAC_BRANCH: &str =
 const OPUS_BRANCH: &str = "rtpopusdepay ! appsink name=sink sync=false";
 const UNSUPPORTED_BRANCH: &str = "fakesink sync=false";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum PayloadFormat {
+    #[value(name = "annexb")]
     AnnexB,
     Avcc,
-}
-
-impl PayloadFormat {
-    pub fn parse(label: &str) -> Option<Self> {
-        match label {
-            "annexb" => Some(Self::AnnexB),
-            "avcc" => Some(Self::Avcc),
-            _ => None,
-        }
-    }
 }
 
 pub fn run(
@@ -46,24 +36,33 @@ pub fn run(
     packet_sender: TokioSender<RtspPacket>,
     error_sender: Sender<String>,
 ) {
-    let video = VideoPacketizer::new(payload_format, fallback_video_codec);
-    if let Err(err) = stream(&url, video, packet_sender) {
+    if let Err(err) = stream(&url, payload_format, fallback_video_codec, packet_sender) {
         let _ = error_sender.send(format!("{err:#}"));
     }
 }
 
-fn stream(url: &str, video: VideoPacketizer, packet_sender: TokioSender<RtspPacket>) -> Result<()> {
+fn stream(
+    url: &str,
+    payload_format: PayloadFormat,
+    fallback_video_codec: String,
+    packet_sender: TokioSender<RtspPacket>,
+) -> Result<()> {
     gst::init().context("initialize GStreamer")?;
     let pipeline = gst::Pipeline::new();
-    let source = rtsp_source_element(url)?;
+    let source = gst::ElementFactory::make("rtspsrc")
+        .property("location", url)
+        .property("latency", 0u32)
+        .build()
+        .context("create rtspsrc (GStreamer good plugins)")?;
+    source.set_property_from_str("protocols", "tcp");
     pipeline.add(&source)?;
-    let video = Mutex::new(Some(video));
     let pipeline_weak = pipeline.downgrade();
     source.connect_pad_added(move |_, pad| {
         let Some(pipeline) = pipeline_weak.upgrade() else {
             return;
         };
-        if let Err(err) = attach_branch(&pipeline, pad, &video, &packet_sender) {
+        let video = VideoPacketizer::new(payload_format, fallback_video_codec.clone());
+        if let Err(err) = attach_branch(&pipeline, pad, video, &packet_sender) {
             log::warn!("RTSP stream not attached: {err:#}");
         }
     });
@@ -75,20 +74,10 @@ fn stream(url: &str, video: VideoPacketizer, packet_sender: TokioSender<RtspPack
     result
 }
 
-fn rtsp_source_element(url: &str) -> Result<gst::Element> {
-    let source = gst::ElementFactory::make("rtspsrc")
-        .property("location", url)
-        .property("latency", 0u32)
-        .build()
-        .context("create rtspsrc (GStreamer good plugins)")?;
-    source.set_property_from_str("protocols", "tcp");
-    Ok(source)
-}
-
 fn attach_branch(
     pipeline: &gst::Pipeline,
     pad: &gst::Pad,
-    video: &Mutex<Option<VideoPacketizer>>,
+    mut video: VideoPacketizer,
     packet_sender: &TokioSender<RtspPacket>,
 ) -> Result<()> {
     let caps = pad.current_caps().context("RTSP pad has no caps")?;
@@ -97,23 +86,22 @@ fn attach_branch(
         .and_then(|structure| structure.get::<&str>("encoding-name").ok())
         .unwrap_or_default()
         .to_owned();
-    let kind = BranchKind::of(&encoding);
-    let (description, callbacks) = match kind {
-        BranchKind::Video => match video.lock().ok().and_then(|mut video| video.take()) {
-            Some(packetizer) => (
-                kind.description(),
-                Some(video_callbacks(packetizer, packet_sender.clone())),
-            ),
-            None => (UNSUPPORTED_BRANCH, None),
-        },
-        BranchKind::Audio(_) => (
-            kind.description(),
-            Some(audio_callbacks(packet_sender.clone())),
+    let (description, callbacks) = match branch_description(&encoding) {
+        H264_BRANCH => (
+            H264_BRANCH,
+            Some(appsink_callbacks(
+                packet_sender.clone(),
+                move |_, data, timing| Ok(video.packetize(data, timing)?.map(RtspPacket::Video)),
+            )),
         ),
-        BranchKind::Unsupported => {
+        UNSUPPORTED_BRANCH => {
             log::warn!("RTSP stream with encoding {encoding:?} is not bridged");
-            (kind.description(), None)
+            (UNSUPPORTED_BRANCH, None)
         }
+        audio => (
+            audio,
+            Some(appsink_callbacks(packet_sender.clone(), audio_packet)),
+        ),
     };
     let branch = gst::parse::bin_from_description(description, true)
         .with_context(|| format!("build RTSP branch for {encoding}"))?;
@@ -135,79 +123,51 @@ fn attach_branch(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BranchKind {
-    Video,
-    Audio(&'static str),
-    Unsupported,
-}
-
-impl BranchKind {
-    fn of(encoding: &str) -> Self {
-        match encoding {
-            "H264" => Self::Video,
-            "PCMA" => Self::Audio(PCMA_BRANCH),
-            "MPEG4-GENERIC" => Self::Audio(AAC_BRANCH),
-            "OPUS" => Self::Audio(OPUS_BRANCH),
-            _ => Self::Unsupported,
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Self::Video => H264_BRANCH,
-            Self::Audio(description) => description,
-            Self::Unsupported => UNSUPPORTED_BRANCH,
-        }
+fn branch_description(encoding: &str) -> &'static str {
+    match encoding {
+        "H264" => H264_BRANCH,
+        "PCMA" => PCMA_BRANCH,
+        "MPEG4-GENERIC" => AAC_BRANCH,
+        "OPUS" => OPUS_BRANCH,
+        _ => UNSUPPORTED_BRANCH,
     }
 }
 
-fn video_callbacks(
-    mut packetizer: VideoPacketizer,
+fn appsink_callbacks(
     packet_sender: TokioSender<RtspPacket>,
+    mut to_packet: impl FnMut(&gst::Sample, &[u8], MediaTiming) -> Result<Option<RtspPacket>>
+        + Send
+        + 'static,
 ) -> AppSinkCallbacks {
     AppSinkCallbacks::builder()
         .new_sample(move |sink| {
             let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
             let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
             let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-            let packet = match packetizer.packetize(map.as_slice(), MediaTiming::of(buffer)) {
-                Ok(Some(packet)) => packet,
-                Ok(None) => return Ok(gst::FlowSuccess::Ok),
-                Err(err) => {
-                    log::warn!("RTSP video access unit dropped: {err:#}");
-                    return Ok(gst::FlowSuccess::Ok);
-                }
-            };
-            packet_sender
-                .blocking_send(RtspPacket::Video(packet))
-                .map_err(|_| gst::FlowError::Eos)?;
+            match to_packet(&sample, map.as_slice(), MediaTiming::of(buffer)) {
+                Ok(Some(packet)) => packet_sender
+                    .blocking_send(packet)
+                    .map_err(|_| gst::FlowError::Eos)?,
+                Ok(None) => {}
+                Err(err) => log::warn!("RTSP sample dropped: {err:#}"),
+            }
             Ok(gst::FlowSuccess::Ok)
         })
         .build()
 }
 
-fn audio_callbacks(packet_sender: TokioSender<RtspPacket>) -> AppSinkCallbacks {
-    AppSinkCallbacks::builder()
-        .new_sample(move |sink| {
-            let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-            let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
-            let format = match sample.caps().map(AudioFormat::from_caps) {
-                Some(Ok(format)) => format,
-                Some(Err(err)) => {
-                    log::warn!("RTSP audio frame dropped: {err:#}");
-                    return Ok(gst::FlowSuccess::Ok);
-                }
-                None => return Ok(gst::FlowSuccess::Ok),
-            };
-            let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-            let packet = format.packet(map.to_vec(), MediaTiming::of(buffer));
-            packet_sender
-                .blocking_send(RtspPacket::Audio(packet))
-                .map_err(|_| gst::FlowError::Eos)?;
-            Ok(gst::FlowSuccess::Ok)
-        })
-        .build()
+fn audio_packet(
+    sample: &gst::Sample,
+    data: &[u8],
+    timing: MediaTiming,
+) -> Result<Option<RtspPacket>> {
+    let Some(caps) = sample.caps() else {
+        return Ok(None);
+    };
+    let format = AudioFormat::from_caps(caps)?;
+    Ok(Some(RtspPacket::Audio(
+        format.packet(data.to_vec(), timing),
+    )))
 }
 
 fn wait_for_end(bus: &gst::Bus) -> Result<()> {
@@ -295,7 +255,6 @@ impl VideoPacketizer {
             is_keyframe: unit.is_keyframe,
             timestamp_us: timing.timestamp_us,
             ingest_wallclock_micros: timing.ingest_wallclock_micros,
-            duration_us: timing.duration_us,
             codec: unit.is_keyframe.then_some(codec),
             description_base64: description
                 .filter(|_| unit.is_keyframe)
@@ -324,14 +283,13 @@ impl AudioFormat {
             .ok()
             .and_then(|channels| u8::try_from(channels).ok());
         match structure.name().as_str() {
-            "audio/x-alaw" => Ok(Self {
-                codec: "pcma".to_string(),
-                description_base64: None,
-                sample_rate,
-                channels,
-            }),
-            "audio/x-opus" => Ok(Self {
-                codec: "opus".to_string(),
+            name @ ("audio/x-alaw" | "audio/x-opus") => Ok(Self {
+                codec: if name == "audio/x-alaw" {
+                    "pcma"
+                } else {
+                    "opus"
+                }
+                .to_string(),
                 description_base64: None,
                 sample_rate,
                 channels,
@@ -369,7 +327,7 @@ impl AudioFormat {
     }
 }
 
-fn now_micros() -> u64 {
+pub fn now_micros() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -538,8 +496,7 @@ mod tests {
         for encoding in ["H264", "PCMA", "MPEG4-GENERIC", "OPUS"] {
             // Act
             let branch =
-                gst::parse::bin_from_description(BranchKind::of(encoding).description(), true)
-                    .unwrap();
+                gst::parse::bin_from_description(branch_description(encoding), true).unwrap();
 
             // Assert
             assert!(
