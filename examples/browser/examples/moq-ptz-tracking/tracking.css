@@ -1,0 +1,93 @@
+.tracking-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .tracking-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card h2 {
+  margin: 0;
+}
+
+.target-form {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.tracking-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.position-badge {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  color: var(--muted);
+  background: #f3f4f6;
+}
+
+.position-badge[data-position='answer'] {
+  color: #fff;
+  background: #16a34a;
+}
+
+.position-badge[data-position='unknown'] {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.setup-hub {
+  display: grid;
+  grid-template-areas:
+    '. . browser . . . .'
+    '. . browser-link . . . .'
+    'camera camera-link relay bot-link bot djev-link djev';
+  justify-content: start;
+  justify-items: center;
+}
+
+.hub-browser {
+  grid-area: browser;
+}
+
+.hub-browser-link {
+  grid-area: browser-link;
+}
+
+.hub-camera {
+  grid-area: camera;
+}
+
+.hub-camera-link {
+  grid-area: camera-link;
+}
+
+.hub-relay {
+  grid-area: relay;
+}
+
+.hub-bot-link {
+  grid-area: bot-link;
+}
+
+.hub-bot {
+  grid-area: bot;
+}
+
+.hub-djev-link {
+  grid-area: djev-link;
+}
+
+.hub-djev {
+  grid-area: djev;
+}

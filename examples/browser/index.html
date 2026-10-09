@@ -94,6 +94,74 @@
         gap: 0.35rem;
       }
 
+      .flow.hub {
+        display: grid;
+        grid-template-areas:
+          '. . browser . . . .'
+          '. . browser-link . . . .'
+          'camera camera-link relay bot-link bot djev-link djev';
+        justify-content: center;
+        justify-items: center;
+      }
+
+      .hub-browser {
+        grid-area: browser;
+      }
+
+      .hub-browser-link {
+        grid-area: browser-link;
+      }
+
+      .hub-camera {
+        grid-area: camera;
+      }
+
+      .hub-camera-link {
+        grid-area: camera-link;
+      }
+
+      .hub-relay {
+        grid-area: relay;
+      }
+
+      .hub-bot-link {
+        grid-area: bot-link;
+      }
+
+      .hub-bot {
+        grid-area: bot;
+      }
+
+      .hub-djev-link {
+        grid-area: djev-link;
+      }
+
+      .hub-djev {
+        grid-area: djev;
+      }
+
+      .observability-map {
+        position: relative;
+        width: 444px;
+        height: 270px;
+        margin: auto;
+        color: var(--accent);
+      }
+
+      .observability-links {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        stroke: currentColor;
+        stroke-width: 1.5;
+      }
+
+      .observability-map .node {
+        position: absolute;
+        transform: translate(-50%, -50%);
+      }
+
       .card-head {
         display: flex;
         flex-wrap: wrap;
@@ -163,6 +231,7 @@
       }
 
       .card {
+        position: relative;
         display: flex;
         flex-direction: column;
         gap: 0.72rem;
@@ -214,18 +283,21 @@
         line-height: 1.6;
       }
 
+      .card > :first-child {
+        padding-right: 1.5rem;
+      }
+
       .card .arrow {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        margin-top: auto;
-        padding-top: 0.25rem;
+        position: absolute;
+        top: 1.1rem;
+        right: 1.1rem;
         color: var(--accent);
-        font-size: 0.83rem;
+        font-size: 1.1rem;
         font-weight: 700;
       }
 
       .card .arrow::after {
+        display: inline-block;
         content: '→';
         transition: transform 180ms ease;
       }
@@ -380,6 +452,18 @@
         <rect width="8" height="8" x="13" y="13" rx="2" />
       </symbol>
       <symbol
+        id="icon-globe"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol
         id="icon-brain-circuit"
         viewBox="0 0 24 24"
         fill="none"
@@ -415,22 +499,22 @@
           <a class="card" href="examples/message/index.html">
             <h3>Message</h3>
             <p>MoQT 制御メッセージを手動で送受信する</p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/media/index.html">
             <h3>Media</h3>
             <p>Publisher / Subscriber を分けてメディアを送受信する</p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/media-cmaf/index.html">
             <h3>Media CMAF</h3>
             <p>CMAF パッケージで Publish / Subscribe する</p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/webcodecs/index.html">
             <h3>WebCodecs Loopback</h3>
             <p>MoQ を介さず Encoder / Decoder の挙動を確認する</p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
       </section>
@@ -458,7 +542,7 @@
                 ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
               >
             </p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/onvif/index.html">
             <div class="card-head">
@@ -482,7 +566,7 @@
                 ><svg><use href="#icon-monitor" /></svg>Browser</span
               >
             </p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/remote-monitoring/index.html">
             <div class="card-head">
@@ -506,7 +590,7 @@
                 ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
               >
             </p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/live-viewer/index.html">
             <div class="card-head">
@@ -530,7 +614,7 @@
                 ><svg><use href="#icon-monitor" /></svg>Browser<span class="count">×N</span></span
               >
             </p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
       </section>
@@ -562,7 +646,7 @@
                 ><svg><use href="#icon-brain-circuit" /></svg>djev-run</span
               >
             </p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
           <a class="card" href="examples/moq-camera-detection/index.html">
             <div class="card-head">
@@ -586,7 +670,35 @@
                 ><svg><use href="#icon-brain-circuit" /></svg>djev-run</span
               >
             </p>
-            <span class="arrow">Open Example</span>
+            <span class="arrow" aria-hidden="true"></span>
+          </a>
+          <a class="card" href="examples/moq-ptz-tracking/index.html">
+            <div class="card-head">
+              <h3>MoQ PTZ Tracking</h3>
+              <p>指定した対象を PTZ カメラで追う</p>
+            </div>
+            <p class="flow hub">
+              <span class="node hub-browser"
+                ><svg><use href="#icon-monitor" /></svg>Browser</span
+              >
+              <span class="link hub-browser-link">↕</span>
+              <span class="node hub-camera"
+                ><svg><use href="#icon-cctv" /></svg>PTZ Camera</span
+              >
+              <span class="link hub-camera-link">↔</span>
+              <span class="node relay hub-relay"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link hub-bot-link">↔</span>
+              <span class="node hub-bot"
+                ><svg><use href="#icon-workflow" /></svg>pipecat</span
+              >
+              <span class="link hub-djev-link">↔</span>
+              <span class="node cloud hub-djev"
+                ><svg><use href="#icon-brain-circuit" /></svg>djev-run</span
+              >
+            </p>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
       </section>
@@ -597,9 +709,89 @@
         </div>
         <div class="grid">
           <a class="card" href="examples/observability/index.html">
-            <h3>Observability</h3>
-            <p>Relay の通信状況と Pub/Sub をトポロジーで表示する</p>
-            <span class="arrow">Open Example</span>
+            <div class="card-head">
+              <h3>Observability</h3>
+              <p>Relay の通信状況と Pub/Sub をトポロジーで表示する</p>
+            </div>
+            <div class="observability-map">
+              <svg class="observability-links" viewBox="0 0 444 270" aria-hidden="true">
+                <defs>
+                  <marker
+                    id="obs-arrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+                  </marker>
+                </defs>
+                <line
+                  x1="57.5"
+                  y1="34.0"
+                  x2="100.0"
+                  y2="34.0"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="160.0"
+                  y1="34.0"
+                  x2="280.0"
+                  y2="34.0"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="340.0"
+                  y1="34.0"
+                  x2="386.5"
+                  y2="34.0"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="160.0"
+                  y1="65.3"
+                  x2="190.0"
+                  y2="96.7"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="280.0"
+                  y1="65.3"
+                  x2="250.0"
+                  y2="96.7"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line x1="145.4" y1="68.5" x2="204.6" y2="201.5" marker-end="url(#obs-arrow)" />
+                <line x1="294.6" y1="68.5" x2="235.4" y2="201.5" marker-end="url(#obs-arrow)" />
+                <line x1="220.0" y1="162.5" x2="220.0" y2="201.5" marker-end="url(#obs-arrow)" />
+              </svg>
+              <span class="node" style="left: 26px; top: 34px"
+                ><svg><use href="#icon-monitor" /></svg>Client</span
+              >
+              <span class="node relay" style="left: 130px; top: 34px"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="node relay" style="left: 310px; top: 34px"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="node" style="left: 418px; top: 34px"
+                ><svg><use href="#icon-monitor" /></svg>Client</span
+              >
+              <span class="node relay" style="left: 220px; top: 128px"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="node cloud" style="left: 220px; top: 236px"
+                ><svg><use href="#icon-globe" /></svg>Observability</span
+              >
+            </div>
+            <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
       </section>
