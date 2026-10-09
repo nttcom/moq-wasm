@@ -67,35 +67,32 @@ class PtzTracker(FrameProcessor):
 
     async def _locate(self, picture: CameraPicture):
         try:
-            await self._locate_and_move(picture)
+            requested_at = time.monotonic()
+            try:
+                answer = await self._vision.locate(picture.jpeg, picture.target.description)
+            except (aiohttp.ClientError, KeyError, IndexError) as error:
+                logger.warning(f"djev-vision could not locate the target in {picture.location}: {error}")
+                return
+            logger.info(f"camera picture {picture.location} {answer} in {time.monotonic() - requested_at:.2f}s")
+            if self._latest_target.target != picture.target:
+                return
+            move = self._calibration.toward(answer) if isinstance(answer, Position) else NO_MOVE
+            self._timeline.append(
+                location_record(
+                    picture.location,
+                    {
+                        "prompt": picture.target.location,
+                        "position": position_record(answer),
+                        "pan_seconds": move.pan_seconds,
+                        "tilt_seconds": move.tilt_seconds,
+                    },
+                )
+            )
+            if move != NO_MOVE:
+                await self._commands.move(move)
+                self._stopped_at = time.monotonic()
         finally:
             self._locating = None
-
-    async def _locate_and_move(self, picture: CameraPicture):
-        requested_at = time.monotonic()
-        try:
-            answer = await self._vision.locate(picture.jpeg, picture.target.description)
-        except (aiohttp.ClientError, KeyError, IndexError) as error:
-            logger.warning(f"djev-vision could not locate the target in {picture.location}: {error}")
-            return
-        logger.info(f"camera picture {picture.location} {answer} in {time.monotonic() - requested_at:.2f}s")
-        if self._latest_target.target != picture.target:
-            return
-        move = self._calibration.toward(answer) if isinstance(answer, Position) else NO_MOVE
-        self._timeline.append(
-            location_record(
-                picture.location,
-                {
-                    "prompt": picture.target.location,
-                    "position": position_record(answer),
-                    "pan_seconds": move.pan_seconds,
-                    "tilt_seconds": move.tilt_seconds,
-                },
-            )
-        )
-        if move != NO_MOVE:
-            await self._commands.move(move)
-            self._stopped_at = time.monotonic()
 
 
 def position_record(answer: Position | Answer) -> list[float] | str | None:

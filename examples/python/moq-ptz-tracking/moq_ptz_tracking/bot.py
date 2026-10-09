@@ -127,24 +127,20 @@ class GroupSampler:
             object_id += 1
 
 
-async def forward_pictures(video: moq.TrackConsumer, latest_target: LatestTarget, worker: PipelineWorker):
-    sampler = GroupSampler(latest_target, worker)
-    async for group in video:
-        try:
-            await sampler.forward(group)
-        except moq.Error as error:
-            # The relay starts a subscriber that joins mid-group at the object after Largest
-            # Object (draft-14 §9.7), and the moq library refuses a group that does not start at
-            # object 0. That group holds no keyframe anyway; the next one starts at object 0.
-            logger.debug(f"skipping camera group {group.sequence}: {error}")
-
-
 async def forward_video(client: moq.Client, video_track: str, latest_target: LatestTarget, worker: PipelineWorker):
     try:
         camera = await client.announced_broadcast(CAMERA_BROADCAST_PATH)
         async with await camera.subscribe_track(video_track) as video:
             logger.info(f"watching {CAMERA_BROADCAST_PATH}/{video_track}")
-            await forward_pictures(video, latest_target, worker)
+            sampler = GroupSampler(latest_target, worker)
+            async for group in video:
+                try:
+                    await sampler.forward(group)
+                except moq.Error as error:
+                    # The relay starts a subscriber that joins mid-group at the object after Largest
+                    # Object (draft-14 §9.7), and the moq library refuses a group that does not start
+                    # at object 0. That group holds no keyframe anyway; the next one starts at object 0.
+                    logger.debug(f"skipping camera group {group.sequence}: {error}")
     except moq.Error as error:
         logger.info(f"camera track ended: {error}")
 
