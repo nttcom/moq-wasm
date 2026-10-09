@@ -294,6 +294,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Control response timeout**: `SessionContext::await_response` bounds every
   request/response wait to 10 s; on timeout the session is closed with
   `ControlMessageTimeout` (draft-14 §12.2).
+- **One forwarding preference per track alias** (draft-14 §2.5, §10): the
+  first object decides whether `accept_data_receiver` returns a stream or a
+  datagram receiver. An object of the other kind later makes that receiver
+  return `MalformedTrackError`, which `TrackReader` passes on. moqt does not
+  UNSUBSCRIBE on its own: the caller does, because a relay must also end
+  its downstream subscriptions.
 - **Header-first subgroup streams**: enforced by the sender typestate; on the
   receive side a uni stream whose first frame is not a header is rejected.
 - **Priority before data**: a stream's transport priority is settable only

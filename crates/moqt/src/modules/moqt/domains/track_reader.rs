@@ -3,8 +3,8 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::mpsc;
 
 use crate::{
-    ExtensionHeaders, StreamDataReceiver, StreamDataReceiverFactory, Subgroup, SubgroupHeader,
-    SubgroupId, SubgroupObject,
+    ExtensionHeaders, MalformedTrackError, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+    SubgroupHeader, SubgroupId, SubgroupObject,
     modules::executor::{self, JoinHandle},
 };
 
@@ -41,7 +41,8 @@ impl TrackReader {
 
     /// Returns `Ok(None)` once the track has no more subgroup streams. A
     /// failure inside one subgroup stream is returned as `Err`; the other
-    /// streams keep being read.
+    /// streams keep being read. A `MalformedTrackError` ends the track after
+    /// the streams already accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
         self.object_receiver.recv().await.transpose()
     }
@@ -63,6 +64,10 @@ impl SubgroupStreamAcceptTask {
                     accepted = factory.next() => match accepted {
                         Ok(receiver) => {
                             subgroup_readers.push(read_subgroup(receiver, object_sender.clone()));
+                        }
+                        Err(error) if error.is::<MalformedTrackError>() => {
+                            let _ = object_sender.send(Err(error)).await;
+                            break;
                         }
                         Err(error) => {
                             tracing::debug!(%error, "track ended");
@@ -146,36 +151,15 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        ExtensionHeaders, PublishOption, StreamDataSenderFactory, SubgroupId, SubgroupObject,
-        SubgroupObjectSender, TrackObject, TrackReader,
+        ExtensionHeaders, MalformedTrackError, SubgroupId, SubgroupObject, TrackObject,
+        TrackReader,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
+            HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
     };
 
-    const PUBLISHER_PRIORITY: u8 = 128;
     const NO_OBJECT_TIMEOUT: Duration = Duration::from_millis(500);
-
-    async fn open_subgroup(
-        factory: &StreamDataSenderFactory,
-        group_id: u64,
-        subgroup_id: SubgroupId,
-    ) -> SubgroupObjectSender {
-        let uninitialized = factory.next().await.unwrap();
-        let header =
-            uninitialized.create_header(group_id, subgroup_id, PUBLISHER_PRIORITY, false, false);
-        uninitialized.send_header(header).await.unwrap()
-    }
-
-    async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
-        let field = sender.create_object_field(
-            0,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(Bytes::from_static(payload)),
-        );
-        sender.send(field).await.unwrap();
-    }
 
     async fn collect_objects(reader: &mut TrackReader, count: usize) -> Vec<TrackObject> {
         let mut objects = Vec::new();
@@ -204,38 +188,14 @@ mod tests {
             .collect()
     }
 
-    async fn published_track(
-        name: &str,
-    ) -> (
-        crate::Session,
-        crate::Session,
-        StreamDataSenderFactory,
-        crate::Subscription,
-    ) {
-        let (port, accept) = spawn_dual_server(name);
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
-        let publisher = client.publisher();
-        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            tokio::join!(
-                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
-                accept_publish(&server)
-            )
-        })
-        .await
-        .unwrap();
-        let factory = publisher.create_stream(&published.unwrap());
-        (client, server, factory, accepted)
-    }
-
     #[tokio::test]
     async fn next_group_is_read_while_the_previous_stream_is_still_open() {
         // Arrange
-        let (_client, server, factory, subscription) = published_track("reader-unclosed").await;
+        let track = published_track("reader-unclosed").await;
+        let factory = track.client.publisher().create_stream(&track.published);
         let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
         send_payload(&mut group_0, b"g0-o0").await;
-        let mut reader = subscribed_track_reader(&server, &subscription).await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
         let mut group_1 = open_subgroup(&factory, 1, SubgroupId::None).await;
@@ -257,10 +217,11 @@ mod tests {
     #[tokio::test]
     async fn subgroups_of_one_group_are_read_concurrently() {
         // Arrange
-        let (_client, server, factory, subscription) = published_track("reader-subgroups").await;
+        let track = published_track("reader-subgroups").await;
+        let factory = track.client.publisher().create_stream(&track.published);
         let mut subgroup_0 = open_subgroup(&factory, 5, SubgroupId::Value(0)).await;
         send_payload(&mut subgroup_0, b"s0-o0").await;
-        let mut reader = subscribed_track_reader(&server, &subscription).await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
         let mut subgroup_1 = open_subgroup(&factory, 5, SubgroupId::Value(1)).await;
@@ -282,7 +243,8 @@ mod tests {
     #[tokio::test]
     async fn first_object_id_subgroup_type_takes_the_first_object_id() {
         // Arrange
-        let (_client, server, factory, subscription) = published_track("reader-first-id").await;
+        let track = published_track("reader-first-id").await;
+        let factory = track.client.publisher().create_stream(&track.published);
         let mut subgroup = open_subgroup(&factory, 2, SubgroupId::FirstObjectIdDelta).await;
         let field = subgroup.create_object_field(
             7,
@@ -290,7 +252,7 @@ mod tests {
             SubgroupObject::new_payload(Bytes::from_static(b"o7")),
         );
         subgroup.send(field).await.unwrap();
-        let mut reader = subscribed_track_reader(&server, &subscription).await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
         send_payload(&mut subgroup, b"o8").await;
@@ -309,10 +271,11 @@ mod tests {
     #[tokio::test]
     async fn status_objects_are_skipped_and_closing_a_stream_keeps_the_track_open() {
         // Arrange
-        let (_client, server, factory, subscription) = published_track("reader-status").await;
+        let track = published_track("reader-status").await;
+        let factory = track.client.publisher().create_stream(&track.published);
         let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
         send_payload(&mut group_0, b"g0-o0").await;
-        let mut reader = subscribed_track_reader(&server, &subscription).await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
         let end_of_group = group_0.create_object_field(
@@ -328,5 +291,34 @@ mod tests {
         // Assert
         assert_eq!(objects[0].payload, Bytes::from_static(b"g0-o0"));
         assert!(nothing_more.is_err(), "reader must wait for further groups");
+    }
+
+    #[tokio::test]
+    async fn a_datagram_on_the_track_is_returned_as_a_malformed_track_error() {
+        // Arrange
+        let track = published_track("reader-malformed").await;
+        let publisher = track.client.publisher();
+        let mut group_0 = open_subgroup(
+            &publisher.create_stream(&track.published),
+            0,
+            SubgroupId::None,
+        )
+        .await;
+        send_payload(&mut group_0, b"g0-o0").await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
+        collect_objects(&mut reader, 1).await;
+
+        // Act
+        publisher
+            .create_datagram(&track.published)
+            .send(object_datagram(track.published.track_alias()))
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(result.unwrap_err().is::<MalformedTrackError>());
     }
 }

@@ -1,6 +1,8 @@
 use anyhow::bail;
 
-use crate::modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
+use crate::modules::moqt::data_plane::{
+    malformed_track_error::MalformedTrackError, object::object_datagram::ObjectDatagram,
+};
 use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
 
 #[derive(Debug)]
@@ -33,7 +35,53 @@ impl DatagramReceiver {
         };
         match result {
             IncomingObject::Datagram(datagram) => Ok(datagram),
-            _ => unreachable!("DatagramReceiver can only receive ObjectDatagram"),
+            IncomingObject::StreamHeader { .. } => Err(MalformedTrackError.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        DataReceiver, MalformedTrackError, SubgroupId,
+        modules::test_support::{
+            HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track,
+        },
+    };
+
+    #[tokio::test]
+    async fn a_subgroup_stream_on_a_datagram_track_is_a_malformed_track() {
+        // Arrange
+        let track = published_track("datagram-receiver-malformed").await;
+        let publisher = track.client.publisher();
+        publisher
+            .create_datagram(&track.published)
+            .send(object_datagram(track.published.track_alias()))
+            .await
+            .unwrap();
+        let DataReceiver::Datagram(mut receiver) = track
+            .server
+            .subscriber()
+            .accept_data_receiver(&track.accepted)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a datagram receiver");
+        };
+        receiver.receive().await.unwrap();
+        let _subgroup = open_subgroup(
+            &publisher.create_stream(&track.published),
+            0,
+            SubgroupId::None,
+        )
+        .await;
+
+        // Act
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(result.unwrap_err().is::<MalformedTrackError>());
     }
 }
