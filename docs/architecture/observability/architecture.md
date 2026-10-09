@@ -220,10 +220,14 @@ path for live and history, and no relay tokens in the browser.
 Every table is `PARTITION BY toYYYYMMDD(ts)` with
 `TTL toDateTime(ts) + INTERVAL 7 DAY` and `ttl_only_drop_parts = 1`, so old
 data leaves a whole day partition at a time; there is no capacity-based
-deletion. Inserts use `async_insert` with a fixed one-second window
-(`async_insert_busy_timeout_max_ms = 1000`, adaptive timeout off), so the
-relays' once-per-second snapshots land as one part per table per second
-instead of a part per insert, and `input_format_skip_unknown_fields`, so a
+deletion. Inserts use `async_insert` with a fixed ten-second window
+(`async_insert_busy_timeout_max_ms = 10000`, adaptive timeout off), so the
+relays' once-per-second snapshots land as one part per table every ten
+seconds instead of a part per insert; one part per second kept merges busy on
+most of two vCPUs for a few MB of data an hour. The insert does not wait for
+the flush (`wait_for_async_insert = 0`), so charts trail the live view by up
+to ten seconds and a failed flush shows only in the ClickHouse log. Inserts
+also set `input_format_skip_unknown_fields`, so a
 field added to `relay-stats` is ignored until a column exists for it.
 Tables are created with `IF NOT EXISTS` and never altered: a new column needs
 an `ALTER TABLE` (or a fresh database) by hand.
