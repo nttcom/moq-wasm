@@ -9,7 +9,7 @@ COPY . .
 RUN cargo build --locked --release -p live-ingest
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
