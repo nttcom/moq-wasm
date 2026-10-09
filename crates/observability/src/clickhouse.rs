@@ -42,12 +42,15 @@ impl ClickHouse {
             &[
                 ("query", query.as_str()),
                 ("async_insert", "1"),
-                ("wait_for_async_insert", "1"),
-                // Every relay inserts into each table once per second. A fixed one-second
-                // window folds those inserts into one part per table per second; the adaptive
-                // window shrinks under frequent inserts to about one part per insert.
+                // Every relay inserts into each table once per second. A fixed ten-second
+                // window folds those inserts into one part per table every ten seconds; the
+                // adaptive window shrinks under frequent inserts to about one part per insert,
+                // and a part per second kept merges busy on most of two vCPUs.
+                // Waiting for the flush would hold each store for the whole window, so a
+                // failed flush shows only in the ClickHouse log.
+                ("wait_for_async_insert", "0"),
                 ("async_insert_use_adaptive_busy_timeout", "0"),
-                ("async_insert_busy_timeout_max_ms", "1000"),
+                ("async_insert_busy_timeout_max_ms", "10000"),
                 ("input_format_skip_unknown_fields", "1"),
             ],
             body,
