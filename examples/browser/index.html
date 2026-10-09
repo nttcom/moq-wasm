@@ -144,10 +144,10 @@
         display: grid;
         grid-template-areas:
           'client-a client-a-link relay-a relay-link relay-b client-b-link client-b'
-          '. . . . relay-c-link . .'
-          '. . . . relay-c . .'
-          '. . . . observability-link . .'
-          '. . . observability observability observability .';
+          '. . relay-ac-link . relay-bc-link . .'
+          '. . . relay-c . . .'
+          '. . . observability-link . . .'
+          '. . observability observability observability . .';
         justify-content: center;
         justify-items: center;
       }
@@ -180,8 +180,20 @@
         grid-area: client-b;
       }
 
-      .obs-relay-c-link {
-        grid-area: relay-c-link;
+      .link.obs-relay-ac-link,
+      .link.obs-relay-bc-link {
+        font-size: 1.6rem;
+        line-height: 1;
+      }
+
+      .obs-relay-ac-link {
+        grid-area: relay-ac-link;
+        justify-self: end;
+      }
+
+      .obs-relay-bc-link {
+        grid-area: relay-bc-link;
+        justify-self: start;
       }
 
       .obs-relay-c {
@@ -763,7 +775,8 @@
               <span class="node obs-client-b"
                 ><svg><use href="#icon-monitor" /></svg>Client</span
               >
-              <span class="link obs-relay-c-link">↕</span>
+              <span class="link obs-relay-ac-link">⤡</span>
+              <span class="link obs-relay-bc-link">⤢</span>
               <span class="node relay obs-relay-c"
                 ><svg><use href="#icon-server" /></svg>Relay</span
               >
