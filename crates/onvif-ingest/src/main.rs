@@ -5,8 +5,8 @@ use clap::Parser;
 use mediapack::loc::{to_extension_headers, LocExtension, CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID};
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    ObjectDatagramPayload, Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender,
-    SubscribeOption, Subscription, WEBTRANSPORT,
+    Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender, SubscribeOption,
+    Subscription, TrackReader, WEBTRANSPORT,
 };
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use onvif_ingest::{
@@ -1671,25 +1671,23 @@ fn spawn_command_receiver(
                 return;
             }
         };
-        let DataReceiver::Datagram(mut datagram) = receiver else {
-            log::warn!("command track did not produce datagram receiver");
+        let DataReceiver::Stream(factory) = receiver else {
+            log::warn!("command track is not delivered on subgroup streams");
             return;
         };
+        let mut reader = TrackReader::new(factory);
         loop {
-            let object = match datagram.receive().await {
-                Ok(object) => object,
-                Err(err) => {
-                    log::warn!("command datagram receive failed: {err}");
-                    return;
-                }
-            };
-            match object.field.payload {
-                ObjectDatagramPayload::Payload(payload) => {
-                    if let Err(err) = handle_command_payload(payload.as_ref(), &command_sender) {
+            match reader.next_object().await {
+                Ok(Some(object)) => {
+                    if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
                         log::warn!("command payload error: {err}");
                     }
                 }
-                ObjectDatagramPayload::Status(_) => {}
+                Ok(None) => {
+                    log::warn!("command track ended");
+                    return;
+                }
+                Err(err) => log::warn!("command subgroup receive failed: {err}"),
             }
         }
     });
