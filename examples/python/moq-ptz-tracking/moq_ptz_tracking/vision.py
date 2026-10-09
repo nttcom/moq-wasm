@@ -1,5 +1,7 @@
 import base64
+import enum
 import re
+from dataclasses import dataclass
 
 import aiohttp
 
@@ -7,38 +9,46 @@ from moq_ptz_tracking.djev_status import DjevStatus
 from moq_ptz_tracking.identity_token import IdentityToken
 
 MODEL = "djev-dgemma"
-MAX_ANSWER_TOKENS = 8
-LEADING_NUMBER = re.compile(r"\s*(\d+)")
-POSITIONS = (
-    "top left",
-    "top center",
-    "top right",
-    "middle left",
-    "center",
-    "middle right",
-    "bottom left",
-    "bottom center",
-    "bottom right",
-)
-NOT_VISIBLE = "not in the picture"
-CHOICES = (*POSITIONS, NOT_VISIBLE)
+MAX_ANSWER_TOKENS = 16
+COORDINATE_SCALE = 1000
+COORDINATES = re.compile(r"(\d+)\D+(\d+)")
+
+
+@dataclass(frozen=True)
+class Position:
+    """Fractions of the picture's width and height, from its top-left corner."""
+
+    x: float
+    y: float
+
+
+class Answer(enum.Enum):
+    NOT_VISIBLE = "not visible"
+    UNREADABLE = "unreadable"
 
 
 def locate_question(description: str) -> str:
-    numbered = "\n".join(f"{number}. {choice}" for number, choice in enumerate(CHOICES, 1))
     return (
-        f"Where is {description} in this picture?\n"
-        f"Answer with only the number of one of these choices:\n{numbered}"
+        f"Where is the center of {description} in this picture?\n"
+        f"Answer with only two numbers from 0 to {COORDINATE_SCALE} separated by a space: how far across from the"
+        f" left edge (0) to the right edge ({COORDINATE_SCALE}), and how far down from the top edge (0) to the"
+        f" bottom edge ({COORDINATE_SCALE}). If {description} is not in the picture, answer none."
     )
 
 
-def parse_position(content: str) -> str | None:
-    # DiffusionGemma prefixes the answer with a "thought" line, and vLLM cannot constrain a
-    # diffusion model's output to the choices, so the number is read from the last line.
+def parse_position(content: str) -> Position | Answer:
+    # DiffusionGemma prefixes the answer with a "thought" line, so the answer is read from the last line.
     lines = content.strip().splitlines()
-    number = LEADING_NUMBER.match(lines[-1]) if lines else None
-    index = int(number[1]) - 1 if number else -1
-    return CHOICES[index] if 0 <= index < len(CHOICES) else None
+    last = lines[-1] if lines else ""
+    if "none" in last.lower():
+        return Answer.NOT_VISIBLE
+    numbers = COORDINATES.search(last)
+    if numbers is None:
+        return Answer.UNREADABLE
+    x, y = int(numbers[1]), int(numbers[2])
+    if x > COORDINATE_SCALE or y > COORDINATE_SCALE:
+        return Answer.UNREADABLE
+    return Position(x / COORDINATE_SCALE, y / COORDINATE_SCALE)
 
 
 class DjevVisionClient:
@@ -54,7 +64,7 @@ class DjevVisionClient:
         self._status = status
         self._identity_token = identity_token
 
-    async def locate(self, jpeg: bytes, description: str) -> str | None:
+    async def locate(self, jpeg: bytes, description: str) -> Position | Answer:
         image_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
         request = {
             "model": MODEL,

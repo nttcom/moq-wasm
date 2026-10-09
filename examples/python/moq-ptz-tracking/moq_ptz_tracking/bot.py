@@ -12,7 +12,7 @@ from pipecat.workers.runner import WorkerRunner
 from moq_ptz_tracking.djev_status import DjevStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
 from moq_ptz_tracking.identity_token import gcloud_identity_token, metadata_identity_token
-from moq_ptz_tracking.ptz import PtzCommands, PtzSteps
+from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
 from moq_ptz_tracking.video import GroupDecoder, picture_to_jpeg
@@ -48,16 +48,22 @@ def parse_args() -> argparse.Namespace:
         "--djev-url", required=True, help="djev-vision's /v1/chat/completions endpoint"
     )
     parser.add_argument(
-        "--pan-step",
+        "--pan-per-second",
         type=float,
-        default=0.3,
-        help="RelativeMove pan for a target one grid column off center; negative for a flipped camera",
+        default=0.27,
+        help="fraction of the picture width a one-second pan to the right shifts the view; negative for a camera that pans left",
     )
     parser.add_argument(
-        "--tilt-step",
+        "--tilt-per-second",
         type=float,
-        default=0.3,
-        help="RelativeMove tilt for a target one grid row off center; negative for a flipped camera",
+        default=0.38,
+        help="fraction of the picture height a one-second tilt up shifts the view; negative for a camera that tilts down",
+    )
+    parser.add_argument(
+        "--dead-zone",
+        type=float,
+        default=0.05,
+        help="largest offset of the target from the center, as a fraction of the picture, that leaves the camera still",
     )
     auth = parser.add_mutually_exclusive_group()
     auth.add_argument(
@@ -208,7 +214,8 @@ async def main():
             else None
         )
         vision = DjevVisionClient(session, args.djev_url, status, identity_token)
-        tracker = PtzTracker(vision, timeline, commands, PtzSteps(args.pan_step, args.tilt_step), latest_target)
+        calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.dead_zone)
+        tracker = PtzTracker(vision, timeline, commands, calibration, latest_target)
         worker = PipelineWorker(Pipeline([tracker]), enable_rtvi=False, idle_timeout_secs=None)
         runner = WorkerRunner()
         await runner.add_workers(worker)

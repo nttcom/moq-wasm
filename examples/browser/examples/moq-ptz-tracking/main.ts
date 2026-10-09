@@ -15,19 +15,6 @@ const AUTH_INFO = ''
 const SUBGROUP_ID = 0n
 const PUBLISHER_PRIORITY = 0
 const LARGEST_OBJECT_FILTER = 0x2
-const POSITION_LABELS: Record<string, string> = {
-  'top left': '左上',
-  'top center': '上',
-  'top right': '右上',
-  'middle left': '左',
-  center: '中央',
-  'middle right': '右',
-  'bottom left': '左下',
-  'bottom center': '下',
-  'bottom right': '右下',
-  'not in the picture': '見つかりません'
-}
-
 type Prompt = { target: string; video: string } | { target: null }
 
 class PromptPublisher {
@@ -232,20 +219,33 @@ function applyRecords(object: SubgroupObjectMessage): void {
   if (!Number.isInteger(promptGroupId) || BigInt(promptGroupId) !== promptPublisher?.latestGroupId) {
     return
   }
-  showRecord({ position: data.position, pan: data.pan, tilt: data.tilt })
+  showRecord({ position: data.position, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
 }
 
-function showRecord(record: { position: string | null; pan: number; tilt: number } | undefined): void {
+type TrackerRecord = {
+  position: [number, number] | 'not visible' | null
+  panSeconds: number
+  tiltSeconds: number
+}
+
+function showRecord(record: TrackerRecord | undefined): void {
   positionLabel.dataset.position = !record ? 'pending' : record.position === null ? 'unknown' : 'answer'
-  positionLabel.textContent = !record
-    ? pendingText()
-    : record.position === null
-      ? '判定できません'
-      : (POSITION_LABELS[record.position] ?? record.position)
+  positionLabel.textContent = !record ? pendingText() : positionText(record.position)
   moveLabel.textContent =
-    record && (record.pan !== 0 || record.tilt !== 0)
-      ? `パン ${formatStep(record.pan)}・チルト ${formatStep(record.tilt)}`
+    record && (record.panSeconds !== 0 || record.tiltSeconds !== 0)
+      ? `パン ${formatSeconds(record.panSeconds)}・チルト ${formatSeconds(record.tiltSeconds)}`
       : ''
+}
+
+function positionText(position: TrackerRecord['position']): string {
+  if (position === null) {
+    return '判定できません'
+  }
+  if (position === 'not visible') {
+    return '見つかりません'
+  }
+  const [x, y] = position
+  return `横 ${Math.round(x * 100)}%・縦 ${Math.round(y * 100)}%`
 }
 
 function pendingText(): string {
@@ -260,8 +260,8 @@ function renderViewerDelay(): void {
   viewerDelayLabel.textContent = viewerDelayMs === undefined ? '' : `delay ${Math.round(viewerDelayMs)} ms`
 }
 
-function formatStep(step: number): string {
-  return `${step > 0 ? '+' : ''}${step.toFixed(2)}`
+function formatSeconds(seconds: number): string {
+  return `${seconds > 0 ? '+' : ''}${seconds.toFixed(2)} 秒`
 }
 
 function sameNamespace(left: string[], right: string[]): boolean {

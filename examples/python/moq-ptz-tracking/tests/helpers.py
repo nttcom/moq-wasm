@@ -11,6 +11,7 @@ from moq_ptz_tracking.djev_status import DjevStatus
 from moq_ptz_tracking.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCommands
 from moq_ptz_tracking.target import LatestTarget, Target
+from moq_ptz_tracking.vision import Answer, Position
 
 READ_TIMEOUT_SECONDS = 2
 TRACK_NAME = "eventtimeline"
@@ -53,10 +54,17 @@ async def published_commands() -> tuple[PtzCommands, moq.TrackConsumer]:
     return commands, await broadcast.consume().subscribe_track(COMMAND_TRACK_NAME)
 
 
-async def next_command(track: moq.TrackConsumer) -> dict[str, Any]:
-    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
+async def next_command(group: moq.GroupConsumer) -> dict[str, Any] | None:
     frame = await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS)
-    return json.loads(frame.payload)
+    return None if frame is None else json.loads(frame.payload)
+
+
+async def next_move(track: moq.TrackConsumer) -> list[dict[str, Any]]:
+    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
+    commands = []
+    while (command := await next_command(group)) is not None:
+        commands.append(command)
+    return commands
 
 
 def tracking(target: Target) -> LatestTarget:
@@ -67,12 +75,12 @@ def tracking(target: Target) -> LatestTarget:
 
 @dataclass
 class StubVision:
-    position: str | None
+    answer: Position | Answer
     images: list[bytes] = field(default_factory=list)
 
-    async def locate(self, jpeg: bytes, description: str) -> str | None:
+    async def locate(self, jpeg: bytes, description: str) -> Position | Answer:
         self.images.append(jpeg)
-        return self.position
+        return self.answer
 
 
 @dataclass

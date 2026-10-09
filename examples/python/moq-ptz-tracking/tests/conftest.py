@@ -7,7 +7,7 @@ from tests.helpers import FakeMetadataServer, FakeVisionServer
 
 @pytest.fixture
 async def fake_vision_server():
-    server = FakeVisionServer(content="thought\n3. top right")
+    server = FakeVisionServer(content="thought\n750 250")
     app = web.Application()
     app.router.add_post("/v1/chat/completions", server.handle)
     async with TestServer(app) as test_server:
