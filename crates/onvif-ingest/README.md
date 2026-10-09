@@ -4,6 +4,16 @@ ONVIF/RTSP bridge for controlling an ONVIF camera and publishing its media over 
 
 ## Setup
 
+The RTSP input runs on GStreamer, so install it with the good and bad plugins
+(`rtspsrc`, the RTP depayloaders and `h264parse`):
+
+```shell
+brew install gstreamer
+```
+
+On Debian/Ubuntu, install `libgstreamer1.0-dev`, `gstreamer1.0-plugins-good`
+and `gstreamer1.0-plugins-bad`.
+
 Create `.env` from `.env.example` and set:
 
 - `ONVIF_IP`
@@ -40,6 +50,7 @@ set `MOQT_DOCKER_RELAY_HOST`/`LOCAL_RELAY_HOST` to force a specific relay host.
 | PTZ command (subscribe) | `anon/onvif/viewer` | `command`         |
 
 Profile indices start at 1 and correspond to the ONVIF media profiles returned by the camera.
+Video objects start each group with a keyframe that carries SPS/PPS. With `--payload-format annexb` (the default) the payload is Annex-B and no LOC Video Config extension is attached; with `--payload-format avcc` the payload is length-prefixed and keyframes carry the avcC in the Video Config extension.
 All names are configurable via CLI flags (`--publish-namespace`, `--subscribe-namespace`, `--video-track`, `--audio-track`, `--catalog-track`, `--command-track`).
 
 ## Direct CLI Options

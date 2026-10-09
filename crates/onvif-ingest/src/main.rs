@@ -10,9 +10,9 @@ use moqt::{
 };
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use onvif_ingest::{
-    app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_decoder,
+    app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker,
     rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
-    soap_client,
+    rtsp_source, soap_client,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -149,14 +149,14 @@ async fn main() -> Result<()> {
         command_namespace
     );
 
-    let payload_format = match rtsp_decoder::PayloadFormat::parse(&args.payload_format) {
+    let payload_format = match rtsp_source::PayloadFormat::parse(&args.payload_format) {
         Some(format) => format,
         None => {
             log::warn!(
                 "unknown payload format '{}', fallback to annexb",
                 args.payload_format
             );
-            rtsp_decoder::PayloadFormat::AnnexB
+            rtsp_source::PayloadFormat::AnnexB
         }
     };
     run_moqt_bridge(BridgeContext {
@@ -185,7 +185,7 @@ struct BridgeContext {
     session: std::sync::Arc<Session>,
     publisher: moqt::Publisher,
     video_codec: String,
-    payload_format: rtsp_decoder::PayloadFormat,
+    payload_format: rtsp_source::PayloadFormat,
     catalog_track: String,
     expected_tracks: HashSet<String>,
     publisher_priority: u8,
@@ -374,12 +374,12 @@ enum MediaTrackKind {
 fn spawn_rtsp_bridge(
     rtsp_url: String,
     codec_label: String,
-    payload_format: rtsp_decoder::PayloadFormat,
+    payload_format: rtsp_source::PayloadFormat,
     tx: mpsc::Sender<RtspPacket>,
     err_tx: std_mpsc::Sender<String>,
 ) {
     std::thread::spawn(move || {
-        rtsp_decoder::run_encoded_url(rtsp_url, codec_label, payload_format, tx, err_tx);
+        rtsp_source::run(rtsp_url, codec_label, payload_format, tx, err_tx);
     });
 }
 
@@ -1422,9 +1422,6 @@ async fn maybe_send_video_catalog_update(
     packet: &EncodedPacket,
 ) -> Result<()> {
     if !packet.is_keyframe {
-        return Ok(());
-    }
-    if packet.description_base64.is_none() {
         return Ok(());
     }
     let Some(codec) = packet.codec.as_deref() else {

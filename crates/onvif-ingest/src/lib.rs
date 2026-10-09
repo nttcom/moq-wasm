@@ -8,7 +8,7 @@ pub mod onvif_services;
 pub mod onvif_stream_uri;
 pub mod ptz_config;
 pub mod ptz_worker;
-pub mod rtsp_decoder;
 pub mod rtsp_frame;
+pub mod rtsp_source;
 pub mod soap_client;
 pub mod wsse_auth;
