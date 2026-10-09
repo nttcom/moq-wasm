@@ -172,7 +172,6 @@ async fn main() -> Result<()> {
         profile_tracks,
         command_namespace,
         command_track: args.command_track,
-        command_subscriber: Some(command_subscriber),
         command_sender,
         command_subscribe_priority: args.subscriber_priority,
     })
@@ -194,7 +193,6 @@ struct BridgeContext {
     profile_tracks: Vec<ProfileTrack>,
     command_namespace: String,
     command_track: String,
-    command_subscriber: Option<moqt::Subscriber>,
     command_sender: std_mpsc::Sender<ptz_worker::Command>,
     command_subscribe_priority: u8,
 }
@@ -213,7 +211,6 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
         profile_tracks,
         command_namespace,
         command_track,
-        mut command_subscriber,
         command_sender,
         command_subscribe_priority,
     } = ctx;
@@ -230,7 +227,7 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
     let mut dump_state = dump_keyframe.map(KeyframeDump::new);
     let mut catalog_state = CatalogUpdateState::new();
     let mut rtsp_started = false;
-    let mut command_subscription_active = false;
+    let mut command_receiver: Option<CommandReceiver> = None;
 
     loop {
         if !rtsp_started {
@@ -250,12 +247,12 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
                 &mut audio_publication,
                 &mut video_state,
                 &mut audio_state,
-                &mut command_subscriber,
+                &session,
                 &command_namespace,
                 &command_track,
                 &command_sender,
                 command_subscribe_priority,
-                &mut command_subscription_active,
+                &mut command_receiver,
             )
             .await?
             {
@@ -288,12 +285,12 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
                     &mut audio_publication,
                     &mut video_state,
                     &mut audio_state,
-                    &mut command_subscriber,
+                    &session,
                     &command_namespace,
                     &command_track,
                     &command_sender,
                     command_subscribe_priority,
-                    &mut command_subscription_active,
+                    &mut command_receiver,
                 ).await? {
                     spawn_rtsp_bridge(
                         start_profile.rtsp_url.clone(),
@@ -399,12 +396,12 @@ async fn handle_session_event(
     audio_publication: &mut Option<Subscription>,
     video_state: &mut VideoStreamState,
     audio_state: &mut AudioStreamState,
-    command_subscriber: &mut Option<moqt::Subscriber>,
+    session: &Session,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
     command_subscribe_priority: u8,
-    command_subscription_active: &mut bool,
+    command_receiver: &mut Option<CommandReceiver>,
 ) -> Result<Option<ProfileTrack>> {
     match event {
         SessionEvent::Subscribe(handler) => {
@@ -436,12 +433,12 @@ async fn handle_session_event(
         SessionEvent::PublishNamespace(handler) => {
             handle_command_namespace_announce(
                 handler,
-                command_subscriber,
+                session,
                 command_namespace,
                 command_track,
                 command_sender,
                 command_subscribe_priority,
-                command_subscription_active,
+                command_receiver,
             )
             .await?;
             Ok(None)
@@ -449,12 +446,12 @@ async fn handle_session_event(
         SessionEvent::Publish(handler) => {
             handle_command_publish_event(
                 handler,
-                command_subscriber,
+                session,
                 command_namespace,
                 command_track,
                 command_sender,
                 command_subscribe_priority,
-                command_subscription_active,
+                command_receiver,
             )
             .await?;
             Ok(None)
@@ -496,11 +493,20 @@ async fn handle_session_event(
                 .await;
             Ok(None)
         }
+        SessionEvent::PublishDone(handler) => {
+            if command_receiver
+                .as_ref()
+                .is_some_and(|receiver| receiver.request_id == handler.request_id())
+            {
+                log::info!("command publisher finished; waiting for the next command publisher");
+                *command_receiver = None;
+            }
+            Ok(None)
+        }
         event @ (SessionEvent::GoAway(_)
         | SessionEvent::MaxRequestId(_)
         | SessionEvent::RequestsBlocked(_)
         | SessionEvent::PublishNamespaceCancel(_)
-        | SessionEvent::PublishDone(_)
         | SessionEvent::SubscribeUpdate(_)
         | SessionEvent::Fetch(_)
         | SessionEvent::FetchCancel(_)
@@ -632,12 +638,12 @@ async fn handle_media_subscribe_event(
 
 async fn handle_command_namespace_announce(
     handler: moqt::PublishNamespaceHandler,
-    command_subscriber: &mut Option<moqt::Subscriber>,
+    session: &Session,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
     command_subscribe_priority: u8,
-    command_subscription_active: &mut bool,
+    command_receiver: &mut Option<CommandReceiver>,
 ) -> Result<()> {
     let announced_namespace = handler.track_namespace.clone();
     handler.ok().await?;
@@ -650,24 +656,24 @@ async fn handle_command_namespace_announce(
         return Ok(());
     }
     ensure_command_track_subscription(
-        command_subscriber,
+        session,
         command_namespace,
         command_track,
         command_sender,
         command_subscribe_priority,
-        command_subscription_active,
+        command_receiver,
     )
     .await
 }
 
 async fn handle_command_publish_event(
     handler: moqt::PublishHandler,
-    command_subscriber: &mut Option<moqt::Subscriber>,
+    session: &Session,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
     command_subscribe_priority: u8,
-    command_subscription_active: &mut bool,
+    command_receiver: &mut Option<CommandReceiver>,
 ) -> Result<()> {
     if handler.track_namespace != command_namespace || handler.track_name != command_track {
         log::warn!(
@@ -680,7 +686,10 @@ async fn handle_command_publish_event(
             .await;
         return Ok(());
     }
-    if *command_subscription_active {
+    if command_receiver
+        .as_ref()
+        .is_some_and(CommandReceiver::is_running)
+    {
         log::info!(
             "Command publish received after subscription already active: ns={} track={}",
             handler.track_namespace,
@@ -701,8 +710,11 @@ async fn handle_command_publish_event(
         .await
         .context("accept command publish")?;
     let track_alias = subscription.track_alias();
-    spawn_command_receiver(command_subscriber, subscription, command_sender.clone())?;
-    *command_subscription_active = true;
+    *command_receiver = Some(CommandReceiver::run(
+        session.subscriber(),
+        subscription,
+        command_sender.clone(),
+    ));
     log::info!(
         "Accepted command publish via SUBSCRIBE_NAMESPACE discovery: ns={} track={} alias={}",
         command_namespace,
@@ -713,20 +725,21 @@ async fn handle_command_publish_event(
 }
 
 async fn ensure_command_track_subscription(
-    command_subscriber: &mut Option<moqt::Subscriber>,
+    session: &Session,
     command_namespace: &str,
     command_track: &str,
     command_sender: &std_mpsc::Sender<ptz_worker::Command>,
     command_subscribe_priority: u8,
-    command_subscription_active: &mut bool,
+    command_receiver: &mut Option<CommandReceiver>,
 ) -> Result<()> {
-    if *command_subscription_active {
+    if command_receiver
+        .as_ref()
+        .is_some_and(CommandReceiver::is_running)
+    {
         return Ok(());
     }
 
-    let Some(subscriber) = command_subscriber.as_mut() else {
-        bail!("command subscriber is unavailable")
-    };
+    let mut subscriber = session.subscriber();
 
     let subscription = subscriber
         .subscribe(
@@ -747,8 +760,11 @@ async fn ensure_command_track_subscription(
             )
         })?;
     let track_alias = subscription.track_alias();
-    spawn_command_receiver(command_subscriber, subscription, command_sender.clone())?;
-    *command_subscription_active = true;
+    *command_receiver = Some(CommandReceiver::run(
+        subscriber,
+        subscription,
+        command_sender.clone(),
+    ));
     log::info!(
         "Command track subscribed after namespace announce: ns={} track={} alias={}",
         command_namespace,
@@ -1615,43 +1631,63 @@ async fn connect_session(
     ))
 }
 
-fn spawn_command_receiver(
-    subscriber: &mut Option<moqt::Subscriber>,
-    subscription: moqt::Subscription,
-    command_sender: std_mpsc::Sender<ptz_worker::Command>,
-) -> Result<()> {
-    let Some(mut subscriber) = subscriber.take() else {
-        bail!("command subscriber is unavailable")
-    };
-    tokio::spawn(async move {
-        let receiver = match subscriber.accept_data_receiver(&subscription).await {
-            Ok(receiver) => receiver,
-            Err(err) => {
-                log::warn!("command accept_data_receiver failed: {err}");
-                return;
-            }
-        };
-        let DataReceiver::Stream(factory) = receiver else {
-            log::warn!("command track is not delivered on subgroup streams");
-            return;
-        };
-        let mut reader = TrackReader::new(factory);
-        loop {
-            match reader.next_object().await {
-                Ok(Some(object)) => {
-                    if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
-                        log::warn!("command payload error: {err}");
-                    }
-                }
-                Ok(None) => {
-                    log::warn!("command track ended");
+/// Dropped once the command track ends or its publisher sends PUBLISH_DONE, so
+/// the next publisher to announce the namespace is subscribed again.
+struct CommandReceiver {
+    request_id: u64,
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl CommandReceiver {
+    fn run(
+        mut subscriber: moqt::Subscriber,
+        subscription: moqt::Subscription,
+        command_sender: std_mpsc::Sender<ptz_worker::Command>,
+    ) -> Self {
+        let request_id = subscription.request_id();
+        let join_handle = tokio::spawn(async move {
+            let receiver = match subscriber.accept_data_receiver(&subscription).await {
+                Ok(receiver) => receiver,
+                Err(err) => {
+                    log::warn!("command accept_data_receiver failed: {err}");
                     return;
                 }
-                Err(err) => log::warn!("command subgroup receive failed: {err}"),
+            };
+            let DataReceiver::Stream(factory) = receiver else {
+                log::warn!("command track is not delivered on subgroup streams");
+                return;
+            };
+            let mut reader = TrackReader::new(factory);
+            loop {
+                match reader.next_object().await {
+                    Ok(Some(object)) => {
+                        if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
+                            log::warn!("command payload error: {err}");
+                        }
+                    }
+                    Ok(None) => {
+                        log::info!("command track ended; waiting for the next command publisher");
+                        return;
+                    }
+                    Err(err) => log::warn!("command subgroup receive failed: {err}"),
+                }
             }
+        });
+        Self {
+            request_id,
+            join_handle,
         }
-    });
-    Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        !self.join_handle.is_finished()
+    }
+}
+
+impl Drop for CommandReceiver {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
 }
 
 fn empty_extension_headers() -> ExtensionHeaders {
