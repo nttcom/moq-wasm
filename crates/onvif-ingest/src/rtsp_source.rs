@@ -6,7 +6,6 @@ use gstreamer::prelude::*;
 use gstreamer_app::{AppSink, AppSinkCallbacks};
 use mediapack::aac::AudioSpecificConfig;
 use mediapack::h264::{annexb_to_avcc, AvcDecoderConfigurationRecord, ParameterSetTracker};
-use std::sync::mpsc::Sender;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender as TokioSender;
 
@@ -30,18 +29,6 @@ pub enum PayloadFormat {
 }
 
 pub fn run(
-    url: String,
-    fallback_video_codec: String,
-    payload_format: PayloadFormat,
-    packet_sender: TokioSender<RtspPacket>,
-    error_sender: Sender<String>,
-) {
-    if let Err(err) = stream(&url, payload_format, fallback_video_codec, packet_sender) {
-        let _ = error_sender.send(format!("{err:#}"));
-    }
-}
-
-fn stream(
     url: &str,
     payload_format: PayloadFormat,
     fallback_video_codec: String,
@@ -86,22 +73,17 @@ fn attach_branch(
         .and_then(|structure| structure.get::<&str>("encoding-name").ok())
         .unwrap_or_default()
         .to_owned();
-    let (description, callbacks) = match branch_description(&encoding) {
-        H264_BRANCH => (
-            H264_BRANCH,
-            Some(appsink_callbacks(
-                packet_sender.clone(),
-                move |_, data, timing| Ok(video.packetize(data, timing)?.map(RtspPacket::Video)),
-            )),
-        ),
+    let description = branch_description(&encoding);
+    let callbacks = match description {
+        H264_BRANCH => Some(appsink_callbacks(
+            packet_sender.clone(),
+            move |_, data, timing| Ok(video.packetize(data, timing)?.map(RtspPacket::Video)),
+        )),
         UNSUPPORTED_BRANCH => {
             log::warn!("RTSP stream with encoding {encoding:?} is not bridged");
-            (UNSUPPORTED_BRANCH, None)
+            None
         }
-        audio => (
-            audio,
-            Some(appsink_callbacks(packet_sender.clone(), audio_packet)),
-        ),
+        _ => Some(appsink_callbacks(packet_sender.clone(), audio_packet)),
     };
     let branch = gst::parse::bin_from_description(description, true)
         .with_context(|| format!("build RTSP branch for {encoding}"))?;
@@ -164,10 +146,43 @@ fn audio_packet(
     let Some(caps) = sample.caps() else {
         return Ok(None);
     };
-    let format = AudioFormat::from_caps(caps)?;
-    Ok(Some(RtspPacket::Audio(
-        format.packet(data.to_vec(), timing),
-    )))
+    let structure = caps.structure(0).context("audio caps are empty")?;
+    let rate = structure
+        .get::<i32>("rate")
+        .ok()
+        .and_then(|rate| u32::try_from(rate).ok());
+    let channel_count = structure
+        .get::<i32>("channels")
+        .ok()
+        .and_then(|channels| u8::try_from(channels).ok());
+    let (codec, description_base64, sample_rate, channels) = match structure.name().as_str() {
+        "audio/x-alaw" => ("pcma".to_string(), None, rate, channel_count),
+        "audio/x-opus" => ("opus".to_string(), None, rate, channel_count),
+        "audio/mpeg" => {
+            let codec_data = structure
+                .get::<gst::Buffer>("codec_data")
+                .context("AAC caps without codec_data")?;
+            let codec_data = codec_data.map_readable()?;
+            let config = AudioSpecificConfig::parse(codec_data.as_slice())?;
+            (
+                config.codec_string(),
+                Some(general_purpose::STANDARD.encode(codec_data.as_slice())),
+                Some(config.sample_rate),
+                Some(config.channel_count()),
+            )
+        }
+        other => bail!("unsupported audio caps {other}"),
+    };
+    Ok(Some(RtspPacket::Audio(EncodedAudioPacket {
+        data: data.to_vec(),
+        timestamp_us: timing.timestamp_us,
+        ingest_wallclock_micros: timing.ingest_wallclock_micros,
+        duration_us: timing.duration_us,
+        codec,
+        description_base64,
+        sample_rate,
+        channels,
+    })))
 }
 
 fn wait_for_end(bus: &gst::Bus) -> Result<()> {
@@ -263,70 +278,6 @@ impl VideoPacketizer {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct AudioFormat {
-    codec: String,
-    description_base64: Option<String>,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-}
-
-impl AudioFormat {
-    fn from_caps(caps: &gst::CapsRef) -> Result<Self> {
-        let structure = caps.structure(0).context("audio caps are empty")?;
-        let sample_rate = structure
-            .get::<i32>("rate")
-            .ok()
-            .and_then(|rate| u32::try_from(rate).ok());
-        let channels = structure
-            .get::<i32>("channels")
-            .ok()
-            .and_then(|channels| u8::try_from(channels).ok());
-        match structure.name().as_str() {
-            name @ ("audio/x-alaw" | "audio/x-opus") => Ok(Self {
-                codec: if name == "audio/x-alaw" {
-                    "pcma"
-                } else {
-                    "opus"
-                }
-                .to_string(),
-                description_base64: None,
-                sample_rate,
-                channels,
-            }),
-            "audio/mpeg" => {
-                let codec_data = structure
-                    .get::<gst::Buffer>("codec_data")
-                    .context("AAC caps without codec_data")?;
-                let codec_data = codec_data.map_readable()?;
-                let config = AudioSpecificConfig::parse(codec_data.as_slice())?;
-                Ok(Self {
-                    codec: config.codec_string(),
-                    description_base64: Some(
-                        general_purpose::STANDARD.encode(codec_data.as_slice()),
-                    ),
-                    sample_rate: Some(config.sample_rate),
-                    channels: Some(config.channel_count()),
-                })
-            }
-            other => bail!("unsupported audio caps {other}"),
-        }
-    }
-
-    fn packet(&self, data: Vec<u8>, timing: MediaTiming) -> EncodedAudioPacket {
-        EncodedAudioPacket {
-            data,
-            timestamp_us: timing.timestamp_us,
-            ingest_wallclock_micros: timing.ingest_wallclock_micros,
-            duration_us: timing.duration_us,
-            codec: self.codec.clone(),
-            description_base64: self.description_base64.clone(),
-            sample_rate: self.sample_rate,
-            channels: self.channels,
-        }
-    }
-}
-
 pub fn now_micros() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -365,6 +316,14 @@ mod tests {
 
     fn packetize(packetizer: &mut VideoPacketizer, access_unit: &[u8]) -> EncodedPacket {
         packetizer.packetize(access_unit, TIMING).unwrap().unwrap()
+    }
+
+    fn audio_packet_with(caps: gst::Caps) -> EncodedAudioPacket {
+        let sample = gst::Sample::builder().caps(&caps).build();
+        match audio_packet(&sample, &[], TIMING).unwrap() {
+            Some(RtspPacket::Audio(packet)) => packet,
+            _ => panic!("caps did not produce an audio packet"),
+        }
     }
 
     #[test]
@@ -449,17 +408,14 @@ mod tests {
             .build();
 
         // Act
-        let format = AudioFormat::from_caps(&caps).unwrap();
+        let packet = audio_packet_with(caps);
 
         // Assert
+        assert_eq!(packet.codec, "pcma");
+        assert_eq!(packet.description_base64, None);
         assert_eq!(
-            format,
-            AudioFormat {
-                codec: "pcma".to_string(),
-                description_base64: None,
-                sample_rate: Some(8_000),
-                channels: Some(1),
-            }
+            (packet.sample_rate, packet.channels),
+            (Some(8_000), Some(1))
         );
     }
 
@@ -474,16 +430,16 @@ mod tests {
             .build();
 
         // Act
-        let format = AudioFormat::from_caps(&caps).unwrap();
+        let packet = audio_packet_with(caps);
 
         // Assert
-        assert_eq!(format.codec, "mp4a.40.2");
+        assert_eq!(packet.codec, "mp4a.40.2");
         assert_eq!(
-            format.description_base64,
+            packet.description_base64,
             Some(general_purpose::STANDARD.encode(&config))
         );
         assert_eq!(
-            (format.sample_rate, format.channels),
+            (packet.sample_rate, packet.channels),
             (Some(48_000), Some(2))
         );
     }

@@ -367,7 +367,9 @@ fn spawn_rtsp_bridge(
     err_tx: std_mpsc::Sender<String>,
 ) {
     std::thread::spawn(move || {
-        rtsp_source::run(rtsp_url, codec_label, payload_format, tx, err_tx);
+        if let Err(err) = rtsp_source::run(&rtsp_url, payload_format, codec_label, tx) {
+            let _ = err_tx.send(format!("{err:#}"));
+        }
     });
 }
 
