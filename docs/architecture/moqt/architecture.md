@@ -262,9 +262,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 - `SubscriptionNotifier` routes incoming objects by track alias into
   `SessionContext::object_sinks`.
-- `FetchNotifier` routes FETCH streams by request id.
-- `IncomingObject` is the internal envelope (`StreamHeader` / `Datagram` /
-  `Fetch`).
+- `FetchNotifier` routes FETCH streams by request id as a
+  `FetchDataReceiver`.
+- `IncomingObject` is the per-track-alias envelope (`StreamHeader` /
+  `Datagram`); FETCH streams never enter the per-track channel.
 
 ## Key invariants
 

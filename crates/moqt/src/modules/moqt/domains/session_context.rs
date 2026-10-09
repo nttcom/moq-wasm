@@ -25,7 +25,9 @@ use crate::{
                 },
                 enums::{RequestId, ResponseMessage},
             },
-            data_plane::stream::bi_stream_sender::BiStreamSender,
+            data_plane::stream::{
+                bi_stream_sender::BiStreamSender, fetch_data_receiver::FetchDataReceiver,
+            },
             runtime::dispatch::incoming_object::IncomingObject,
         },
         transport::transport_send_stream::TransportSendError,
@@ -92,9 +94,9 @@ pub(crate) struct SessionContext {
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<IncomingObject>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
     pub(crate) fetch_receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
+        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
 }
 
 enum ObjectSink {
