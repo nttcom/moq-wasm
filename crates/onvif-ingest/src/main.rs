@@ -1231,7 +1231,7 @@ impl AudioStreamState {
             SubgroupId::None,
             publisher_priority,
             false,
-            false,
+            true,
         );
         let stream = uninit_stream.send_header(header).await?;
         self.stream = Some(stream);
