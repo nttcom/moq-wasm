@@ -1,8 +1,10 @@
+import asyncio
+
 import pytest
 
 from moq_ptz_tracking import djev_status
 from moq_ptz_tracking.djev_status import IDLE_STOP_SECONDS, DjevStatus
-from tests.helpers import STATUS_TRACK_NAME, next_status, published_status
+from tests.helpers import READ_TIMEOUT_SECONDS, STATUS_TRACK_NAME, next_status, published_status
 
 
 class FakeClock:
@@ -86,3 +88,17 @@ async def test_failed_request_reports_ready_again():
 
     # Assert
     assert await next_status(track) == "ready"
+
+
+async def test_each_status_is_a_finished_group_of_one_object():
+    # Arrange
+    status = DjevStatus(STATUS_TRACK_NAME)
+    track = await published_status(status)
+
+    # Act
+    group = await asyncio.wait_for(track.next_group(), READ_TIMEOUT_SECONDS)
+    frames = [await asyncio.wait_for(group.read_frame(), READ_TIMEOUT_SECONDS) for _ in range(2)]
+
+    # Assert
+    assert frames[0] is not None
+    assert frames[1] is None

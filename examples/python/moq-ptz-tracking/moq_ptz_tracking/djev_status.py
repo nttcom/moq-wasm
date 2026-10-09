@@ -85,3 +85,4 @@ class DjevStatus:
         group.write_frame(
             json.dumps({"djev": self._state, "since": self._since_ms}, separators=(",", ":")).encode()
         )
+        group.finish()
