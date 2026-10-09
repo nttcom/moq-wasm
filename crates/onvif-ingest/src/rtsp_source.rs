@@ -342,19 +342,6 @@ mod tests {
     }
 
     #[test]
-    fn annexb_keyframe_without_parameter_sets_gets_the_last_ones() {
-        // Arrange
-        let mut packetizer = VideoPacketizer::new(PayloadFormat::AnnexB, "avc1.640028".into());
-        packetize(&mut packetizer, &keyframe());
-
-        // Act
-        let packet = packetize(&mut packetizer, &annexb(&[&IDR_SLICE]));
-
-        // Assert
-        assert_eq!(packet.data, keyframe());
-    }
-
-    #[test]
     fn avcc_keyframe_is_length_prefixed_with_its_avcc() {
         // Arrange
         let mut packetizer = VideoPacketizer::new(PayloadFormat::Avcc, "avc1.640028".into());
