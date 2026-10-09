@@ -140,6 +140,62 @@
         grid-area: djev;
       }
 
+      .flow.observability-flow {
+        display: grid;
+        grid-template-areas:
+          'client-a client-a-link relay-a relay-link relay-b client-b-link client-b'
+          '. . . . relay-c-link . .'
+          '. . . . relay-c . .'
+          '. . . . observability-link . .'
+          '. . . observability observability observability .';
+        justify-content: center;
+        justify-items: center;
+      }
+
+      .obs-client-a {
+        grid-area: client-a;
+      }
+
+      .obs-client-a-link {
+        grid-area: client-a-link;
+      }
+
+      .obs-relay-a {
+        grid-area: relay-a;
+      }
+
+      .obs-relay-link {
+        grid-area: relay-link;
+      }
+
+      .obs-relay-b {
+        grid-area: relay-b;
+      }
+
+      .obs-client-b-link {
+        grid-area: client-b-link;
+      }
+
+      .obs-client-b {
+        grid-area: client-b;
+      }
+
+      .obs-relay-c-link {
+        grid-area: relay-c-link;
+      }
+
+      .obs-relay-c {
+        grid-area: relay-c;
+      }
+
+      .obs-observability-link {
+        grid-area: observability-link;
+      }
+
+      .obs-observability {
+        grid-area: observability;
+      }
+
       .card-head {
         display: flex;
         flex-wrap: wrap;
@@ -430,6 +486,18 @@
         <rect width="8" height="8" x="13" y="13" rx="2" />
       </symbol>
       <symbol
+        id="icon-globe"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol
         id="icon-brain-circuit"
         viewBox="0 0 24 24"
         fill="none"
@@ -675,8 +743,35 @@
         </div>
         <div class="grid">
           <a class="card" href="examples/observability/index.html">
-            <h3>Observability</h3>
-            <p>Relay の通信状況と Pub/Sub をトポロジーで表示する</p>
+            <div class="card-head">
+              <h3>Observability</h3>
+              <p>Relay の通信状況と Pub/Sub をトポロジーで表示する</p>
+            </div>
+            <p class="flow observability-flow">
+              <span class="node obs-client-a"
+                ><svg><use href="#icon-monitor" /></svg>Client</span
+              >
+              <span class="link obs-client-a-link">↔</span>
+              <span class="node relay obs-relay-a"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link obs-relay-link">↔</span>
+              <span class="node relay obs-relay-b"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link obs-client-b-link">↔</span>
+              <span class="node obs-client-b"
+                ><svg><use href="#icon-monitor" /></svg>Client</span
+              >
+              <span class="link obs-relay-c-link">↕</span>
+              <span class="node relay obs-relay-c"
+                ><svg><use href="#icon-server" /></svg>Relay</span
+              >
+              <span class="link obs-observability-link">↕</span>
+              <span class="node cloud obs-observability"
+                ><svg><use href="#icon-globe" /></svg>Observability</span
+              >
+            </p>
             <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
