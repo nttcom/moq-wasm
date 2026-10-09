@@ -88,7 +88,7 @@ class PromptPublisher {
   latestGroupId: bigint | undefined
 
   constructor(
-    private readonly client: MOQTClient,
+    private readonly session: MoqtClientWrapper,
     readonly requestId: bigint,
     private readonly trackAlias: bigint
   ) {}
@@ -98,17 +98,7 @@ class PromptPublisher {
     const groupId = this.nextGroupId++
     this.latestGroupId = groupId
     const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-    await this.client.sendSubgroupObject(this.trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      groupId,
-      SUBGROUP_ID,
-      1n,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    await this.session.sendSingleObjectGroup(this.trackAlias, groupId, payload)
   }
 }
 
@@ -245,7 +235,7 @@ async function acceptDetectorSubscriber({
     setVideoSender(new GopSender(client, subscribe.requestId, trackAlias))
     encoderWorker?.postMessage({ type: 'forceKeyframe' })
   } else {
-    promptPublisher = new PromptPublisher(client, subscribe.requestId, trackAlias)
+    promptPublisher = new PromptPublisher(session, subscribe.requestId, trackAlias)
     await sendPrompt()
   }
 }
