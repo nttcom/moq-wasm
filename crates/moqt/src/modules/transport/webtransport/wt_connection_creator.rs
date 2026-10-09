@@ -19,7 +19,7 @@ use crate::modules::transport::{
 
 enum WtEndpoint {
     Server(tokio::sync::Mutex<web_transport_quinn::Server>),
-    Client(web_transport_quinn::Client),
+    Client(quinn::ClientConfig),
 }
 
 pub struct WtConnectionCreator {
@@ -36,10 +36,7 @@ impl WtConnectionCreator {
             endpoint.local_addr()?
         );
         Ok(WtConnectionCreator {
-            endpoint: WtEndpoint::Client(web_transport_quinn::Client::new(
-                endpoint.clone(),
-                client_config,
-            )),
+            endpoint: WtEndpoint::Client(client_config),
             quic_endpoint: endpoint,
         })
     }
@@ -90,8 +87,8 @@ impl TransportConnectionCreator for WtConnectionCreator {
         &self,
         target: &ConnectTarget,
     ) -> anyhow::Result<BoxedConnection> {
-        let client = match &self.endpoint {
-            WtEndpoint::Client(c) => c,
+        let client_config = match &self.endpoint {
+            WtEndpoint::Client(client_config) => client_config,
             WtEndpoint::Server(_) => {
                 anyhow::bail!("Cannot create_new_transport on a server endpoint")
             }
@@ -102,8 +99,10 @@ impl TransportConnectionCreator for WtConnectionCreator {
                 target.url
             );
         }
-        let session = client
-            .connect(target.url.clone())
+        let connection = target
+            .connect_quic(&self.quic_endpoint, client_config.clone())
+            .await?;
+        let session = web_transport_quinn::Session::connect(connection, target.url.clone())
             .await
             .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
 
@@ -134,5 +133,27 @@ impl TransportConnectionCreator for WtConnectionCreator {
 
     async fn wait_idle(&self) {
         self.quic_endpoint.wait_idle().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        Endpoint, WEBTRANSPORT,
+        modules::test_support::{connect_sessions_from, insecure_client_config, spawn_dual_server},
+    };
+
+    #[tokio::test]
+    async fn web_transport_client_connects_to_a_host_name() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("wt-localhost");
+        let client = Endpoint::<WEBTRANSPORT>::create_client(&insecure_client_config()).unwrap();
+
+        // Act
+        let result =
+            connect_sessions_from(&client, &format!("https://localhost:{port}/moq"), accept).await;
+
+        // Assert
+        result.unwrap();
     }
 }
