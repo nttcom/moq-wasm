@@ -7,7 +7,7 @@ from pipecat.tests.utils import SleepFrame, run_test
 
 from moq_ptz_tracking.ptz import PtzCalibration
 from moq_ptz_tracking.target import LatestTarget
-from moq_ptz_tracking.tracker import SETTLE_SECONDS, STALE_PICTURE_SECONDS, CameraPicture, PtzTracker
+from moq_ptz_tracking.tracker import SETTLE_SECONDS, CameraPicture, PtzTracker
 from moq_ptz_tracking.vision import Answer, Position
 from tests.helpers import (
     MUG_TARGET,
@@ -42,10 +42,11 @@ class StoppingVision:
         return OFF_CENTER
 
 
-async def tracker_with(vision):
+async def tracker_with(vision, latest_target: LatestTarget | None = None):
     timeline, group = await published_timeline()
     commands, command_track = await published_commands()
-    return PtzTracker(vision, timeline, commands, CALIBRATION, tracking(MUG_TARGET)), group, command_track
+    latest_target = latest_target or tracking(MUG_TARGET)
+    return PtzTracker(vision, timeline, commands, CALIBRATION, latest_target), group, command_track
 
 
 async def test_off_center_target_moves_the_camera_and_records_where_it_was():
@@ -116,28 +117,10 @@ async def test_picture_arriving_while_another_is_located_is_skipped():
     assert len(vision.images) == 1
 
 
-async def test_stale_picture_is_not_located():
-    # Arrange
-    vision = StubVision(OFF_CENTER)
-    tracker, _, _ = await tracker_with(vision)
-
-    # Act
-    await run_test(
-        tracker,
-        frames_to_send=[picture((43, 0), decoded_at=time.monotonic() - STALE_PICTURE_SECONDS - 1)],
-        expected_down_frames=[],
-    )
-
-    # Assert
-    assert vision.images == []
-
-
 async def test_answer_for_a_target_stopped_meanwhile_does_not_move_the_camera():
     # Arrange
-    timeline, group = await published_timeline()
-    commands, command_track = await published_commands()
     latest_target = tracking(MUG_TARGET)
-    tracker = PtzTracker(StoppingVision(latest_target), timeline, commands, CALIBRATION, latest_target)
+    tracker, group, command_track = await tracker_with(StoppingVision(latest_target), latest_target)
 
     # Act
     await run_test(tracker, frames_to_send=[picture((44, 0)), SleepFrame()], expected_down_frames=[])

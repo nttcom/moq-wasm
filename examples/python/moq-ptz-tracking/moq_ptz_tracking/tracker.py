@@ -12,7 +12,6 @@ from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands, PtzMove
 from moq_ptz_tracking.target import LatestTarget, Target
 from moq_ptz_tracking.vision import Answer, DjevVisionClient, Position
 
-STALE_PICTURE_SECONDS = 2.0
 # The camera stops within 0.3 s of a Stop command, and a picture reaches the bot about 0.4 s after
 # the camera captured it.
 SETTLE_SECONDS = 1.0
@@ -55,8 +54,6 @@ class PtzTracker(FrameProcessor):
             await self.push_frame(frame, direction)
             return
         if self._locating is not None or frame.decoded_at - self._stopped_at < SETTLE_SECONDS:
-            return
-        if time.monotonic() - frame.decoded_at > STALE_PICTURE_SECONDS:
             return
         self._locating = self.create_task(self._locate(frame))
 
