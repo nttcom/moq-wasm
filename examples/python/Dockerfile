@@ -4,6 +4,7 @@ FROM python:3.11-slim-bookworm@sha256:389c808973913a68e42e5c3bc4d169ed1bf52b83a5
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+RUN pip uninstall -y setuptools
 
 WORKDIR /app
 # Copy only what each bot needs: a developer's checkout keeps an untracked .env next to them.
