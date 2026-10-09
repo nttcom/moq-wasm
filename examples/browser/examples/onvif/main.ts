@@ -2,7 +2,7 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
 import { PlayerControls } from '@player/ui/playerControls'
 import type { MOQTClient } from '../../pkg/moqt'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
@@ -23,9 +23,6 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   zoom: 'Zoom',
   speed: 'Speed'
 }
-
-const SUBGROUP_ID = 0n
-const PUBLISHER_PRIORITY = 0
 
 const DEFAULT_VALUES: Record<FieldKey, number> = {
   pan: 0,
@@ -146,17 +143,7 @@ async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void
 
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
   const groupId = nextCommandGroupId++
-  await client.sendSubgroupHeader(commandTrackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-  await client.sendSubgroupObject(commandTrackAlias, groupId, SUBGROUP_ID, 0n, undefined, bytes, undefined)
-  await client.sendSubgroupObject(
-    commandTrackAlias,
-    groupId,
-    SUBGROUP_ID,
-    1n,
-    OBJECT_STATUS_END_OF_GROUP,
-    new Uint8Array(0),
-    undefined
-  )
+  await sendSingleObjectGroup(client, commandTrackAlias, groupId, bytes)
   updateStatus(`sent ${command}`, true)
 }
 

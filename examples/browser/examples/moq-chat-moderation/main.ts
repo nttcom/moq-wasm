@@ -1,6 +1,6 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
@@ -18,8 +18,6 @@ const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', 'moderator']
 const CHAT_TRACK = 'chat'
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
 const AUTH_INFO = ''
-const SUBGROUP_ID = 0n
-const PUBLISHER_PRIORITY = 0
 const LARGEST_OBJECT_FILTER = 0x2
 const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 
@@ -43,19 +41,8 @@ class ChatPublisher {
   }
 
   async send(text: string, location: Location): Promise<void> {
-    const { groupId, objectId } = location
-    await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
     const payload = encodeChatRecord(text, location)
-    await this.client.sendSubgroupObject(this.trackAlias, groupId, SUBGROUP_ID, objectId, undefined, payload, undefined)
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      groupId,
-      SUBGROUP_ID,
-      objectId + 1n,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    await sendSingleObjectGroup(this.client, this.trackAlias, location.groupId, payload)
   }
 }
 

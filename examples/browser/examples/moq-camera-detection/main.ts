@@ -1,6 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
@@ -98,17 +99,7 @@ class PromptPublisher {
     const groupId = this.nextGroupId++
     this.latestGroupId = groupId
     const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-    await this.client.sendSubgroupObject(this.trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      groupId,
-      SUBGROUP_ID,
-      1n,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    await sendSingleObjectGroup(this.client, this.trackAlias, groupId, payload)
   }
 }
 
