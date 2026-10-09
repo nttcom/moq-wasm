@@ -24,7 +24,7 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// picture takes over only while no audio is playing. Every move of the clock
 /// applies from the sample that caused it on, so the frames waiting for their
 /// time move with the sound they belong to. A sample without a capture
-/// timestamp is presented at once.
+/// timestamp is presented at once and leaves the clock alone.
 ///
 /// Playback opens with a warm-up: a subscription starts with a burst of what
 /// the relay had cached of the current groups, so the samples of the first
@@ -260,7 +260,7 @@ export class LivePlayout {
     return nowMs
   }
 
-  private shiftClock(deltaMs: number, fromCaptureMicros: number | undefined): void {
+  private shiftClock(deltaMs: number, fromCaptureMicros: number): void {
     this.clock.shift(deltaMs)
     this.video.shift(deltaMs, fromCaptureMicros)
   }

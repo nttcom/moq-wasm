@@ -28,3 +28,15 @@ test('a timed chunk due now reports the output latency it starts late by as drif
   expect(driftsMs).toHaveLength(1)
   expect(driftsMs[0]).toBeCloseTo(OUTPUT_LATENCY_SECONDS * 1_000)
 })
+
+test('an untimed chunk reports no drift', () => {
+  // Arrange
+  const driftsMs: number[] = []
+  const playout = new AudioPlayout((driftMs) => driftsMs.push(driftMs))
+
+  // Act
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), undefined, (nowMs) => nowMs)
+
+  // Assert
+  expect(driftsMs).toEqual([])
+})
