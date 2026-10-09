@@ -100,7 +100,7 @@ ONVIF カメラは手元のネットワークにあるため、relay・`onvif-in
 | --- | --- | --- | --- |
 | `anon/moq-ptz-tracking/viewer` | `prompt` | ブラウザ | `{"target": "...", "video": "<映像トラック名>"}` で追従を始め、`{"target": null}` で止める。1 件 1 group。対象は 100 文字以内 |
 | `anon/onvif/client` | `video/profile_N` | `onvif-ingest` | H.264 Annex B の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
-| `anon/onvif/viewer` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 件 1 group で `{"type": "relative", ...}` を送る。ONVIF ページも同じトラックに送る |
+| `anon/onvif/viewer` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 回の動きを 1 group にし、`{"type": "continuous", ...}` と `{"type": "stop"}` を順に送る。ONVIF ページも同じトラックに送る |
 | `anon/moq-ptz-tracking/tracker` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す。`data.position` は対象の中心（画面に対する割合）、映っていなければ `"not visible"`、読めなければ `null` |
 | `anon/moq-ptz-tracking/tracker` | `status` | bot | djev-vision の起動状態（[moq-camera-detection](../moq-camera-detection/README.md) と同じ） |
 
