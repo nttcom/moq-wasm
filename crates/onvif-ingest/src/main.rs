@@ -556,7 +556,6 @@ async fn handle_media_subscribe_event(
             alias
         );
         let publication = handler.into_subscription(alias);
-        catalog_state.track_publication = Some(publication.clone());
         log::info!(
             "Sending initial catalog object: namespace={} track={} group_id={} track_alias={}",
             handler.track_namespace,
@@ -564,19 +563,16 @@ async fn handle_media_subscribe_event(
             catalog_state.next_group_id,
             publication.track_alias()
         );
+        catalog_state.track_publication = Some(publication);
         send_catalog(
             publisher,
-            &publication,
-            catalog_state.next_group_id,
+            catalog_state,
             publisher_priority,
             publish_namespace,
-            None,
-            None,
             profile_tracks,
         )
         .await
         .context("send initial catalog object")?;
-        catalog_state.next_group_id += 1;
         return Ok(None);
     }
 
@@ -880,18 +876,18 @@ async fn send_audio_packet(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn send_catalog(
     publisher: &moqt::Publisher,
-    publication: &Subscription,
-    group_id: u64,
+    state: &mut CatalogUpdateState,
     publisher_priority: u8,
     namespace: &[String],
-    video_update: Option<&CatalogVideoUpdate<'_>>,
-    audio_update: Option<&CatalogAudioUpdate<'_>>,
     profiles: &[ProfileTrack],
 ) -> Result<()> {
-    let tracks = build_catalog_tracks(namespace, video_update, audio_update, profiles);
+    let group_id = state.next_group_id;
+    let Some(publication) = state.track_publication.as_ref() else {
+        return Ok(());
+    };
+    let tracks = build_catalog_tracks(namespace, state, profiles);
     let catalog = Catalog {
         version: Some(1),
         delta_update: None,
@@ -907,31 +903,14 @@ async fn send_catalog(
     if was_stopped_by_peer(sent, "catalog")? {
         return Ok(());
     }
-    if let Some(update) = video_update {
-        log::info!(
-            "Catalog sent: tracks={} video_codec={} video_track={} group_id={}",
-            profiles.len(),
-            update.codec,
-            update.track_name,
-            group_id
-        );
-    } else if let Some(update) = audio_update {
-        log::info!(
-            "Catalog sent: tracks={} audio_codec={} audio_track={} sample_rate={:?} channels={:?} group_id={}",
-            profiles.len(),
-            update.codec,
-            update.track_name,
-            update.sample_rate,
-            update.channels,
-            group_id
-        );
-    } else {
-        log::info!(
-            "Catalog sent: tracks={} codec=- group_id={}",
-            profiles.len(),
-            group_id
-        );
-    }
+    log::info!(
+        "Catalog sent: tracks={} video_codec={:?} audio_codec={:?} group_id={}",
+        profiles.len(),
+        state.last_video_codec,
+        state.last_audio.as_ref().map(|audio| &audio.codec),
+        group_id
+    );
+    state.next_group_id += 1;
     Ok(())
 }
 
@@ -1433,18 +1412,6 @@ struct CatalogAudioSnapshot {
     channels: Option<u8>,
 }
 
-struct CatalogVideoUpdate<'a> {
-    track_name: &'a str,
-    codec: &'a str,
-}
-
-struct CatalogAudioUpdate<'a> {
-    track_name: &'a str,
-    codec: &'a str,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-}
-
 async fn maybe_send_video_catalog_update(
     publisher: &moqt::Publisher,
     state: &mut CatalogUpdateState,
@@ -1453,12 +1420,6 @@ async fn maybe_send_video_catalog_update(
     publisher_priority: u8,
     packet: &EncodedPacket,
 ) -> Result<()> {
-    let Some(publication) = state.track_publication.as_ref() else {
-        return Ok(());
-    };
-    let Some(track_name) = state.selected_video_track.as_deref() else {
-        return Ok(());
-    };
     if !packet.is_keyframe {
         return Ok(());
     }
@@ -1471,21 +1432,8 @@ async fn maybe_send_video_catalog_update(
     if state.last_video_codec.as_deref() == Some(codec) {
         return Ok(());
     }
-    let update = CatalogVideoUpdate { track_name, codec };
-    send_catalog(
-        publisher,
-        publication,
-        state.next_group_id,
-        publisher_priority,
-        namespace,
-        Some(&update),
-        None,
-        profiles,
-    )
-    .await?;
     state.last_video_codec = Some(codec.to_string());
-    state.next_group_id += 1;
-    Ok(())
+    send_catalog(publisher, state, publisher_priority, namespace, profiles).await
 }
 
 async fn maybe_send_audio_catalog_update(
@@ -1496,12 +1444,6 @@ async fn maybe_send_audio_catalog_update(
     publisher_priority: u8,
     packet: &EncodedAudioPacket,
 ) -> Result<()> {
-    let Some(publication) = state.track_publication.as_ref() else {
-        return Ok(());
-    };
-    let Some(track_name) = state.selected_audio_track.as_deref() else {
-        return Ok(());
-    };
     let next = CatalogAudioSnapshot {
         codec: packet.codec.clone(),
         sample_rate: packet.sample_rate,
@@ -1510,32 +1452,13 @@ async fn maybe_send_audio_catalog_update(
     if state.last_audio.as_ref() == Some(&next) {
         return Ok(());
     }
-    let update = CatalogAudioUpdate {
-        track_name,
-        codec: next.codec.as_str(),
-        sample_rate: next.sample_rate,
-        channels: next.channels,
-    };
-    send_catalog(
-        publisher,
-        publication,
-        state.next_group_id,
-        publisher_priority,
-        namespace,
-        None,
-        Some(&update),
-        profiles,
-    )
-    .await?;
     state.last_audio = Some(next);
-    state.next_group_id += 1;
-    Ok(())
+    send_catalog(publisher, state, publisher_priority, namespace, profiles).await
 }
 
 fn build_catalog_tracks(
     namespace: &[String],
-    video_update: Option<&CatalogVideoUpdate<'_>>,
-    audio_update: Option<&CatalogAudioUpdate<'_>>,
+    state: &CatalogUpdateState,
     profiles: &[ProfileTrack],
 ) -> Vec<Track> {
     let namespace_label = if namespace.is_empty() {
@@ -1545,12 +1468,15 @@ fn build_catalog_tracks(
     };
     let mut tracks = Vec::with_capacity(profiles.len() * 2);
     for profile in profiles {
-        let video_codec = video_update.and_then(|update| {
-            (update.track_name == profile.video_track_name).then(|| update.codec.to_string())
-        });
-        let audio_codec = audio_update.and_then(|update| {
-            (update.track_name == profile.audio_track_name).then(|| update.codec.to_string())
-        });
+        let video_codec = state
+            .last_video_codec
+            .clone()
+            .filter(|_| state.selected_video_track.as_ref() == Some(&profile.video_track_name));
+        let audio = state
+            .last_audio
+            .as_ref()
+            .filter(|_| state.selected_audio_track.as_ref() == Some(&profile.audio_track_name));
+        let audio_codec = audio.map(|audio| audio.codec.clone());
         let base_label = profile
             .name
             .clone()
@@ -1612,17 +1538,10 @@ fn build_catalog_tracks(
             bitrate: None,
             width: None,
             height: None,
-            sample_rate: audio_update
-                .and_then(|update| {
-                    (update.track_name == profile.audio_track_name).then_some(update.sample_rate)
-                })
-                .flatten(),
-            channel_config: audio_update
-                .and_then(|update| {
-                    (update.track_name == profile.audio_track_name)
-                        .then(|| update.channels.map(channel_config_label))
-                })
-                .flatten(),
+            sample_rate: audio.and_then(|audio| audio.sample_rate),
+            channel_config: audio
+                .and_then(|audio| audio.channels)
+                .map(channel_config_label),
             display_width: None,
             display_height: None,
             lang: None,
