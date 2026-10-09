@@ -67,7 +67,7 @@ const player = new LivePlayer({
   container: element('stage'),
   callbacks: {
     onStateChange: followSelectedVideoTrack,
-    onLiveFrame: () => {},
+    onLiveFrame: renderViewerDelay,
     onLog: (level, message) => console[level](`[moq-ptz-tracking] ${message}`)
   }
 })
@@ -83,6 +83,7 @@ const targetInput = element<HTMLInputElement>('target')
 const stopButton = element<HTMLButtonElement>('stopBtn')
 const positionLabel = element<HTMLSpanElement>('position')
 const moveLabel = element<HTMLSpanElement>('move')
+const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 const djevStatus = new DjevStatusView(element('djev-status'))
 
 configureRelayUrlControls({ defaultUrl: DEFAULT_LOCAL_RELAY_A_URL })
@@ -137,6 +138,7 @@ async function leave(): Promise<void> {
 
 async function resetSession(connectionText: string, connectionState: StatusState): Promise<void> {
   await player.stop()
+  viewerDelayLabel.textContent = ''
   djevStatus.reset()
   setPromptPublisher(undefined)
   sentPrompt = { target: null }
@@ -251,6 +253,11 @@ function pendingText(): string {
     return '停止中'
   }
   return sentPrompt.target === null ? '映像を待っています' : '判定待ち'
+}
+
+function renderViewerDelay(): void {
+  const { viewerDelayMs } = player.stats()
+  viewerDelayLabel.textContent = viewerDelayMs === undefined ? '' : `delay ${Math.round(viewerDelayMs)} ms`
 }
 
 function formatStep(step: number): string {
