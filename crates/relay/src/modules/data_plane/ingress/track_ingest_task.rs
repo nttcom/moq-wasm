@@ -176,11 +176,13 @@ impl Drop for TrackIngestTask {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::modules::{
-        session::data_receiver::stream_receiver::StreamReceiver,
+        session::{data_receiver::stream_receiver::StreamReceiver, session_event::EventKind},
         test_support::relay_harness::{
-            UpstreamSubgroupStream, fixtures::location, wait_largest_location,
+            UpstreamDatagrams, UpstreamSubgroupStream, fixtures::location, wait_largest_location,
         },
     };
 
@@ -220,7 +222,7 @@ mod tests {
         _task: TrackIngestTask,
         command_sender: mpsc::Sender<IngestCommand>,
         cache_store: Arc<TrackCacheStore>,
-        _session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
+        session_event_receiver: mpsc::UnboundedReceiver<SessionEvent>,
     }
 
     impl IngestContext {
@@ -236,7 +238,7 @@ mod tests {
                 ),
                 command_sender,
                 cache_store,
-                _session_event_receiver: session_event_receiver,
+                session_event_receiver,
             }
         }
 
@@ -256,6 +258,19 @@ mod tests {
             UpstreamPublisher { stream_sender }
         }
 
+        async fn start_datagrams(&self, publisher_session_id: SessionId) -> UpstreamDatagrams {
+            let (datagrams, receiver) = UpstreamDatagrams::open();
+            self.command_sender
+                .send(IngestCommand::Start(IngestStart {
+                    track_key: track_key(),
+                    publisher_session_id,
+                    source: IngestSource::Datagram(receiver),
+                }))
+                .await
+                .unwrap();
+            datagrams
+        }
+
         async fn stop(&self, publisher_session_id: SessionId) {
             self.command_sender
                 .send(IngestCommand::Stop {
@@ -268,6 +283,13 @@ mod tests {
 
         async fn wait_largest_location(&self, expected: moqt::Location) {
             wait_largest_location(&self.cache_store.get_or_create(&track_key()), expected).await;
+        }
+
+        async fn expect_session_event(&mut self) -> SessionEvent {
+            tokio::time::timeout(Duration::from_secs(3), self.session_event_receiver.recv())
+                .await
+                .expect("a session event should be reported")
+                .expect("session event channel should stay open")
         }
     }
 
@@ -306,5 +328,23 @@ mod tests {
         second_stream.object(0);
         // Assert
         context.wait_largest_location(location(1, 0)).await;
+    }
+
+    #[tokio::test]
+    async fn a_datagram_publisher_of_a_subgroup_track_makes_the_track_malformed() {
+        // Arrange
+        let mut context = IngestContext::new();
+        let stream_publisher = context.start(FIRST_PUBLISHER).await;
+        let datagram_publisher = context.start_datagrams(SECOND_PUBLISHER).await;
+        let stream = stream_publisher.open_stream();
+        stream.header(0);
+        stream.object(0);
+        context.wait_largest_location(location(0, 0)).await;
+        // Act
+        datagram_publisher.object(1, 0);
+        // Assert
+        let event = context.expect_session_event().await;
+        assert_eq!(event.session_id, SECOND_PUBLISHER);
+        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
     }
 }

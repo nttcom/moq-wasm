@@ -26,6 +26,20 @@ pub(crate) fn make_header_with(
     ))
 }
 
+pub(crate) fn make_datagram(group_id: u64, object_id: u64) -> DataObject {
+    DataObject::ObjectDatagram(moqt::ObjectDatagram::new(
+        0,
+        group_id,
+        moqt::DatagramField {
+            object_id: Some(object_id),
+            publisher_priority: 128,
+            extension_headers: None,
+            end_of_group: false,
+            payload: moqt::ObjectDatagramPayload::Payload(ordered_payload(object_id as usize)),
+        },
+    ))
+}
+
 pub(crate) fn make_payload_object(object_id_delta: u64, payload: Bytes) -> DataObject {
     make_subgroup_object(object_id_delta, moqt::SubgroupObject::new_payload(payload))
 }

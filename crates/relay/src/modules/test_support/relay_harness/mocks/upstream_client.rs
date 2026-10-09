@@ -10,7 +10,7 @@ use crate::modules::{
     },
     test_support::relay_harness::{
         RECV_TIMEOUT,
-        fixtures::data_object::{make_header, make_payload_object, ordered_payload},
+        fixtures::data_object::{make_datagram, make_header, make_payload_object, ordered_payload},
     },
 };
 
@@ -91,6 +91,37 @@ impl UpstreamSubgroupStream {
             .await
             .expect("stream reader should end")
             .expect("stream reader should not panic");
+    }
+}
+
+struct MockDatagramReceiver {
+    receiver: mpsc::UnboundedReceiver<DataObject>,
+}
+
+#[async_trait::async_trait]
+impl DatagramReceiver for MockDatagramReceiver {
+    async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
+        self.receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("upstream datagrams ended"))
+    }
+}
+
+pub(crate) struct UpstreamDatagrams {
+    sender: mpsc::UnboundedSender<DataObject>,
+}
+
+impl UpstreamDatagrams {
+    pub(crate) fn open() -> (Self, Box<dyn DatagramReceiver>) {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        (Self { sender }, Box::new(MockDatagramReceiver { receiver }))
+    }
+
+    pub(crate) fn object(&self, group_id: u64, object_id: u64) {
+        self.sender
+            .send(make_datagram(group_id, object_id))
+            .expect("ingress should be reading datagrams");
     }
 }
 

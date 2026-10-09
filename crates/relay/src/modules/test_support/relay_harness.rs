@@ -36,7 +36,9 @@ pub(crate) mod fixtures;
 mod mocks;
 
 pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
-pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
+pub(crate) use self::mocks::upstream_client::{
+    FailingUpstream, UpstreamDatagrams, UpstreamSubgroupStream,
+};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
