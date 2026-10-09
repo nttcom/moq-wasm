@@ -6,7 +6,7 @@ use mediapack::loc::{to_extension_headers, LocExtension, CAPTURE_TIMESTAMP_ID, V
 use moqt::{
     ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
     ObjectDatagramPayload, Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender,
-    SubscribeOption, Subscription, WEBTRANSPORT,
+    SubscribeOption, Subscription, TransportSendError, WEBTRANSPORT,
 };
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use onvif_ingest::{
@@ -319,7 +319,7 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
                         )
                         .await?;
                         if let Some(publication) = video_publication.as_ref() {
-                            send_video_packet(
+                            let sent = send_video_packet(
                                 &publisher,
                                 &mut video_state,
                                 publication,
@@ -327,7 +327,10 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
                                 &mut dump_state,
                                 packet,
                             )
-                            .await?;
+                            .await;
+                            if was_stopped_by_peer(sent, "video")? {
+                                video_state.stream = None;
+                            }
                         }
                     }
                     RtspPacket::Audio(packet) => {
@@ -341,14 +344,17 @@ async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
                         )
                         .await?;
                         if let Some(publication) = audio_publication.as_ref() {
-                            send_audio_packet(
+                            let sent = send_audio_packet(
                                 &publisher,
                                 &mut audio_state,
                                 publication,
                                 publisher_priority,
                                 packet,
                             )
-                            .await?;
+                            .await;
+                            if was_stopped_by_peer(sent, "audio")? {
+                                audio_state.stream = None;
+                            }
                         }
                     }
                 }
@@ -453,10 +459,17 @@ async fn handle_session_event(
             Ok(None)
         }
         SessionEvent::Unsubscribe(handler) => {
-            log::info!(
-                "Command/media unsubscribe event received: subscribe_id={}",
-                handler.subscribe_id()
-            );
+            let request_id = handler.subscribe_id();
+            log::info!("Unsubscribe received: subscribe_id={request_id}");
+            let unsubscribed =
+                |publication: &mut Subscription| publication.request_id() == request_id;
+            catalog_state.track_publication.take_if(unsubscribed);
+            if video_publication.take_if(unsubscribed).is_some() {
+                *video_state = VideoStreamState::default();
+            }
+            if audio_publication.take_if(unsubscribed).is_some() {
+                *audio_state = AudioStreamState::default();
+            }
             Ok(None)
         }
         SessionEvent::UnsubscribeNamespace(handler) => {
@@ -892,30 +905,10 @@ async fn send_catalog(
         tracks: Some(tracks),
     };
     let data = serde_json::to_vec(&catalog).context("serialize catalog json")?;
-    let uninit_stream = publisher
-        .create_stream(publication)
-        .next()
-        .await
-        .context("open catalog subgroup stream")?;
-    let header =
-        uninit_stream.create_header(group_id, SubgroupId::None, publisher_priority, false, false);
-    let mut stream = uninit_stream
-        .send_header(header)
-        .await
-        .context("send catalog subgroup header")?;
-    let object = stream.create_object_field(
-        0,
-        empty_extension_headers(),
-        SubgroupObject::new_payload(data.into()),
-    );
-    stream
-        .send(object)
-        .await
-        .context("send catalog subgroup object")?;
-    stream
-        .close()
-        .await
-        .context("close catalog subgroup stream")?;
+    let sent = send_catalog_group(publisher, publication, group_id, publisher_priority, data).await;
+    if was_stopped_by_peer(sent, "catalog")? {
+        return Ok(());
+    }
     if let Some(update) = video_update {
         log::info!(
             "Catalog sent: tracks={} video_codec={} video_track={} group_id={}",
@@ -942,6 +935,49 @@ async fn send_catalog(
         );
     }
     Ok(())
+}
+
+async fn send_catalog_group(
+    publisher: &moqt::Publisher,
+    publication: &Subscription,
+    group_id: u64,
+    publisher_priority: u8,
+    data: Vec<u8>,
+) -> Result<()> {
+    let uninit_stream = publisher
+        .create_stream(publication)
+        .next()
+        .await
+        .context("open catalog subgroup stream")?;
+    let header =
+        uninit_stream.create_header(group_id, SubgroupId::None, publisher_priority, false, false);
+    let mut stream = uninit_stream
+        .send_header(header)
+        .await
+        .context("send catalog subgroup header")?;
+    let object = stream.create_object_field(
+        0,
+        empty_extension_headers(),
+        SubgroupObject::new_payload(data.into()),
+    );
+    stream
+        .send(object)
+        .await
+        .context("send catalog subgroup object")?;
+    stream
+        .close()
+        .await
+        .context("close catalog subgroup stream")
+}
+
+fn was_stopped_by_peer(sent: Result<()>, track: &str) -> Result<bool> {
+    match sent {
+        Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
+            log::info!("Subscriber stopped the {track} subgroup stream: {error:#}");
+            Ok(true)
+        }
+        sent => sent.map(|()| false),
+    }
 }
 
 struct KeyframeDump {
@@ -1743,4 +1779,39 @@ fn spawn_rtsp_error_logger(err_rx: std_mpsc::Receiver<String>) {
             log::warn!("RTSP error: {err}");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn send_failure(error: TransportSendError) -> Result<()> {
+        Err::<(), _>(error).context("send subgroup object")
+    }
+
+    #[test]
+    fn stopped_subgroup_stream_is_not_fatal() {
+        // Arrange
+        let sent = send_failure(TransportSendError::Stopped { code: 0 });
+
+        // Act / Assert
+        assert!(was_stopped_by_peer(sent, "video").unwrap());
+    }
+
+    #[test]
+    fn lost_connection_stays_fatal() {
+        // Arrange
+        let sent = send_failure(TransportSendError::ConnectionLost {
+            reason: "timeout".to_string(),
+        });
+
+        // Act / Assert
+        assert!(was_stopped_by_peer(sent, "video").is_err());
+    }
+
+    #[test]
+    fn delivered_object_was_not_stopped() {
+        // Act / Assert
+        assert!(!was_stopped_by_peer(Ok(()), "video").unwrap());
+    }
 }
