@@ -32,9 +32,6 @@ impl StreamDataReceiverFactory {
             Some(IncomingObject::Datagram(_)) => {
                 anyhow::bail!("Expected StreamHeader but got Datagram")
             }
-            Some(IncomingObject::Fetch { .. }) => {
-                anyhow::bail!("Expected StreamHeader but got Fetch")
-            }
             None => anyhow::bail!("Stream channel closed"),
         }
     }

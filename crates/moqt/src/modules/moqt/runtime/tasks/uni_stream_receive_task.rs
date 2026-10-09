@@ -8,7 +8,10 @@ use crate::{
     modules::moqt::{
         data_plane::{
             codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
-            stream::{fetch_data_receiver::Fetch, stream_receiver::UniStreamReceiver},
+            stream::{
+                fetch_data_receiver::{Fetch, FetchDataReceiver},
+                stream_receiver::UniStreamReceiver,
+            },
         },
         domains::session_context::SessionContext,
         runtime::dispatch::{
@@ -79,7 +82,7 @@ impl UniStreamReceiveTask {
                 FetchNotifier::notify(
                     context,
                     header.request_id,
-                    IncomingObject::Fetch { stream, header },
+                    FetchDataReceiver::new(stream, header),
                 )
                 .await;
             }
