@@ -60,7 +60,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | --- | --- | --- |
 | `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection (`connect_with` for raw QUIC, `web_transport_quinn::Client` for WebTransport). |
+| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
@@ -262,9 +262,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 - `SubscriptionNotifier` routes incoming objects by track alias into
   `SessionContext::object_sinks`.
-- `FetchNotifier` routes FETCH streams by request id.
-- `IncomingObject` is the internal envelope (`StreamHeader` / `Datagram` /
-  `Fetch`).
+- `FetchNotifier` routes FETCH streams by request id as a
+  `FetchDataReceiver`.
+- `IncomingObject` is the per-track-alias envelope (`StreamHeader` /
+  `Datagram`); FETCH streams never enter the per-track channel.
 
 ## Key invariants
 
@@ -293,6 +294,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Control response timeout**: `SessionContext::await_response` bounds every
   request/response wait to 10 s; on timeout the session is closed with
   `ControlMessageTimeout` (draft-14 §12.2).
+- **One forwarding preference per track alias** (draft-14 §2.5, §10): the
+  first object decides whether `accept_data_receiver` returns a stream or a
+  datagram receiver. An object of the other kind later makes that receiver
+  return `MalformedTrackError`, which `TrackReader` passes on. moqt does not
+  UNSUBSCRIBE on its own: the caller does, because a relay must also end
+  its downstream subscriptions.
 - **Header-first subgroup streams**: enforced by the sender typestate; on the
   receive side a uni stream whose first frame is not a header is rejected.
 - **Priority before data**: a stream's transport priority is settable only

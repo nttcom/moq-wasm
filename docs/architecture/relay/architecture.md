@@ -192,7 +192,7 @@ sequences::{PublishNamespace, Subscribe, Fetch, …}.handle(...)
   `sequences` entry.
 - Two relay-internal events exist, both reported by the ingest path (not by
   a peer) and routed to the upstream publisher session's worker:
-  - `MalformedTrackDetected(session_id, track_key)`, raised by the insert that
+  - `MalformedTrackDetected(session_id, track_key)`, raised by the reader that
     latched the track. Handled by
     `sequences::malformed_track::MalformedTrackCleanup`: remove every
     `ActiveUpstreamSubscription` of the track, since the cache latch makes the
@@ -491,10 +491,13 @@ per-request authorization gate under "Event pipeline".
 - `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_fetch_object`
   via `TrackCache::insert`, which registers no knowledge); no header synthesis and
   no per-subgroup delta state.
-- The cache's sticky §2.5 malformed latch is only ever set inside an insert,
-  so the reader (or fetch fill) that performed the latching insert is always
+- The cache's sticky §2.5 malformed latch is set by an ingest reader: by the
+  insert that conflicts, or when moqt returns `MalformedTrackError` because one
+  publisher's upstream subscription switched between subgroup streams and
+  datagrams (`accept_streams`, `read_datagrams`). That reader is always
   present to report `MalformedTrackDetected` into the event pipeline — no
-  standing watcher is needed. Downstream, `EgressRunner` watches the same
+  standing watcher is needed. Two publishers that use different forwarding
+  preferences for one track are not detected unless their objects conflict. Downstream, `EgressRunner` watches the same
   latch and terminates subscriptions with PUBLISH_DONE(MALFORMED_TRACK);
   `FetchIngest` bails on the latch and sends upstream FETCH_CANCEL for its
   own fetch.
@@ -554,7 +557,10 @@ per-request authorization gate under "Event pipeline".
   `FetchInterrupted::Malformed`.
 - Eviction job (`eviction_job.rs`): every `RELAY_CACHE_EVICT_INTERVAL_SECS`
   (5 s) drop objects older than `RELAY_CACHE_TTL_SECS` (60 s) and release
-  knowledge exactly for the removed locations; a `TrackCache` entry is removed
+  knowledge exactly for the removed locations. While live ingest runs, the
+  object at the track's largest location is kept past the TTL: a late
+  subscriber is answered Content Exists from the cache (§9.8) and fetches that
+  object, so a sparse track such as a catalog stays joinable; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.
 

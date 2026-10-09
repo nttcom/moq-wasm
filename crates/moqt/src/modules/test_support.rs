@@ -4,8 +4,9 @@ use bytes::Bytes;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 use crate::{
-    ClientConfig, DUAL, DataReceiver, Endpoint, FilterType, Handshake, ServerConfig, Session,
-    SessionEvent, Subscription, TrackReader,
+    ClientConfig, DUAL, DataReceiver, Endpoint, ExtensionHeaders, FilterType, Handshake,
+    PublishOption, ServerConfig, Session, SessionEvent, StreamDataSenderFactory, SubgroupId,
+    SubgroupObject, SubgroupObjectSender, Subscription, TrackReader, TransportProtocol,
     modules::moqt::{
         data_plane::object::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
@@ -17,6 +18,7 @@ use crate::{
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const PUBLISHER_PRIORITY: u8 = 128;
 /// Well below quinn's 30 s default idle timeout, so a peer that is only
 /// detected as gone through the idle timeout fails the wait.
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -68,12 +70,16 @@ pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
     Endpoint::<DUAL>::create_client(&config).unwrap()
 }
 
-pub(crate) fn dual_client() -> Endpoint<DUAL> {
-    dual_client_with_config(ClientConfig {
+pub(crate) fn insecure_client_config() -> ClientConfig {
+    ClientConfig {
         port: 0,
         verify_certificate: false,
         authorization_token: None,
-    })
+    }
+}
+
+pub(crate) fn dual_client() -> Endpoint<DUAL> {
+    dual_client_with_config(insecure_client_config())
 }
 
 /// Connects a DUAL client to the server started by `spawn_dual_server` and
@@ -82,8 +88,16 @@ pub(crate) async fn connect_sessions(
     url: &str,
     accept: tokio::task::JoinHandle<Session>,
 ) -> anyhow::Result<(Session, Session)> {
+    connect_sessions_from(&dual_client(), url, accept).await
+}
+
+pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
+    client: &Endpoint<T>,
+    url: &str,
+    accept: tokio::task::JoinHandle<Session>,
+) -> anyhow::Result<(Session, Session)> {
     let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-        dual_client().connect(url).await?.await
+        client.connect(url).await?.await
     })
     .await??;
     let server = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept).await??;
@@ -116,6 +130,52 @@ pub(crate) async fn accept_publish(server: &Session) -> Subscription {
     subscription
 }
 
+pub(crate) struct PublishedTrack {
+    pub(crate) client: Session,
+    pub(crate) server: Session,
+    pub(crate) published: Subscription,
+    pub(crate) accepted: Subscription,
+}
+
+pub(crate) async fn published_track(name: &str) -> PublishedTrack {
+    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let publisher = client.publisher();
+    let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        tokio::join!(
+            publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+            accept_publish(&server)
+        )
+    })
+    .await
+    .unwrap();
+    PublishedTrack {
+        client,
+        server,
+        published: published.unwrap(),
+        accepted,
+    }
+}
+
+pub(crate) async fn open_subgroup(
+    factory: &StreamDataSenderFactory,
+    group_id: u64,
+    subgroup_id: SubgroupId,
+) -> SubgroupObjectSender {
+    let uninitialized = factory.next().await.unwrap();
+    let header =
+        uninitialized.create_header(group_id, subgroup_id, PUBLISHER_PRIORITY, false, false);
+    uninitialized.send_header(header).await.unwrap()
+}
+
+pub(crate) async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
+    let field = sender.create_object_field(
+        0,
+        ExtensionHeaders::default(),
+        SubgroupObject::new_payload(Bytes::from_static(payload)),
+    );
+    sender.send(field).await.unwrap();
+}
+
 /// The data receiver resolves only once the first object has arrived, so
 /// this must run after the publisher has sent something.
 pub(crate) async fn subscribed_track_reader(
@@ -133,18 +193,18 @@ pub(crate) async fn subscribed_track_reader(
     TrackReader::new(factory)
 }
 
-fn datagram_object(track_alias: u64) -> IncomingObject {
-    IncomingObject::Datagram(ObjectDatagram::new(
+pub(crate) fn object_datagram(track_alias: u64) -> ObjectDatagram {
+    ObjectDatagram::new(
         track_alias,
         0,
         DatagramField {
             object_id: Some(0),
-            publisher_priority: 128,
+            publisher_priority: PUBLISHER_PRIORITY,
             extension_headers: None,
             end_of_group: false,
             payload: ObjectDatagramPayload::Payload(Bytes::from_static(b"object")),
         },
-    ))
+    )
 }
 
 pub(crate) async fn notify_datagram(
@@ -152,7 +212,10 @@ pub(crate) async fn notify_datagram(
     track_alias: u64,
 ) -> IncomingObjectNotification {
     context
-        .notify_incoming_object(track_alias, datagram_object(track_alias))
+        .notify_incoming_object(
+            track_alias,
+            IncomingObject::Datagram(object_datagram(track_alias)),
+        )
         .await
 }
 

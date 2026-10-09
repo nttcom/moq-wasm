@@ -32,6 +32,7 @@ pub use modules::moqt::control_plane::options::SubscribeOption;
 pub use modules::moqt::control_plane::options::SubscribeUpdateOption;
 pub use modules::moqt::data_plane::datagram::datagram_receiver::DatagramReceiver;
 pub use modules::moqt::data_plane::datagram::datagram_sender::DatagramSender;
+pub use modules::moqt::data_plane::malformed_track_error::MalformedTrackError;
 pub use modules::moqt::data_plane::object::datagram_field::DatagramField;
 pub use modules::moqt::data_plane::object::datagram_field::ObjectDatagramPayload;
 pub use modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;

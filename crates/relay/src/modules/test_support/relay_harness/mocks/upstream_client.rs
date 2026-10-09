@@ -1,7 +1,13 @@
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
-    session::{data_object::DataObject, data_receiver::stream_receiver::StreamReceiver},
+    session::{
+        data_object::DataObject,
+        data_receiver::{
+            datagram_receiver::DatagramReceiver,
+            stream_receiver::{StreamReceiver, StreamReceiverFactory},
+        },
+    },
     test_support::relay_harness::{
         RECV_TIMEOUT,
         fixtures::data_object::{make_header, make_payload_object, ordered_payload},
@@ -85,5 +91,21 @@ impl UpstreamSubgroupStream {
             .await
             .expect("stream reader should end")
             .expect("stream reader should not panic");
+    }
+}
+
+pub(crate) struct FailingUpstream(pub(crate) fn() -> anyhow::Error);
+
+#[async_trait::async_trait]
+impl StreamReceiverFactory for FailingUpstream {
+    async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
+        Err(self.0())
+    }
+}
+
+#[async_trait::async_trait]
+impl DatagramReceiver for FailingUpstream {
+    async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
+        Err(self.0())
     }
 }

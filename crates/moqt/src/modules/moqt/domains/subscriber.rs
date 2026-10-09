@@ -251,7 +251,7 @@ impl Subscriber {
         let request_id = self.session.get_request_id();
 
         let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
+            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
         self.session
             .fetch_notification_map
             .lock()
@@ -361,7 +361,7 @@ impl Subscriber {
         let request_id = self.session.get_request_id();
 
         let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
+            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
         self.session
             .fetch_notification_map
             .lock()
@@ -547,14 +547,10 @@ impl Subscriber {
                     request_id
                 )
             })?;
-        let incoming_track_data = fetch_stream_rx
+        fetch_stream_rx
             .recv()
             .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
-        match incoming_track_data {
-            IncomingObject::Fetch { stream, header } => Ok(FetchDataReceiver::new(stream, header)),
-            _ => unreachable!("FetchReceiver can only receive IncomingObject::Fetch"),
-        }
+            .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))
     }
 
     #[tracing::instrument(
@@ -596,9 +592,6 @@ impl Subscriber {
                 IncomingObject::Datagram(_) => {
                     span.record("object_kind", "datagram");
                 }
-                IncomingObject::Fetch { .. } => {
-                    span.record("object_kind", "fetch");
-                }
             }
             stream_with_object
         };
@@ -612,9 +605,6 @@ impl Subscriber {
             IncomingObject::Datagram(object) => {
                 let data_receiver = DatagramReceiver::new(object, receiver).await;
                 Ok(DataReceiver::Datagram(data_receiver))
-            }
-            IncomingObject::Fetch { .. } => {
-                anyhow::bail!("Expected StreamHeader or Datagram but got Fetch")
             }
         }
     }

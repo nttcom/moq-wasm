@@ -98,7 +98,7 @@ impl TrackCache {
         self.malformed.load(AtomicOrdering::Acquire)
     }
 
-    fn mark_malformed(&self) {
+    pub(crate) fn mark_malformed(&self) {
         self.malformed.store(true, AtomicOrdering::Release);
         self.malformed_notify.notify_waiters();
     }
@@ -192,10 +192,17 @@ impl TrackCache {
     pub(crate) fn evict(&self, ttl: Duration) {
         let removed_count = {
             let mut ledger = self.write();
+            // A late subscriber joins at the largest location (draft-14 §9.8
+            // Content Exists) and fetches it, so a track whose publisher is
+            // still live keeps its newest object past the TTL.
+            let newest_of_live_track = (self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0)
+                .then(|| ledger.largest_location())
+                .flatten();
             let mut removed = Vec::new();
             let mut removed_payload_bytes = 0u64;
             ledger.objects.retain(|location, object| {
-                let keep = object.received_at.elapsed() <= ttl;
+                let keep =
+                    Some(*location) == newest_of_live_track || object.received_at.elapsed() <= ttl;
                 if !keep {
                     removed.push(*location);
                     removed_payload_bytes += object.payload.len() as u64;
@@ -623,6 +630,41 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn evict_keeps_the_newest_object_of_a_live_track_past_ttl() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0));
+        let _ = cache.insert_live(stream_object(1, 0));
+        tokio::time::advance(Duration::from_secs(11)).await;
+
+        // Act
+        cache.evict(ttl);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 1);
+        assert_eq!(cache.largest_location(), Some(location(1, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_the_newest_object_once_live_ingest_ended() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0));
+        cache.end_live_ingest();
+        tokio::time::advance(Duration::from_secs(11)).await;
+
+        // Act
+        cache.evict(ttl);
+
+        // Assert
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn evict_releases_knowledge_only_where_objects_were_removed() {
         // Arrange: object 0 expires before object 1
         let ttl = Duration::from_secs(10);
@@ -937,14 +979,14 @@ mod fetch_tests {
 
     #[tokio::test(start_paused = true)]
     async fn resolve_fetch_range_not_covered_when_group_head_was_evicted() {
-        // Arrange: g0's only object expired and was evicted, then live ingest continued with g1
+        // Arrange: live ingest moved on to g1, then g0's only object expired and was evicted
         let ttl = Duration::from_secs(10);
         let cache = TrackCache::new();
         cache.begin_live_ingest();
         let _g0 = open_group(&cache, 0, &[0]);
         tokio::time::advance(Duration::from_secs(11)).await;
-        cache.evict(ttl);
         let _g1 = open_group(&cache, 1, &[0]);
+        cache.evict(ttl);
         // Act / Assert: evicted knowledge must not be served as an in-flight wait
         assert_eq!(
             cache.resolve_fetch_range(location(0, 0), location(1, 1)),
