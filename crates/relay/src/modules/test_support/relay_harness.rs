@@ -14,7 +14,11 @@ use crate::modules::{
         egress::{
             coordinator::EgressFetchRequest, fetch_delivery::deliver_fetch, runner::EgressRunner,
         },
-        ingress::{stream_reader::read_stream, track_ingest_task::TrackIngest},
+        ingress::{
+            datagram_reader::read_datagrams,
+            stream_reader::{accept_streams, read_stream},
+            track_ingest_task::TrackIngest,
+        },
     },
     domain::{
         delivery_stats::{DeliveryCounters, DeliveryStats},
@@ -32,7 +36,7 @@ pub(crate) mod fixtures;
 mod mocks;
 
 pub(crate) use self::mocks::downstream_client::{FetchSent, MockPublisherObservers, Sent};
-pub(crate) use self::mocks::upstream_client::UpstreamSubgroupStream;
+pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
 
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
@@ -186,6 +190,32 @@ impl RelayHarness {
         UpstreamSubgroupStream::open(|receiver| {
             tokio::spawn(read_stream(self.ingest.clone(), receiver))
         })
+    }
+
+    pub(crate) async fn run_stream_ingest(&self, upstream: FailingUpstream) {
+        tokio::time::timeout(
+            RECV_TIMEOUT,
+            accept_streams(
+                self.ingest.clone(),
+                Box::new(upstream),
+                tracing::Span::none(),
+            ),
+        )
+        .await
+        .expect("stream ingest should end");
+    }
+
+    pub(crate) async fn run_datagram_ingest(&self, upstream: FailingUpstream) {
+        tokio::time::timeout(
+            RECV_TIMEOUT,
+            read_datagrams(self.ingest.clone(), Box::new(upstream)),
+        )
+        .await
+        .expect("datagram ingest should end");
+    }
+
+    pub(crate) fn is_track_malformed(&self) -> bool {
+        self.ingest.cache.is_malformed()
     }
 
     pub(crate) fn ingest_conflicting_duplicate(&self) -> [UpstreamSubgroupStream; 2] {

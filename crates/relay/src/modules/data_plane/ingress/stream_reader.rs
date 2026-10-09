@@ -32,7 +32,7 @@ struct SubgroupIngest<'a> {
     open: OpenSubgroupGuard<'a>,
 }
 
-pub(super) async fn accept_streams(
+pub(crate) async fn accept_streams(
     mut ingest: TrackIngest,
     mut factory: Box<dyn StreamReceiverFactory>,
     track_span: Span,
@@ -45,8 +45,20 @@ pub(super) async fn accept_streams(
                 break;
             }
             receiver = factory.next() => {
-                let Ok(receiver) = receiver else {
-                    break;
+                let receiver = match receiver {
+                    Ok(receiver) => receiver,
+                    Err(error) => {
+                        if error.is::<moqt::MalformedTrackError>() {
+                            ingest.cache.mark_malformed();
+                            report_malformed_track(
+                                &Span::current(),
+                                &ingest.session_event_sender,
+                                ingest.publisher_session_id,
+                                &ingest.track_key,
+                            );
+                        }
+                        break;
+                    }
                 };
                 let span = tracing::info_span!(
                     parent: &track_span,
@@ -260,7 +272,7 @@ mod tests {
         data_plane::cache::{subgroup_key::SubgroupKey, track_cache::NextObject},
         session::session_event::EventKind,
         test_support::relay_harness::{
-            PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
+            FailingUpstream, PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
             fixtures::{
                 cached_object::stream_key,
                 data_object::{
@@ -440,6 +452,32 @@ mod tests {
         harness.wait_track_malformed().await;
         let event = harness.expect_session_event().await;
         assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
+    }
+
+    #[tokio::test]
+    async fn a_datagram_on_the_stream_track_reports_the_malformed_track() {
+        // Arrange
+        let mut harness = RelayHarness::new();
+        // Act
+        harness
+            .run_stream_ingest(FailingUpstream(|| moqt::MalformedTrackError.into()))
+            .await;
+        // Assert
+        harness.wait_track_malformed().await;
+        let event = harness.expect_session_event().await;
+        assert!(matches!(event.kind, EventKind::MalformedTrackDetected(_)));
+    }
+
+    #[tokio::test]
+    async fn an_ended_upstream_subscription_does_not_mark_the_track_malformed() {
+        // Arrange
+        let harness = RelayHarness::new();
+        // Act
+        harness
+            .run_stream_ingest(FailingUpstream(|| anyhow::anyhow!("Stream channel closed")))
+            .await;
+        // Assert
+        assert!(!harness.is_track_malformed());
     }
 
     #[tokio::test]
