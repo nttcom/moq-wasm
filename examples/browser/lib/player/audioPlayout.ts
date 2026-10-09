@@ -38,7 +38,9 @@ type Scheduled = {
 /// rate. Chunks are appended whole at a write head so the waveform stays
 /// continuous, and how far the write head sits from the time the clock asked
 /// for is reported as drift, which lets the clock follow the audio device: a
-/// chunk that is late is not trimmed, it starts now and moves the clock.
+/// chunk that is late is not trimmed, it starts now and moves the clock. A
+/// chunk without a capture timestamp is not on the clock's timeline, so it
+/// reports no drift.
 /// Chunks that arrive before the context renders wait for it, because a
 /// context reports `running` before its clock has started, and chunks that
 /// arrive while others are waiting queue behind them so the order holds.
@@ -62,7 +64,7 @@ export class AudioPlayout {
   breaks = 0
   shedMs = 0
 
-  constructor(private readonly onDrift: (driftMs: number, captureMicros: number | undefined) => void) {}
+  constructor(private readonly onDrift: (driftMs: number, captureMicros: number) => void) {}
 
   /// Opens the context ahead of the first chunk so that its start-up has
   /// passed by the time the chunk is due.
@@ -169,7 +171,9 @@ export class AudioPlayout {
     if (!continues && this.writeHead !== undefined) {
       this.breaks += 1
     }
-    this.onDrift((startAt - target) * MILLIS_PER_SECOND, chunk.captureMicros)
+    if (chunk.captureMicros !== undefined) {
+      this.onDrift((startAt - target) * MILLIS_PER_SECOND, chunk.captureMicros)
+    }
     const channels = this.splice(chunk, continues)
     const buffer = context.createBuffer(channels.length, channels[0].length, chunk.sampleRate)
     channels.forEach((channel, index) => buffer.copyToChannel(channel, index))
