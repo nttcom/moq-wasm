@@ -1176,11 +1176,12 @@ impl VideoStreamState {
         publication: &Subscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
-        let mut pending_close = None;
-        if self.started {
-            pending_close = self.take_pending_group_close(publication.track_alias());
-            self.group_id += 1;
-        }
+        let pending_close = self.take_pending_group_close(publication.track_alias());
+        self.group_id = if self.started {
+            self.group_id + 1
+        } else {
+            first_group_id()
+        };
         self.object_id = 0;
         let uninit_stream = publisher
             .create_stream(publication)
@@ -1234,11 +1235,12 @@ impl AudioStreamState {
         publication: &Subscription,
         publisher_priority: u8,
     ) -> Result<Option<PendingGroupClose>> {
-        let mut pending_close = None;
-        if self.started {
-            pending_close = self.take_pending_group_close(publication.track_alias());
-            self.group_id += 1;
-        }
+        let pending_close = self.take_pending_group_close(publication.track_alias());
+        self.group_id = if self.started {
+            self.group_id + 1
+        } else {
+            first_group_id()
+        };
         self.object_id = 0;
         let uninit_stream = publisher
             .create_stream(publication)
@@ -1257,6 +1259,13 @@ impl AudioStreamState {
         self.started = true;
         Ok(pending_close)
     }
+}
+
+/// A relay latches a track whose publisher re-sends a location with other
+/// content as malformed (draft-14 §2.5), so a track restarted by a new
+/// subscription or a new process starts from the wall clock, not from 0.
+fn first_group_id() -> u64 {
+    now_micros()
 }
 
 fn spawn_pending_group_close(pending: PendingGroupClose) {
@@ -1408,7 +1417,7 @@ impl CatalogUpdateState {
     fn new() -> Self {
         Self {
             track_publication: None,
-            next_group_id: 0,
+            next_group_id: first_group_id(),
             last_video_codec: None,
             last_audio: None,
             selected_video_track: None,
