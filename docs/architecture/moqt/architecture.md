@@ -60,7 +60,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | --- | --- | --- |
 | `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection (`connect_with` for raw QUIC, `web_transport_quinn::Client` for WebTransport). |
+| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over

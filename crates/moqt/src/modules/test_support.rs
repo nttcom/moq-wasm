@@ -6,7 +6,7 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 use crate::{
     ClientConfig, DUAL, DataReceiver, Endpoint, ExtensionHeaders, FilterType, Handshake,
     PublishOption, ServerConfig, Session, SessionEvent, StreamDataSenderFactory, SubgroupId,
-    SubgroupObject, SubgroupObjectSender, Subscription, TrackReader,
+    SubgroupObject, SubgroupObjectSender, Subscription, TrackReader, TransportProtocol,
     modules::moqt::{
         data_plane::object::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
@@ -70,12 +70,16 @@ pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
     Endpoint::<DUAL>::create_client(&config).unwrap()
 }
 
-pub(crate) fn dual_client() -> Endpoint<DUAL> {
-    dual_client_with_config(ClientConfig {
+pub(crate) fn insecure_client_config() -> ClientConfig {
+    ClientConfig {
         port: 0,
         verify_certificate: false,
         authorization_token: None,
-    })
+    }
+}
+
+pub(crate) fn dual_client() -> Endpoint<DUAL> {
+    dual_client_with_config(insecure_client_config())
 }
 
 /// Connects a DUAL client to the server started by `spawn_dual_server` and
@@ -84,8 +88,16 @@ pub(crate) async fn connect_sessions(
     url: &str,
     accept: tokio::task::JoinHandle<Session>,
 ) -> anyhow::Result<(Session, Session)> {
+    connect_sessions_from(&dual_client(), url, accept).await
+}
+
+pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
+    client: &Endpoint<T>,
+    url: &str,
+    accept: tokio::task::JoinHandle<Session>,
+) -> anyhow::Result<(Session, Session)> {
     let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-        dual_client().connect(url).await?.await
+        client.connect(url).await?.await
     })
     .await??;
     let server = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept).await??;

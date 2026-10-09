@@ -28,13 +28,10 @@ enum DualEndpoint {
     Client(Box<DualClient>),
 }
 
-/// One UDP socket serves both transports: raw QUIC connects with the
-/// `moq-00` ALPN via `connect_with`, WebTransport reuses the same endpoint
-/// through `web_transport_quinn::Client` with the `h3` ALPN.
 struct DualClient {
     endpoint: quinn::Endpoint,
     quic_config: quinn::ClientConfig,
-    web_transport: web_transport_quinn::Client,
+    web_transport_config: quinn::ClientConfig,
 }
 
 pub struct DualProtocolCreator {
@@ -47,8 +44,6 @@ impl DualProtocolCreator {
         let quic_config = quic_client_config(crypto.clone(), MOQ_ALPN)?;
         let web_transport_config =
             quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
-        let web_transport =
-            web_transport_quinn::Client::new(endpoint.clone(), web_transport_config);
         tracing::info!(
             "Client ready! for Dual Protocol: {:?}",
             endpoint.local_addr()?
@@ -57,7 +52,7 @@ impl DualProtocolCreator {
             endpoint: DualEndpoint::Client(Box::new(DualClient {
                 endpoint,
                 quic_config,
-                web_transport,
+                web_transport_config,
             })),
         })
     }
@@ -136,9 +131,10 @@ impl TransportConnectionCreator for DualProtocolCreator {
                 Ok(Box::new(QUICConnection::new(connection)))
             }
             ClientTransport::WebTransport => {
-                let session = client
-                    .web_transport
-                    .connect(target.url.clone())
+                let connection = target
+                    .connect_quic(&client.endpoint, client.web_transport_config.clone())
+                    .await?;
+                let session = web_transport_quinn::Session::connect(connection, target.url.clone())
                     .await
                     .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
                 Ok(Box::new(WtConnection::new(session)))
@@ -220,6 +216,18 @@ mod tests {
 
         // Act
         let result = connect_sessions(&format!("https://127.0.0.1:{port}/moq"), accept).await;
+
+        // Assert
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dual_client_connects_over_web_transport_to_a_host_name() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("dual-wt-localhost");
+
+        // Act
+        let result = connect_sessions(&format!("https://localhost:{port}/moq"), accept).await;
 
         // Assert
         result.unwrap();
