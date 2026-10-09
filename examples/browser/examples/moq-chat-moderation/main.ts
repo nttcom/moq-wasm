@@ -1,6 +1,6 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
-import { sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
+import { firstGroupId, sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
@@ -22,9 +22,7 @@ const LARGEST_OBJECT_FILTER = 0x2
 const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 
 class ChatPublisher {
-  /// The relay isolates a track whose publisher repeats a location, so a
-  /// publisher that comes back must not restart its group ids at zero.
-  private nextGroupId = BigInt(Date.now()) * 1_000n
+  private nextGroupId = firstGroupId()
 
   constructor(
     private readonly client: MOQTClient,

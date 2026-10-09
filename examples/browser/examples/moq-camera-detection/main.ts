@@ -1,7 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
-import { sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
+import { JsonGroupPublisher, firstGroupId } from '../../utils/media/singleObjectGroup'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
@@ -28,9 +28,7 @@ const VIDEO_ENCODER_CONFIG = {
 }
 
 class GopSender {
-  /// The relay isolates a track whose publisher repeats a location, so a
-  /// publisher that comes back must not restart its group ids at zero.
-  private nextGroupId = BigInt(Date.now()) * 1_000n
+  private nextGroupId = firstGroupId()
   private groupId: bigint | undefined
   private nextObjectId = 0n
 
@@ -84,24 +82,7 @@ class GopSender {
 
 type Prompt = { question: string; choices: string[] }
 
-class PromptPublisher {
-  private nextGroupId = BigInt(Date.now()) * 1_000n
-  latestGroupId: bigint | undefined
-
-  constructor(
-    private readonly client: MOQTClient,
-    readonly requestId: bigint,
-    private readonly trackAlias: bigint
-  ) {}
-
-  /// One group per prompt, because the detector reads every group from its first object.
-  async send(prompt: Prompt): Promise<void> {
-    const groupId = this.nextGroupId++
-    this.latestGroupId = groupId
-    const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await sendSingleObjectGroup(this.client, this.trackAlias, groupId, payload)
-  }
-}
+class PromptPublisher extends JsonGroupPublisher<Prompt> {}
 
 const session = new MoqtClientWrapper()
 let videoSender: GopSender | undefined

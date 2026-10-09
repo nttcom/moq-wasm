@@ -1,7 +1,7 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { LivePlayer } from '@player/livePlayer'
-import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
-import { sendSingleObjectGroup } from '../../utils/media/singleObjectGroup'
+import type { SubgroupObjectMessage } from '../../pkg/moqt'
+import { JsonGroupPublisher } from '../../utils/media/singleObjectGroup'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
@@ -15,26 +15,7 @@ const AUTH_INFO = ''
 const LARGEST_OBJECT_FILTER = 0x2
 type Prompt = { target: string; video: string } | { target: null }
 
-class PromptPublisher {
-  /// The relay isolates a track whose publisher repeats a location, so a
-  /// publisher that comes back must not restart its group ids at zero.
-  private nextGroupId = BigInt(Date.now()) * 1_000n
-  latestGroupId: bigint | undefined
-
-  constructor(
-    private readonly client: MOQTClient,
-    readonly requestId: bigint,
-    private readonly trackAlias: bigint
-  ) {}
-
-  /// One group per prompt, because the tracker reads every group from its first object.
-  async send(prompt: Prompt): Promise<void> {
-    const groupId = this.nextGroupId++
-    this.latestGroupId = groupId
-    const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await sendSingleObjectGroup(this.client, this.trackAlias, groupId, payload)
-  }
-}
+class PromptPublisher extends JsonGroupPublisher<Prompt> {}
 
 const session = new MoqtClientWrapper()
 const player = new LivePlayer({
