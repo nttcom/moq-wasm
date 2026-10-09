@@ -140,72 +140,26 @@
         grid-area: djev;
       }
 
-      .flow.observability-flow {
-        display: grid;
-        grid-template-areas:
-          'client-a client-a-link relay-a relay-link relay-b client-b-link client-b'
-          '. . relay-ac-link . relay-bc-link . .'
-          '. . . relay-c . . .'
-          '. . . observability-link . . .'
-          '. . observability observability observability . .';
-        justify-content: center;
-        justify-items: center;
+      .observability-map {
+        position: relative;
+        width: 444px;
+        height: 270px;
+        margin: auto;
+        color: var(--accent);
       }
 
-      .obs-client-a {
-        grid-area: client-a;
+      .observability-links {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        stroke: currentColor;
+        stroke-width: 1.5;
       }
 
-      .obs-client-a-link {
-        grid-area: client-a-link;
-      }
-
-      .obs-relay-a {
-        grid-area: relay-a;
-      }
-
-      .obs-relay-link {
-        grid-area: relay-link;
-      }
-
-      .obs-relay-b {
-        grid-area: relay-b;
-      }
-
-      .obs-client-b-link {
-        grid-area: client-b-link;
-      }
-
-      .obs-client-b {
-        grid-area: client-b;
-      }
-
-      .link.obs-relay-ac-link,
-      .link.obs-relay-bc-link {
-        font-size: 1.6rem;
-        line-height: 1;
-      }
-
-      .obs-relay-ac-link {
-        grid-area: relay-ac-link;
-        justify-self: end;
-      }
-
-      .obs-relay-bc-link {
-        grid-area: relay-bc-link;
-        justify-self: start;
-      }
-
-      .obs-relay-c {
-        grid-area: relay-c;
-      }
-
-      .obs-observability-link {
-        grid-area: observability-link;
-      }
-
-      .obs-observability {
-        grid-area: observability;
+      .observability-map .node {
+        position: absolute;
+        transform: translate(-50%, -50%);
       }
 
       .card-head {
@@ -759,32 +713,84 @@
               <h3>Observability</h3>
               <p>Relay の通信状況と Pub/Sub をトポロジーで表示する</p>
             </div>
-            <p class="flow observability-flow">
-              <span class="node obs-client-a"
+            <div class="observability-map">
+              <svg class="observability-links" viewBox="0 0 444 270" aria-hidden="true">
+                <defs>
+                  <marker
+                    id="obs-arrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+                  </marker>
+                </defs>
+                <line
+                  x1="57.5"
+                  y1="34.0"
+                  x2="100.0"
+                  y2="34.0"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="160.0"
+                  y1="34.0"
+                  x2="280.0"
+                  y2="34.0"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="340.0"
+                  y1="34.0"
+                  x2="386.5"
+                  y2="34.0"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="160.0"
+                  y1="65.3"
+                  x2="190.0"
+                  y2="96.7"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line
+                  x1="280.0"
+                  y1="65.3"
+                  x2="250.0"
+                  y2="96.7"
+                  marker-end="url(#obs-arrow)"
+                  marker-start="url(#obs-arrow)"
+                />
+                <line x1="145.4" y1="68.5" x2="204.6" y2="201.5" marker-end="url(#obs-arrow)" />
+                <line x1="294.6" y1="68.5" x2="235.4" y2="201.5" marker-end="url(#obs-arrow)" />
+                <line x1="220.0" y1="162.5" x2="220.0" y2="201.5" marker-end="url(#obs-arrow)" />
+              </svg>
+              <span class="node" style="left: 26px; top: 34px"
                 ><svg><use href="#icon-monitor" /></svg>Client</span
               >
-              <span class="link obs-client-a-link">↔</span>
-              <span class="node relay obs-relay-a"
+              <span class="node relay" style="left: 130px; top: 34px"
                 ><svg><use href="#icon-server" /></svg>Relay</span
               >
-              <span class="link obs-relay-link">↔</span>
-              <span class="node relay obs-relay-b"
+              <span class="node relay" style="left: 310px; top: 34px"
                 ><svg><use href="#icon-server" /></svg>Relay</span
               >
-              <span class="link obs-client-b-link">↔</span>
-              <span class="node obs-client-b"
+              <span class="node" style="left: 418px; top: 34px"
                 ><svg><use href="#icon-monitor" /></svg>Client</span
               >
-              <span class="link obs-relay-ac-link">⤡</span>
-              <span class="link obs-relay-bc-link">⤢</span>
-              <span class="node relay obs-relay-c"
+              <span class="node relay" style="left: 220px; top: 128px"
                 ><svg><use href="#icon-server" /></svg>Relay</span
               >
-              <span class="link obs-observability-link">↕</span>
-              <span class="node cloud obs-observability"
+              <span class="node cloud" style="left: 220px; top: 236px"
                 ><svg><use href="#icon-globe" /></svg>Observability</span
               >
-            </p>
+            </div>
             <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
