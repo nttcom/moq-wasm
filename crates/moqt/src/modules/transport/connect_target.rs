@@ -42,6 +42,21 @@ impl ConnectTarget {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn connect_quic(
+        &self,
+        endpoint: &quinn::Endpoint,
+        config: quinn::ClientConfig,
+    ) -> anyhow::Result<quinn::Connection> {
+        let remote_address = self.resolve_remote_address().await?;
+        let connection = endpoint
+            .connect_with(config, remote_address, &self.server_name())
+            .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?
+            .await
+            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
+        Ok(connection)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn server_name(&self) -> String {
         use url::Host;
         match self.host() {

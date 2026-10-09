@@ -130,19 +130,9 @@ impl TransportConnectionCreator for DualProtocolCreator {
         };
         match target.transport {
             ClientTransport::Quic => {
-                let remote_address = target.resolve_remote_address().await?;
-                let connection = client
-                    .endpoint
-                    .connect_with(
-                        client.quic_config.clone(),
-                        remote_address,
-                        &target.server_name(),
-                    )
-                    .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?
-                    .await
-                    .inspect_err(|e| {
-                        tracing::error!("failed to create connection: {:?}", e.to_string())
-                    })?;
+                let connection = target
+                    .connect_quic(&client.endpoint, client.quic_config.clone())
+                    .await?;
                 Ok(Box::new(QUICConnection::new(connection)))
             }
             ClientTransport::WebTransport => {
