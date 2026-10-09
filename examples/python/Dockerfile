@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.12.21@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
 
-FROM python:3.11-slim-bookworm@sha256:389c808973913a68e42e5c3bc4d169ed1bf52b83a543be37a2dbe0ab034182ed
+FROM python:3.11-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
