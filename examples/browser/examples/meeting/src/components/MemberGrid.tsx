@@ -212,7 +212,7 @@ export function MemberGrid({
         muted
         placeholder="Camera disabled"
         secondaryPlaceholder="Screen share disabled"
-        details={<CatalogsPanel tracks={catalogTracks} subscribedTracks={subscribedCatalogTracks} />}
+        details={<CatalogsPanel subscribedTracks={subscribedCatalogTracks} />}
       />
       {isDeviceModalOpen && (
         <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>
@@ -396,7 +396,6 @@ export function MemberGrid({
 interface MemberCardProps {
   title: string
   testId?: string
-  videoTestId?: string
   headerActions?: ReactNode
   videoStream?: MediaStream | null
   picture?: HTMLElement | null
@@ -415,7 +414,6 @@ interface MemberCardProps {
 function MemberCard({
   title,
   testId,
-  videoTestId,
   headerActions,
   videoStream,
   picture,
@@ -437,7 +435,7 @@ function MemberCard({
       {picture !== undefined ? (
         <PictureFrame picture={picture} placeholder={placeholder} footer={videoFooter} />
       ) : (
-        <MediaStreamVideo stream={videoStream} muted={muted} footer={videoFooter} testId={videoTestId} />
+        <MediaStreamVideo stream={videoStream} muted={muted} footer={videoFooter} />
       )}
       {(secondaryPicture || secondaryVideoStream) && (
         <div className="mt-2 space-y-1">
@@ -1181,14 +1179,6 @@ function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableMe
   }
 }
 
-function findVideoResolutionOptionId(
-  options: VideoEncodingOptionSet,
-  width: number | undefined,
-  height: number | undefined
-): string {
-  return findVideoResolutionOptionIdFromList(options.resolutionOptions, width, height)
-}
-
 function findVideoResolutionOptionIdFromList(
   options: Array<Pick<VideoResolutionOption, 'id' | 'width' | 'height'>>,
   width: number | undefined,
@@ -1699,70 +1689,40 @@ async function validateVideoEncoderCatalogTrackConfig(
   }
 }
 
-function CatalogsPanel({
-  tracks,
-  subscribedTracks
-}: {
-  tracks: EditableMeetingCatalogTrack[]
-  subscribedTracks: SubscribedCatalogTrack[]
-}) {
-  const subscribedByName = new Map(subscribedTracks.map((track) => [track.name, track]))
-
-  const sortTracks = (left: MeetingCatalogTrack, right: MeetingCatalogTrack) => {
-    if (left.role !== right.role) {
-      return left.role.localeCompare(right.role)
-    }
-    return (left.label || left.name).localeCompare(right.label || right.name)
-  }
-
-  const activeTracks = [...subscribedTracks].sort(sortTracks)
-
+function CatalogsPanel({ subscribedTracks }: { subscribedTracks: SubscribedCatalogTrack[] }) {
+  const activeTracks = [...subscribedTracks].sort((left, right) =>
+    left.role !== right.role
+      ? left.role.localeCompare(right.role)
+      : (left.label || left.name).localeCompare(right.label || right.name)
+  )
   return (
     <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
       <div className="text-sm font-semibold text-blue-100">Catalogs</div>
-      <TrackSettingsTiles
-        title="Subscribed"
-        tracks={activeTracks}
-        getSubscriberCount={(trackName) => subscribedByName.get(trackName)?.subscriberCount ?? 0}
-        emptyText="No active subscribers"
-      />
-    </div>
-  )
-}
-
-function TrackSettingsTiles({
-  title,
-  tracks,
-  getSubscriberCount,
-  emptyText
-}: {
-  title: string
-  tracks: MeetingCatalogTrack[]
-  getSubscriberCount: (trackName: string) => number
-  emptyText: string
-}) {
-  return (
-    <div className="space-y-2 text-[10px] text-blue-100/90">
-      <div className="text-[10px] font-medium text-blue-200/90">{title}</div>
-      {tracks.length ? (
-        <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-          {tracks.map((track) => (
-            <TrackSettingTile
-              key={track.name}
-              title={`${track.label || track.name} (${formatTrackRoleLabel(track.role)})`}
-              rows={[
-                ['Track', track.name],
-                ['Subscribers', `${getSubscriberCount(track.name)}`],
-                ...buildCatalogTrackMetadataEntries(track).map<[string, string]>((entry) => [entry.label, entry.value])
-              ]}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">
-          {emptyText}
-        </div>
-      )}
+      <div className="space-y-2 text-[10px] text-blue-100/90">
+        <div className="text-[10px] font-medium text-blue-200/90">Subscribed</div>
+        {activeTracks.length ? (
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {activeTracks.map((track) => (
+              <TrackSettingTile
+                key={track.name}
+                title={`${track.label || track.name} (${formatTrackRoleLabel(track.role)})`}
+                rows={[
+                  ['Track', track.name],
+                  ['Subscribers', `${track.subscriberCount}`],
+                  ...buildCatalogTrackMetadataEntries(track).map<[string, string]>((entry) => [
+                    entry.label,
+                    entry.value
+                  ])
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">
+            No active subscribers
+          </div>
+        )}
+      </div>
     </div>
   )
 }
