@@ -23,6 +23,7 @@ type StatsChartConfig = {
   unit: 'kbps' | 'ms' | 'KB' | ''
 }
 
+const CHART_HEIGHT_CLASS = 'h-64'
 const CHART_VIEWBOX_WIDTH = 108
 const CHART_VIEWBOX_HEIGHT = 48
 const CHART_LINE_STROKE_WIDTH = 0.8
@@ -202,13 +203,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
   }
 ]
 
-export function MemberStatsCharts({
-  samples,
-  chartHeightClass = 'h-44'
-}: {
-  samples: SidebarStatsSample[]
-  chartHeightClass?: string
-}) {
+export function MemberStatsCharts({ samples }: { samples: SidebarStatsSample[] }) {
   const visibleCharts = STATS_CHART_CONFIGS.filter((chart) =>
     chart.series.some((series) => buildMetricEntries(samples, series.accessor).length > 0)
   )
@@ -242,7 +237,6 @@ export function MemberStatsCharts({
           }
           yPadding={chart.yPadding}
           unit={chart.unit}
-          chartHeightClass={chartHeightClass}
         />
       ))}
     </div>
@@ -266,8 +260,7 @@ function MetricChart({
   series,
   yTicks,
   yPadding,
-  unit,
-  chartHeightClass
+  unit
 }: {
   title: string
   samples: SidebarStatsSample[]
@@ -275,7 +268,6 @@ function MetricChart({
   yTicks?: number[]
   yPadding: ChartYAxisPadding
   unit: StatsChartConfig['unit']
-  chartHeightClass: string
 }) {
   const [hiddenSeriesLabels, setHiddenSeriesLabels] = useState<Set<string>>(new Set())
   const seriesEntries = series.map((seriesConfig) => ({
@@ -341,7 +333,7 @@ function MetricChart({
       {hasRenderableSeries ? (
         <svg
           viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}
-          className={`block w-full ${chartHeightClass} overflow-visible rounded bg-black/20`}
+          className={`block w-full ${CHART_HEIGHT_CLASS} overflow-visible rounded bg-black/20`}
         >
           {tickValues.map((tick) => {
             const y = toChartY(tick)
@@ -381,7 +373,7 @@ function MetricChart({
         </svg>
       ) : (
         <div
-          className={`flex ${chartHeightClass} items-center justify-center rounded bg-black/20 text-xs text-blue-200`}
+          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded bg-black/20 text-xs text-blue-200`}
         >
           No data
         </div>

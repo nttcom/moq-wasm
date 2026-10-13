@@ -347,7 +347,7 @@ export function MemberGrid({
           size="wide"
         >
           <div className="space-y-4">
-            <MemberStatsCharts samples={statsHistory.get(statsModalTarget) ?? []} chartHeightClass="h-64" />
+            <MemberStatsCharts samples={statsHistory.get(statsModalTarget) ?? []} />
           </div>
         </DeviceModal>
       )}
