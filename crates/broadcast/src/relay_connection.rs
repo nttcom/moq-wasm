@@ -72,6 +72,9 @@ struct RelayState {
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
     disconnected: bool,
+    /// The New Session URI of a GOAWAY (draft-14 §9.4) not acted on yet;
+    /// empty means the current URL.
+    go_away: Option<String>,
 }
 
 impl RelayState {
@@ -153,16 +156,42 @@ impl RelayConnection {
         Some(connected.session.transport_stats())
     }
 
+    /// The relay session to send on, connected on first use. After a GOAWAY the
+    /// next call moves to the relay it names (draft-14 §8.4.2); the previous
+    /// session is closed once the new one holds the state. When the new relay
+    /// cannot be reached, the current session is kept until the relay closes it.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) async fn connected(&self) -> Result<Option<Arc<ConnectedRelay>>> {
         let Some(target) = &self.target else {
             return Ok(None);
         };
         let mut guard = self.inner.lock().await;
-        if guard.connected.is_none() {
-            guard.connected = Some(Arc::new(
-                ConnectedRelay::connect(target, self.ledger.clone()).await?,
-            ));
+        match &guard.connected {
+            None => {
+                guard.connected = Some(Arc::new(
+                    ConnectedRelay::connect(target, self.ledger.clone()).await?,
+                ));
+            }
+            Some(current) => {
+                if let Some(new_session_uri) = current.take_go_away().await {
+                    match current
+                        .migrate(target, &new_session_uri, self.ledger.clone())
+                        .await
+                    {
+                        Ok(next) => {
+                            tracing::info!(%new_session_uri, "moved the broadcast to the relay named by GOAWAY");
+                            if let Some(previous) = guard.connected.replace(Arc::new(next)) {
+                                let _ = executor::spawn("broadcast-relay-close", async move {
+                                    previous.close().await
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(?err, %new_session_uri, "failed to move to the relay named by GOAWAY; staying on the current session");
+                        }
+                    }
+                }
+            }
         }
         Ok(guard.connected.clone())
     }
@@ -205,6 +234,71 @@ impl ConnectedRelay {
         self.session
             .close_with_error(TerminationErrorCode::NoError, "");
         self.endpoint.wait_idle().await;
+    }
+
+    async fn take_go_away(&self) -> Option<String> {
+        self.state.lock().await.go_away.take()
+    }
+
+    /// Connects to the relay a GOAWAY named and gives it what this session
+    /// holds: the announced namespaces, the published tracks and the
+    /// catalogs. Objects keep going to this session until the caller swaps
+    /// to the returned one, so a viewer misses only the objects between the
+    /// swap and the next keyframe. The FETCH cache starts empty on the new
+    /// session.
+    async fn migrate(
+        &self,
+        target: &MoqtTarget,
+        new_session_uri: &str,
+        ledger: StreamLedger,
+    ) -> Result<Self> {
+        let url = if new_session_uri.is_empty() {
+            target.url.clone()
+        } else {
+            new_session_uri.to_string()
+        };
+        let next = Self::connect(
+            &MoqtTarget {
+                url,
+                ..target.clone()
+            },
+            ledger,
+        )
+        .await?;
+        // The subscriber watches move with the state, so a source waiting for
+        // its first subscriber keeps waiting and is woken by the new relay's
+        // SUBSCRIBE instead of failing when the old session closes.
+        let (catalogs, sent_namespaces, declared_tracks, subscribed) = {
+            let mut guard = self.state.lock().await;
+            (
+                guard.catalogs.clone(),
+                guard
+                    .catalog_sent_at
+                    .keys()
+                    .cloned()
+                    .collect::<HashSet<_>>(),
+                guard.declared_tracks.clone(),
+                std::mem::take(&mut guard.subscribed),
+            )
+        };
+        {
+            let mut next_state = next.state.lock().await;
+            next_state.declared_tracks = declared_tracks;
+            next_state.subscribed = subscribed;
+        }
+        for (namespace_path, metadata) in catalogs {
+            let namespace: Vec<String> = namespace_path.split('/').map(str::to_string).collect();
+            next.announce(&namespace).await?;
+            next.state
+                .lock()
+                .await
+                .catalogs
+                .insert(namespace_path.clone(), metadata);
+            if sent_namespaces.contains(&namespace_path) {
+                next.send_catalog(&namespace_path).await?;
+            }
+        }
+        Ok(next)
     }
 
     fn spawn_event_loop(
@@ -278,8 +372,14 @@ impl ConnectedRelay {
                             tracing::warn!(request_id, ?err, "failed to answer TRACK_STATUS");
                         }
                     }
-                    event @ (SessionEvent::GoAway(_)
-                    | SessionEvent::MaxRequestId(_)
+                    SessionEvent::GoAway(handler) => {
+                        tracing::info!(
+                            new_session_uri = handler.new_session_uri(),
+                            "GOAWAY received; moving on the next send"
+                        );
+                        state.lock().await.go_away = Some(handler.new_session_uri().to_string());
+                    }
+                    event @ (SessionEvent::MaxRequestId(_)
                     | SessionEvent::RequestsBlocked(_)
                     | SessionEvent::PublishNamespaceCancel(_)
                     | SessionEvent::PublishDone(_)
@@ -559,7 +659,206 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use moqt::{DUAL, server::ServerConfig, subscribe::FilterType};
+    use rcgen::{CertifiedKey, generate_simple_self_signed};
+    use tokio::sync::{mpsc, oneshot};
+
     use super::*;
+    use crate::broadcast::{Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+    fn self_signed_server_config(name: &str) -> ServerConfig {
+        let CertifiedKey { cert, signing_key } =
+            generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+                .unwrap();
+        let dir: PathBuf =
+            std::env::temp_dir().join(format!("broadcast-test-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        std::fs::write(&cert_path, cert.pem()).unwrap();
+        std::fs::write(&key_path, signing_key.serialize_pem()).unwrap();
+        ServerConfig {
+            port: 0,
+            cert_path: cert_path.to_string_lossy().into_owned(),
+            key_path: key_path.to_string_lossy().into_owned(),
+            keep_alive_interval_sec: 5,
+        }
+    }
+
+    /// A relay that accepts one publisher session, answers its
+    /// PUBLISH_NAMESPACE and PUBLISH, and reports every request it received.
+    struct FakeRelay {
+        url: String,
+        session: oneshot::Receiver<Arc<Session>>,
+        requests: mpsc::UnboundedReceiver<String>,
+    }
+
+    impl FakeRelay {
+        fn spawn(name: &str) -> Self {
+            let mut endpoint =
+                Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
+            let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
+            let (session_sender, session) = oneshot::channel();
+            let (request_sender, requests) = mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                let handshake = endpoint.accept().await.unwrap().await.unwrap();
+                let session = Arc::new(handshake.accept().await.unwrap());
+                let _ = session_sender.send(session.clone());
+                while let Ok(event) = session.receive_event().await {
+                    match event {
+                        SessionEvent::PublishNamespace(handler) => {
+                            let _ = request_sender
+                                .send(format!("PUBLISH_NAMESPACE {}", handler.track_namespace));
+                            handler.ok().await.unwrap();
+                        }
+                        SessionEvent::Publish(handler) => {
+                            let _ = request_sender.send(format!(
+                                "PUBLISH {}/{}",
+                                handler.track_namespace, handler.track_name
+                            ));
+                            handler.ok(0, FilterType::LargestObject, 0).await.unwrap();
+                        }
+                        SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
+                        _ => {}
+                    }
+                }
+            });
+            Self {
+                url,
+                session,
+                requests,
+            }
+        }
+
+        async fn session(&mut self) -> Arc<Session> {
+            tokio::time::timeout(TEST_TIMEOUT, &mut self.session)
+                .await
+                .expect("the publisher must connect")
+                .unwrap()
+        }
+
+        fn received_requests(&mut self) -> Vec<String> {
+            let mut requests = Vec::new();
+            while let Ok(request) = self.requests.try_recv() {
+                requests.push(request);
+            }
+            requests
+        }
+    }
+
+    fn video_track_info() -> VideoTrackInfo {
+        VideoTrackInfo {
+            label: "Video".to_string(),
+            codec: "avc1.42e01e".to_string(),
+            width: 640,
+            height: 360,
+            init_segment: String::new(),
+        }
+    }
+
+    fn keyframe_object(group_id: u64) -> OutgoingObject {
+        OutgoingObject::plain(
+            moqt::publish::GroupBoundary::At(group_id),
+            Bytes::from_static(b"keyframe"),
+        )
+    }
+
+    #[tokio::test]
+    async fn go_away_moves_the_broadcast_to_the_named_relay_and_closes_the_old_session() {
+        // Arrange: the broadcast announces and publishes its catalog on relay A
+        let mut relay_a = FakeRelay::spawn("goaway-a");
+        let mut relay_b = FakeRelay::spawn("goaway-b");
+        let connection = RelayConnection::new(Some(MoqtTarget {
+            url: relay_a.url.clone(),
+            auth_token: None,
+            verify_certificate: false,
+        }));
+        let broadcast = Broadcast::new(connection, vec!["live".to_string(), "cam".to_string()]);
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        let session_a = relay_a.session().await;
+        assert!(
+            relay_a
+                .received_requests()
+                .contains(&"PUBLISH_NAMESPACE live/cam".to_string())
+        );
+
+        // Act: relay A sends GOAWAY naming relay B; the next sends move over
+        session_a.go_away(relay_b.url.clone()).await.unwrap();
+        let moved = tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut group_id = 1;
+            loop {
+                broadcast
+                    .send_object(VIDEO_TRACK_NAME, keyframe_object(group_id))
+                    .await
+                    .unwrap();
+                group_id += 1;
+                if relay_b.session.try_recv().is_ok() || !relay_b.requests.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+
+        // Assert
+        assert!(moved.is_ok(), "the broadcast must move to relay B");
+        let requests_b = relay_b.received_requests();
+        assert!(
+            requests_b.contains(&"PUBLISH_NAMESPACE live/cam".to_string()),
+            "{requests_b:?}"
+        );
+        assert!(
+            requests_b.contains(&"PUBLISH live/cam/video".to_string()),
+            "{requests_b:?}"
+        );
+        assert!(
+            requests_b.contains(&format!("PUBLISH live/cam/{CATALOG_TRACK_NAME}")),
+            "{requests_b:?}"
+        );
+        let close = tokio::time::timeout(TEST_TIMEOUT, session_a.closed())
+            .await
+            .expect("the old session must be closed after the move");
+        assert_eq!(close.code, Some(0x0));
+    }
+
+    #[tokio::test]
+    async fn go_away_with_an_unreachable_relay_keeps_the_current_session() {
+        // Arrange
+        let mut relay_a = FakeRelay::spawn("goaway-unreachable");
+        let connection = RelayConnection::new(Some(MoqtTarget {
+            url: relay_a.url.clone(),
+            auth_token: None,
+            verify_certificate: false,
+        }));
+        let broadcast = Broadcast::new(connection, vec!["live".to_string()]);
+        broadcast.announce().await.unwrap();
+        let session_a = relay_a.session().await;
+
+        // Act: the named relay does not exist
+        session_a
+            .go_away("ftp://relay.invalid".to_string())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let sent = broadcast
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(1))
+            .await;
+
+        // Assert: the send still goes to relay A, which was not closed
+        assert!(sent.is_ok());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), session_a.closed())
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn transport_stats_is_none_before_the_relay_session_exists() {
