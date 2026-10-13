@@ -24,20 +24,20 @@ export async function sendAudioChunkViaMoqt({
     return
   }
 
-  if (transportState.getAudioGroupId() < 0n) {
-    transportState.advanceAudioGroup()
+  if (transportState.audio.groupId < 0n) {
+    transportState.audio.advanceGroup()
   }
 
   const subgroupId = 0
-  transportState.ensureAudioSubgroup(subgroupId)
-  if (transportState.getAudioGroupId() < 0n) {
-    transportState.advanceAudioGroup()
+  transportState.audio.ensureSubgroup(subgroupId)
+  if (transportState.audio.groupId < 0n) {
+    transportState.audio.advanceGroup()
   }
 
   for (const alias of trackAliases) {
-    if (transportState.shouldSendAudioHeader(alias, subgroupId)) {
-      await client.sendSubgroupHeader(alias, transportState.getAudioGroupId(), BigInt(subgroupId), 0)
-      transportState.markAudioHeaderSent(alias, subgroupId)
+    if (!transportState.audio.hasHeaderSent(alias, subgroupId)) {
+      await client.sendSubgroupHeader(alias, transportState.audio.groupId, BigInt(subgroupId), 0)
+      transportState.audio.markHeaderSent(alias, subgroupId)
     }
   }
 
@@ -54,14 +54,14 @@ export async function sendAudioChunkViaMoqt({
   for (const alias of trackAliases) {
     await client.sendSubgroupObject(
       alias,
-      transportState.getAudioGroupId(),
+      transportState.audio.groupId,
       BigInt(subgroupId),
-      transportState.getAudioObjectNumber(),
+      transportState.audio.nextObjectId,
       undefined,
       payload,
       locHeader
     )
   }
 
-  transportState.incrementAudioObjectNumber()
+  transportState.audio.nextObjectId += 1n
 }

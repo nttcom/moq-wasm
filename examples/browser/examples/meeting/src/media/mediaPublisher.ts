@@ -1347,7 +1347,7 @@ export class MediaPublisher {
         .then(async () => {
           await this.sendAudioEndOfGroupForTrackContext(context)
           // Advancing the group resets subgroup headers and starts a fresh audio subgroup stream.
-          context.transportState.advanceAudioGroup()
+          context.transportState.audio.advanceGroup()
         })
         .catch((error) => {
           console.error(`${context.trackName} audio group rotation failed:`, error)
@@ -1369,8 +1369,8 @@ export class MediaPublisher {
     if (!client) {
       return
     }
-    const currentGroupId = context.transportState.getAudioGroupId()
-    const endObjectId = context.transportState.getAudioObjectId()
+    const currentGroupId = context.transportState.audio.groupId
+    const endObjectId = context.transportState.audio.nextObjectId
     if (endObjectId === 0n) {
       return
     }

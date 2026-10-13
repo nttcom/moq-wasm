@@ -307,8 +307,8 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
         ...buildMp4Callbacks(
           'video',
           () => getVideoTrackAliases(client, getTrackNamespace()),
-          () => transportState.advanceVideoGroup(),
-          () => transportState.getVideoGroupId()
+          () => transportState.video.advanceGroup(),
+          () => transportState.video.groupId
         )
       })
     })
@@ -321,8 +321,8 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
         ...buildMp4Callbacks(
           'audio',
           () => getAudioTrackAliases(client, getTrackNamespace()),
-          () => transportState.advanceAudioGroup(),
-          () => transportState.getAudioGroupId()
+          () => transportState.audio.advanceGroup(),
+          () => transportState.audio.groupId
         )
       })
     })
