@@ -29,7 +29,7 @@ impl Handshake {
     pub async fn accept(self) -> anyhow::Result<Session> {
         let (control, control_receiver) = self.setup.accept().await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let context = SessionContext::new(self.transport_connection, control, event_sender);
+        let context = SessionContext::new(self.transport_connection, control, true, event_sender);
         tracing::info!("Session established");
         Ok(Session::new(
             control_receiver,
