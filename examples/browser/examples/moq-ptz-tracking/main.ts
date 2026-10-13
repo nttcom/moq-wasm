@@ -1,39 +1,15 @@
-import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
+import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LivePlayer } from '@player/livePlayer'
-import type { SubgroupObjectMessage } from '../../pkg/moqt'
-import { DjevStatusView } from '../../utils/djevStatus'
-import { showBotOffHoursNotice } from '../../utils/botHours'
-import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
-import { timeSeededGroupId } from '../../utils/media/clock'
-import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
+import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpDjevBotPage } from '../../utils/djevBot'
+import { element, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
 const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']
 const TRACKER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'tracker']
 const PROMPT_TRACK = 'prompt'
-const EVENT_TIMELINE_TRACK = 'eventtimeline'
 const AUTH_INFO = ''
-const LARGEST_OBJECT_FILTER = 0x2
+
 type Prompt = { target: string; video: string } | { target: null }
-
-class PromptPublisher {
-  private nextGroupId = timeSeededGroupId()
-  latestGroupId: bigint | undefined
-
-  constructor(
-    private readonly session: MoqtClientWrapper,
-    readonly requestId: bigint,
-    private readonly trackAlias: bigint
-  ) {}
-
-  /// One group per prompt, because the tracker reads every group from its first object.
-  async send(prompt: Prompt): Promise<void> {
-    const groupId = this.nextGroupId++
-    this.latestGroupId = groupId
-    const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await this.session.sendSingleObjectGroup(this.trackAlias, groupId, payload)
-  }
-}
 
 const session = new MoqtClientWrapper()
 const player = new LivePlayer({
@@ -45,27 +21,50 @@ const player = new LivePlayer({
     onLog: (level, message) => console[level](`[moq-ptz-tracking] ${message}`)
   }
 })
-let promptPublisher: PromptPublisher | undefined
+let promptPublisher: SingleObjectGroupPublisher | undefined
 let trackingTarget: string | undefined
 let sentPrompt: Prompt = { target: null }
 
-const urlInput = element<HTMLInputElement>('url')
-const joinButton = element<HTMLButtonElement>('joinBtn')
-const leaveButton = element<HTMLButtonElement>('leaveBtn')
 const targetForm = element<HTMLFormElement>('targetForm')
 const targetInput = element<HTMLInputElement>('target')
 const stopButton = element<HTMLButtonElement>('stopBtn')
 const positionLabel = element<HTMLSpanElement>('position')
 const moveLabel = element<HTMLSpanElement>('move')
 const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
-const djevStatus = new DjevStatusView(element('djev-status'))
 
-showBotOffHoursNotice(element('bot-hours'))
-appendCloudRelayPresetButtons(element('urlPresets'))
-configureRelayUrlControls()
-
-joinButton.addEventListener('click', () => void join())
-leaveButton.addEventListener('click', () => void leave())
+setUpDjevBotPage({
+  session,
+  logTag: 'moq-ptz-tracking',
+  ownNamespace: VIEWER_NAMESPACE,
+  ownTracks: [PROMPT_TRACK],
+  botNamespace: TRACKER_NAMESPACE,
+  afterConnect: () => player.start(CAMERA_NAMESPACE, AUTH_INFO),
+  onSubscriber: async ({ requestId, trackAlias }) => {
+    setPromptPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias))
+    await sendPrompt(currentPrompt())
+  },
+  onUnsubscribe: (requestId) => {
+    if (promptPublisher?.requestId === requestId) {
+      setPromptPublisher(undefined)
+    }
+  },
+  onTimelineObject: (payload) => {
+    const data = latestRecordForPrompt<{
+      position: TrackerRecord['position']
+      pan_seconds: number
+      tilt_seconds: number
+    }>(payload, promptPublisher?.latestGroupId)
+    if (data) {
+      showRecord({ position: data.position, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
+    }
+  },
+  onReset: async () => {
+    await player.stop()
+    viewerDelayLabel.textContent = ''
+    setPromptPublisher(undefined)
+    sentPrompt = { target: null }
+  }
+})
 targetForm.addEventListener('submit', (event) => {
   event.preventDefault()
   targetInput.setCustomValidity(targetInput.value.trim() ? '' : '追従する対象を入力してください')
@@ -75,77 +74,7 @@ targetForm.addEventListener('submit', (event) => {
 })
 stopButton.addEventListener('click', () => setTrackingTarget(undefined))
 
-async function join(): Promise<void> {
-  joinButton.disabled = true
-  setStatus('connection-status', '接続中', 'review')
-  try {
-    await session.connect(urlInput.value.trim())
-    session.setOnConnectionClosedHandler(() => void resetSession('切断されました', 'error'))
-    session.setOnIncomingSubscribeHandler(acceptTrackerSubscriber)
-    session.setOnIncomingUnsubscribeHandler((requestId) => {
-      if (promptPublisher?.requestId === requestId) {
-        setPromptPublisher(undefined)
-      }
-    })
-    session.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-      await respondOk()
-      if (sameNamespace(publishNamespace.trackNamespace, TRACKER_NAMESPACE)) {
-        await subscribeTrackerRecords()
-        await djevStatus
-          .follow(session, TRACKER_NAMESPACE)
-          .catch((error) => console.warn('[moq-ptz-tracking] djev status subscribe failed', error))
-      }
-    })
-    await session.publishNamespace(VIEWER_NAMESPACE, AUTH_INFO)
-    await session.subscribeNamespace(TRACKER_NAMESPACE, AUTH_INFO)
-    await player.start(CAMERA_NAMESPACE, AUTH_INFO)
-    setStatus('connection-status', '接続済み', 'ok')
-    leaveButton.disabled = false
-  } catch (error) {
-    await session.disconnect()
-    await resetSession(`接続に失敗しました: ${getErrorMessage(error)}`, 'error')
-  }
-}
-
-async function leave(): Promise<void> {
-  await session.disconnect()
-  await resetSession('未接続', 'idle')
-}
-
-async function resetSession(connectionText: string, connectionState: StatusState): Promise<void> {
-  await player.stop()
-  viewerDelayLabel.textContent = ''
-  djevStatus.reset()
-  setPromptPublisher(undefined)
-  sentPrompt = { target: null }
-  setStatus('connection-status', connectionText, connectionState)
-  joinButton.disabled = false
-  leaveButton.disabled = true
-}
-
-async function acceptTrackerSubscriber({
-  subscribe,
-  isSuccess,
-  code,
-  respondOk,
-  respondError
-}: IncomingSubscribeContext): Promise<void> {
-  if (!isSuccess) {
-    await respondError(BigInt(code), 'subscribe rejected')
-    return
-  }
-  if (!sameNamespace(subscribe.trackNamespace, VIEWER_NAMESPACE) || subscribe.trackName !== PROMPT_TRACK) {
-    await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
-    return
-  }
-  const trackAlias = await respondOk()
-  if (session.getRawClient()) {
-    setPromptPublisher(new PromptPublisher(session, subscribe.requestId, trackAlias))
-    await sendPrompt(currentPrompt())
-  }
-}
-
-function setPromptPublisher(publisher: PromptPublisher | undefined): void {
+function setPromptPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
   promptPublisher = publisher
   setStatus('tracker-status', publisher ? 'bot 接続済み' : 'bot 未接続', publisher ? 'ok' : 'idle')
   showRecord(undefined)
@@ -178,36 +107,10 @@ async function sendPrompt(prompt: Prompt): Promise<void> {
     return
   }
   try {
-    await promptPublisher.send(prompt)
+    await promptPublisher.send(new TextEncoder().encode(JSON.stringify(prompt)))
   } catch (error) {
     console.error('[moq-ptz-tracking] prompt send failed', error)
   }
-}
-
-async function subscribeTrackerRecords(): Promise<void> {
-  try {
-    const { subscribeOk } = await session.subscribe(TRACKER_NAMESPACE, EVENT_TIMELINE_TRACK, AUTH_INFO, {
-      filterType: LARGEST_OBJECT_FILTER,
-      forward: true
-    })
-    session.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => applyRecords(object))
-  } catch (error) {
-    console.warn('[moq-ptz-tracking] event timeline subscribe failed', error)
-  }
-}
-
-/// draft-ietf-moq-msf-01 §8.1: each event timeline object is a JSON array of records; the
-/// newest one, last in the array, carries the latest result.
-function applyRecords(object: SubgroupObjectMessage): void {
-  if (object.objectStatus !== undefined) {
-    return
-  }
-  const data = JSON.parse(new TextDecoder().decode(new Uint8Array(object.objectPayload))).at(-1)?.data
-  const [promptGroupId] = Array.isArray(data?.prompt) ? data.prompt : []
-  if (!Number.isInteger(promptGroupId) || BigInt(promptGroupId) !== promptPublisher?.latestGroupId) {
-    return
-  }
-  showRecord({ position: data.position, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
 }
 
 type TrackerRecord = {
@@ -250,8 +153,4 @@ function renderViewerDelay(): void {
 
 function formatSeconds(seconds: number): string {
   return `${seconds > 0 ? '+' : ''}${seconds.toFixed(2)} 秒`
-}
-
-function sameNamespace(left: string[], right: string[]): boolean {
-  return left.join('/') === right.join('/')
 }

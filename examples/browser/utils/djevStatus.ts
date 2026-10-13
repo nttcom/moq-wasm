@@ -1,8 +1,8 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
+import { FilterType, type MoqtClientWrapper } from '@moqt/moqtClient'
 
 const STATUS_TRACK = 'status'
 const AUTH_INFO = ''
-const LARGEST_OBJECT_FILTER = 0x2
+
 const CURRENT_GROUP = 0n
 
 type DjevState = 'ready' | 'slow' | 'starting'
@@ -19,7 +19,7 @@ export class DjevStatusView {
 
   async follow(session: MoqtClientWrapper, botNamespace: string[]): Promise<void> {
     const { requestId, subscribeOk } = await session.subscribe(botNamespace, STATUS_TRACK, AUTH_INFO, {
-      filterType: LARGEST_OBJECT_FILTER,
+      filterType: FilterType.LargestObject,
       forward: true
     })
     session.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) => {

@@ -1,19 +1,14 @@
-import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
-import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
+import { MoqtClientWrapper } from '@moqt/moqtClient'
+import type { MOQTClient } from '../../pkg/moqt'
 import { SubgroupWriter } from '@moqt/subgroupWriter'
-import { showBotOffHoursNotice } from '../../utils/botHours'
-import { DjevStatusView } from '../../utils/djevStatus'
-import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
+import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpDjevBotPage } from '../../utils/djevBot'
 import { timeSeededGroupId } from '../../utils/media/clock'
-import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
+import { element, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', 'camera']
 const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', 'detector']
 const VIDEO_TRACK = 'video'
 const PROMPT_TRACK = 'prompt'
-const EVENT_TIMELINE_TRACK = 'eventtimeline'
-const AUTH_INFO = ''
-const LARGEST_OBJECT_FILTER = 0x2
 const MAX_CHOICES = 9
 const MAX_CHOICE_LENGTH = 40
 const VIDEO_ENCODER_CONFIG = {
@@ -54,114 +49,74 @@ class GopSender {
 
 type Prompt = { question: string; choices: string[] }
 
-class PromptPublisher {
-  private nextGroupId = timeSeededGroupId()
-  latestGroupId: bigint | undefined
-
-  constructor(
-    private readonly session: MoqtClientWrapper,
-    readonly requestId: bigint,
-    private readonly trackAlias: bigint
-  ) {}
-
-  /// One group per prompt, because the detector reads every group from its first object.
-  async send(prompt: Prompt): Promise<void> {
-    const groupId = this.nextGroupId++
-    this.latestGroupId = groupId
-    const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await this.session.sendSingleObjectGroup(this.trackAlias, groupId, payload)
-  }
-}
-
 const session = new MoqtClientWrapper()
 let videoSender: GopSender | undefined
-let promptPublisher: PromptPublisher | undefined
+let promptPublisher: SingleObjectGroupPublisher | undefined
 let mediaStream: MediaStream | undefined
 let encoderWorker: Worker | undefined
 let sendQueue = Promise.resolve()
 
-const urlInput = element<HTMLInputElement>('url')
-const joinButton = element<HTMLButtonElement>('joinBtn')
-const leaveButton = element<HTMLButtonElement>('leaveBtn')
 const preview = element<HTMLVideoElement>('preview')
 const verdictLabel = element<HTMLSpanElement>('verdict')
 const promptForm = element<HTMLFormElement>('promptForm')
 const questionInput = element<HTMLInputElement>('question')
 const choicesInput = element<HTMLInputElement>('choices')
-const djevStatus = new DjevStatusView(element('djev-status'))
-showBotOffHoursNotice(element('bot-hours'))
 let appliedPrompt = readPrompt()
 
-appendCloudRelayPresetButtons(element('urlPresets'))
-configureRelayUrlControls()
-
-joinButton.addEventListener('click', () => void join())
-leaveButton.addEventListener('click', () => void leave())
-promptForm.addEventListener('submit', (event) => {
-  event.preventDefault()
-  applyPrompt()
-})
-
-async function join(): Promise<void> {
-  joinButton.disabled = true
-  setStatus('connection-status', '接続中', 'review')
-  try {
+setUpDjevBotPage({
+  session,
+  logTag: 'moq-camera-detection',
+  ownNamespace: CAMERA_NAMESPACE,
+  ownTracks: [VIDEO_TRACK, PROMPT_TRACK],
+  botNamespace: DETECTOR_NAMESPACE,
+  beforeConnect: async () => {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { width: VIDEO_ENCODER_CONFIG.width, height: VIDEO_ENCODER_CONFIG.height },
       audio: false
     })
     preview.srcObject = mediaStream
-    await session.connect(urlInput.value.trim())
-    session.setOnConnectionClosedHandler(() => resetSession('切断されました', 'error'))
-    session.setOnIncomingSubscribeHandler(acceptDetectorSubscriber)
-    session.setOnIncomingUnsubscribeHandler((requestId) => {
-      if (videoSender?.requestId === requestId) {
-        setVideoSender(undefined)
-      }
-      if (promptPublisher?.requestId === requestId) {
-        promptPublisher = undefined
-        showVerdict(undefined)
-      }
-    })
-    session.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-      await respondOk()
-      if (sameNamespace(publishNamespace.trackNamespace, DETECTOR_NAMESPACE)) {
-        await subscribeVerdicts()
-        await djevStatus
-          .follow(session, DETECTOR_NAMESPACE)
-          .catch((error) => console.warn('[moq-camera-detection] djev status subscribe failed', error))
-      }
-    })
-    await session.publishNamespace(CAMERA_NAMESPACE, AUTH_INFO)
-    await session.subscribeNamespace(DETECTOR_NAMESPACE, AUTH_INFO)
-    startEncoder(mediaStream)
-    setStatus('connection-status', '接続済み', 'ok')
-    leaveButton.disabled = false
-  } catch (error) {
-    await session.disconnect()
-    resetSession(`接続に失敗しました: ${getErrorMessage(error)}`, 'error')
+  },
+  afterConnect: async () => startEncoder(mediaStream!),
+  onSubscriber: async ({ trackName, requestId, trackAlias }) => {
+    if (trackName === VIDEO_TRACK) {
+      setVideoSender(new GopSender(session.getRawClient()!, requestId, trackAlias))
+      encoderWorker?.postMessage({ type: 'forceKeyframe' })
+    } else {
+      promptPublisher = new SingleObjectGroupPublisher(session, requestId, trackAlias)
+      await sendPrompt()
+    }
+  },
+  onUnsubscribe: (requestId) => {
+    if (videoSender?.requestId === requestId) {
+      setVideoSender(undefined)
+    }
+    if (promptPublisher?.requestId === requestId) {
+      promptPublisher = undefined
+      showVerdict(undefined)
+    }
+  },
+  onTimelineObject: (payload) => {
+    const data = latestRecordForPrompt<{ answer?: unknown }>(payload, promptPublisher?.latestGroupId)
+    if (data && (typeof data.answer === 'string' || data.answer === null)) {
+      showVerdict(data.answer)
+    }
+  },
+  onReset: () => {
+    setVideoSender(undefined)
+    promptPublisher = undefined
+    for (const track of mediaStream?.getTracks() ?? []) {
+      track.stop()
+    }
+    mediaStream = undefined
+    preview.srcObject = null
+    showVerdict(undefined)
   }
-}
+})
 
-async function leave(): Promise<void> {
-  await session.disconnect()
-  resetSession('未接続', 'idle')
-}
-
-function resetSession(connectionText: string, connectionState: StatusState): void {
-  djevStatus.reset()
-  setVideoSender(undefined)
-  promptPublisher = undefined
-  for (const track of mediaStream?.getTracks() ?? []) {
-    track.stop()
-  }
-  mediaStream = undefined
-  preview.srcObject = null
-  setStatus('connection-status', connectionText, connectionState)
-  showVerdict(undefined)
-  joinButton.disabled = false
-  leaveButton.disabled = true
-}
+promptForm.addEventListener('submit', (event) => {
+  event.preventDefault()
+  applyPrompt()
+})
 
 function startEncoder(stream: MediaStream): void {
   encoderWorker ??= new Worker(new URL('../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
@@ -179,36 +134,6 @@ function startEncoder(stream: MediaStream): void {
   const [videoTrack] = stream.getVideoTracks()
   const videoStream = new MediaStreamTrackProcessor({ track: videoTrack }).readable
   encoderWorker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
-}
-
-async function acceptDetectorSubscriber({
-  subscribe,
-  isSuccess,
-  code,
-  respondOk,
-  respondError
-}: IncomingSubscribeContext): Promise<void> {
-  if (!isSuccess) {
-    await respondError(BigInt(code), 'subscribe rejected')
-    return
-  }
-  const { trackName } = subscribe
-  if (!sameNamespace(subscribe.trackNamespace, CAMERA_NAMESPACE) || ![VIDEO_TRACK, PROMPT_TRACK].includes(trackName)) {
-    await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
-    return
-  }
-  const trackAlias = await respondOk()
-  const client = session.getRawClient()
-  if (!client) {
-    return
-  }
-  if (trackName === VIDEO_TRACK) {
-    setVideoSender(new GopSender(client, subscribe.requestId, trackAlias))
-    encoderWorker?.postMessage({ type: 'forceKeyframe' })
-  } else {
-    promptPublisher = new PromptPublisher(session, subscribe.requestId, trackAlias)
-    await sendPrompt()
-  }
 }
 
 function readPrompt(): Prompt {
@@ -241,7 +166,7 @@ async function sendPrompt(): Promise<void> {
   }
   showVerdict(undefined)
   try {
-    await promptPublisher.send(appliedPrompt)
+    await promptPublisher.send(new TextEncoder().encode(JSON.stringify(appliedPrompt)))
   } catch (error) {
     console.error('[moq-camera-detection] prompt send failed', error)
   }
@@ -252,39 +177,7 @@ function setVideoSender(sender: GopSender | undefined): void {
   setStatus('detector-status', sender ? 'bot 接続済み' : 'bot 未接続', sender ? 'ok' : 'idle')
 }
 
-async function subscribeVerdicts(): Promise<void> {
-  try {
-    const { subscribeOk } = await session.subscribe(DETECTOR_NAMESPACE, EVENT_TIMELINE_TRACK, AUTH_INFO, {
-      filterType: LARGEST_OBJECT_FILTER,
-      forward: true
-    })
-    session.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => applyVerdicts(object))
-  } catch (error) {
-    console.warn('[moq-camera-detection] event timeline subscribe failed', error)
-  }
-}
-
-/// draft-ietf-moq-msf-01 §8.1: each event timeline object is a JSON array of records; the
-/// newest one, last in the array, carries the latest verdict.
-function applyVerdicts(object: SubgroupObjectMessage): void {
-  if (object.objectStatus !== undefined) {
-    return
-  }
-  const data = JSON.parse(new TextDecoder().decode(new Uint8Array(object.objectPayload))).at(-1)?.data
-  const [promptGroupId] = Array.isArray(data?.prompt) ? data.prompt : []
-  if (!Number.isInteger(promptGroupId) || BigInt(promptGroupId) !== promptPublisher?.latestGroupId) {
-    return
-  }
-  if (typeof data.answer === 'string' || data.answer === null) {
-    showVerdict(data.answer)
-  }
-}
-
 function showVerdict(answer: string | null | undefined): void {
   verdictLabel.dataset.verdict = answer === undefined ? 'pending' : answer === null ? 'unknown' : 'answer'
   verdictLabel.textContent = answer === undefined ? '判定待ち' : answer === null ? '判定できません' : answer
-}
-
-function sameNamespace(left: string[], right: string[]): boolean {
-  return left.join('/') === right.join('/')
 }

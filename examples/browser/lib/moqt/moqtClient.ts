@@ -60,6 +60,9 @@ export interface SubscribeNamespaceOptions {
 export const GroupOrder = { Publisher: 0, Ascending: 1, Descending: 2 } as const
 export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
 
+export const FilterType = { NextGroupStart: 0x1, LargestObject: 0x2, AbsoluteStart: 0x3, AbsoluteRange: 0x4 } as const
+export type FilterType = (typeof FilterType)[keyof typeof FilterType]
+
 export const RequestErrorCode = {
   InternalError: 0x0n,
   Timeout: 0x2n,
@@ -89,7 +92,7 @@ export interface SubscribeOptions {
   requestId?: bigint
   subscriberPriority?: number
   groupOrder?: GroupOrder
-  filterType?: number
+  filterType?: FilterType
   startGroup?: bigint
   startObject?: bigint
   endGroup?: bigint
@@ -431,7 +434,7 @@ export class MoqtClientWrapper {
       trackName,
       options.subscriberPriority ?? 0,
       options.groupOrder ?? GroupOrder.Publisher,
-      options.filterType ?? 1,
+      options.filterType ?? FilterType.NextGroupStart,
       options.startGroup,
       options.startObject,
       options.endGroup,
