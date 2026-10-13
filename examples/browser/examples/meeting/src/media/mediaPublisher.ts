@@ -1,4 +1,5 @@
 import { type IncomingFetchContext, MoqtClientWrapper } from '@moqt/moqtClient'
+import { SubgroupWriter } from '@moqt/subgroupWriter'
 import type { MOQTClient } from '../../../../pkg/moqt'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
@@ -1321,7 +1322,9 @@ export class MediaPublisher {
     })
     const payload = new TextEncoder().encode(buildMeetingCatalogJson(this.trackNamespace, this.catalogTracks))
     this.catalogGroups.set(groupId, payload)
-    await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
-    await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
+    const writer = new SubgroupWriter(client, trackAlias)
+    await writer.openGroup(groupId)
+    await writer.send(payload)
+    await writer.closeGroup()
   }
 }
