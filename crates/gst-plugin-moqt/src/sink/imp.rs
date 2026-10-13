@@ -1,7 +1,7 @@
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use broadcast::{MediaPublisher, MoqtManager, MoqtTarget};
+use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection};
 use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::{glib, prelude::*, subclass::prelude::*};
@@ -36,7 +36,7 @@ impl Settings {
 }
 
 struct Started {
-    publisher: MediaPublisher,
+    writer: BroadcastWriter,
     runtime: Runtime,
     video: VideoInput,
 }
@@ -273,17 +273,17 @@ impl MoqtSink {
             return Err(anyhow!("the namespace property must not be empty"));
         }
         let runtime = Runtime::new().context("start the tokio runtime")?;
-        let manager = MoqtManager::new(Some(target));
+        let broadcast = Broadcast::new(RelayConnection::new(Some(target)), namespace);
         runtime
-            .block_on(manager.setup_namespace(&namespace))
+            .block_on(broadcast.announce())
             .context("connect to the relay and publish the namespace")?;
-        tracing::info!(namespace = %namespace.join("/"), "moqtsink connected");
-        let publisher = {
+        tracing::info!(namespace = %broadcast.namespace().join("/"), "moqtsink connected");
+        let writer = {
             let _runtime_context = runtime.enter();
-            MediaPublisher::run(manager, namespace)
+            BroadcastWriter::run(broadcast)
         };
         *self.started.lock().expect("started lock") = Some(Started {
-            publisher,
+            writer,
             runtime,
             video: VideoInput::default(),
         });
@@ -292,7 +292,9 @@ impl MoqtSink {
 
     fn stop(&self) {
         if let Some(started) = self.started.lock().expect("started lock").take() {
-            started.runtime.block_on(started.publisher.moqt().close());
+            started
+                .runtime
+                .block_on(started.writer.broadcast().connection().close());
         }
         self.pads.lock().expect("pads lock").ended.clear();
     }
@@ -327,7 +329,7 @@ impl MoqtSink {
         };
         for event in events {
             started
-                .publisher
+                .writer
                 .push(event)
                 .map_err(|err| self.stream_error(err))?;
         }
@@ -377,7 +379,7 @@ impl MoqtSink {
         let started = started
             .as_mut()
             .context("audio caps received before the sink started")?;
-        started.publisher.push(event)
+        started.writer.push(event)
     }
 
     fn stream_error(&self, err: anyhow::Error) -> gst::FlowError {

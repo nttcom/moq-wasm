@@ -11,11 +11,10 @@ use mediapack::{
 use moqt::publish::{GroupBoundary, OutgoingObject};
 
 use crate::{
-    group_alignment::GroupAlignment,
-    manager::{
-        MoqtManager, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
-        now_unix,
+    broadcast::{
+        Broadcast, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name, now_unix,
     },
+    group_alignment::GroupAlignment,
     media_timeline::MediaTimeline,
 };
 
@@ -36,9 +35,8 @@ pub struct SharedTiming {
 }
 
 pub(crate) struct TrackPublisher {
-    moqt: MoqtManager,
-    namespace: Vec<String>,
-    namespace_ready: bool,
+    broadcast: Broadcast,
+    announced: bool,
     /// The video keyframe group the audio is being written into, so that the
     /// audio tracks start a group exactly when the video tracks do.
     audio_group_id: Option<u64>,
@@ -50,11 +48,10 @@ pub(crate) struct TrackPublisher {
 }
 
 impl TrackPublisher {
-    pub(crate) fn new(moqt: MoqtManager, namespace: Vec<String>) -> Self {
+    pub(crate) fn new(broadcast: Broadcast) -> Self {
         Self {
-            moqt,
-            namespace,
-            namespace_ready: false,
+            broadcast,
+            announced: false,
             audio_group_id: None,
             audio_config: None,
             timeline: MediaTimeline::default(),
@@ -77,15 +74,13 @@ impl TrackPublisher {
             MediaEvent::VideoConfig(config) => {
                 self.video_cmaf = Some(Fmp4TrackMuxer::video(config.clone()));
                 let info = VideoTrackInfo::from_record(config, "Video".to_string())?;
-                self.moqt
-                    .update_video_catalog(&self.namespace, VIDEO_TRACK_NAME, info)
+                self.broadcast
+                    .update_video_catalog(VIDEO_TRACK_NAME, info)
                     .await
             }
             MediaEvent::AudioConfig(config) => {
                 self.audio_cmaf = Some(Fmp4TrackMuxer::audio(config.clone()));
-                self.moqt
-                    .update_audio_catalog(&self.namespace, config.clone())
-                    .await?;
+                self.broadcast.update_audio_catalog(config.clone()).await?;
                 self.audio_config = Some(config.clone());
                 Ok(())
             }
@@ -95,11 +90,11 @@ impl TrackPublisher {
     }
 
     async fn publish_video(&mut self, sample: &VideoSample) -> Result<()> {
-        self.setup_namespace().await?;
+        self.announce().await?;
         tracing::debug!(
             target: DELIVERY_LOG_TARGET,
             stage = "ingest",
-            namespace = %self.namespace.join("/"),
+            namespace = %self.broadcast.namespace().join("/"),
             track = VIDEO_TRACK_NAME,
             pts_us = sample.pts.micros(),
             bytes = sample.data.len(),
@@ -117,9 +112,8 @@ impl TrackPublisher {
             .is_keyframe
             .then(|| self.timing.alignment.keyframe(sample.pts.micros()));
         let written = self
-            .moqt
+            .broadcast
             .send_object(
-                &self.namespace,
                 VIDEO_TRACK_NAME,
                 OutgoingObject {
                     group: keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At),
@@ -132,7 +126,7 @@ impl TrackPublisher {
             tracing::debug!(
                 target: DELIVERY_LOG_TARGET,
                 stage = "publish",
-                namespace = %self.namespace.join("/"),
+                namespace = %self.broadcast.namespace().join("/"),
                 track = VIDEO_TRACK_NAME,
                 group_id = self
                     .timing
@@ -169,9 +163,8 @@ impl TrackPublisher {
         } else {
             GroupBoundary::Within
         };
-        self.moqt
+        self.broadcast
             .send_object(
-                &self.namespace,
                 &cmaf_track_name(VIDEO_TRACK_NAME),
                 OutgoingObject::plain(group, fragment.data),
             )
@@ -187,9 +180,8 @@ impl TrackPublisher {
     ) -> Result<()> {
         self.timeline
             .record(group_id, presentation_us, encoded_at_ms);
-        self.moqt
+        self.broadcast
             .send_object(
-                &self.namespace,
                 TIMELINE_TRACK_NAME,
                 OutgoingObject::plain(GroupBoundary::Next, Bytes::from(self.timeline.document()?)),
             )
@@ -203,11 +195,11 @@ impl TrackPublisher {
         self.audio_config
             .as_ref()
             .context("audio sample received before its AudioSpecificConfig")?;
-        self.setup_namespace().await?;
+        self.announce().await?;
         tracing::debug!(
             target: DELIVERY_LOG_TARGET,
             stage = "ingest",
-            namespace = %self.namespace.join("/"),
+            namespace = %self.broadcast.namespace().join("/"),
             track = AUDIO_TRACK,
             pts_us = sample.pts.micros(),
             bytes = sample.data.len()
@@ -224,9 +216,8 @@ impl TrackPublisher {
         let capture_us = object.capture_timestamp().map_or(0, |at| at.micros());
         let bytes = object.payload.len();
         let written = self
-            .moqt
+            .broadcast
             .send_object(
-                &self.namespace,
                 AUDIO_TRACK,
                 OutgoingObject {
                     group,
@@ -239,7 +230,7 @@ impl TrackPublisher {
             tracing::debug!(
                 target: DELIVERY_LOG_TARGET,
                 stage = "publish",
-                namespace = %self.namespace.join("/"),
+                namespace = %self.broadcast.namespace().join("/"),
                 track = AUDIO_TRACK,
                 group_id = self.audio_group_id.unwrap_or_default(),
                 capture_us,
@@ -261,9 +252,8 @@ impl TrackPublisher {
         let Some(fragment) = muxer.push(&MediaEvent::Audio(sample.clone()))? else {
             return Ok(());
         };
-        self.moqt
+        self.broadcast
             .send_object(
-                &self.namespace,
                 &cmaf_track_name(AUDIO_TRACK),
                 OutgoingObject::plain(group, fragment.data),
             )
@@ -277,10 +267,10 @@ impl TrackPublisher {
             .get_or_init(|| LocMuxer::new(wall_clock().saturating_sub(presentation_time)))
     }
 
-    async fn setup_namespace(&mut self) -> Result<()> {
-        if !self.namespace_ready {
-            self.moqt.setup_namespace(&self.namespace).await?;
-            self.namespace_ready = true;
+    async fn announce(&mut self) -> Result<()> {
+        if !self.announced {
+            self.broadcast.announce().await?;
+            self.announced = true;
         }
         Ok(())
     }

@@ -3,27 +3,25 @@ use mediapack::MediaEvent;
 use tokio::task::JoinHandle;
 
 use crate::{
-    manager::MoqtManager,
+    broadcast::Broadcast,
     publish_queue::{PublishQueue, QueueConsumer},
     track_publisher::{SharedTiming, TrackPublisher},
 };
 
-pub struct MediaPublisher {
-    moqt: MoqtManager,
-    namespace: Vec<String>,
+pub struct BroadcastWriter {
+    broadcast: Broadcast,
     timing: SharedTiming,
     queue: PublishQueue,
     _publish_task: JoinHandle<()>,
 }
 
-impl MediaPublisher {
-    pub fn run(moqt: MoqtManager, namespace: Vec<String>) -> Self {
-        let tracks = TrackPublisher::new(moqt.clone(), namespace.clone());
+impl BroadcastWriter {
+    pub fn run(broadcast: Broadcast) -> Self {
+        let tracks = TrackPublisher::new(broadcast.clone());
         let timing = tracks.shared_timing();
-        let (queue, consumer) = PublishQueue::open(moqt.clone());
+        let (queue, consumer) = PublishQueue::open(broadcast.connection().clone());
         Self {
-            moqt,
-            namespace,
+            broadcast,
             timing,
             queue,
             _publish_task: tokio::spawn(publish_queued_events(consumer, tracks)),
@@ -34,12 +32,8 @@ impl MediaPublisher {
         self.queue.push(event)
     }
 
-    pub fn moqt(&self) -> &MoqtManager {
-        &self.moqt
-    }
-
-    pub fn namespace(&self) -> &[String] {
-        &self.namespace
+    pub fn broadcast(&self) -> &Broadcast {
+        &self.broadcast
     }
 
     pub fn shared_timing(&self) -> SharedTiming {
@@ -62,7 +56,7 @@ mod tests {
     use mediapack::{Timestamp, VideoSample};
 
     use super::*;
-    use crate::manager::MoqtTarget;
+    use crate::relay_connection::{MoqtTarget, RelayConnection};
 
     fn keyframe() -> MediaEvent {
         MediaEvent::Video(VideoSample {
@@ -81,13 +75,13 @@ mod tests {
             auth_token: None,
             verify_certificate: true,
         };
-        let mut publisher =
-            MediaPublisher::run(MoqtManager::new(Some(target)), vec!["ns".to_string()]);
+        let broadcast = Broadcast::new(RelayConnection::new(Some(target)), vec!["ns".to_string()]);
+        let mut writer = BroadcastWriter::run(broadcast);
 
         // Act
-        let queued = publisher.push(keyframe());
-        (&mut publisher._publish_task).await.unwrap();
-        let failed = publisher.push(keyframe());
+        let queued = writer.push(keyframe());
+        (&mut writer._publish_task).await.unwrap();
+        let failed = writer.push(keyframe());
 
         // Assert
         assert!(queued.is_ok());

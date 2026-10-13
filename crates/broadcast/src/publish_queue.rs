@@ -5,7 +5,7 @@ use tokio::sync::{
     oneshot,
 };
 
-use crate::manager::MoqtManager;
+use crate::relay_connection::RelayConnection;
 
 /// 30 fps video with 48 kHz AAC audio (1024 samples per frame) is about 77
 /// samples per second.
@@ -30,7 +30,7 @@ const BACKLOG_CLEARED_DEPTH: usize = BACKLOG_WARN_DEPTH / 2;
 /// keyframe fits so that no viewer receives a group it cannot decode from its
 /// start.
 pub(crate) struct PublishQueue {
-    moqt: MoqtManager,
+    connection: RelayConnection,
     event_sender: mpsc::Sender<MediaEvent>,
     failure_receiver: oneshot::Receiver<anyhow::Error>,
     awaiting_keyframe: bool,
@@ -56,12 +56,12 @@ impl DroppedSamples {
 }
 
 impl PublishQueue {
-    pub(crate) fn open(moqt: MoqtManager) -> (Self, QueueConsumer) {
+    pub(crate) fn open(connection: RelayConnection) -> (Self, QueueConsumer) {
         let (event_sender, event_receiver) = mpsc::channel(CAPACITY);
         let (failure_sender, failure_receiver) = oneshot::channel();
         (
             Self {
-                moqt,
+                connection,
                 event_sender,
                 failure_receiver,
                 awaiting_keyframe: false,
@@ -116,7 +116,7 @@ impl PublishQueue {
             tracing::warn!(
                 queued,
                 capacity = CAPACITY,
-                transport = ?self.moqt.transport_stats(),
+                transport = ?self.connection.transport_stats(),
                 "publish queue backlog: the relay is not keeping up, media is delivered late"
             );
         } else if self.backlog_reported && queued <= BACKLOG_CLEARED_DEPTH {
@@ -129,7 +129,7 @@ impl PublishQueue {
         if !self.awaiting_keyframe {
             tracing::warn!(
                 capacity = CAPACITY,
-                transport = ?self.moqt.transport_stats(),
+                transport = ?self.connection.transport_stats(),
                 "publish queue full: the relay is not keeping up, dropping media until a keyframe fits"
             );
         }
@@ -138,7 +138,7 @@ impl PublishQueue {
             tracing::warn!(
                 dropped_video = self.dropped.video,
                 dropped_audio = self.dropped.audio,
-                transport = ?self.moqt.transport_stats(),
+                transport = ?self.connection.transport_stats(),
                 "still dropping media: the publish queue is full"
             );
         }
@@ -148,7 +148,7 @@ impl PublishQueue {
         tracing::warn!(
             dropped_video = self.dropped.video,
             dropped_audio = self.dropped.audio,
-            transport = ?self.moqt.transport_stats(),
+            transport = ?self.connection.transport_stats(),
             "publishing resumed at a keyframe"
         );
         self.awaiting_keyframe = false;
@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn stalled_queue() -> (PublishQueue, QueueConsumer) {
-        let (mut queue, consumer) = PublishQueue::open(MoqtManager::new(None));
+        let (mut queue, consumer) = PublishQueue::open(RelayConnection::new(None));
         for _ in 0..SAMPLE_SLOTS {
             queue.push(video(false)).unwrap();
         }
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn reports_a_backlog_once_it_reaches_the_warn_depth() {
         // Arrange
-        let (mut queue, _consumer) = PublishQueue::open(MoqtManager::new(None));
+        let (mut queue, _consumer) = PublishQueue::open(RelayConnection::new(None));
         for _ in 0..BACKLOG_WARN_DEPTH {
             queue.push(audio()).unwrap();
         }
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn clears_the_backlog_report_only_after_the_queue_drains_below_half_the_warn_depth() {
         // Arrange
-        let (mut queue, mut consumer) = PublishQueue::open(MoqtManager::new(None));
+        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None));
         for _ in 0..=BACKLOG_WARN_DEPTH {
             queue.push(audio()).unwrap();
         }
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn reports_why_publishing_stopped() {
         // Arrange
-        let (mut queue, consumer) = PublishQueue::open(MoqtManager::new(None));
+        let (mut queue, consumer) = PublishQueue::open(RelayConnection::new(None));
         let QueueConsumer {
             event_receiver,
             failure_sender,
