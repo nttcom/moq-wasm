@@ -1,4 +1,4 @@
-import { cn } from '../utils/cn'
+import { cn } from '../../../../lib/ui/classNames'
 import { CameraId, ConnState } from '../types/monitoring'
 
 interface Props {

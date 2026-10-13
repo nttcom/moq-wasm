@@ -1,8 +1,8 @@
 import { useMemo, useState, FormEvent, ChangeEvent } from 'react'
 import { CLOUD_RELAY_PRESETS, LOAD_BALANCED_RELAY_PRESET, buildLocalRelayPresets } from '../../../../utils/relayPresets'
-import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
+import { Button } from '../../../../lib/ui/button'
+import { Input } from '../../../../lib/ui/input'
+import { Label } from '../../../../lib/ui/label'
 
 interface JoinRoomFormProps {
   onJoin: (roomName: string, userName: string, relayUrl: string) => void

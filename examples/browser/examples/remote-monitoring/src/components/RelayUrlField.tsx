@@ -1,6 +1,6 @@
 import { RELAY_PRESETS } from '../types/monitoring'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
+import { Input } from '../../../../lib/ui/input'
+import { Label } from '../../../../lib/ui/label'
 
 interface Props {
   value: string
