@@ -122,13 +122,10 @@ impl SubgroupHeaderType {
                 let subgroup_id = buf.try_get_varint()?;
                 Ok(SubgroupId::Value(subgroup_id))
             }
-            _ => {
-                tracing::error!("Invalid message type: {}", self.0);
-                Err(DecodeError::Fatal(format!(
-                    "Invalid message type: {}",
-                    self.0
-                )))
-            }
+            _ => Err(DecodeError::Fatal(format!(
+                "Invalid message type: {}",
+                self.0
+            ))),
         }
     }
 

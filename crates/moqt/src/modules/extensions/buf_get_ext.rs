@@ -53,8 +53,7 @@ impl<T: Buf> BufGetExt for T {
             );
         }
         let bytes_str = self.copy_to_bytes(length as usize);
-        let s = str::from_utf8(&bytes_str)
-            .inspect_err(|e| tracing::error!("Failed to convert bytes to string: {:?}", e))?;
+        let s = str::from_utf8(&bytes_str)?;
         Ok(s.to_string())
     }
 }
