@@ -37,7 +37,7 @@ export function serveSubscribes(moqtClient: MoqtClientWrapper, publication: Medi
 
     const { trackName } = subscribe
     if (trackName === CATALOG_TRACK_NAME) {
-      const writer = new SubgroupWriter(moqtClient.requireConnectedClient(), await respondOk(0n))
+      const writer = new SubgroupWriter(moqtClient, await respondOk(0n))
       await writer.openGroup(nextCatalogGroupId++)
       await writer.send(new TextEncoder().encode(publication.catalogJson(trackNamespace)))
       await writer.closeGroup()

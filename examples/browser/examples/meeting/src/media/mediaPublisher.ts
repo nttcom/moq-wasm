@@ -162,11 +162,10 @@ export class MediaPublisher {
   }
 
   async sendCatalogToAlias(trackAlias: bigint): Promise<void> {
-    const client = this.client.getRawClient()
-    if (!client) {
+    if (!this.client.getConnectionStatus()) {
       return
     }
-    await this.sendCatalogObject(client, trackAlias)
+    await this.sendCatalogObject(trackAlias)
   }
 
   async answerCatalogFetch(context: IncomingFetchContext): Promise<void> {
@@ -1140,11 +1139,11 @@ export class MediaPublisher {
       return
     }
     for (const alias of aliases) {
-      await this.sendCatalogObject(client, alias)
+      await this.sendCatalogObject(alias)
     }
   }
 
-  private async sendCatalogObject(client: MOQTClient, trackAlias: bigint): Promise<void> {
+  private async sendCatalogObject(trackAlias: bigint): Promise<void> {
     const groupId = this.nextCatalogGroupId
     this.nextCatalogGroupId += 1n
 
@@ -1155,7 +1154,7 @@ export class MediaPublisher {
     })
     const payload = new TextEncoder().encode(buildMeetingCatalogJson(this.trackNamespace, this.catalogTracks))
     this.catalogGroups.set(groupId, payload)
-    const writer = new SubgroupWriter(client, trackAlias)
+    const writer = new SubgroupWriter(this.client, trackAlias)
     await writer.openGroup(groupId)
     await writer.send(payload)
     await writer.closeGroup()
