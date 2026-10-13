@@ -14,7 +14,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         track_name: String,
         option: SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription>;
-    async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()>;
+    async fn send_unsubscribe(&self, subscription: &UpstreamSubscription) -> anyhow::Result<()>;
     async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
     async fn create_data_receiver(
         &mut self,
@@ -32,7 +32,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         &mut self,
         handle: &moqt::fetch::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>>;
-    async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()>;
+    async fn send_fetch_cancel(&self, fetch: &moqt::fetch::FetchHandle) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -63,10 +63,10 @@ impl Subscriber for moqt::Subscriber {
         level = "info",
         name = "relay.subscriber.send_unsubscribe",
         skip_all,
-        fields(subscribe_id = %subscribe_id)
+        fields(request_id = %subscription.request_id())
     )]
-    async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
-        self.unsubscribe(subscribe_id).await
+    async fn send_unsubscribe(&self, subscription: &UpstreamSubscription) -> anyhow::Result<()> {
+        self.unsubscribe(subscription.as_moqt()).await
     }
 
     #[tracing::instrument(
@@ -143,9 +143,9 @@ impl Subscriber for moqt::Subscriber {
         level = "info",
         name = "relay.subscriber.send_fetch_cancel",
         skip_all,
-        fields(request_id = %request_id)
+        fields(request_id = %fetch.request_id)
     )]
-    async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
-        self.fetch_cancel(request_id).await
+    async fn send_fetch_cancel(&self, fetch: &moqt::fetch::FetchHandle) -> anyhow::Result<()> {
+        self.fetch_cancel(fetch).await
     }
 }

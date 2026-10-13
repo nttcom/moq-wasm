@@ -138,7 +138,13 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
-`Subscriber` facades sharing the same `Arc<SessionContext>`. Application
+`Subscriber` facades sharing the same `Arc<SessionContext>`. Operations on an
+established request take its handle, not its request id:
+`Subscriber::unsubscribe` / `subscribe_update` / `update_forward` /
+`fetch_relative_joining` take the `Subscription`, `Subscriber::fetch_cancel`
+the `FetchHandle`, and `Publisher::publish_done` the `Subscription` it
+publishes on. The request id stays readable as an identifier, but how a
+request is cancelled or updated on the wire is left to moqt. Application
 code consumes inbound control messages through
 `Session::receive_event() -> SessionEvent`. `Session::closed()` awaits the
 transport close itself (the signal `DisconnectWatchTask` turns into

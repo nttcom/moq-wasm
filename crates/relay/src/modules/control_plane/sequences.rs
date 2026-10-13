@@ -20,6 +20,7 @@ use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    session::subscription::UpstreamSubscription,
 };
 
 #[derive(Clone, Copy)]
@@ -67,11 +68,12 @@ pub(crate) async fn release_upstream(
     forwarder: &ControlMessageForwarder,
     ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
     publisher_session_id: SessionId,
-    upstream_request_id: u64,
+    subscription: &UpstreamSubscription,
     track_key: &TrackKey,
 ) {
+    let upstream_request_id = subscription.request_id();
     if let Err(err) = forwarder
-        .unsubscribe(publisher_session_id, upstream_request_id)
+        .unsubscribe(publisher_session_id, subscription)
         .await
     {
         tracing::warn!(

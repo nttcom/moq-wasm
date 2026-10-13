@@ -115,12 +115,12 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.publish_done",
         skip_all,
-        fields(session_id = %session_id, request_id = %request_id)
+        fields(session_id = %session_id, request_id = %subscription.request_id())
     )]
     pub(crate) async fn publish_done(
         &self,
         session_id: SessionId,
-        request_id: u64,
+        subscription: &DownstreamSubscription,
         reason: PublishDoneReason,
     ) -> anyhow::Result<()> {
         let publisher = self
@@ -128,7 +128,7 @@ impl ControlMessageForwarder {
             .await
             .ok_or_else(|| anyhow::anyhow!("No publisher"))?;
         publisher
-            .send_publish_done(request_id, reason.status_code, 0, reason.error_reason)
+            .send_publish_done(subscription, reason.status_code, 0, reason.error_reason)
             .await
     }
 
@@ -199,20 +199,20 @@ impl ControlMessageForwarder {
         level = "info",
         name = "relay.control_message_forwarder.unsubscribe",
         skip_all,
-        fields(session_id = %session_id, subscribe_id = %subscribe_id)
+        fields(session_id = %session_id, request_id = %subscription.request_id())
     )]
     pub(crate) async fn unsubscribe(
         &self,
         session_id: SessionId,
-        subscribe_id: u64,
+        subscription: &UpstreamSubscription,
     ) -> anyhow::Result<()> {
         let subscriber = self.subscriber(session_id).await?;
         tracing::info!(
-            "Forwarded UNSUBSCRIBE subscribe_id={} to session:{}",
-            subscribe_id,
+            "Forwarded UNSUBSCRIBE request_id={} to session:{}",
+            subscription.request_id(),
             session_id
         );
-        subscriber.send_unsubscribe(subscribe_id).await
+        subscriber.send_unsubscribe(subscription).await
     }
 
     #[tracing::instrument(

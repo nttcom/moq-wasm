@@ -359,7 +359,7 @@ impl Publisher for MockUpstreamPublisher {
 
     async fn send_publish_done(
         &self,
-        request_id: u64,
+        subscription: &DownstreamSubscription,
         status_code: PublishDoneCode,
         _stream_count: u64,
         _error_reason: String,
@@ -368,7 +368,7 @@ impl Publisher for MockUpstreamPublisher {
             .publish_dones
             .lock()
             .unwrap()
-            .push((request_id, status_code));
+            .push((subscription.request_id(), status_code));
         Ok(())
     }
 
@@ -426,12 +426,12 @@ impl Subscriber for MockUpstreamSubscriber {
         ))
     }
 
-    async fn send_unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
+    async fn send_unsubscribe(&self, subscription: &UpstreamSubscription) -> anyhow::Result<()> {
         self.recorded
             .unsubscribed_request_ids
             .lock()
             .unwrap()
-            .push(subscribe_id);
+            .push(subscription.request_id());
         Ok(())
     }
 
@@ -477,12 +477,12 @@ impl Subscriber for MockUpstreamSubscriber {
         Ok(Box::new(PendingFetchReceiver))
     }
 
-    async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
+    async fn send_fetch_cancel(&self, fetch: &moqt::fetch::FetchHandle) -> anyhow::Result<()> {
         self.recorded
             .fetch_cancelled_request_ids
             .lock()
             .unwrap()
-            .push(request_id);
+            .push(fetch.request_id);
         Ok(())
     }
 }

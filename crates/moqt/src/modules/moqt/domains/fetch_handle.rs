@@ -3,7 +3,7 @@ use crate::{
     object::{GroupOrder, Location},
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FetchHandle {
     pub request_id: u64,
     pub group_order: GroupOrder,

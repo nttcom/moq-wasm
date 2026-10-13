@@ -91,7 +91,7 @@ impl DownstreamPublish {
             };
             return self
                 .forwarder
-                .publish_done(subscriber_session_id, request_id, track_ended)
+                .publish_done(subscriber_session_id, &downstream_subscription, track_ended)
                 .await;
         };
 

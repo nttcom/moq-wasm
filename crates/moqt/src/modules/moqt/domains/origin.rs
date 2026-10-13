@@ -566,7 +566,7 @@ mod tests {
     async fn unsubscribe(peers: &Peers, subscription: &Subscription) -> Option<(String, String)> {
         let subscriber = peers.server.subscriber();
         let (unsubscribed, released) = within(async {
-            tokio::join!(subscriber.unsubscribe(subscription.request_id()), async {
+            tokio::join!(subscriber.unsubscribe(subscription), async {
                 let SessionEvent::Unsubscribe(handler) =
                     peers.client.receive_event().await.unwrap()
                 else {

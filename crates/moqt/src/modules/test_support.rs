@@ -271,6 +271,23 @@ pub(crate) async fn register_and_take_data_receiver(
         .unwrap()
 }
 
+/// A subscriber-initiated subscription with the given ids, for operations
+/// that only address it.
+pub(crate) fn subscription(request_id: u64, track_alias: u64) -> Subscription {
+    Subscription::SubscriberInitiated(crate::SubscriberInitiatedSubscription {
+        request_id,
+        track_namespace: "ns".to_string(),
+        track_name: "track".to_string(),
+        track_alias,
+        expires: 0,
+        group_order: crate::object::GroupOrder::Ascending,
+        content_exists: crate::object::ContentExists::False,
+        subscriber_priority: 128,
+        filter_type: crate::subscribe::FilterType::LargestObject,
+        delivery_timeout: None,
+    })
+}
+
 pub(crate) struct Rejection {
     pub(crate) code: RequestErrorCode,
     pub(crate) reason: String,

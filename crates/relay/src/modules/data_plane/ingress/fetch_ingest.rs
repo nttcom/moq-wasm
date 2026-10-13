@@ -40,7 +40,7 @@ impl FetchIngest {
         let downstream_subscriber_session_id = start.egress_start.subscriber_session_id;
         let request_id = start.egress_start.request_id;
         let upstream_publisher_session_id = start.upstream_publisher_session_id;
-        let upstream_request_id = start.fetch_handle.request_id;
+        let upstream_fetch = start.fetch_handle.clone();
         let track_key = start.track_key.clone();
         let cache = start.egress_start.cache.clone();
         let join_handle = tokio::spawn(async move {
@@ -56,7 +56,7 @@ impl FetchIngest {
                     Self::cancel_upstream_fetch(
                         session_repo.clone(),
                         upstream_publisher_session_id,
-                        upstream_request_id,
+                        &upstream_fetch,
                     )
                     .await;
                     DataStreamResetCode::MalformedTrack
@@ -161,8 +161,9 @@ impl FetchIngest {
     async fn cancel_upstream_fetch(
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         upstream_publisher_session_id: SessionId,
-        upstream_request_id: u64,
+        upstream_fetch: &moqt::fetch::FetchHandle,
     ) {
+        let upstream_request_id = upstream_fetch.request_id;
         let subscriber = {
             let session_repo = session_repo.lock().await;
             session_repo.subscriber(upstream_publisher_session_id)
@@ -170,7 +171,7 @@ impl FetchIngest {
         let Some(subscriber) = subscriber else {
             return;
         };
-        if let Err(error) = subscriber.send_fetch_cancel(upstream_request_id).await {
+        if let Err(error) = subscriber.send_fetch_cancel(upstream_fetch).await {
             tracing::warn!(
                 error = %format!("{error:#}"),
                 upstream_request_id,

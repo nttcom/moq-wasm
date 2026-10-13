@@ -194,26 +194,26 @@ async fn run_fetch_ns(
 /// delivery order. A receive error before `Fetch::End` is propagated.
 async fn run_joining_fetch(
     subscriber: &mut moqt::Subscriber,
-    joining_request_id: u64,
+    joining: &moqt::Subscription,
     joining_start: u64,
 ) -> anyhow::Result<Vec<(u64, u64)>> {
-    run_joining_fetch_with_label(subscriber, joining_request_id, joining_start, "carol").await
+    run_joining_fetch_with_label(subscriber, joining, joining_start, "carol").await
 }
 
 async fn run_joining_fetch_with_label(
     subscriber: &mut moqt::Subscriber,
-    joining_request_id: u64,
+    joining: &moqt::Subscription,
     joining_start: u64,
     label: &str,
 ) -> anyhow::Result<Vec<(u64, u64)>> {
     tracing::info!(
         "[{}] joining fetch request_id={} joining_start={}",
         label,
-        joining_request_id,
+        joining.request_id(),
         joining_start
     );
     let handle = subscriber
-        .fetch_relative_joining(joining_request_id, joining_start, FetchOption::default())
+        .fetch_relative_joining(joining, joining_start, FetchOption::default())
         .await?;
     let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut received = Vec::new();
@@ -276,7 +276,7 @@ async fn carol(
 
     // Joining Fetch: 1 group back from largest_at_subscribe (g2), so groups 1
     // and 2 in full.
-    let received = run_joining_fetch(&mut subscriber, subscription.request_id(), 1).await?;
+    let received = run_joining_fetch(&mut subscriber, &subscription, 1).await?;
     let expected: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP)
         .map(|o| (1, o))
         .chain((0..OBJECTS_PER_GROUP).map(|o| (2, o)))
@@ -715,8 +715,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
     tracing::info!("[grace] issuing joining fetch from warmed relay-B cache");
 
     // Joining Fetch: 1 group back from g2, so groups 1 and 2 in full.
-    let received =
-        run_joining_fetch_with_label(&mut grace_sub, subscription.request_id(), 1, "grace").await?;
+    let received = run_joining_fetch_with_label(&mut grace_sub, &subscription, 1, "grace").await?;
     let expected: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP)
         .map(|o| (1, o))
         .chain((0..OBJECTS_PER_GROUP).map(|o| (2, o)))
@@ -998,13 +997,8 @@ async fn run_cross_relay_cold_cache_joining_fetch(
     );
 
     // Joining Fetch 2 groups back from largest (g2): groups 0..=2 in full.
-    let received = run_joining_fetch_with_label(
-        &mut cold_sub,
-        cold_subscription.request_id(),
-        2,
-        "cold-join",
-    )
-    .await?;
+    let received =
+        run_joining_fetch_with_label(&mut cold_sub, &cold_subscription, 2, "cold-join").await?;
     let expected: Vec<(u64, u64)> = (0..GROUPS)
         .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
         .collect();
@@ -1028,13 +1022,8 @@ async fn run_cross_relay_cold_cache_joining_fetch(
             },
         )
         .await?;
-    let received = run_joining_fetch_with_label(
-        &mut warm_sub,
-        warm_subscription.request_id(),
-        2,
-        "warm-join",
-    )
-    .await?;
+    let received =
+        run_joining_fetch_with_label(&mut warm_sub, &warm_subscription, 2, "warm-join").await?;
     assert_eq!(
         received, expected,
         "[H] repeated joining fetch must be served from relay-B's warmed cache"
@@ -1167,13 +1156,8 @@ async fn run_cross_relay_live_joining_fetch(
     // Joining Fetch 2 groups back from the subscribe-time largest (g2): exactly
     // groups 0..=2 in full, ending at g2's last object, with no g3 objects even
     // though upstream now has g3.
-    let received = run_joining_fetch_with_label(
-        &mut live_sub,
-        live_subscription.request_id(),
-        2,
-        "live-join",
-    )
-    .await?;
+    let received =
+        run_joining_fetch_with_label(&mut live_sub, &live_subscription, 2, "live-join").await?;
     let expected: Vec<(u64, u64)> = (0..GROUPS)
         .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
         .collect();

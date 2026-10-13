@@ -243,6 +243,10 @@ Each sequence owns the relay-side protocol logic for one message
   any upstream subscription feeds it. The last downstream subscriber leaving
   releases its SUBSCRIBE-initiated upstream subscriptions, while
   PUBLISH-initiated ones stay until their publisher ends them. `remove_session` returns everything cleanup needs.
+  An `ActiveUpstreamSubscription` keeps the `moqt::Subscription` handle, and
+  a release hands that handle back (`ReleasedUpstreamSubscription`), because
+  moqt addresses UNSUBSCRIBE / PUBLISH_DONE / FETCH_CANCEL by the
+  subscription or fetch handle rather than by its request id.
 - `UpstreamCreationSerializer` — per-(namespace, track) async lock. The
   guard removes the track's entry on release unless a waiter still holds the
   mutex, so the map only holds tracks whose upstream creation is in progress.

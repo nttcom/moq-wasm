@@ -567,7 +567,7 @@ impl InMemoryLocalPubSubDirectory {
             track
                 .subscriptions
                 .get(&publisher_session_id)
-                .is_some_and(|subscription| subscription.upstream_request_id == upstream_request_id)
+                .is_some_and(|active| active.subscription.request_id() == upstream_request_id)
         })
     }
 
@@ -597,9 +597,7 @@ impl InMemoryLocalPubSubDirectory {
                     .value()
                     .subscriptions
                     .get(&publisher_session_id)
-                    .is_some_and(|subscription| {
-                        subscription.upstream_request_id == upstream_request_id
-                    })
+                    .is_some_and(|active| active.subscription.request_id() == upstream_request_id)
             })
             .map(|entry| entry.key().clone())?;
         let (ended_subscription, _) =
@@ -743,7 +741,7 @@ impl InMemoryLocalPubSubDirectory {
                     if released {
                         released_upstream_subscriptions.push(ReleasedUpstreamSubscription {
                             publisher_session_id: *publisher_session_id,
-                            upstream_request_id: subscription.upstream_request_id,
+                            subscription: subscription.subscription.clone(),
                         });
                     }
                     !released
@@ -797,6 +795,7 @@ mod tests {
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, table_with_upstream,
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
+    use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
 
     #[test]
     fn remove_session_cleans_up_all_session_scoped_entries() {
@@ -1396,6 +1395,19 @@ mod tests {
         }
     }
 
+    fn released_request_ids(removed: &RemovedDownstreamSubscription) -> Vec<(SessionId, u64)> {
+        removed
+            .released_upstream_subscriptions
+            .iter()
+            .map(|released| {
+                (
+                    released.publisher_session_id,
+                    released.subscription.request_id(),
+                )
+            })
+            .collect()
+    }
+
     const SECOND_PUBLISHER_SESSION: SessionId = 3;
     const SECOND_UPSTREAM_REQUEST_ID: u64 = 44;
 
@@ -1408,7 +1420,7 @@ mod tests {
             track_key.clone(),
             SECOND_PUBLISHER_SESSION,
             ActiveUpstreamSubscription {
-                upstream_request_id: SECOND_UPSTREAM_REQUEST_ID,
+                subscription: upstream_subscription(SECOND_UPSTREAM_REQUEST_ID),
                 ..active_upstream(origin)
             },
         );
@@ -1484,7 +1496,7 @@ mod tests {
             track_key.clone(),
             4,
             ActiveUpstreamSubscription {
-                upstream_request_id: 45,
+                subscription: upstream_subscription(45),
                 ..active_upstream(UpstreamSubscriptionOrigin::Publish)
             },
         );
@@ -1504,16 +1516,10 @@ mod tests {
 
         // Assert
         assert_eq!(
-            removed.released_upstream_subscriptions,
+            released_request_ids(&removed),
             vec![
-                ReleasedUpstreamSubscription {
-                    publisher_session_id: PUBLISHER_SESSION,
-                    upstream_request_id: UPSTREAM_REQUEST_ID,
-                },
-                ReleasedUpstreamSubscription {
-                    publisher_session_id: SECOND_PUBLISHER_SESSION,
-                    upstream_request_id: SECOND_UPSTREAM_REQUEST_ID,
-                },
+                (PUBLISHER_SESSION, UPSTREAM_REQUEST_ID),
+                (SECOND_PUBLISHER_SESSION, SECOND_UPSTREAM_REQUEST_ID),
             ]
         );
         assert_eq!(
@@ -1532,7 +1538,7 @@ mod tests {
             track_key.clone(),
             RELAY_PUBLISHER_SESSION,
             ActiveUpstreamSubscription {
-                upstream_request_id: 46,
+                subscription: upstream_subscription(46),
                 publisher_peer: SessionPeer::Relay,
                 ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
             },
@@ -1571,11 +1577,8 @@ mod tests {
 
         // Assert: the client publisher keeps serving the relay subscriber
         assert_eq!(
-            removed.released_upstream_subscriptions,
-            vec![ReleasedUpstreamSubscription {
-                publisher_session_id: RELAY_PUBLISHER_SESSION,
-                upstream_request_id: 46,
-            }]
+            released_request_ids(&removed),
+            vec![(RELAY_PUBLISHER_SESSION, 46)]
         );
         assert!(!runner_stopped(&mut relay_runner_stop_receiver));
         assert_eq!(
@@ -1687,7 +1690,7 @@ mod tests {
             track_key.clone(),
             1,
             ActiveUpstreamSubscription {
-                upstream_request_id: 10,
+                subscription: upstream_subscription(10),
                 ..active_upstream(UpstreamSubscriptionOrigin::Subscribe)
             },
         );

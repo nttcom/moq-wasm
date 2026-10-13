@@ -85,7 +85,7 @@ pub(crate) fn subscribe_initiated(
     publisher_peer: SessionPeer,
 ) -> ActiveUpstreamSubscription {
     ActiveUpstreamSubscription {
-        upstream_request_id: subscription.request_id(),
+        subscription: subscription.clone(),
         expires: subscription.expires(),
         content_exists: subscription.content_exists(),
         origin: UpstreamSubscriptionOrigin::Subscribe,
@@ -157,7 +157,7 @@ async fn join_track(
     active_upstream: ActiveUpstreamSubscription,
     subscription: UpstreamSubscription,
 ) {
-    let upstream_request_id = active_upstream.upstream_request_id;
+    let upstream_request_id = subscription.request_id();
     let joined = deps.table.add_upstream_subscription_to_track(
         track_key,
         publisher_session_id,
@@ -171,7 +171,7 @@ async fn join_track(
         );
         if let Err(error) = deps
             .forwarder
-            .unsubscribe(publisher_session_id, upstream_request_id)
+            .unsubscribe(publisher_session_id, &subscription)
             .await
         {
             tracing::warn!(

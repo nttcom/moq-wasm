@@ -114,7 +114,7 @@ async fn subscribe_to_published_track(
                     return Ok(subscription);
                 }
                 Ok(subscription) => {
-                    subscriber.unsubscribe(subscription.request_id()).await?;
+                    subscriber.unsubscribe(&subscription).await?;
                 }
                 Err(error) => tracing::info!(track, ?error, "track not published yet"),
             }
@@ -207,5 +207,5 @@ async fn expect_groups(
         .with_context(|| {
             format!("{track}: fewer than {groups} groups within {RECEIVE_TIMEOUT:?}")
         })??;
-    subscriber.unsubscribe(subscription.request_id()).await
+    subscriber.unsubscribe(subscription).await
 }
