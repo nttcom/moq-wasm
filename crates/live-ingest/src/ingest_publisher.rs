@@ -1,5 +1,5 @@
 use anyhow::Result;
-use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, VideoTrackInfo};
+use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, SourceTracks, VideoTrackInfo};
 use mediapack::MediaEvent;
 
 use crate::{renditions::RenditionFanout, stats_panel::ConnectionRegistry};
@@ -20,7 +20,7 @@ pub struct IngestPublisher {
 impl IngestPublisher {
     pub fn new(broadcast: Broadcast, transcode: bool) -> Self {
         Self {
-            writer: BroadcastWriter::run(broadcast),
+            writer: BroadcastWriter::run(broadcast, SourceTracks::default()),
             transcode,
             renditions: None,
         }

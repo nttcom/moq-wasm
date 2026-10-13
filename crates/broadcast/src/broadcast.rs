@@ -79,12 +79,42 @@ impl Broadcast {
             .await
     }
 
-    pub async fn update_audio_catalog(&self, config: AudioConfig) -> Result<()> {
+    pub async fn update_audio_catalog(&self, track_name: &str, info: AudioTrackInfo) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
-        relay.update_audio_catalog(&self.namespace, config).await
+        relay
+            .update_audio_catalog(&self.namespace, track_name, info)
+            .await
     }
+}
+
+/// The tracks one `BroadcastWriter` writes its source into. The media
+/// timeline and the chat belong to the default `video` and `audio` tracks, so
+/// a writer under other names publishes neither.
+#[derive(Debug, Clone)]
+pub struct SourceTracks {
+    pub video: String,
+    pub video_label: String,
+    pub audio: String,
+    pub audio_label: String,
+}
+
+impl Default for SourceTracks {
+    fn default() -> Self {
+        Self {
+            video: VIDEO_TRACK_NAME.to_string(),
+            video_label: "Video".to_string(),
+            audio: AUDIO_TRACK_NAME.to_string(),
+            audio_label: "Audio".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioTrackInfo {
+    pub label: String,
+    pub config: AudioConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +147,14 @@ pub fn cmaf_track_name(track_name: &str) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CatalogMetadata {
     pub(crate) video_tracks: BTreeMap<String, VideoTrackInfo>,
-    pub(crate) audio_config: Option<AudioConfig>,
+    pub(crate) audio_tracks: BTreeMap<String, AudioTrackInfo>,
+}
+
+impl CatalogMetadata {
+    fn has_default_tracks(&self) -> bool {
+        self.video_tracks.contains_key(VIDEO_TRACK_NAME)
+            || self.audio_tracks.contains_key(AUDIO_TRACK_NAME)
+    }
 }
 
 pub(crate) fn is_cmaf(track: &Track) -> bool {
@@ -155,37 +192,49 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         tracks.push(cmaf);
     }
 
-    let audio_role = TrackRole::Known(KnownTrackRole::Audio);
-    let mut audio = track(
-        &namespace,
-        AUDIO_TRACK_NAME,
-        KnownPackaging::Loc,
-        audio_role,
-    );
-    audio.label = Some("Audio".to_string());
-    audio.codec = Some("mp4a.40.2".to_string());
-    audio.mime_type = Some(audio_mime_type(metadata.audio_config.as_ref()).to_string());
-    if let Some(config) = &metadata.audio_config {
-        audio.codec = Some(config.codec_string());
-        audio.sample_rate = Some(config.sample_rate());
-        audio.channel_config = Some(channel_config_label(config.channels()));
+    for (name, info) in &metadata.audio_tracks {
+        let mut audio = audio_track(&namespace, name, &info.label);
+        audio.codec = Some(info.config.codec_string());
+        audio.mime_type = Some(audio_mime_type(&info.config).to_string());
+        audio.sample_rate = Some(info.config.sample_rate());
+        audio.channel_config = Some(channel_config_label(info.config.channels()));
+        // Only AAC has an fMP4 muxer, so other codecs travel as LOC alone.
+        let mut audio_cmaf = None;
+        if let AudioConfig::Aac(config) = &info.config {
+            let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
+            init_data_list.push(audio.set_inline_init_data(audio_specific_config));
+            let mut cmaf = cmaf_sibling(&audio, "audio/mp4", None);
+            let init_segment = Fmp4TrackMuxer::audio(config.clone()).init_segment()?;
+            init_data_list
+                .push(cmaf.set_inline_init_data(general_purpose::STANDARD.encode(init_segment)));
+            audio_cmaf = Some(cmaf);
+        }
+        tracks.push(audio);
+        tracks.extend(audio_cmaf);
     }
-    // Only AAC has an fMP4 muxer, so other codecs travel as LOC alone.
-    let mut audio_cmaf = None;
-    if let Some(AudioConfig::Aac(config)) = &metadata.audio_config {
-        let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
-        init_data_list.push(audio.set_inline_init_data(audio_specific_config));
-        let mut cmaf = cmaf_sibling(&audio, "audio/mp4", None);
-        let init_segment = Fmp4TrackMuxer::audio(config.clone()).init_segment()?;
-        init_data_list
-            .push(cmaf.set_inline_init_data(general_purpose::STANDARD.encode(init_segment)));
-        audio_cmaf = Some(cmaf);
+    if metadata.has_default_tracks() {
+        tracks.extend(default_tracks(&namespace, metadata));
     }
-    tracks.push(audio);
-    tracks.extend(audio_cmaf);
+
+    let mut catalog = Catalog::new(tracks, now_unix().as_millis() as u64);
+    catalog.init_data_list = (!init_data_list.is_empty()).then_some(init_data_list);
+    Ok(catalog)
+}
+
+/// The tracks that come with the default `video` and `audio`: the `audio`
+/// placeholder listed before its config arrives, so it is published together
+/// with `video`, the media timeline and the chat.
+fn default_tracks(namespace: &Option<String>, metadata: &CatalogMetadata) -> Vec<Track> {
+    let mut tracks = Vec::new();
+    if !metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME) {
+        let mut audio = audio_track(namespace, AUDIO_TRACK_NAME, "Audio");
+        audio.codec = Some("mp4a.40.2".to_string());
+        audio.mime_type = Some("audio/aac".to_string());
+        tracks.push(audio);
+    }
 
     let mut timeline = track(
-        &namespace,
+        namespace,
         TIMELINE_TRACK_NAME,
         KnownPackaging::MediaTimeline,
         TrackRole::Known(KnownTrackRole::MediaTimeline),
@@ -199,7 +248,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     tracks.push(timeline);
 
     let mut chat = track(
-        &namespace,
+        namespace,
         CHAT_TRACK_NAME,
         KnownPackaging::EventTimeline,
         TrackRole::Other(CHAT_TRACK_NAME.to_string()),
@@ -212,10 +261,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     ]);
     chat.mime_type = Some("application/json".to_string());
     tracks.push(chat);
-
-    let mut catalog = Catalog::new(tracks, now_unix().as_millis() as u64);
-    catalog.init_data_list = (!init_data_list.is_empty()).then_some(init_data_list);
-    Ok(catalog)
+    tracks
 }
 
 fn cmaf_sibling(loc: &Track, mime_type: &str, alt_group: Option<u64>) -> Track {
@@ -236,11 +282,22 @@ fn track(
     track
 }
 
-fn audio_mime_type(config: Option<&AudioConfig>) -> &'static str {
+fn audio_track(namespace: &Option<String>, name: &str, label: &str) -> Track {
+    let mut audio = track(
+        namespace,
+        name,
+        KnownPackaging::Loc,
+        TrackRole::Known(KnownTrackRole::Audio),
+    );
+    audio.label = Some(label.to_string());
+    audio
+}
+
+fn audio_mime_type(config: &AudioConfig) -> &'static str {
     match config {
-        None | Some(AudioConfig::Aac(_)) => "audio/aac",
-        Some(AudioConfig::Pcma { .. }) => "audio/pcma",
-        Some(AudioConfig::Opus { .. }) => "audio/opus",
+        AudioConfig::Aac(_) => "audio/aac",
+        AudioConfig::Pcma { .. } => "audio/pcma",
+        AudioConfig::Opus { .. } => "audio/opus",
     }
 }
 
@@ -284,7 +341,13 @@ mod tests {
         );
         CatalogMetadata {
             video_tracks,
-            audio_config: Some(AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1))),
+            audio_tracks: BTreeMap::from([(
+                AUDIO_TRACK_NAME.to_string(),
+                AudioTrackInfo {
+                    label: "Audio".to_string(),
+                    config: AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)),
+                },
+            )]),
         }
     }
 
@@ -343,7 +406,8 @@ mod tests {
             init_data_of(&catalog, video_cmaf),
             Some(video_init_segment.as_str())
         );
-        let Some(AudioConfig::Aac(config)) = metadata.audio_config.clone() else {
+        let AudioConfig::Aac(config) = metadata.audio_tracks[AUDIO_TRACK_NAME].config.clone()
+        else {
             panic!("the fixture audio is AAC");
         };
         assert_eq!(
@@ -402,13 +466,17 @@ mod tests {
     #[test]
     fn catalog_carries_pcma_audio_as_loc_only() {
         // Arrange
-        let metadata = CatalogMetadata {
-            audio_config: Some(AudioConfig::Pcma {
-                sample_rate: 8_000,
-                channels: 1,
-            }),
-            ..metadata_with_video_and_audio()
-        };
+        let mut metadata = metadata_with_video_and_audio();
+        metadata.audio_tracks.insert(
+            AUDIO_TRACK_NAME.to_string(),
+            AudioTrackInfo {
+                label: "Audio".to_string(),
+                config: AudioConfig::Pcma {
+                    sample_rate: 8_000,
+                    channels: 1,
+                },
+            },
+        );
 
         // Act
         let catalog = build_catalog("live/test", &metadata).unwrap();
@@ -426,6 +494,40 @@ mod tests {
                 .iter()
                 .flatten()
                 .all(|track| track.name != "audio_cmaf")
+        );
+    }
+
+    #[test]
+    fn a_source_under_other_names_brings_neither_the_timeline_nor_the_default_audio() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        let video = metadata.video_tracks.remove(VIDEO_TRACK_NAME).unwrap();
+        let audio = metadata.audio_tracks.remove(AUDIO_TRACK_NAME).unwrap();
+        metadata
+            .video_tracks
+            .insert("video/profile_1".to_string(), video);
+        metadata
+            .audio_tracks
+            .insert("audio/profile_1".to_string(), audio);
+
+        // Act
+        let catalog = build_catalog("onvif/client", &metadata).unwrap();
+
+        // Assert
+        let names: Vec<&str> = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "video/profile_1",
+                "video/profile_1_cmaf",
+                "audio/profile_1",
+                "audio/profile_1_cmaf"
+            ]
         );
     }
 }

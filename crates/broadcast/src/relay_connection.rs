@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
-use mediapack::AudioConfig;
 use moqt::{
     ClientConfig, DUAL, Endpoint, Session, SessionEvent, TerminationErrorCode, TransportStats,
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
@@ -21,7 +20,8 @@ use tokio::{
 
 use crate::{
     broadcast::{
-        CatalogMetadata, VideoTrackInfo, awaits_subscribe, build_catalog, is_cmaf, now_unix,
+        AudioTrackInfo, CatalogMetadata, VideoTrackInfo, awaits_subscribe, build_catalog, is_cmaf,
+        now_unix,
     },
     stream_ledger::{StreamLedger, StreamRecord},
 };
@@ -405,7 +405,8 @@ impl ConnectedRelay {
     pub(crate) async fn update_audio_catalog(
         &self,
         namespace: &[String],
-        config: AudioConfig,
+        track_name: &str,
+        info: AudioTrackInfo,
     ) -> Result<()> {
         self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
@@ -416,10 +417,10 @@ impl ConnectedRelay {
                 bail!("MoQ publisher disconnected");
             }
             let metadata = guard.catalogs.entry(namespace_path.clone()).or_default();
-            if metadata.audio_config.as_ref() == Some(&config) {
+            if metadata.audio_tracks.get(track_name) == Some(&info) {
                 return Ok(());
             }
-            metadata.audio_config = Some(config);
+            metadata.audio_tracks.insert(track_name.to_string(), info);
         }
         self.send_catalog(&namespace_path).await
     }

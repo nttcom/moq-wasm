@@ -1,7 +1,7 @@
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow};
-use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection};
+use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
 use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::{glib, prelude::*, subclass::prelude::*};
@@ -280,7 +280,7 @@ impl MoqtSink {
         tracing::info!(namespace = %broadcast.namespace().join("/"), "moqtsink connected");
         let writer = {
             let _runtime_context = runtime.enter();
-            BroadcastWriter::run(broadcast)
+            BroadcastWriter::run(broadcast, SourceTracks::default())
         };
         *self.started.lock().expect("started lock") = Some(Started {
             writer,
