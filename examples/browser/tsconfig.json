@@ -13,7 +13,7 @@
       "@moqt/*": ["./lib/moqt/*"],
       "@player/*": ["./lib/player/*"]
     },
-    "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom"],
+    "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom", "vite/client"],
     "lib": ["esnext", "webworker", "dom"]
   },
   "include": [
