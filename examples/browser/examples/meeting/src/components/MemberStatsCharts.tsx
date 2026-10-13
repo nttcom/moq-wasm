@@ -20,7 +20,7 @@ type StatsChartConfig = {
   adaptiveMaxTickCount?: number
   adaptiveTickRangeMode?: 'zeroBased' | 'dataFocused'
   yPadding: ChartYAxisPadding
-  yTickLabelFormatter: (value: number) => string
+  unit: 'kbps' | 'ms' | 'KB' | ''
 }
 
 const CHART_VIEWBOX_WIDTH = 108
@@ -41,7 +41,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [{ label: 'Video', accessor: (sample) => sample.videoBitrateKbps, colorClass: 'text-cyan-300' }],
     yTickStep: VIDEO_BITRATE_TICK_STEP_KBPS,
     yPadding: BITRATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} kbps`
+    unit: 'kbps'
   },
   {
     key: 'audio-bitrate',
@@ -49,7 +49,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [{ label: 'Audio', accessor: (sample) => sample.audioBitrateKbps, colorClass: 'text-emerald-300' }],
     yTicks: AUDIO_BITRATE_Y_TICKS,
     yPadding: BITRATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} kbps`
+    unit: 'kbps'
   },
   {
     key: 'screenshare-bitrate',
@@ -57,7 +57,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [{ label: 'Screen', accessor: (sample) => sample.screenShareBitrateKbps, colorClass: 'text-orange-300' }],
     yTickStep: VIDEO_BITRATE_TICK_STEP_KBPS,
     yPadding: BITRATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} kbps`
+    unit: 'kbps'
   },
   {
     key: 'local-video-encode',
@@ -76,7 +76,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     ],
     yTickStep: 25,
     yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+    unit: 'ms'
   },
   {
     key: 'local-video-send-queue-wait',
@@ -95,7 +95,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     ],
     yTickStep: 25,
     yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+    unit: 'ms'
   },
   {
     key: 'local-video-send-active',
@@ -119,7 +119,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     ],
     yTickStep: 25,
     yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+    unit: 'ms'
   },
   {
     key: 'local-video-send-queue-depth',
@@ -149,7 +149,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     yTickStep: 1,
     adaptiveMaxTickCount: 8,
     yPadding: RENDERING_RATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)}`
+    unit: ''
   },
   {
     key: 'local-video-send-object-bytes',
@@ -168,7 +168,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     ],
     yTickStep: 25,
     yPadding: BITRATE_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} KB`
+    unit: 'KB'
   },
   {
     key: 'playout-buffer',
@@ -181,7 +181,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     ],
     yTickStep: LATENCY_Y_TICK_STEP_MS,
     yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+    unit: 'ms'
   },
   {
     key: 'viewer-delay',
@@ -189,7 +189,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [{ label: 'Delay', accessor: (sample) => sample.viewerDelayMs, colorClass: 'text-cyan-300' }],
     yTickStep: LATENCY_Y_TICK_STEP_MS,
     yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+    unit: 'ms'
   },
   {
     key: 'av-offset',
@@ -198,7 +198,7 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     yTickStep: 20,
     adaptiveTickRangeMode: 'dataFocused',
     yPadding: LATENCY_Y_PADDING,
-    yTickLabelFormatter: (value) => `${Math.round(value)} ms`
+    unit: 'ms'
   }
 ]
 
@@ -241,7 +241,7 @@ export function MemberStatsCharts({
               : chart.yTicks
           }
           yPadding={chart.yPadding}
-          yTickLabelFormatter={chart.yTickLabelFormatter}
+          unit={chart.unit}
           chartHeightClass={chartHeightClass}
         />
       ))}
@@ -266,7 +266,7 @@ function MetricChart({
   series,
   yTicks,
   yPadding,
-  yTickLabelFormatter,
+  unit,
   chartHeightClass
 }: {
   title: string
@@ -274,7 +274,7 @@ function MetricChart({
   series: MetricSeriesConfig[]
   yTicks?: number[]
   yPadding: ChartYAxisPadding
-  yTickLabelFormatter: (value: number) => string
+  unit: StatsChartConfig['unit']
   chartHeightClass: string
 }) {
   const [hiddenSeriesLabels, setHiddenSeriesLabels] = useState<Set<string>>(new Set())
@@ -356,7 +356,7 @@ function MetricChart({
                   strokeDasharray="1.2 1.2"
                 />
                 <text x={1.2} y={Math.max(2.5, y - 0.6)} fontSize={2.4} fill="rgba(191, 219, 254, 0.75)">
-                  {yTickLabelFormatter(tick)}
+                  {formatTickLabel(tick, unit)}
                 </text>
               </g>
             )
@@ -388,6 +388,10 @@ function MetricChart({
       )}
     </section>
   )
+}
+
+function formatTickLabel(value: number, unit: StatsChartConfig['unit']): string {
+  return unit ? `${Math.round(value)} ${unit}` : `${Math.round(value)}`
 }
 
 function buildAdaptiveTicks(
