@@ -12,10 +12,9 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # A loopback MOQT_URL may resolve to the Docker bridge host, which is local as well.
 LOOPBACK_RELAY_URLS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
 LOCAL_RELAY_URLS = $(LOOPBACK_RELAY_URLS) $(if $(filter $(LOOPBACK_RELAY_URLS),$(MOQT_URL)),$(RESOLVED_MOQT_URL))
-is_local_relay = $(filter $(LOCAL_RELAY_URLS),$1)
-LIVE_INGEST_TLS_FLAGS = $(if $(call is_local_relay,$(LIVE_INGEST_MOQT_URL)),--insecure-skip-tls-verify)
-ONVIF_TLS_FLAGS = $(if $(call is_local_relay,$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
-GST_TLS_PROPERTIES = $(if $(call is_local_relay,$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
+LIVE_INGEST_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_INGEST_MOQT_URL)),--insecure-skip-tls-verify)
+ONVIF_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
+GST_TLS_PROPERTIES = $(if $(filter $(LOCAL_RELAY_URLS),$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
