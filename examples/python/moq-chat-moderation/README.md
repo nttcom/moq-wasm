@@ -20,7 +20,7 @@ sequenceDiagram
 
 ## djev-run
 
-djev-run は Jev 互換の `/v1/systemone` を返す Cloud Run サービス `djev-dgemma`（asia-southeast1）として動いています。
+djev-run は Jev 互換の `/v1/systemone` を返す Cloud Run サービス `djev-vision`（asia-southeast1、MoQ Camera Detection と共用）として動いています。
 IAM 認証が必須なので、bot を起動するアカウントには `roles/run.invoker` が必要です。bot は `--gcloud-auth` を付けると
 `gcloud auth print-identity-token` の ID トークンを Bearer で送ります。GCE の VM では `--metadata-auth` を付けると、VM のサービスアカウントの ID トークンをメタデータサーバーから取って送ります。`--min-instances=0` のため、しばらく使われずに停止した後の最初の判定は、コールドスタートで約 3 分かかります。
 デプロイ手順は [djev-run を Cloud Run にデプロイする](../djev-run-on-cloud-run.md) にあります。
@@ -44,7 +44,7 @@ Cloud relay-1 には、常時動いている bot がつながっています。C
    ```shell
    cd examples/python/moq-chat-moderation
    uv run python -m moq_chat_moderation.bot --insecure \
-     --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+     --jev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
      --gcloud-auth
    ```
 

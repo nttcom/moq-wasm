@@ -1,12 +1,12 @@
 # djev-run を Cloud Run にデプロイする
 
 MoQ Chat Moderation（`moq-chat-moderation`）と MoQ Camera Detection（`moq-camera-detection`）の bot が呼ぶ判定サーバです。
-どちらも [djev-run](https://github.com/taeold/djev-run) を Cloud Run の GPU で動かします。
+どちらも 1 つの Cloud Run サービス `djev-vision` で動く [djev-run](https://github.com/taeold/djev-run) を、呼び出し先を変えて使います。
 
-| サービス | 用途 | 呼び出し先 |
+| bot | 用途 | 呼び出し先 |
 | --- | --- | --- |
-| `djev-dgemma` | チャットの暴言判定（テキスト、確率付き） | `/v1/systemone` |
-| `djev-vision` | カメラ映像への質問（画像、選択肢の番号） | `/v1/chat/completions` |
+| MoQ Chat Moderation | チャットの暴言判定（テキスト、確率付き） | `/v1/systemone` |
+| MoQ Camera Detection | カメラ映像への質問（画像、選択肢の番号） | `/v1/chat/completions` |
 
 基本の手順は djev-run の README の
 [Deploy on Google Cloud Run](https://github.com/taeold/djev-run/tree/2f6e6b9b455eec27dcdc0a4cb71a3fafdec6acc8#deploy-on-google-cloud-run)
@@ -18,7 +18,7 @@ MoQ Chat Moderation（`moq-chat-moderation`）と MoQ Camera Detection（`moq-ca
 | 認証なしで公開 | IAM 認証必須。専用のサービスアカウントを使う | GPU の費用がかかるため |
 | `default` サブネット | Private Google Access を有効にした専用サブネット | `default` サブネットの設定を変えずに、GCS から重みを速く読む（VPC を通さないとコールドスタートに約 9 分かかる） |
 | 重みのバケットを読み書き可能でマウント | 読み取り専用でマウント | 重みを書き換えないため |
-| テキストのみ（`--language-model-only`） | `djev-vision` は画像エンコーダを読み込み、`--mm-processor-cache-gb 0` を付ける | 画像を受け付けるため。キャッシュを有効にすると画像リクエストが毎回 500 になる |
+| テキストのみ（`--language-model-only`） | 画像エンコーダも読み込み、`--mm-processor-cache-gb 0` を付ける | 画像を受け付けるため。キャッシュを有効にすると画像リクエストが毎回 500 になる |
 
 ## 前提
 
@@ -80,39 +80,26 @@ gcloud compute networks subnets create djev-run --project=${PROJECT} --network=d
 
 ## 4. デプロイする
 
-2 つのサービスは同じイメージと同じリソースで動かします。
+イメージに組み込まれた `vllm serve` の起動コマンドを、画像も受け付けるものに差し替えます。
 
 ```shell
-COMMON=(
-  --project=${PROJECT} --region=${REGION} --image=${IMAGE}
-  --service-account=${SA} --no-allow-unauthenticated
-  --gpu=1 --gpu-type=nvidia-rtx-pro-6000 --no-gpu-zonal-redundancy
-  --cpu=20 --memory=80Gi --no-cpu-throttling
-  --concurrency=32 --min-instances=0 --max-instances=1 --port=8080
-  --network=default --subnet=djev-run --vpc-egress=all-traffic
-  --add-volume=name=weights,type=cloud-storage,bucket=${BUCKET},readonly=true,mount-options=enable-buffered-read=true
-  --add-volume-mount=volume=weights,mount-path=/mnt/gcs
-  --startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=5,periodSeconds=10,timeoutSeconds=5,failureThreshold=60
-)
-```
-
-`djev-dgemma` はイメージに組み込まれた `vllm serve` をそのまま使います。
-
-```shell
-gcloud beta run deploy djev-dgemma "${COMMON[@]}"
-```
-
-`djev-vision` は起動コマンドだけを差し替えます。
-
-```shell
-gcloud beta run deploy djev-vision "${COMMON[@]}" \
+gcloud beta run deploy djev-vision \
+  --project=${PROJECT} --region=${REGION} --image=${IMAGE} \
+  --service-account=${SA} --no-allow-unauthenticated \
+  --gpu=1 --gpu-type=nvidia-rtx-pro-6000 --no-gpu-zonal-redundancy \
+  --cpu=20 --memory=80Gi --no-cpu-throttling \
+  --concurrency=32 --min-instances=0 --max-instances=1 --port=8080 \
+  --network=default --subnet=djev-run --vpc-egress=all-traffic \
+  --add-volume=name=weights,type=cloud-storage,bucket=${BUCKET},readonly=true,mount-options=enable-buffered-read=true \
+  --add-volume-mount=volume=weights,mount-path=/mnt/gcs \
+  --startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=5,periodSeconds=10,timeoutSeconds=5,failureThreshold=60 \
   --command=/bin/bash \
   --args="-c","export VLLM_ENABLE_V1_MULTIPROCESSING=0 VLLM_FLASHINFER_MOE_BACKEND=masked_gemm PYTHONPATH=/opt/dgemma && cp -r /mnt/gcs/dgemma /dev/shm/dgemma && exec vllm serve /dev/shm/dgemma --middleware server.SystemOneMiddleware --port 8080 --served-model-name djev-dgemma --allowed-origins '[\"*\"]' --trust-remote-code --enforce-eager --attention-backend TRITON_ATTN --kv-cache-memory 2G --max-num-seqs 32 --max-model-len 4096 --mm-processor-cache-gb 0 --diffusion-config '{\"canvas_length\":128}' --override-generation-config '{\"max_new_tokens\":null}'"
 ```
 
 ## 5. bot から呼ぶ
 
-プロジェクトのオーナー以外が bot を起動する場合は、そのアカウントに `roles/run.invoker` をサービスごとに付けます。
+プロジェクトのオーナー以外が bot を起動する場合は、そのアカウントに `roles/run.invoker` を付けます。
 
 ```shell
 gcloud run services add-iam-policy-binding djev-vision --project=${PROJECT} --region=${REGION} \
