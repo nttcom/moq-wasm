@@ -2,15 +2,14 @@ import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt'
 import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../lib/msf/catalog'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
+import type { MediaKind } from '../../lib/player/trackContext'
 
-export type TrackKind = 'video' | 'audio'
+type CatalogPick = Record<MediaKind, { tracks: MediaCatalogTrack[]; selected?: MediaCatalogTrack }>
 
-export type CatalogPick = Record<TrackKind, { tracks: MediaCatalogTrack[]; selected?: MediaCatalogTrack }>
-
-const KINDS: TrackKind[] = ['video', 'audio']
+const KINDS: MediaKind[] = ['video', 'audio']
 const STATUS_ID = 'catalog-track-status'
 
-function formatTrackLabel(kind: TrackKind, track: MediaCatalogTrack): string {
+function formatTrackLabel(kind: MediaKind, track: MediaCatalogTrack): string {
   const details =
     kind === 'video'
       ? [typeof track.width === 'number' && typeof track.height === 'number' ? `${track.width}x${track.height}` : '']
@@ -24,7 +23,7 @@ function formatTrackLabel(kind: TrackKind, track: MediaCatalogTrack): string {
   return metadata ? `${track.label} (${metadata})` : track.label
 }
 
-function placeholderOption(kind: TrackKind): HTMLOptionElement {
+function placeholderOption(kind: MediaKind): HTMLOptionElement {
   const option = new Option(`Catalog ${kind} tracks are not loaded yet`, '', true, true)
   option.disabled = true
   return option
@@ -33,15 +32,15 @@ function placeholderOption(kind: TrackKind): HTMLOptionElement {
 export function setUpCatalogPicker(
   moqtClient: MoqtClientWrapper,
   form: HTMLFormElement,
-  onSelect?: (kind: TrackKind, track: MediaCatalogTrack) => void
+  onSelect?: (kind: MediaKind, track: MediaCatalogTrack) => void
 ): { pick: CatalogPick; reset: () => void } {
   const pick: CatalogPick = { video: { tracks: [] }, audio: { tracks: [] } }
-  const selects: Record<TrackKind, HTMLSelectElement | null> = {
+  const selects: Record<MediaKind, HTMLSelectElement | null> = {
     video: document.getElementById('selected-video-track') as HTMLSelectElement | null,
     audio: document.getElementById('selected-audio-track') as HTMLSelectElement | null
   }
 
-  const choose = (kind: TrackKind, name: string | undefined) => {
+  const choose = (kind: MediaKind, name: string | undefined) => {
     const track = pick[kind].tracks.find((entry) => entry.name === name)
     pick[kind].selected = track
     if (track) {

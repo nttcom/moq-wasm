@@ -4,7 +4,7 @@ import type { MOQTClient } from '../../pkg/moqt'
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 import { timeSeededGroupId } from '../../utils/media/clock'
 
-export type MediaPublication = {
+type MediaPublication = {
   trackNamespace: () => string[]
   catalogJson: (trackNamespace: string[]) => string
   mediaTrackNames: string[]

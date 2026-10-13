@@ -1,15 +1,9 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocLive, formatLiveStats } from '@player/locLive'
-import {
-  AUDIO_LEVEL_ID,
-  CAPTURE_TIMESTAMP_ID,
-  VIDEO_CONFIG_ID,
-  VIDEO_FRAME_MARKING_ID,
-  type LocHeader
-} from '../../../utils/media/loc'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
-import { setUpCatalogPicker, type TrackKind } from '../catalogPicker'
+import { setUpCatalogPicker } from '../catalogPicker'
+import type { MediaKind } from '@player/trackContext'
 
 const moqtClient = new MoqtClientWrapper()
 const form = element<HTMLFormElement>('form')
@@ -29,7 +23,7 @@ const locLive = new LocLive(videoElement, canvasElement, undefined, {
 videoElement.hidden = locLive.picture.element !== videoElement
 canvasElement.hidden = locLive.picture.element !== canvasElement
 
-const receivedObjectCounts: Record<TrackKind, number> = { video: 0, audio: 0 }
+const receivedObjectCounts: Record<MediaKind, number> = { video: 0, audio: 0 }
 const catalogPicker = setUpCatalogPicker(moqtClient, form, (kind, track) =>
   locLive.configureTrack(
     kind,
@@ -142,7 +136,7 @@ function setupVideoPlaybackStatus(): void {
   })
 }
 
-function setupClientObjectCallbacks(kind: TrackKind, trackAlias: bigint): void {
+function setupClientObjectCallbacks(kind: MediaKind, trackAlias: bigint): void {
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
     receivedObjectCounts[kind] += 1
     setStatusText(
@@ -158,7 +152,7 @@ function setupClientObjectCallbacks(kind: TrackKind, trackAlias: bigint): void {
       objectId: subgroupStreamObject.objectId,
       payloadLength: subgroupStreamObject.objectPayloadLength,
       status: subgroupStreamObject.objectStatus,
-      loc: summarizeLocHeader(subgroupStreamObject.locHeader)
+      loc: subgroupStreamObject.locHeader
     })
     locLive.push(kind, groupId, subgroupStreamObject)
   })
@@ -213,16 +207,3 @@ setupVideoPlaybackStatus()
 setPlaybackObjectStatus('video', 'Waiting for objects')
 renderPlayoutStats()
 window.setInterval(renderPlayoutStats, PLAYOUT_STATS_INTERVAL_MS)
-
-function summarizeLocHeader(locHeader: unknown) {
-  const extensions: LocHeader = Array.isArray(locHeader) ? locHeader : []
-  const has = (id: number) => extensions.some((ext) => ext.id === id)
-  return {
-    present: Boolean(locHeader),
-    extensionCount: extensions.length,
-    hasCaptureTimestamp: has(CAPTURE_TIMESTAMP_ID),
-    hasVideoConfig: has(VIDEO_CONFIG_ID),
-    hasVideoFrameMarking: has(VIDEO_FRAME_MARKING_ID),
-    hasAudioLevel: has(AUDIO_LEVEL_ID)
-  }
-}
