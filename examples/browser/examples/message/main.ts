@@ -500,17 +500,15 @@ function setupObjectButtons(): void {
   ]
   for (const [id, counter, step] of idButtons) {
     onClick(id, () => {
+      const next = (counter === 'group' ? groupId : subgroupId) + step
+      if (next < 0n) {
+        return
+      }
       if (counter === 'group') {
-        if (groupId + step < 0n) {
-          return
-        }
-        groupId += step
+        groupId = next
         subgroupId = 0n
       } else {
-        if (subgroupId + step < 0n) {
-          return
-        }
-        subgroupId += step
+        subgroupId = next
       }
       objectId = 0n
       renderIds()
