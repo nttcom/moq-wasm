@@ -1,23 +1,7 @@
-import {
-  MOQTClient,
-  ObjectDatagramMessage,
-  ObjectDatagramStatusMessage,
-  PublishNamespaceMessage,
-  RequestErrorMessage,
-  ServerSetupMessage,
-  SubgroupHeaderMessage,
-  SubgroupObjectMessage,
-  SubscribeOkMessage
-} from '../../pkg/moqt'
+import { MOQTClient, RequestErrorMessage, SubgroupObjectMessage, SubscribeOkMessage } from '../../pkg/moqt'
 import { FilterType, GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
-import { element, buildDefaultTrackNamespace } from '../../utils/page'
-
-type HTMLFormControls = HTMLFormElement & {
-  elements: HTMLFormControlsCollection
-}
-
-type FormFieldElement = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+import { element, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
 
 interface TrackMetadata {
   trackNamespace: string[]
@@ -32,59 +16,16 @@ let objectId = 0n
 let groupId = 0n
 let subgroupId = 0n
 
-function getForm(): HTMLFormControls {
-  const form = document.forms.namedItem('form')
-  if (!form) {
-    throw new Error('form element not found')
-  }
-  return form as HTMLFormControls
+const form = element<HTMLFormElement>('form')
+const aliasSelect = element<HTMLSelectElement>('object-track-alias')
+const receivedTextElement = element('received-text')
+
+function field(name: string): HTMLInputElement {
+  return form.elements.namedItem(name) as HTMLInputElement
 }
 
-function getField(form: HTMLFormControls, name: string): FormFieldElement {
-  const element = form.elements.namedItem(name)
-  if (
-    element instanceof HTMLInputElement ||
-    element instanceof HTMLTextAreaElement ||
-    element instanceof HTMLSelectElement
-  ) {
-    return element
-  }
-
-  const fallback = document.getElementById(name)
-  if (
-    fallback instanceof HTMLInputElement ||
-    fallback instanceof HTMLTextAreaElement ||
-    fallback instanceof HTMLSelectElement
-  ) {
-    return fallback
-  }
-
-  throw new Error(`field "${name}" not found`)
-}
-
-function getAliasSelect(form: HTMLFormControls): HTMLSelectElement {
-  const field = getField(form, 'object-track-alias')
-  if (!(field instanceof HTMLSelectElement)) {
-    throw new Error('object-track-alias select not found')
-  }
-  return field
-}
-
-function getRadioValue(form: HTMLFormControls, name: string): string {
-  const elements = form.elements.namedItem(name)
-  if (!elements) {
-    return ''
-  }
-
-  if (elements instanceof RadioNodeList) {
-    return elements.value
-  }
-
-  if (elements instanceof HTMLInputElement && elements.type === 'radio') {
-    return elements.checked ? elements.value : ''
-  }
-
-  throw new Error(`radio group "${name}" not found`)
+function radioValue(name: string): string {
+  return (form.elements.namedItem(name) as RadioNodeList).value
 }
 
 function toBigUint64Array(input: string): BigUint64Array {
@@ -96,23 +37,16 @@ function toBigUint64Array(input: string): BigUint64Array {
   return new BigUint64Array(values)
 }
 
-function parseTrackNamespace(value: string): string[] {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter(Boolean)
-}
-
-function describeReceivedObject(payload: ArrayBuffer | Uint8Array, container: HTMLElement): void {
+function describeReceivedObject(payload: ArrayBuffer | Uint8Array): void {
   const brElement = document.createElement('br')
-  container.prepend(brElement)
+  receivedTextElement.prepend(brElement)
 
   const receivedArray = payload instanceof Uint8Array ? payload : new Uint8Array(payload)
   const receivedText = new TextDecoder().decode(receivedArray)
 
   const receivedElement = document.createElement('p')
   receivedElement.textContent = receivedText
-  container.prepend(receivedElement)
+  receivedTextElement.prepend(receivedElement)
 }
 
 function ensureRawClient(): MOQTClient {
@@ -121,11 +55,6 @@ function ensureRawClient(): MOQTClient {
     throw new Error('MOQT client connection is not available')
   }
   return client
-}
-
-function setFieldValue(name: string, value: string): void {
-  const form = getForm()
-  getField(form, name).value = value
 }
 
 function buildAliasLabel(trackAlias: bigint, metadata?: TrackMetadata): string {
@@ -139,8 +68,6 @@ function buildAliasLabel(trackAlias: bigint, metadata?: TrackMetadata): string {
 }
 
 function registerTrackAlias(requestId: bigint, trackAlias: bigint, metadata?: TrackMetadata): void {
-  const form = getForm()
-  const aliasSelect = getAliasSelect(form)
   const aliasValue = trackAlias.toString()
 
   requestTrackAliases.set(requestId, trackAlias)
@@ -156,8 +83,8 @@ function registerTrackAlias(requestId: bigint, trackAlias: bigint, metadata?: Tr
   }
   option.textContent = buildAliasLabel(trackAlias, metadata ?? requestTrackMetadata.get(requestId))
   aliasSelect.value = aliasValue
-  setFieldValue('subscribe-assigned-track-alias', aliasValue)
-  setFieldValue('unsubscribe-subscribe-id', requestId.toString())
+  field('subscribe-assigned-track-alias').value = aliasValue
+  field('unsubscribe-subscribe-id').value = requestId.toString()
 }
 
 function pruneAliasState(trackAlias: bigint): void {
@@ -170,8 +97,6 @@ function pruneAliasState(trackAlias: bigint): void {
 }
 
 function unregisterTrackAliasByRequestId(requestId: bigint): void {
-  const form = getForm()
-  const aliasSelect = getAliasSelect(form)
   const trackAlias = requestTrackAliases.get(requestId)
 
   requestTrackAliases.delete(requestId)
@@ -191,22 +116,22 @@ function unregisterTrackAliasByRequestId(requestId: bigint): void {
 
   const nextValue = aliasSelect.options[0]?.value ?? ''
   aliasSelect.value = nextValue
-  setFieldValue('subscribe-assigned-track-alias', nextValue)
+  field('subscribe-assigned-track-alias').value = nextValue
 }
 
-function getSelectedTrackAlias(form: HTMLFormControls): bigint {
-  const aliasValue = getAliasSelect(form).value
+function getSelectedTrackAlias(): bigint {
+  const aliasValue = aliasSelect.value
   if (!aliasValue) {
     throw new Error('No active track alias selected')
   }
   return BigInt(aliasValue)
 }
 
-function attachSubgroupObjectHandler(trackAlias: bigint, receivedTextElement: HTMLElement): void {
+function attachSubgroupObjectHandler(trackAlias: bigint): void {
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (receivedGroupId, subgroupObject: SubgroupObjectMessage) => {
     console.info({ groupId: receivedGroupId, subgroupObject })
     if (subgroupObject.objectPayload.length > 0) {
-      describeReceivedObject(subgroupObject.objectPayload, receivedTextElement)
+      describeReceivedObject(subgroupObject.objectPayload)
     }
   })
 }
@@ -215,56 +140,25 @@ function isRequestError(response: SubscribeOkMessage | RequestErrorMessage): res
   return 'errorCode' in response
 }
 
-function handleServerSetup(serverSetup: ServerSetupMessage): void {
-  console.info({ serverSetup })
-}
-
-function handlePublishNamespace(publishNamespace: PublishNamespaceMessage): void {
-  console.info({ publishNamespace })
-}
-
-function handlePublishNamespaceResponse(response: RequestErrorMessage | { requestId: bigint }): void {
-  console.info({ publishNamespaceResponse: response })
-}
-
-function handleSubscribeNamespaceResponse(response: RequestErrorMessage | { requestId: bigint }): void {
-  console.info({ subscribeNamespaceResponse: response })
-}
-
-function handleTrackStatusResponse(response: SubscribeOkMessage | RequestErrorMessage): void {
-  if (isRequestError(response)) {
-    console.info(
-      `TrackStatusError requestId=${response.requestId} code=${response.errorCode} reason=${response.reasonPhrase}`
-    )
-    return
-  }
-  console.info(`TrackStatusOk requestId=${response.requestId}`)
-}
-
-function handleObjectDatagram(message: ObjectDatagramMessage, receivedTextElement: HTMLElement): void {
-  console.info({ objectDatagram: message })
-  if (message.objectPayload.length > 0) {
-    describeReceivedObject(message.objectPayload, receivedTextElement)
-  }
-}
-
-function handleObjectDatagramStatus(message: ObjectDatagramStatusMessage): void {
-  console.info({ objectDatagramStatus: message })
-}
-
-function handleSubgroupHeader(message: SubgroupHeaderMessage): void {
-  console.info({ subgroupHeader: message })
-}
-
-function registerClientCallbacks(receivedTextElement: HTMLElement): void {
-  moqtClient.setOnServerSetupHandler(handleServerSetup)
+function registerClientCallbacks(): void {
+  moqtClient.setOnServerSetupHandler((serverSetup) => console.info({ serverSetup }))
   moqtClient.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-    handlePublishNamespace(publishNamespace)
+    console.info({ publishNamespace })
     await respondOk()
   })
-  moqtClient.setOnPublishNamespaceResponseHandler(handlePublishNamespaceResponse)
-  moqtClient.setOnSubscribeNamespaceResponseHandler(handleSubscribeNamespaceResponse)
-  moqtClient.setOnTrackStatusResponseHandler(handleTrackStatusResponse)
+  moqtClient.setOnPublishNamespaceResponseHandler((response) => console.info({ publishNamespaceResponse: response }))
+  moqtClient.setOnSubscribeNamespaceResponseHandler((response) =>
+    console.info({ subscribeNamespaceResponse: response })
+  )
+  moqtClient.setOnTrackStatusResponseHandler((response) => {
+    if (isRequestError(response)) {
+      console.info(
+        `TrackStatusError requestId=${response.requestId} code=${response.errorCode} reason=${response.reasonPhrase}`
+      )
+      return
+    }
+    console.info(`TrackStatusOk requestId=${response.requestId}`)
+  })
   moqtClient.setOnSubscribeResponseHandler((response) => {
     console.info({ subscribeResponse: response })
     if (isRequestError(response)) {
@@ -273,7 +167,7 @@ function registerClientCallbacks(receivedTextElement: HTMLElement): void {
     }
 
     registerTrackAlias(response.requestId, response.trackAlias, requestTrackMetadata.get(response.requestId))
-    attachSubgroupObjectHandler(response.trackAlias, receivedTextElement)
+    attachSubgroupObjectHandler(response.trackAlias)
   })
   moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
     console.info({ subscribeMessage: subscribe, isSuccess, code })
@@ -292,26 +186,28 @@ function registerClientCallbacks(receivedTextElement: HTMLElement): void {
     console.info({ unsubscribeMessage: { requestId } })
     unregisterTrackAliasByRequestId(requestId)
   })
-  moqtClient.setOnObjectDatagramHandler((message) => handleObjectDatagram(message, receivedTextElement))
-  moqtClient.setOnObjectDatagramStatusHandler(handleObjectDatagramStatus)
-  moqtClient.setOnSubgroupHeaderHandler(handleSubgroupHeader)
+  moqtClient.setOnObjectDatagramHandler((message) => {
+    console.info({ objectDatagram: message })
+    if (message.objectPayload.length > 0) {
+      describeReceivedObject(message.objectPayload)
+    }
+  })
+  moqtClient.setOnObjectDatagramStatusHandler((message) => console.info({ objectDatagramStatus: message }))
+  moqtClient.setOnSubgroupHeaderHandler((message) => console.info({ subgroupHeader: message }))
   moqtClient.setOnConnectionClosedHandler(() => {
     console.info('connection closed')
     subgroupHeaderSent.clear()
     requestTrackAliases.clear()
     requestTrackMetadata.clear()
     moqtClient.clearSubgroupObjectHandlers()
-    setFieldValue('subscribe-assigned-track-alias', '')
-    setFieldValue('unsubscribe-subscribe-id', '')
-    getAliasSelect(getForm()).innerHTML = ''
+    field('subscribe-assigned-track-alias').value = ''
+    field('unsubscribe-subscribe-id').value = ''
+    aliasSelect.innerHTML = ''
   })
 }
 
 function setSendStatus(message: string): void {
-  const element = document.getElementById('send-status')
-  if (element) {
-    element.textContent = message
-  }
+  element('send-status').textContent = message
 }
 
 async function sendControlMessage(label: string, send: () => Promise<unknown>): Promise<void> {
@@ -323,34 +219,30 @@ async function sendControlMessage(label: string, send: () => Promise<unknown>): 
   }
 }
 
-function onClick(id: string, handler: () => Promise<void>): void {
-  const button = document.getElementById(id) as HTMLButtonElement | null
-  button?.addEventListener('click', handler)
+function onClick(id: string, handler: () => unknown): void {
+  element(id).addEventListener('click', handler)
 }
 
 function setupControlMessageButtons(): void {
   onClick('sendPublishNamespaceDoneBtn', async () => {
-    const form = getForm()
-    const trackNamespace = parseTrackNamespace(getField(form, 'publish-namespace-done-track-namespace').value)
+    const trackNamespace = parseTrackNamespace(field('publish-namespace-done-track-namespace').value)
     await sendControlMessage('PUBLISH_NAMESPACE_DONE', () => ensureRawClient().sendPublishNamespaceDone(trackNamespace))
   })
 
   onClick('sendUnsubscribeNamespaceBtn', async () => {
-    const form = getForm()
-    const trackNamespacePrefix = parseTrackNamespace(getField(form, 'unsubscribe-namespace-prefix').value)
+    const trackNamespacePrefix = parseTrackNamespace(field('unsubscribe-namespace-prefix').value)
     await sendControlMessage('UNSUBSCRIBE_NAMESPACE', () =>
       ensureRawClient().sendUnsubscribeNamespace(trackNamespacePrefix)
     )
   })
 
   onClick('sendPublishBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'publish-request-id').value)
-    const trackNamespace = parseTrackNamespace(getField(form, 'publish-track-namespace-2').value)
-    const trackName = getField(form, 'publish-track-name').value
-    const trackAlias = BigInt(getField(form, 'publish-track-alias').value)
-    const groupOrder = Number(getField(form, 'publish-group-order').value)
-    const authInfo = getField(form, 'auth-info').value
+    const requestId = BigInt(field('publish-request-id').value)
+    const trackNamespace = parseTrackNamespace(field('publish-track-namespace-2').value)
+    const trackName = field('publish-track-name').value
+    const trackAlias = BigInt(field('publish-track-alias').value)
+    const groupOrder = Number(field('publish-group-order').value)
+    const authInfo = field('auth-info').value
     await sendControlMessage('PUBLISH', () =>
       ensureRawClient().sendPublish(
         requestId,
@@ -368,14 +260,13 @@ function setupControlMessageButtons(): void {
   })
 
   onClick('sendFetchBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'fetch-request-id').value)
-    const trackNamespace = parseTrackNamespace(getField(form, 'fetch-track-namespace').value)
-    const trackName = getField(form, 'fetch-track-name').value
-    const startGroup = BigInt(getField(form, 'fetch-start-group').value)
-    const startObject = BigInt(getField(form, 'fetch-start-object').value)
-    const endGroup = BigInt(getField(form, 'fetch-end-group').value)
-    const endObject = BigInt(getField(form, 'fetch-end-object').value)
+    const requestId = BigInt(field('fetch-request-id').value)
+    const trackNamespace = parseTrackNamespace(field('fetch-track-namespace').value)
+    const trackName = field('fetch-track-name').value
+    const startGroup = BigInt(field('fetch-start-group').value)
+    const startObject = BigInt(field('fetch-start-object').value)
+    const endGroup = BigInt(field('fetch-end-group').value)
+    const endObject = BigInt(field('fetch-end-object').value)
     await sendControlMessage('FETCH', () =>
       ensureRawClient().sendFetch(
         requestId,
@@ -391,38 +282,33 @@ function setupControlMessageButtons(): void {
   })
 
   onClick('sendGoAwayBtn', async () => {
-    const form = getForm()
-    const newSessionUri = getField(form, 'goaway-new-session-uri').value
+    const newSessionUri = field('goaway-new-session-uri').value
     await sendControlMessage('GOAWAY', () => ensureRawClient().sendGoAway(newSessionUri))
   })
 
   onClick('sendMaxRequestIdBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'max-request-id-value').value)
+    const requestId = BigInt(field('max-request-id-value').value)
     await sendControlMessage('MAX_REQUEST_ID', () => ensureRawClient().sendMaxRequestId(requestId))
   })
 
   onClick('sendRequestsBlockedBtn', async () => {
-    const form = getForm()
-    const maximumRequestId = BigInt(getField(form, 'requests-blocked-maximum-request-id').value)
+    const maximumRequestId = BigInt(field('requests-blocked-maximum-request-id').value)
     await sendControlMessage('REQUESTS_BLOCKED', () => ensureRawClient().sendRequestsBlocked(maximumRequestId))
   })
 
   onClick('sendFetchCancelBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'fetch-cancel-request-id').value)
+    const requestId = BigInt(field('fetch-cancel-request-id').value)
     await sendControlMessage('FETCH_CANCEL', () => ensureRawClient().sendFetchCancel(requestId))
   })
 
   onClick('sendSubscribeUpdateBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'subscribe-update-request-id').value)
-    const subscriptionRequestId = BigInt(getField(form, 'subscribe-update-subscription-request-id').value)
-    const startGroup = BigInt(getField(form, 'subscribe-update-start-group').value)
-    const startObject = BigInt(getField(form, 'subscribe-update-start-object').value)
-    const endGroup = BigInt(getField(form, 'subscribe-update-end-group').value)
-    const subscriberPriority = Number(getField(form, 'subscribe-update-subscriber-priority').value)
-    const forward = getRadioValue(form, 'forwarding') === 'true'
+    const requestId = BigInt(field('subscribe-update-request-id').value)
+    const subscriptionRequestId = BigInt(field('subscribe-update-subscription-request-id').value)
+    const startGroup = BigInt(field('subscribe-update-start-group').value)
+    const startObject = BigInt(field('subscribe-update-start-object').value)
+    const endGroup = BigInt(field('subscribe-update-end-group').value)
+    const subscriberPriority = Number(field('subscribe-update-subscriber-priority').value)
+    const forward = radioValue('forwarding') === 'true'
     await sendControlMessage('SUBSCRIBE_UPDATE', () =>
       ensureRawClient().sendSubscribeUpdate(
         requestId,
@@ -437,64 +323,42 @@ function setupControlMessageButtons(): void {
   })
 
   onClick('sendPublishDoneBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'publish-done-request-id').value)
-    const statusCode = BigInt(getField(form, 'publish-done-status-code').value)
-    const streamCount = BigInt(getField(form, 'publish-done-stream-count').value)
-    const errorReason = getField(form, 'publish-done-error-reason').value
+    const requestId = BigInt(field('publish-done-request-id').value)
+    const statusCode = BigInt(field('publish-done-status-code').value)
+    const streamCount = BigInt(field('publish-done-stream-count').value)
+    const errorReason = field('publish-done-error-reason').value
     await sendControlMessage('PUBLISH_DONE', () =>
       ensureRawClient().sendPublishDone(requestId, statusCode, streamCount, errorReason)
     )
   })
 
   onClick('sendPublishNamespaceCancelBtn', async () => {
-    const form = getForm()
-    const trackNamespace = parseTrackNamespace(getField(form, 'publish-namespace-cancel-track-namespace').value)
-    const errorCode = BigInt(getField(form, 'publish-namespace-cancel-error-code').value)
-    const errorReason = getField(form, 'publish-namespace-cancel-error-reason').value
+    const trackNamespace = parseTrackNamespace(field('publish-namespace-cancel-track-namespace').value)
+    const errorCode = BigInt(field('publish-namespace-cancel-error-code').value)
+    const errorReason = field('publish-namespace-cancel-error-reason').value
     await sendControlMessage('PUBLISH_NAMESPACE_CANCEL', () =>
       ensureRawClient().sendPublishNamespaceCancel(trackNamespace, errorCode, errorReason)
     )
   })
 
   onClick('sendTrackStatusBtn', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'track-status-request-id').value)
-    const trackNamespace = parseTrackNamespace(getField(form, 'track-status-track-namespace').value)
-    const trackName = getField(form, 'track-status-track-name').value
-    const authInfo = getField(form, 'auth-info').value
+    const requestId = BigInt(field('track-status-request-id').value)
+    const trackNamespace = parseTrackNamespace(field('track-status-track-namespace').value)
+    const trackName = field('track-status-track-name').value
+    const authInfo = field('auth-info').value
     await sendControlMessage('TRACK_STATUS', () =>
       ensureRawClient().sendTrackStatus(requestId, trackNamespace, trackName, authInfo)
     )
   })
 }
 
-function setupConnectButton(): void {
-  const connectBtn = document.getElementById('connectBtn')
-  if (!(connectBtn instanceof HTMLButtonElement)) {
-    return
-  }
-
-  connectBtn.addEventListener('click', async () => {
-    const form = getForm()
-    const url = getField(form, 'url').value
-    const receivedTextElement = document.getElementById('received-text')
-    if (!receivedTextElement) {
-      return
-    }
-
-    await moqtClient.connect(url, { sendSetup: false })
-    registerClientCallbacks(receivedTextElement)
+function setupSessionButtons(): void {
+  onClick('connectBtn', async () => {
+    await moqtClient.connect(field('url').value, { sendSetup: false })
+    registerClientCallbacks()
   })
-}
 
-function setupCloseButton(): void {
-  const closeBtn = document.getElementById('closeBtn')
-  if (!(closeBtn instanceof HTMLButtonElement)) {
-    return
-  }
-
-  closeBtn.addEventListener('click', async () => {
+  onClick('closeBtn', async () => {
     await moqtClient.disconnect()
     subgroupHeaderSent.clear()
     requestTrackAliases.clear()
@@ -503,64 +367,42 @@ function setupCloseButton(): void {
     groupId = 0n
     subgroupId = 0n
   })
-}
 
-function setupActionButtons(): void {
-  const objectIdElement = document.getElementById('objectId')
-  const datagramGroupIdElement = document.getElementById('datagramGroupId')
-  const subgroupGroupIdElement = document.getElementById('subgroupGroupId')
-  const subgroupIdElement = document.getElementById('subgroupId')
-
-  const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement | null
-  sendSetupBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const versionsInput = getField(form, 'versions').value
-    const maxRequestId = BigInt(getField(form, 'max-subscribe-id').value)
-    await sendControlMessage('CLIENT_SETUP', () =>
-      moqtClient.sendClientSetup(toBigUint64Array(versionsInput), maxRequestId)
-    )
+  onClick('sendSetupBtn', async () => {
+    const versions = toBigUint64Array(field('versions').value)
+    const maxRequestId = BigInt(field('max-subscribe-id').value)
+    await sendControlMessage('CLIENT_SETUP', () => moqtClient.sendClientSetup(versions, maxRequestId))
   })
 
-  const sendPublishNamespaceBtn = document.getElementById('sendPublishNamespaceBtn') as HTMLButtonElement | null
-  sendPublishNamespaceBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const trackNamespace = parseTrackNamespace(getField(form, 'publish-track-namespace').value)
-    const authInfo = getField(form, 'auth-info').value
+  onClick('sendPublishNamespaceBtn', async () => {
+    const trackNamespace = parseTrackNamespace(field('publish-track-namespace').value)
+    const authInfo = field('auth-info').value
     await sendControlMessage('PUBLISH_NAMESPACE', () => moqtClient.publishNamespace(trackNamespace, authInfo))
   })
 
-  const sendSubscribeNamespaceBtn = document.getElementById('sendSubscribeNamespaceBtn') as HTMLButtonElement | null
-  sendSubscribeNamespaceBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const trackNamespacePrefix = parseTrackNamespace(getField(form, 'track-namespace-prefix').value)
-    const authInfo = getField(form, 'auth-info').value
+  onClick('sendSubscribeNamespaceBtn', async () => {
+    const trackNamespacePrefix = parseTrackNamespace(field('track-namespace-prefix').value)
+    const authInfo = field('auth-info').value
     await sendControlMessage('SUBSCRIBE_NAMESPACE', () => moqtClient.subscribeNamespace(trackNamespacePrefix, authInfo))
   })
 
-  const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement | null
-  sendSubscribeBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'subscribe-request-id').value)
-    const trackNamespace = parseTrackNamespace(getField(form, 'subscribe-track-namespace').value)
-    const trackName = getField(form, 'track-name').value
-    const authInfo = getField(form, 'auth-info').value
-    const subscriberPriority = Number(getField(form, 'subscriber-priority').value)
-    const groupOrder = Number(getRadioValue(form, 'group-order')) as GroupOrder
-    const filterType = Number(getRadioValue(form, 'filter-type')) as FilterType
-    const startGroup = BigInt(getField(form, 'start-group').value)
-    const startObject = BigInt(getField(form, 'start-object').value)
-    const endGroup = BigInt(getField(form, 'end-group').value)
-    const forward = getRadioValue(form, 'forwarding') === 'true'
+  onClick('sendSubscribeBtn', async () => {
+    const requestId = BigInt(field('subscribe-request-id').value)
+    const trackNamespace = parseTrackNamespace(field('subscribe-track-namespace').value)
+    const trackName = field('track-name').value
+    const authInfo = field('auth-info').value
+    const subscriberPriority = Number(field('subscriber-priority').value)
+    const groupOrder = Number(radioValue('group-order')) as GroupOrder
+    const filterType = Number(radioValue('filter-type')) as FilterType
+    const startGroup = BigInt(field('start-group').value)
+    const startObject = BigInt(field('start-object').value)
+    const endGroup = BigInt(field('end-group').value)
+    const forward = radioValue('forwarding') === 'true'
 
     requestTrackMetadata.set(requestId, {
       trackNamespace: [...trackNamespace],
       trackName
     })
-
-    const receivedTextElement = document.getElementById('received-text')
-    if (!receivedTextElement) {
-      return
-    }
 
     await sendControlMessage('SUBSCRIBE', async () => {
       const trackAlias = (
@@ -580,206 +422,108 @@ function setupActionButtons(): void {
         trackNamespace: [...trackNamespace],
         trackName
       })
-      attachSubgroupObjectHandler(trackAlias, receivedTextElement)
+      attachSubgroupObjectHandler(trackAlias)
     })
   })
 
-  const sendUnsubscribeBtn = document.getElementById('sendUnsubscribeBtn') as HTMLButtonElement | null
-  sendUnsubscribeBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const requestId = BigInt(getField(form, 'unsubscribe-subscribe-id').value)
+  onClick('sendUnsubscribeBtn', async () => {
+    const requestId = BigInt(field('unsubscribe-subscribe-id').value)
     await sendControlMessage('UNSUBSCRIBE', async () => {
       await moqtClient.unsubscribe(requestId)
       unregisterTrackAliasByRequestId(requestId)
     })
   })
+}
 
-  const sendDatagramObjectBtn = document.getElementById('sendDatagramObjectBtn') as HTMLButtonElement | null
-  sendDatagramObjectBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const client = ensureRawClient()
-    const trackAlias = getSelectedTrackAlias(form)
-    const publisherPriority = Number(getField(form, 'publisher-priority').value)
-    const objectPayloadString = getField(form, 'payload').value
-    const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
+function readObjectInputs(): { client: MOQTClient; trackAlias: bigint; publisherPriority: number } {
+  return {
+    client: ensureRawClient(),
+    trackAlias: getSelectedTrackAlias(),
+    publisherPriority: Number(field('publisher-priority').value)
+  }
+}
 
-    await client.sendObjectDatagram(trackAlias, groupId, objectId++, publisherPriority, objectPayloadArray, undefined)
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
+function readPayload(): Uint8Array {
+  return new TextEncoder().encode(field('payload').value)
+}
+
+function readObjectStatus(): number {
+  return Number(radioValue('object-status'))
+}
+
+function renderIds(): void {
+  element('objectId').textContent = objectId.toString()
+  element('datagramGroupId').textContent = groupId.toString()
+  element('subgroupGroupId').textContent = groupId.toString()
+  element('subgroupId').textContent = subgroupId.toString()
+}
+
+async function sendSubgroup(objectStatus: number | undefined, payload: Uint8Array): Promise<void> {
+  const { client, trackAlias, publisherPriority } = readObjectInputs()
+  const key = `${trackAlias.toString()}:${groupId.toString()}:${subgroupId.toString()}`
+  if (!subgroupHeaderSent.has(key)) {
+    await client.sendSubgroupHeader(trackAlias, groupId, subgroupId, publisherPriority)
+    subgroupHeaderSent.add(key)
+  }
+  await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId++, objectStatus, payload, undefined)
+  renderIds()
+}
+
+function setupObjectButtons(): void {
+  onClick('sendDatagramObjectBtn', async () => {
+    const { client, trackAlias, publisherPriority } = readObjectInputs()
+    await client.sendObjectDatagram(trackAlias, groupId, objectId++, publisherPriority, readPayload(), undefined)
+    renderIds()
   })
 
-  const sendDatagramObjectWithStatusBtn = document.getElementById(
-    'sendDatagramObjectWithStatusBtn'
-  ) as HTMLButtonElement | null
-  sendDatagramObjectWithStatusBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const client = ensureRawClient()
-    const trackAlias = getSelectedTrackAlias(form)
-    const publisherPriority = Number(getField(form, 'publisher-priority').value)
-    const objectStatus = Number(getRadioValue(form, 'object-status'))
-
-    await client.sendObjectDatagramStatus(trackAlias, groupId, objectId++, publisherPriority, objectStatus, undefined)
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  const sendSubgroupObjectBtn = document.getElementById('sendSubgroupObjectBtn') as HTMLButtonElement | null
-  sendSubgroupObjectBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const client = ensureRawClient()
-    const trackAlias = getSelectedTrackAlias(form)
-    const publisherPriority = Number(getField(form, 'publisher-priority').value)
-    const objectPayloadString = getField(form, 'payload').value
-    const objectPayloadArray = new TextEncoder().encode(objectPayloadString)
-    const key = `${trackAlias.toString()}:${groupId.toString()}:${subgroupId.toString()}`
-
-    if (!subgroupHeaderSent.has(key)) {
-      await client.sendSubgroupHeader(trackAlias, groupId, subgroupId, publisherPriority)
-      subgroupHeaderSent.add(key)
-    }
-
-    await client.sendSubgroupObject(
+  onClick('sendDatagramObjectWithStatusBtn', async () => {
+    const { client, trackAlias, publisherPriority } = readObjectInputs()
+    await client.sendObjectDatagramStatus(
       trackAlias,
       groupId,
-      subgroupId,
       objectId++,
-      undefined,
-      objectPayloadArray,
+      publisherPriority,
+      readObjectStatus(),
       undefined
     )
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
+    renderIds()
   })
 
-  const sendSubgroupObjectWithStatusBtn = document.getElementById(
-    'sendSubgroupObjectWithStatusBtn'
-  ) as HTMLButtonElement | null
-  sendSubgroupObjectWithStatusBtn?.addEventListener('click', async () => {
-    const form = getForm()
-    const client = ensureRawClient()
-    const trackAlias = getSelectedTrackAlias(form)
-    const publisherPriority = Number(getField(form, 'publisher-priority').value)
-    const objectStatus = Number(getRadioValue(form, 'object-status'))
-    const key = `${trackAlias.toString()}:${groupId.toString()}:${subgroupId.toString()}`
+  onClick('sendSubgroupObjectBtn', () => sendSubgroup(undefined, readPayload()))
+  onClick('sendSubgroupObjectWithStatusBtn', () => sendSubgroup(readObjectStatus(), new Uint8Array()))
 
-    if (!subgroupHeaderSent.has(key)) {
-      await client.sendSubgroupHeader(trackAlias, groupId, subgroupId, publisherPriority)
-      subgroupHeaderSent.add(key)
-    }
-
-    await client.sendSubgroupObject(
-      trackAlias,
-      groupId,
-      subgroupId,
-      objectId++,
-      objectStatus,
-      new Uint8Array(),
-      undefined
-    )
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  setupControlMessageButtons()
-
-  const ascendDatagramGroupId = document.getElementById('ascendDatagramGroupIdBtn') as HTMLButtonElement | null
-  ascendDatagramGroupId?.addEventListener('click', () => {
-    groupId += 1n
-    objectId = 0n
-    if (datagramGroupIdElement) {
-      datagramGroupIdElement.textContent = groupId.toString()
-    }
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  const descendDatagramGroupId = document.getElementById('descendDatagramGroupIdBtn') as HTMLButtonElement | null
-  descendDatagramGroupId?.addEventListener('click', () => {
-    if (groupId === 0n) {
-      return
-    }
-    groupId -= 1n
-    objectId = 0n
-    if (datagramGroupIdElement) {
-      datagramGroupIdElement.textContent = groupId.toString()
-    }
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  const ascendSubgroupGroupId = document.getElementById('ascendSubgroupGroupIdBtn') as HTMLButtonElement | null
-  ascendSubgroupGroupId?.addEventListener('click', () => {
-    groupId += 1n
-    subgroupId = 0n
-    objectId = 0n
-    if (subgroupGroupIdElement) {
-      subgroupGroupIdElement.textContent = groupId.toString()
-    }
-    if (subgroupIdElement) {
-      subgroupIdElement.textContent = subgroupId.toString()
-    }
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  const descendSubgroupGroupId = document.getElementById('descendSubgroupGroupIdBtn') as HTMLButtonElement | null
-  descendSubgroupGroupId?.addEventListener('click', () => {
-    if (groupId === 0n) {
-      return
-    }
-    groupId -= 1n
-    subgroupId = 0n
-    objectId = 0n
-    if (subgroupGroupIdElement) {
-      subgroupGroupIdElement.textContent = groupId.toString()
-    }
-    if (subgroupIdElement) {
-      subgroupIdElement.textContent = subgroupId.toString()
-    }
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  const ascendSubgroupId = document.getElementById('ascendSubgroupIdBtn') as HTMLButtonElement | null
-  ascendSubgroupId?.addEventListener('click', () => {
-    subgroupId += 1n
-    objectId = 0n
-    if (subgroupIdElement) {
-      subgroupIdElement.textContent = subgroupId.toString()
-    }
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
-
-  const descendSubgroupId = document.getElementById('descendSubgroupIdBtn') as HTMLButtonElement | null
-  descendSubgroupId?.addEventListener('click', () => {
-    if (subgroupId === 0n) {
-      return
-    }
-    subgroupId -= 1n
-    objectId = 0n
-    if (subgroupIdElement) {
-      subgroupIdElement.textContent = subgroupId.toString()
-    }
-    if (objectIdElement) {
-      objectIdElement.textContent = objectId.toString()
-    }
-  })
+  const idButtons: [string, 'group' | 'subgroup', bigint][] = [
+    ['ascendDatagramGroupIdBtn', 'group', 1n],
+    ['descendDatagramGroupIdBtn', 'group', -1n],
+    ['ascendSubgroupGroupIdBtn', 'group', 1n],
+    ['descendSubgroupGroupIdBtn', 'group', -1n],
+    ['ascendSubgroupIdBtn', 'subgroup', 1n],
+    ['descendSubgroupIdBtn', 'subgroup', -1n]
+  ]
+  for (const [id, counter, step] of idButtons) {
+    onClick(id, () => {
+      if (counter === 'group') {
+        if (groupId + step < 0n) {
+          return
+        }
+        groupId += step
+        subgroupId = 0n
+      } else {
+        if (subgroupId + step < 0n) {
+          return
+        }
+        subgroupId += step
+      }
+      objectId = 0n
+      renderIds()
+    })
+  }
 }
 
 setUpRelayUrlControls(element('url'), element('urlPresets'))
 for (const id of ['publish-track-namespace', 'track-namespace-prefix', 'subscribe-track-namespace']) {
   element<HTMLInputElement>(id).value = buildDefaultTrackNamespace()
 }
-setupConnectButton()
-setupCloseButton()
-setupActionButtons()
+setupSessionButtons()
+setupObjectButtons()
+setupControlMessageButtons()
