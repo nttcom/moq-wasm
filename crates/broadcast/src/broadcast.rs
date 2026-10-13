@@ -5,9 +5,7 @@ use std::{
 
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
-use mediapack::{
-    aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
-};
+use mediapack::{AudioConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer};
 use moqt::publish::OutgoingObject;
 use msf::{
     Catalog, Track,
@@ -70,7 +68,7 @@ impl Broadcast {
             .await
     }
 
-    pub async fn update_audio_catalog(&self, config: AudioSpecificConfig) -> Result<()> {
+    pub async fn update_audio_catalog(&self, config: AudioConfig) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
@@ -108,7 +106,7 @@ pub fn cmaf_track_name(track_name: &str) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CatalogMetadata {
     pub(crate) video_tracks: BTreeMap<String, VideoTrackInfo>,
-    pub(crate) audio_config: Option<AudioSpecificConfig>,
+    pub(crate) audio_config: Option<AudioConfig>,
 }
 
 pub(crate) fn is_cmaf(track: &Track) -> bool {
@@ -155,11 +153,15 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     );
     audio.label = Some("Audio".to_string());
     audio.codec = Some("mp4a.40.2".to_string());
-    audio.mime_type = Some("audio/aac".to_string());
-    let mut audio_cmaf = None;
+    audio.mime_type = Some(audio_mime_type(metadata.audio_config.as_ref()).to_string());
     if let Some(config) = &metadata.audio_config {
-        audio.sample_rate = Some(config.sample_rate);
-        audio.channel_config = Some(channel_config_label(config.channel_count()));
+        audio.codec = Some(config.codec_string());
+        audio.sample_rate = Some(config.sample_rate());
+        audio.channel_config = Some(channel_config_label(config.channels()));
+    }
+    // Only AAC has an fMP4 muxer, so other codecs travel as LOC alone.
+    let mut audio_cmaf = None;
+    if let Some(AudioConfig::Aac(config)) = &metadata.audio_config {
         let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
         init_data_list.push(audio.set_inline_init_data(audio_specific_config));
         let mut cmaf = cmaf_sibling(&audio, "audio/mp4", None);
@@ -223,6 +225,14 @@ fn track(
     track
 }
 
+fn audio_mime_type(config: Option<&AudioConfig>) -> &'static str {
+    match config {
+        None | Some(AudioConfig::Aac(_)) => "audio/aac",
+        Some(AudioConfig::Pcma { .. }) => "audio/pcma",
+        Some(AudioConfig::Opus { .. }) => "audio/opus",
+    }
+}
+
 fn channel_config_label(channels: u8) -> String {
     match channels {
         1 => "mono".to_string(),
@@ -240,6 +250,7 @@ pub(crate) fn now_unix() -> Duration {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use mediapack::aac::AudioSpecificConfig;
 
     use super::*;
 
@@ -262,7 +273,7 @@ mod tests {
         );
         CatalogMetadata {
             video_tracks,
-            audio_config: Some(AudioSpecificConfig::new(2, 48_000, 1)),
+            audio_config: Some(AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1))),
         }
     }
 
@@ -321,7 +332,9 @@ mod tests {
             init_data_of(&catalog, video_cmaf),
             Some(video_init_segment.as_str())
         );
-        let config = metadata.audio_config.clone().unwrap();
+        let Some(AudioConfig::Aac(config)) = metadata.audio_config.clone() else {
+            panic!("the fixture audio is AAC");
+        };
         assert_eq!(
             init_data_of(&catalog, track_named(&catalog, "audio")),
             Some(general_purpose::STANDARD.encode(config.to_bytes()).as_str())
@@ -373,5 +386,35 @@ mod tests {
             .collect();
         init_refs.sort();
         assert_eq!(init_refs, ids);
+    }
+
+    #[test]
+    fn catalog_carries_pcma_audio_as_loc_only() {
+        // Arrange
+        let metadata = CatalogMetadata {
+            audio_config: Some(AudioConfig::Pcma {
+                sample_rate: 8_000,
+                channels: 1,
+            }),
+            ..metadata_with_video_and_audio()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let audio = track_named(&catalog, "audio");
+        assert_eq!(audio.codec.as_deref(), Some("pcma"));
+        assert_eq!(audio.mime_type.as_deref(), Some("audio/pcma"));
+        assert_eq!(audio.sample_rate, Some(8_000));
+        assert_eq!(audio.channel_config.as_deref(), Some("mono"));
+        assert_eq!(audio.init_ref, None);
+        assert!(
+            catalog
+                .tracks
+                .iter()
+                .flatten()
+                .all(|track| track.name != "audio_cmaf")
+        );
     }
 }

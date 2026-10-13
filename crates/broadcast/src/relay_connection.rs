@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
-use mediapack::aac::AudioSpecificConfig;
+use mediapack::AudioConfig;
 use moqt::{
     ClientConfig, DUAL, Endpoint, Session, SessionEvent, TerminationErrorCode, TransportStats,
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
@@ -363,7 +363,7 @@ impl ConnectedRelay {
     pub(crate) async fn update_audio_catalog(
         &self,
         namespace: &[String],
-        config: AudioSpecificConfig,
+        config: AudioConfig,
     ) -> Result<()> {
         self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
