@@ -7,7 +7,7 @@ export function postSubgroupObjectToWorker(worker: Worker, groupId: bigint, mess
       groupId,
       subgroupStreamObject: {
         subgroupId: message.subgroupId,
-        objectIdDelta: message.objectIdDelta,
+        objectId: message.objectId,
         objectPayloadLength: message.objectPayloadLength,
         objectPayload: payload,
         objectStatus: message.objectStatus,

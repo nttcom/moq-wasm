@@ -7,7 +7,6 @@ import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros } from '../clock'
 import { readLocHeader } from '../loc'
 import { buildAudioChunkFromLoc } from '../locChunk'
-import { trackSubgroupObjectId } from '../subgroupObjectId'
 
 let telemetryEnabled = true
 let bypassJitterBuffer = false
@@ -49,7 +48,6 @@ let catalogAudioSampleRate: number | undefined
 let catalogAudioChannels: number | undefined
 let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
-const directLastObjectIds = new Map<string, bigint>()
 const groupOrder = new GroupOrderGate((groupId, object) => enqueueDirectDecode(groupId, object))
 
 function postAudioData(audioData: AudioData, captureTimestampMicros: number | undefined): void {
@@ -143,7 +141,7 @@ self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
   const message = event.data as SubgroupWorkerMessage
   const subgroupStreamObject: SubgroupObjectWithLoc = {
     subgroupId: message.subgroupStreamObject.subgroupId,
-    objectIdDelta: message.subgroupStreamObject.objectIdDelta,
+    objectId: message.subgroupStreamObject.objectId,
     objectPayloadLength: message.subgroupStreamObject.objectPayloadLength,
     objectPayload: message.subgroupStreamObject.objectPayload,
     objectStatus: message.subgroupStreamObject.objectStatus,
@@ -185,7 +183,7 @@ function materializeDirectObject(
   object: SubgroupObjectWithLoc,
   onReceiveLatency?: (latencyMs: number) => void
 ): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
-  const objectId = trackSubgroupObjectId(directLastObjectIds, groupId, object)
+  const objectId = object.objectId
   if (!object.objectPayloadLength) {
     return null
   }
@@ -201,7 +199,6 @@ function materializeDirectObject(
     captureTimestampMicros,
     object: {
       ...object,
-      objectId,
       cachedChunk: parsed,
       remotePTS: parsed.metadata.timestamp,
       localPTS: performance.timeOrigin + performance.now()

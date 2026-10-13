@@ -1,6 +1,5 @@
 import { readLocHeader } from './loc'
 import { buildAudioChunkFromLoc } from './locChunk'
-import { trackSubgroupObjectId } from './subgroupObjectId'
 import { latencyMsFromCaptureMicros } from './clock'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
 
@@ -20,7 +19,6 @@ export class AudioJitterBuffer {
   private buffer: AudioJitterBufferEntry[] = []
   private hasPoppedOnce = false
   private mode: AudioJitterBufferMode = 'ordered'
-  private readonly lastObjectIds = new Map<string, bigint>()
 
   constructor(
     private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE,
@@ -34,7 +32,7 @@ export class AudioJitterBuffer {
   }
 
   push(groupId: bigint, object: SubgroupObjectWithLoc, onReceiveLatency?: (latencyMs: number) => void): bigint | null {
-    const objectId = trackSubgroupObjectId(this.lastObjectIds, groupId, object)
+    const objectId = object.objectId
     if (!object.objectPayloadLength) {
       return null
     }
@@ -44,7 +42,6 @@ export class AudioJitterBuffer {
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
-      objectId,
       cachedChunk: parsed,
       remotePTS: parsed.metadata.timestamp,
       localPTS: performance.timeOrigin + performance.now()

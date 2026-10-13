@@ -6,7 +6,6 @@ import { type ChunkMetadata } from '../chunk'
 import { latencyMsFromCaptureMicros, monotonicUnixMicros } from '../clock'
 import { readLocHeader } from '../loc'
 import { buildVideoChunkFromLoc } from '../locChunk'
-import { trackSubgroupObjectId } from '../subgroupObjectId'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   postTelemetry({ type: 'bitrate', kbps })
@@ -405,7 +404,6 @@ let catalogDescriptionBase64: string | undefined
 let catalogAvcFormat: 'annexb' | 'avc' | undefined
 let missingCatalogCodecWarned = false
 let directDecodeQueue: Promise<void> = Promise.resolve()
-const directLastObjectIds = new Map<string, bigint>()
 
 function summarizeDescriptionBase64(descriptionBase64?: string): {
   length: number
@@ -900,7 +898,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   }
   const subgroupStreamObject: SubgroupObjectWithLoc = {
     subgroupId: event.data.subgroupStreamObject.subgroupId,
-    objectIdDelta: event.data.subgroupStreamObject.objectIdDelta,
+    objectId: event.data.subgroupStreamObject.objectId,
     objectPayloadLength: event.data.subgroupStreamObject.objectPayloadLength,
     objectPayload: event.data.subgroupStreamObject.objectPayload,
     objectStatus: event.data.subgroupStreamObject.objectStatus,
@@ -957,7 +955,7 @@ function materializeDirectObject(
   object: SubgroupObjectWithLoc,
   onReceiveLatency?: (latencyMs: number) => void
 ): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
-  const objectId = trackSubgroupObjectId(directLastObjectIds, groupId, object)
+  const objectId = object.objectId
   if (!object.objectPayloadLength) {
     return null
   }
@@ -974,7 +972,6 @@ function materializeDirectObject(
     captureTimestampMicros,
     object: {
       ...object,
-      objectId,
       cachedChunk: parsed,
       remotePTS: parsed.metadata.timestamp,
       localPTS: performance.timeOrigin + performance.now()

@@ -1,6 +1,5 @@
 import { readLocHeader } from './loc'
 import { buildVideoChunkFromLoc } from './locChunk'
-import { trackSubgroupObjectId } from './subgroupObjectId'
 import { latencyMsFromCaptureMicros } from './clock'
 import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 import type { JitterBufferSubgroupObject, SubgroupObjectWithLoc } from './jitterBufferTypes'
@@ -19,13 +18,12 @@ type VideoJitterBufferEntry = {
 
 export class VideoJitterBuffer {
   private buffer: VideoJitterBufferEntry[] = []
-  private readonly lastObjectIds = new Map<string, bigint>()
 
   constructor(private readonly maxBufferSize: number = DEFAULT_JITTER_BUFFER_SIZE) {}
 
   push(groupId: bigint, object: SubgroupObjectWithLoc, onReceiveLatency?: (latencyMs: number) => void): bigint | null {
     const subgroupId = object.subgroupId ?? 0n
-    const objectId = trackSubgroupObjectId(this.lastObjectIds, groupId, object)
+    const objectId = object.objectId
     if (!object.objectPayloadLength) {
       return null
     }
@@ -36,7 +34,6 @@ export class VideoJitterBuffer {
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
-      objectId,
       cachedChunk: parsed,
       remotePTS: parsed.metadata.timestamp,
       localPTS: performance.timeOrigin + performance.now()

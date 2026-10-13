@@ -4,7 +4,7 @@ import type { DeserializedChunk } from './chunk'
 
 export type SubgroupObject = Pick<
   SubgroupObjectMessage,
-  'subgroupId' | 'objectIdDelta' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus'
+  'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus'
 >
 
 export type SubgroupObjectWithLoc = SubgroupObject & {
@@ -17,7 +17,6 @@ export type SubgroupWorkerMessage = {
 }
 
 export type JitterBufferSubgroupObject = SubgroupObjectWithLoc & {
-  objectId: bigint
   cachedChunk: DeserializedChunk
   remotePTS: number
   localPTS: number
