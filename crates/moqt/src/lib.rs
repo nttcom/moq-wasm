@@ -35,5 +35,6 @@ pub use crate::modules::moqt::protocol::QUIC;
 pub use crate::modules::moqt::protocol::TransportProtocol;
 #[cfg(not(target_arch = "wasm32"))]
 pub use crate::modules::moqt::protocol::WEBTRANSPORT;
+pub use crate::modules::transport::transport_connection::TransportClose;
 pub use crate::modules::transport::transport_send_stream::TransportSendError;
 pub use crate::modules::transport::transport_stats::TransportStats;

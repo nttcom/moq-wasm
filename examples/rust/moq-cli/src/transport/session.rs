@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, SessionEvent,
+    ClientConfig, Endpoint, QUIC, Session,
     object::{DataReceiver, GroupOrder, StreamDataReceiverFactory},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -57,18 +57,6 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
         auth_token_refresh,
         endpoint,
     })
-}
-
-/// Resolves once the relay ends the session, with the reason as the error.
-pub async fn session_closed(session: &Session) -> anyhow::Error {
-    loop {
-        match session.receive_event().await {
-            Ok(SessionEvent::Disconnected()) => return anyhow!("session closed by the relay"),
-            Ok(SessionEvent::ProtocolViolation()) => return anyhow!("protocol violation"),
-            Ok(_) => {}
-            Err(error) => return error.context("session event loop failed"),
-        }
-    }
 }
 
 pub async fn subscribe_track(

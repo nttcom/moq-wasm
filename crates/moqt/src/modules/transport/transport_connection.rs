@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 
 use crate::modules::{
     executor::{MaybeSend, MaybeSync},
@@ -13,9 +13,18 @@ use async_trait::async_trait;
 /// connection was closed by the application layer (draft-14 §3.4), `None` for
 /// transport-level failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TransportClose {
-    pub(crate) code: Option<u32>,
-    pub(crate) reason: String,
+pub struct TransportClose {
+    pub code: Option<u32>,
+    pub reason: String,
+}
+
+impl fmt::Display for TransportClose {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.code {
+            Some(code) => write!(f, "code {code}: {}", self.reason),
+            None => f.write_str(&self.reason),
+        }
+    }
 }
 
 pub(crate) type BoxedSendStream = Box<dyn TransportSendStream>;
