@@ -40,7 +40,7 @@ pub(crate) enum ReceivedMessage {
     TrackStatus(Subscribe),
     TrackStatusOk(SubscribeOk),
     TrackStatusError(RequestError),
-    FatalError(),
+    FatalError(String),
 }
 
 impl std::fmt::Debug for ReceivedMessage {
@@ -76,7 +76,7 @@ impl std::fmt::Debug for ReceivedMessage {
             ReceivedMessage::TrackStatus(_) => "TrackStatus",
             ReceivedMessage::TrackStatusOk(_) => "TrackStatusOk",
             ReceivedMessage::TrackStatusError(_) => "TrackStatusError",
-            ReceivedMessage::FatalError() => "FatalError",
+            ReceivedMessage::FatalError(_) => "FatalError",
         };
 
         f.write_str(name)

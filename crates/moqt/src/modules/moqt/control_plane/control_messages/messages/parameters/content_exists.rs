@@ -1,11 +1,7 @@
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::{
-    modules::{
-        extensions::result_ext::ResultExt, moqt::control_plane::control_messages::util::u8_to_bool,
-    },
-    object::Location,
-};
+use crate::{modules::moqt::control_plane::control_messages::util::u8_to_bool, object::Location};
 
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum ContentExists {
@@ -14,14 +10,14 @@ pub enum ContentExists {
 }
 
 impl ContentExists {
-    pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let value = bytes.try_get_u8().log_context("content exists u8").ok()?;
-        let content_exists = u8_to_bool(value).log_context("content exists").ok()?;
+    pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let value = bytes.try_get_u8().context("content exists u8")?;
+        let content_exists = u8_to_bool(value).context("content exists")?;
         if content_exists {
             let location = Location::decode(bytes)?;
-            Some(ContentExists::True { location })
+            Ok(ContentExists::True { location })
         } else {
-            Some(ContentExists::False)
+            Ok(ContentExists::False)
         }
     }
 
@@ -46,7 +42,7 @@ mod tests {
     use super::ContentExists;
 
     fn decode(payload: &[u8]) -> Option<ContentExists> {
-        ContentExists::decode(&mut std::io::Cursor::new(payload))
+        ContentExists::decode(&mut std::io::Cursor::new(payload)).ok()
     }
 
     #[test]

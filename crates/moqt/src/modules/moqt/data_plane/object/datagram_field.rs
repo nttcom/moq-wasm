@@ -1,7 +1,8 @@
+use anyhow::Context;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::data_plane::object::{extension_headers::ExtensionHeaders, object_status::ObjectStatus},
 };
 
@@ -40,37 +41,36 @@ impl DatagramField {
         self.object_id.unwrap_or(0)
     }
 
-    pub(crate) fn decode(message_type: u64, data: &mut BytesMut) -> Option<Self> {
+    pub(crate) fn decode(message_type: u64, data: &mut BytesMut) -> anyhow::Result<Self> {
         if !is_defined_type(message_type) {
-            tracing::error!("Invalid message type: {}", message_type);
-            return None;
+            anyhow::bail!("undefined OBJECT_DATAGRAM type {message_type:#x}");
         }
         let has = |flag: u64| message_type & flag != 0;
         let end_of_group = has(END_OF_GROUP);
         if end_of_group {
             if !data.starts_with(END_OF_GROUP_PREFIX) {
-                return None;
+                anyhow::bail!("end of group datagram without its prefix");
             }
             data.advance(END_OF_GROUP_PREFIX.len());
         }
         let object_id = if has(OBJECT_ID_ABSENT) {
             None
         } else {
-            Some(data.try_get_varint().log_context("object id").ok()?)
+            Some(data.try_get_varint().context("object id")?)
         };
-        let publisher_priority = data.try_get_u8().log_context("publisher priority").ok()?;
+        let publisher_priority = data.try_get_u8().context("publisher priority")?;
         let extension_headers = if has(EXTENSIONS_PRESENT) {
-            Some(ExtensionHeaders::decode(data)?)
+            Some(ExtensionHeaders::decode(data).context("extension headers")?)
         } else {
             None
         };
         let payload = if has(STATUS) {
-            let status = data.try_get_u8().log_context("status").ok()?;
-            ObjectDatagramPayload::Status(ObjectStatus::try_from(status).ok()?)
+            let status = data.try_get_u8().context("status")?;
+            ObjectDatagramPayload::Status(ObjectStatus::try_from(status).context("object status")?)
         } else {
             ObjectDatagramPayload::Payload(data.split().freeze())
         };
-        Some(Self {
+        Ok(Self {
             object_id,
             publisher_priority,
             extension_headers,
@@ -224,7 +224,7 @@ mod tests {
             let mut received = BytesMut::from(&[0x01, 0x05, 0x80, 0x01][..]);
             // Act / Assert
             assert!(
-                DatagramField::decode(message_type, &mut received).is_none(),
+                DatagramField::decode(message_type, &mut received).is_err(),
                 "type {message_type:#x}"
             );
         }

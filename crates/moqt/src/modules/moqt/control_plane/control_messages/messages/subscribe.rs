@@ -1,5 +1,5 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{
@@ -9,6 +9,7 @@ use crate::modules::{
         util,
     },
 };
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 #[derive(Debug, PartialEq)]
@@ -25,30 +26,23 @@ pub struct Subscribe {
 }
 
 impl Subscribe {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let track_namespace_tuple_length = buf
-            .try_get_varint()
-            .log_context("track namespace length")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let track_namespace_tuple_length =
+            buf.try_get_varint().context("track namespace length")?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().log_context("track namespace").ok()?;
+            let track_namespace = buf.try_get_string().context("track namespace")?;
             track_namespace_tuple.push(track_namespace);
         }
-        let track_name = buf.try_get_string().log_context("track name").ok()?;
-        let subscriber_priority = buf.try_get_u8().log_context("subscriber priority").ok()?;
-        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
-        let group_order = GroupOrder::try_from(group_order_u8)
-            .log_context("group order")
-            .ok()?;
-        let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
-        let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
+        let track_name = buf.try_get_string().context("track name")?;
+        let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
+        let group_order_u8 = buf.try_get_u8().context("group order u8")?;
+        let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
+        let forward_u8 = buf.try_get_u8().context("forward u8")?;
+        let forward = util::u8_to_bool(forward_u8).context("forward")?;
         let filter_type = FilterType::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
             let params = KeyValuePair::decode(buf)?;
@@ -58,10 +52,7 @@ impl Subscribe {
             .iter()
             .filter(|kv_pair| kv_pair.key == 0x03)
             .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => {
-                    let mut value = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut value)
-                }
+                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
                 VariantType::Even(_) => unreachable!(),
             })
             .collect();
@@ -74,7 +65,7 @@ impl Subscribe {
                     VariantType::Even(value) => value,
                 });
 
-        Some(Subscribe {
+        Ok(Subscribe {
             request_id,
             track_namespace: track_namespace_tuple,
             track_name,
@@ -410,9 +401,9 @@ mod tests {
             let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe = Subscribe::decode(&mut buf);
             let depacketized_subscribe = match depacketized_subscribe {
-                Some(s) => s,
-                None => {
-                    panic!("Failed to depacketize")
+                Ok(s) => s,
+                Err(error) => {
+                    panic!("Failed to depacketize: {error:#}")
                 }
             };
 

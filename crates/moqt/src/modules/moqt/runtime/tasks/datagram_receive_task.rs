@@ -42,9 +42,9 @@ impl DatagramReceiveTask {
     async fn on_datagram_received(context: &Arc<SessionContext>, data: &mut BytesMut) -> bool {
         tracing::trace!(?data, "Received datagram");
         let datagram_object = match ObjectDatagram::decode(data) {
-            Some(object) => object,
-            None => {
-                tracing::error!("Failed to depacketize datagram object");
+            Ok(object) => object,
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "Failed to decode a datagram object");
                 return false;
             }
         };

@@ -1,8 +1,9 @@
+use anyhow::Context;
 use bytes::BytesMut;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::messages::parameters::location::Location,
 };
 
@@ -47,24 +48,22 @@ impl FilterType {
         }
     }
 
-    pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let filter_type_value = bytes.try_get_varint().log_context("filter type").ok()?;
-        let value = FilterTypeValue::try_from(filter_type_value)
-            .log_context("filter type value")
-            .ok()?;
+    pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let filter_type_value = bytes.try_get_varint().context("filter type")?;
+        let value = FilterTypeValue::try_from(filter_type_value).context("filter type value")?;
         match value {
-            FilterTypeValue::LatestObject => Some(FilterType::LargestObject),
-            FilterTypeValue::LatestGroup => Some(FilterType::NextGroupStart),
+            FilterTypeValue::LatestObject => Ok(FilterType::LargestObject),
+            FilterTypeValue::LatestGroup => Ok(FilterType::NextGroupStart),
             FilterTypeValue::AbsoluteStart => {
                 let start_location = Location::decode(bytes)?;
-                Some(FilterType::AbsoluteStart {
+                Ok(FilterType::AbsoluteStart {
                     location: start_location,
                 })
             }
             FilterTypeValue::AbsoluteRange => {
                 let start_location = Location::decode(bytes)?;
-                let end_group = bytes.try_get_varint().log_context("end group").ok()?;
-                Some(FilterType::AbsoluteRange {
+                let end_group = bytes.try_get_varint().context("end group")?;
+                Ok(FilterType::AbsoluteRange {
                     location: start_location,
                     end_group,
                 })
@@ -116,7 +115,7 @@ mod tests {
     }
 
     fn decode(payload: &[u8]) -> Option<FilterType> {
-        FilterType::decode(&mut std::io::Cursor::new(payload))
+        FilterType::decode(&mut std::io::Cursor::new(payload)).ok()
     }
 
     #[test]

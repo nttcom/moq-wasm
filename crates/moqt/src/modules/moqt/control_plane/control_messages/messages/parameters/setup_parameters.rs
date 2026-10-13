@@ -1,10 +1,11 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::authorization_token::AuthorizationToken,
     },
 };
+use anyhow::Context;
 use bytes::{Bytes, BytesMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::Serialize;
@@ -37,12 +38,9 @@ pub struct SetupParameter {
 }
 
 impl SetupParameter {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let mut kv_pairs = Vec::new();
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         for _ in 0..number_of_parameters {
             let key_value_pair = KeyValuePair::decode(buf)?;
             kv_pairs.push(key_value_pair);
@@ -67,10 +65,7 @@ impl SetupParameter {
             .iter()
             .filter(|kv_pair| kv_pair.key == 0x03)
             .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => {
-                    let mut value = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut value)
-                }
+                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
                 VariantType::Even(_) => unreachable!(),
             })
             .collect();
@@ -98,7 +93,7 @@ impl SetupParameter {
                     VariantType::Even(_) => unreachable!(),
                 });
 
-        Some(SetupParameter {
+        Ok(SetupParameter {
             path,
             max_request_id,
             authorization_token,

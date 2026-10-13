@@ -1,7 +1,8 @@
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{group_order::GroupOrder, location::Location},
@@ -31,21 +32,14 @@ pub struct FetchOk {
 }
 
 impl FetchOk {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
-        let group_order = GroupOrder::try_from(group_order_u8)
-            .log_context("group order")
-            .ok()?;
-        let end_of_track_u8 = buf.try_get_u8().log_context("end of track u8").ok()?;
-        let end_of_track = util::u8_to_bool(end_of_track_u8)
-            .log_context("end of track")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let group_order_u8 = buf.try_get_u8().context("group order u8")?;
+        let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
+        let end_of_track_u8 = buf.try_get_u8().context("end of track u8")?;
+        let end_of_track = util::u8_to_bool(end_of_track_u8).context("end of track")?;
         let end_location = Location::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
             let kv = KeyValuePair::decode(buf)?;
@@ -59,7 +53,7 @@ impl FetchOk {
                     VariantType::Odd(_) => unreachable!(),
                     VariantType::Even(value) => value,
                 });
-        Some(FetchOk {
+        Ok(FetchOk {
             request_id,
             group_order,
             end_of_track,

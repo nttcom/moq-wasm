@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 
 /// draft-14 §9.12. The wire field stays a varint because an unknown code must
@@ -34,13 +33,13 @@ impl PublishDone {
         }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let status_code = buf.try_get_varint().log_context("status code").ok()?;
-        let stream_count = buf.try_get_varint().log_context("stream count").ok()?;
-        let error_reason = buf.try_get_string().log_context("error reason").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let status_code = buf.try_get_varint().context("status code")?;
+        let stream_count = buf.try_get_varint().context("stream count")?;
+        let error_reason = buf.try_get_string().context("error reason")?;
 
-        Some(Self {
+        Ok(Self {
             request_id,
             status_code,
             stream_count,

@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 use serde::Serialize;
 use std::fmt;
@@ -25,12 +24,12 @@ impl fmt::Display for RequestError {
 impl std::error::Error for RequestError {}
 
 impl RequestError {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let error_code = buf.try_get_varint().log_context("error code").ok()?;
-        let reason_phrase = buf.try_get_string().log_context("reason phrase").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let error_code = buf.try_get_varint().context("error code")?;
+        let reason_phrase = buf.try_get_string().context("reason phrase")?;
 
-        Some(RequestError {
+        Ok(RequestError {
             request_id,
             error_code,
             reason_phrase,

@@ -42,7 +42,7 @@ impl ExtensionHeaders {
         let end_remaining = cursor.remaining() - byte_length;
         let mut key_value_pairs = Vec::new();
         while cursor.remaining() > end_remaining {
-            key_value_pairs.push(KeyValuePair::decode(cursor)?);
+            key_value_pairs.push(KeyValuePair::decode(cursor).ok()?);
         }
         Some(Self { key_value_pairs })
     }

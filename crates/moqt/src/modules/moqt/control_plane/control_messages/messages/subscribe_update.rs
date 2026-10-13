@@ -1,11 +1,12 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{authorization_token::AuthorizationToken, location::Location},
         util,
     },
 };
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,21 +23,15 @@ pub struct SubscribeUpdate {
 }
 
 impl SubscribeUpdate {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let subscription_request_id = buf
-            .try_get_varint()
-            .log_context("subscription request id")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let subscription_request_id = buf.try_get_varint().context("subscription request id")?;
         let start_location = Location::decode(buf)?;
-        let end_group = buf.try_get_varint().log_context("end group").ok()?;
-        let subscriber_priority = buf.try_get_u8().log_context("subscriber priority").ok()?;
-        let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
-        let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let end_group = buf.try_get_varint().context("end group")?;
+        let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
+        let forward_u8 = buf.try_get_u8().context("forward u8")?;
+        let forward = util::u8_to_bool(forward_u8).context("forward")?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
             let parameter = KeyValuePair::decode(buf)?;
@@ -46,10 +41,7 @@ impl SubscribeUpdate {
             .iter()
             .filter(|kv_pair| kv_pair.key == 0x03)
             .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => {
-                    let mut value = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut value)
-                }
+                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
                 VariantType::Even(_) => unreachable!(),
             })
             .collect();
@@ -62,7 +54,7 @@ impl SubscribeUpdate {
                     VariantType::Even(value) => value,
                 });
 
-        Some(Self {
+        Ok(Self {
             request_id,
             subscription_request_id,
             start_location,
@@ -194,7 +186,7 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&payload[..]);
             let decoded = SubscribeUpdate::decode(&mut cursor);
 
-            assert!(decoded.is_none());
+            assert!(decoded.is_err());
         }
     }
 }

@@ -1,11 +1,10 @@
+use anyhow::Context;
 use std::fmt;
 
 use bytes::{Buf, Bytes};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
 
 #[repr(u64)]
 #[derive(Debug, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
@@ -79,38 +78,45 @@ impl AuthorizationToken {
         }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let token_alias = buf.try_get_varint().log_context("alias type").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let token_alias = buf.try_get_varint().context("alias type")?;
         if let Ok(token_alias) = AliasType::try_from(token_alias) {
             match token_alias {
-                AliasType::Delete => Some(AuthorizationToken::Delete),
+                AliasType::Delete => Ok(AuthorizationToken::Delete),
                 AliasType::Register => {
-                    let token_alias = buf.try_get_varint().log_context("token alias").ok()?;
-                    let token_type = buf.try_get_varint().log_context("token type").ok()?;
+                    let token_alias = buf.try_get_varint().context("token alias")?;
+                    let token_type = buf.try_get_varint().context("token type")?;
                     let token_value = buf.copy_to_bytes(buf.remaining());
-                    Some(AuthorizationToken::Register {
+                    Ok(AuthorizationToken::Register {
                         token_alias,
                         token_type,
                         token_value,
                     })
                 }
                 AliasType::UseAlias => {
-                    let token_alias = buf.try_get_varint().log_context("token alias").ok()?;
-                    Some(AuthorizationToken::UseAlias { token_alias })
+                    let token_alias = buf.try_get_varint().context("token alias")?;
+                    Ok(AuthorizationToken::UseAlias { token_alias })
                 }
                 AliasType::UseValue => {
-                    let token_type = buf.try_get_varint().log_context("token type").ok()?;
+                    let token_type = buf.try_get_varint().context("token type")?;
                     let token_value = buf.copy_to_bytes(buf.remaining());
-                    Some(AuthorizationToken::UseValue {
+                    Ok(AuthorizationToken::UseValue {
                         token_type,
                         token_value,
                     })
                 }
             }
         } else {
-            tracing::error!("Invalid alias type: {}", token_alias);
-            None
+            anyhow::bail!("Invalid alias type: {}", token_alias)
         }
+    }
+
+    pub(crate) fn decode_parameter(value: &[u8]) -> Option<Self> {
+        Self::decode(&mut std::io::Cursor::new(value))
+            .inspect_err(|error| {
+                tracing::warn!(error = %format!("{error:#}"), "dropping a malformed authorization token")
+            })
+            .ok()
     }
 
     pub fn encode(&self) -> bytes::BytesMut {
