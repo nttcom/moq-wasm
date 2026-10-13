@@ -6,8 +6,8 @@ mod srt;
 mod stats_panel;
 
 use anyhow::Result;
+use broadcast::MoqtTarget;
 use clap::Parser;
-use publisher::MoqtTarget;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{

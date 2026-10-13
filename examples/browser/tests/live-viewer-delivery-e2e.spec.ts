@@ -39,7 +39,7 @@ type TrackReport = {
 test('every sample the bridge publishes while the viewer watches reaches it', async ({ browser }) => {
   test.skip(
     !bridgeLog,
-    'set DELIVERY_BRIDGE_LOG to the live-ingest log written with RUST_LOG=publisher::delivery=debug'
+    'set DELIVERY_BRIDGE_LOG to the live-ingest log written with RUST_LOG=broadcast::delivery=debug'
   )
   // Arrange
   const context = await browser.newContext({ ignoreHTTPSErrors: true })
@@ -101,7 +101,7 @@ function parseBridgeLog(text: string): Published[] {
   const published: Published[] = []
   for (const raw of text.split('\n')) {
     const line = raw.replace(/\x1b\[[0-9;]*m/g, '')
-    if (!line.includes('publisher::delivery')) {
+    if (!line.includes('broadcast::delivery')) {
       continue
     }
     const fields = new Map<string, string>()

@@ -299,6 +299,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "mediapack",
+ "moqt",
+ "msf",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1068,10 +1083,10 @@ name = "gst-plugin-moqt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "broadcast",
  "bytes",
  "gstreamer",
  "mediapack",
- "publisher",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1683,12 +1698,12 @@ name = "live-ingest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "broadcast",
  "bytes",
  "clap",
  "futures",
  "mediapack",
  "moqt",
- "publisher",
  "rml_rtmp",
  "srt-tokio",
  "tokio",
@@ -2378,21 +2393,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
 dependencies = [
  "prost",
-]
-
-[[package]]
-name = "publisher"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "bytes",
- "mediapack",
- "moqt",
- "msf",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]

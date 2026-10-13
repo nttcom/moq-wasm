@@ -8,7 +8,7 @@ use mediapack::{
 };
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use publisher::MoqtManager;
+use broadcast::MoqtManager;
 
 use crate::stats_panel::Registration;
 

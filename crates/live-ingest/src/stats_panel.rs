@@ -8,8 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use broadcast::{MoqtManager, StreamRecord};
 use moqt::TransportStats;
-use publisher::{MoqtManager, StreamRecord};
 use tokio::task::JoinHandle;
 
 const LABEL_WIDTH: usize = 40;

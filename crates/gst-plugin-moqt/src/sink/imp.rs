@@ -1,11 +1,11 @@
 use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Context, Result, anyhow};
+use broadcast::{MediaPublisher, MoqtManager, MoqtTarget};
 use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::{glib, prelude::*, subclass::prelude::*};
 use mediapack::{AudioSample, MediaEvent, Timestamp};
-use publisher::{MediaPublisher, MoqtManager, MoqtTarget};
 use tokio::runtime::Runtime;
 
 use crate::media_input::{VideoInput, audio_config};
