@@ -2,7 +2,6 @@ import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBu
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
-import { buildVideoChunkFromLoc } from '../locChunk'
 
 const bitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
@@ -111,11 +110,9 @@ type FrameIds = { groupId: bigint; objectId: bigint }
 const outputPendingIds = new Map<number, FrameIds[]>()
 let lastOutputMetaResetAtMs = Number.NEGATIVE_INFINITY
 
-type CachedVideoConfig = { codec: string; descriptionBase64?: string }
-
-let cachedVideoConfig: CachedVideoConfig | null = null
+let cachedVideoConfig: VideoDecoderConfig | null = null
 let catalogCodec: string | undefined
-let catalogDescriptionBase64: string | undefined
+let catalogDescription: Uint8Array | undefined
 let missingCatalogCodecWarned = false
 let directDecodeQueue: Promise<void> = Promise.resolve()
 
@@ -237,7 +234,12 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         objectId: object.objectId,
         captureTimestampMicros: loc.captureTimestampMicros,
         receivedAtMs: performance.now(),
-        chunk: buildVideoChunkFromLoc(loc, object.objectPayload, object.objectId)
+        videoConfig: loc.videoConfig,
+        chunk: new EncodedVideoChunk({
+          type: object.objectId === 0n ? 'key' : 'delta',
+          timestamp: loc.captureTimestampMicros ?? 0,
+          data: object.objectPayload
+        })
       }
       if (holdMs === 0) {
         enqueueDirectDecode(entry)
@@ -257,20 +259,18 @@ function enqueueDirectDecode(entry: VideoJitterBufferEntry): void {
     })
 }
 
-async function decode({ groupId, objectId, chunk }: VideoJitterBufferEntry) {
+async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBufferEntry) {
   if (isSupersededGroup(groupId)) {
     return
   }
 
-  const resolvedConfig = resolveVideoConfig(chunk.descriptionBase64)
+  const resolvedConfig = resolveVideoConfig(videoConfig)
   if (!resolvedConfig) {
     return
   }
 
-  const encodedVideoChunk = new EncodedVideoChunk({ type: chunk.type, timestamp: chunk.timestamp, data: chunk.data })
-
   if (!videoDecoder || videoDecoder.state === 'closed') {
-    videoDecoder = await initializeVideoDecoder(buildVideoDecoderConfig(resolvedConfig))
+    videoDecoder = await initializeVideoDecoder(resolvedConfig)
     if (!videoDecoder) {
       return
     }
@@ -289,7 +289,7 @@ async function decode({ groupId, objectId, chunk }: VideoJitterBufferEntry) {
   }
 
   try {
-    videoDecoder.decode(encodedVideoChunk)
+    videoDecoder.decode(chunk)
     if (chunk.type === 'key') {
       waitingForKeyFrame = false
       newestKeyframeGroupId = groupId
@@ -319,7 +319,7 @@ function isKeyFrameRequiredError(error: unknown): boolean {
 function applyCatalogInfo(codec?: string, descriptionBase64?: string): void {
   newestKeyframeGroupId = undefined
   if (descriptionBase64) {
-    catalogDescriptionBase64 = descriptionBase64
+    catalogDescription = Uint8Array.fromBase64(descriptionBase64)
   }
   if (!codec || catalogCodec === codec) {
     return
@@ -333,7 +333,7 @@ function applyCatalogInfo(codec?: string, descriptionBase64?: string): void {
   }
 }
 
-function resolveVideoConfig(descriptionBase64: string | undefined): CachedVideoConfig | null {
+function resolveVideoConfig(videoConfig: Uint8Array | undefined): VideoDecoderConfig | null {
   if (cachedVideoConfig) {
     return cachedVideoConfig
   }
@@ -345,13 +345,9 @@ function resolveVideoConfig(descriptionBase64: string | undefined): CachedVideoC
     return null
   }
   missingCatalogCodecWarned = false
-  return { codec: catalogCodec, descriptionBase64: descriptionBase64 ?? catalogDescriptionBase64 }
-}
-
-function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfig {
   return {
-    codec: resolved.codec,
-    description: resolved.descriptionBase64 ? Uint8Array.fromBase64(resolved.descriptionBase64) : undefined,
+    codec: catalogCodec,
+    description: videoConfig ?? catalogDescription,
     hardwareAcceleration: 'prefer-software'
   }
 }

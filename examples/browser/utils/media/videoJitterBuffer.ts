@@ -1,5 +1,3 @@
-import type { VideoChunk } from './locChunk'
-
 const MAX_ENTRIES = 9000
 
 export type VideoJitterBufferEntry = {
@@ -8,7 +6,8 @@ export type VideoJitterBufferEntry = {
   objectId: bigint
   captureTimestampMicros?: number
   receivedAtMs: number
-  chunk: VideoChunk
+  videoConfig?: Uint8Array
+  chunk: EncodedVideoChunk
 }
 
 export class VideoJitterBuffer {
