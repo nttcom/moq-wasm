@@ -42,7 +42,7 @@ pub fn build_video_catalog(namespace: &str, media_track: &str, codec: &str) -> C
     Catalog {
         version: Some(1),
         generated_at: Some(now_millis()),
-        is_complete: Some(true),
+        is_complete: None,
         tracks: Some(vec![track]),
         delta_update: None,
         add_tracks: None,
@@ -90,5 +90,14 @@ mod tests {
         assert_eq!(track.name, "video");
         assert_eq!(track.codec.as_deref(), Some("avc3.640028"));
         assert_eq!(packaging_str(&track.packaging), "loc");
+    }
+
+    #[test]
+    fn live_catalog_omits_is_complete() {
+        // Act
+        let catalog = build_video_catalog("tokyo/cam01", "video", "avc3.640028");
+
+        // Assert
+        assert_eq!(catalog.is_complete, None);
     }
 }

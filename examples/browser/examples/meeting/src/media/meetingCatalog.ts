@@ -272,7 +272,6 @@ export function buildMeetingCatalogJson(trackNamespace: string[], tracks: Meetin
   const catalog: MsfCatalog = {
     version: 1,
     generatedAt: Date.now(),
-    isComplete: true,
     tracks: catalogTracks
   }
   return JSON.stringify(catalog)
