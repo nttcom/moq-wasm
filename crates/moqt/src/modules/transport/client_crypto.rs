@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -37,9 +38,9 @@ pub(crate) fn client_crypto_with_custom_cert(
 ) -> anyhow::Result<rustls::ClientConfig> {
     install_default_crypto_provider();
     let certs = CertificateDer::pem_file_iter(custom_cert_path)
-        .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
+        .context("failed to open the certificate file")?
         .collect::<Result<Vec<_>, _>>()
-        .inspect_err(|e| tracing::error!("Parsing certificate failed: {:?}", e))?;
+        .context("failed to parse the certificate file")?;
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs {
         roots.add(cert)?;

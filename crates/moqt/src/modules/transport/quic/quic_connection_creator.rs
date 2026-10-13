@@ -1,4 +1,5 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
+use anyhow::Context;
 use anyhow::Ok;
 use async_trait::async_trait;
 use std::{
@@ -36,15 +37,15 @@ impl QUICConnectionCreator {
         install_default_crypto_provider();
 
         let cert = CertificateDer::pem_file_iter(cert_path)
-            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
+            .context("failed to open the certificate file")?
             .collect::<Result<Vec<_>, _>>()
-            .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
+            .context("failed to parse the certificate file")?;
         let key = PrivateKeyDer::from_pem_file(key_path)
-            .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
+            .context("failed to read the private key file")?;
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert, key)
-            .inspect_err(|e| tracing::error!("server config failed: {:?}", e.to_string()))?;
+            .context("failed to build the TLS server config")?;
         let alpn = &[b"moq-00"];
         server_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -103,11 +104,8 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         let remote_address = target.resolve_remote_address().await?;
         let connecting = self
             .endpoint
-            .connect(remote_address, &target.server_name())
-            .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?;
-        let connection = connecting
-            .await
-            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
+            .connect(remote_address, &target.server_name())?;
+        let connection = connecting.await?;
 
         Ok(Box::new(QUICConnection::new(connection)))
     }
@@ -118,9 +116,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
             .accept()
             .await
             .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
-        let connection = incoming
-            .await
-            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
+        let connection = incoming.await?;
 
         Ok(Box::new(QUICConnection::new(connection)))
     }

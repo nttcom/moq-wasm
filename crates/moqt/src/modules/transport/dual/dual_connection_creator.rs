@@ -1,4 +1,5 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
+use anyhow::Context;
 use std::{
     net::{Ipv6Addr, SocketAddr},
     sync::Arc,
@@ -78,18 +79,18 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
         // 証明書を同期的に読み込む
         let cert = CertificateDer::pem_file_iter(cert_path)
-            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
+            .context("failed to open the certificate file")?
             .collect::<Result<Vec<_>, _>>()
-            .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
+            .context("failed to parse the certificate file")?;
 
         // 秘密鍵を同期的に読み込む
         let key = PrivateKeyDer::from_pem_file(key_path)
-            .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
+            .context("failed to read the private key file")?;
 
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert, key)
-            .inspect_err(|e| tracing::error!("server config failed: {:?}", e.to_string()))?;
+            .context("failed to build the TLS server config")?;
 
         // ALPN を2つ登録（WebTransport + QUIC）
         server_crypto.alpn_protocols = vec![
@@ -134,9 +135,8 @@ impl TransportConnectionCreator for DualProtocolCreator {
                 let connection = target
                     .connect_quic(&client.endpoint, client.web_transport_config.clone())
                     .await?;
-                let session = web_transport_quinn::Session::connect(connection, target.url.clone())
-                    .await
-                    .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
+                let session =
+                    web_transport_quinn::Session::connect(connection, target.url.clone()).await?;
                 Ok(Box::new(WtConnection::new(session)))
             }
         }
@@ -154,9 +154,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
             .await
             .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
 
-        let connection = incoming
-            .await
-            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
+        let connection = incoming.await?;
 
         // ALPN で分岐
         let alpn = connection
@@ -167,14 +165,8 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
         if alpn.as_slice() == web_transport_quinn::ALPN.as_bytes() {
             // WebTransport: H3 ハンドシェイクを行いセッションを確立する
-            let request = web_transport_quinn::Request::accept(connection)
-                .await
-                .inspect_err(|e| {
-                    tracing::error!("failed to accept WebTransport request: {:?}", e)
-                })?;
-            let session = request.ok().await.inspect_err(|e| {
-                tracing::error!("failed to establish WebTransport session: {:?}", e)
-            })?;
+            let request = web_transport_quinn::Request::accept(connection).await?;
+            let session = request.ok().await?;
             Ok(Box::new(WtConnection::new(session)))
         } else if alpn.as_slice() == b"moq-00" {
             // Raw QUIC
