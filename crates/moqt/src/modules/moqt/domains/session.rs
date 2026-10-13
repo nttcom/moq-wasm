@@ -19,8 +19,8 @@ use crate::modules::moqt::runtime::tasks::{
 };
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
-    transport_addresses::TransportAddresses, transport_connection::TransportClose,
-    transport_stats::TransportStats,
+    application_protocol::NegotiatedProtocol, transport_addresses::TransportAddresses,
+    transport_connection::TransportClose, transport_stats::TransportStats,
 };
 
 pub struct Session {
@@ -136,6 +136,16 @@ impl Session {
         self.inner.transport_connection.addresses()
     }
 
+    /// The URL scheme `Endpoint::connect` takes for this session's transport:
+    /// `moqt` for raw QUIC, `https` for WebTransport. A server names a GOAWAY's
+    /// New Session URI in it (draft-14 §9.4).
+    pub fn url_scheme(&self) -> &'static str {
+        match self.inner.transport_connection.negotiated_protocol() {
+            NegotiatedProtocol::Quic { .. } => "moqt",
+            NegotiatedProtocol::WebTransport { .. } => "https",
+        }
+    }
+
     /// draft-14 §9.4. A client sends an empty URI; only a server names a new
     /// session. Fire-and-forget: the draft defines no response.
     pub async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
@@ -235,6 +245,29 @@ mod tests {
         let remote = addresses.remote.expect("a QUIC session knows its peer");
         assert_eq!(remote.port(), port);
         assert!(remote.ip().is_loopback());
+    }
+
+    #[tokio::test]
+    async fn url_scheme_is_the_one_the_client_connected_with() {
+        // Arrange
+        let (quic_port, quic_accept) = spawn_dual_server("url-scheme-quic");
+        let (wt_port, wt_accept) = spawn_dual_server("url-scheme-wt");
+
+        // Act
+        let (quic_client, quic_server) =
+            connect_sessions(&format!("moqt://127.0.0.1:{quic_port}"), quic_accept)
+                .await
+                .unwrap();
+        let (wt_client, wt_server) =
+            connect_sessions(&format!("https://127.0.0.1:{wt_port}/moq"), wt_accept)
+                .await
+                .unwrap();
+
+        // Assert
+        assert_eq!(quic_client.url_scheme(), "moqt");
+        assert_eq!(quic_server.url_scheme(), "moqt");
+        assert_eq!(wt_client.url_scheme(), "https");
+        assert_eq!(wt_server.url_scheme(), "https");
     }
 
     #[tokio::test]
