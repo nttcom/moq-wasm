@@ -96,7 +96,38 @@ class FakeRawClient {
     this.sent.push(`SUBSCRIBE_UPDATE ${subscriptionRequestId} forward=${forward}`)
   }
 
-  /// The relay side: a GOAWAY and an object on a subgroup.
+  async sendPublish(requestId: bigint, trackNamespace: string[], trackName: string): Promise<bigint> {
+    this.sent.push(`PUBLISH ${requestId} ${trackNamespace.join('/')}/${trackName}`)
+    const trackAlias = this.nextAliases.shift()
+    if (trackAlias === undefined) {
+      throw new Error('fake relay ran out of aliases')
+    }
+    this.emit('publishResponse', { requestId })
+    return trackAlias
+  }
+
+  async sendSubscribeOk(requestId: bigint): Promise<bigint> {
+    this.sent.push(`SUBSCRIBE_OK ${requestId}`)
+    const trackAlias = this.nextAliases.shift()
+    if (trackAlias === undefined) {
+      throw new Error('fake relay ran out of aliases')
+    }
+    return trackAlias
+  }
+
+  async sendSubgroupHeader(trackAlias: bigint, groupId: bigint): Promise<void> {
+    this.sent.push(`SUBGROUP_HEADER alias=${trackAlias} group=${groupId}`)
+  }
+
+  async sendSubgroupObject(trackAlias: bigint, groupId: bigint, _subgroupId: bigint, objectId: bigint): Promise<void> {
+    this.sent.push(`OBJECT alias=${trackAlias} group=${groupId} object=${objectId}`)
+  }
+
+  /// The relay side: a SUBSCRIBE for a track this client publishes.
+  receiveSubscribe(requestId: bigint, trackNamespace: string[], trackName: string): void {
+    this.emit('subscribe', { requestId, trackNamespace, trackName }, true, 0)
+  }
+
   receivePublishDone(requestId: bigint): void {
     this.emit('publishDone', { requestId, statusCode: 0x2n, errorReason: 'publisher moved away' })
   }
@@ -216,6 +247,47 @@ test('a failed switchover keeps the current session', async () => {
   // Assert
   expect(clients[0].closed).toBe(false)
   expect(wrapper.getRawClient()).toBe(clients[0] as unknown as MOQTClient)
+})
+
+test('a published track keeps its alias for the application while the new relay gets its own', async () => {
+  // Arrange
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  const appAlias = await wrapper.publish(['room', 'me'], 'video', '')
+  expect(appAlias).toBe(7n)
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  await wrapper.sendSubgroupHeader(appAlias, 3n, 0n, 0)
+  await wrapper.sendSubgroupObject(appAlias, 3n, 0n, 0n, undefined, new Uint8Array(1), undefined)
+
+  // Assert: relay B received PUBLISH and the objects under its own alias 40
+  const relayB = clients[1]
+  expect(relayB.sent.some((line) => line.startsWith('PUBLISH ') && line.endsWith(' room/me/video'))).toBe(true)
+  expect(relayB.sent).toContain('SUBGROUP_HEADER alias=40 group=3')
+  expect(relayB.sent).toContain('OBJECT alias=40 group=3 object=0')
+})
+
+test('subscriptions the old relay held on this publisher are reported ended by the switchover', async () => {
+  // Arrange: relay A subscribed to a track this client serves
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  wrapper.setOnIncomingSubscribeHandler(async ({ respondOk }) => {
+    await respondOk()
+  })
+  const ended: bigint[] = []
+  wrapper.setOnIncomingUnsubscribeHandler((requestId) => ended.push(requestId))
+  clients[0].receiveSubscribe(11n, ['room', 'me'], 'video')
+  await settled()
+  expect(clients[0].sent).toContain('SUBSCRIBE_OK 11')
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await settled()
+
+  // Assert
+  expect(ended).toEqual([11n])
 })
 
 test('a PUBLISH_DONE from the relay that sent GOAWAY does not end the subscription carried over', async () => {
