@@ -25,11 +25,8 @@ import {
   E2E_CAMERA_SETTINGS,
   appendCatalogTracks,
   createCatalogTrackId,
-  getAudioCatalogTrackNames,
   getAudioCatalogTracks,
-  getCameraCatalogTrackNames,
   getCameraCatalogTracks,
-  getScreenShareCatalogTrackNames,
   getScreenShareCatalogTracks,
   pickVideoTrackByPriority,
   removeCatalogTracksByNames,
@@ -103,28 +100,10 @@ const INITIAL_CAMERA_ENCODING_SETTINGS: VideoEncodingSettings = E2E_CAMERA_SETTI
   : DEFAULT_VIDEO_ENCODING_SETTINGS
 
 type CatalogPresetSource = 'camera' | 'screenshare' | 'audio'
-type CatalogPreset = {
-  label: string
-  append: () => ReturnType<typeof getCameraCatalogTracks>
-  names: () => string[]
-}
-
-const CATALOG_PRESETS: Record<CatalogPresetSource, CatalogPreset> = {
-  camera: {
-    label: 'camera',
-    append: getCameraCatalogTracks,
-    names: getCameraCatalogTrackNames
-  },
-  screenshare: {
-    label: 'screenshare',
-    append: getScreenShareCatalogTracks,
-    names: getScreenShareCatalogTrackNames
-  },
-  audio: {
-    label: 'audio',
-    append: getAudioCatalogTracks,
-    names: getAudioCatalogTrackNames
-  }
+const CATALOG_PRESETS: Record<CatalogPresetSource, () => MeetingCatalogTrack[]> = {
+  camera: getCameraCatalogTracks,
+  screenshare: getScreenShareCatalogTracks,
+  audio: getAudioCatalogTracks
 }
 
 export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaResult {
@@ -404,23 +383,25 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
 
   const ensureCatalogPresetTracks = useCallback(
     (source: CatalogPresetSource) => {
-      const preset = CATALOG_PRESETS[source]
       updateCatalogTracks((prev) => {
         if (hasCatalogTrackForSource(prev, source)) {
           return prev
         }
-        return appendCatalogTracks(prev, preset.append())
-      }, `ensure ${preset.label} catalog tracks`)
+        return appendCatalogTracks(prev, CATALOG_PRESETS[source]())
+      }, `ensure ${source} catalog tracks`)
     },
     [updateCatalogTracks]
   )
 
   const removeCatalogPresetTracks = useCallback(
     (source: CatalogPresetSource) => {
-      const preset = CATALOG_PRESETS[source]
       updateCatalogTracks(
-        (prev) => removeCatalogTracksByNames(prev, preset.names()),
-        `remove ${preset.label} catalog tracks`
+        (prev) =>
+          removeCatalogTracksByNames(
+            prev,
+            CATALOG_PRESETS[source]().map((track) => track.name)
+          ),
+        `remove ${source} catalog tracks`
       )
     },
     [updateCatalogTracks]

@@ -354,18 +354,6 @@ export function removeCatalogTracksByNames(
   return changed ? next : tracks
 }
 
-export function getCameraCatalogTrackNames(): string[] {
-  return CAMERA_CATALOG_TRACKS.map((track) => track.name)
-}
-
-export function getScreenShareCatalogTrackNames(): string[] {
-  return SCREENSHARE_CATALOG_TRACKS.map((track) => track.name)
-}
-
-export function getAudioCatalogTrackNames(): string[] {
-  return AUDIO_CATALOG_TRACKS.map((track) => track.name)
-}
-
 export function createCatalogTrackId(): string {
   return `catalog-track-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 }
