@@ -1,6 +1,6 @@
 import type { MOQTClient } from '../../pkg/moqt'
 import { MediaTransportState } from './transportState'
-import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
+import { buildLocHeader, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
 import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 
@@ -44,7 +44,7 @@ export async function sendVideoChunkViaMoqt({
 
   const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
   const decoderConfig = metadata?.decoderConfig as any
-  const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
+  const configBytes: Uint8Array | undefined = decoderConfig?.description && new Uint8Array(decoderConfig.description)
   const includeConfig = chunk.type === 'key' || shouldIncludeCodec
   const payload = new Uint8Array(chunk.byteLength)
   chunk.copyTo(payload)
