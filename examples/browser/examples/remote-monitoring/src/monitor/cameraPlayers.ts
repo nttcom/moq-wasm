@@ -69,7 +69,7 @@ export class CameraPlayers {
       await player.stop()
     }
     this.players.clear()
-    await this.client.finish()
+    await this.client.disconnect()
     log('disconnected')
   }
 }

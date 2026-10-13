@@ -261,10 +261,6 @@ export class MoqtClientWrapper {
     }
   }
 
-  async finish(): Promise<void> {
-    await this.disconnect()
-  }
-
   getConnectionStatus(): this is MoqtClientWrapper & { client: MOQTClient } {
     return !!this.client && this.client.isConnected()
   }
