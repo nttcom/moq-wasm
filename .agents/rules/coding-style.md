@@ -28,6 +28,7 @@ Shared by all agents (Claude Code, Codex).
 
 ## Error Handling
 - Use `anyhow::Result` by default.
+- Define a typed error (a `thiserror` enum) when a caller branches on the failure kind, i.e. it would otherwise `downcast_ref` the error or match on its message. Mark it `#[non_exhaustive]` when it is exported outside the crate.
 - Use `std::io::Result` only when explicitly instructed.
 - For recoverable failures, do not use `panic!`/`unwrap`; return `Result` instead.
 - `panic!`/`unwrap` is allowed during initialization/startup only when the process cannot continue safely.
