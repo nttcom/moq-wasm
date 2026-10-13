@@ -5,8 +5,8 @@ use tokio::sync::mpsc;
 use crate::{
     modules::executor::{self, JoinHandle},
     object::{
-        ExtensionHeaders, MalformedTrackError, StreamDataReceiver, StreamDataReceiverFactory,
-        Subgroup, SubgroupHeader, SubgroupId, SubgroupObject,
+        ExtensionHeaders, ForwardingPreference, MalformedTrackError, ObjectStatus,
+        StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
     },
 };
 
@@ -105,26 +105,21 @@ async fn read_subgroup_objects(
     receiver: &mut StreamDataReceiver,
     object_sender: &mpsc::Sender<anyhow::Result<TrackObject>>,
 ) -> anyhow::Result<()> {
-    let header = match receiver.receive().await? {
-        Some(Subgroup::Header(header)) => header,
-        other => anyhow::bail!("subgroup stream did not start with a header: {other:?}"),
-    };
-    let mut prev_object_id = None;
     loop {
         match receiver.receive().await? {
-            Some(Subgroup::Object(field)) => {
-                let object_id = field.resolve_object_id(prev_object_id);
-                let first_object_id = prev_object_id.unwrap_or(object_id);
-                prev_object_id = Some(object_id);
-                let SubgroupObject::Payload { data, .. } = field.subgroup_object else {
+            Some(Subgroup::Object(object)) => {
+                if object.status != ObjectStatus::Normal || object.payload.is_empty() {
                     continue;
+                }
+                let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
+                    unreachable!("a subgroup stream carries subgroup objects")
                 };
                 let object = TrackObject {
-                    group_id: header.group_id,
-                    subgroup_id: resolve_subgroup_id(&header, first_object_id),
-                    object_id,
-                    extension_headers: field.extension_headers,
-                    payload: data,
+                    group_id: object.location.group_id,
+                    subgroup_id,
+                    object_id: object.location.object_id,
+                    extension_headers: object.extension_headers,
+                    payload: object.payload,
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
                     return Ok(());
@@ -133,16 +128,6 @@ async fn read_subgroup_objects(
             Some(Subgroup::Header(_)) => continue,
             None => return Ok(()),
         }
-    }
-}
-
-/// draft-14 §10.4.1: header types without a Subgroup ID field mean subgroup
-/// 0, and the "first object id" types take the id of the first object sent.
-fn resolve_subgroup_id(header: &SubgroupHeader, first_object_id: u64) -> u64 {
-    match header.subgroup_id {
-        SubgroupId::None => 0,
-        SubgroupId::Value(subgroup_id) => subgroup_id,
-        SubgroupId::FirstObjectIdDelta => first_object_id,
     }
 }
 

@@ -1,60 +1,53 @@
 use bytes::Bytes;
-use moqt::object::{ObjectStatus, SubgroupId};
+use moqt::object::{ObjectStatus, SubgroupStart};
 
-use crate::modules::session::data_object::DataObject;
+use crate::modules::{
+    session::data_object::DataObject,
+    test_support::relay_harness::fixtures::cached_object::{
+        FIXTURE_PRIORITY, status_object, stream_object_in_subgroup, stream_object_with_payload,
+    },
+};
 
 pub(crate) fn ordered_payload(index: usize) -> Bytes {
     Bytes::from(format!("ordered-object-{index}"))
 }
 
-pub(crate) fn make_header(group_id: u64) -> DataObject {
-    make_header_with(group_id, SubgroupId::Value(0), false)
-}
-
-pub(crate) fn make_header_with(
-    group_id: u64,
-    subgroup_id: SubgroupId,
-    has_end_of_group: bool,
-) -> DataObject {
-    DataObject::SubgroupHeader(moqt::object::SubgroupHeader::new(
-        0,
+pub(crate) fn subgroup_start(group_id: u64, subgroup_id: u64, ends_group: bool) -> SubgroupStart {
+    SubgroupStart {
         group_id,
         subgroup_id,
-        128,
-        false,
-        has_end_of_group,
-    ))
+        publisher_priority: FIXTURE_PRIORITY,
+        ends_group,
+    }
 }
 
-pub(crate) fn make_payload_object(object_id_delta: u64, payload: Bytes) -> DataObject {
-    make_subgroup_object(
-        object_id_delta,
-        moqt::object::SubgroupObject::new_payload(payload),
-    )
+pub(crate) fn make_header(group_id: u64) -> DataObject {
+    make_header_with(group_id, 0, false)
 }
 
-pub(crate) fn make_status_object(object_id_delta: u64, status: ObjectStatus) -> DataObject {
-    make_raw_status_object(object_id_delta, u8::from(status) as u64)
+pub(crate) fn make_header_with(group_id: u64, subgroup_id: u64, ends_group: bool) -> DataObject {
+    DataObject::SubgroupHeader(subgroup_start(group_id, subgroup_id, ends_group))
 }
 
-pub(crate) fn make_raw_status_object(object_id_delta: u64, code: u64) -> DataObject {
-    make_subgroup_object(
-        object_id_delta,
-        moqt::object::SubgroupObject::new_status(code),
-    )
+/// An object of subgroup 0 of `group_id`.
+pub(crate) fn make_payload_object(group_id: u64, object_id: u64, payload: Bytes) -> DataObject {
+    DataObject::SubgroupObject(stream_object_with_payload(group_id, object_id, payload).to_object())
 }
 
-fn make_subgroup_object(
-    object_id_delta: u64,
-    subgroup_object: moqt::object::SubgroupObject,
+pub(crate) fn make_object_in_subgroup(
+    group_id: u64,
+    subgroup_id: u64,
+    object_id: u64,
 ) -> DataObject {
-    let message_type =
-        moqt::object::SubgroupHeader::new(0, 0, SubgroupId::Value(0), 128, false, false)
-            .message_type;
-    DataObject::SubgroupObject(moqt::object::SubgroupObjectField {
-        message_type,
-        object_id_delta,
-        extension_headers: moqt::object::ExtensionHeaders::default(),
-        subgroup_object,
-    })
+    DataObject::SubgroupObject(
+        stream_object_in_subgroup(group_id, subgroup_id, object_id).to_object(),
+    )
+}
+
+pub(crate) fn make_status_object(
+    group_id: u64,
+    object_id: u64,
+    status: ObjectStatus,
+) -> DataObject {
+    DataObject::SubgroupObject(status_object(group_id, object_id, status).to_object())
 }

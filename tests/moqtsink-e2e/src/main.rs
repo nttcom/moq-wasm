@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
     fetch::{Fetch, FetchObject, FetchOption},
-    object::{ContentExists, DataReceiver, GroupOrder, Location, Subgroup, SubgroupObject},
+    object::{ContentExists, DataReceiver, GroupOrder, Location, Subgroup},
     subscribe::{FilterType, SubscribeOption},
 };
 use msf::Catalog;
@@ -190,8 +190,8 @@ async fn expect_groups(
             while let Some(object) = stream.receive().await? {
                 match object {
                     Subgroup::Header(header) => group_id = Some(header.group_id),
-                    Subgroup::Object(field) => {
-                        if matches!(field.subgroup_object, SubgroupObject::Payload { .. }) {
+                    Subgroup::Object(object) => {
+                        if !object.payload.is_empty() {
                             received.extend(group_id);
                             break;
                         }

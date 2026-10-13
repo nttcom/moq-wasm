@@ -11,8 +11,8 @@ use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
     object::{
-        ContentExists, ExtensionHeaders, GroupOrder, ObjectDatagramPayload, Subgroup, SubgroupId,
-        SubgroupObject,
+        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
+        ObjectDatagramPayload, ObjectStatus, Subgroup, SubgroupStart,
     },
     subscribe::{FilterType, SubscribeOption},
 };
@@ -689,8 +689,30 @@ fn spawn_ordered_objects_publisher_loop(
     })
 }
 
-/// Sends `count` objects on one subgroup stream with sequential object ids
-/// (delta 0 for the first object, 1 for each subsequent one).
+/// A Normal object of subgroup 0 of group 0, where every publisher in this
+/// test sends.
+fn group_zero_object(object_id: u64, payload: Bytes) -> Object {
+    Object {
+        location: Location {
+            group_id: 0,
+            object_id,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: 128,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload,
+    }
+}
+
+const GROUP_ZERO: SubgroupStart = SubgroupStart {
+    group_id: 0,
+    subgroup_id: 0,
+    publisher_priority: 128,
+    ends_group: false,
+};
+
+/// Sends `count` objects on one subgroup stream with sequential object ids.
 async fn send_ordered_objects(
     session: Arc<Session>,
     downstream_subscription: Subscription,
@@ -698,16 +720,12 @@ async fn send_ordered_objects(
 ) -> anyhow::Result<()> {
     let stream_factory = session.publisher().create_stream(&downstream_subscription);
     let uninitialized = stream_factory.next().await?;
-    let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
-    let mut stream = uninitialized.send_header(header).await?;
+    let mut stream = uninitialized.start(GROUP_ZERO).await?;
     for index in 0..count {
-        let object_id_delta = if index == 0 { 0 } else { 1 };
-        let object = stream.create_object_field(
-            object_id_delta,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(Bytes::from(ordered_object_payload(index))),
-        );
-        stream.send(object).await?;
+        let payload = Bytes::from(ordered_object_payload(index));
+        stream
+            .send_object(&group_zero_object(index as u64, payload))
+            .await?;
     }
     stream.close().await?;
     tracing::info!(count, "publisher sent ordered objects");
@@ -747,10 +765,10 @@ async fn subscribe_and_receive_ordered_objects(
                 let Some(subgroup) = stream.receive().await? else {
                     bail!("stream ended before receiving {count} objects");
                 };
-                if let Subgroup::Object(field) = subgroup
-                    && let SubgroupObject::Payload { data, .. } = field.subgroup_object
+                if let Subgroup::Object(object) = subgroup
+                    && !object.payload.is_empty()
                 {
-                    payloads.push(data.to_vec());
+                    payloads.push(object.payload.to_vec());
                 }
             }
         }
@@ -842,14 +860,10 @@ async fn send_test_object(
 ) -> anyhow::Result<()> {
     let stream_factory = session.publisher().create_stream(&downstream_subscription);
     let uninitialized = stream_factory.next().await?;
-    let header = uninitialized.create_header(0, SubgroupId::None, 128, false, false);
-    let mut stream = uninitialized.send_header(header).await?;
-    let object = stream.create_object_field(
-        0,
-        ExtensionHeaders::default(),
-        SubgroupObject::new_payload(Bytes::from_static(payload)),
-    );
-    stream.send(object).await?;
+    let mut stream = uninitialized.start(GROUP_ZERO).await?;
+    stream
+        .send_object(&group_zero_object(0, Bytes::from_static(payload)))
+        .await?;
     stream.close().await?;
     tracing::info!("publisher sent test object");
     Ok(())
@@ -964,14 +978,14 @@ where
                 let Some(subgroup) = stream.receive().await? else {
                     anyhow::bail!("stream ended before receiving an object");
                 };
-                if let Subgroup::Object(field) = subgroup
-                    && let SubgroupObject::Payload { data, .. } = field.subgroup_object
+                if let Subgroup::Object(object) = subgroup
+                    && !object.payload.is_empty()
                 {
                     tracing::info!(
-                        payload_len = data.len(),
+                        payload_len = object.payload.len(),
                         "subscriber received stream object"
                     );
-                    return Ok(data.to_vec());
+                    return Ok(object.payload.to_vec());
                 }
             }
         }

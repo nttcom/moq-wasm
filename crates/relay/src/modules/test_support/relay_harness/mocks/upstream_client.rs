@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
@@ -30,9 +32,13 @@ impl StreamReceiver for MockStreamReceiver {
     }
 }
 
+/// Feeds a stream reader the objects moqt would hand it: the header, then
+/// objects whose ids follow the previous one unless a gap is asked for.
 pub(crate) struct UpstreamSubgroupStream {
     sender: mpsc::UnboundedSender<ReceiveResult>,
     reader: JoinHandle<()>,
+    /// The group of the header sent and the next object id.
+    start: Mutex<Option<(u64, u64)>>,
 }
 
 impl UpstreamSubgroupStream {
@@ -41,7 +47,11 @@ impl UpstreamSubgroupStream {
     ) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let reader = spawn_reader(Box::new(MockStreamReceiver { receiver }));
-        Self { sender, reader }
+        Self {
+            sender,
+            reader,
+            start: Mutex::new(None),
+        }
     }
 
     fn push(&self, item: ReceiveResult) {
@@ -55,19 +65,32 @@ impl UpstreamSubgroupStream {
     }
 
     pub(crate) fn header(&self, group_id: u64) {
+        *self.start.lock().unwrap() = Some((group_id, 0));
         self.send(make_header(group_id));
     }
 
     pub(crate) fn object(&self, index: usize) {
-        self.object_with_payload(ordered_payload(index));
+        self.object_with_gap(0, index);
     }
 
-    pub(crate) fn object_with_delta(&self, object_id_delta: u64, index: usize) {
-        self.send(make_payload_object(object_id_delta, ordered_payload(index)));
+    /// Skips `gap` object ids before this object.
+    pub(crate) fn object_with_gap(&self, gap: u64, index: usize) {
+        self.send_payload(gap, ordered_payload(index));
     }
 
     pub(crate) fn object_with_payload(&self, payload: bytes::Bytes) {
-        self.send(make_payload_object(0, payload));
+        self.send_payload(0, payload);
+    }
+
+    fn send_payload(&self, gap: u64, payload: bytes::Bytes) {
+        let (group_id, object_id) = {
+            let mut start = self.start.lock().unwrap();
+            let (group_id, next_object_id) = start.as_mut().expect("send the header first");
+            let object_id = *next_object_id + gap;
+            *next_object_id = object_id + 1;
+            (*group_id, object_id)
+        };
+        self.send(make_payload_object(group_id, object_id, payload));
     }
 
     pub(crate) fn reset(&self) {
@@ -79,6 +102,12 @@ impl UpstreamSubgroupStream {
     pub(crate) fn decode_error(&self) {
         self.push(Err(moqt::object::StreamReceiveError::Decode(
             "malformed object field".to_string(),
+        )));
+    }
+
+    pub(crate) fn protocol_violation(&self) {
+        self.push(Err(moqt::object::StreamReceiveError::ProtocolViolation(
+            "invalid object status 0x2".to_string(),
         )));
     }
 

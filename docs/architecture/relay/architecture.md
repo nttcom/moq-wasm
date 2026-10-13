@@ -466,9 +466,10 @@ per-request authorization gate under "Event pipeline".
   track is ignored, and a publisher's `Stop` tears down only its own readers.
   Stream readers outlive their accept loop until their stop sender is
   signalled or dropped.
-- Readers convert every wire object into a canonical `CachedObject` and insert
-  it into `TrackCache`. A SUBGROUP_HEADER is not cached: the reader keeps its
-  group id, subgroup id and priority as the per-stream context, opens the
+- Readers convert every object moqt hands them (`moqt::object::Object`, ids
+  already resolved) into a canonical `CachedObject` and insert it into
+  `TrackCache`. A subgroup header (`SubgroupStart`) is not cached: the reader
+  keeps its group id, subgroup id and priority as the per-stream context, opens the
   subgroup in the cache (`open_subgroup`, returning an `OpenSubgroupGuard`),
   which also announces the `SubgroupKey` to egress. Only a FIN or an End of Group / End of Track
   object `finish`es the guard; every other end (RESET_STREAM, stop, decode
@@ -487,11 +488,11 @@ per-request authorization gate under "Event pipeline".
   previous one was cancelled) reopens it as the next `SubgroupRun`: the abort
   mark is cleared so the new stream's FIN or reset decides the tail again, and
   the run's first object id lies past every object cached for the subgroup,
-  so the objects below it belong to the superseded runs. Header
-  types without an explicit subgroup id map to 0, or to the first object's id
-  (Type 0x12/0x13/0x1A/0x1B, opened once that object arrives). For End-of-Group
-  header types (0x18–0x1D) a clean FIN inserts an EndOfGroup status object at
-  `last_id + 1`, so the signal survives header regeneration as data.
+  so the objects below it belong to the superseded runs. When the header
+  says the subgroup ends its group (`SubgroupStart::ends_group`), a clean FIN
+  inserts an EndOfGroup status object at `last_id + 1`, so the signal
+  survives header regeneration as data. A protocol violation moqt reports on
+  the stream (an unknown Object Status) terminates the publisher session.
 - `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_fetch_object`
   via `TrackCache::insert`, which registers no knowledge); no header synthesis and
   no per-subgroup delta state.
@@ -510,8 +511,8 @@ per-request authorization gate under "Event pipeline".
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
   location, forwarding preference (subgroup id or datagram), publisher
   priority, status, extension headers, payload, and its own `received_at`.
-  Wire forms are derived from it at egress (`to_subgroup_object_field` with the
-  delta computed from the previously sent id, `to_object_datagram` normalised
+  Egress hands subgroup objects to moqt as `to_object()` (moqt computes the
+  deltas); the other wire forms are still derived here (`to_object_datagram` normalised
   to explicit-id types, `to_fetch_object_field` with subgroup id = object id
   for datagram objects per §10.4.4). `conflicts_with` implements §8.1:
   differing forwarding preference, subgroup, priority or payload, or a status

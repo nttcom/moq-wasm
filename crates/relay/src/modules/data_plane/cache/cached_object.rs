@@ -2,25 +2,31 @@ use bytes::Bytes;
 use moqt::{
     fetch::{FetchObject, FetchObjectField},
     object::{
-        DatagramField, ExtensionHeaders, ObjectDatagram, ObjectDatagramPayload, ObjectStatus,
-        SubgroupHeaderType, SubgroupObject, SubgroupObjectField,
+        DatagramField, ExtensionHeaders, Object, ObjectDatagram, ObjectDatagramPayload,
+        ObjectStatus, SubgroupStart,
     },
 };
 use tokio::time::Instant;
 
 use crate::modules::data_plane::cache::subgroup_key::SubgroupKey;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ForwardingPreference {
-    Subgroup { subgroup_id: u64 },
-    Datagram,
-}
+pub(crate) use moqt::object::ForwardingPreference;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SubgroupHeaderFields {
     pub(crate) group_id: u64,
     pub(crate) subgroup_id: u64,
     pub(crate) publisher_priority: u8,
+}
+
+impl From<SubgroupStart> for SubgroupHeaderFields {
+    fn from(start: SubgroupStart) -> Self {
+        Self {
+            group_id: start.group_id,
+            subgroup_id: start.subgroup_id,
+            publisher_priority: start.publisher_priority,
+        }
+    }
 }
 
 impl SubgroupHeaderFields {
@@ -45,21 +51,27 @@ pub(crate) struct CachedObject {
 }
 
 impl CachedObject {
-    pub(crate) fn from_subgroup_object(
-        header: &SubgroupHeaderFields,
-        object_id: u64,
-        field: SubgroupObjectField,
-    ) -> anyhow::Result<Self> {
-        let (status, payload) = match field.subgroup_object {
-            SubgroupObject::Payload { data, .. } => (ObjectStatus::Normal, data),
-            SubgroupObject::Status { code, .. } => (Self::status_from_code(code)?, Bytes::new()),
-        };
-        Ok(Self {
-            status,
-            extension_headers: field.extension_headers,
-            payload,
-            ..Self::empty_at(header, object_id)
-        })
+    pub(crate) fn from_object(object: Object) -> Self {
+        Self {
+            location: object.location,
+            forwarding: object.forwarding,
+            publisher_priority: object.publisher_priority,
+            status: object.status,
+            extension_headers: object.extension_headers,
+            payload: object.payload,
+            received_at: Instant::now(),
+        }
+    }
+
+    pub(crate) fn to_object(&self) -> Object {
+        Object {
+            location: self.location,
+            forwarding: self.forwarding,
+            publisher_priority: self.publisher_priority,
+            status: self.status,
+            extension_headers: self.extension_headers.clone(),
+            payload: self.payload.clone(),
+        }
     }
 
     pub(crate) fn end_of_group(header: &SubgroupHeaderFields, object_id: u64) -> Self {
@@ -199,29 +211,6 @@ impl CachedObject {
         )
     }
 
-    pub(crate) fn to_subgroup_object_field(
-        &self,
-        message_type: SubgroupHeaderType,
-        prev_sent_object_id: Option<u64>,
-    ) -> SubgroupObjectField {
-        let object_id = self.location.object_id;
-        let object_id_delta = match prev_sent_object_id {
-            None => object_id,
-            Some(prev) => object_id.saturating_sub(prev.saturating_add(1)),
-        };
-        let subgroup_object = if self.payload.is_empty() {
-            SubgroupObject::new_status(u8::from(self.status) as u64)
-        } else {
-            SubgroupObject::new_payload(self.payload.clone())
-        };
-        SubgroupObjectField {
-            message_type,
-            object_id_delta,
-            extension_headers: self.extension_headers.clone(),
-            subgroup_object,
-        }
-    }
-
     pub(crate) fn to_object_datagram(&self, track_alias: u64) -> ObjectDatagram {
         // draft-14 §10.2.1.1: zero-length objects encode their status explicitly.
         let payload = if self.payload.is_empty() {
@@ -239,13 +228,6 @@ impl CachedObject {
         };
         ObjectDatagram::new(track_alias, self.location.group_id, field)
     }
-
-    fn status_from_code(code: u64) -> anyhow::Result<ObjectStatus> {
-        u8::try_from(code)
-            .ok()
-            .and_then(|code| ObjectStatus::try_from(code).ok())
-            .ok_or_else(|| anyhow::anyhow!("invalid object status {code:#x}"))
-    }
 }
 
 #[cfg(test)]
@@ -253,9 +235,9 @@ mod tests {
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::cached_object::{
         FIXTURE_PRIORITY, datagram_object, status_object, stream_object, stream_object_in_subgroup,
-        stream_object_with_payload, subgroup_header_fields,
+        stream_object_with_payload,
     };
-    use moqt::object::{KeyValuePair, SubgroupHeader, VariantType};
+    use moqt::object::{KeyValuePair, VariantType};
 
     fn extension_headers() -> ExtensionHeaders {
         ExtensionHeaders::new(vec![KeyValuePair {
@@ -346,24 +328,6 @@ mod tests {
         let end_of_group = status_object(0, 0, ObjectStatus::EndOfGroup);
         // Act / Assert
         assert!(normal.conflicts_with(&end_of_group));
-    }
-
-    #[test]
-    fn subgroup_object_with_invalid_status_code_is_rejected() {
-        // Arrange
-        let message_type =
-            SubgroupHeader::new(0, 0, moqt::object::SubgroupId::Value(0), 0, false, false)
-                .message_type;
-        let field = SubgroupObjectField {
-            message_type,
-            object_id_delta: 0,
-            extension_headers: ExtensionHeaders::default(),
-            subgroup_object: SubgroupObject::new_status(0x2),
-        };
-        // Act / Assert
-        assert!(
-            CachedObject::from_subgroup_object(&subgroup_header_fields(0, 0), 0, field).is_err()
-        );
     }
 
     #[test]
@@ -458,38 +422,13 @@ mod tests {
     fn empty_payload_is_encoded_as_explicit_status() {
         // Arrange: a zero-length Normal object must encode Object Status 0x0
         let cached = stream_object_with_payload(0, 0, Bytes::new());
-        let message_type =
-            SubgroupHeader::new(0, 0, moqt::object::SubgroupId::Value(0), 0, true, false)
-                .message_type;
         // Act
         let fetch_field = cached.to_fetch_object_field();
-        let subgroup_field = cached.to_subgroup_object_field(message_type, None);
         // Assert
         assert_eq!(
             fetch_field.fetch_object,
             FetchObject::Status(ObjectStatus::Normal)
         );
-        assert_eq!(
-            subgroup_field.subgroup_object,
-            SubgroupObject::new_status(ObjectStatus::Normal as u64)
-        );
-    }
-
-    #[test]
-    fn subgroup_object_delta_is_relative_to_the_previously_sent_object() {
-        // Arrange
-        let message_type =
-            SubgroupHeader::new(0, 0, moqt::object::SubgroupId::Value(0), 0, true, false)
-                .message_type;
-        let first = stream_object(0, 7).to_subgroup_object_field(message_type, None);
-        let second = stream_object(0, 9).to_subgroup_object_field(message_type, Some(7));
-        // Act
-        let first_id = first.resolve_object_id(None);
-        let second_id = second.resolve_object_id(Some(first_id));
-        // Assert
-        assert_eq!(first_id, 7);
-        assert_eq!(second_id, 9);
-        assert_eq!(first.message_type, message_type);
     }
 
     #[test]

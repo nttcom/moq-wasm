@@ -469,30 +469,20 @@ pub(crate) fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
     objects
         .iter()
         .filter_map(|object| match object {
-            DataObject::SubgroupObject(field) => match &field.subgroup_object {
-                moqt::object::SubgroupObject::Payload { data, .. } => Some(data.clone()),
-                _ => None,
-            },
+            DataObject::SubgroupObject(object) if !object.payload.is_empty() => {
+                Some(object.payload.clone())
+            }
             _ => None,
         })
         .collect()
 }
 
-pub(crate) fn resolve_downstream_object_ids(objects: &[DataObject]) -> Vec<u64> {
-    let mut prev_object_id = None;
+pub(crate) fn downstream_object_ids(objects: &[DataObject]) -> Vec<u64> {
     objects
         .iter()
         .filter_map(|object| match object {
-            DataObject::SubgroupObject(field) => {
-                let object_id = field.resolve_object_id(prev_object_id);
-                prev_object_id = Some(object_id);
-                Some(object_id)
-            }
-            DataObject::SubgroupHeader(_) => {
-                prev_object_id = None;
-                None
-            }
-            DataObject::ObjectDatagram(_) => None,
+            DataObject::SubgroupObject(object) => Some(object.location.object_id),
+            _ => None,
         })
         .collect()
 }

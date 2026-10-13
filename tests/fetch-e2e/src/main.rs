@@ -32,8 +32,9 @@ use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
     fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
     object::{
-        ContentExists, DataReceiver, ExtensionHeaders, GroupOrder, Location,
-        StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
+        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location,
+        Object, ObjectStatus, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup,
+        SubgroupStart,
     },
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
@@ -75,18 +76,39 @@ async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session> {
     connecting.await
 }
 
+/// A Normal object of subgroup 0, the only subgroup this test publishes.
+fn payload_object(group_id: u64, object_id: u64, priority: u8, payload: String) -> Object {
+    Object {
+        location: Location {
+            group_id,
+            object_id,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: priority,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload: payload.into(),
+    }
+}
+
+fn subgroup_zero(group_id: u64, priority: u8) -> SubgroupStart {
+    SubgroupStart {
+        group_id,
+        subgroup_id: 0,
+        publisher_priority: priority,
+        ends_group: false,
+    }
+}
+
 async fn send_group(factory: &StreamDataSenderFactory, group_id: u64) -> anyhow::Result<()> {
     let sender = factory.next().await?;
-    let header = sender.create_header(group_id, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
-    let mut stream = sender.send_header(header).await?;
+    let mut stream = sender
+        .start(subgroup_zero(group_id, PUBLISHER_PRIORITY))
+        .await?;
     for obj_id in 0..OBJECTS_PER_GROUP {
         let payload = format!("g{}:o{}", group_id, obj_id);
-        let obj = stream.create_object_field(
-            0,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(payload.into()),
-        );
-        stream.send(obj).await?;
+        let object = payload_object(group_id, obj_id, PUBLISHER_PRIORITY, payload);
+        stream.send_object(&object).await?;
         tracing::info!("[alice] sent g{}:o{}", group_id, obj_id);
     }
     stream.close().await
@@ -482,22 +504,13 @@ async fn publisher_event_loop(
                 let factory = session.publisher().create_stream(&publication);
                 for group_id in 0..GROUPS {
                     let sender = factory.next().await?;
-                    let header = sender.create_header(
-                        group_id,
-                        SubgroupId::None,
-                        PUBLISHER_PRIORITY,
-                        false,
-                        false,
-                    );
-                    let mut stream = sender.send_header(header).await?;
+                    let mut stream = sender
+                        .start(subgroup_zero(group_id, PUBLISHER_PRIORITY))
+                        .await?;
                     for obj_id in 0..OBJECTS_PER_GROUP {
                         let payload = format!("{}-g{}:o{}", label, group_id, obj_id);
-                        let obj = stream.create_object_field(
-                            0,
-                            ExtensionHeaders::default(),
-                            SubgroupObject::new_payload(payload.into()),
-                        );
-                        stream.send(obj).await?;
+                        let object = payload_object(group_id, obj_id, PUBLISHER_PRIORITY, payload);
+                        stream.send_object(&object).await?;
                     }
                     stream.close().await?;
                     tracing::info!("[{}] published group {}", label, group_id);

@@ -182,8 +182,7 @@ use these facades instead of the data-plane factories directly:
   applies QUIC flow control to the publisher instead of buffering without
   bound. Ordering is therefore only guaranteed within a subgroup (draft-14
   §10.4); consumers that need cross-subgroup order sort by the ids themselves.
-  `subgroup_id` is resolved as the wire says (absent field → 0, "first object
-  id" types → the first object's id). Object ids come from the wire deltas,
+  It reads the resolved objects `StreamDataReceiver` returns (below);
   status objects are skipped, a failure inside one stream is returned as `Err`
   while the other streams keep being read, and `Ok(None)` means the factory
   has no more streams.
@@ -311,9 +310,15 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 ## Data plane (`modules/moqt/data_plane`)
 
-- `object/*` — wire formats: `SubgroupHeader` (types `0x10..=0x1D` encoding
-  subgroup-id mode / extensions / end-of-group), `SubgroupObject`,
-  `ObjectDatagram`, `FetchObject`, `ExtensionHeaders`, `ObjectStatus`.
+- `object/canonical_object.rs` — the draft-independent data model the public
+  stream API speaks: `Object` (location, `ForwardingPreference`, publisher
+  priority, status, extension headers, payload) and `SubgroupStart` (what a
+  subgroup header announces: group, subgroup, priority, whether the subgroup
+  ends its group). A zero-length object carries its meaning in the status.
+- `object/*` (the rest) — draft-14 wire formats: `SubgroupHeader` (types
+  `0x10..=0x1D` encoding subgroup-id mode / extensions / end-of-group),
+  `SubgroupObject`, `ObjectDatagram`, `FetchObject`, `ExtensionHeaders`,
+  `ObjectStatus`.
   `ExtensionHeaders` keeps every Object Extension Header as an ordered list of
   `KeyValuePair`s and re-encodes them unchanged (accessors expose the header
   types the transport uses); this satisfies the draft-14 §10.2.1.2 requirement
@@ -325,8 +330,19 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - `stream/*` — send/receive wrappers:
   - `StreamDataSenderFactory::next()` opens one uni stream per subgroup and
     returns a `StreamDataSender`.
-  - `StreamDataSender` uses a **typestate** (`Uninitialized` → `send_header()`
+  - `StreamDataSender` uses a **typestate** (`Uninitialized` → `start()`
     → `HeaderSent`) so "header before objects" is enforced at compile time.
+    `start(SubgroupStart)` always declares extensions present and encodes the
+    subgroup id explicitly; `send_object(&Object)` computes the Object ID
+    Delta from the previous object and rejects ids that do not increase. The
+    raw `send_header` / `send` stay crate-private for `TrackWriter`, which
+    picks its header type itself.
+  - `StreamDataReceiver::receive()` returns `Subgroup::Header(SubgroupStart)`
+    and then `Subgroup::Object(Object)` with absolute ids: header types
+    without a Subgroup ID field mean subgroup 0, and the "first object id"
+    types (0x12/0x13/0x1A/0x1B) are returned only once the first object
+    arrived (a stream that ends before it yields no header). An Object Status
+    draft-14 does not define is `StreamReceiveError::ProtocolViolation`.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

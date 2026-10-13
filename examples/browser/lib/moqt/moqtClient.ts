@@ -649,7 +649,7 @@ export class MoqtClientWrapper {
       console.debug('[moqt] received subgroup header', {
         trackAlias: header.trackAlias.toString(),
         groupId: header.groupId.toString(),
-        subgroupId: header.subgroupId?.toString() ?? '0',
+        subgroupId: header.subgroupId.toString(),
         publisherPriority: header.publisherPriority
       })
       this.onSubgroupHeaderHandler?.(header)

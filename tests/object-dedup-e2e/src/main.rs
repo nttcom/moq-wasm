@@ -15,7 +15,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use moqt::{
     ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
     fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
-    object::{ExtensionHeaders, Location, StreamDataSenderFactory, SubgroupId, SubgroupObject},
+    object::{
+        ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
+        StreamDataSenderFactory, SubgroupStart,
+    },
     publish::PublishOption,
 };
 
@@ -51,21 +54,42 @@ fn object_payload(obj_id: u64) -> String {
     format!("alice:g{}:o{}", GROUP_ID, obj_id)
 }
 
+/// A Normal object of subgroup 0, the only subgroup this test publishes.
+fn payload_object(group_id: u64, object_id: u64, priority: u8, payload: String) -> Object {
+    Object {
+        location: Location {
+            group_id,
+            object_id,
+        },
+        forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: priority,
+        status: ObjectStatus::Normal,
+        extension_headers: ExtensionHeaders::default(),
+        payload: payload.into(),
+    }
+}
+
+fn subgroup_zero(group_id: u64, priority: u8) -> SubgroupStart {
+    SubgroupStart {
+        group_id,
+        subgroup_id: 0,
+        publisher_priority: priority,
+        ends_group: false,
+    }
+}
+
 async fn send_group(
     factory: &StreamDataSenderFactory,
     attempt: &str,
     payload_of: impl Fn(u64) -> String,
 ) -> anyhow::Result<()> {
     let sender = factory.next().await?;
-    let header = sender.create_header(GROUP_ID, SubgroupId::None, PUBLISHER_PRIORITY, false, false);
-    let mut stream = sender.send_header(header).await?;
+    let mut stream = sender
+        .start(subgroup_zero(GROUP_ID, PUBLISHER_PRIORITY))
+        .await?;
     for obj_id in 0..OBJECTS_PER_GROUP {
-        let obj = stream.create_object_field(
-            0,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(payload_of(obj_id).into()),
-        );
-        stream.send(obj).await?;
+        let object = payload_object(GROUP_ID, obj_id, PUBLISHER_PRIORITY, payload_of(obj_id));
+        stream.send_object(&object).await?;
         tracing::info!("[alice:{}] sent g{}:o{}", attempt, GROUP_ID, obj_id);
     }
     stream.close().await

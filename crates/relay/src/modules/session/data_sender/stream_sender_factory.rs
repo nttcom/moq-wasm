@@ -10,18 +10,11 @@ pub(crate) trait StreamSenderFactory: Send + 'static {
 
 pub(crate) struct ConcreteStreamSenderFactory {
     inner: moqt::object::StreamDataSenderFactory,
-    subscriber_track_alias: u64,
 }
 
 impl ConcreteStreamSenderFactory {
-    pub(crate) fn new(
-        inner: moqt::object::StreamDataSenderFactory,
-        subscriber_track_alias: u64,
-    ) -> Self {
-        Self {
-            inner,
-            subscriber_track_alias,
-        }
+    pub(crate) fn new(inner: moqt::object::StreamDataSenderFactory) -> Self {
+        Self { inner }
     }
 }
 
@@ -33,9 +26,6 @@ impl StreamSenderFactory for ConcreteStreamSenderFactory {
     ) -> anyhow::Result<Box<dyn DataSender>> {
         let sender = self.inner.next().await?;
         sender.set_priority(priority).await?;
-        Ok(Box::new(StreamSender::new(
-            sender,
-            self.subscriber_track_alias,
-        )))
+        Ok(Box::new(StreamSender::new(sender)))
     }
 }

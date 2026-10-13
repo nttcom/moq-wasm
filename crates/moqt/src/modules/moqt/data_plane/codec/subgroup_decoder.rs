@@ -3,8 +3,15 @@ use tokio_util::codec::Decoder;
 
 use crate::{
     modules::moqt::data_plane::object::decode_error::DecodeError,
-    object::{Subgroup, SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
+    object::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
 };
+
+/// One frame of a subgroup stream as draft-14 encodes it.
+#[derive(Debug)]
+pub(crate) enum SubgroupFrame {
+    Header(SubgroupHeader),
+    Object(SubgroupObjectField),
+}
 
 #[derive(Debug)]
 pub(crate) struct SubgroupDecoder {
@@ -12,7 +19,7 @@ pub(crate) struct SubgroupDecoder {
 }
 
 impl Decoder for SubgroupDecoder {
-    type Item = Subgroup;
+    type Item = SubgroupFrame;
     // TODO: define a proper error type.
     type Error = std::io::Error;
 
@@ -39,7 +46,7 @@ impl SubgroupDecoder {
     fn decode_header(
         &mut self,
         cursor: &mut std::io::Cursor<&[u8]>,
-    ) -> Result<Option<Subgroup>, std::io::Error> {
+    ) -> Result<Option<SubgroupFrame>, std::io::Error> {
         // The first frame should always be a subgroup header.
         let subgroup_header = match SubgroupHeader::decode(cursor) {
             Ok(header) => header,
@@ -59,10 +66,13 @@ impl SubgroupDecoder {
             }
         };
         self.subgroup_header_type = Some(subgroup_header.message_type);
-        Ok(Some(Subgroup::Header(subgroup_header)))
+        Ok(Some(SubgroupFrame::Header(subgroup_header)))
     }
 
-    fn decode_object_field(&self, src: &mut BytesMut) -> Result<Option<Subgroup>, std::io::Error> {
+    fn decode_object_field(
+        &self,
+        src: &mut BytesMut,
+    ) -> Result<Option<SubgroupFrame>, std::io::Error> {
         if src.is_empty() {
             return Ok(None);
         }
@@ -84,6 +94,6 @@ impl SubgroupDecoder {
                     }
                 }
             };
-        Ok(Some(Subgroup::Object(subgroup_object_field)))
+        Ok(Some(SubgroupFrame::Object(subgroup_object_field)))
     }
 }

@@ -6,7 +6,10 @@ use crate::{
     modules::executor::{self, JoinHandle},
     modules::moqt::{
         data_plane::{
-            codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
+            codec::{
+                subgroup_decoder::SubgroupFrame,
+                uni_stream_decoder::{UniStreamData, UniStreamDecoder},
+            },
             stream::{
                 fetch_data_receiver::{Fetch, FetchDataReceiver},
                 stream_receiver::{StreamReceiveError, UniStreamReceiver},
@@ -18,7 +21,6 @@ use crate::{
             subscription_notifier::SubscriptionNotifier,
         },
     },
-    object::Subgroup,
 };
 
 pub(crate) struct UniStreamReceiveTask;
@@ -62,14 +64,16 @@ impl UniStreamReceiveTask {
                 tracing::debug!(%error, "Stream ended before its header");
                 return false;
             }
-            Err(error @ StreamReceiveError::Decode(_)) => {
+            Err(
+                error @ (StreamReceiveError::Decode(_) | StreamReceiveError::ProtocolViolation(_)),
+            ) => {
                 tracing::error!(%error, "Failed to decode the stream header");
                 return false;
             }
         };
 
         match stream_data {
-            UniStreamData::Subgroup(Subgroup::Header(header)) => {
+            UniStreamData::Subgroup(SubgroupFrame::Header(header)) => {
                 tracing::debug!(
                     track_alias = header.track_alias,
                     group_id = header.group_id,
