@@ -54,6 +54,16 @@ type ActiveSubscription = {
   /** The alias the application knows; it survives a relay switchover. */
   trackAlias: bigint
 }
+type PublishedTrack = {
+  trackNamespace: string[]
+  trackName: string
+  authInfo: string
+  /** The alias the application sends on; it survives a relay switchover. */
+  trackAlias: bigint
+}
+/** Aliases of the current session keyed both ways, rebuilt by every switchover. */
+type AliasMaps = { appAliasByWireAlias: Map<bigint, bigint>; wireAliasByAppAlias: Map<bigint, bigint> }
+const emptyAliasMaps = (): AliasMaps => ({ appAliasByWireAlias: new Map(), wireAliasByAppAlias: new Map() })
 
 /// Grace for the relay named by GOAWAY to accept the session and the
 /// subscriptions before the switchover is given up.
@@ -205,8 +215,11 @@ export class MoqtClientWrapper {
   private readonly announcedNamespaces = new Map<string, NamespaceRequest>()
   private readonly subscribedNamespaces = new Map<string, NamespaceRequest>()
   private readonly activeSubscriptions = new Map<bigint, ActiveSubscription>()
-  /** Wire alias on the current session → alias the application knows; empty until a switchover. */
-  private readonly appAliasByWireAlias = new Map<bigint, bigint>()
+  private readonly publishedTracks = new Map<bigint, PublishedTrack>()
+  /** Incoming SUBSCRIBEs accepted on the current session; they end with it. */
+  private readonly incomingSubscribeRequestIds = new Set<bigint>()
+  /** Aliases of the current session that differ from the application's; empty until a switchover. */
+  private aliases: AliasMaps = emptyAliasMaps()
   private migrating = false
   private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
   private onPublishNamespaceHandler: IncomingPublishNamespaceHandler | null = null
@@ -314,21 +327,28 @@ export class MoqtClientWrapper {
       const timedOut = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('relay switchover timed out')), MIGRATION_TIMEOUT_MS)
       })
-      await Promise.race([migrated, timedOut])
+      const aliases = await Promise.race([migrated, timedOut])
       this.client = next
       this.connectUrl = url
+      this.aliases = aliases
       console.info('[moqt] moved to the relay named by GOAWAY', { url })
+      // The subscriptions the old relay held on this publisher end with its
+      // session; the new relay sends its own SUBSCRIBEs.
+      const endedIncoming = [...this.incomingSubscribeRequestIds]
+      this.incomingSubscribeRequestIds.clear()
+      for (const requestId of endedIncoming) {
+        this.incomingUnsubscribeHandler?.(requestId)
+      }
       await previous.close()
     } catch (error) {
       console.warn('[moqt] relay switchover failed; staying on the current session', { url, error })
-      this.appAliasByWireAlias.clear()
       await next?.close().catch(() => undefined)
     } finally {
       this.migrating = false
     }
   }
 
-  private async migrateState(next: MOQTClient): Promise<void> {
+  private async migrateState(next: MOQTClient): Promise<AliasMaps> {
     await this.sendSetup(next, this.connectOptions)
     for (const { trackNamespace, authInfo } of this.announcedNamespaces.values()) {
       const requestId = this.issueRequestId()
@@ -342,21 +362,43 @@ export class MoqtClientWrapper {
       await next.sendSubscribeNamespace(requestId, trackNamespace, authInfo)
       await response
     }
-    const wireAliases = new Map<bigint, bigint>()
+    const aliases = emptyAliasMaps()
     for (const [requestId, subscription] of this.activeSubscriptions) {
       const response = expectResponse(this.pendingSubscribe, requestId)
       await this.sendSubscribeOn(next, requestId, subscription)
       const subscribeOk = await response
-      wireAliases.set(subscribeOk.trackAlias, subscription.trackAlias)
+      aliases.appAliasByWireAlias.set(subscribeOk.trackAlias, subscription.trackAlias)
       this.subscriptionTrackAliases.set(requestId, subscription.trackAlias)
       if (subscription.options.forward === false) {
         await next.sendSubscribeForward(this.issueRequestId(), requestId, false)
       }
     }
-    this.appAliasByWireAlias.clear()
-    for (const [wireAlias, appAlias] of wireAliases) {
-      this.appAliasByWireAlias.set(wireAlias, appAlias)
+    for (const [requestId, track] of this.publishedTracks) {
+      const response = expectResponse(this.pendingPublish, requestId)
+      const wireAlias = await this.sendPublishOn(next, requestId, track)
+      await response
+      aliases.wireAliasByAppAlias.set(track.trackAlias, wireAlias)
     }
+    return aliases
+  }
+
+  private sendPublishOn(
+    client: MOQTClient,
+    requestId: bigint,
+    { trackNamespace, trackName, authInfo }: Omit<PublishedTrack, 'trackAlias'>
+  ): Promise<bigint> {
+    return client.sendPublish(
+      requestId,
+      trackNamespace,
+      trackName,
+      undefined,
+      GroupOrder.Ascending,
+      false,
+      undefined,
+      undefined,
+      true,
+      authInfo
+    )
   }
 
   private sendSubscribeOn(
@@ -381,7 +423,11 @@ export class MoqtClientWrapper {
   }
 
   private appAlias(wireAlias: bigint): bigint {
-    return this.appAliasByWireAlias.get(wireAlias) ?? wireAlias
+    return this.aliases.appAliasByWireAlias.get(wireAlias) ?? wireAlias
+  }
+
+  private wireAlias(appAlias: bigint): bigint {
+    return this.aliases.wireAliasByAppAlias.get(appAlias) ?? appAlias
   }
 
   private waitForServerSetup(): Promise<void> {
@@ -512,19 +558,9 @@ export class MoqtClientWrapper {
     const requestId = this.issueRequestId()
     const response = expectResponse(this.pendingPublish, requestId)
     try {
-      const trackAlias = await client.sendPublish(
-        requestId,
-        trackNamespace,
-        trackName,
-        undefined,
-        GroupOrder.Ascending,
-        false,
-        undefined,
-        undefined,
-        true,
-        authInfo
-      )
+      const trackAlias = await this.sendPublishOn(client, requestId, { trackNamespace, trackName, authInfo })
       await response
+      this.publishedTracks.set(requestId, { trackNamespace, trackName, authInfo, trackAlias })
       return trackAlias
     } catch (error) {
       this.pendingPublish.delete(requestId)
@@ -727,7 +763,12 @@ export class MoqtClientWrapper {
     subgroupId: bigint,
     publisherPriority: number
   ): Promise<void> {
-    await this.requireConnectedClient().sendSubgroupHeader(trackAlias, groupId, subgroupId, publisherPriority)
+    await this.requireConnectedClient().sendSubgroupHeader(
+      this.wireAlias(trackAlias),
+      groupId,
+      subgroupId,
+      publisherPriority
+    )
   }
 
   async sendSubgroupObject(
@@ -740,7 +781,7 @@ export class MoqtClientWrapper {
     locHeader: unknown
   ): Promise<void> {
     await this.requireConnectedClient().sendSubgroupObject(
-      trackAlias,
+      this.wireAlias(trackAlias),
       groupId,
       subgroupId,
       objectId,
@@ -814,8 +855,16 @@ export class MoqtClientWrapper {
         subscribe,
         isSuccess,
         code,
-        respondOk: async (expires = 0n, deliveryTimeout, maxDuration) =>
-          this.requireConnectedClient().sendSubscribeOk(subscribe.requestId, expires, deliveryTimeout, maxDuration),
+        respondOk: async (expires = 0n, deliveryTimeout, maxDuration) => {
+          const trackAlias = await this.requireConnectedClient().sendSubscribeOk(
+            subscribe.requestId,
+            expires,
+            deliveryTimeout,
+            maxDuration
+          )
+          this.incomingSubscribeRequestIds.add(subscribe.requestId)
+          return trackAlias
+        },
         respondError: (errorCode, reasonPhrase) =>
           this.requireConnectedClient().sendSubscribeError(subscribe.requestId, errorCode, reasonPhrase)
       })
@@ -832,6 +881,7 @@ export class MoqtClientWrapper {
     })
 
     client.onIncomingUnsubscribe((requestId: bigint) => {
+      this.incomingSubscribeRequestIds.delete(requestId)
       this.incomingUnsubscribeHandler?.(requestId)
     })
 
@@ -1007,9 +1057,11 @@ export class MoqtClientWrapper {
     this.subscriptionTrackAliases.clear()
     this.publishDoneHandlers.clear()
     this.activeSubscriptions.clear()
+    this.publishedTracks.clear()
+    this.incomingSubscribeRequestIds.clear()
     this.announcedNamespaces.clear()
     this.subscribedNamespaces.clear()
-    this.appAliasByWireAlias.clear()
+    this.aliases = emptyAliasMaps()
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
     this.onPublishNamespaceDoneHandler = null

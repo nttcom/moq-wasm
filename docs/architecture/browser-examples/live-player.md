@@ -70,9 +70,13 @@ Rules:
   the ones the application was given, and closes the old session once every
   request is accepted; a failed switchover keeps the old session. The player
   therefore keeps its request ids, aliases and per-alias handlers across a
-  relay restart. Not carried over: PUBLISH-initiated tracks and in-flight
-  FETCHes, and the alias in `SubgroupHeaderMessage` / datagram messages is
-  the wire alias of the current session.
+  relay restart. Tracks published with `publish()` are published again on
+  the new session and `sendSubgroupHeader` / `sendSubgroupObject` (and so
+  `SubgroupWriter`) translate the application's alias to the new one;
+  incoming SUBSCRIBEs accepted on the old session are reported through the
+  incoming-unsubscribe handler, since the new relay sends its own. Not
+  carried over: in-flight FETCHes, and the alias in `SubgroupHeaderMessage`
+  / datagram messages is the wire alias of the current session.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.
