@@ -25,7 +25,7 @@ modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL m
         │
         ▼
 modules/transport         ← transport abstraction + quinn/web-transport-quinn impls
-modules/executor          ← task spawning, yielding and timeouts (tokio natively, wasm-bindgen-futures on wasm32)
+modules/executor          ← task spawning, yielding, timeouts and the monotonic clock (tokio natively, wasm-bindgen-futures / performance.now on wasm32)
 ```
 
 - The public API is grouped by MoQT operation, so the type that sends a
@@ -177,14 +177,50 @@ use these facades instead of the data-plane factories directly:
   while the other streams keep being read, and `Ok(None)` means the factory
   has no more streams.
 
+### `Origin` — the tracks this endpoint originates
+
+`Origin` (`domains/origin.rs`) is the opt-in bookkeeping of an original
+publisher: a `Clone` handle over `Arc<Session>` and a `tokio::sync::Mutex`
+of per-track state, shared between the application's session event loop and
+its media writers. Relays do not use it; they forward from their own cache
+through the raw stream senders.
+
+- Per track (`ensure_track(namespace, name, first_group_id, retention)`):
+  `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`),
+  an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
+  the publication state, the optional `TrackWriter` and the largest location
+  actually sent. The caller chooses the retention and the first group id.
+- `write(namespace, name, OutgoingObject) -> WriteOutcome` numbers and
+  caches the object first, whether or not the track is published, so the
+  cache and the live stream always agree on ids. The writer is taken out of
+  its slot for the duration of the awaited send and put back only if nothing
+  replaced or released it meanwhile. `Sent(placement)` and
+  `Stopped(placement)` (STOP_SENDING by the peer; the track resumes at the
+  next group) carry the placement so the caller can account the stream;
+  `NotSent` covers a `Within` object with no open group, a track without a
+  writer, and a writer that still waits for the next group start.
+  `write_group` sends one object as a finished group (the MSF catalog layout).
+- `publish` sends PUBLISH and writes from the next group; `accept_subscribe`
+  answers a SUBSCRIBE the application decided to accept (Content Exists is the
+  largest sent location) and writes from the next group; `release(request_id)`
+  drops the writer on UNSUBSCRIBE and returns the track so the caller can
+  account it; `serve_fetch` answers a Standalone FETCH from the cache on its
+  own stream (`FetchServeTask`, one per request, aborted by `cancel_fetch` and
+  when the `Origin` is dropped; joining FETCH is NOT_SUPPORTED);
+  `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.
+- Left to the application: whether to accept a SUBSCRIBE, namespace
+  announcements, when to PUBLISH, retention and first group ids, and
+  disconnect handling. The FETCH End Location arithmetic is the free function
+  `resolve_fetch_range` (`domains/fetch_range.rs`), shared with the wasm
+  bindings.
+
 ### `SessionContext` — shared session state
 
 One struct owns all cross-task state:
 
 - `request_id: AtomicU64` — starts at 1, incremented by 2 per request.
-- `track_alias: AtomicU64` — server-side track alias allocation
-  (`SubscribeHandler::allocate_track_alias`). `Publisher::publish` uses a
-  separate process-global `NEXT_TRACK_ALIAS` counter.
+- `track_alias: AtomicU64` — per-session track alias allocation, shared by
+  `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
 - `inflight_requests` — request/response correlation by request id.
   Registration returns a `RegisteredSender` drop-guard that marks the entry
   abandoned on drop, so a late response is withdrawn instead of closing the
@@ -334,11 +370,13 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   await `Endpoint::wait_idle()` before exiting, or the peer only notices
   through its idle timeout.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
-  yields and bounds waits only through `modules/executor` (`spawn`,
-  `try_spawn`, `yield_now`, `timeout`); `tokio::sync` channels and locks are
-  used directly. `modules/transport` is the only other place that touches
-  tokio I/O. `executor/native.rs` is the tokio implementation,
-  `executor/browser.rs` the `spawn_local` one; the executor also defines
+  yields, bounds waits and reads the clock only through `modules/executor`
+  (`spawn`, `try_spawn`, `yield_now`, `timeout`, `now`); `tokio::sync`
+  channels and locks are used directly. `modules/transport` is the only other
+  place that touches tokio I/O. `executor/native.rs` is the tokio
+  implementation (`now` is the elapsed time since a process-wide `Instant`),
+  `executor/browser.rs` the `spawn_local` one (`now` reads
+  `performance.now()`; `std::time::Instant` panics on wasm32); the executor also defines
   `MaybeSend` / `MaybeSync` / `BoxFuture`, which are `Send` / `Sync` bounds
   natively and empty on wasm32 because JavaScript values cannot cross
   threads. The transport traits and `async_trait` attributes use them.
