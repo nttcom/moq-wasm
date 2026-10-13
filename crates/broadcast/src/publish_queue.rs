@@ -166,7 +166,7 @@ impl PublishQueue {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use mediapack::{AudioSample, Timestamp, VideoSample, aac::AudioSpecificConfig};
+    use mediapack::{AudioConfig, AudioSample, Timestamp, VideoSample, aac::AudioSpecificConfig};
 
     use super::*;
 
@@ -189,7 +189,7 @@ mod tests {
     }
 
     fn audio_config() -> MediaEvent {
-        MediaEvent::AudioConfig(AudioSpecificConfig::new(2, 48_000, 1))
+        MediaEvent::AudioConfig(AudioConfig::Aac(AudioSpecificConfig::new(2, 48_000, 1)))
     }
 
     fn stalled_queue() -> (PublishQueue, QueueConsumer) {

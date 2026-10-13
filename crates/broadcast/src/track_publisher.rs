@@ -3,8 +3,7 @@ use std::sync::{Arc, OnceLock};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::{
-    AudioSample, MediaEvent, Timestamp, VideoSample,
-    aac::AudioSpecificConfig,
+    AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample,
     loc::{Muxer as LocMuxer, to_extension_headers},
     mp4::Fmp4TrackMuxer,
 };
@@ -40,7 +39,7 @@ pub(crate) struct TrackPublisher {
     /// The video keyframe group the audio is being written into, so that the
     /// audio tracks start a group exactly when the video tracks do.
     audio_group_id: Option<u64>,
-    audio_config: Option<AudioSpecificConfig>,
+    audio_config: Option<AudioConfig>,
     timeline: MediaTimeline,
     timing: SharedTiming,
     video_cmaf: Option<Fmp4TrackMuxer>,
@@ -79,7 +78,10 @@ impl TrackPublisher {
                     .await
             }
             MediaEvent::AudioConfig(config) => {
-                self.audio_cmaf = Some(Fmp4TrackMuxer::audio(config.clone()));
+                self.audio_cmaf = match config {
+                    AudioConfig::Aac(config) => Some(Fmp4TrackMuxer::audio(config.clone())),
+                    _ => None,
+                };
                 self.broadcast.update_audio_catalog(config.clone()).await?;
                 self.audio_config = Some(config.clone());
                 Ok(())
@@ -194,7 +196,7 @@ impl TrackPublisher {
     async fn publish_audio(&mut self, sample: &AudioSample) -> Result<()> {
         self.audio_config
             .as_ref()
-            .context("audio sample received before its AudioSpecificConfig")?;
+            .context("audio sample received before its AudioConfig")?;
         self.announce().await?;
         tracing::debug!(
             target: DELIVERY_LOG_TARGET,

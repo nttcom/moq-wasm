@@ -5,7 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     h264::{AvcDecoderConfigurationRecord, ParameterSetTracker, avcc::avcc_to_annexb},
     loc::object::LocObject,
-    sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
 };
 
 const DEFAULT_NAL_LENGTH_SIZE: usize = 4;
@@ -52,7 +52,7 @@ impl Demuxer {
                 has_audio: matches!(self.track, Track::Audio(_)),
             }));
             if let Track::Audio(config) = &self.track {
-                events.push(MediaEvent::AudioConfig(config.clone()));
+                events.push(MediaEvent::AudioConfig(AudioConfig::Aac(config.clone())));
             }
         }
 
@@ -297,7 +297,7 @@ mod tests {
                     has_video: false,
                     has_audio: true
                 }),
-                MediaEvent::AudioConfig(mono_48k()),
+                MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
                 MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[7, 7]),
                     pts: Timestamp::ZERO

@@ -117,7 +117,7 @@ impl Fmp4TrackMuxer {
                     bail!("audio configuration pushed into a video track");
                 };
                 ensure!(
-                    config == update,
+                    config == update.aac()?,
                     "audio configuration changed after the init segment"
                 );
                 Ok(None)

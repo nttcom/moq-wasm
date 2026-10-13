@@ -11,7 +11,7 @@ use crate::{
         STREAM_TYPE_H264, TsPacket, parse_packet, parse_pat_pmt_pid, parse_pes_header, parse_pmt,
         parse_section_body,
     },
-    sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
 };
 
 #[derive(Default)]
@@ -260,7 +260,9 @@ fn emit_audio(
     let mut pts = pts.unwrap_or_default();
     for frame in adts.push(payload)? {
         if audio_config.as_ref() != Some(&frame.config) {
-            events.push(MediaEvent::AudioConfig(frame.config.clone()));
+            events.push(MediaEvent::AudioConfig(AudioConfig::Aac(
+                frame.config.clone(),
+            )));
             *audio_config = Some(frame.config.clone());
         }
         events.push(MediaEvent::Audio(AudioSample {
@@ -352,7 +354,7 @@ mod tests {
         };
         assert_eq!(config.codec_string(), "avc1.42D00B");
         assert_eq!(config.sequence_parameter_set().unwrap().width, 160);
-        assert!(events.contains(&MediaEvent::AudioConfig(mono_48k())));
+        assert!(events.contains(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k()))));
 
         let video = video_samples(&events);
         assert_eq!(video.len(), 2);
