@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 
 fn spawn_moqtsink(plugin_file: &str, relay_url: &str) -> Result<Child> {
     let pipeline = format!(
-        "moqtsink name=moqt relay-url={relay_url} namespace={NAMESPACE} \
+        "moqtsink name=moqt relay-url={relay_url} insecure-skip-tls-verify=true namespace={NAMESPACE} \
          videotestsrc is-live=true ! video/x-raw,width=320,height=180,framerate=30/1 \
          ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 \
          ! h264parse config-interval=-1 ! moqt.video \

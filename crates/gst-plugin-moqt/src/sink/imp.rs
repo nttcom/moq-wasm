@@ -18,6 +18,21 @@ struct Settings {
     relay_url: Option<String>,
     namespace: Option<String>,
     auth_token: Option<String>,
+    insecure_skip_tls_verify: bool,
+}
+
+impl Settings {
+    fn moqt_target(&self) -> Result<MoqtTarget> {
+        let url = self
+            .relay_url
+            .clone()
+            .context("the relay-url property is required")?;
+        Ok(MoqtTarget {
+            url,
+            auth_token: self.auth_token.clone(),
+            verify_certificate: !self.insecure_skip_tls_verify,
+        })
+    }
 }
 
 struct Started {
@@ -83,6 +98,11 @@ impl ObjectImpl for MoqtSink {
                     .blurb("JWT presented to the relay in CLIENT_SETUP")
                     .mutable_ready()
                     .build(),
+                glib::ParamSpecBoolean::builder("insecure-skip-tls-verify")
+                    .nick("Skip TLS verification")
+                    .blurb("Skip TLS certificate verification of the relay (INSECURE, local development only)")
+                    .mutable_ready()
+                    .build(),
             ]
         });
         PROPERTIES.as_ref()
@@ -90,11 +110,14 @@ impl ObjectImpl for MoqtSink {
 
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         let mut settings = self.settings.lock().expect("settings lock");
-        let text = value.get().expect("type checked upstream");
+        let checked = "type checked upstream";
         match pspec.name() {
-            "relay-url" => settings.relay_url = text,
-            "namespace" => settings.namespace = text,
-            "auth-token" => settings.auth_token = text,
+            "relay-url" => settings.relay_url = value.get().expect(checked),
+            "namespace" => settings.namespace = value.get().expect(checked),
+            "auth-token" => settings.auth_token = value.get().expect(checked),
+            "insecure-skip-tls-verify" => {
+                settings.insecure_skip_tls_verify = value.get().expect(checked)
+            }
             _ => unreachable!("property {} is not declared", pspec.name()),
         }
     }
@@ -105,6 +128,7 @@ impl ObjectImpl for MoqtSink {
             "relay-url" => settings.relay_url.to_value(),
             "namespace" => settings.namespace.to_value(),
             "auth-token" => settings.auth_token.to_value(),
+            "insecure-skip-tls-verify" => settings.insecure_skip_tls_verify.to_value(),
             _ => unreachable!("property {} is not declared", pspec.name()),
         }
     }
@@ -234,21 +258,11 @@ impl MoqtSink {
     fn start(&self) -> Result<()> {
         let (target, namespace) = {
             let settings = self.settings.lock().expect("settings lock");
-            let url = settings
-                .relay_url
-                .clone()
-                .context("the relay-url property is required")?;
             let namespace = settings
                 .namespace
                 .clone()
                 .context("the namespace property is required")?;
-            (
-                MoqtTarget {
-                    url,
-                    auth_token: settings.auth_token.clone(),
-                },
-                namespace,
-            )
+            (settings.moqt_target()?, namespace)
         };
         let namespace: Vec<String> = namespace
             .split('/')
@@ -386,4 +400,43 @@ fn running_time(pad: &gst::Pad, timestamp: gst::ClockTime) -> Option<Timestamp> 
         .downcast_ref::<gst::ClockTime>()?
         .to_running_time(timestamp)?;
     Some(Timestamp::from_micros(running_time.useconds()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings_with_relay_url() -> Settings {
+        Settings {
+            relay_url: Some("https://relay.example.com:443".to_string()),
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn moqt_target_verifies_the_relay_certificate_by_default() {
+        // Arrange
+        let settings = settings_with_relay_url();
+
+        // Act
+        let target = settings.moqt_target().unwrap();
+
+        // Assert
+        assert!(target.verify_certificate);
+    }
+
+    #[test]
+    fn moqt_target_skips_certificate_verification_when_requested() {
+        // Arrange
+        let settings = Settings {
+            insecure_skip_tls_verify: true,
+            ..settings_with_relay_url()
+        };
+
+        // Act
+        let target = settings.moqt_target().unwrap();
+
+        // Assert
+        assert!(!target.verify_certificate);
+    }
 }

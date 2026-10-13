@@ -76,6 +76,7 @@ async function main() {
         srtAddress,
         "--moqt-url",
         moqtUrl,
+        "--insecure-skip-tls-verify",
         "--transcode",
       ],
       { cwd: repoRoot },

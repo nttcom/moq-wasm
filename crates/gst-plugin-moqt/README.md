@@ -39,6 +39,7 @@ Properties:
 | `relay-url` | `moqt://host:port` for QUIC or `https://host:port` for WebTransport (required) |
 | `namespace` | Slash-separated track namespace, e.g. `anon/live/test` (required) |
 | `auth-token` | JWT presented to the relay in CLIENT_SETUP |
+| `insecure-skip-tls-verify` | Skip TLS certificate verification of the relay (insecure, for a local relay with a self-signed certificate only) |
 
 Behaviour:
 
@@ -62,11 +63,12 @@ gst-launch-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib -e \
   srtsrc uri="srt://0.0.0.0:9000?mode=listener" ! tsdemux name=demux \
   demux. ! queue ! h264parse config-interval=-1 ! moqt. \
   demux. ! queue ! aacparse ! moqt. \
-  moqtsink name=moqt relay-url=https://127.0.0.1:4433 namespace=anon/live/test
+  moqtsink name=moqt relay-url=https://127.0.0.1:4433 insecure-skip-tls-verify=true namespace=anon/live/test
 ```
 
 `GST_MOQT_URL`, `GST_SRT_ADDR` and `GST_NAMESPACE` override the relay, the SRT
-listen address and the namespace.
+listen address and the namespace. `insecure-skip-tls-verify=true` is set only
+for a local relay; any other relay's certificate is verified.
 
 ## E2E
 

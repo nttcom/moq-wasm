@@ -19,7 +19,7 @@ Tokenless publishers may only use `anon/**`.
 
 | Option | Effect |
 | --- | --- |
-| `LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest` | Publish to another relay (default: the local one) |
+| `LIVE_INGEST_MOQT_URL=https://relay.example.com:443 make live-ingest` | Publish to another relay (default: the local one). Only a local relay is connected with `--insecure-skip-tls-verify`; any other relay's certificate is verified |
 | `make live-ingest-transcode` | Add `video_720p` / `video_480p` / `video_360p` renditions. Needs GStreamer, see [`crates/transcode`](../transcode/README.md) |
 | `make live-ingest-stats` | Redraw the QUIC statistics of every relay connection on stdout once a second |
 
@@ -68,5 +68,8 @@ cargo run -p live-ingest -- \
   --rtmp-addr 0.0.0.0:1935 \
   --srt-addr 0.0.0.0:9000 \
   --moqt-url https://127.0.0.1:4433 \
-  [--transcode] [--stats]
+  [--insecure-skip-tls-verify] [--transcode] [--stats]
 ```
+
+`--insecure-skip-tls-verify` skips TLS certificate verification of the relay;
+use it only for a local relay with a self-signed certificate.

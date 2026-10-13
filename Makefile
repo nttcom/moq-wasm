@@ -5,9 +5,13 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
-# Only a local relay serves the self-signed development certificate; any other relay is verified.
-ONVIF_TLS_FLAGS = $(if $(or $(filter $$(LOCAL_MOQT_URL),$(value ONVIF_MOQT_URL)),$(filter https://127.0.0.1:% https://localhost:% https://[::1]:%,$(ONVIF_MOQT_URL))),--insecure-skip-tls-verify)
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
+# Only a local relay serves the self-signed development certificate; any other relay is verified.
+LOCAL_RELAY_URL_PATTERNS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
+is_local_relay = $(or $(filter $$(LOCAL_MOQT_URL),$(value $1)),$(filter $(LOCAL_RELAY_URL_PATTERNS),$($1)))
+LIVE_INGEST_TLS_FLAGS = $(if $(call is_local_relay,LIVE_INGEST_MOQT_URL),--insecure-skip-tls-verify)
+ONVIF_TLS_FLAGS = $(if $(call is_local_relay,ONVIF_MOQT_URL),--insecure-skip-tls-verify)
+GST_TLS_PROPERTIES = $(if $(call is_local_relay,GST_MOQT_URL),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
@@ -43,7 +47,7 @@ live-ingest:
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
-		--moqt-url $(LIVE_INGEST_MOQT_URL) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,)
+		--moqt-url $(LIVE_INGEST_MOQT_URL) $(LIVE_INGEST_TLS_FLAGS) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,)
 
 live-ingest-transcode: LIVE_INGEST_TRANSCODE := 1
 live-ingest-transcode: live-ingest
@@ -62,7 +66,7 @@ gst-srt-publish: gst-plugin
 		srtsrc uri="srt://$(GST_SRT_ADDR)?mode=listener" ! tsdemux name=demux \
 		demux. ! queue ! h264parse config-interval=-1 ! moqt. \
 		demux. ! queue ! aacparse ! moqt. \
-		moqtsink name=moqt relay-url=$(GST_MOQT_URL) namespace=$(GST_NAMESPACE)
+		moqtsink name=moqt relay-url=$(GST_MOQT_URL) $(GST_TLS_PROPERTIES) namespace=$(GST_NAMESPACE)
 
 ## Media helpers
 relay-certs:
