@@ -1,5 +1,10 @@
 import { RemoteMember, SubscriptionState } from '../../types/member'
 import { Room } from '../../types/room'
+import type { CatalogSubscribeRole } from '../../types/catalog'
+
+export function buildTrackActionKey(memberId: string, role: CatalogSubscribeRole): string {
+  return `${memberId}:${role}`
+}
 
 export function addOrUpdateRemoteMember(room: Room, announcedUser: string, trackNamespace: string[]): Room {
   const existingMember = room.remoteMembers.get(announcedUser)

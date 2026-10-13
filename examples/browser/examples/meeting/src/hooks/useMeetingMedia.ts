@@ -28,7 +28,7 @@ import {
   getAudioCatalogTracks,
   getCameraCatalogTracks,
   getScreenShareCatalogTracks,
-  pickVideoTrackByPriority,
+  pickHighestBitrateTrack,
   removeCatalogTracksByNames,
   toCatalogTracks,
   toEditableCatalogTracks,
@@ -705,7 +705,7 @@ function deriveVideoEncoding(
   fallback: VideoEncodingSettings,
   source: 'camera' | 'screenshare'
 ): VideoEncodingSettings {
-  const videoTrack = pickVideoTrackByPriority(
+  const videoTrack = pickHighestBitrateTrack(
     tracks.filter(
       (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (source === 'screenshare')
     )

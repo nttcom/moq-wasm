@@ -9,22 +9,24 @@ import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
 import { useRetryBackoff } from '../hooks/useRetryBackoff'
-import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
+import {
+  CATALOG_SUBSCRIBE_ROLES,
+  type MeetingCatalogTrack,
+  type CatalogSubscribeRole,
+  type TrackMediaConfig
+} from '../types/catalog'
+import { pickHighestBitrateTrack } from '../media/meetingCatalog'
+import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import type { RemotePlaybackStats } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
-import { updateSubscriptionState } from '../utils/state/roomState'
+import { buildTrackActionKey, updateSubscriptionState } from '../utils/state/roomState'
 
 interface MeetingRoomProps {
   session: LocalSession
   onLeave: () => void
 }
 
-type CatalogSelections = {
-  video?: string
-  screenshare?: string
-  audio?: string
-  chat?: string
-}
+type CatalogSelections = Partial<Record<CatalogSubscribeRole, string>>
 
 type StatsSnapshot = {
   localMemberId: string
@@ -157,11 +159,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
 
   useEffect(() => {
     const memberIds = new Set(room.remoteMembers.keys())
-    setRemoteCatalogTracks((prev) => filterMapByKeys(prev, memberIds))
-    setRemoteCatalogSelections((prev) => filterMapByKeys(prev, memberIds))
-    setCatalogLoadingMemberIds((prev) => filterSetByKeys(prev, memberIds))
-    setCatalogSubscribedMemberIds((prev) => filterSetByKeys(prev, memberIds))
-    setCatalogUnsubscribingTrackKeys((prev) => filterSetByTrackKeys(prev, memberIds))
+    setRemoteCatalogTracks((prev) => new Map([...prev].filter(([memberId]) => memberIds.has(memberId))))
+    setRemoteCatalogSelections((prev) => new Map([...prev].filter(([memberId]) => memberIds.has(memberId))))
+    setCatalogLoadingMemberIds((prev) => new Set([...prev].filter((memberId) => memberIds.has(memberId))))
+    setCatalogSubscribedMemberIds((prev) => new Set([...prev].filter((memberId) => memberIds.has(memberId))))
+    setCatalogUnsubscribingTrackKeys(
+      (prev) => new Set([...prev].filter((key) => memberIds.has(key.slice(0, key.lastIndexOf(':')))))
+    )
   }, [room.remoteMembers])
 
   useEffect(() => {
@@ -241,16 +245,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setRemoteCatalogSelections((prev) => {
       const next = new Map(prev)
       const current = next.get(memberId) ?? {}
-      const selectedVideo = ensureSelectedTrackName(current.video, tracks, 'video')
-      const selectedScreenShare = ensureSelectedTrackName(current.screenshare, tracks, 'screenshare')
-      const selectedAudio = ensureSelectedTrackName(current.audio, tracks, 'audio')
-      const selectedChat = ensureSelectedTrackName(current.chat, tracks, 'chat')
-      next.set(memberId, {
-        video: selectedVideo,
-        screenshare: selectedScreenShare,
-        audio: selectedAudio,
-        chat: selectedChat
-      })
+      next.set(
+        memberId,
+        Object.fromEntries(
+          CATALOG_SUBSCRIBE_ROLES.map((role) => [role, ensureSelectedTrackName(current[role], tracks, role)])
+        )
+      )
       return next
     })
   }
@@ -317,26 +317,19 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
 
   const subscribeCatalogTrack = async (
     member: RemoteMember,
-    memberId: string,
-    trackNamespace: string[],
     role: CatalogSubscribeRole,
     trackName: string | undefined
   ) => {
     if (!trackName) {
       return
     }
+    const memberId = member.id
     const selectedTrack =
-      role === 'audio' || role === 'video' || role === 'screenshare'
-        ? remoteCatalogTracks.get(memberId)?.find((track) => {
-            if (track.name !== trackName) {
-              return false
-            }
-            if (role === 'audio') {
-              return track.role === 'audio'
-            }
-            return track.role === 'video'
-          })
-        : undefined
+      role === 'chat'
+        ? undefined
+        : remoteCatalogTracks
+            .get(memberId)
+            ?.find((track) => track.name === trackName && track.role === (role === 'audio' ? 'audio' : 'video'))
     if ((role === 'video' || role === 'screenshare') && selectedTrack) {
       const validation = await validateVideoDecoderCatalogTrackConfig(selectedTrack)
       if (!validation.ok) {
@@ -350,7 +343,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       }
     }
     const trackMediaConfig: TrackMediaConfig | undefined =
-      role === 'audio' || role === 'video' || role === 'screenshare'
+      role !== 'chat'
         ? {
             codec: selectedTrack?.codec,
             samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
@@ -358,7 +351,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             initData: selectedTrack?.initData
           }
         : undefined
-    const trackState = getSubscriptionStateByRole(member, role)
+    const trackState = member.subscribedTracks[role]
     const trackKey = buildTrackActionKey(memberId, role)
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
       return
@@ -375,7 +368,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     )
 
     try {
-      const requestId = await session.subscribe(trackNamespace, trackName, role, trackMediaConfig)
+      const requestId = await session.subscribe(member.trackNamespace, trackName, role, trackMediaConfig)
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
@@ -400,7 +393,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (!member) {
       return
     }
-    const trackState = getSubscriptionStateByRole(member, role)
+    const trackState = member.subscribedTracks[role]
     const subscribeId = trackState.subscribeId
     const trackKey = buildTrackActionKey(memberId, role)
     if (
@@ -441,12 +434,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (!member) {
       return
     }
-    const { trackNamespace } = member
-    const selected = remoteCatalogSelections.get(memberId)
-    const trackName = getSelectedTrackName(selected, role)
-
     try {
-      await subscribeCatalogTrack(member, memberId, trackNamespace, role, trackName)
+      await subscribeCatalogTrack(member, role, remoteCatalogSelections.get(memberId)?.[role])
     } catch (error) {
       console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
     }
@@ -460,13 +449,10 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       if (chatState.isSubscribed || chatState.isSubscribing || catalogUnsubscribingTrackKeys.has(chatTrackKey)) {
         continue
       }
-      const { trackNamespace } = member
       const selected = remoteCatalogSelections.get(member.id)
       const catalogChatTrackName = remoteCatalogTracks.get(member.id)?.find((track) => track.role === 'chat')?.name
       const chatTrackName = selected?.chat ?? catalogChatTrackName ?? 'chat'
-      chatSubscribeBackoff.run(member.id, () =>
-        subscribeCatalogTrack(member, member.id, trackNamespace, 'chat', chatTrackName)
-      )
+      chatSubscribeBackoff.run(member.id, () => subscribeCatalogTrack(member, 'chat', chatTrackName))
     }
   }, [
     catalogUnsubscribingTrackKeys,
@@ -584,16 +570,11 @@ function appendStatsSample(
 }
 
 function getTracksForRole(tracks: MeetingCatalogTrack[], role: CatalogSubscribeRole): MeetingCatalogTrack[] {
-  if (role === 'audio') {
-    return tracks.filter((track) => track.role === 'audio')
+  if (role === 'audio' || role === 'chat') {
+    return tracks.filter((track) => track.role === role)
   }
-  if (role === 'chat') {
-    return tracks.filter((track) => track.role === 'chat')
-  }
-  return tracks.filter((track) =>
-    role === 'screenshare'
-      ? track.role === 'video' && track.name.trim().toLowerCase().startsWith('screenshare')
-      : track.role === 'video' && !track.name.trim().toLowerCase().startsWith('screenshare')
+  return tracks.filter(
+    (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (role === 'screenshare')
   )
 }
 
@@ -607,39 +588,12 @@ function updateMemberSubscriptionStateByRole(
   if (!member) {
     return room
   }
-
-  const updatedMember: RemoteMember = {
-    ...member,
-    subscribedTracks: {
-      ...member.subscribedTracks,
-      video: role === 'video' ? updater(member.subscribedTracks.video) : member.subscribedTracks.video,
-      screenshare:
-        role === 'screenshare' ? updater(member.subscribedTracks.screenshare) : member.subscribedTracks.screenshare,
-      audio: role === 'audio' ? updater(member.subscribedTracks.audio) : member.subscribedTracks.audio,
-      chat: role === 'chat' ? updater(member.subscribedTracks.chat) : member.subscribedTracks.chat
-    }
-  }
-
   const updatedMembers = new Map(room.remoteMembers)
-  updatedMembers.set(memberId, updatedMember)
-  return {
-    ...room,
-    remoteMembers: updatedMembers
-  }
-}
-
-function pickDefaultTrackName(tracks: MeetingCatalogTrack[], role: CatalogSubscribeRole): string | undefined {
-  const roleTracks = getTracksForRole(tracks, role)
-  if (!roleTracks.length) {
-    return undefined
-  }
-  const withBitrate = roleTracks
-    .filter((track) => typeof track.bitrate === 'number')
-    .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
-  if (withBitrate.length) {
-    return withBitrate[0].name
-  }
-  return roleTracks[0].name
+  updatedMembers.set(memberId, {
+    ...member,
+    subscribedTracks: { ...member.subscribedTracks, [role]: updater(member.subscribedTracks[role]) }
+  })
+  return { ...room, remoteMembers: updatedMembers }
 }
 
 function ensureSelectedTrackName(
@@ -647,75 +601,11 @@ function ensureSelectedTrackName(
   tracks: MeetingCatalogTrack[],
   role: CatalogSubscribeRole
 ): string | undefined {
-  if (selectedTrackName && getTracksForRole(tracks, role).some((track) => track.name === selectedTrackName)) {
+  const roleTracks = getTracksForRole(tracks, role)
+  if (selectedTrackName && roleTracks.some((track) => track.name === selectedTrackName)) {
     return selectedTrackName
   }
-  return pickDefaultTrackName(tracks, role)
-}
-
-function getSelectedTrackName(selected: CatalogSelections | undefined, role: CatalogSubscribeRole): string | undefined {
-  if (!selected) {
-    return undefined
-  }
-  if (role === 'video') {
-    return selected.video
-  }
-  if (role === 'screenshare') {
-    return selected.screenshare
-  }
-  if (role === 'chat') {
-    return selected.chat
-  }
-  return selected.audio
-}
-
-function filterMapByKeys<T>(source: Map<string, T>, keys: Set<string>): Map<string, T> {
-  const next = new Map<string, T>()
-  for (const [key, value] of source.entries()) {
-    if (keys.has(key)) {
-      next.set(key, value)
-    }
-  }
-  return next
-}
-
-function filterSetByKeys(source: Set<string>, keys: Set<string>): Set<string> {
-  const next = new Set<string>()
-  for (const key of source.values()) {
-    if (keys.has(key)) {
-      next.add(key)
-    }
-  }
-  return next
-}
-
-function filterSetByTrackKeys(source: Set<string>, memberIds: Set<string>): Set<string> {
-  const next = new Set<string>()
-  for (const key of source.values()) {
-    const separatorIndex = key.lastIndexOf(':')
-    const memberId = separatorIndex >= 0 ? key.slice(0, separatorIndex) : key
-    if (memberIds.has(memberId)) {
-      next.add(key)
-    }
-  }
-  return next
-}
-
-function buildTrackActionKey(memberId: string, role: CatalogSubscribeRole): string {
-  return `${memberId}:${role}`
-}
-
-function getSubscriptionStateByRole(member: RemoteMember, role: CatalogSubscribeRole) {
-  if (role === 'video') {
-    return member.subscribedTracks.video
-  }
-  if (role === 'screenshare') {
-    return member.subscribedTracks.screenshare
-  }
-  if (role === 'chat') {
-    return member.subscribedTracks.chat
-  }
-  return member.subscribedTracks.audio
+  return pickHighestBitrateTrack(roleTracks)?.name
 }
 
 async function validateVideoDecoderCatalogTrackConfig(

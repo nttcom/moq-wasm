@@ -285,7 +285,7 @@ export function trackAudioEncoding(track: MeetingCatalogTrack, fallback: AudioEn
   }
 }
 
-export function pickVideoTrackByPriority<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
+export function pickHighestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
   const tracksWithBitrate = tracks
     .filter((track) => typeof track.bitrate === 'number')
     .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))

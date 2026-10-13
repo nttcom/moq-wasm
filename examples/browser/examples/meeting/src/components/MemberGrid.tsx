@@ -10,6 +10,7 @@ import { GetUserMediaForm } from './GetUserMediaForm'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, EditableMeetingCatalogTrack } from '../types/catalog'
 import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { buildTrackActionKey } from '../utils/state/roomState'
 import type { SidebarStatsSample } from '../types/stats'
 import { MemberStatsCharts } from './MemberStatsCharts'
 import type { RemotePictures, RemotePlaybackStats } from '../media/mediaSubscriber'
@@ -1570,10 +1571,6 @@ function formatSubscribeStatus(subscribed: boolean, subscribing: boolean, unsubs
     return 'Subscribing...'
   }
   return subscribed ? 'Subscribed' : 'Not subscribed'
-}
-
-function buildTrackActionKey(memberId: string, role: CatalogSubscribeRole): string {
-  return `${memberId}:${role}`
 }
 
 function formatCatalogTrackLabel(track: MeetingCatalogTrack): string {
