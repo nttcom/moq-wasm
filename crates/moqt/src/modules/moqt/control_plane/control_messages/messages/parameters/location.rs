@@ -29,6 +29,13 @@ impl Location {
         payload.put_varint(self.object_id);
         payload
     }
+
+    pub fn next(self) -> Self {
+        Self {
+            group_id: self.group_id,
+            object_id: self.object_id + 1,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -67,6 +74,22 @@ mod tests {
 
             let expected_bytes = vec![10, 5];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());
+        }
+
+        #[test]
+        fn next_is_the_following_object_of_the_same_group() {
+            // Act / Assert
+            assert_eq!(
+                Location {
+                    group_id: 10,
+                    object_id: 5
+                }
+                .next(),
+                Location {
+                    group_id: 10,
+                    object_id: 6
+                }
+            );
         }
     }
 }

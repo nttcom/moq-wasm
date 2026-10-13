@@ -7,7 +7,7 @@ use moqt::wire::{
 };
 
 use crate::{
-    incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest, location_after},
+    incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest},
     messages::SubgroupState,
     request_rejection::RequestRejection,
 };
@@ -328,7 +328,7 @@ impl ClientState {
                 group_id: start_group(largest),
                 object_id: 0,
             },
-            requested_end: location_after(largest),
+            requested_end: largest.next(),
         })
     }
 
