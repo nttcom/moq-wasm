@@ -166,10 +166,12 @@ One struct owns all cross-task state:
 - `track_alias: AtomicU64` — server-side track alias allocation
   (`SubscribeHandler::allocate_track_alias`). `Publisher::publish` uses a
   separate process-global `NEXT_TRACK_ALIAS` counter.
-- `sender_map: HashMap<RequestId, oneshot::Sender<ResponseMessage>>` —
-  request/response correlation. Registration returns a `RegisteredSender`
-  drop-guard that removes the entry on drop, so cancelled requests never leak
-  senders.
+- `inflight_requests` — request/response correlation by request id.
+  Registration returns a `RegisteredSender` drop-guard that marks the entry
+  abandoned on drop, so a late response is withdrawn instead of closing the
+  session. When the control stream closes, every entry is failed and later
+  registrations fail at once: no response can arrive, so a caller never waits
+  out the response timeout for a gone peer.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
@@ -199,7 +201,7 @@ paths:
 
 1. **Requests** (SUBSCRIBE, PUBLISH, FETCH, namespace messages, …) become
    `SessionEvent` variants delivered to `Session::receive_event()`.
-2. **Responses** (`*_OK` / `*_ERROR`) are matched against `sender_map` by
+2. **Responses** (`*_OK` / `*_ERROR`) are matched against `inflight_requests` by
    request id and complete the pending `oneshot`.
 3. **Protocol violations** (a malformed payload, a SETUP after the handshake,
    a response to a request kind this crate never sends) close the session and
@@ -288,12 +290,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   has a registered receiver, the subscriber closes the session with
   `DuplicateTrackAlias` (draft-14 §9.8). A cancelled subscription's alias does
   not count as in use.
-- **Unknown response request id**: a response that matches no `sender_map`
+- **Unknown response request id**: a response that matches no `inflight_requests`
   entry is a protocol violation; the session is closed with
   `ProtocolViolation`.
 - **Control response timeout**: `SessionContext::await_response` bounds every
-  request/response wait to 10 s; on timeout the session is closed with
-  `ControlMessageTimeout` (draft-14 §12.2).
+  request/response wait to 10 s; a timeout fails only that request with
+  `RequestTimeoutError` and keeps the session open (draft-14 §12.2).
 - **One forwarding preference per track alias** (draft-14 §2.5, §10): the
   first object decides whether `accept_data_receiver` returns a stream or a
   datagram receiver. An object of the other kind later makes that receiver

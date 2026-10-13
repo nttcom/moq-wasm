@@ -69,16 +69,23 @@ pub(crate) enum LateResponseAction {
     PublishNamespaceDone { namespace: Vec<String> },
 }
 
-/// A request awaiting its response on this session. Kept in `sender_map`
-/// until the response arrives, even after the caller stops waiting, so a
-/// late response is answered with a withdrawal instead of being mistaken
-/// for an unknown Request ID (which must close the session, §9.1).
+/// A request awaiting its response on this session. Kept in
+/// `inflight_requests` until the response arrives, even after the caller
+/// stops waiting, so a late response is answered with a withdrawal instead
+/// of being mistaken for an unknown Request ID (which must close the
+/// session, §9.1).
 pub(crate) enum InflightRequest {
     Waiting {
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
         on_late_response: LateResponseAction,
     },
     Abandoned(LateResponseAction),
+}
+
+#[derive(Default)]
+pub(crate) struct InflightRequests {
+    requests: HashMap<RequestId, InflightRequest>,
+    control_stream_closed: bool,
 }
 
 const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
@@ -89,7 +96,7 @@ pub(crate) struct SessionContext {
     request_id: AtomicU64,
     track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    pub(crate) sender_map: std::sync::Mutex<HashMap<RequestId, InflightRequest>>,
+    inflight_requests: std::sync::Mutex<InflightRequests>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
@@ -128,11 +135,11 @@ pub(crate) enum IncomingObjectNotification {
     Discarded,
 }
 
-/// Holds the `sender_map` registration for an in-flight request. On drop, a
-/// still-waiting entry is downgraded to `Abandoned` (not removed): the caller
-/// gave up, but a late response must still find the entry so it triggers the
-/// registered action instead of a session close.
-#[must_use = "dropping this abandons the request in sender_map; bind it for the lifetime of the request"]
+/// Holds the `inflight_requests` registration for an in-flight request. On
+/// drop, a still-waiting entry is downgraded to `Abandoned` (not removed):
+/// the caller gave up, but a late response must still find the entry so it
+/// triggers the registered action instead of a session close.
+#[must_use = "dropping this abandons the request in inflight_requests; bind it for the lifetime of the request"]
 pub(crate) struct RegisteredSender {
     session: Arc<SessionContext>,
     request_id: RequestId,
@@ -140,8 +147,8 @@ pub(crate) struct RegisteredSender {
 
 impl Drop for RegisteredSender {
     fn drop(&mut self) {
-        if let Ok(mut requests) = self.session.sender_map.lock()
-            && let Some(entry) = requests.get_mut(&self.request_id)
+        if let Ok(mut inflight) = self.session.inflight_requests.lock()
+            && let Some(entry) = inflight.requests.get_mut(&self.request_id)
             && let InflightRequest::Waiting {
                 on_late_response, ..
             } = entry
@@ -165,7 +172,7 @@ impl SessionContext {
             request_id,
             track_alias: AtomicU64::new(0),
             event_sender,
-            sender_map: std::sync::Mutex::new(HashMap::new()),
+            inflight_requests: std::sync::Mutex::new(InflightRequests::default()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
             fetch_notification_map: tokio::sync::Mutex::new(HashMap::new()),
@@ -185,26 +192,52 @@ impl SessionContext {
         track_alias
     }
 
-    /// Inserts the sender into `sender_map` and returns a `RegisteredSender`
-    /// that marks the request abandoned on drop. `on_late_response` is the
-    /// withdrawal to send if a success response arrives after abandonment.
+    /// Inserts the sender into `inflight_requests` and returns a
+    /// `RegisteredSender` that marks the request abandoned on drop.
+    /// `on_late_response` is the withdrawal to send if a success response
+    /// arrives after abandonment. Once the control stream is closed no
+    /// response can arrive, so the sender is dropped and the wait fails at
+    /// once.
     pub(crate) fn register_response_sender(
         self: &Arc<Self>,
         request_id: RequestId,
         sender: tokio::sync::oneshot::Sender<ResponseMessage>,
         on_late_response: LateResponseAction,
     ) -> RegisteredSender {
-        self.sender_map.lock().expect("sender_map poisoned").insert(
-            request_id,
-            InflightRequest::Waiting {
-                sender,
-                on_late_response,
-            },
-        );
+        let mut inflight = self
+            .inflight_requests
+            .lock()
+            .expect("inflight_requests poisoned");
+        if !inflight.control_stream_closed {
+            inflight.requests.insert(
+                request_id,
+                InflightRequest::Waiting {
+                    sender,
+                    on_late_response,
+                },
+            );
+        }
         RegisteredSender {
             session: self.clone(),
             request_id,
         }
+    }
+
+    pub(crate) fn take_inflight_request(&self, request_id: RequestId) -> Option<InflightRequest> {
+        self.inflight_requests
+            .lock()
+            .expect("inflight_requests poisoned")
+            .requests
+            .remove(&request_id)
+    }
+
+    pub(crate) fn fail_inflight_requests(&self) {
+        let mut inflight = self
+            .inflight_requests
+            .lock()
+            .expect("inflight_requests poisoned");
+        inflight.control_stream_closed = true;
+        inflight.requests.clear();
     }
 
     pub(crate) async fn notify_incoming_object(
@@ -308,15 +341,15 @@ impl SessionContext {
     /// requests are request-scoped, and a shared (inter-relay) session must
     /// survive one slow request. §12.2's resource-exhaustion concern is met
     /// by the caller dropping its pending request state on the error path;
-    /// the `sender_map` entry stays behind as `Abandoned` so a late response
-    /// is withdrawn instead of closing the session.
+    /// the `inflight_requests` entry stays behind as `Abandoned` so a late
+    /// response is withdrawn instead of closing the session.
     pub(crate) async fn await_response(
         &self,
         receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
     ) -> anyhow::Result<ResponseMessage> {
         match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(error)) => anyhow::bail!("control response channel closed: {}", error),
+            Ok(Err(_)) => anyhow::bail!("control stream closed before the response arrived"),
             Err(_) => Err(RequestTimeoutError.into()),
         }
     }

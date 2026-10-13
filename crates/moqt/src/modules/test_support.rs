@@ -19,9 +19,10 @@ use crate::{
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const PUBLISHER_PRIORITY: u8 = 128;
-/// Well below quinn's 30 s default idle timeout, so a peer that is only
-/// detected as gone through the idle timeout fails the wait.
-const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Well below quinn's 30 s default idle timeout and the 10 s control response
+/// timeout, so a peer that is only detected as gone through either timeout
+/// fails the wait.
+pub(crate) const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) fn free_udp_port() -> u16 {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
