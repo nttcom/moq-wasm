@@ -343,6 +343,7 @@ impl ConnectedRelay {
         track_name: &str,
         info: VideoTrackInfo,
     ) -> Result<()> {
+        self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
 
         {
@@ -364,6 +365,7 @@ impl ConnectedRelay {
         namespace: &[String],
         config: AudioSpecificConfig,
     ) -> Result<()> {
+        self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
 
         {
@@ -380,9 +382,11 @@ impl ConnectedRelay {
         self.send_catalog(&namespace_path).await
     }
 
-    /// The non-CMAF tracks are published before the catalog is sent, so a viewer
-    /// subscribing to a track it read there finds the relay already ingesting
-    /// it; the relay would otherwise forward the SUBSCRIBE here. CMAF tracks
+    /// The namespace is announced first, since the relay routes a PUBLISH by
+    /// its namespace. The non-CMAF tracks are published before the catalog is
+    /// sent, so a viewer subscribing to a track it read there finds the relay
+    /// already ingesting it; the relay would otherwise forward the SUBSCRIBE
+    /// here. CMAF tracks
     /// wait for that SUBSCRIBE, so the uplink carries them only while someone
     /// watches them.
     async fn send_catalog(&self, namespace_path: &str) -> Result<()> {
