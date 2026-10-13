@@ -16,10 +16,7 @@ fn resolve_start_location(
 ) -> moqt::object::Location {
     let start = filter_type.start_location(*largest);
     match largest {
-        Some(largest) if start <= *largest => moqt::object::Location {
-            group_id: largest.group_id,
-            object_id: largest.object_id + 1,
-        },
+        Some(largest) if start <= *largest => largest.next(),
         _ => start,
     }
 }
