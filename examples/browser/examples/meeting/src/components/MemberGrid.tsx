@@ -577,7 +577,7 @@ function CatalogTrackEditor({
       ? getSupportedVideoResolutionOptions(videoEncodingOptions, currentDraft.codec)
       : videoEncodingOptions.resolutionOptions
 
-  const setCurrentDraft = (patch: Partial<Omit<EditableMeetingCatalogTrack, 'id'>>) => {
+  const setCurrentDraft = (patch: TrackPatch) => {
     setDraftConfigError(null)
     if (addTrackKind === 'video') {
       setVideoDraft((prev) => ({ ...prev, ...patch }))
@@ -745,21 +745,11 @@ function CatalogTrackEditor({
                   value={currentDraft.hardwareAcceleration ?? 'prefer-software'}
                   onChange={(option) => setCurrentDraft({ hardwareAcceleration: option.value })}
                 />
-                <label className="col-span-full flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                  <span>Keyframe Interval (frames)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={normalizeTrackKeyframeInterval(currentDraft)}
-                    onChange={(event) =>
-                      setCurrentDraft({
-                        keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
-                      })
-                    }
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                  />
-                </label>
+                <KeyframeIntervalField
+                  className="col-span-full flex max-w-xs flex-col gap-1 text-xs text-blue-100"
+                  track={currentDraft}
+                  onChange={setCurrentDraft}
+                />
               </>
             ) : (
               <>
@@ -787,49 +777,12 @@ function CatalogTrackEditor({
                     })
                   }
                 />
-                <div className="col-span-full rounded border border-white/10 bg-white/5 p-2">
-                  <div className="text-xs font-semibold text-white">Audio Group Update</div>
-                  <div className="mt-2 flex flex-wrap items-center gap-4">
-                    <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                      <input
-                        type="radio"
-                        name="draft-audio-stream-update-mode"
-                        checked={resolveAudioStreamUpdateMode(currentDraft) === 'single'}
-                        onChange={() => setCurrentDraft({ audioStreamUpdateMode: 'single' })}
-                      />
-                      <span>単一 Stream</span>
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                      <input
-                        type="radio"
-                        name="draft-audio-stream-update-mode"
-                        checked={resolveAudioStreamUpdateMode(currentDraft) === 'interval'}
-                        onChange={() => setCurrentDraft({ audioStreamUpdateMode: 'interval' })}
-                      />
-                      <span>N 秒ごとに更新</span>
-                    </label>
-                  </div>
-                  {resolveAudioStreamUpdateMode(currentDraft) === 'interval' ? (
-                    <label className="mt-2 flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                      <span>更新間隔 (秒)</span>
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={resolveAudioStreamUpdateIntervalSeconds(currentDraft)}
-                        onChange={(event) =>
-                          setCurrentDraft({
-                            audioStreamUpdateIntervalSeconds: toPositiveInteger(
-                              event.target.value,
-                              DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
-                            )
-                          })
-                        }
-                        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                      />
-                    </label>
-                  ) : null}
-                </div>
+                <AudioGroupUpdateFields
+                  className="col-span-full space-y-2 rounded border border-white/10 bg-white/5 p-2"
+                  radioName="draft-audio-stream-update-mode"
+                  track={currentDraft}
+                  onChange={setCurrentDraft}
+                />
               </>
             )}
           </div>
@@ -884,65 +837,13 @@ function CatalogTrackEditor({
                     ) : null}
                     <div className="mt-2">
                       {track.role === 'video' ? (
-                        <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                          <span>Keyframe Interval (frames)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={normalizeTrackKeyframeInterval(track)}
-                            onChange={(event) =>
-                              onUpdateTrack(track.id, {
-                                keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
-                              })
-                            }
-                            className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                          />
-                        </label>
+                        <KeyframeIntervalField track={track} onChange={(patch) => onUpdateTrack(track.id, patch)} />
                       ) : (
-                        <div className="space-y-2">
-                          <div className="text-xs font-semibold text-white">Audio Group Update</div>
-                          <div className="flex flex-wrap items-center gap-4">
-                            <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                              <input
-                                type="radio"
-                                name={`audio-stream-update-mode-${track.id}`}
-                                checked={resolveAudioStreamUpdateMode(track) === 'single'}
-                                onChange={() => onUpdateTrack(track.id, { audioStreamUpdateMode: 'single' })}
-                              />
-                              <span>単一 Stream</span>
-                            </label>
-                            <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                              <input
-                                type="radio"
-                                name={`audio-stream-update-mode-${track.id}`}
-                                checked={resolveAudioStreamUpdateMode(track) === 'interval'}
-                                onChange={() => onUpdateTrack(track.id, { audioStreamUpdateMode: 'interval' })}
-                              />
-                              <span>N 秒ごとに更新</span>
-                            </label>
-                          </div>
-                          {resolveAudioStreamUpdateMode(track) === 'interval' ? (
-                            <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                              <span>更新間隔 (秒)</span>
-                              <input
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={resolveAudioStreamUpdateIntervalSeconds(track)}
-                                onChange={(event) =>
-                                  onUpdateTrack(track.id, {
-                                    audioStreamUpdateIntervalSeconds: toPositiveInteger(
-                                      event.target.value,
-                                      DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
-                                    )
-                                  })
-                                }
-                                className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                              />
-                            </label>
-                          ) : null}
-                        </div>
+                        <AudioGroupUpdateFields
+                          radioName={`audio-stream-update-mode-${track.id}`}
+                          track={track}
+                          onChange={(patch) => onUpdateTrack(track.id, patch)}
+                        />
                       )}
                     </div>
                   </div>
@@ -996,6 +897,93 @@ function OptionSelect<T extends { id: string; label: string }>({
         ))}
       </select>
     </label>
+  )
+}
+
+type TrackPatch = Partial<Omit<EditableMeetingCatalogTrack, 'id'>>
+
+function KeyframeIntervalField({
+  track,
+  onChange,
+  className = 'flex max-w-xs flex-col gap-1 text-xs text-blue-100'
+}: {
+  track: Pick<MeetingCatalogTrack, 'keyframeInterval'>
+  onChange: (patch: TrackPatch) => void
+  className?: string
+}) {
+  return (
+    <label className={className}>
+      <span>Keyframe Interval (frames)</span>
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={normalizeTrackKeyframeInterval(track)}
+        onChange={(event) =>
+          onChange({ keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL) })
+        }
+        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+      />
+    </label>
+  )
+}
+
+function AudioGroupUpdateFields({
+  track,
+  radioName,
+  onChange,
+  className = 'space-y-2'
+}: {
+  track: Pick<MeetingCatalogTrack, 'audioStreamUpdateMode' | 'audioStreamUpdateIntervalSeconds'>
+  radioName: string
+  onChange: (patch: TrackPatch) => void
+  className?: string
+}) {
+  const mode = resolveAudioStreamUpdateMode(track)
+  return (
+    <div className={className}>
+      <div className="text-xs font-semibold text-white">Audio Group Update</div>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+          <input
+            type="radio"
+            name={radioName}
+            checked={mode === 'single'}
+            onChange={() => onChange({ audioStreamUpdateMode: 'single' })}
+          />
+          <span>単一 Stream</span>
+        </label>
+        <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+          <input
+            type="radio"
+            name={radioName}
+            checked={mode === 'interval'}
+            onChange={() => onChange({ audioStreamUpdateMode: 'interval' })}
+          />
+          <span>N 秒ごとに更新</span>
+        </label>
+      </div>
+      {mode === 'interval' ? (
+        <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+          <span>更新間隔 (秒)</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={resolveAudioStreamUpdateIntervalSeconds(track)}
+            onChange={(event) =>
+              onChange({
+                audioStreamUpdateIntervalSeconds: toPositiveInteger(
+                  event.target.value,
+                  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+                )
+              })
+            }
+            className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+          />
+        </label>
+      ) : null}
+    </div>
   )
 }
 
