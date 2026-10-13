@@ -56,7 +56,7 @@ export class LocalSession {
     this.client.setOnSubscribeResponseHandler((response) => {
       if (response instanceof SubscribeOkMessage) {
         console.info('[meeting][moqt] received SUBSCRIBE_OK', {
-          contentExists: (response as any).contentExists ?? (response as any).content_exists,
+          contentExists: response.contentExists,
           largestGroupId: response.largestGroupId?.toString(),
           largestObjectId: response.largestObjectId?.toString()
         })
