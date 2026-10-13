@@ -267,13 +267,13 @@ so the viewer and the rewind work unchanged. No CMAF siblings are published.
   (`mp4::Mp4Index`) through `crates/wasm`: only `moov` is handed to wasm and
   samples are read with `File.slice`, so the file never sits in memory whole.
 - Video must be H.264. `mediapack` converts AVCC samples to Annex-B and puts
-  the SPS / PPS from `avcC` before every keyframe, so the catalog carries no
-  `initData`, as with `live-ingest`.
+  the SPS / PPS from `avcC` before every keyframe, so the video track has no
+  `initRef`, as with `live-ingest`.
 - Audio may be AAC or MP3, both sent as the MP4 frames they are (a LOC payload
   is the raw bitstream of a codec in the WebCodecs registry). AAC puts its
-  AudioSpecificConfig in the catalog `initData`; MP3 needs only
-  `codec: "mp3"` for the receiver's `AudioDecoder`. Other audio codecs are
-  skipped and the video is published alone.
+  AudioSpecificConfig in the catalog `initDataList`, named by the audio track's
+  `initRef`; MP3 needs only `codec: "mp3"` for the receiver's `AudioDecoder`.
+  Other audio codecs are skipped and the video is published alone.
 - It does not wait for a SUBSCRIBE: `video`, `audio`, `timeline` and `catalog`
   are PUBLISHed, the catalog after every track it lists so the relay caches
   each from its first object, and the catalog is re-sent every 30 s so it never
@@ -314,7 +314,8 @@ The gear menu selects how the media tracks are received. `LOC` subscribes to
 the `loc` tracks and decodes them with WebCodecs into a MediaStream; `CMAF`
 subscribes to the `_cmaf` siblings the bridge publishes alongside them
 (draft-ietf-moq-cmsf-01) and feeds their fragments to a MediaSource on the
-same video element, with the init segment taken from the catalog `initData`.
+same video element, with the init segment taken from the catalog
+`initDataList` entry the track's `initRef` names.
 Switching packaging re-subscribes both tracks at the current quality.
 
 In CMAF mode the seek bar and rewind targets are built from the MSF media
@@ -361,6 +362,11 @@ while the SUBSCRIBE brings the new one. The viewer applies the catalog of the
 newest group whatever order they arrive in, and when a catalog redefines a
 track it is subscribed to under the same name, as a new publisher with another
 audio codec does, the decoder is reconfigured from the new definition.
+
+A track's init data is the `initDataList` entry its `initRef` names
+(draft-ietf-moq-msf-01 §5.1.7, §5.2.13). A reference to an entry that is
+missing or not `inline`, the only type the draft defines, leaves the track
+without init data and logs a warning instead of rejecting the catalog.
 
 ### Audio / video synchronisation
 

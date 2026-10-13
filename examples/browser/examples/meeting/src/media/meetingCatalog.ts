@@ -1,5 +1,5 @@
 import { parse_msf_catalog_json } from '../../../../pkg/moqt'
-import { buildMsfCatalogJson, type MsfTrack } from '../../../../lib/msf/catalog'
+import { buildMsfCatalogJson, resolveInitData, type MsfTrack } from '../../../../lib/msf/catalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
@@ -261,7 +261,7 @@ export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[
         framerate: track.framerate,
         samplerate: track.samplerate,
         channelConfig: track.channelConfig,
-        initData: track.initData,
+        initData: resolveInitData(catalog, track),
         isLive: track.isLive
       }
     ]

@@ -26,7 +26,7 @@ import { PublishedGroupLog } from './publishedGroupLog'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
 import { type StatusState, getErrorMessage } from '../../utils/page'
-import { CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../../lib/msf/catalog'
+import { CATALOG_TRACK_NAME, type MsfInitData, type MsfTrack, buildMsfCatalogJson } from '../../lib/msf/catalog'
 
 const VIDEO_TRACK_NAME = 'video'
 const AUDIO_TRACK_NAME = 'audio'
@@ -525,8 +525,9 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       depends: [VIDEO_TRACK_NAME]
     }
   ]
+  const initDataList: MsfInitData[] = []
   if (media.audio) {
-    tracks.push({
+    const audio: MsfTrack = {
       namespace: namespacePath,
       name: AUDIO_TRACK_NAME,
       packaging: 'loc',
@@ -535,11 +536,15 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       label: 'Audio',
       codec: media.audio.codec,
       samplerate: media.audio.sampleRate,
-      channelConfig: formatAudioChannelConfig(media.audio.channels),
-      initData: media.audio.audioSpecificConfig && media.audio.audioSpecificConfig.toBase64()
-    })
+      channelConfig: formatAudioChannelConfig(media.audio.channels)
+    }
+    if (media.audio.audioSpecificConfig) {
+      audio.initRef = AUDIO_TRACK_NAME
+      initDataList.push({ id: AUDIO_TRACK_NAME, type: 'inline', data: media.audio.audioSpecificConfig.toBase64() })
+    }
+    tracks.push(audio)
   }
-  return buildMsfCatalogJson(tracks)
+  return buildMsfCatalogJson(tracks, initDataList)
 }
 
 function describeMedia(media: Mp4Media): string {
