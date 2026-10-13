@@ -13,7 +13,11 @@ use moqt::{
     subscribe::SubscribeHandler,
 };
 use msf::CATALOG_TRACK_NAME;
-use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
+use tokio::{
+    sync::{Mutex, watch},
+    task::JoinHandle,
+    time::Instant,
+};
 
 use crate::{
     broadcast::{
@@ -59,10 +63,36 @@ struct RelayState {
     announced_namespaces: HashSet<String>,
     catalogs: HashMap<String, CatalogMetadata>,
     catalog_sent_at: HashMap<String, Instant>,
+    /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
+    /// disconnect, which ends every wait for one.
+    subscribed: HashMap<String, watch::Sender<bool>>,
     disconnected: bool,
 }
 
 impl RelayState {
+    fn disconnect(&mut self) {
+        self.disconnected = true;
+        self.subscribed.clear();
+    }
+
+    fn subscribed_sender(&mut self, namespace_path: &str) -> &watch::Sender<bool> {
+        self.subscribed
+            .entry(namespace_path.to_string())
+            .or_insert_with(|| watch::channel(false).0)
+    }
+
+    /// The catalog from the announce on, so a viewer can subscribe before the
+    /// source has produced one, and the CMAF tracks the catalog lists.
+    fn subscribable(&self, namespace_path: &str, track_name: &str) -> bool {
+        if track_name == CATALOG_TRACK_NAME {
+            return self.announced_namespaces.contains(namespace_path);
+        }
+        self.catalogs
+            .get(namespace_path)
+            .and_then(|metadata| build_catalog(namespace_path, metadata).ok())
+            .is_some_and(|catalog| awaits_subscribe(&catalog, track_name))
+    }
+
     fn catalog_refresh_due(&self, namespace_path: &str) -> bool {
         self.catalog_sent_at
             .get(namespace_path)
@@ -172,8 +202,7 @@ impl ConnectedRelay {
                     Ok(event) => event,
                     Err(err) => {
                         tracing::warn!(?err, "MoQT event loop ended");
-                        let mut guard = state.lock().await;
-                        guard.disconnected = true;
+                        state.lock().await.disconnect();
                         break;
                     }
                 };
@@ -211,8 +240,7 @@ impl ConnectedRelay {
                         tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
                     }
                     SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => {
-                        let mut guard = state.lock().await;
-                        guard.disconnected = true;
+                        state.lock().await.disconnect();
                         break;
                     }
                     SessionEvent::Publish(handler) => {
@@ -311,19 +339,12 @@ impl ConnectedRelay {
     ) {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
-        let subscribable = {
-            let guard = state.lock().await;
-            guard
-                .catalogs
-                .get(&namespace)
-                .and_then(|metadata| build_catalog(&namespace, metadata).ok())
-                .is_some_and(|catalog| awaits_subscribe(&catalog, &track_name))
-        };
+        let subscribable = state.lock().await.subscribable(&namespace, &track_name);
         if !subscribable {
             if let Err(err) = handler
                 .error(
                     SUBSCRIBE_TRACK_DOES_NOT_EXIST,
-                    format!("{track_name} is not a CMAF track of the catalog"),
+                    format!("{track_name} is neither the catalog nor a CMAF track of it"),
                 )
                 .await
             {
@@ -334,7 +355,28 @@ impl ConnectedRelay {
         ensure_origin_track(origin, &(namespace.clone(), track_name.clone())).await;
         if let Err(err) = origin.accept_subscribe(handler).await {
             tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
+            return;
         }
+        state
+            .lock()
+            .await
+            .subscribed_sender(&namespace)
+            .send_replace(true);
+    }
+
+    pub(crate) async fn wait_for_subscriber(&self, namespace: &[String]) -> Result<()> {
+        let mut subscribed = {
+            let mut guard = self.state.lock().await;
+            if guard.disconnected {
+                bail!("MoQ publisher disconnected");
+            }
+            guard.subscribed_sender(&namespace.join("/")).subscribe()
+        };
+        subscribed
+            .wait_for(|subscribed| *subscribed)
+            .await
+            .context("MoQ publisher disconnected")?;
+        Ok(())
     }
 
     pub(crate) async fn update_video_catalog(
@@ -497,5 +539,33 @@ mod tests {
         tokio::time::advance(Duration::from_secs(1)).await;
         assert!(state.catalog_refresh_due("live/test"));
         assert!(!state.catalog_refresh_due("live/other"));
+    }
+
+    #[test]
+    fn the_catalog_is_subscribable_from_the_announce_on() {
+        // Arrange
+        let mut state = RelayState::default();
+        state.announced_namespaces.insert("live/test".to_string());
+
+        // Act / Assert
+        assert!(state.subscribable("live/test", CATALOG_TRACK_NAME));
+        assert!(!state.subscribable("live/other", CATALOG_TRACK_NAME));
+        assert!(!state.subscribable("live/test", "video"));
+    }
+
+    #[tokio::test]
+    async fn a_wait_for_a_subscriber_ends_on_subscribe_or_disconnect() {
+        // Arrange
+        let mut state = RelayState::default();
+        let mut subscribed = state.subscribed_sender("live/test").subscribe();
+        let mut abandoned = state.subscribed_sender("live/other").subscribe();
+
+        // Act
+        state.subscribed_sender("live/test").send_replace(true);
+        state.disconnect();
+
+        // Assert
+        assert!(subscribed.wait_for(|subscribed| *subscribed).await.is_ok());
+        assert!(abandoned.wait_for(|subscribed| *subscribed).await.is_err());
     }
 }

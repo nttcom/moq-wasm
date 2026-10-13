@@ -50,6 +50,17 @@ impl Broadcast {
         relay.announce(&self.namespace).await
     }
 
+    /// Resolves once the relay has forwarded a SUBSCRIBE for a track of this
+    /// broadcast, which the catalog accepts from `announce` on, so a source
+    /// can start only when someone watches. Resolves at once without a
+    /// target; fails when the relay session ends.
+    pub async fn wait_for_subscriber(&self) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay.wait_for_subscriber(&self.namespace).await
+    }
+
     /// `false` when nothing was sent: there is no target, the peer stopped the
     /// stream, or the write ended in `WriteOutcome::NotSent`.
     pub async fn send_object(&self, track_name: &str, object: OutgoingObject) -> Result<bool> {

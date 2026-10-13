@@ -32,7 +32,11 @@ does not carry both packagings of every rendition while nobody watches CMAF;
 the relay caches a CMAF track from its first subscriber on. PUBLISH_NAMESPACE
 is still sent so that the relay can forward those SUBSCRIBEs here, and so that
 relays in a cascade can route a SUBSCRIBE to the relay the publisher is
-connected to. A SUBSCRIBE for any other track is rejected with
+connected to. A SUBSCRIBE for the catalog is accepted from the announce on,
+before the source has produced one, and the catalog flows on it once it is
+sent; `Broadcast::wait_for_subscriber` resolves on the first SUBSCRIBE accepted
+in the namespace, so a source such as an ONVIF camera can be started only when
+a viewer arrives. A SUBSCRIBE for any other track is rejected with
 TRACK_DOES_NOT_EXIST.
 
 ## Track format
