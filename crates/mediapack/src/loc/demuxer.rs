@@ -43,6 +43,14 @@ impl Demuxer {
         }
     }
 
+    /// Measures presentation time from `capture_origin` instead of the first
+    /// capture timestamp seen on this track, so the demuxers of the tracks of
+    /// one broadcast share one origin and their samples stay aligned.
+    pub fn with_capture_origin(mut self, capture_origin: Timestamp) -> Self {
+        self.capture_origin = Some(capture_origin);
+        self
+    }
+
     pub fn push(&mut self, object: &LocObject) -> Result<Vec<MediaEvent>> {
         let mut events = Vec::new();
         if !self.announced {
@@ -118,7 +126,9 @@ mod tests {
     use crate::{
         h264::annexb::annexb_to_avcc,
         loc::object::{CAPTURE_TIMESTAMP_ID, LocExtension, VIDEO_CONFIG_ID},
-        test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
+        test_support::{
+            delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k, video_samples,
+        },
     };
 
     fn video_object(pts_micros: u64, payload: Bytes) -> LocObject {
@@ -126,6 +136,23 @@ mod tests {
             extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, pts_micros)],
             payload,
         }
+    }
+
+    #[test]
+    fn measures_presentation_time_from_a_shared_origin() {
+        // Arrange
+        let mut demuxer = Demuxer::video().with_capture_origin(Timestamp::from_micros(1_000_000));
+
+        // Act
+        let events = demuxer
+            .push(&video_object(1_500_000, keyframe_annexb()))
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            video_samples(&events)[0].pts,
+            Timestamp::from_micros(500_000)
+        );
     }
 
     #[test]

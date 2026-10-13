@@ -91,8 +91,9 @@ for event in &events {
 The LoC muxer adds the capture origin to each sample's PTS and keeps H.264
 payloads in Annex-B form with in-band parameter sets. Configuration events
 produce no object. The demuxer measures PTS from the first capture timestamp
-on its track and sets video DTS equal to PTS; separate decode timestamps and
-cross-track clock alignment are not represented by this API.
+on its track and sets video DTS equal to PTS; separate decode timestamps are
+not represented by this API. To keep the tracks of one broadcast aligned,
+give their demuxers one origin with `with_capture_origin`.
 
 RTP carries datagrams rather than a byte stream, so `rtp::Demuxer` and
 `rtp::Muxer` sit outside the transmux API too. The demuxer is built from the
