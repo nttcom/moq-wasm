@@ -61,10 +61,9 @@ function initializeStatuses(): void {
 
 function setUpStartGetUserMediaButton() {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
-  const getSampleVideoBtn = document.getElementById('getSampleVideo') as HTMLButtonElement
 
-  const startCapture = async (source: 'camera' | 'sample') => {
-    setCaptureStatus(`Requesting ${source === 'sample' ? 'sample media' : 'camera'}`)
+  const startCapture = async () => {
+    setCaptureStatus('Requesting camera')
     const constraints = {
       audio: false,
       video: {
@@ -82,19 +81,14 @@ function setUpStartGetUserMediaButton() {
         typeof settings.width === 'number' && typeof settings.height === 'number'
           ? `${settings.width}x${settings.height}`
           : 'unknown resolution'
-      setCaptureStatus(`Media ready (${source}): ${dimensions}`)
+      setCaptureStatus(`Media ready: ${dimensions}`)
     } catch (error) {
       setCaptureStatus(`getUserMedia failed: ${getErrorMessage(error)}`)
       throw error
     }
   }
 
-  startGetUserMediaBtn.addEventListener('click', async () => {
-    await startCapture('camera')
-  })
-  getSampleVideoBtn.addEventListener('click', async () => {
-    await startCapture('sample')
-  })
+  startGetUserMediaBtn.addEventListener('click', startCapture)
 }
 
 const videoEncoderWorker = new Worker(new URL('../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
@@ -108,10 +102,6 @@ type VideoEncoderWorkerMessage =
       captureTimestampMicros?: number
     }
   | { type: 'bitrate'; kbps: number }
-
-function getForwardingPreference(form: HTMLFormElement): string {
-  return (Array.from(form['forwarding-preference']) as HTMLInputElement[]).filter((elem) => elem.checked)[0].value
-}
 
 function isCatalogTrack(trackName: string): boolean {
   return trackName === CATALOG_TRACK_NAME

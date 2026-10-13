@@ -76,25 +76,6 @@
           </section>
 
           <section class="card stack">
-            <h2>Forwarding Preference</h2>
-            <div class="radio-group">
-              <label
-                ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
-              </label>
-              <label
-                ><input
-                  type="radio"
-                  name="forwarding-preference"
-                  id="selectSubgroup"
-                  value="subgroup"
-                  checked
-                />Subgroup
-              </label>
-            </div>
-            <p class="hint">You must select at first</p>
-          </section>
-
-          <section class="card stack">
             <h3>CLIENT_SETUP</h3>
             <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
             <div class="button-row action-row">
@@ -137,24 +118,10 @@
             <div id="objectField" style="display: blocked">
               <h4>Object</h4>
             </div>
-            <div id="datagramObjectContents" style="display: none">
-              Group ID:
-              <p id="datagramGroupId">0</p>
-              <div class="button-row">
-                <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
-                <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
-              </div>
-            </div>
             <div class="button-row">
               <button type="button" id="startGetUserMediaBtn" data-testid="publisher-get-user-media-button">
                 getUserMedia
               </button>
-              <button type="button" id="getSampleVideo" data-testid="publisher-get-sample-video-button">
-                getSampleVideo
-              </button>
-            </div>
-            <div id="sendDatagramObject" style="display: none">
-              <button type="button" id="sendDatagramObjectBtn">Send</button>
             </div>
             <div id="sendSubgroupObject" style="display: blocked">
               <button type="button" id="sendSubgroupObjectBtn" data-testid="publisher-send-button">Send</button>

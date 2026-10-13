@@ -278,12 +278,6 @@ button:active {
   color: var(--accent-strong);
 }
 
-.radio-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
 .button-row {
   display: flex;
   flex-wrap: wrap;
@@ -374,19 +368,6 @@ button:active {
 
 .visualizer-panel.is-visible {
   display: block;
-}
-
-.visualizer-grid {
-  display: grid;
-  gap: 4px 16px;
-}
-
-.visualizer-grid-3 {
-  grid-template-columns: auto 1fr 1fr;
-}
-
-.visualizer-grid-4 {
-  grid-template-columns: auto 1fr 1fr 1fr;
 }
 
 .visualizer-cards {
@@ -566,14 +547,6 @@ audio {
 
 .log-entry.log-error strong {
   color: #dc2626;
-}
-
-#datagramGroupId {
-  display: inline-block;
-  font-family: var(--font-mono);
-  padding: 2px 8px;
-  border-radius: 8px;
-  background: rgba(15, 118, 110, 0.08);
 }
 
 @media (max-width: 720px) {
