@@ -5,7 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     flv::tag::{Tag, TagType, parse_file_header, parse_tag},
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
-    sample::{AudioSample, MediaEvent, Timestamp, VideoSample},
+    sample::{AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample},
 };
 
 const VIDEO_CODEC_AVC: u8 = 7;
@@ -109,7 +109,7 @@ impl Demuxer {
                 let config =
                     AudioSpecificConfig::parse(body).context("parse FLV AAC sequence header")?;
                 self.audio_config = Some(config.clone());
-                Ok(vec![MediaEvent::AudioConfig(config)])
+                Ok(vec![MediaEvent::AudioConfig(AudioConfig::Aac(config))])
             }
             PACKET_TYPE_PAYLOAD => Ok(vec![MediaEvent::Audio(AudioSample {
                 data: Bytes::copy_from_slice(body),
@@ -219,7 +219,10 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert_eq!(config_events, [MediaEvent::AudioConfig(mono_48k())]);
+        assert_eq!(
+            config_events,
+            [MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k()))]
+        );
         assert_eq!(
             sample_events,
             [MediaEvent::Audio(AudioSample {

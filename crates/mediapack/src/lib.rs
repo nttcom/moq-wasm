@@ -11,5 +11,5 @@ pub mod mpegts;
 pub mod sample;
 pub mod transmux;
 
-pub use sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample};
+pub use sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample};
 pub use transmux::{InputFormat, OutputFormat, Transmuxer, transmux};

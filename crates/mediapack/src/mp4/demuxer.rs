@@ -10,7 +10,7 @@ use crate::{
         },
         track::{AudioCodec, Media, Track, annexb_access_unit, read_track},
     },
-    sample::{AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+    sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
 };
 
 const TFHD_BASE_DATA_OFFSET: u32 = 0x01;
@@ -111,7 +111,9 @@ impl Demuxer {
         for track in self.tracks.values() {
             events.push(match &track.media {
                 Media::Video(config) => MediaEvent::VideoConfig(config.clone()),
-                Media::Audio(AudioCodec::Aac(config)) => MediaEvent::AudioConfig(config.clone()),
+                Media::Audio(AudioCodec::Aac(config)) => {
+                    MediaEvent::AudioConfig(AudioConfig::Aac(config.clone()))
+                }
                 Media::Audio(AudioCodec::Mp3 { .. }) => {
                     anyhow::bail!("MP3 audio is not supported by the fragment demuxer")
                 }

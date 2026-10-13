@@ -82,7 +82,7 @@ impl Muxer {
             }
             MediaEvent::AudioConfig(config) => {
                 let mut data = BytesMut::from(&AAC_SEQUENCE_HEADER[..]);
-                data.put_slice(&config.to_bytes());
+                data.put_slice(&config.aac()?.to_bytes());
                 Tag {
                     tag_type: TagType::Audio,
                     timestamp: Timestamp::ZERO,
@@ -118,7 +118,7 @@ mod tests {
     use super::*;
     use crate::{
         flv::demuxer::Demuxer,
-        sample::{AudioSample, VideoSample},
+        sample::{AudioConfig, AudioSample, VideoSample},
         test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
     };
 
@@ -129,7 +129,7 @@ mod tests {
                 has_audio: true,
             }),
             MediaEvent::VideoConfig(fixture_record()),
-            MediaEvent::AudioConfig(mono_48k()),
+            MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())),
             MediaEvent::Video(VideoSample {
                 data: keyframe_annexb(),
                 is_keyframe: true,

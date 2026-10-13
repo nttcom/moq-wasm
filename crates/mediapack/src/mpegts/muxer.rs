@@ -53,7 +53,7 @@ impl Muxer {
                 Ok(Bytes::new())
             }
             MediaEvent::AudioConfig(config) => {
-                self.audio_config = Some(config.clone());
+                self.audio_config = Some(config.aac()?.clone());
                 Ok(Bytes::new())
             }
             MediaEvent::VideoConfig(_) => Ok(Bytes::new()),

@@ -22,9 +22,9 @@ the corresponding container bytes or objects.
 | --- | --- |
 | `Streams` | Which tracks the container announces (MPEG-TS PMT, FLV header flags) |
 | `VideoConfig` | `AvcDecoderConfigurationRecord` (SPS/PPS, codec string) |
-| `AudioConfig` | `AudioSpecificConfig` (object type, sample rate, channels) |
+| `AudioConfig` | AAC `AudioSpecificConfig`, or the sample rate and channels of G.711 A-law or Opus; the FLV, MPEG-TS and MP4 muxers take AAC only |
 | `Video` | One H.264 access unit in Annex-B form; keyframes carry SPS/PPS in-band |
-| `Audio` | One raw AAC access unit without ADTS header |
+| `Audio` | One encoded audio frame (a raw AAC access unit without ADTS header, A-law bytes, or an Opus packet) |
 
 Timestamps are `Timestamp` values in microseconds with conversions to and from
 90 kHz ticks, milliseconds, and arbitrary timescales.

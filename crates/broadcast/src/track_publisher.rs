@@ -79,6 +79,7 @@ impl TrackPublisher {
                     .await
             }
             MediaEvent::AudioConfig(config) => {
+                let config = config.aac()?;
                 self.audio_cmaf = Some(Fmp4TrackMuxer::audio(config.clone()));
                 self.broadcast.update_audio_catalog(config.clone()).await?;
                 self.audio_config = Some(config.clone());

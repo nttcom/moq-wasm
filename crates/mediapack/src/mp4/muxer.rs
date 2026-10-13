@@ -45,6 +45,7 @@ impl Fmp4Muxer {
                 Ok(Bytes::new())
             }
             MediaEvent::AudioConfig(config) => {
+                let config = config.aac()?;
                 if self.init_written {
                     ensure!(
                         self.audio_config.as_ref() == Some(config),
@@ -168,7 +169,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{
         mp4::isobmff::{NON_SYNC_SAMPLE_FLAGS, SYNC_SAMPLE_FLAGS},
-        sample::{AudioSample, Timestamp},
+        sample::{AudioConfig, AudioSample, Timestamp},
         test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
     };
 
@@ -224,7 +225,9 @@ pub(crate) mod tests {
         muxer
             .push(&MediaEvent::VideoConfig(fixture_record()))
             .unwrap();
-        muxer.push(&MediaEvent::AudioConfig(mono_48k())).unwrap();
+        muxer
+            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
+            .unwrap();
         muxer
     }
 
@@ -324,7 +327,9 @@ pub(crate) mod tests {
 
         // Act
         let before_audio_config = muxer.push(&video(0, true)).unwrap();
-        muxer.push(&MediaEvent::AudioConfig(mono_48k())).unwrap();
+        muxer
+            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
+            .unwrap();
         let after = muxer.push(&audio(0)).unwrap();
 
         // Assert
@@ -341,7 +346,7 @@ pub(crate) mod tests {
         let changed = AudioSpecificConfig::new(2, 48_000, 2);
 
         // Act
-        let result = muxer.push(&MediaEvent::AudioConfig(changed));
+        let result = muxer.push(&MediaEvent::AudioConfig(AudioConfig::Aac(changed)));
 
         // Assert
         assert!(result.is_err());
