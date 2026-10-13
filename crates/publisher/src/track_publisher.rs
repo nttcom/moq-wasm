@@ -8,12 +8,13 @@ use mediapack::{
     loc::{Muxer as LocMuxer, to_extension_headers},
     mp4::Fmp4TrackMuxer,
 };
+use moqt::publish::{GroupBoundary, OutgoingObject};
 
 use crate::{
     group_alignment::GroupAlignment,
     manager::{
-        GroupBoundary, MoqtManager, OutgoingObject, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
-        VideoTrackInfo, cmaf_track_name, now_unix,
+        MoqtManager, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
+        now_unix,
     },
     media_timeline::MediaTimeline,
 };
