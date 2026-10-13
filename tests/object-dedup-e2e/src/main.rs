@@ -13,7 +13,7 @@ use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session,
+    ClientConfig, Endpoint, QUIC, RequestFailure, Session,
     fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
     object::{ExtensionHeaders, Location, StreamDataSenderFactory, SubgroupId, SubgroupObject},
     publish::PublishOption,
@@ -222,10 +222,12 @@ async fn main() -> anyhow::Result<()> {
             received
         ),
     };
-    let message = format!("{error:#}");
     assert!(
-        message.contains("code 9"),
-        "fetch on a malformed track must fail with MALFORMED_TRACK (0x9); got: {message}"
+        matches!(
+            error.downcast_ref::<RequestFailure>(),
+            Some(RequestFailure::Rejected { code: 0x9, .. })
+        ),
+        "fetch on a malformed track must fail with MALFORMED_TRACK (0x9); got: {error:#}"
     );
     tracing::info!("[bob] OK: conflicting republish is rejected as a malformed track");
     Ok(())

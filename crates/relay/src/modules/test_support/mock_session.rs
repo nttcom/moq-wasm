@@ -454,10 +454,10 @@ impl Subscriber for MockUpstreamSubscriber {
     ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         match self.answer_fetch {
             FetchAnswer::Never => std::future::pending().await,
-            FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::wire::RequestError {
+            FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
                 request_id: 0,
-                error_code: 0x4,
-                reason_phrase: "no objects".to_string(),
+                code: 0x4,
+                reason: "no objects".to_string(),
             })),
             FetchAnswer::FetchOk => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,

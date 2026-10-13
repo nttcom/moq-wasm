@@ -139,19 +139,19 @@ impl TrackStatusHandler {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Session, SessionEvent,
+        RequestFailure, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
-            test_support::{connect_sessions, spawn_dual_server},
+            test_support::{connect_sessions, rejection, spawn_dual_server},
         },
         object::{ContentExists, Location},
-        wire::{RequestError, TrackStatusOk},
+        wire::TrackStatusOk,
     };
 
     use super::TrackStatusHandler;
 
     struct TrackStatusExchange {
-        request: tokio::task::JoinHandle<anyhow::Result<TrackStatusOk>>,
+        request: tokio::task::JoinHandle<Result<TrackStatusOk, RequestFailure>>,
         handler: TrackStatusHandler,
         _server: Session,
     }
@@ -179,13 +179,6 @@ mod tests {
             handler,
             _server: server,
         }
-    }
-
-    fn request_error(result: anyhow::Result<TrackStatusOk>) -> RequestError {
-        result
-            .unwrap_err()
-            .downcast::<RequestError>()
-            .expect("expected a RequestError")
     }
 
     #[tokio::test]
@@ -259,7 +252,7 @@ mod tests {
             .unwrap();
 
         // Assert
-        let error = request_error(exchange.request.await.unwrap());
+        let error = rejection(exchange.request.await.unwrap());
         assert_eq!(error.error_code, 0x1);
         assert_eq!(error.reason_phrase, "unauthorized");
     }
@@ -273,7 +266,7 @@ mod tests {
         drop(exchange.handler);
 
         // Assert
-        let error = request_error(exchange.request.await.unwrap());
+        let error = rejection(exchange.request.await.unwrap());
         assert_eq!(error.error_code, 0x3);
     }
 }

@@ -350,7 +350,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `ProtocolViolation`.
 - **Control response timeout**: `SessionContext::await_response` bounds every
   request/response wait to 10 s; a timeout fails only that request with
-  `RequestTimeoutError` and keeps the session open (draft-14 §12.2).
+  `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
+  Every request that waits for a response returns `RequestFailure`, so
+  callers tell a peer rejection, a timeout and a closed session apart by
+  matching instead of downcasting.
 - **One forwarding preference per track alias** (draft-14 §2.5, §10): the
   first object decides whether `accept_data_receiver` returns a stream or a
   datagram receiver. An object of the other kind later makes that receiver

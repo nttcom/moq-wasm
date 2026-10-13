@@ -466,15 +466,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        SessionEvent, Subscription, TrackObject,
+        RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchObjectField, FetchOption},
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, accept_publish, read_fetch_objects, spawn_connected_dual_sessions,
-            subscribed_track_reader,
+            HANDSHAKE_TIMEOUT, accept_publish, read_fetch_objects, rejection,
+            spawn_connected_dual_sessions, subscribed_track_reader,
         },
         object::GroupOrder,
         subscribe::{FilterType, SubscribeOption},
-        wire::RequestError,
     };
 
     const NAMESPACE: &str = "ns";
@@ -531,14 +530,6 @@ mod tests {
             .iter()
             .map(|object| (object.group_id, object.object_id))
             .collect()
-    }
-
-    fn request_error<T>(result: Result<T>) -> RequestError {
-        result
-            .err()
-            .expect("expected a request error")
-            .downcast::<RequestError>()
-            .expect("expected a RequestError")
     }
 
     async fn publish(peers: &Peers) -> Subscription {
@@ -613,7 +604,10 @@ mod tests {
         Ok((handle, objects))
     }
 
-    async fn track_status(peers: &Peers, track_name: &str) -> Result<crate::wire::TrackStatusOk> {
+    async fn track_status(
+        peers: &Peers,
+        track_name: &str,
+    ) -> std::result::Result<crate::wire::TrackStatusOk, RequestFailure> {
         let subscriber = peers.server.subscriber();
         let (status, ()) = within(async {
             tokio::join!(
@@ -726,7 +720,7 @@ mod tests {
             }
         );
         assert_eq!(
-            request_error(unknown).error_code,
+            rejection(unknown).error_code,
             SUBSCRIBE_TRACK_DOES_NOT_EXIST
         );
     }
@@ -805,12 +799,9 @@ mod tests {
             [(9, 0), (8, 0), (8, 1), (8, 2), (7, 0), (7, 1)]
         );
         assert_eq!(descending.end_location, location(9, 1));
-        assert_eq!(
-            request_error(unknown).error_code,
-            FETCH_TRACK_DOES_NOT_EXIST
-        );
-        assert_eq!(request_error(empty).error_code, FETCH_NO_OBJECTS);
-        assert_eq!(request_error(invalid).error_code, FETCH_INVALID_RANGE);
+        assert_eq!(rejection(unknown).error_code, FETCH_TRACK_DOES_NOT_EXIST);
+        assert_eq!(rejection(empty).error_code, FETCH_NO_OBJECTS);
+        assert_eq!(rejection(invalid).error_code, FETCH_INVALID_RANGE);
     }
 
     #[tokio::test]
@@ -939,7 +930,7 @@ mod tests {
 
         // Assert
         assert!(origin.state.lock().await.fetches.is_empty());
-        assert_eq!(request_error(result).error_code, FETCH_NOT_SUPPORTED);
+        assert_eq!(rejection(result).error_code, FETCH_NOT_SUPPORTED);
     }
 
     #[test]
