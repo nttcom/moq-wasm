@@ -459,6 +459,14 @@ export class MoqtClientWrapper {
     )
   }
 
+  /// Hands the objects and the stream end of a FETCH sent through the raw
+  /// client to the handlers, as `fetch` does for its own. Call it before
+  /// sending the FETCH: objects that arrive without a handler are dropped.
+  watchFetch(requestId: bigint, onObject: FetchObjectHandler, onStreamEnd: FetchStreamEndHandler): void {
+    this.fetchObjectHandlers.set(requestId, onObject)
+    this.fetchStreamEndHandlers.set(requestId, onStreamEnd)
+  }
+
   private async sendFetchRequest(
     options: FetchOptions,
     send: (client: MOQTClient, requestId: bigint, groupOrder: GroupOrder) => Promise<void>

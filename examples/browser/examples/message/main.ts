@@ -259,6 +259,15 @@ function setupControlMessageButtons(): void {
     const startObject = BigInt(field('fetch-start-object').value)
     const endGroup = BigInt(field('fetch-end-group').value)
     const endObject = BigInt(field('fetch-end-object').value)
+    let objects = 0
+    moqtClient.watchFetch(
+      requestId,
+      () => {
+        objects += 1
+      },
+      ({ isReset }) =>
+        console.info(`FETCH ${requestId} stream ${isReset ? 'reset' : 'finished'} after ${objects} objects`)
+    )
     await sendControlMessage('FETCH', () =>
       moqtClient
         .requireConnectedClient()
