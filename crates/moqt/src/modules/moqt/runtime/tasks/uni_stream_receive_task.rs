@@ -47,7 +47,7 @@ impl UniStreamReceiveTask {
         )
     }
 
-    #[tracing::instrument(level = "info", name = "on_stream_received", skip_all)]
+    #[tracing::instrument(level = "debug", name = "on_stream_received", skip_all)]
     async fn on_stream_received(
         context: &Arc<SessionContext>,
         mut stream: UniStreamReceiver,

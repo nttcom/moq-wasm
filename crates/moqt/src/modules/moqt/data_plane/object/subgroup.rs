@@ -166,14 +166,8 @@ impl SubgroupObject {
     pub(crate) fn check_length(cursor: &mut std::io::Cursor<&[u8]>) -> Result<usize, DecodeError> {
         let length = cursor.try_get_varint()? as usize;
         if cursor.remaining() < length {
-            tracing::debug!(
-                "Payload length expected:{}, actual: {}",
-                length,
-                cursor.remaining()
-            );
             return Err(DecodeError::NeedMoreData);
         }
-        tracing::debug!("Payload Length is {}", length);
         Ok(length)
     }
 

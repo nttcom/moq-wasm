@@ -25,7 +25,6 @@ impl DatagramReceiveTask {
                 loop {
                     match context.transport_connection.receive_datagram().await {
                         Ok(mut data) => {
-                            tracing::debug!("accepted incoming datagram");
                             Self::on_datagram_received(&context, &mut data).await;
                         }
                         Err(error) => {
@@ -39,9 +38,9 @@ impl DatagramReceiveTask {
         )
     }
 
-    #[tracing::instrument(level = "info", name = "on_datagram_received", skip_all)]
+    #[tracing::instrument(level = "trace", name = "on_datagram_received", skip_all)]
     async fn on_datagram_received(context: &Arc<SessionContext>, data: &mut BytesMut) -> bool {
-        tracing::debug!("Received datagram: {:?}", data);
+        tracing::trace!(?data, "Received datagram");
         let datagram_object = match ObjectDatagram::decode(data) {
             Some(object) => object,
             None => {
@@ -50,7 +49,6 @@ impl DatagramReceiveTask {
             }
         };
 
-        tracing::debug!("Datagram object: {:?}", datagram_object);
         SubscriptionNotifier::notify(
             context,
             datagram_object.track_alias,
