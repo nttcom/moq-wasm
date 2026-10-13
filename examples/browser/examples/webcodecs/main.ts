@@ -5,6 +5,7 @@ import {
   VIDEO_HARDWARE_ACCELERATION_OPTIONS,
   VIDEO_RESOLUTION_OPTIONS
 } from '../meeting/src/types/videoEncoding'
+import { element } from '../../utils/page'
 
 type DecoderHwa = 'prefer-hardware' | 'prefer-software'
 type AvcFormatMode = 'auto' | 'annexb' | 'avc'
@@ -12,7 +13,6 @@ type AvcFormatMode = 'auto' | 'annexb' | 'avc'
 type LoopbackState = {
   runId: number
   stream: MediaStream | null
-  sourceTrack: MediaStreamTrack | null
   processorTrack: MediaStreamTrack | null
   reader: ReadableStreamDefaultReader<VideoFrame> | null
   generator: MediaStreamTrackGenerator<VideoFrame> | null
@@ -20,10 +20,8 @@ type LoopbackState = {
   writerChain: Promise<void>
   encoder: VideoEncoder | null
   decoder: VideoDecoder | null
-  decoderConfigured: boolean
   decoderConfigKey: string | null
   frameIndex: number
-  inputEnded: boolean
   statsTimer: number | null
   lastMetadataOutputAtMs: number | null
   metadataSequence: number
@@ -52,7 +50,6 @@ const MAX_LOG_LINES = 500
 const state: LoopbackState = {
   runId: 0,
   stream: null,
-  sourceTrack: null,
   processorTrack: null,
   reader: null,
   generator: null,
@@ -60,84 +57,67 @@ const state: LoopbackState = {
   writerChain: Promise.resolve(),
   encoder: null,
   decoder: null,
-  decoderConfigured: false,
   decoderConfigKey: null,
   frameIndex: 0,
-  inputEnded: false,
   statsTimer: null,
   lastMetadataOutputAtMs: null,
   metadataSequence: 0
 }
 
-const stats: Stats = {
-  startWallMs: null,
-  encodedFrames: 0,
-  decodedFrames: 0,
-  keyframes: 0,
-  encodeErrors: 0,
-  decodeErrors: 0,
-  encoderQueueCurrent: 0,
-  encoderQueueMax: 0,
-  decoderQueueCurrent: 0,
-  decoderQueueMax: 0,
-  captureToEncodeDoneSamples: [],
-  encodeToDecodeDoneSamples: [],
-  captureToDecodeDoneSamples: []
+function freshStats(): Stats {
+  return {
+    startWallMs: null,
+    encodedFrames: 0,
+    decodedFrames: 0,
+    keyframes: 0,
+    encodeErrors: 0,
+    decodeErrors: 0,
+    encoderQueueCurrent: 0,
+    encoderQueueMax: 0,
+    decoderQueueCurrent: 0,
+    decoderQueueMax: 0,
+    captureToEncodeDoneSamples: [],
+    encodeToDecodeDoneSamples: [],
+    captureToDecodeDoneSamples: [],
+    lastDecoderError: undefined
+  }
 }
+
+const stats = freshStats()
 
 const captureTimestampByChunkTimestamp = new Map<number, number>()
 const encodeDoneTimestampByChunkTimestamp = new Map<number, number>()
 
-const sourceVideo = getEl<HTMLVideoElement>('sourceVideo')
-const decodedVideo = getEl<HTMLVideoElement>('decodedVideo')
-const codecSelect = getEl<HTMLSelectElement>('codecSelect')
-const resolutionSelect = getEl<HTMLSelectElement>('resolutionSelect')
-const bitrateSelect = getEl<HTMLSelectElement>('bitrateSelect')
-const framerateInput = getEl<HTMLInputElement>('framerateInput')
-const keyframeIntervalInput = getEl<HTMLInputElement>('keyframeIntervalInput')
-const encoderHwaSelect = getEl<HTMLSelectElement>('encoderHwaSelect')
-const encoderRealtimeCheckbox = getEl<HTMLInputElement>('encoderRealtimeCheckbox')
-const decoderHwaSelect = getEl<HTMLSelectElement>('decoderHwaSelect')
-const decoderAvcFormatSelect = getEl<HTMLSelectElement>('decoderAvcFormatSelect')
-const decoderOptimizeLatencyCheckbox = getEl<HTMLInputElement>('decoderOptimizeLatencyCheckbox')
-const checkSupportBtn = getEl<HTMLButtonElement>('checkSupportBtn')
-const startBtn = getEl<HTMLButtonElement>('startBtn')
-const stopBtn = getEl<HTMLButtonElement>('stopBtn')
-const clearLogBtn = getEl<HTMLButtonElement>('clearLogBtn')
-const statusText = getEl<HTMLDivElement>('statusText')
-const supportText = getEl<HTMLDivElement>('supportText')
-const statsGrid = getEl<HTMLDivElement>('statsGrid')
-const logArea = getEl<HTMLTextAreaElement>('logArea')
+const sourceVideo = element<HTMLVideoElement>('sourceVideo')
+const decodedVideo = element<HTMLVideoElement>('decodedVideo')
+const codecSelect = element<HTMLSelectElement>('codecSelect')
+const resolutionSelect = element<HTMLSelectElement>('resolutionSelect')
+const bitrateSelect = element<HTMLSelectElement>('bitrateSelect')
+const framerateInput = element<HTMLInputElement>('framerateInput')
+const keyframeIntervalInput = element<HTMLInputElement>('keyframeIntervalInput')
+const encoderHwaSelect = element<HTMLSelectElement>('encoderHwaSelect')
+const encoderRealtimeCheckbox = element<HTMLInputElement>('encoderRealtimeCheckbox')
+const decoderHwaSelect = element<HTMLSelectElement>('decoderHwaSelect')
+const decoderAvcFormatSelect = element<HTMLSelectElement>('decoderAvcFormatSelect')
+const decoderOptimizeLatencyCheckbox = element<HTMLInputElement>('decoderOptimizeLatencyCheckbox')
+const checkSupportBtn = element<HTMLButtonElement>('checkSupportBtn')
+const startBtn = element<HTMLButtonElement>('startBtn')
+const stopBtn = element<HTMLButtonElement>('stopBtn')
+const clearLogBtn = element<HTMLButtonElement>('clearLogBtn')
+const statusText = element<HTMLSpanElement>('statusText')
+const supportText = element<HTMLDivElement>('supportText')
+const statsGrid = element<HTMLDivElement>('statsGrid')
+const logArea = element<HTMLTextAreaElement>('logArea')
 
 initUi()
 attachHandlers()
 renderStats()
 
 function initUi(): void {
-  for (const option of VIDEO_CODEC_OPTIONS) {
-    const el = document.createElement('option')
-    el.value = option.codec
-    el.textContent = option.label
-    codecSelect.append(el)
-  }
-  for (const option of VIDEO_RESOLUTION_OPTIONS) {
-    const el = document.createElement('option')
-    el.value = `${option.width}x${option.height}`
-    el.textContent = option.label
-    resolutionSelect.append(el)
-  }
-  for (const option of VIDEO_BITRATE_OPTIONS) {
-    const el = document.createElement('option')
-    el.value = String(option.bitrate)
-    el.textContent = option.label
-    bitrateSelect.append(el)
-  }
-  for (const option of VIDEO_HARDWARE_ACCELERATION_OPTIONS) {
-    const el = document.createElement('option')
-    el.value = option.value
-    el.textContent = option.value
-    encoderHwaSelect.append(el)
-  }
+  codecSelect.append(...VIDEO_CODEC_OPTIONS.map((o) => new Option(o.label, o.codec)))
+  resolutionSelect.append(...VIDEO_RESOLUTION_OPTIONS.map((o) => new Option(o.label, `${o.width}x${o.height}`)))
+  bitrateSelect.append(...VIDEO_BITRATE_OPTIONS.map((o) => new Option(o.label, String(o.bitrate))))
+  encoderHwaSelect.append(...VIDEO_HARDWARE_ACCELERATION_OPTIONS.map((o) => new Option(o.value, o.value)))
 
   codecSelect.value = DEFAULT_VIDEO_ENCODING_SETTINGS.codec
   resolutionSelect.value = `${DEFAULT_VIDEO_ENCODING_SETTINGS.width}x${DEFAULT_VIDEO_ENCODING_SETTINGS.height}`
@@ -173,14 +153,6 @@ function attachHandlers(): void {
   })
 }
 
-function getEl<T extends HTMLElement>(id: string): T {
-  const el = document.getElementById(id)
-  if (!el) {
-    throw new Error(`element not found: ${id}`)
-  }
-  return el as T
-}
-
 function log(message: string, detail?: unknown, level: 'info' | 'warn' | 'error' = 'info'): void {
   const ts = new Date().toLocaleTimeString('ja-JP', { hour12: false })
   const line =
@@ -206,17 +178,13 @@ function safeStringify(value: unknown): string | null {
 }
 
 function setStatus(text: string): void {
-  statusText.innerHTML = `<strong>Status:</strong> ${escapeHtml(text)}`
+  statusText.textContent = text
 }
 
 function setSupportText(text: string, level: 'normal' | 'warn' | 'danger' = 'normal'): void {
   supportText.textContent = text
   supportText.className =
     level === 'danger' ? 'status-line danger-text' : level === 'warn' ? 'status-line warn-text' : 'status-line'
-}
-
-function escapeHtml(text: string): string {
-  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }
 
 function filterResolutionOptionsForCodec(): void {
@@ -378,15 +346,12 @@ async function startLoopback(): Promise<void> {
     const runId = state.runId + 1
     state.runId = runId
     state.stream = stream
-    state.sourceTrack = sourceTrack
     state.processorTrack = processorTrack
     state.reader = reader
     state.generator = generator
     state.writer = writer
     state.writerChain = Promise.resolve()
     state.frameIndex = 0
-    state.inputEnded = false
-    state.decoderConfigured = false
     state.decoderConfigKey = null
     state.lastMetadataOutputAtMs = null
     state.metadataSequence = 0
@@ -477,10 +442,9 @@ async function startLoopback(): Promise<void> {
 
         const decoderConfig = buildDecoderConfigFromCodec(encoderConfig.codec, metadataDecoderConfig as any)
         const configKey = buildDecoderConfigKey(decoderConfig)
-        if (!state.decoderConfigured || state.decoderConfigKey !== configKey) {
+        if (state.decoderConfigKey !== configKey) {
           try {
             decoder.configure(decoderConfig)
-            state.decoderConfigured = true
             state.decoderConfigKey = configKey
             log('[decoder] configured', {
               codec: decoderConfig.codec,
@@ -565,7 +529,6 @@ async function pumpFrames(
     while (state.runId === runId) {
       const result = await reader.read()
       if (result.done) {
-        state.inputEnded = true
         break
       }
       const frame = result.value
@@ -591,52 +554,22 @@ async function pumpFrames(
     }
   } finally {
     if (state.runId === runId) {
-      await finalizePipeline(runId)
-      setStatus('stopped')
-      stopBtn.disabled = true
+      await finalizePipeline()
     }
   }
 }
 
-async function finalizePipeline(runId: number): Promise<void> {
-  const encoder = state.encoder
-  const decoder = state.decoder
-  if (encoder && encoder.state !== 'closed') {
-    try {
-      await encoder.flush()
-    } catch {
-      // ignore
-    }
-    try {
-      encoder.close()
-    } catch {
-      // ignore
-    }
-  }
-  if (decoder && decoder.state !== 'closed') {
-    try {
-      await decoder.flush()
-    } catch {
-      // ignore
-    }
-    try {
-      decoder.close()
-    } catch {
-      // ignore
-    }
-  }
+async function ignoreErrors(action: () => unknown): Promise<void> {
   try {
-    await state.writerChain
-  } catch {
-    // ignore
-  }
-  if (state.runId === runId && state.writer) {
-    try {
-      await state.writer.close()
-    } catch {
-      // ignore
-    }
-  }
+    await action()
+  } catch {}
+}
+
+async function finalizePipeline(): Promise<void> {
+  await ignoreErrors(() => state.encoder?.flush())
+  await ignoreErrors(() => state.decoder?.flush())
+  await stopLoopback('input-ended')
+  setStatus('stopped')
 }
 
 async function stopLoopback(reason: string): Promise<void> {
@@ -647,82 +580,30 @@ async function stopLoopback(reason: string): Promise<void> {
     state.statsTimer = null
   }
 
-  if (state.reader) {
-    try {
-      await state.reader.cancel(reason)
-    } catch {
-      // ignore
-    }
-    state.reader = null
-  }
-
-  if (state.encoder && state.encoder.state !== 'closed') {
-    try {
-      state.encoder.close()
-    } catch {
-      // ignore
-    }
-  }
-  state.encoder = null
-
-  if (state.decoder && state.decoder.state !== 'closed') {
-    try {
-      state.decoder.close()
-    } catch {
-      // ignore
-    }
-  }
-  state.decoder = null
-  state.decoderConfigured = false
-  state.decoderConfigKey = null
-
-  try {
-    await state.writerChain
-  } catch {
-    // ignore
-  }
-  if (state.writer) {
-    try {
-      await state.writer.close()
-    } catch {
-      // ignore
-    }
-  }
-  state.writer = null
-
-  if (state.generator) {
-    try {
-      state.generator.stop()
-    } catch {
-      // ignore
-    }
-  }
-  state.generator = null
-
-  if (state.processorTrack) {
-    try {
-      state.processorTrack.stop()
-    } catch {
-      // ignore
-    }
-  }
-  state.processorTrack = null
-
-  if (state.stream) {
-    for (const track of state.stream.getTracks()) {
-      track.stop()
-    }
-  }
-  state.stream = null
-  state.sourceTrack = null
+  await ignoreErrors(() => state.reader?.cancel(reason))
+  await ignoreErrors(() => state.encoder?.close())
+  await ignoreErrors(() => state.decoder?.close())
+  await state.writerChain
+  await ignoreErrors(() => state.writer?.close())
+  await ignoreErrors(() => state.generator?.stop())
+  await ignoreErrors(() => state.processorTrack?.stop())
+  state.stream?.getTracks().forEach((track) => track.stop())
+  Object.assign(state, {
+    stream: null,
+    processorTrack: null,
+    reader: null,
+    generator: null,
+    writer: null,
+    writerChain: Promise.resolve(),
+    encoder: null,
+    decoder: null,
+    decoderConfigKey: null,
+    frameIndex: 0
+  })
   sourceVideo.srcObject = null
   decodedVideo.srcObject = null
-
   captureTimestampByChunkTimestamp.clear()
   encodeDoneTimestampByChunkTimestamp.clear()
-  state.writerChain = Promise.resolve()
-  state.inputEnded = false
-  state.frameIndex = 0
 
   stopBtn.disabled = true
   if (previousRunId !== 0) {
@@ -732,20 +613,7 @@ async function stopLoopback(reason: string): Promise<void> {
 }
 
 function resetStats(): void {
-  stats.startWallMs = null
-  stats.encodedFrames = 0
-  stats.decodedFrames = 0
-  stats.keyframes = 0
-  stats.encodeErrors = 0
-  stats.decodeErrors = 0
-  stats.encoderQueueCurrent = 0
-  stats.encoderQueueMax = 0
-  stats.decoderQueueCurrent = 0
-  stats.decoderQueueMax = 0
-  stats.captureToEncodeDoneSamples.length = 0
-  stats.encodeToDecodeDoneSamples.length = 0
-  stats.captureToDecodeDoneSamples.length = 0
-  stats.lastDecoderError = undefined
+  Object.assign(stats, freshStats())
   renderStats()
 }
 
@@ -768,13 +636,20 @@ function renderStats(): void {
     { label: 'Last Decoder Error', value: stats.lastDecoderError ?? '-' }
   ]
 
-  statsGrid.innerHTML = ''
-  for (const item of items) {
-    const div = document.createElement('div')
-    div.className = 'stat'
-    div.innerHTML = `<div class="k">${escapeHtml(item.label)}</div><div class="v">${escapeHtml(item.value)}</div>`
-    statsGrid.append(div)
-  }
+  statsGrid.replaceChildren(
+    ...items.map(({ label, value }) => {
+      const stat = textDiv('stat', '')
+      stat.append(textDiv('k', label), textDiv('v', value))
+      return stat
+    })
+  )
+}
+
+function textDiv(className: string, text: string): HTMLDivElement {
+  const div = document.createElement('div')
+  div.className = className
+  div.textContent = text
+  return div
 }
 
 function average(values: number[]): number | null {
