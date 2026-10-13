@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::catalog::InitData;
 use crate::types::{KnownPackaging, Packaging, TrackRole};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,7 +24,7 @@ pub struct Track {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alt_group: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub init_data: Option<String>,
+    pub init_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depends: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,7 +79,7 @@ impl Track {
             label: None,
             render_group: None,
             alt_group: None,
-            init_data: None,
+            init_ref: None,
             depends: None,
             temporal_id: None,
             spatial_id: None,
@@ -103,23 +104,31 @@ impl Track {
 
     /// Every group and object starts on a SAP type 1 sample
     /// (draft-ietf-moq-cmsf-01 §3.5.2) and `altGroup` names the switching set
-    /// (§3.2).
-    pub fn cmaf_sibling(
-        &self,
-        name: &str,
-        mime_type: &str,
-        init_data: String,
-        alt_group: Option<u64>,
-    ) -> Self {
+    /// (§3.2). The sibling does not inherit `initRef`; set its CMAF header
+    /// with `set_inline_init_data` (§3.1).
+    pub fn cmaf_sibling(&self, name: &str, mime_type: &str, alt_group: Option<u64>) -> Self {
         Self {
             name: name.to_string(),
             packaging: Packaging::Known(KnownPackaging::Cmaf),
             alt_group,
+            init_ref: None,
             mime_type: Some(mime_type.to_string()),
-            init_data: Some(init_data),
             max_grp_sap_starting_type: Some(1),
             max_obj_sap_starting_type: Some(1),
             ..self.clone()
+        }
+    }
+
+    /// Points `initRef` at the returned inline `initDataList` entry; `data`
+    /// must already be Base64 (draft-ietf-moq-cmsf-01 §3.1). The entry id is
+    /// the track name, so ids stay unique as long as track names do.
+    #[must_use = "add the entry to the catalog initDataList"]
+    pub fn set_inline_init_data(&mut self, data: String) -> InitData {
+        self.init_ref = Some(self.name.clone());
+        InitData {
+            id: self.name.clone(),
+            r#type: "inline".to_string(),
+            data,
         }
     }
 }
@@ -157,15 +166,16 @@ mod tests {
         loc.role = Some(KnownTrackRole::Video.into());
         loc.codec = Some("avc1.640028".to_string());
         loc.width = Some(1280);
+        loc.init_ref = Some("video".to_string());
 
         // Act
-        let cmaf = loc.cmaf_sibling("video_cmaf", "video/mp4", "AAAA".to_string(), Some(2));
+        let cmaf = loc.cmaf_sibling("video_cmaf", "video/mp4", Some(2));
 
         // Assert
         assert_eq!(cmaf.name, "video_cmaf");
         assert_eq!(cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
         assert_eq!(cmaf.mime_type.as_deref(), Some("video/mp4"));
-        assert_eq!(cmaf.init_data.as_deref(), Some("AAAA"));
+        assert_eq!(cmaf.init_ref, None);
         assert_eq!(cmaf.alt_group, Some(2));
         assert_eq!(cmaf.max_grp_sap_starting_type, Some(1));
         assert_eq!(cmaf.max_obj_sap_starting_type, Some(1));
@@ -173,6 +183,26 @@ mod tests {
         assert_eq!(cmaf.role, loc.role);
         assert_eq!(cmaf.codec, loc.codec);
         assert_eq!(cmaf.width, loc.width);
+    }
+
+    #[test]
+    fn set_inline_init_data_points_init_ref_at_the_entry_it_returns() {
+        // Arrange
+        let mut track = Track::new("audio_cmaf", KnownPackaging::Cmaf, true);
+
+        // Act
+        let init_data = track.set_inline_init_data("AAAA".to_string());
+
+        // Assert
+        assert_eq!(track.init_ref.as_deref(), Some("audio_cmaf"));
+        assert_eq!(
+            init_data,
+            InitData {
+                id: "audio_cmaf".to_string(),
+                r#type: "inline".to_string(),
+                data: "AAAA".to_string(),
+            }
+        );
     }
 
     #[test]
