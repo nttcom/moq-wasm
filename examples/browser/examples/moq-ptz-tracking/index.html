@@ -88,7 +88,43 @@
         </summary>
         <p class="hint">Cloud Run の djev-vision は停止後の最初の判定に約 3 分かかります</p>
         <div class="setup-routes">
-          <details class="setup-panel setup-toggle" open>
+          <details class="setup-panel setup-toggle">
+            <summary>
+              <h3 class="setup-flow setup-hub">
+                <span class="setup-node setup-node-local hub-browser"
+                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>このページ</small></span
+                >
+                <span class="setup-arrow hub-browser-link" aria-hidden="true">↕</span>
+                <span class="setup-node setup-node-local hub-camera"
+                  ><svg aria-hidden="true"><use href="#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
+                >
+                <span class="setup-arrow hub-camera-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud hub-relay"
+                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow hub-bot-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud hub-bot"
+                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Cloud VM</small></span
+                >
+                <span class="setup-arrow hub-djev-link" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud hub-djev"
+                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps">
+              <li>
+                <h4>PTZ カメラを Cloud relay-1 に配信する</h4>
+                <p class="hint">.env に ONVIF_IP・ONVIF_USERNAME・ONVIF_PASSWORD を設定します</p>
+                <pre><code>make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443</code></pre>
+              </li>
+              <li>
+                <h4>追従する対象を指定する</h4>
+                <p class="hint">Relay URL は既定の Cloud relay-1 のまま Join します</p>
+              </li>
+            </ol>
+          </details>
+          <details class="setup-panel setup-toggle">
             <summary>
               <h3 class="setup-flow setup-hub">
                 <span class="setup-node setup-node-local hub-browser"
@@ -126,7 +162,10 @@
               </li>
               <li>
                 <h4>relay を起動する</h4>
-                <p class="hint">各コマンドは別々のターミナルで実行します</p>
+                <p class="hint">
+                  Cloud relay-1 には Cloud の bot がつながっているため、手元の bot はローカルの relay
+                  につなぎます。各コマンドは別々のターミナルで実行します
+                </p>
                 <pre><code>make relay</code></pre>
               </li>
               <li>
@@ -145,7 +184,7 @@ uv run python -m moq_ptz_tracking.bot --insecure \
               <li>
                 <h4>追従する対象を指定する</h4>
                 <p class="hint">
-                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a のまま Join します
+                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a を選んで Join します
                 </p>
               </li>
             </ol>
@@ -164,6 +203,7 @@ uv run python -m moq_ptz_tracking.bot --insecure \
           </div>
           <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
           <span id="tracker-status" class="status-dot" data-state="idle">bot 未接続</span>
+          <span id="bot-hours" class="status-dot" data-state="review"></span>
           <span id="djev-status" class="status-dot" data-state="review" data-testid="ptz-tracking-djev-status"></span>
         </section>
         <section class="card stack">
