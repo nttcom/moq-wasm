@@ -438,7 +438,7 @@ export class MoqtClientWrapper {
     return { requestId, subscribeOk }
   }
 
-  async fetch(
+  fetch(
     trackNamespace: string[],
     trackName: string,
     startGroupId: bigint,
@@ -447,17 +447,8 @@ export class MoqtClientWrapper {
     endObjectId: bigint,
     options: FetchOptions = {}
   ): Promise<FetchResult> {
-    const client = this.requireConnectedClient()
-    const requestId = options.requestId ?? this.issueRequestId()
-    if (options.onObject) {
-      this.setOnFetchObjectHandler(requestId, options.onObject)
-    }
-    if (options.onStreamEnd) {
-      this.fetchStreamEndHandlers.set(requestId, options.onStreamEnd)
-    }
-    const response = expectResponse(this.pendingFetch, requestId)
-    try {
-      await client.sendFetch(
+    return this.sendFetchRequest(options, (client, requestId, groupOrder) =>
+      client.sendFetch(
         requestId,
         trackNamespace,
         trackName,
@@ -465,47 +456,39 @@ export class MoqtClientWrapper {
         startObjectId,
         endGroupId,
         endObjectId,
-        options.groupOrder ?? GroupOrder.Ascending
+        groupOrder
       )
-      const fetchOk = await response
-      return { requestId, fetchOk }
-    } catch (error) {
-      if (options.onObject) {
-        this.clearFetchObjectHandler(requestId)
-      }
-      this.fetchStreamEndHandlers.delete(requestId)
-      this.pendingFetch.delete(requestId)
-      throw error
-    }
+    )
   }
 
-  async relativeJoiningFetch(
+  relativeJoiningFetch(
     joiningRequestId: bigint,
     joiningStart: bigint,
     options: FetchOptions = {}
   ): Promise<FetchResult> {
+    return this.sendFetchRequest(options, (client, requestId, groupOrder) =>
+      client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart, groupOrder)
+    )
+  }
+
+  private async sendFetchRequest(
+    options: FetchOptions,
+    send: (client: MOQTClient, requestId: bigint, groupOrder: GroupOrder) => Promise<void>
+  ): Promise<FetchResult> {
     const client = this.requireConnectedClient()
     const requestId = options.requestId ?? this.issueRequestId()
     if (options.onObject) {
-      this.setOnFetchObjectHandler(requestId, options.onObject)
+      this.fetchObjectHandlers.set(requestId, options.onObject)
     }
     if (options.onStreamEnd) {
       this.fetchStreamEndHandlers.set(requestId, options.onStreamEnd)
     }
     const response = expectResponse(this.pendingFetch, requestId)
     try {
-      await client.sendRelativeJoiningFetch(
-        requestId,
-        joiningRequestId,
-        joiningStart,
-        options.groupOrder ?? GroupOrder.Ascending
-      )
-      const fetchOk = await response
-      return { requestId, fetchOk }
+      await send(client, requestId, options.groupOrder ?? GroupOrder.Ascending)
+      return { requestId, fetchOk: await response }
     } catch (error) {
-      if (options.onObject) {
-        this.clearFetchObjectHandler(requestId)
-      }
+      this.fetchObjectHandlers.delete(requestId)
       this.fetchStreamEndHandlers.delete(requestId)
       this.pendingFetch.delete(requestId)
       throw error
@@ -533,14 +516,6 @@ export class MoqtClientWrapper {
    */
   async refreshAuthToken(appId: string, token: string): Promise<void> {
     await this.trackStatus([appId], 'update_auth_token', token)
-  }
-
-  setOnFetchObjectHandler(requestId: bigint, handler: FetchObjectHandler): void {
-    this.fetchObjectHandlers.set(requestId, handler)
-  }
-
-  clearFetchObjectHandler(requestId: bigint): void {
-    this.fetchObjectHandlers.delete(requestId)
   }
 
   async unsubscribe(requestId: bigint): Promise<void> {
