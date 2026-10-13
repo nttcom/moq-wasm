@@ -794,7 +794,7 @@ export class MoqtClientWrapper {
   }
 }
 
-function isRequestError<T extends object>(message: T | RequestErrorMessage): message is RequestErrorMessage {
+export function isRequestError<T extends object>(message: T | RequestErrorMessage): message is RequestErrorMessage {
   return 'errorCode' in message
 }
 
