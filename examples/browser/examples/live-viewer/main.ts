@@ -116,7 +116,6 @@ async function publishMp4(): Promise<void> {
       file,
       url: element<HTMLInputElement>('url').value.trim(),
       namespace: trackNamespace(),
-      authInfo: AUTH_INFO,
       loop: element<HTMLInputElement>('mp4-loop').checked
     })
   } catch (error) {
@@ -150,7 +149,7 @@ function renderPublishStreams(state: LivePlayerState): void {
     return
   }
   const now = Date.now()
-  const records = mp4Publisher.sentStreams.snapshot()
+  const records = mp4Publisher.sentStreamRecords()
   renderStreamMonitor(
     element<SVGSVGElement>('publish-stream-monitor'),
     records,

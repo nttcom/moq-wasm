@@ -171,9 +171,12 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
     // Act
     await fetcher.fetchButton.click()
 
-    // Assert: the relay has cached the track only since the viewer subscribed, so it forwards the FETCH upstream
+    // Assert: the relay cached the track only from the viewer's SUBSCRIBE, so it forwards the FETCH upstream;
+    // the publisher answers and the stream finishes, not reset, well before the relay's 10 s wait for it
     await expect(fetcher.sendStatus).toHaveText('Sent FETCH')
-    await expect(viewer.logPanel).toContainText(/answered FETCH video 0:0-\d+:\d+/)
+    await expect(fetcher.logPanel).toContainText(/FETCH 0 stream finished after [1-9]\d* objects/, {
+      timeout: FIRST_VIDEO_TIMEOUT_MS
+    })
     // Assert: the replayed groups match what the relay cached from the subscription
     await expect(viewer.logPanel).not.toContainText(/malformed/i)
   } finally {

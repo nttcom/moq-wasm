@@ -16,8 +16,6 @@ pub struct Mp4AudioTrack {
     #[wasm_bindgen(js_name = sampleRate)]
     pub sample_rate: u32,
     pub channels: u8,
-    #[wasm_bindgen(getter_with_clone, js_name = audioSpecificConfig)]
-    pub audio_specific_config: Option<Vec<u8>>,
 }
 
 /// The sample table as parallel columns, one entry per sample in decode
@@ -77,7 +75,6 @@ impl Mp4Index {
             codec: config.codec_string(),
             sample_rate: config.sample_rate(),
             channels: config.channels(),
-            audio_specific_config: config.aac().ok().map(|config| config.to_bytes().to_vec()),
         })
     }
 

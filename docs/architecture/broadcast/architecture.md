@@ -6,12 +6,12 @@ layout, the publishing flow or the invariants described here change.
 
 ## Scope
 `crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
-unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC
-and CMAF media tracks, a media timeline and a publisher-side FETCH cache.
-`crates/live-ingest`, `crates/gst-plugin-moqt` and `crates/onvif-ingest`
-build on it. The track
-layout is summarised in [its README](../../../crates/broadcast/README.md);
-this document records why the tracks are shaped that way.
+unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC and
+CMAF media tracks, a media timeline and a publisher-side FETCH cache.
+`crates/live-ingest`, `crates/gst-plugin-moqt`, `crates/onvif-ingest` and the
+Live Viewer's MP4 publisher, through `crates/wasm`, build on it. The track
+layout is summarised in [its README](../../../crates/broadcast/README.md); this
+document records why the tracks are shaped that way.
 
 Three types carry the three multiplicities. `RelayConnection` is one session
 to the relay, opened on first use and shared by every broadcast on it: RTMP

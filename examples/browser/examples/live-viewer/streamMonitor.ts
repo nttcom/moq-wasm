@@ -166,6 +166,14 @@ export class StreamMonitor implements DeliveryObserver {
     }
   }
 
+  /// For streams another component records, such as a publisher's.
+  replace(records: StreamRecord[]): void {
+    this.records.clear()
+    for (const record of records) {
+      this.records.set(`${record.trackAlias}:${record.groupId}`, record)
+    }
+  }
+
   reset(): void {
     this.records.clear()
     this.labels.clear()

@@ -1,52 +1,22 @@
-import {
-  type IncomingFetchContext,
-  type IncomingTrackStatusContext,
-  MoqtClientWrapper,
-  RequestErrorCode
-} from '@moqt/moqtClient'
 import init, {
-  type MOQTClient,
-  type Mp4AudioTrack,
+  Mp4Broadcast,
   Mp4Index,
   type Mp4SampleTable,
-  type Mp4VideoTrack
+  type Mp4VideoTrack,
+  type Mp4AudioTrack
 } from '../../pkg/moqt'
-import { monotonicUnixMicros, timeSeededGroupId } from '../../utils/media/clock'
-import { buildLocHeader } from '../../utils/media/loc'
-import { formatAudioChannelConfig } from '../../utils/media/audioChannelConfig'
-import {
-  type ReplayTrack,
-  answerFetch,
-  documentReplayTrack,
-  endOfGroupObject,
-  replayObject
-} from '../../utils/media/fetchReplay'
-import { SubgroupWriter } from '@moqt/subgroupWriter'
-import { PublishedGroupLog } from './publishedGroupLog'
+import { monotonicUnixMicros } from '../../utils/media/clock'
 import type { PublishPreview } from './publishPreview'
-import { StreamMonitor } from './streamMonitor'
+import { StreamMonitor, type StreamRecord } from './streamMonitor'
 import { type StatusState, getErrorMessage } from '../../utils/page'
-import { CATALOG_TRACK_NAME, type MsfInitData, type MsfTrack, buildMsfCatalogJson } from '../../lib/msf/catalog'
 
-const VIDEO_TRACK_NAME = 'video'
-const AUDIO_TRACK_NAME = 'audio'
-const TIMELINE_TRACK_NAME = 'timeline'
-const MAX_REQUEST_ID = 1_000_000n
 const MILLIS_PER_MICRO = 1 / 1_000
-/// The relay's default cache TTL: an older record names a group that can no longer be fetched.
-const TIMELINE_RETENTION_MS = 60_000
-/// Half the relay's default cache TTL: draft-ietf-moq-msf-01 §5 republishes the
-/// catalog before it can fall out of the relay cache.
-const CATALOG_REFRESH_MICROS = 30_000_000
 const ATOM_HEADER_LENGTH = 8
 const LARGE_ATOM_HEADER_LENGTH = 16
 const MOOV = 'moov'
 const AUDIO_SAMPLE_KIND = 1
 
 type LogLevel = 'info' | 'warn' | 'error'
-
-/// draft-ietf-moq-msf-01 §7.1.1: [presentation time ms, [group id, object id], encode wallclock ms].
-type MediaTimelineRecord = [number, [number, number], number]
 
 export type Mp4PublisherCallbacks = {
   onStatus(text: string, state: StatusState): void
@@ -57,7 +27,6 @@ export type Mp4PublishOptions = {
   file: File
   url: string
   namespace: string[]
-  authInfo: string
   loop: boolean
 }
 
@@ -72,13 +41,6 @@ type SampleColumns = {
   sync: Uint8Array
 }
 
-type TrackAliases = {
-  video: bigint
-  audio?: bigint
-  timeline: bigint
-  catalog: bigint
-}
-
 type Mp4Media = {
   file: File
   index: Mp4Index
@@ -86,20 +48,21 @@ type Mp4Media = {
   video: Mp4VideoTrack
   audio?: Mp4AudioTrack
   firstPresentationMicros: number
+  /// Timestamps pushed to the broadcast count from this, so neither
+  /// presentation nor decode time is negative.
+  firstDecodeMicros: number
   reorderDelayMicros: number
   durationMicros: number
 }
 
+/// Reads the samples of an MP4 file and paces them like a live encoder into
+/// `Mp4Broadcast`, which publishes them as live-ingest does.
 export class Mp4Publisher {
   readonly sentStreams = new StreamMonitor()
-  private readonly session = new MoqtClientWrapper()
+  private broadcast: Mp4Broadcast | undefined
+  private readonly trackAliases = new Map<string, bigint>()
   private running: Promise<void> | undefined
-  private active = false
   private stopRequested = false
-  private nextCatalogGroupId = 0n
-  private catalogGroups = new Map<bigint, Uint8Array>()
-  private timelineGroups = new Map<bigint, Uint8Array>()
-  private mediaGroups = new PublishedGroupLog(0)
 
   constructor(
     private readonly callbacks: Mp4PublisherCallbacks,
@@ -109,36 +72,25 @@ export class Mp4Publisher {
   async start(options: Mp4PublishOptions): Promise<void> {
     await this.stop()
     const media = await openMp4(options.file)
-    let trackAliases: TrackAliases
+    let broadcast: Mp4Broadcast
     try {
-      this.nextCatalogGroupId = timeSeededGroupId()
       this.sentStreams.reset()
-      this.catalogGroups = new Map()
-      this.timelineGroups = new Map()
-      this.mediaGroups = new PublishedGroupLog(media.samples.size.length)
-      await this.session.connect(options.url, { maxRequestId: MAX_REQUEST_ID })
-      this.session.setOnIncomingSubscribeHandler(({ respondError }) =>
-        respondError(RequestErrorCode.NotSupported, 'tracks are delivered by PUBLISH')
-      )
-      const replayTracks = this.replayTracks(media)
-      this.session.setOnIncomingTrackStatusHandler((context) =>
-        this.answerTrackStatus(context, options.namespace, replayTracks)
-      )
-      this.session.setOnIncomingFetchHandler((context) => this.answerFetch(context, options.namespace, replayTracks))
-      this.session.setOnConnectionClosedHandler(() => {
-        this.callbacks.onLog('warn', 'publisher connection closed')
-        this.stopRequested = true
-      })
-      await this.session.publishNamespace(options.namespace, options.authInfo)
-      trackAliases = await this.publishTracks(media, options)
+      this.trackAliases.clear()
+      broadcast = new Mp4Broadcast(options.url, options.namespace, media.index)
+      try {
+        await broadcast.announce()
+      } catch (error) {
+        broadcast.free()
+        throw error
+      }
     } catch (error) {
       media.index.free()
       throw error
     }
+    this.broadcast = broadcast
     this.stopRequested = false
-    this.active = true
     this.preview.start(media.video.codec, media.reorderDelayMicros)
-    this.running = this.publish(media, options, trackAliases)
+    this.running = this.publish(broadcast, media, options)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`,
       'ok'
@@ -153,273 +105,104 @@ export class Mp4Publisher {
   }
 
   get publishing(): boolean {
-    return this.active
+    return this.broadcast !== undefined
   }
 
-  /// The tracks are published before the catalog that lists them, so a
-  /// viewer subscribing to a track it read there finds the relay already
-  /// ingesting it.
-  private async publishTracks(media: Mp4Media, options: Mp4PublishOptions): Promise<TrackAliases> {
-    const publishTrack = async (trackName: string): Promise<bigint> => {
-      const trackAlias = await this.session.publish(options.namespace, trackName, options.authInfo)
-      this.callbacks.onLog('info', `published ${trackName}`)
-      return trackAlias
+  /// Refreshes `sentStreams` from the broadcast and returns its snapshot.
+  sentStreamRecords(): StreamRecord[] {
+    if (this.broadcast) {
+      this.sentStreams.replace(this.broadcast.streams().map((stream) => this.toStreamRecord(stream)))
     }
-    const trackAliases = {
-      video: await publishTrack(VIDEO_TRACK_NAME),
-      audio: media.audio && (await publishTrack(AUDIO_TRACK_NAME)),
-      timeline: await publishTrack(TIMELINE_TRACK_NAME),
-      catalog: await publishTrack(CATALOG_TRACK_NAME)
-    }
-    await this.sendCatalog(trackAliases.catalog, buildCatalogJson(options.namespace, media))
-    return trackAliases
+    return this.sentStreams.snapshot()
   }
 
   /// The final status is reported once the session is closed, so a reader of
   /// `Publish stopped` knows the relay has seen the publisher leave.
-  private async publish(media: Mp4Media, options: Mp4PublishOptions, trackAliases: TrackAliases): Promise<void> {
+  private async publish(broadcast: Mp4Broadcast, media: Mp4Media, options: Mp4PublishOptions): Promise<void> {
     let status: Parameters<Mp4PublisherCallbacks['onStatus']>
     try {
-      const completed = await this.pace(media, options, trackAliases)
+      const completed = await this.pace(broadcast, media, options)
       status = [completed ? 'Publish finished' : 'Publish stopped', 'idle']
     } catch (error) {
       status = [`Publish failed: ${getErrorMessage(error)}`, 'error']
       this.callbacks.onLog('error', `publish: ${getErrorMessage(error)}`)
     }
-    this.active = false
+    this.broadcast = undefined
     this.preview.stop()
     media.index.free()
-    if (this.session.getConnectionStatus()) {
-      await this.session.disconnect()
-    }
+    await broadcast.close()
+    broadcast.free()
     this.callbacks.onStatus(...status)
   }
 
   /// Samples go out in decode order, each at its decode time plus the file's
   /// reorder delay on the wall clock, the way a live encoder with B-frames
-  /// emits them, and are stamped with their presentation time as the LOC
-  /// capture timestamp: the viewer paces playback and resolves seek positions
-  /// from it. Sending at the presentation time instead would hold a P-frame
-  /// until it is shown and deliver the B-frames that precede it late.
-  private async pace(media: Mp4Media, options: Mp4PublishOptions, trackAliases: TrackAliases): Promise<boolean> {
-    const client = this.requireClient()
-    const video = this.trackWriter(client, trackAliases.video, VIDEO_TRACK_NAME)
-    const audio =
-      trackAliases.audio === undefined ? undefined : this.trackWriter(client, trackAliases.audio, AUDIO_TRACK_NAME)
-    const timeline = this.trackWriter(client, trackAliases.timeline, TIMELINE_TRACK_NAME)
-    const catalog = buildCatalogJson(options.namespace, media)
-    let catalogRefreshMicros = monotonicUnixMicros() + CATALOG_REFRESH_MICROS
-    const records: MediaTimelineRecord[] = []
-    let nextTimelineGroupId = timeSeededGroupId()
-    let nextGroupId = timeSeededGroupId()
-    let groupId: bigint | undefined
-    const originMicros = monotonicUnixMicros()
-    let passOriginMicros = originMicros
+  /// emits them. Sending at the presentation time instead would hold a
+  /// P-frame until it is shown and deliver the B-frames that precede it late.
+  private async pace(broadcast: Mp4Broadcast, media: Mp4Media, options: Mp4PublishOptions): Promise<boolean> {
+    let passOriginMicros = monotonicUnixMicros()
+    let passOffsetMicros = 0
+    do {
+      for (let index = 0; index < media.samples.size.length; index++) {
+        if (this.stopRequested) {
+          return false
+        }
+        const sendMicros =
+          passOriginMicros + (media.samples.dtsMicros[index] - media.firstPresentationMicros) + media.reorderDelayMicros
+        const payload = await readSamplePayload(media, index)
+        await sleepUntilUnixMicros(sendMicros)
+        const ptsMicros = passOffsetMicros + media.samples.ptsMicros[index] - media.firstDecodeMicros
+        if (isAudioSample(media, index)) {
+          broadcast.pushAudio(payload, ptsMicros)
+          continue
+        }
+        const isSync = media.samples.sync[index] === 1
+        const dtsMicros = passOffsetMicros + media.samples.dtsMicros[index] - media.firstDecodeMicros
+        this.preview.decode(
+          payload,
+          isSync,
+          passOriginMicros + (media.samples.ptsMicros[index] - media.firstPresentationMicros)
+        )
+        broadcast.pushVideo(payload, isSync, ptsMicros, dtsMicros)
+      }
+      passOriginMicros += media.durationMicros
+      passOffsetMicros += media.durationMicros
+    } while (options.loop)
+    return true
+  }
+
+  private toStreamRecord(stream: ReturnType<Mp4Broadcast['streams']>[number]): StreamRecord {
     try {
-      do {
-        for (let index = 0; index < media.samples.size.length; index++) {
-          if (this.stopRequested) {
-            return false
-          }
-          const isVideo = !isAudioSample(media, index)
-          const isSync = media.samples.sync[index] === 1
-          const presentationMicros = samplePresentationMicros(media, passOriginMicros, index)
-          const sendMicros =
-            passOriginMicros +
-            (media.samples.dtsMicros[index] - media.firstPresentationMicros) +
-            media.reorderDelayMicros
-          const payload = await readSamplePayload(media, index)
-          await sleepUntilUnixMicros(sendMicros)
-          if (monotonicUnixMicros() >= catalogRefreshMicros) {
-            await this.sendCatalog(trackAliases.catalog, catalog)
-            catalogRefreshMicros = monotonicUnixMicros() + CATALOG_REFRESH_MICROS
-          }
-          if (isVideo && isSync) {
-            groupId = nextGroupId
-            nextGroupId += 1n
-            this.mediaGroups.startGroup(groupId, index, passOriginMicros)
-          }
-          if (groupId === undefined) {
-            continue
-          }
-          if (isVideo) {
-            this.preview.decode(payload, isSync, presentationMicros)
-            await sendInGroup(video, groupId, payload, presentationMicros)
-            if (isSync) {
-              records.push([
-                Math.floor((presentationMicros - originMicros) * MILLIS_PER_MICRO),
-                [Number(groupId), 0],
-                Math.floor(presentationMicros * MILLIS_PER_MICRO)
-              ])
-              while (records[0][0] < records[records.length - 1][0] - TIMELINE_RETENTION_MS) {
-                records.shift()
-              }
-              const document = new TextEncoder().encode(JSON.stringify(records))
-              const timelineGroupId = nextTimelineGroupId++
-              this.timelineGroups.set(timelineGroupId, document)
-              while (this.timelineGroups.size > records.length) {
-                this.timelineGroups.delete(this.timelineGroups.keys().next().value!)
-              }
-              await sendInGroup(timeline, timelineGroupId, document)
-            }
-          } else if (audio) {
-            await sendInGroup(audio, groupId, payload, presentationMicros)
-          }
-        }
-        passOriginMicros += media.durationMicros
-        if (options.loop) {
-          this.mediaGroups.startPass(passOriginMicros)
-        }
-      } while (options.loop)
-      return true
+      let trackAlias = this.trackAliases.get(stream.track)
+      if (trackAlias === undefined) {
+        trackAlias = BigInt(this.trackAliases.size)
+        this.trackAliases.set(stream.track, trackAlias)
+      }
+      return {
+        kind: 'subscribe',
+        trackAlias,
+        track: stream.track,
+        groupId: stream.groupId,
+        lastGroupId: stream.groupId,
+        openedAt: stream.openedAtMs,
+        finishedAt: stream.finishedAtMs,
+        bytes: stream.bytes,
+        objects: stream.objectSentAtMs.length,
+        receivedAtByObjectId: new Map(
+          Array.from(stream.objectSentAtMs, (sentAt, objectId) => [BigInt(objectId), sentAt])
+        ),
+        captureAtByObjectId: new Map(),
+        receivedAtByGroup: new Map(),
+        captureAtByGroup: new Map()
+      }
     } finally {
-      if (this.session.getConnectionStatus()) {
-        await video.closeGroup()
-        await audio?.closeGroup()
-        await timeline.closeGroup()
-      }
-    }
-  }
-
-  private async answerTrackStatus(
-    context: IncomingTrackStatusContext,
-    namespace: string[],
-    replayTracks: Map<string, ReplayTrack>
-  ): Promise<void> {
-    const { trackStatus, respondOk, respondError } = context
-    if (findReplayTrack(replayTracks, namespace, trackStatus.trackNamespace, trackStatus.trackName)) {
-      await respondOk()
-      return
-    }
-    await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
-  }
-
-  private async answerFetch(
-    context: IncomingFetchContext,
-    namespace: string[],
-    replayTracks: Map<string, ReplayTrack>
-  ): Promise<void> {
-    const { fetch } = context
-    const track = findReplayTrack(replayTracks, namespace, fetch.trackNamespace, fetch.trackName)
-    try {
-      if (!track) {
-        await context.respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
-        return
-      }
-      await answerFetch(context, track)
-      this.callbacks.onLog(
-        'info',
-        `answered FETCH ${fetch.trackName} ${fetch.startGroupId}:${fetch.startObjectId}-${fetch.endGroupId}:${fetch.endObjectId}`
-      )
-    } catch (error) {
-      if (!context.cancelSignal.aborted) {
-        this.callbacks.onLog('error', `FETCH ${fetch.trackName}: ${getErrorMessage(error)}`)
-      }
-    }
-  }
-
-  private replayTracks(media: Mp4Media): Map<string, ReplayTrack> {
-    const tracks = new Map<string, ReplayTrack>([
-      [CATALOG_TRACK_NAME, documentReplayTrack(this.catalogGroups, () => true)],
-      [VIDEO_TRACK_NAME, mediaReplayTrack(media, this.mediaGroups, false)],
-      [
-        TIMELINE_TRACK_NAME,
-        documentReplayTrack(this.timelineGroups, (groupId) => groupId !== Array.from(this.timelineGroups.keys()).at(-1))
-      ]
-    ])
-    if (media.audio) {
-      tracks.set(AUDIO_TRACK_NAME, mediaReplayTrack(media, this.mediaGroups, true))
-    }
-    return tracks
-  }
-
-  /// The relay keeps a track's cache across publisher sessions and treats a
-  /// location it has already seen as a malformed track, so every catalog
-  /// goes out in a fresh wall-clock seeded group like the media groups.
-  private async sendCatalog(trackAlias: bigint, catalog: string): Promise<void> {
-    const client = this.requireClient()
-    const groupId = this.nextCatalogGroupId
-    this.nextCatalogGroupId += 1n
-    const payload = new TextEncoder().encode(catalog)
-    // A viewer fetches the group the relay reports as the largest, which is the newest one.
-    this.catalogGroups.clear()
-    this.catalogGroups.set(groupId, payload)
-    const writer = this.trackWriter(client, trackAlias, CATALOG_TRACK_NAME)
-    await writer.openGroup(groupId)
-    await writer.send(payload)
-    await writer.closeGroup()
-  }
-
-  private trackWriter(client: MOQTClient, trackAlias: bigint, name: string): SubgroupWriter {
-    this.sentStreams.label(trackAlias, name)
-    return new SubgroupWriter(client, trackAlias, this.sentStreams)
-  }
-
-  private requireClient(): MOQTClient {
-    const client = this.session.getRawClient()
-    if (!client) {
-      throw new Error('publisher session is not connected')
-    }
-    return client
-  }
-}
-
-async function sendInGroup(
-  writer: SubgroupWriter,
-  groupId: bigint,
-  payload: Uint8Array,
-  captureMicros?: number
-): Promise<void> {
-  if (writer.openGroupId !== groupId) {
-    await writer.openGroup(groupId)
-  }
-  await writer.send(payload, captureMicros)
-}
-
-function findReplayTrack(
-  replayTracks: Map<string, ReplayTrack>,
-  namespace: string[],
-  requestedNamespace: string[],
-  trackName: string
-): ReplayTrack | undefined {
-  return requestedNamespace.join('/') === namespace.join('/') ? replayTracks.get(trackName) : undefined
-}
-
-/// Replays a group exactly as `Mp4Publisher.pace` sent it: the relay keeps
-/// the first copy of an object and treats different bytes at the same
-/// location as a malformed track.
-function mediaReplayTrack(media: Mp4Media, groups: PublishedGroupLog, audio: boolean): ReplayTrack {
-  return {
-    groupIds: () => groups.groupIds(),
-    async *objects(groupId: bigint) {
-      let objectId = 0n
-      for (const span of groups.spans(groupId)) {
-        for (let index = span.firstSample; index < span.endSample; index++) {
-          if (isAudioSample(media, index) !== audio) {
-            continue
-          }
-          const captureMicros = samplePresentationMicros(media, span.passOriginMicros, index)
-          yield replayObject(
-            objectId,
-            await readSamplePayload(media, index),
-            buildLocHeader({ captureTimestampMicros: captureMicros })
-          )
-          objectId += 1n
-        }
-      }
-      if (groups.isClosed(groupId)) {
-        yield endOfGroupObject(objectId)
-      }
+      stream.free()
     }
   }
 }
 
 function isAudioSample(media: Mp4Media, index: number): boolean {
   return media.samples.kind[index] === AUDIO_SAMPLE_KIND
-}
-
-function samplePresentationMicros(media: Mp4Media, passOriginMicros: number, index: number): number {
-  return passOriginMicros + (media.samples.ptsMicros[index] - media.firstPresentationMicros)
 }
 
 async function readSamplePayload(media: Mp4Media, index: number): Promise<Uint8Array> {
@@ -451,6 +234,7 @@ async function openMp4(file: File): Promise<Mp4Media> {
       video,
       audio: index.audio(),
       firstPresentationMicros: samples.ptsMicros.reduce((earliest, pts) => Math.min(earliest, pts), Infinity),
+      firstDecodeMicros: samples.dtsMicros.reduce((earliest, dts) => Math.min(earliest, dts), Infinity),
       reorderDelayMicros: index.reorderDelayMicros(),
       durationMicros: index.durationMicros()
     }
@@ -498,53 +282,6 @@ function readSampleColumns(table: Mp4SampleTable): SampleColumns {
   } finally {
     table.free()
   }
-}
-
-function buildCatalogJson(namespace: string[], media: Mp4Media): string {
-  const namespacePath = namespace.join('/')
-  const tracks: MsfTrack[] = [
-    {
-      namespace: namespacePath,
-      name: VIDEO_TRACK_NAME,
-      packaging: 'loc',
-      role: 'video',
-      isLive: true,
-      label: `${media.video.height}p`,
-      codec: media.video.codec,
-      width: media.video.width,
-      height: media.video.height
-    },
-    {
-      namespace: namespacePath,
-      name: TIMELINE_TRACK_NAME,
-      packaging: 'mediatimeline',
-      role: 'mediatimeline',
-      isLive: true,
-      label: 'Media timeline',
-      mimeType: 'application/json',
-      depends: [VIDEO_TRACK_NAME]
-    }
-  ]
-  const initDataList: MsfInitData[] = []
-  if (media.audio) {
-    const audio: MsfTrack = {
-      namespace: namespacePath,
-      name: AUDIO_TRACK_NAME,
-      packaging: 'loc',
-      role: 'audio',
-      isLive: true,
-      label: 'Audio',
-      codec: media.audio.codec,
-      samplerate: media.audio.sampleRate,
-      channelConfig: formatAudioChannelConfig(media.audio.channels)
-    }
-    if (media.audio.audioSpecificConfig) {
-      audio.initRef = AUDIO_TRACK_NAME
-      initDataList.push({ id: AUDIO_TRACK_NAME, type: 'inline', data: media.audio.audioSpecificConfig.toBase64() })
-    }
-    tracks.push(audio)
-  }
-  return buildMsfCatalogJson(tracks, initDataList)
 }
 
 function describeMedia(media: Mp4Media): string {

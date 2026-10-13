@@ -260,8 +260,11 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
 ### MP4 publisher
 
 The MP4 Publish panel demuxes the chosen file in the browser and publishes it
-as the catalog and LOC tracks `live-ingest` produces, plus the media timeline,
-so the viewer and the rewind work unchanged. No CMAF siblings are published.
+through `crates/broadcast`, built into `crates/wasm` as `Mp4Broadcast`: the
+catalog, LOC and CMAF tracks, media timeline and FETCH cache are the ones
+`live-ingest` produces, so the viewer, the CMAF packaging and the rewind work
+unchanged. The page reads and paces the samples; everything sent to the relay
+is decided in Rust, as described in the `broadcast` architecture document.
 
 - Demuxing uses the progressive MP4 index of `crates/mediapack`
   (`mp4::Mp4Index`) through `crates/wasm`: only `moov` is handed to wasm and
@@ -270,29 +273,16 @@ so the viewer and the rewind work unchanged. No CMAF siblings are published.
   the SPS / PPS from `avcC` before every keyframe, so the video track has no
   `initRef`, as with `live-ingest`.
 - Audio may be AAC or MP3, both sent as the MP4 frames they are (a LOC payload
-  is the raw bitstream of a codec in the WebCodecs registry). AAC puts its
-  AudioSpecificConfig in the catalog `initDataList`, named by the audio track's
-  `initRef`; MP3 needs only `codec: "mp3"` for the receiver's `AudioDecoder`.
-  Other audio codecs are skipped and the video is published alone.
-- It does not wait for a SUBSCRIBE: `video`, `audio`, `timeline` and `catalog`
-  are PUBLISHed, the catalog after every track it lists so the relay caches
-  each from its first object, and the catalog is re-sent every 30 s so it never
-  leaves the relay cache. A SUBSCRIBE that reaches the publisher is rejected
-  with NOT_SUPPORTED.
-- Groups switch at video keyframes and audio objects join the group of the
-  preceding keyframe. Group ids, the catalog's included, are numbered from the
-  start time in unix microseconds, so a republished file never reuses a
-  location (the relay keeps a track's cache across publishers and treats a
-  reused location as a malformed track).
-- The `timeline` track sends, at every keyframe, the records so far
-  (presentation time, `[group id, 0]`, encode wallclock) as one object in a new
-  group; records older than the relay's 60 s retention are dropped and
-  presentation time counts from the start of publishing.
-- Samples are sent in decode order, like a live encoder with B-frames, at a
+  is the raw bitstream of a codec in the WebCodecs registry). AAC gets a CMAF
+  sibling; MP3 travels as LOC alone with `codec: "mp3"`. A file with other
+  audio is published without it, and the catalog then lists the `audio`
+  placeholder `broadcast` keeps for a source whose audio has not started.
+- Samples are pushed in decode order, like a live encoder with B-frames, at a
   wall clock of decode time plus the file's reorder delay (the largest amount
-  presentation time runs ahead of decode time; 0 without B-frames), and the
-  presentation wall clock travels as the LOC capture timestamp. Loop shifts the
-  next pass by the file's duration.
+  presentation time runs ahead of decode time; 0 without B-frames). Their
+  timestamps count from the file's earliest decode time, and `broadcast`
+  stamps the presentation time on its wall clock as the LOC capture timestamp.
+  Loop shifts the next pass by the file's duration.
 - The preview decodes the samples as sent with WebCodecs and draws each frame
   at capture timestamp plus reorder delay, the moment everything up to that
   frame has been sent, giving the picture of a receiver without network or
@@ -300,13 +290,15 @@ so the viewer and the rewind work unchanged. No CMAF siblings are published.
   the difference to their display time is shown as `viewer delay` under the
   preview and as `delay` in the Playback stats; across two browsers the clock
   skew between them adds to it.
-- Publish Streams shows the groups (subgroup streams) sent per track as the
-  same bars as Subscribe Streams under the Playback picture, sharing its Window
-  and GOPs settings, with the counts of streams in flight and finished and the
-  send bitrate of the streams open in the window.
+- Publish Streams shows the groups (subgroup streams) sent per track, read from
+  the broadcast's stream ledger with one cell per object at its send time, as
+  the same bars as Subscribe Streams under the Playback picture, sharing its
+  Window and GOPs settings, with the counts of streams in flight and finished
+  and the send bitrate of the streams open in the window.
 - Publishing runs on its own MoQT session, so Watch and Stop on the same page
-  do not interrupt it. Browsers do not answer FETCH, so rewinding is limited to
-  the closed groups in the relay cache.
+  do not interrupt it. FETCHes the relay forwards are answered from the
+  broadcast's 60 s cache, so a viewer rewinds into groups that predate the
+  relay's first subscriber within that window.
 
 ### Packaging
 
