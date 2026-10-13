@@ -1,8 +1,6 @@
-import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
-import type { SubgroupObjectMessage } from '../../pkg/moqt'
-import { showBotOffHoursNotice } from '../../utils/botHours'
-import { DjevStatusView } from '../../utils/djevStatus'
-import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
+import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { SingleObjectGroupPublisher, setUpDjevBotPage } from '../../utils/djevBot'
+import { element, setStatus } from '../../utils/page'
 import {
   type Location,
   MAX_CHAT_TEXT_LENGTH,
@@ -10,132 +8,46 @@ import {
   encodeChatRecord,
   parseModerationVerdicts
 } from './chatWire'
-import { timeSeededGroupId } from '../../utils/media/clock'
-import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', 'chat']
 const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', 'moderator']
 const CHAT_TRACK = 'chat'
-const EVENT_TIMELINE_TRACK = 'eventtimeline'
-const AUTH_INFO = ''
-const LARGEST_OBJECT_FILTER = 0x2
 const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
-
-class ChatPublisher {
-  private nextGroupId = timeSeededGroupId()
-
-  constructor(
-    private readonly session: MoqtClientWrapper,
-    readonly requestId: bigint,
-    private readonly trackAlias: bigint
-  ) {}
-
-  /// One group per record: pipecat reads every group from its first object, and a
-  /// SUBSCRIBE that joins mid-group starts after it, so each record starts a group.
-  reserveLocation(): Location {
-    const location = { groupId: this.nextGroupId, objectId: 0n }
-    this.nextGroupId += 1n
-    return location
-  }
-
-  async send(text: string, location: Location): Promise<void> {
-    const payload = encodeChatRecord(text, location)
-    await this.session.sendSingleObjectGroup(this.trackAlias, location.groupId, payload)
-  }
-}
 
 const session = new MoqtClientWrapper()
 const messages = new Map<string, HTMLLIElement>()
-let chatPublisher: ChatPublisher | undefined
+let chatPublisher: SingleObjectGroupPublisher | undefined
 
-const urlInput = element<HTMLInputElement>('url')
-const joinButton = element<HTMLButtonElement>('joinBtn')
-const leaveButton = element<HTMLButtonElement>('leaveBtn')
 const messageList = element<HTMLOListElement>('messages')
 const chatForm = element<HTMLFormElement>('chatForm')
 const chatInput = element<HTMLInputElement>('chatInput')
 const sendButton = element<HTMLButtonElement>('sendBtn')
-const djevStatus = new DjevStatusView(element('djev-status'))
-showBotOffHoursNotice(element('bot-hours'))
 
 chatInput.maxLength = MAX_CHAT_TEXT_LENGTH
 
-appendCloudRelayPresetButtons(element('urlPresets'))
-configureRelayUrlControls()
+setUpDjevBotPage({
+  session,
+  logTag: 'moq-chat-moderation',
+  ownNamespace: CHAT_NAMESPACE,
+  ownTracks: [CHAT_TRACK],
+  botNamespace: MODERATOR_NAMESPACE,
+  onSubscriber: ({ requestId, trackAlias }) =>
+    setChatPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias)),
+  onUnsubscribe: (requestId) => {
+    if (chatPublisher?.requestId === requestId) {
+      setChatPublisher(undefined)
+    }
+  },
+  onTimelineObject: (payload) => parseModerationVerdicts(payload).forEach(moderateMessage),
+  onReset: () => setChatPublisher(undefined)
+})
 
-joinButton.addEventListener('click', () => void join())
-leaveButton.addEventListener('click', () => void leave())
 chatForm.addEventListener('submit', (event) => {
   event.preventDefault()
   void sendChat()
 })
 
-async function join(): Promise<void> {
-  joinButton.disabled = true
-  setStatus('connection-status', '接続中', 'review')
-  try {
-    await session.connect(urlInput.value.trim())
-    session.setOnConnectionClosedHandler(() => resetSession('切断されました', 'error'))
-    session.setOnIncomingSubscribeHandler(acceptChatSubscriber)
-    session.setOnIncomingUnsubscribeHandler((requestId) => {
-      if (chatPublisher?.requestId === requestId) {
-        setChatPublisher(undefined)
-      }
-    })
-    session.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-      await respondOk()
-      if (sameNamespace(publishNamespace.trackNamespace, MODERATOR_NAMESPACE)) {
-        await subscribeVerdicts()
-        await djevStatus
-          .follow(session, MODERATOR_NAMESPACE)
-          .catch((error) => console.warn('[moq-chat-moderation] djev status subscribe failed', error))
-      }
-    })
-    await session.publishNamespace(CHAT_NAMESPACE, AUTH_INFO)
-    await session.subscribeNamespace(MODERATOR_NAMESPACE, AUTH_INFO)
-    setStatus('connection-status', '接続済み', 'ok')
-    leaveButton.disabled = false
-  } catch (error) {
-    await session.disconnect()
-    resetSession(`接続に失敗しました: ${getErrorMessage(error)}`, 'error')
-  }
-}
-
-async function leave(): Promise<void> {
-  await session.disconnect()
-  resetSession('未接続', 'idle')
-}
-
-function resetSession(connectionText: string, connectionState: StatusState): void {
-  djevStatus.reset()
-  setChatPublisher(undefined)
-  setStatus('connection-status', connectionText, connectionState)
-  joinButton.disabled = false
-  leaveButton.disabled = true
-}
-
-async function acceptChatSubscriber({
-  subscribe,
-  isSuccess,
-  code,
-  respondOk,
-  respondError
-}: IncomingSubscribeContext): Promise<void> {
-  if (!isSuccess) {
-    await respondError(BigInt(code), 'subscribe rejected')
-    return
-  }
-  if (!sameNamespace(subscribe.trackNamespace, CHAT_NAMESPACE) || subscribe.trackName !== CHAT_TRACK) {
-    await respondError(RequestErrorCode.TrackDoesNotExist, 'unknown track')
-    return
-  }
-  const trackAlias = await respondOk()
-  if (session.getRawClient()) {
-    setChatPublisher(new ChatPublisher(session, subscribe.requestId, trackAlias))
-  }
-}
-
-function setChatPublisher(publisher: ChatPublisher | undefined): void {
+function setChatPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
   chatPublisher = publisher
   chatInput.disabled = publisher === undefined
   sendButton.disabled = publisher === undefined
@@ -146,37 +58,16 @@ function setChatPublisher(publisher: ChatPublisher | undefined): void {
   }
 }
 
-async function subscribeVerdicts(): Promise<void> {
-  try {
-    const { subscribeOk } = await session.subscribe(MODERATOR_NAMESPACE, EVENT_TIMELINE_TRACK, AUTH_INFO, {
-      filterType: LARGEST_OBJECT_FILTER,
-      forward: true
-    })
-    session.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (_groupId, object) => applyVerdicts(object))
-  } catch (error) {
-    console.warn('[moq-chat-moderation] event timeline subscribe failed', error)
-  }
-}
-
-function applyVerdicts(object: SubgroupObjectMessage): void {
-  if (object.objectStatus !== undefined) {
-    return
-  }
-  for (const verdict of parseModerationVerdicts(new Uint8Array(object.objectPayload))) {
-    moderateMessage(verdict)
-  }
-}
-
 async function sendChat(): Promise<void> {
   const text = chatInput.value.trim()
   if (!text || !chatPublisher) {
     return
   }
   chatInput.value = ''
-  const location = chatPublisher.reserveLocation()
+  const location = { groupId: chatPublisher.reserveGroupId(), objectId: 0n }
   const item = appendMessage(text, location)
   try {
-    await chatPublisher.send(text, location)
+    await chatPublisher.send(encodeChatRecord(text, location), location.groupId)
   } catch (error) {
     console.error('[moq-chat-moderation] chat send failed', error)
     setVerdict(item, 'failed', '送信失敗')
@@ -224,8 +115,4 @@ function setVerdict(item: HTMLLIElement, verdict: string, labelText: string): vo
 
 function locationKey({ groupId, objectId }: Location): string {
   return `${groupId}:${objectId}`
-}
-
-function sameNamespace(left: string[], right: string[]): boolean {
-  return left.join('/') === right.join('/')
 }
