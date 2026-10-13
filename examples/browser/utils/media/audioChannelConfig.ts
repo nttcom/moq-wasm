@@ -16,3 +16,7 @@ export function parseAudioChannelCount(channelConfig?: string): number | undefin
   }
   return undefined
 }
+
+export function formatAudioChannelConfig(channels: number): string {
+  return channels === 1 ? 'mono' : channels === 2 ? 'stereo' : `${channels}ch`
+}

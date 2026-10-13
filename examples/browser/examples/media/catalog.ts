@@ -1,6 +1,7 @@
 import type { MsfTrack } from '../../lib/msf/catalog'
 import { buildMsfCatalogJson } from '../../lib/msf/catalog'
 import { getMediaVideoEncodingOverrides } from './common'
+import { formatAudioChannelConfig } from '../../utils/media/audioChannelConfig'
 
 export type MediaVideoProfile = {
   trackName: string
@@ -94,7 +95,7 @@ export function buildMediaCatalogJson(
     codec: profile.codec,
     bitrate: profile.bitrate,
     samplerate: profile.sampleRate,
-    channelConfig: profile.channels === 1 ? 'mono' : `${profile.channels}ch`
+    channelConfig: formatAudioChannelConfig(profile.channels)
   }))
   return buildMsfCatalogJson([...videoTracks, ...audioTracks])
 }

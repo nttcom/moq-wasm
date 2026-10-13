@@ -1,5 +1,5 @@
 import { monotonicUnixMicros } from '../../utils/media/clock'
-import { parseAudioChannelCount } from '../../utils/media/decoderCatalog'
+import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
 import type { SubgroupWorkerMessage } from '../../utils/media/jitterBufferTypes'
 import type { BufferPolicy } from './jitterBuffer'
 import { LivePlayout } from './livePlayout'

@@ -1,6 +1,6 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt'
-import { parseAudioChannelCount } from '../../utils/media/decoderCatalog'
+import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
 import type { MseTrackSource } from '../../utils/media/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
