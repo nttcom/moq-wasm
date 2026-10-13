@@ -3,8 +3,6 @@ resolver = "2"
 members = [
     'crates/*',
     'examples/rust/moq-cli',
-    'examples/cross-protocol-test/publisher',
-    'examples/cross-protocol-test/quic-subscriber',
     'tests/*',
 ]
 exclude = ['tests/browser-e2e']
