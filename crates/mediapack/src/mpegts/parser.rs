@@ -127,7 +127,9 @@ pub fn parse_section_body(data: &[u8]) -> Result<Option<&[u8]>> {
 }
 
 pub fn parse_pat_pmt_pid(body: &[u8]) -> Option<u16> {
-    body.chunks_exact(4)
+    body.as_chunks::<4>()
+        .0
+        .iter()
         .find(|entry| entry[..2] != [0, 0])
         .map(|entry| u16::from_be_bytes([entry[2] & 0x1F, entry[3]]))
 }
