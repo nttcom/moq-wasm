@@ -1,10 +1,9 @@
 import { AudioPlayout } from './audioPlayout'
-import { PlayoutClock } from './playoutClock'
+import { PlayoutClock, syncOffsetMs } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
 import type { ReviewFrame } from './rewind'
 
 const REVIEW_LEAD_MS = 150
-const MICROS_PER_MILLI = 1_000
 const WAIT_POLL_MS = 200
 
 /// Presents a review. The fetched media is decoded ahead of time, so the clock
@@ -123,13 +122,7 @@ export class ReviewPlayout {
 
   /// How far the picture on screen is ahead of the sound.
   syncOffsetMs(): number | undefined {
-    const nowMs = performance.now()
-    const video = this.video.positionMicrosAt(nowMs)
-    const audio = this.audio.positionMicrosAt(nowMs)
-    if (video === undefined || audio === undefined) {
-      return undefined
-    }
-    return (video - audio) / MICROS_PER_MILLI
+    return syncOffsetMs(this.video, this.audio)
   }
 
   private dueAt(captureMicros: number): number {
