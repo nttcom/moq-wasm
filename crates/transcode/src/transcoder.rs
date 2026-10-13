@@ -324,6 +324,18 @@ mod tests {
             .collect()
     }
 
+    /// VideoToolbox, which decodebin prefers on macOS, now and then drops the
+    /// last frame when it is drained at end of stream.
+    fn decode_in_software() {
+        gst::init().unwrap();
+        let registry = gst::Registry::get();
+        for name in ["vtdec_hw", "vtdec"] {
+            if let Some(decoder) = registry.lookup_feature(name) {
+                decoder.set_rank(gst::Rank::NONE);
+            }
+        }
+    }
+
     async fn drain(transcoder: &mut Transcoder) -> Vec<TranscodedEvent> {
         let mut outputs = Vec::new();
         while let Some(event) = transcoder.next().await {
@@ -335,6 +347,7 @@ mod tests {
     #[tokio::test]
     async fn transcodes_fixture_into_a_smaller_rendition() {
         // Arrange
+        decode_in_software();
         let samples = fixture_video_samples();
         let rendition = Rendition {
             name: "54p".into(),
