@@ -79,6 +79,7 @@ mod tests {
         let target = MoqtTarget {
             url: "ftp://relay.invalid".to_string(),
             auth_token: None,
+            verify_certificate: true,
         };
         let mut publisher =
             MediaPublisher::run(MoqtManager::new(Some(target)), vec!["ns".to_string()]);

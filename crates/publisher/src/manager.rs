@@ -55,6 +55,7 @@ const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub struct MoqtTarget {
     pub url: String,
     pub auth_token: Option<String>,
+    pub verify_certificate: bool,
 }
 
 #[derive(Clone)]
@@ -322,7 +323,7 @@ impl ConnectedPublisher {
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
             port: 0,
-            verify_certificate: false,
+            verify_certificate: target.verify_certificate,
             authorization_token: target.auth_token.clone(),
         })?;
         let connecting = endpoint
