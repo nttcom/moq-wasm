@@ -43,6 +43,17 @@ impl ParameterSetTracker {
         Self::default()
     }
 
+    /// Starts with parameter sets announced out of band, so a keyframe that
+    /// arrives without them is still completed and the configuration is not
+    /// reported again unless the in-band sets differ.
+    pub fn from_record(record: &AvcDecoderConfigurationRecord) -> Self {
+        Self {
+            sps: record.sps.clone(),
+            pps: record.pps.clone(),
+            config: Some(record.clone()),
+        }
+    }
+
     pub fn track(&mut self, annexb: &[u8]) -> Result<Option<TrackedAccessUnit>> {
         let nals: Vec<&[u8]> = nal_units(annexb).collect();
         if nals.is_empty() {
@@ -130,6 +141,22 @@ mod tests {
         // Assert
         assert_eq!(unit.data, keyframe_annexb());
         assert!(unit.is_keyframe);
+    }
+
+    #[test]
+    fn completes_bare_keyframes_from_an_out_of_band_record() {
+        // Arrange
+        let mut tracker = ParameterSetTracker::from_record(&fixture_record());
+
+        // Act
+        let unit = tracker
+            .track(&with_start_codes([&IDR_SLICE[..]]))
+            .unwrap()
+            .unwrap();
+
+        // Assert: the record is already known, so it is not reported again
+        assert_eq!(unit.data, keyframe_annexb());
+        assert!(unit.config_changed.is_none());
     }
 
     #[test]
