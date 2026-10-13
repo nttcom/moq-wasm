@@ -192,18 +192,6 @@ function setupUrlPresets(): void {
   setUpRelayUrlControls(element('moqt-url'), element('urlPresets'))
 }
 
-function openSettingsModal(): void {
-  const modal = element('settings-modal')
-  modal.classList.add('open')
-  modal.setAttribute('aria-hidden', 'false')
-}
-
-function closeSettingsModal(): void {
-  const modal = element('settings-modal')
-  modal.classList.remove('open')
-  modal.setAttribute('aria-hidden', 'true')
-}
-
 async function connect(): Promise<void> {
   const url = inputValue('moqt-url')
   const publishNamespace = parseNamespace(inputValue('publish-namespace'))
@@ -268,17 +256,11 @@ element('disconnect-btn').addEventListener('click', () => {
   })
 })
 
-const settingsModal = element('settings-modal')
-element('settings-btn').addEventListener('click', openSettingsModal)
-element('settings-close-btn').addEventListener('click', closeSettingsModal)
+const settingsModal = element<HTMLDialogElement>('settings-modal')
+element('settings-btn').addEventListener('click', () => settingsModal.showModal())
 settingsModal.addEventListener('click', (event) => {
   if (event.target === settingsModal) {
-    closeSettingsModal()
-  }
-})
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && settingsModal.classList.contains('open')) {
-    closeSettingsModal()
+    settingsModal.close()
   }
 })
 
