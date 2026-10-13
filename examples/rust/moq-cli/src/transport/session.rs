@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -9,11 +9,25 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
 };
 use tracing::info;
+use url::Url;
 
 use super::{auth_token_file::read_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
 use crate::cli::RelayArgs;
 
 const SUBSCRIBER_PRIORITY: u8 = 128;
+/// Grace for the relay named by GOAWAY to accept the session and the
+/// requests before a move is given up.
+pub const MOVE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Points `relay` at the New Session URI of a GOAWAY; an empty URI keeps the
+/// current URL (draft-14 §9.4).
+pub fn follow_go_away(relay: &mut RelayArgs, new_session_uri: &str) -> Result<()> {
+    if !new_session_uri.is_empty() {
+        relay.url =
+            Url::parse(new_session_uri).context("GOAWAY names an invalid New Session URI")?;
+    }
+    Ok(())
+}
 
 pub struct RelayConnection {
     pub session: Arc<Session>,
