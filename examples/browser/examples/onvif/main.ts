@@ -75,14 +75,6 @@ function updateCommandAlias(alias: bigint | null): void {
   element('command-alias').textContent = alias === null ? '-' : alias.toString()
 }
 
-function parseBigInt(value: string): bigint {
-  try {
-    return BigInt(value)
-  } catch {
-    return 0n
-  }
-}
-
 function inputValue(id: string): string {
   return element<HTMLInputElement>(id).value
 }
@@ -185,7 +177,7 @@ async function connect(): Promise<void> {
   const publishNamespaceLabel = publishNamespace.join('/')
   const commandTrack = inputValue('command-track')
   const authInfo = inputValue('auth-info')
-  const maxRequestId = parseBigInt(inputValue('max-subscribe-id'))
+  const maxRequestId = BigInt(inputValue('max-subscribe-id'))
 
   if (!publishNamespace.length || !subscribeNamespace.length) {
     updateStatus('namespace required', false)
