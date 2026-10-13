@@ -1,4 +1,5 @@
 import { parse_msf_catalog_json } from '../../../../pkg/moqt'
+import { buildMsfCatalogJson, type MsfTrack } from '../../../../lib/msf/catalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
@@ -193,33 +194,6 @@ const CHAT_TRACK_NAME = 'chat'
 const CHAT_TRACK_LABEL = 'Chat'
 const CHAT_EVENT_TYPE = 'com.skyway.chat.v1'
 
-type MsfTrack = {
-  namespace?: string
-  name: string
-  packaging: string
-  eventType?: string
-  role?: string
-  isLive?: boolean
-  label?: string
-  codec?: string
-  mimeType?: string
-  depends?: string[]
-  bitrate?: number
-  width?: number
-  height?: number
-  framerate?: number
-  hardwareAcceleration?: HardwareAcceleration
-  samplerate?: number
-  channelConfig?: string
-}
-
-type MsfCatalog = {
-  version?: number
-  generatedAt?: number
-  isComplete?: boolean
-  tracks?: MsfTrack[]
-}
-
 export function getDefaultMeetingCatalogTracks(): MeetingCatalogTrack[] {
   return DEFAULT_MEETING_CATALOG_TRACKS.map((track) => ({ ...track }))
 }
@@ -250,13 +224,10 @@ export function buildMeetingCatalogJson(trackNamespace: string[], tracks: Meetin
     width: track.width,
     height: track.height,
     framerate: track.framerate,
-    hardwareAcceleration: track.hardwareAcceleration,
     samplerate: track.samplerate,
     channelConfig: track.channelConfig
   }))
-  const existingNames = new Set(catalogTracks.map((track) => track.name))
-  if (!existingNames.has(CHAT_TRACK_NAME)) {
-    const depends = tracks.map((track) => track.name)
+  if (!catalogTracks.some((track) => track.name === CHAT_TRACK_NAME)) {
     catalogTracks.push({
       namespace,
       name: CHAT_TRACK_NAME,
@@ -266,55 +237,36 @@ export function buildMeetingCatalogJson(trackNamespace: string[], tracks: Meetin
       label: CHAT_TRACK_LABEL,
       mimeType: 'application/json',
       eventType: CHAT_EVENT_TYPE,
-      depends
+      depends: tracks.map((track) => track.name)
     })
   }
-  const catalog: MsfCatalog = {
-    version: 1,
-    generatedAt: Date.now(),
-    tracks: catalogTracks
-  }
-  return JSON.stringify(catalog)
+  return buildMsfCatalogJson(catalogTracks)
 }
 
 export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
-  const parsed = parse_msf_catalog_json(payload)
-  return extractMeetingCatalogTracks(parsed)
-}
-
-export function extractMeetingCatalogTracks(catalog: unknown): MeetingCatalogTrack[] {
-  const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
-    ? ((catalog as { tracks: unknown[] }).tracks ?? [])
-    : []
-  return tracks.reduce<MeetingCatalogTrack[]>((acc, rawTrack) => {
-    if (!isObject(rawTrack)) {
-      return acc
-    }
-    const name = asString(rawTrack.name)
-    if (!name) {
-      return acc
-    }
-    const role = resolveRole(rawTrack, name)
+  const catalog: { tracks?: MsfTrack[] } = parse_msf_catalog_json(payload)
+  return (catalog.tracks ?? []).flatMap((track) => {
+    const role = resolveRole(track)
     if (!role) {
-      return acc
+      return []
     }
-    acc.push({
-      name,
-      label: asString(rawTrack.label) ?? name,
-      role,
-      codec: asString(rawTrack.codec),
-      bitrate: asNumber(rawTrack.bitrate),
-      width: asNumber(rawTrack.width),
-      height: asNumber(rawTrack.height),
-      framerate: asNumber(rawTrack.framerate),
-      hardwareAcceleration: asHardwareAcceleration(rawTrack.hardwareAcceleration),
-      samplerate: asNumber(rawTrack.samplerate),
-      channelConfig: asString(rawTrack.channelConfig),
-      initData: asString(rawTrack.initData),
-      isLive: asBoolean(rawTrack.isLive)
-    })
-    return acc
-  }, [])
+    return [
+      {
+        name: track.name,
+        label: track.label ?? track.name,
+        role,
+        codec: track.codec,
+        bitrate: track.bitrate,
+        width: track.width,
+        height: track.height,
+        framerate: track.framerate,
+        samplerate: track.samplerate,
+        channelConfig: track.channelConfig,
+        initData: track.initData,
+        isLive: track.isLive
+      }
+    ]
+  })
 }
 
 export function toEditableCatalogTracks(tracks: MeetingCatalogTrack[]): EditableMeetingCatalogTrack[] {
@@ -428,8 +380,7 @@ function sanitizeTrack(track: EditableMeetingCatalogTrack): MeetingCatalogTrack 
   }
 }
 
-function resolveRole(track: Record<string, unknown>, name: string): CatalogTrackRole | null {
-  const role = asString(track.role)
+function resolveRole({ role, name }: MsfTrack): CatalogTrackRole | null {
   if (role === 'chat' || name === CHAT_TRACK_NAME) {
     return 'chat'
   }
@@ -443,22 +394,6 @@ function resolveRole(track: Record<string, unknown>, name: string): CatalogTrack
     return 'audio'
   }
   return null
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
 }
 
 function asHardwareAcceleration(value: unknown): HardwareAcceleration | undefined {
