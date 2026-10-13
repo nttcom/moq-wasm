@@ -1,6 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../../media/catalogPicker'
+import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 
 const moqtClient = new MoqtClientWrapper()
 const form = element<HTMLFormElement>('form')
@@ -29,8 +30,6 @@ const moqObjectVisualization: Record<'video' | 'audio', MoqObjectVisualizationSt
   video: { groupId: null, objectId: null },
   audio: { groupId: null, objectId: null }
 }
-
-let isMoqVisualizerVisible = false
 
 const PLAYBACK_BUFFER_THRESHOLD = 1.0 // バッファがこの秒数を超えたら再生開始（1フラグメント分）
 const SOURCE_BUFFER_VISUALIZER_INTERVAL_MS = 250
@@ -309,25 +308,9 @@ const startSourceBufferVisualizationLoop = (): void => {
 }
 
 const resetSourceBufferVisualization = (): void => {
-  const ids = [
-    'sb-video-updating',
-    'sb-audio-updating',
-    'sb-video-queue',
-    'sb-audio-queue',
-    'sb-video-ranges',
-    'sb-audio-ranges',
-    'sb-video-ahead',
-    'sb-audio-ahead',
-    'sb-video-end',
-    'sb-audio-end',
-    'sb-video-speed',
-    'sb-audio-speed',
-    'sb-video-time',
-    'sb-audio-time'
-  ]
-  for (const id of ids) {
-    setElementText(id, '-')
-  }
+  document.querySelectorAll('[id^="sb-"]').forEach((cell) => {
+    cell.textContent = '-'
+  })
   resetSourceBufferSpeedState()
   lastLiveEdgeCatchupAtMs = 0
 }
@@ -341,51 +324,17 @@ const updateOverheadDisplay = (
   mdat: number,
   overhead: string
 ): void => {
-  const setText = (id: string, text: string) => {
-    const el = document.getElementById(id)
-    if (el) {
-      el.textContent = text
-    }
-  }
-  setText(`oh-${type}-init`, `${init} bytes`)
-  setText(`oh-${type}-moof`, `${moof} bytes`)
-  setText(`oh-${type}-mdat`, `${mdat} bytes`)
-  setText(`oh-${type}-pct`, `${overhead}%`)
+  setElementText(`oh-${type}-init`, `${init} bytes`)
+  setElementText(`oh-${type}-moof`, `${moof} bytes`)
+  setElementText(`oh-${type}-mdat`, `${mdat} bytes`)
+  setElementText(`oh-${type}-pct`, `${overhead}%`)
 }
 
 const setMoqObjectVisualizationState = (type: 'video' | 'audio', groupId: bigint, objectId: bigint): void => {
   moqObjectVisualization[type] = { groupId, objectId }
-  if (isMoqVisualizerVisible) {
+  if (isMoqVisualizerVisible()) {
     renderMoqObjectVisualization()
   }
-}
-
-const getVisualizerEyeSvg = (active: boolean): string => {
-  if (active) {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 3l18 18"></path>
-        <path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6"></path>
-        <path d="M9.9 5.3A11.6 11.6 0 0 1 12 5c6.5 0 10 7 10 7a15 15 0 0 1-4 4.9"></path>
-        <path d="M6.6 6.6A15.1 15.1 0 0 0 2 12s3.5 7 10 7a11.3 11.3 0 0 0 5.1-1.2"></path>
-      </svg>
-    `
-  }
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
-      <circle cx="12" cy="12" r="3"></circle>
-    </svg>
-  `
-}
-
-const syncMoqVisualizerButton = (toggleBtn: HTMLButtonElement): void => {
-  toggleBtn.innerHTML = getVisualizerEyeSvg(isMoqVisualizerVisible)
-  toggleBtn.classList.toggle('active', isMoqVisualizerVisible)
-  toggleBtn.setAttribute('aria-pressed', isMoqVisualizerVisible ? 'true' : 'false')
-  const label = isMoqVisualizerVisible ? 'MoQ受信可視化を非表示' : 'MoQ受信可視化を表示'
-  toggleBtn.setAttribute('aria-label', label)
-  toggleBtn.setAttribute('title', label)
 }
 
 const resetMoqObjectVisualizationState = (): void => {
@@ -394,38 +343,22 @@ const resetMoqObjectVisualizationState = (): void => {
 }
 
 const renderMoqObjectVisualization = (): void => {
-  const setText = (id: string, text: string) => {
-    const el = document.getElementById(id)
-    if (el) {
-      el.textContent = text
-    }
+  for (const kind of ['video', 'audio'] as const) {
+    const { groupId, objectId } = moqObjectVisualization[kind]
+    setElementText(`viz-${kind}-group-id`, groupId?.toString() ?? '-')
+    setElementText(`viz-${kind}-object-id`, objectId?.toString() ?? '-')
   }
-  const formatBigInt = (value: bigint | null): string => (value === null ? '-' : value.toString())
-
-  setText('viz-video-group-id', formatBigInt(moqObjectVisualization.video.groupId))
-  setText('viz-video-object-id', formatBigInt(moqObjectVisualization.video.objectId))
-  setText('viz-audio-group-id', formatBigInt(moqObjectVisualization.audio.groupId))
-  setText('viz-audio-object-id', formatBigInt(moqObjectVisualization.audio.objectId))
 }
 
-const setupMoqObjectVisualizationButton = (): void => {
-  const toggleBtn = document.getElementById('toggleMoqVisualizerBtn') as HTMLButtonElement | null
-  const panel = document.getElementById('moqVisualizerPanel')
-  if (!toggleBtn || !panel) {
-    return
+const isMoqVisualizerVisible = setUpVisualizerToggle(
+  'toggleMoqVisualizerBtn',
+  'moqVisualizerPanel',
+  'MoQ受信可視化',
+  () => {
+    renderMoqObjectVisualization()
+    renderSourceBufferVisualization()
   }
-  syncMoqVisualizerButton(toggleBtn)
-
-  toggleBtn.addEventListener('click', () => {
-    isMoqVisualizerVisible = !isMoqVisualizerVisible
-    panel.classList.toggle('is-visible', isMoqVisualizerVisible)
-    syncMoqVisualizerButton(toggleBtn)
-    if (isMoqVisualizerVisible) {
-      renderMoqObjectVisualization()
-      renderSourceBufferVisualization()
-    }
-  })
-}
+)
 
 // --- MSE helpers ---
 
@@ -693,7 +626,7 @@ const setupCloseButtonHandler = (): void => {
     stopSourceBufferVisualizationLoop()
     resetSourceBufferVisualization()
     resetMoqObjectVisualizationState()
-    if (isMoqVisualizerVisible) {
+    if (isMoqVisualizerVisible()) {
       renderMoqObjectVisualization()
     }
     catalogPicker.reset()
@@ -704,7 +637,6 @@ const setupCloseButtonHandler = (): void => {
 const setupButtonHandlers = (): void => {
   sendSetupButtonClickHandler()
   sendSubscribeButtonClickHandler()
-  setupMoqObjectVisualizationButton()
   setupLiveCatchupModeButton()
   setupCloseButtonHandler()
   setupLiveEdgeCatchupHandler()

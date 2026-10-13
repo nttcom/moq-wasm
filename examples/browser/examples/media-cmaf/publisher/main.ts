@@ -12,6 +12,7 @@ import {
   MediaStreamAudioTrackSource
 } from 'mediabunny'
 import { getTrackAliases, serveSubscribes } from '../../media/serveSubscribes'
+import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 import { element, parseTrackNamespace, initializeMediaExamplePage } from '../../../utils/page'
 
 let mediaStream: MediaStream | null = null
@@ -30,8 +31,6 @@ const moqSendVisualization: Record<'video' | 'audio', MoqSendVisualizationState>
   video: { groupId: null, objectId: null },
   audio: { groupId: null, objectId: null }
 }
-
-let isMoqSendVisualizerVisible = false
 
 const setUpStartGetUserMediaButton = () => {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
@@ -62,7 +61,7 @@ const sendMoqObject = async (
 
 const setMoqSendVisualizationState = (type: 'video' | 'audio', groupId: bigint, objectId: bigint): void => {
   moqSendVisualization[type] = { groupId, objectId }
-  if (isMoqSendVisualizerVisible) {
+  if (isMoqSendVisualizerVisible()) {
     renderMoqSendVisualization()
   }
 }
@@ -73,63 +72,19 @@ const resetMoqSendVisualizationState = (): void => {
 }
 
 const renderMoqSendVisualization = (): void => {
-  const setText = (id: string, text: string) => {
-    const el = document.getElementById(id)
-    if (el) {
-      el.textContent = text
-    }
+  for (const kind of ['video', 'audio'] as const) {
+    const { groupId, objectId } = moqSendVisualization[kind]
+    element(`send-viz-${kind}-group-id`).textContent = groupId?.toString() ?? '-'
+    element(`send-viz-${kind}-object-id`).textContent = objectId?.toString() ?? '-'
   }
-  const formatBigInt = (value: bigint | null): string => (value === null ? '-' : value.toString())
-  setText('send-viz-video-group-id', formatBigInt(moqSendVisualization.video.groupId))
-  setText('send-viz-video-object-id', formatBigInt(moqSendVisualization.video.objectId))
-  setText('send-viz-audio-group-id', formatBigInt(moqSendVisualization.audio.groupId))
-  setText('send-viz-audio-object-id', formatBigInt(moqSendVisualization.audio.objectId))
 }
 
-const getVisualizerEyeSvg = (active: boolean): string => {
-  if (active) {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 3l18 18"></path>
-        <path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6"></path>
-        <path d="M9.9 5.3A11.6 11.6 0 0 1 12 5c6.5 0 10 7 10 7a15 15 0 0 1-4 4.9"></path>
-        <path d="M6.6 6.6A15.1 15.1 0 0 0 2 12s3.5 7 10 7a11.3 11.3 0 0 0 5.1-1.2"></path>
-      </svg>
-    `
-  }
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
-      <circle cx="12" cy="12" r="3"></circle>
-    </svg>
-  `
-}
-
-const syncMoqSendVisualizerButton = (toggleBtn: HTMLButtonElement): void => {
-  toggleBtn.innerHTML = getVisualizerEyeSvg(isMoqSendVisualizerVisible)
-  toggleBtn.classList.toggle('active', isMoqSendVisualizerVisible)
-  toggleBtn.setAttribute('aria-pressed', isMoqSendVisualizerVisible ? 'true' : 'false')
-  const label = isMoqSendVisualizerVisible ? 'MoQ送信可視化を非表示' : 'MoQ送信可視化を表示'
-  toggleBtn.setAttribute('aria-label', label)
-  toggleBtn.setAttribute('title', label)
-}
-
-const setupMoqSendVisualizationButton = (): void => {
-  const toggleBtn = document.getElementById('toggleMoqSendVisualizerBtn') as HTMLButtonElement | null
-  const panel = document.getElementById('moqSendVisualizerPanel')
-  if (!toggleBtn || !panel) {
-    return
-  }
-  syncMoqSendVisualizerButton(toggleBtn)
-  toggleBtn.addEventListener('click', () => {
-    isMoqSendVisualizerVisible = !isMoqSendVisualizerVisible
-    panel.classList.toggle('is-visible', isMoqSendVisualizerVisible)
-    syncMoqSendVisualizerButton(toggleBtn)
-    if (isMoqSendVisualizerVisible) {
-      renderMoqSendVisualization()
-    }
-  })
-}
+const isMoqSendVisualizerVisible = setUpVisualizerToggle(
+  'toggleMoqSendVisualizerBtn',
+  'moqSendVisualizerPanel',
+  'MoQ送信可視化',
+  renderMoqSendVisualization
+)
 
 const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
@@ -310,7 +265,7 @@ const setupCloseButtonHandler = (): void => {
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
     resetMoqSendVisualizationState()
-    if (isMoqSendVisualizerVisible) {
+    if (isMoqSendVisualizerVisible()) {
       renderMoqSendVisualization()
     }
   })
@@ -318,7 +273,6 @@ const setupCloseButtonHandler = (): void => {
 
 initializeMediaExamplePage('publish-track-namespace')
 setUpStartGetUserMediaButton()
-setupMoqSendVisualizationButton()
 setupClientCallbacks()
 setupCloseButtonHandler()
 
@@ -328,7 +282,7 @@ connectBtn.addEventListener('click', async () => {
 
   await moqtClient.connect(url, { sendSetup: false })
   resetMoqSendVisualizationState()
-  if (isMoqSendVisualizerVisible) {
+  if (isMoqSendVisualizerVisible()) {
     renderMoqSendVisualization()
   }
 })
