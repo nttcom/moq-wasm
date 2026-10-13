@@ -6,11 +6,13 @@ import {
   type AudioStreamUpdateMode,
   type MeetingCatalogTrack,
   type CatalogTrackRole,
+  type CatalogSubscribeRole,
   type EditableMeetingCatalogTrack
 } from '../types/catalog'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import { parseAudioChannelCount } from '../../../../utils/media/audioChannelConfig'
+import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
 type E2ECameraSettings = {
   width: number
@@ -283,6 +285,15 @@ export function trackAudioEncoding(track: MeetingCatalogTrack, fallback: AudioEn
     bitrate: track.bitrate ?? fallback.bitrate,
     channels: parseAudioChannelCount(track.channelConfig) ?? fallback.channels
   }
+}
+
+export function catalogTracksForRole<T extends MeetingCatalogTrack>(tracks: T[], role: CatalogSubscribeRole): T[] {
+  if (role === 'audio' || role === 'chat') {
+    return tracks.filter((track) => track.role === role)
+  }
+  return tracks.filter(
+    (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (role === 'screenshare')
+  )
 }
 
 export function pickHighestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {

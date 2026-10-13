@@ -7,9 +7,16 @@ import { BarChart3, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOf
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
-import type { MeetingCatalogTrack, CatalogSubscribeRole, EditableMeetingCatalogTrack } from '../types/catalog'
-import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
-import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import {
+  CATALOG_SUBSCRIBE_ROLES,
+  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
+  DEFAULT_VIDEO_KEYFRAME_INTERVAL,
+  type CatalogSelections,
+  type CatalogSubscribeRole,
+  type EditableMeetingCatalogTrack,
+  type MeetingCatalogTrack
+} from '../types/catalog'
+import { catalogTracksForRole } from '../media/meetingCatalog'
 import { buildTrackActionKey } from '../utils/state/roomState'
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { SidebarStatsSample } from '../types/stats'
@@ -77,19 +84,13 @@ interface MemberGridProps {
   onUpdateCatalogTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   onRemoveCatalogTrack: (id: string) => void
   remoteCatalogTracks: Map<string, MeetingCatalogTrack[]>
-  remoteCatalogSelections: Map<string, { video?: string; screenshare?: string; audio?: string; chat?: string }>
+  remoteCatalogSelections: Map<string, CatalogSelections>
   catalogLoadingMemberIds: Set<string>
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribeVideoTrack: (memberId: string) => void
-  onSubscribeScreenshareTrack: (memberId: string) => void
-  onSubscribeAudioTrack: (memberId: string) => void
-  onSubscribeChatTrack: (memberId: string) => void
-  onUnsubscribeVideoTrack: (memberId: string) => void
-  onUnsubscribeScreenshareTrack: (memberId: string) => void
-  onUnsubscribeAudioTrack: (memberId: string) => void
-  onUnsubscribeChatTrack: (memberId: string) => void
+  onSubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
+  onUnsubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
   statsHistory: Map<string, SidebarStatsSample[]>
 }
 
@@ -137,14 +138,8 @@ export function MemberGrid({
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
   onSelectCatalogTrack,
-  onSubscribeVideoTrack,
-  onSubscribeScreenshareTrack,
-  onSubscribeAudioTrack,
-  onSubscribeChatTrack,
-  onUnsubscribeVideoTrack,
-  onUnsubscribeScreenshareTrack,
-  onUnsubscribeAudioTrack,
-  onUnsubscribeChatTrack,
+  onSubscribeTrack,
+  onUnsubscribeTrack,
   statsHistory
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
@@ -333,34 +328,15 @@ export function MemberGrid({
             secondaryPlaceholder="Awaiting screen share"
             details={
               <RemoteCatalogSubscribePanel
-                memberName={member.name}
+                member={member}
                 tracks={remoteCatalogTracks.get(member.id) ?? []}
                 selected={remoteCatalogSelections.get(member.id)}
                 isLoading={catalogLoadingMemberIds.has(member.id)}
                 isCatalogSubscribed={catalogSubscribedMemberIds.has(member.id)}
-                isVideoSubscribed={member.subscribedTracks.video.isSubscribed}
-                isVideoSubscribing={member.subscribedTracks.video.isSubscribing}
-                isVideoUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'video'))}
-                isScreenshareSubscribed={member.subscribedTracks.screenshare.isSubscribed}
-                isScreenshareSubscribing={member.subscribedTracks.screenshare.isSubscribing}
-                isScreenshareUnsubscribing={catalogUnsubscribingTrackKeys.has(
-                  buildTrackActionKey(member.id, 'screenshare')
-                )}
-                isAudioSubscribed={member.subscribedTracks.audio.isSubscribed}
-                isAudioSubscribing={member.subscribedTracks.audio.isSubscribing}
-                isAudioUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'audio'))}
-                isChatSubscribed={member.subscribedTracks.chat.isSubscribed}
-                isChatSubscribing={member.subscribedTracks.chat.isSubscribing}
-                isChatUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'chat'))}
+                unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
                 onSelectTrack={(role, trackName) => onSelectCatalogTrack(member.id, role, trackName)}
-                onSubscribeVideo={() => onSubscribeVideoTrack(member.id)}
-                onSubscribeScreenshare={() => onSubscribeScreenshareTrack(member.id)}
-                onSubscribeAudio={() => onSubscribeAudioTrack(member.id)}
-                onSubscribeChat={() => onSubscribeChatTrack(member.id)}
-                onUnsubscribeVideo={() => onUnsubscribeVideoTrack(member.id)}
-                onUnsubscribeScreenshare={() => onUnsubscribeScreenshareTrack(member.id)}
-                onUnsubscribeAudio={() => onUnsubscribeAudioTrack(member.id)}
-                onUnsubscribeChat={() => onUnsubscribeChatTrack(member.id)}
+                onSubscribe={(role) => onSubscribeTrack(member.id, role)}
+                onUnsubscribe={(role) => onUnsubscribeTrack(member.id, role)}
               />
             }
           />
@@ -574,9 +550,6 @@ function CatalogTrackEditor({
   onUpdateTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   onRemoveTrack: (id: string) => void
 }) {
-  const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
-  const screenshareTracks = tracks.filter((track) => track.role === 'video' && isScreenShareTrackName(track.name))
-  const audioTracks = tracks.filter((track) => track.role === 'audio')
   const [activeTab, setActiveTab] = useState<CatalogTabKey>('video')
   const [isAddingTrack, setIsAddingTrack] = useState(false)
   const [addTrackKind, setAddTrackKind] = useState<CatalogTabKey>('video')
@@ -596,19 +569,19 @@ function CatalogTrackEditor({
       key: 'video',
       title: 'Video',
       description: 'Camera tracks',
-      tracks: videoTracks
+      tracks: catalogTracksForRole(tracks, 'video')
     },
     {
       key: 'screenshare',
       title: 'Screenshare',
       description: 'Display capture tracks',
-      tracks: screenshareTracks
+      tracks: catalogTracksForRole(tracks, 'screenshare')
     },
     {
       key: 'audio',
       title: 'Audio',
       description: 'Microphone tracks',
-      tracks: audioTracks
+      tracks: catalogTracksForRole(tracks, 'audio')
     }
   ]
   const currentTab = tabItems.find((tab) => tab.key === activeTab) ?? tabItems[0]
@@ -1298,126 +1271,48 @@ function toPositiveInteger(value: unknown, fallback: number): number {
   return Math.floor(parsed)
 }
 
+const SUBSCRIBE_ROW_TITLES: Record<CatalogSubscribeRole, string> = {
+  video: 'Video Track',
+  screenshare: 'Screenshare Track',
+  audio: 'Audio Track',
+  chat: 'Chat Track'
+}
+
 function RemoteCatalogSubscribePanel({
-  memberName,
+  member,
   tracks,
   selected,
   isLoading,
   isCatalogSubscribed,
-  isVideoSubscribed,
-  isVideoSubscribing,
-  isVideoUnsubscribing,
-  isScreenshareSubscribed,
-  isScreenshareSubscribing,
-  isScreenshareUnsubscribing,
-  isAudioSubscribed,
-  isAudioSubscribing,
-  isAudioUnsubscribing,
-  isChatSubscribed,
-  isChatSubscribing,
-  isChatUnsubscribing,
+  unsubscribingTrackKeys,
   onSelectTrack,
-  onSubscribeVideo,
-  onSubscribeScreenshare,
-  onSubscribeAudio,
-  onSubscribeChat,
-  onUnsubscribeVideo,
-  onUnsubscribeScreenshare,
-  onUnsubscribeAudio,
-  onUnsubscribeChat
+  onSubscribe,
+  onUnsubscribe
 }: {
-  memberName: string
+  member: RemoteMember
   tracks: MeetingCatalogTrack[]
-  selected?: { video?: string; screenshare?: string; audio?: string; chat?: string }
+  selected?: CatalogSelections
   isLoading: boolean
   isCatalogSubscribed: boolean
-  isVideoSubscribed: boolean
-  isVideoSubscribing: boolean
-  isVideoUnsubscribing: boolean
-  isScreenshareSubscribed: boolean
-  isScreenshareSubscribing: boolean
-  isScreenshareUnsubscribing: boolean
-  isAudioSubscribed: boolean
-  isAudioSubscribing: boolean
-  isAudioUnsubscribing: boolean
-  isChatSubscribed: boolean
-  isChatSubscribing: boolean
-  isChatUnsubscribing: boolean
+  unsubscribingTrackKeys: Set<string>
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribeVideo: () => void
-  onSubscribeScreenshare: () => void
-  onSubscribeAudio: () => void
-  onSubscribeChat: () => void
-  onUnsubscribeVideo: () => void
-  onUnsubscribeScreenshare: () => void
-  onUnsubscribeAudio: () => void
-  onUnsubscribeChat: () => void
+  onSubscribe: (role: CatalogSubscribeRole) => void
+  onUnsubscribe: (role: CatalogSubscribeRole) => void
 }) {
-  const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
-  const screenshareTracks = tracks.filter((track) => track.role === 'video' && isScreenShareTrackName(track.name))
-  const audioTracks = tracks.filter((track) => track.role === 'audio')
-  const chatTracks = tracks.filter((track) => track.role === 'chat')
-  const selectedVideo = selected?.video ?? videoTracks[0]?.name ?? ''
-  const selectedScreenshare = selected?.screenshare ?? screenshareTracks[0]?.name ?? ''
-  const selectedAudio = selected?.audio ?? audioTracks[0]?.name ?? ''
-  const selectedChat = selected?.chat ?? chatTracks[0]?.name ?? ''
+  const memberName = member.name
   const hasCatalog = isCatalogSubscribed
-  const trackRows: {
-    role: CatalogSubscribeRole
-    title: string
-    tracks: MeetingCatalogTrack[]
-    selectedTrack: string
-    subscribed: boolean
-    subscribing: boolean
-    unsubscribing: boolean
-    onSubscribe: () => void
-    onUnsubscribe: () => void
-  }[] = [
-    {
-      role: 'video',
-      title: 'Video Track',
-      tracks: videoTracks,
-      selectedTrack: selectedVideo,
-      subscribed: isVideoSubscribed,
-      subscribing: isVideoSubscribing,
-      unsubscribing: isVideoUnsubscribing,
-      onSubscribe: onSubscribeVideo,
-      onUnsubscribe: onUnsubscribeVideo
-    },
-    {
-      role: 'screenshare',
-      title: 'Screenshare Track',
-      tracks: screenshareTracks,
-      selectedTrack: selectedScreenshare,
-      subscribed: isScreenshareSubscribed,
-      subscribing: isScreenshareSubscribing,
-      unsubscribing: isScreenshareUnsubscribing,
-      onSubscribe: onSubscribeScreenshare,
-      onUnsubscribe: onUnsubscribeScreenshare
-    },
-    {
-      role: 'audio',
-      title: 'Audio Track',
-      tracks: audioTracks,
-      selectedTrack: selectedAudio,
-      subscribed: isAudioSubscribed,
-      subscribing: isAudioSubscribing,
-      unsubscribing: isAudioUnsubscribing,
-      onSubscribe: onSubscribeAudio,
-      onUnsubscribe: onUnsubscribeAudio
-    },
-    {
-      role: 'chat',
-      title: 'Chat Track',
-      tracks: chatTracks,
-      selectedTrack: selectedChat,
-      subscribed: isChatSubscribed,
-      subscribing: isChatSubscribing,
-      unsubscribing: isChatUnsubscribing,
-      onSubscribe: onSubscribeChat,
-      onUnsubscribe: onUnsubscribeChat
+  const trackRows = CATALOG_SUBSCRIBE_ROLES.map((role) => {
+    const roleTracks = catalogTracksForRole(tracks, role)
+    const { isSubscribed, isSubscribing } = member.subscribedTracks[role]
+    return {
+      role,
+      tracks: roleTracks,
+      selectedTrack: selected?.[role] ?? roleTracks[0]?.name ?? '',
+      subscribed: isSubscribed,
+      subscribing: isSubscribing,
+      unsubscribing: unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role))
     }
-  ]
+  })
   const visibleTrackRows = trackRows.filter(
     (row) => row.tracks.length > 0 || row.subscribed || row.subscribing || row.unsubscribing
   )
@@ -1436,7 +1331,7 @@ function RemoteCatalogSubscribePanel({
         return (
           <TrackSubscribeRow
             key={row.role}
-            title={row.title}
+            title={SUBSCRIBE_ROW_TITLES[row.role]}
             tracks={row.tracks}
             selected={row.selectedTrack}
             disabled={!hasCatalog || row.subscribed || busy}
@@ -1450,8 +1345,8 @@ function RemoteCatalogSubscribePanel({
             canUnsubscribe={canUnsubscribe}
             busy={busy}
             onChange={(trackName) => onSelectTrack(row.role, trackName)}
-            onSubscribe={row.onSubscribe}
-            onUnsubscribe={row.onUnsubscribe}
+            onSubscribe={() => onSubscribe(row.role)}
+            onUnsubscribe={() => onUnsubscribe(row.role)}
           />
         )
       })}

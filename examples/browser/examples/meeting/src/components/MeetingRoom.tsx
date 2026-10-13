@@ -11,12 +11,12 @@ import { useMeetingMedia } from '../hooks/useMeetingMedia'
 import { useRetryBackoff } from '../hooks/useRetryBackoff'
 import {
   CATALOG_SUBSCRIBE_ROLES,
+  type CatalogSelections,
   type MeetingCatalogTrack,
   type CatalogSubscribeRole,
   type TrackMediaConfig
 } from '../types/catalog'
-import { pickHighestBitrateTrack } from '../media/meetingCatalog'
-import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { catalogTracksForRole, pickHighestBitrateTrack } from '../media/meetingCatalog'
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { RemotePlaybackStats } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
@@ -26,8 +26,6 @@ interface MeetingRoomProps {
   session: LocalSession
   onLeave: () => void
 }
-
-type CatalogSelections = Partial<Record<CatalogSubscribeRole, string>>
 
 type StatsSnapshot = {
   localMemberId: string
@@ -521,14 +519,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
             onSelectCatalogTrack={handleSelectCatalogTrack}
-            onSubscribeVideoTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'video')}
-            onSubscribeScreenshareTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'screenshare')}
-            onSubscribeAudioTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'audio')}
-            onSubscribeChatTrack={(memberId) => handleSubscribeCatalogTrack(memberId, 'chat')}
-            onUnsubscribeVideoTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'video')}
-            onUnsubscribeScreenshareTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'screenshare')}
-            onUnsubscribeAudioTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'audio')}
-            onUnsubscribeChatTrack={(memberId) => handleUnsubscribeCatalogTrack(memberId, 'chat')}
+            onSubscribeTrack={handleSubscribeCatalogTrack}
+            onUnsubscribeTrack={handleUnsubscribeCatalogTrack}
             statsHistory={statsHistory}
           />
         </main>
@@ -570,15 +562,6 @@ function appendStatsSample(
   return next.slice(next.length - SIDEBAR_STATS_HISTORY_LIMIT)
 }
 
-function getTracksForRole(tracks: MeetingCatalogTrack[], role: CatalogSubscribeRole): MeetingCatalogTrack[] {
-  if (role === 'audio' || role === 'chat') {
-    return tracks.filter((track) => track.role === role)
-  }
-  return tracks.filter(
-    (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (role === 'screenshare')
-  )
-}
-
 function updateMemberSubscriptionStateByRole(
   room: Room,
   memberId: string,
@@ -602,7 +585,7 @@ function ensureSelectedTrackName(
   tracks: MeetingCatalogTrack[],
   role: CatalogSubscribeRole
 ): string | undefined {
-  const roleTracks = getTracksForRole(tracks, role)
+  const roleTracks = catalogTracksForRole(tracks, role)
   if (selectedTrackName && roleTracks.some((track) => track.name === selectedTrackName)) {
     return selectedTrackName
   }
