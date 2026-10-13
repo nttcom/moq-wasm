@@ -621,7 +621,7 @@ export class MediaPublisher {
         return
       }
 
-      this.handleAudioTrackChunk(context, data.chunk, data.metadata, data.captureTimestampMicros)
+      this.handleAudioTrackChunk(context, data.chunk, data.captureTimestampMicros)
     }
 
     context.worker.postMessage({ type: 'config', config: this.buildAudioEncoderConfig(config) })
@@ -828,7 +828,6 @@ export class MediaPublisher {
   private handleAudioTrackChunk(
     context: AudioTrackEncoderContext,
     chunk: EncodedAudioChunk,
-    metadata: EncodedAudioChunkMetadata | undefined,
     captureTimestampMicros?: number
   ): void {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
