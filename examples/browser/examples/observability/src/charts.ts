@@ -49,19 +49,17 @@ function trackLines(topology: Topology, relayId: string, publisherSessionId: Id,
         track.publisher_session_id === publisherSessionId &&
         (!visible.trackKeys || visible.trackKeys.has(trackKeyOf(track.namespace, track.name)))
     )
-    .map(
-      (track): LineRef => ({
-        label: trackLabel(track.namespace, track.name),
-        relayId,
-        target: {
-          target: 'track',
-          publisher_session_id: publisherSessionId,
-          namespace: track.namespace,
-          name: track.name
-        },
-        metric
-      })
-    )
+    .map((track): LineRef => ({
+      label: trackLabel(track.namespace, track.name),
+      relayId,
+      target: {
+        target: 'track',
+        publisher_session_id: publisherSessionId,
+        namespace: track.namespace,
+        name: track.name
+      },
+      metric
+    }))
 }
 
 function relayCharts(relayId: string): ChartSpec[] {
@@ -194,18 +192,16 @@ export function chartSpecs(topology: Topology, selection: Selection, visible: Vi
         subscription.subscriber_session_id === session.session_id &&
         carriedTracks.has(trackKeyOf(subscription.namespace, subscription.name))
     )
-    .map(
-      (subscription): LineRef => ({
-        label: trackLabel(subscription.namespace, subscription.name),
-        relayId,
-        target: {
-          target: 'subscription',
-          subscriber_session_id: subscription.subscriber_session_id,
-          request_id: subscription.request_id
-        },
-        metric: 'sent_mbps'
-      })
-    )
+    .map((subscription): LineRef => ({
+      label: trackLabel(subscription.namespace, subscription.name),
+      relayId,
+      target: {
+        target: 'subscription',
+        subscriber_session_id: subscription.subscriber_session_id,
+        request_id: subscription.request_id
+      },
+      metric: 'sent_mbps'
+    }))
   return present([
     bySender ? chart('Bitrate', 'Mbps', relayedSubscriptions) : null,
     ...sessionCharts(topology, relayId, session.session_id, visible, [], {
