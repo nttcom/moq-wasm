@@ -313,7 +313,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
           if (data.type !== 'chunk') {
             return
           }
-          const { chunk, metadata, captureTimestampMicros } = data
+          const { chunk, captureTimestampMicros } = data
           const form = getFormElement()
           const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
           const trackAliases = getAudioTrackAliases(client, trackNamespace, context.trackName)
@@ -326,7 +326,6 @@ function sendSubgroupObjectButtonClickHandler(): void {
           }
           await sendAudioChunkViaMoqt({
             chunk,
-            metadata,
             captureTimestampMicros,
             trackAliases,
             client,

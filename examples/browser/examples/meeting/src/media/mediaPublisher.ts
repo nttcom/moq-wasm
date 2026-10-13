@@ -975,7 +975,6 @@ export class MediaPublisher {
         }
         await sendAudioChunkViaMoqt({
           chunk,
-          metadata,
           captureTimestampMicros,
           trackAliases: aliases,
           client,

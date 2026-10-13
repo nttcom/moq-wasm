@@ -5,7 +5,6 @@ import { monotonicUnixMicros } from './clock'
 
 export interface AudioChunkSendOptions {
   chunk: EncodedAudioChunk
-  metadata: EncodedAudioChunkMetadata | undefined
   captureTimestampMicros?: number
   trackAliases: bigint[]
   client: MOQTClient
@@ -14,7 +13,6 @@ export interface AudioChunkSendOptions {
 
 export async function sendAudioChunkViaMoqt({
   chunk,
-  metadata,
   captureTimestampMicros,
   trackAliases,
   client,
@@ -24,20 +22,11 @@ export async function sendAudioChunkViaMoqt({
     return
   }
 
-  if (transportState.audio.groupId < 0n) {
-    transportState.audio.advanceGroup()
-  }
-
-  const subgroupId = 0
-  transportState.audio.ensureSubgroup(subgroupId)
-  if (transportState.audio.groupId < 0n) {
-    transportState.audio.advanceGroup()
-  }
-
+  const audio = transportState.audio
   for (const alias of trackAliases) {
-    if (!transportState.audio.hasHeaderSent(alias, subgroupId)) {
-      await client.sendSubgroupHeader(alias, transportState.audio.groupId, BigInt(subgroupId), 0)
-      transportState.audio.markHeaderSent(alias, subgroupId)
+    if (!audio.hasHeaderSent(alias, 0)) {
+      await client.sendSubgroupHeader(alias, audio.groupId, 0n, 0)
+      audio.markHeaderSent(alias, 0)
     }
   }
 
@@ -52,16 +41,8 @@ export async function sendAudioChunkViaMoqt({
   })
 
   for (const alias of trackAliases) {
-    await client.sendSubgroupObject(
-      alias,
-      transportState.audio.groupId,
-      BigInt(subgroupId),
-      transportState.audio.nextObjectId,
-      undefined,
-      payload,
-      locHeader
-    )
+    await client.sendSubgroupObject(alias, audio.groupId, 0n, audio.nextObjectId, undefined, payload, locHeader)
   }
 
-  transportState.audio.nextObjectId += 1n
+  audio.nextObjectId += 1n
 }
