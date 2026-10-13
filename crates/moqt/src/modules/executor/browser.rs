@@ -4,17 +4,17 @@ use futures::future::{AbortHandle, Abortable};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
-pub(crate) struct JoinHandle {
+pub struct JoinHandle {
     abort_handle: AbortHandle,
 }
 
 impl JoinHandle {
-    pub(crate) fn abort(&self) {
+    pub fn abort(&self) {
         self.abort_handle.abort();
     }
 }
 
-pub(crate) fn spawn<F>(_name: &str, future: F) -> JoinHandle
+pub fn spawn<F>(_name: &str, future: F) -> JoinHandle
 where
     F: Future<Output = ()> + 'static,
 {
@@ -45,7 +45,7 @@ pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<
 }
 
 /// Monotonic time since an arbitrary origin; only differences are meaningful.
-pub(crate) fn now() -> Duration {
+pub fn now() -> Duration {
     let global = js_sys::global();
     let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance"))
         .expect("performance is defined in every browser global scope");
@@ -58,6 +58,11 @@ pub(crate) fn now() -> Duration {
         .as_f64()
         .expect("performance.now returns a number");
     Duration::from_secs_f64(millis / 1_000.0)
+}
+
+/// The wall clock as the time since the Unix epoch.
+pub fn system_time() -> Duration {
+    Duration::from_secs_f64(js_sys::Date::now() / 1_000.0)
 }
 
 async fn sleep(duration: Duration) {

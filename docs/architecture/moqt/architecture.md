@@ -40,6 +40,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, handlers |
   | `moqt::object` | Object model (`Location`, `GroupOrder`, `ExtensionHeaders`, subgroup objects) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
   | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
+  | `moqt::executor` | `spawn` / `JoinHandle`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
 
   Implementation files under `modules/` are not arranged by these modules;
   each public module only re-exports.
@@ -376,7 +377,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   through its idle timeout.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
   yields, bounds waits and reads the clock only through `modules/executor`
-  (`spawn`, `try_spawn`, `yield_now`, `timeout`, `now`); `tokio::sync`
+  (`spawn`, `try_spawn`, `yield_now`, `timeout`, `now`, `system_time`); `tokio::sync`
   channels and locks are used directly. `modules/transport` is the only other
   place that touches tokio I/O. `executor/native.rs` is the tokio
   implementation (`now` is the elapsed time since a process-wide `Instant`),

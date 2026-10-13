@@ -1,22 +1,23 @@
 use std::{
     future::Future,
     sync::OnceLock,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 static START: OnceLock<Instant> = OnceLock::new();
 
-pub(crate) struct JoinHandle {
+pub struct JoinHandle {
     inner: tokio::task::JoinHandle<()>,
 }
 
 impl JoinHandle {
-    pub(crate) fn abort(&self) {
+    pub fn abort(&self) {
         self.inner.abort();
     }
 }
 
-pub(crate) fn spawn<F>(name: &str, future: F) -> JoinHandle
+/// Panics outside of a tokio runtime.
+pub fn spawn<F>(name: &str, future: F) -> JoinHandle
 where
     F: Future<Output = ()> + Send + 'static,
 {
@@ -52,6 +53,13 @@ pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<
 }
 
 /// Monotonic time since an arbitrary origin; only differences are meaningful.
-pub(crate) fn now() -> Duration {
+pub fn now() -> Duration {
     START.get_or_init(Instant::now).elapsed()
+}
+
+/// The wall clock as the time since the Unix epoch.
+pub fn system_time() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
 }
