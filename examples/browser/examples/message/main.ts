@@ -9,7 +9,7 @@ import {
   SubgroupObjectMessage,
   SubscribeOkMessage
 } from '../../pkg/moqt'
-import { GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
+import { FilterType, GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { configureRelayUrlControls } from '../../utils/relayPresets'
 
 type HTMLFormControls = HTMLFormElement & {
@@ -545,7 +545,7 @@ function setupActionButtons(): void {
     const authInfo = getField(form, 'auth-info').value
     const subscriberPriority = Number(getField(form, 'subscriber-priority').value)
     const groupOrder = Number(getRadioValue(form, 'group-order')) as GroupOrder
-    const filterType = Number(getRadioValue(form, 'filter-type'))
+    const filterType = Number(getRadioValue(form, 'filter-type')) as FilterType
     const startGroup = BigInt(getField(form, 'start-group').value)
     const startObject = BigInt(getField(form, 'start-object').value)
     const endGroup = BigInt(getField(form, 'end-group').value)

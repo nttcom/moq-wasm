@@ -4,7 +4,7 @@ import {
   RequestErrorMessage,
   SubscribeOkMessage
 } from '../../../../pkg/moqt'
-import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { FilterType, MoqtClientWrapper } from '@moqt/moqtClient'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
@@ -275,7 +275,7 @@ export class LocalSession {
       this.client
         // Largest Object (0x2) filter: receive catalog updates after largest_at_subscribe.
         // The current catalog is backfilled via Joining Fetch below.
-        .subscribe(trackNamespace, 'catalog', authInfo, { filterType: 2 })
+        .subscribe(trackNamespace, 'catalog', authInfo, { filterType: FilterType.LargestObject })
         .then(async ({ requestId: catalogRequestId, subscribeOk }) => {
           const trackAlias = subscribeOk.trackAlias
           this.subscribeTrackAliases.set(catalogRequestId, trackAlias)
