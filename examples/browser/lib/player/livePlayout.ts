@@ -1,6 +1,6 @@
 import { AudioPlayout } from './audioPlayout'
 import { type BufferPolicy, JitterBuffer } from './jitterBuffer'
-import { PlayoutClock, type PlayoutOrigin } from './playoutClock'
+import { PlayoutClock, syncOffsetMs, type PlayoutOrigin } from './playoutClock'
 import { VideoPlayout } from './videoPlayout'
 
 export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 200, maximumMs: Number.POSITIVE_INFINITY }
@@ -200,13 +200,7 @@ export class LivePlayout {
   /// How far the picture on screen is ahead of the sound, from the capture
   /// timestamps each was presented at.
   syncOffsetMs(): number | undefined {
-    const nowMs = performance.now()
-    const video = this.video.positionMicrosAt(nowMs)
-    const audio = this.audio.positionMicrosAt(nowMs)
-    if (video === undefined || audio === undefined) {
-      return undefined
-    }
-    return (video - audio) / MICROS_PER_MILLI
+    return syncOffsetMs(this.video, this.audio)
   }
 
   /// The relay sends the groups of a fresh subscription on separate streams,

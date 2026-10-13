@@ -6,12 +6,13 @@ import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../utils/media/audioTransport'
-import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
 import { MEDIA_AUDIO_PROFILES, buildMediaCatalogJson, getMediaVideoProfiles } from '../catalog'
 import { getMediaVideoEncodingOverrides } from '../common'
 import { getErrorMessage, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
 
+/// A keyframe every 2 s at 30 fps.
+const KEYFRAME_INTERVAL = 60
 let mediaStream: MediaStream | null = null
 const ENABLE_AUDIO_PUBLISH = false
 const moqtClient = new MoqtClientWrapper()
@@ -313,7 +314,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
           if (data.type !== 'chunk') {
             return
           }
-          const { chunk, metadata, captureTimestampMicros } = data
+          const { chunk, captureTimestampMicros } = data
           const form = getFormElement()
           const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
           const trackAliases = getAudioTrackAliases(client, trackNamespace, context.trackName)
@@ -326,7 +327,6 @@ function sendSubgroupObjectButtonClickHandler(): void {
           }
           await sendAudioChunkViaMoqt({
             chunk,
-            metadata,
             captureTimestampMicros,
             trackAliases,
             client,

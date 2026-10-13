@@ -165,7 +165,7 @@ export class LocalSession {
       this.client.setOnSubscribeNamespaceResponseHandler(null)
       this.client.setOnServerSetupHandler(null)
       this.client.setOnConnectionClosedHandler(null)
-      await this.client.finish()
+      await this.client.disconnect()
     } finally {
       this.transitionToState(LocalSessionState.Disconnected)
     }

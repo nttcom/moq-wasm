@@ -3,10 +3,16 @@ import { parse_msf_catalog_json } from '../../../pkg/moqt'
 import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
 import { LocLive, formatLiveStats } from '@player/locLive'
-import { summarizeLocHeader } from '../../../utils/media/locSummary'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
+import {
+  AUDIO_LEVEL_ID,
+  CAPTURE_TIMESTAMP_ID,
+  VIDEO_CONFIG_ID,
+  VIDEO_FRAME_MARKING_ID,
+  type LocHeader
+} from '../../../utils/media/loc'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -470,3 +476,16 @@ renderCatalogTracks()
 setPlaybackObjectStatus('video', 'Waiting for objects')
 renderPlayoutStats()
 window.setInterval(renderPlayoutStats, PLAYOUT_STATS_INTERVAL_MS)
+
+function summarizeLocHeader(locHeader: unknown) {
+  const extensions: LocHeader = Array.isArray(locHeader) ? locHeader : []
+  const has = (id: number) => extensions.some((ext) => ext.id === id)
+  return {
+    present: Boolean(locHeader),
+    extensionCount: extensions.length,
+    hasCaptureTimestamp: has(CAPTURE_TIMESTAMP_ID),
+    hasVideoConfig: has(VIDEO_CONFIG_ID),
+    hasVideoFrameMarking: has(VIDEO_FRAME_MARKING_ID),
+    hasAudioLevel: has(AUDIO_LEVEL_ID)
+  }
+}

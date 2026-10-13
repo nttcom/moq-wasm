@@ -1,24 +1,15 @@
 import type { SubgroupObjectMessage } from '../../pkg/moqt'
 import type { LocHeader } from './loc'
-import type { DeserializedChunk } from './chunk'
 
-export type SubgroupObject = Pick<
+export type SubgroupObjectWithLoc = Pick<
   SubgroupObjectMessage,
-  'subgroupId' | 'objectIdDelta' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus'
->
-
-export type SubgroupObjectWithLoc = SubgroupObject & {
+  'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus'
+> & {
   locHeader?: LocHeader
 }
 
 export type SubgroupWorkerMessage = {
+  type: 'object'
   groupId: bigint
   subgroupStreamObject: SubgroupObjectWithLoc
-}
-
-export type JitterBufferSubgroupObject = SubgroupObjectWithLoc & {
-  objectId: bigint
-  cachedChunk: DeserializedChunk
-  remotePTS: number
-  localPTS: number
 }

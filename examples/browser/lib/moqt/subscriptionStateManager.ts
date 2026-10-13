@@ -4,15 +4,7 @@ export type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?:
 export type SubgroupObjectHandler = (groupId: bigint, message: SubgroupObjectMessageWithLoc) => void
 type BufferedSubgroupObject = { groupId: bigint; message: SubgroupObjectMessageWithLoc }
 
-export interface SubscriptionStateStore {
-  setSubgroupObjectHandler(trackAlias: bigint, handler: SubgroupObjectHandler): void
-  getSubgroupObjectHandler(trackAlias: bigint): SubgroupObjectHandler | undefined
-  bufferSubgroupObject(trackAlias: bigint, groupId: bigint, message: SubgroupObjectMessageWithLoc): void
-  deleteSubgroupObjectHandler(trackAlias: bigint): void
-  clearHandlers(): void
-}
-
-export class InMemorySubscriptionStateManager implements SubscriptionStateStore {
+export class SubscriptionStateManager {
   private static readonly MAX_BUFFERED_OBJECTS_PER_TRACK = 32
   private readonly subgroupObjectHandlers = new Map<bigint, SubgroupObjectHandler>()
   private readonly bufferedSubgroupObjects = new Map<bigint, BufferedSubgroupObject[]>()
@@ -35,7 +27,7 @@ export class InMemorySubscriptionStateManager implements SubscriptionStateStore 
 
   bufferSubgroupObject(trackAlias: bigint, groupId: bigint, message: SubgroupObjectMessageWithLoc): void {
     const buffered = this.bufferedSubgroupObjects.get(trackAlias) ?? []
-    if (buffered.length >= InMemorySubscriptionStateManager.MAX_BUFFERED_OBJECTS_PER_TRACK) {
+    if (buffered.length >= SubscriptionStateManager.MAX_BUFFERED_OBJECTS_PER_TRACK) {
       buffered.shift()
       console.warn('[moqt] dropping oldest buffered subgroup object', {
         trackAlias: trackAlias.toString()

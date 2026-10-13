@@ -12,8 +12,6 @@ export const VIDEO_CONFIG_ID = 13
 export type LocMetadata = {
   captureTimestampMicros?: number
   videoConfig?: Uint8Array
-  videoFrameMarking?: number
-  audioLevel?: number
 }
 
 export function buildLocHeader(meta: LocMetadata): LocHeader {
@@ -24,52 +22,17 @@ export function buildLocHeader(meta: LocMetadata): LocHeader {
   if (meta.videoConfig) {
     extensions.push({ id: VIDEO_CONFIG_ID, value: { bytes: meta.videoConfig } })
   }
-  if (typeof meta.videoFrameMarking === 'number') {
-    extensions.push({ id: VIDEO_FRAME_MARKING_ID, value: { varint: meta.videoFrameMarking } })
-  }
-  if (typeof meta.audioLevel === 'number') {
-    extensions.push({ id: AUDIO_LEVEL_ID, value: { varint: meta.audioLevel } })
-  }
   return extensions
 }
 
 export function readLocHeader(header?: LocHeader): LocMetadata {
   const meta: LocMetadata = {}
   for (const ext of header ?? []) {
-    if ('bytes' in ext.value) {
-      if (ext.id === VIDEO_CONFIG_ID) {
-        meta.videoConfig = ext.value.bytes
-      }
-      continue
-    }
-    switch (ext.id) {
-      case CAPTURE_TIMESTAMP_ID:
-        meta.captureTimestampMicros = ext.value.varint
-        break
-      case VIDEO_FRAME_MARKING_ID:
-        meta.videoFrameMarking = ext.value.varint
-        break
-      case AUDIO_LEVEL_ID:
-        meta.audioLevel = ext.value.varint
-        break
-      default:
-        break
+    if (ext.id === VIDEO_CONFIG_ID && 'bytes' in ext.value) {
+      meta.videoConfig = ext.value.bytes
+    } else if (ext.id === CAPTURE_TIMESTAMP_ID && 'varint' in ext.value) {
+      meta.captureTimestampMicros = ext.value.varint
     }
   }
   return meta
-}
-
-export function arrayBufferToUint8Array(buffer?: ArrayBuffer): Uint8Array | undefined {
-  if (!buffer) {
-    return undefined
-  }
-  return new Uint8Array(buffer)
-}
-
-export function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
 }
