@@ -21,7 +21,8 @@ use crate::modules::moqt::runtime::tasks::{
     uni_stream_receive_task::UniStreamReceiveTask,
 };
 use crate::modules::transport::{
-    transport_addresses::TransportAddresses, transport_stats::TransportStats,
+    transport_addresses::TransportAddresses, transport_connection::TransportClose,
+    transport_stats::TransportStats,
 };
 
 pub struct Session {
@@ -112,6 +113,13 @@ impl Session {
         }
     }
 
+    /// Resolves once the transport has closed, whichever side closed it.
+    /// Consumes no session events, so it can be awaited beside
+    /// `receive_event()`.
+    pub async fn closed(&self) -> TransportClose {
+        self.inner.transport_connection.closed().await
+    }
+
     pub fn transport_stats(&self) -> TransportStats {
         self.inner.transport_connection.stats()
     }
@@ -180,10 +188,10 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use crate::{
-        SessionEvent,
+        SessionEvent, TerminationErrorCode,
         modules::test_support::{
-            connect_sessions, receive_disconnected, spawn_connected_dual_sessions,
-            spawn_dual_server,
+            DISCONNECT_TIMEOUT, connect_sessions, receive_disconnected,
+            spawn_connected_dual_sessions, spawn_dual_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
@@ -255,6 +263,23 @@ mod tests {
 
         // Assert
         receive_disconnected(&server).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_reports_the_peers_termination_code_and_leaves_the_events_unread() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-closed").await;
+
+        // Act
+        server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(close.code, Some(TerminationErrorCode::GoawayTimeout as u32));
+        assert_eq!(close.reason, "bye");
+        receive_disconnected(&client).await.unwrap();
     }
 
     #[tokio::test]

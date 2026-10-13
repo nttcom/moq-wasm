@@ -135,7 +135,11 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
 `Subscriber` facades sharing the same `Arc<SessionContext>`. Application
 code consumes inbound control messages through
-`Session::receive_event() -> SessionEvent`.
+`Session::receive_event() -> SessionEvent`. `Session::closed()` awaits the
+transport close itself (the signal `DisconnectWatchTask` turns into
+`SessionEvent::Disconnected`) and returns the peer's termination code and
+reason as `TransportClose`; it reads no session events, so a task can await it
+beside `receive_event()`.
 `Publisher::begin_publish_namespace` returns once PUBLISH_NAMESPACE is written,
 with a `PendingPublishNamespace` whose `accepted()` awaits the reply, so a
 caller fanning out to many sessions can keep the writes ordered without
