@@ -98,8 +98,14 @@ impl OriginState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Publication {
     Unpublished,
+    /// A SUBSCRIBE the peer sent is being served.
+    Subscribed,
+    /// A PUBLISH this endpoint sent is being served.
     Published,
-    Released,
+    /// `published` tells whether the released subscription came from PUBLISH.
+    Released {
+        published: bool,
+    },
 }
 
 struct OriginTrack {
@@ -121,14 +127,23 @@ impl OriginTrack {
         }
     }
 
-    fn publish(&mut self, writer: TrackWriter) {
-        self.publication = Publication::Published;
+    fn serve(&mut self, publication: Publication, writer: TrackWriter) {
+        self.publication = publication;
         self.writer = Some(writer);
     }
 
     fn release(&mut self) {
-        self.publication = Publication::Released;
+        self.publication = Publication::Released {
+            published: self.publication == Publication::Published,
+        };
         self.writer = None;
+    }
+
+    fn serving(&self) -> bool {
+        matches!(
+            self.publication,
+            Publication::Subscribed | Publication::Published
+        )
     }
 }
 
@@ -158,13 +173,18 @@ impl Origin {
             .or_insert_with(|| OriginTrack::new(first_group_id, retention));
     }
 
-    /// A no-op once the track has been published, even if it has been
-    /// released since.
+    /// A no-op while a subscription to the track is served, and once a
+    /// PUBLISH of it has been released: the peer unsubscribed from what this
+    /// endpoint offered. A track released after a SUBSCRIBE is published
+    /// again.
     pub async fn publish(&self, namespace: &str, track_name: &str) -> Result<()> {
         let key = track_key(namespace, track_name);
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
-        if track.publication != Publication::Unpublished {
+        if !matches!(
+            track.publication,
+            Publication::Unpublished | Publication::Released { published: false }
+        ) {
             return Ok(());
         }
         let next_group_id = track.numbering.next_group_id();
@@ -177,10 +197,10 @@ impl Origin {
             )
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
-        state.track_mut(&key)?.publish(TrackWriter::new(
-            publisher.create_stream(&subscription),
-            next_group_id,
-        ));
+        state.track_mut(&key)?.serve(
+            Publication::Published,
+            TrackWriter::new(publisher.create_stream(&subscription), next_group_id),
+        );
         state.subscriptions.insert(subscription.request_id(), key);
         tracing::info!(
             namespace,
@@ -278,10 +298,13 @@ impl Origin {
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
-        track.publish(TrackWriter::new(
-            self.session.publisher().create_stream(&subscription),
-            next_group_id,
-        ));
+        track.serve(
+            Publication::Subscribed,
+            TrackWriter::new(
+                self.session.publisher().create_stream(&subscription),
+                next_group_id,
+            ),
+        );
         state.subscriptions.insert(handler.request_id(), key);
         tracing::info!(
             namespace = %handler.track_namespace,
@@ -405,7 +428,7 @@ impl Origin {
     ) -> Result<WriteOutcome> {
         let mut state = self.state.lock().await;
         let track = state.track_mut(key)?;
-        if track.writer.is_none() && track.publication == Publication::Published {
+        if track.writer.is_none() && track.serving() {
             track.writer = Some(writer);
         }
         match result {
@@ -551,6 +574,23 @@ mod tests {
         .await;
         published.unwrap();
         accepted
+    }
+
+    async fn unsubscribe(peers: &Peers, subscription: &Subscription) -> Option<(String, String)> {
+        let subscriber = peers.server.subscriber();
+        let (unsubscribed, released) = within(async {
+            tokio::join!(subscriber.unsubscribe(subscription.request_id()), async {
+                let SessionEvent::Unsubscribe(handler) =
+                    peers.client.receive_event().await.unwrap()
+                else {
+                    panic!("expected UNSUBSCRIBE from the relay");
+                };
+                peers.origin.release(handler.subscribe_id()).await
+            })
+        })
+        .await;
+        unsubscribed.unwrap();
+        released
     }
 
     async fn subscribe(peers: &Peers) -> Subscription {
@@ -814,6 +854,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_track_released_after_a_subscribe_is_published_again() {
+        // Arrange
+        let peers = origin_with_track("origin-republish", RETENTION).await;
+        let subscription = subscribe(&peers).await;
+        unsubscribe(&peers, &subscription).await;
+
+        // Act
+        let accepted = publish(&peers).await;
+        let written = peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(accepted.track_name(), TRACK);
+        assert!(matches!(written, WriteOutcome::Sent(_)));
+    }
+
+    #[tokio::test]
     async fn release_drops_the_writer_but_keeps_numbering_and_caching() {
         // Arrange
         let peers = origin_with_track("origin-release", RETENTION).await;
@@ -825,18 +885,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let subscriber = peers.server.subscriber();
-        let (unsubscribed, released) = within(async {
-            tokio::join!(subscriber.unsubscribe(subscription.request_id()), async {
-                let SessionEvent::Unsubscribe(handler) =
-                    peers.client.receive_event().await.unwrap()
-                else {
-                    panic!("expected UNSUBSCRIBE from the relay");
-                };
-                origin.release(handler.subscribe_id()).await
-            })
-        })
-        .await;
+        let released = unsubscribe(&peers, &subscription).await;
         let after_release = origin
             .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
             .await
@@ -852,7 +901,6 @@ mod tests {
         .unwrap();
 
         // Assert
-        unsubscribed.unwrap();
         assert_eq!(live, sent(FIRST_GROUP_ID, 0, true));
         assert_eq!(released, Some((NAMESPACE.to_string(), TRACK.to_string())));
         assert_eq!(after_release, WriteOutcome::NotSent);
