@@ -1,15 +1,14 @@
 import { createBitrateLogger } from '../bitrate'
-import { monotonicUnixMicros } from '../clock'
+import { CaptureTimestamps } from './captureTimestamps'
 
 let audioEncoder: AudioEncoder | undefined
-let timestampOffset: number | null = null
 let encoderConfig: AudioEncoderConfig = {
   codec: 'opus',
   sampleRate: 48000,
   numberOfChannels: 1,
   bitrate: 64_000
 }
-const captureTimestampByChunkTimestamp = new Map<number, number>()
+const captureTimestamps = new CaptureTimestamps()
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', media: 'audio', kbps })
@@ -18,25 +17,8 @@ const audioBitrateLogger = createBitrateLogger((kbps) => {
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
   audioBitrateLogger.addBytes(chunk.byteLength)
 
-  // 最初のチャンクでtimestampのoffsetを保存
-  if (timestampOffset === null) {
-    timestampOffset = chunk.timestamp
-    console.info('[audioEncoder] Set timestamp offset:', timestampOffset)
-  }
-
-  // timestampを0起点に調整したチャンクを作成
-  const adjustedTimestamp = chunk.timestamp - timestampOffset
-  const buffer = new ArrayBuffer(chunk.byteLength)
-  chunk.copyTo(buffer)
-  const adjustedChunk = new EncodedAudioChunk({
-    type: chunk.type,
-    timestamp: adjustedTimestamp,
-    duration: chunk.duration ?? undefined,
-    data: buffer
-  })
-
-  const captureTimestampMicros = takeCaptureTimestampMicros(chunk.timestamp)
-  self.postMessage({ type: 'chunk', chunk: adjustedChunk, metadata, captureTimestampMicros })
+  const { init, captureTimestampMicros } = captureTimestamps.restamp(chunk)
+  self.postMessage({ type: 'chunk', chunk: new EncodedAudioChunk(init), metadata, captureTimestampMicros })
 }
 
 async function initializeAudioEncoder() {
@@ -64,9 +46,7 @@ async function initializeAudioEncoder() {
 }
 
 async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) {
-  // 新しいストリーム開始時にtimestampのoffsetをリセット
-  timestampOffset = null
-  captureTimestampByChunkTimestamp.clear()
+  captureTimestamps.reset()
   if (!audioEncoder) {
     audioEncoder = await initializeAudioEncoder()
   }
@@ -78,35 +58,10 @@ async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) 
     const audioResult = await audioReader.read()
     if (audioResult.done) break
     const audio = audioResult.value
-    setCaptureTimestampMicros(audio.timestamp, monotonicUnixMicros())
+    captureTimestamps.recordCapture(audio.timestamp)
     audioEncoder.encode(audio)
     audio.close()
   }
-}
-
-function setCaptureTimestampMicros(timestamp: number, captureTimestampMicros: number): void {
-  if (!Number.isFinite(timestamp)) {
-    return
-  }
-  captureTimestampByChunkTimestamp.set(timestamp, captureTimestampMicros)
-  if (captureTimestampByChunkTimestamp.size > 1024) {
-    const oldestKey = captureTimestampByChunkTimestamp.keys().next().value
-    if (typeof oldestKey === 'number') {
-      captureTimestampByChunkTimestamp.delete(oldestKey)
-    }
-  }
-}
-
-function takeCaptureTimestampMicros(timestamp: number): number | undefined {
-  if (!Number.isFinite(timestamp)) {
-    return undefined
-  }
-  const value = captureTimestampByChunkTimestamp.get(timestamp)
-  if (value !== undefined) {
-    captureTimestampByChunkTimestamp.delete(timestamp)
-    return value
-  }
-  return undefined
 }
 
 self.onmessage = async (event) => {

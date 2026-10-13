@@ -1,13 +1,13 @@
 import { createBitrateLogger } from '../bitrate'
 import { monotonicUnixMicros } from '../clock'
+import { CaptureTimestamps } from './captureTimestamps'
 
 let videoEncoder: VideoEncoder | undefined
 // Default keeps periodic keyframes alive even before the first keyframeInterval message.
 let keyframeInterval: number = 30
 let encoderConfig: VideoEncoderConfig | null = null
 let forceNextKeyframe = false
-let timestampOffset: number | null = null
-const captureTimestampByChunkTimestamp = new Map<number, number>()
+const captureTimestamps = new CaptureTimestamps()
 
 // H264 プロファイル
 // Baseline: 42 Main: 4D High: 64
@@ -33,27 +33,11 @@ const videoBitrateLogger = createBitrateLogger((kbps) => {
 function sendVideoChunkMessage(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
   videoBitrateLogger.addBytes(chunk.byteLength)
 
-  // 最初のチャンクでtimestampのoffsetを保存
-  if (timestampOffset === null) {
-    timestampOffset = chunk.timestamp
-  }
-
-  // timestampを0起点に調整したチャンクを作成
-  const adjustedTimestamp = chunk.timestamp - timestampOffset
-  const buffer = new ArrayBuffer(chunk.byteLength)
-  chunk.copyTo(buffer)
-  const adjustedChunk = new EncodedVideoChunk({
-    type: chunk.type,
-    timestamp: adjustedTimestamp,
-    duration: chunk.duration ?? undefined,
-    data: buffer
-  })
-
-  const captureTimestampMicros = takeCaptureTimestampMicros(chunk.timestamp)
+  const { init, captureTimestampMicros } = captureTimestamps.restamp(chunk)
   const encodeDoneTimestampMicros = monotonicUnixMicros()
   self.postMessage({
     type: 'chunk',
-    chunk: adjustedChunk,
+    chunk: new EncodedVideoChunk(init),
     metadata,
     captureTimestampMicros,
     encodeDoneTimestampMicros,
@@ -95,9 +79,7 @@ async function initializeVideoEncoder() {
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
-  // 新しいストリーム開始時にtimestampのoffsetをリセット
-  timestampOffset = null
-  captureTimestampByChunkTimestamp.clear()
+  captureTimestamps.reset()
   videoEncoder = await initializeVideoEncoder()
   if (!videoEncoder) {
     return
@@ -122,7 +104,6 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       console.log('Re-initialize video encoder')
       videoEncoder = await initializeVideoEncoder()
       frameCounter = 0
-      captureTimestampByChunkTimestamp.clear()
       if (!videoEncoder) {
         console.error('Failed to initialize video encoder, dropping frame')
         videoFrame.close()
@@ -143,36 +124,11 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       forceNextKeyframe = false
       frameCounter = 0
     }
-    setCaptureTimestampMicros(videoFrame.timestamp, monotonicUnixMicros())
+    captureTimestamps.recordCapture(videoFrame.timestamp)
     videoEncoder.encode(videoFrame, { keyFrame })
     frameCounter++
     videoFrame.close()
   }
-}
-
-function setCaptureTimestampMicros(timestamp: number | null, captureTimestampMicros: number): void {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-    return
-  }
-  captureTimestampByChunkTimestamp.set(timestamp, captureTimestampMicros)
-  if (captureTimestampByChunkTimestamp.size > 1024) {
-    const oldestKey = captureTimestampByChunkTimestamp.keys().next().value
-    if (typeof oldestKey === 'number') {
-      captureTimestampByChunkTimestamp.delete(oldestKey)
-    }
-  }
-}
-
-function takeCaptureTimestampMicros(timestamp: number): number | undefined {
-  if (!Number.isFinite(timestamp)) {
-    return undefined
-  }
-  const value = captureTimestampByChunkTimestamp.get(timestamp)
-  if (value !== undefined) {
-    captureTimestampByChunkTimestamp.delete(timestamp)
-    return value
-  }
-  return undefined
 }
 
 self.onmessage = async (event) => {
