@@ -1,5 +1,3 @@
-import { element } from '../../utils/page'
-import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../pkg/moqt'
 
@@ -18,11 +16,6 @@ export function requireRawClient(moqtClient: MoqtClientWrapper): MOQTClient {
   return client
 }
 
-export function initializeMediaExamplePage(namespaceInputId: string): void {
-  setUpRelayUrlControls(element('url'), element('urlPresets'))
-  applyNamespaceOverride(namespaceInputId)
-}
-
 export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {
   const params = new URLSearchParams(window.location.search)
   const codec = firstNonEmptyValue(params, ['videoCodec'])
@@ -33,23 +26,6 @@ export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {
     codec: codec ?? undefined,
     hardwareAcceleration
   }
-}
-
-function applyNamespaceOverride(namespaceInputId: string): void {
-  const input = document.getElementById(namespaceInputId)
-  if (!(input instanceof HTMLInputElement)) {
-    return
-  }
-
-  const params = new URLSearchParams(window.location.search)
-  input.value =
-    firstNonEmptyValue(params, ['trackNamespace', 'namespace']) ?? (input.value.trim() || buildDefaultTrackNamespace())
-}
-
-export function buildDefaultTrackNamespace(date = new Date()): string {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
-  return `anon/nttcom/${day}/${pad(date.getHours())}${pad(date.getMinutes())}`
 }
 
 function firstNonEmptyValue(params: URLSearchParams, keys: string[]): string | null {
