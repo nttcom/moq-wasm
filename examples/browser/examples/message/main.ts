@@ -10,7 +10,8 @@ import {
   SubscribeOkMessage
 } from '../../pkg/moqt'
 import { FilterType, GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
-import { configureRelayUrlControls } from '../../utils/relayPresets'
+import { setUpRelayUrlControls } from '../../utils/relayPresets'
+import { element, buildDefaultTrackNamespace } from '../../utils/page'
 
 type HTMLFormControls = HTMLFormElement & {
   elements: HTMLFormControlsCollection
@@ -775,7 +776,10 @@ function setupActionButtons(): void {
   })
 }
 
-configureRelayUrlControls()
+setUpRelayUrlControls(element('url'), element('urlPresets'))
+for (const id of ['publish-track-namespace', 'track-namespace-prefix', 'subscribe-track-namespace']) {
+  element<HTMLInputElement>(id).value = buildDefaultTrackNamespace()
+}
 setupConnectButton()
 setupCloseButton()
 setupActionButtons()
