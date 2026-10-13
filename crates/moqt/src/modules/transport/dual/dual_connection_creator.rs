@@ -45,10 +45,7 @@ impl DualProtocolCreator {
         let quic_config = quic_client_config(crypto.clone(), MOQ_ALPN)?;
         let web_transport_config =
             quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
-        tracing::info!(
-            "Client ready! for Dual Protocol: {:?}",
-            endpoint.local_addr()?
-        );
+        tracing::debug!(local_addr = ?endpoint.local_addr()?, "Dual Protocol client endpoint ready");
         Ok(DualProtocolCreator {
             endpoint: DualEndpoint::Client(Box::new(DualClient {
                 endpoint,

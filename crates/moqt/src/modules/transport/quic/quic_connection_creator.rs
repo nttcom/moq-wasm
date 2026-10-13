@@ -55,8 +55,6 @@ impl QUICConnectionCreator {
         ));
         let transport_config = server_transport_config(keep_alive_sec);
 
-        tracing::warn!("datagram setting: {:?}", transport_config);
-
         let transport_arc = Arc::new(transport_config);
         server_config.transport_config(transport_arc);
 
@@ -66,7 +64,7 @@ impl QUICConnectionCreator {
     fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
         let mut endpoint = client_endpoint(port_num)?;
         endpoint.set_default_client_config(quic_client_config(crypto, MOQ_ALPN)?);
-        tracing::info!("Client ready! for QUIC: {:?}", endpoint.local_addr()?);
+        tracing::debug!(local_addr = ?endpoint.local_addr()?, "QUIC client endpoint ready");
         Ok(QUICConnectionCreator { endpoint })
     }
 }

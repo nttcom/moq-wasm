@@ -32,10 +32,7 @@ impl WtConnectionCreator {
     fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
         let endpoint = client_endpoint(port_num)?;
         let client_config = quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
-        tracing::info!(
-            "Client ready! for WebTransport: {:?}",
-            endpoint.local_addr()?
-        );
+        tracing::debug!(local_addr = ?endpoint.local_addr()?, "WebTransport client endpoint ready");
         Ok(WtConnectionCreator {
             endpoint: WtEndpoint::Client(client_config),
             quic_endpoint: endpoint,
