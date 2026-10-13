@@ -1,3 +1,5 @@
+import { timeSeededGroupId } from './clock'
+
 type SubgroupId = number
 
 interface SubgroupHeaderState {
@@ -25,19 +27,15 @@ function aliasKey(alias: bigint | string): string {
   return normalizeAlias(alias).toString()
 }
 
-function initialGroupId(): bigint {
-  return BigInt(Date.now()) - 1n
-}
-
 export class MediaTransportState {
   private readonly video: TrackCounters = {
-    groupId: initialGroupId(),
+    groupId: timeSeededGroupId() - 1n,
     nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }
 
   private readonly audio: TrackCounters = {
-    groupId: initialGroupId(),
+    groupId: timeSeededGroupId() - 1n,
     nextObjectNumber: 0n,
     subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
   }

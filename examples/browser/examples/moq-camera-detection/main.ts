@@ -5,6 +5,7 @@ import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
+import { timeSeededGroupId } from '../../utils/media/clock'
 
 const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', 'camera']
 const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', 'detector']
@@ -27,9 +28,7 @@ const VIDEO_ENCODER_CONFIG = {
 }
 
 class GopSender {
-  /// The relay isolates a track whose publisher repeats a location, so a
-  /// publisher that comes back must not restart its group ids at zero.
-  private nextGroupId = BigInt(Date.now()) * 1_000n
+  private nextGroupId = timeSeededGroupId()
   private groupId: bigint | undefined
   private nextObjectId = 0n
 
@@ -84,7 +83,7 @@ class GopSender {
 type Prompt = { question: string; choices: string[] }
 
 class PromptPublisher {
-  private nextGroupId = BigInt(Date.now()) * 1_000n
+  private nextGroupId = timeSeededGroupId()
   latestGroupId: bigint | undefined
 
   constructor(

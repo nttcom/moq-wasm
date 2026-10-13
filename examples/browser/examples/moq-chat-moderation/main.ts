@@ -11,6 +11,7 @@ import {
   encodeChatRecord,
   parseModerationVerdicts
 } from './chatWire'
+import { timeSeededGroupId } from '../../utils/media/clock'
 
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', 'chat']
 const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', 'moderator']
@@ -21,9 +22,7 @@ const LARGEST_OBJECT_FILTER = 0x2
 const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 
 class ChatPublisher {
-  /// The relay isolates a track whose publisher repeats a location, so a
-  /// publisher that comes back must not restart its group ids at zero.
-  private nextGroupId = BigInt(Date.now()) * 1_000n
+  private nextGroupId = timeSeededGroupId()
 
   constructor(
     private readonly session: MoqtClientWrapper,

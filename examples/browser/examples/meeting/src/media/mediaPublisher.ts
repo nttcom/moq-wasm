@@ -16,6 +16,7 @@ import {
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
+import { timeSeededGroupId } from '../../../../utils/media/clock'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 type VideoSource = 'camera' | 'screenshare'
@@ -135,7 +136,7 @@ export class MediaPublisher {
     noiseSuppression: true,
     autoGainControl: true
   }
-  private nextCatalogGroupId = BigInt(Date.now())
+  private nextCatalogGroupId = timeSeededGroupId()
   private readonly catalogGroups = new Map<bigint, Uint8Array>()
 
   constructor(
