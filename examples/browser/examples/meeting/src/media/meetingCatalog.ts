@@ -119,8 +119,6 @@ const CAMERA_CATALOG_TRACKS: MeetingCatalogTrack[] = CAMERA_PROFILES.flatMap((pr
   )
 )
 
-const DEFAULT_MEETING_CATALOG_TRACKS: MeetingCatalogTrack[] = []
-
 const SCREENSHARE_CATALOG_TRACKS: MeetingCatalogTrack[] = [
   {
     name: 'screenshare_1080p',
@@ -196,10 +194,6 @@ const AUDIO_CATALOG_TRACKS: MeetingCatalogTrack[] = [
 const CHAT_TRACK_NAME = 'chat'
 const CHAT_TRACK_LABEL = 'Chat'
 const CHAT_EVENT_TYPE = 'com.skyway.chat.v1'
-
-export function getDefaultMeetingCatalogTracks(): MeetingCatalogTrack[] {
-  return DEFAULT_MEETING_CATALOG_TRACKS.map((track) => ({ ...track }))
-}
 
 export function getCameraCatalogTracks(): MeetingCatalogTrack[] {
   return CAMERA_CATALOG_TRACKS.map((track) => ({ ...track }))

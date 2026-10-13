@@ -64,7 +64,7 @@ export class MeetingMediaController {
 
     client.setOnIncomingUnsubscribeHandler((subscribeId) => {
       console.info('[meeting][moqt] received UNSUBSCRIBE', { subscribeId: subscribeId.toString() })
-      this.publisher.handleIncomingUnsubscribe(subscribeId)
+      this.publisher.handleIncomingUnsubscribe()
     })
   }
 
