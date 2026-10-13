@@ -197,7 +197,7 @@ fn render_streams(streams: &[StreamRecord]) -> Vec<String> {
             "    {:<12} g{:<16} {state}  {:>4} obj  {:>8.1} KB  {}{}",
             truncate(&stream.track_name, 12),
             stream.group_id,
-            stream.objects,
+            stream.object_sent_at.len(),
             stream.bytes as f64 / 1024.0,
             "█".repeat(filled),
             "·".repeat(BAR_WIDTH - filled),
@@ -314,7 +314,7 @@ mod tests {
                 group_id: 7,
                 opened_at,
                 bytes: 3000,
-                objects: 30,
+                object_sent_at: vec![opened_at; 30],
                 finished_at: None,
             },
             StreamRecord {
@@ -322,7 +322,7 @@ mod tests {
                 group_id: 7,
                 opened_at,
                 bytes: 1000,
-                objects: 40,
+                object_sent_at: vec![opened_at; 40],
                 finished_at: Some(opened_at),
             },
         ];

@@ -22,7 +22,8 @@ pub struct StreamRecord {
     /// `moqt::executor::now()` when the group stream opened.
     pub opened_at: Duration,
     pub bytes: u64,
-    pub objects: u64,
+    /// `moqt::executor::now()` as each object was sent, in object order.
+    pub object_sent_at: Vec<Duration>,
     pub finished_at: Option<Duration>,
 }
 
@@ -46,19 +47,20 @@ impl StreamLedger {
             group_id,
             opened_at: now,
             bytes: 0,
-            objects: 0,
+            object_sent_at: Vec::new(),
             finished_at: None,
         });
     }
 
     pub(crate) fn add_object(&self, track_name: &str, bytes: usize) {
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         if let Some(record) = records
             .iter_mut()
             .find(|record| record.track_name == track_name && record.is_open())
         {
             record.bytes += bytes as u64;
-            record.objects += 1;
+            record.object_sent_at.push(now);
         }
     }
 
@@ -105,9 +107,9 @@ mod tests {
         let video: Vec<_> = records.iter().filter(|r| r.track_name == "video").collect();
         assert_eq!(video.len(), 2);
         assert!(!video[0].is_open());
-        assert_eq!((video[0].bytes, video[0].objects), (100, 1));
+        assert_eq!((video[0].bytes, video[0].object_sent_at.len()), (100, 1));
         assert!(video[1].is_open());
-        assert_eq!((video[1].bytes, video[1].objects), (5, 1));
+        assert_eq!((video[1].bytes, video[1].object_sent_at.len()), (5, 1));
         assert!(
             records
                 .iter()
