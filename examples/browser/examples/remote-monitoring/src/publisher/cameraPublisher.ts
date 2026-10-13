@@ -1,7 +1,5 @@
 import { MediaTransportState } from '../../../../utils/media/transportState'
-import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
-import type { LocHeader } from '../../../../utils/media/loc'
-import type { MOQTClient } from '../../../../pkg/moqt'
+import { sendVideoChunkViaMoqt } from '../../../../utils/media/videoTransport'
 import type { PublisherSession } from './publisherSession'
 import { type CameraId, type VideoSource } from '../types/monitoring'
 
@@ -9,7 +7,6 @@ const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
 const KEYFRAME_INTERVAL_FRAMES = 30 // 30fps × 1s = 1 GoP per second
 const BITRATE_LOG_INTERVAL_CHUNKS = 900 // ~30 seconds at 30fps
-const OBJECT_STATUS_END_OF_GROUP = 3
 const VIDEO_CONFIG = {
   codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
   width: 1280,
@@ -26,14 +23,11 @@ const CAM_COLORS: Record<CameraId, string> = {
   cam04: '#7a4a10'
 }
 
-type GroupState = { groupId: bigint; lastObjectId: bigint }
-
 export class CameraPublisher {
   private worker: Worker | null = null
   private stream: MediaStream | null = null
   private videoEl: HTMLVideoElement | null = null
   private readonly transportState = new MediaTransportState()
-  private readonly videoGroupStates = new Map<bigint, GroupState>()
   private readonly activeAliases = new Set<string>()
   private sendQueue: Promise<void> = Promise.resolve()
   private chunkCount = 0
@@ -205,10 +199,6 @@ export class CameraPublisher {
     if (aliases.length === 0) return
 
     const rawClient = this.session.getRawClient()
-    const sender: VideoChunkSender = async (alias, groupId, subgroupId, objectId, payload, client, locHeader) => {
-      await this.sendVideoObject(alias, groupId, subgroupId, objectId, payload, client, locHeader)
-    }
-
     await sendVideoChunkViaMoqt({
       chunk,
       metadata,
@@ -216,8 +206,7 @@ export class CameraPublisher {
       trackAliases: aliases,
       publisherPriority: 0,
       client: rawClient,
-      transportState: this.transportState,
-      sender
+      transportState: this.transportState
     })
   }
 
@@ -228,7 +217,6 @@ export class CameraPublisher {
     for (const key of this.activeAliases) {
       if (!latestKeys.has(key)) {
         this.transportState.resetAlias(key)
-        this.videoGroupStates.delete(BigInt(key))
       }
     }
 
@@ -238,50 +226,6 @@ export class CameraPublisher {
     }
 
     return aliases
-  }
-
-  private async sendVideoObject(
-    trackAlias: bigint,
-    groupId: bigint,
-    subgroupId: bigint,
-    objectId: bigint,
-    payload: Uint8Array,
-    client: MOQTClient,
-    locHeader?: LocHeader
-  ): Promise<void> {
-    const previousState = this.videoGroupStates.get(trackAlias)
-    if (previousState && previousState.groupId !== groupId) {
-      const endObjectId = previousState.lastObjectId + 1n
-      try {
-        await this.sendEndOfGroup(client, trackAlias, previousState.groupId, endObjectId)
-      } catch (err) {
-        console.warn('[pub][camera] EndOfGroup send failed', {
-          camId: this.camId,
-          trackAlias: trackAlias.toString(),
-          err
-        })
-      }
-    }
-
-    await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
-    this.videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
-  }
-
-  private async sendEndOfGroup(
-    client: MOQTClient,
-    trackAlias: bigint,
-    groupId: bigint,
-    endObjectId: bigint
-  ): Promise<void> {
-    await client.sendSubgroupObject(
-      trackAlias,
-      groupId,
-      0n,
-      endObjectId,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
   }
 
   stop(): void {
@@ -297,6 +241,5 @@ export class CameraPublisher {
       this.videoEl = null
     }
     this.activeAliases.clear()
-    this.videoGroupStates.clear()
   }
 }

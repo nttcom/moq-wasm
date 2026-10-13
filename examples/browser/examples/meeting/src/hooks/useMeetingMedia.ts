@@ -92,7 +92,6 @@ type LocalVideoSendTiming = {
   sendActiveMs: number
   objectSendMs: number
   serializeMs: number
-  endOfGroupMs: number
   queueDepth: number
   objectBytes: number
   objectCount: number

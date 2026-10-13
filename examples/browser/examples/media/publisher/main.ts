@@ -1,7 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt'
 import { AUTH_INFO } from './const'
-import { sendVideoObjectMessage } from './sender'
 import { getFormElement } from './utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
@@ -304,8 +303,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
         trackAliases,
         publisherPriority,
         client,
-        transportState,
-        sender: sendVideoObjectMessage
+        transportState
       })
     }
     if (ENABLE_AUDIO_PUBLISH) {
