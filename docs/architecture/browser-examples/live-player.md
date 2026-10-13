@@ -62,6 +62,17 @@ Rules:
   top of the pictures.
 - L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
   can share one session with a publisher or with other players.
+- Relay switchover is the wrapper's, not the player's. On GOAWAY
+  (draft-14 §3.5, §8.3.1) `MoqtClientWrapper` opens a second session to the
+  relay the GOAWAY names (or its current URL when it names none), re-sends
+  PUBLISH_NAMESPACE / SUBSCRIBE_NAMESPACE and every active SUBSCRIBE there
+  under the same request ids, maps the aliases the new relay assigns back to
+  the ones the application was given, and closes the old session once every
+  request is accepted; a failed switchover keeps the old session. The player
+  therefore keeps its request ids, aliases and per-alias handlers across a
+  relay restart. Not carried over: PUBLISH-initiated tracks and in-flight
+  FETCHes, and the alias in `SubgroupHeaderMessage` / datagram messages is
+  the wire alias of the current session.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.

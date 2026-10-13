@@ -1,0 +1,238 @@
+import { expect, test } from '@playwright/test'
+import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
+import { MoqtClientWrapper } from './moqtClient'
+
+type Callback = (...args: any[]) => unknown
+
+/// A raw client whose relay accepts every request, assigns the track aliases
+/// it is given and records what was sent to it.
+class FakeRawClient {
+  readonly sent: string[] = []
+  closed = false
+  private connected = false
+  private readonly callbacks = new Map<string, Callback>()
+
+  constructor(
+    readonly url: string,
+    private readonly nextAliases: bigint[]
+  ) {}
+
+  private on(name: string) {
+    return (callback: Callback) => {
+      this.callbacks.set(name, callback)
+    }
+  }
+
+  readonly onServerSetup = this.on('serverSetup')
+  readonly onPublishNamespace = this.on('publishNamespace')
+  readonly onPublishNamespaceDone = this.on('publishNamespaceDone')
+  readonly onPublishNamespaceResponse = this.on('publishNamespaceResponse')
+  readonly onSubscribeNamespaceResponse = this.on('subscribeNamespaceResponse')
+  readonly onPublishResponse = this.on('publishResponse')
+  readonly onSubscribe = this.on('subscribe')
+  readonly onSubscribeResponse = this.on('subscribeResponse')
+  readonly onPublishDone = this.on('publishDone')
+  readonly onIncomingUnsubscribe = this.on('incomingUnsubscribe')
+  readonly onObjectDatagram = this.on('objectDatagram')
+  readonly onObjectDatagramStatus = this.on('objectDatagramStatus')
+  readonly onSubgroupHeader = this.on('subgroupHeader')
+  readonly onSubgroupObject = this.on('subgroupObject')
+  readonly onTrackStatus = this.on('trackStatus')
+  readonly onTrackStatusResponse = this.on('trackStatusResponse')
+  readonly onFetch = this.on('fetch')
+  readonly onFetchCancel = this.on('fetchCancel')
+  readonly onFetchResponse = this.on('fetchResponse')
+  readonly onFetchObject = this.on('fetchObject')
+  readonly onFetchStreamEnd = this.on('fetchStreamEnd')
+  readonly onGoAway = this.on('goAway')
+  readonly onConnectionClosed = this.on('connectionClosed')
+
+  private emit(name: string, ...args: unknown[]): void {
+    queueMicrotask(() => this.callbacks.get(name)?.(...args))
+  }
+
+  isConnected(): boolean {
+    return this.connected
+  }
+
+  async start(): Promise<void> {
+    this.connected = true
+  }
+
+  async close(): Promise<void> {
+    this.closed = true
+    this.connected = false
+  }
+
+  async sendClientSetup(): Promise<void> {
+    this.sent.push('CLIENT_SETUP')
+    this.emit('serverSetup', { selectedVersion: 0xff00000en })
+  }
+
+  async sendPublishNamespace(requestId: bigint, trackNamespace: string[]): Promise<void> {
+    this.sent.push(`PUBLISH_NAMESPACE ${trackNamespace.join('/')}`)
+    this.emit('publishNamespaceResponse', { requestId })
+  }
+
+  async sendSubscribeNamespace(requestId: bigint, prefix: string[]): Promise<void> {
+    this.sent.push(`SUBSCRIBE_NAMESPACE ${prefix.join('/')}`)
+    this.emit('subscribeNamespaceResponse', { requestId })
+  }
+
+  async sendSubscribe(requestId: bigint, trackNamespace: string[], trackName: string): Promise<void> {
+    this.sent.push(`SUBSCRIBE ${requestId} ${trackNamespace.join('/')}/${trackName}`)
+    const trackAlias = this.nextAliases.shift()
+    if (trackAlias === undefined) {
+      throw new Error('fake relay ran out of aliases')
+    }
+    this.emit('subscribeResponse', { requestId, trackAlias, contentExists: false })
+  }
+
+  async sendUnsubscribe(requestId: bigint): Promise<void> {
+    this.sent.push(`UNSUBSCRIBE ${requestId}`)
+  }
+
+  async sendSubscribeForward(_requestId: bigint, subscriptionRequestId: bigint, forward: boolean): Promise<void> {
+    this.sent.push(`SUBSCRIBE_UPDATE ${subscriptionRequestId} forward=${forward}`)
+  }
+
+  /// The relay side: a GOAWAY and an object on a subgroup.
+  receivePublishDone(requestId: bigint): void {
+    this.emit('publishDone', { requestId, statusCode: 0x2n, errorReason: 'publisher moved away' })
+  }
+
+  receiveGoAway(newSessionUri: string): void {
+    this.emit('goAway', newSessionUri)
+  }
+
+  receiveSubgroupObject(wireAlias: bigint, groupId: bigint, objectId: bigint): void {
+    this.emit('subgroupObject', wireAlias, groupId, { objectId } as unknown as SubgroupObjectMessage)
+  }
+}
+
+async function settled(): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  }
+}
+
+function fakeRelays(): { clients: FakeRawClient[]; wrapper: MoqtClientWrapper } {
+  const clients: FakeRawClient[] = []
+  const wrapper = new MoqtClientWrapper(async (url) => {
+    const client = new FakeRawClient(url, url.includes('relay-b') ? [40n, 41n] : [7n, 8n])
+    clients.push(client)
+    return client as unknown as MOQTClient
+  })
+  return { clients, wrapper }
+}
+
+test('GOAWAY moves the namespaces and subscriptions to the named relay under the same ids and aliases', async () => {
+  // Arrange: announced, subscribed to a prefix and to one track (alias 7 on relay A)
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  await wrapper.publishNamespace(['room', 'me'], '')
+  await wrapper.subscribeNamespace(['room'], '')
+  const { requestId, subscribeOk } = await wrapper.subscribe(['room', 'them'], 'video', '', { forward: true })
+  const received: bigint[] = []
+  wrapper.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId) => received.push(groupId))
+  const [relayA] = clients
+
+  // Act
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+
+  // Assert: relay B holds the same state under the same request id, relay A is closed
+  expect(clients).toHaveLength(2)
+  const relayB = clients[1]
+  expect(relayB.url).toBe('https://relay-b.example:4433')
+  expect(relayB.sent).toEqual([
+    'CLIENT_SETUP',
+    'PUBLISH_NAMESPACE room/me',
+    'SUBSCRIBE_NAMESPACE room',
+    `SUBSCRIBE ${requestId} room/them/video`
+  ])
+  expect(relayA.closed).toBe(true)
+  expect(wrapper.getRawClient()).toBe(relayB as unknown as MOQTClient)
+
+  // Assert: objects arriving under relay B's alias 40 reach the handler registered for alias 7
+  relayB.receiveSubgroupObject(40n, 5n, 0n)
+  await settled()
+  expect(received).toEqual([5n])
+
+  // Assert: the application's request id still names the subscription on relay B
+  await wrapper.unsubscribe(requestId)
+  expect(relayB.sent).toContain(`UNSUBSCRIBE ${requestId}`)
+})
+
+test('GOAWAY with an empty URI reconnects to the current URL', async () => {
+  // Arrange
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  await wrapper.subscribe(['room', 'them'], 'audio', '')
+
+  // Act
+  clients[0].receiveGoAway('')
+  await settled()
+
+  // Assert
+  expect(clients).toHaveLength(2)
+  expect(clients[1].url).toBe('https://relay-a.example:4433')
+  expect(clients[0].closed).toBe(true)
+})
+
+test('a paused subscription stays paused on the new relay', async () => {
+  // Arrange
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  const { requestId } = await wrapper.subscribe(['room', 'them'], 'video', '', { forward: true })
+  await wrapper.setSubscriptionForward(requestId, false)
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await settled()
+
+  // Assert
+  expect(clients[1].sent).toContain(`SUBSCRIBE_UPDATE ${requestId} forward=false`)
+})
+
+test('a failed switchover keeps the current session', async () => {
+  // Arrange
+  const clients: FakeRawClient[] = []
+  const wrapper = new MoqtClientWrapper(async (url) => {
+    if (url.includes('relay-b')) {
+      throw new Error('connection refused')
+    }
+    const client = new FakeRawClient(url, [7n])
+    clients.push(client)
+    return client as unknown as MOQTClient
+  })
+  await wrapper.connect('https://relay-a.example:4433')
+  await wrapper.subscribe(['room', 'them'], 'video', '')
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await settled()
+
+  // Assert
+  expect(clients[0].closed).toBe(false)
+  expect(wrapper.getRawClient()).toBe(clients[0] as unknown as MOQTClient)
+})
+
+test('a PUBLISH_DONE from the relay that sent GOAWAY does not end the subscription carried over', async () => {
+  // Arrange: the publisher has already moved, so relay A ends the subscription
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  const ended: bigint[] = []
+  const { requestId } = await wrapper.subscribe(['room', 'them'], 'video', '', {
+    onPublishDone: (message) => ended.push(message.requestId)
+  })
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  clients[0].receivePublishDone(requestId)
+  await settled()
+
+  // Assert
+  expect(ended).toEqual([])
+  expect(clients[1].sent).toContain(`SUBSCRIBE ${requestId} room/them/video`)
+})

@@ -1,4 +1,4 @@
-import init, {
+import type {
   FetchMessage,
   FetchObjectMessage,
   FetchOkMessage,
@@ -33,6 +33,31 @@ export interface ConnectionCloseInfo {
   reason?: string
 }
 type ConnectionClosedHandler = ((info: ConnectionCloseInfo) => void) | null
+
+/** Creates the raw client; tests substitute a fake. */
+export type RawClientFactory = (url: string) => Promise<MOQTClient>
+
+/// The wasm package is loaded on first use so that this module can be
+/// imported where it cannot be instantiated.
+const defaultRawClientFactory: RawClientFactory = async (url) => {
+  const { default: init, MOQTClient } = await import('../../pkg/moqt')
+  await init()
+  return new MOQTClient(url)
+}
+
+type NamespaceRequest = { trackNamespace: string[]; authInfo: string }
+type ActiveSubscription = {
+  trackNamespace: string[]
+  trackName: string
+  authInfo: string
+  options: SubscribeOptions
+  /** The alias the application knows; it survives a relay switchover. */
+  trackAlias: bigint
+}
+
+/// Grace for the relay named by GOAWAY to accept the session and the
+/// subscriptions before the switchover is given up.
+const MIGRATION_TIMEOUT_MS = 10_000
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type PublishDoneHandler = (message: PublishDoneMessage) => void
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
@@ -175,6 +200,14 @@ type IncomingFetchHandler = (ctx: IncomingFetchContext) => Promise<void> | void
 
 export class MoqtClientWrapper {
   client: MOQTClient | null = null
+  private connectUrl = ''
+  private connectOptions: ConnectOptions = {}
+  private readonly announcedNamespaces = new Map<string, NamespaceRequest>()
+  private readonly subscribedNamespaces = new Map<string, NamespaceRequest>()
+  private readonly activeSubscriptions = new Map<bigint, ActiveSubscription>()
+  /** Wire alias on the current session → alias the application knows; empty until a switchover. */
+  private readonly appAliasByWireAlias = new Map<bigint, bigint>()
+  private migrating = false
   private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
   private onPublishNamespaceHandler: IncomingPublishNamespaceHandler | null = null
   private onPublishNamespaceDoneHandler: IncomingPublishNamespaceDoneHandler | null = null
@@ -205,6 +238,8 @@ export class MoqtClientWrapper {
   private readonly publishDoneHandlers = new Map<bigint, PublishDoneHandler>()
   private nextRequestId = 0n
 
+  constructor(private readonly createRawClient: RawClientFactory = defaultRawClientFactory) {}
+
   async connect(url: string, options: ConnectOptions = {}): Promise<void> {
     if (this.getConnectionStatus()) {
       return
@@ -212,27 +247,23 @@ export class MoqtClientWrapper {
 
     let wtConnectStartedAtMs: number | null = null
     try {
-      await init()
-      this.client = new MOQTClient(url)
+      this.connectUrl = url
+      this.connectOptions = options
+      this.client = await this.createRawClient(url)
       wtConnectStartedAtMs = performance.now()
       await this.client.start()
       console.info('[moqt][wt] connected', {
         url,
         elapsedMs: Math.round((performance.now() - wtConnectStartedAtMs) * 100) / 100
       })
-      this.setupCallbacks()
+      this.setupCallbacks(this.client)
 
       if (options.sendSetup === false) {
         this.pendingServerSetup = null
         return
       }
 
-      const receiveServerSetup = this.waitForServerSetup()
-
-      const versions = options.versions ?? new BigUint64Array([0xff00000en])
-      const maxRequestId = options.maxRequestId ?? 100n
-      await this.client.sendClientSetup(versions, maxRequestId, options.authToken)
-      await receiveServerSetup
+      await this.sendSetup(this.client, options)
     } catch (error) {
       this.cleanupClient()
       if (wtConnectStartedAtMs !== null) {
@@ -251,6 +282,106 @@ export class MoqtClientWrapper {
     const receiveServerSetup = this.waitForServerSetup()
     await client.sendClientSetup(versions, maxRequestId, authToken)
     await receiveServerSetup
+  }
+
+  private async sendSetup(client: MOQTClient, options: ConnectOptions): Promise<void> {
+    const receiveServerSetup = this.waitForServerSetup()
+    const versions = options.versions ?? new BigUint64Array([0xff00000en])
+    const maxRequestId = options.maxRequestId ?? 100n
+    await client.sendClientSetup(versions, maxRequestId, options.authToken)
+    await receiveServerSetup
+  }
+
+  /// draft-14 §3.5 / §8.3.1: a second session is opened to the relay the
+  /// GOAWAY names (or the current URL when it names none). The announced
+  /// namespaces and every active subscription are re-sent there under the same
+  /// request ids; once they are all accepted the old session is closed. The
+  /// application keeps its request ids, track aliases and handlers. On any
+  /// failure the current session is kept until the relay closes it.
+  private async migrate(newSessionUri: string): Promise<void> {
+    const previous = this.client
+    if (!previous || this.migrating) {
+      return
+    }
+    this.migrating = true
+    const url = newSessionUri || this.connectUrl
+    let next: MOQTClient | null = null
+    try {
+      next = await this.createRawClient(url)
+      await next.start()
+      this.setupCallbacks(next)
+      const migrated = this.migrateState(next)
+      const timedOut = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('relay switchover timed out')), MIGRATION_TIMEOUT_MS)
+      })
+      await Promise.race([migrated, timedOut])
+      this.client = next
+      this.connectUrl = url
+      console.info('[moqt] moved to the relay named by GOAWAY', { url })
+      await previous.close()
+    } catch (error) {
+      console.warn('[moqt] relay switchover failed; staying on the current session', { url, error })
+      this.appAliasByWireAlias.clear()
+      await next?.close().catch(() => undefined)
+    } finally {
+      this.migrating = false
+    }
+  }
+
+  private async migrateState(next: MOQTClient): Promise<void> {
+    await this.sendSetup(next, this.connectOptions)
+    for (const { trackNamespace, authInfo } of this.announcedNamespaces.values()) {
+      const requestId = this.issueRequestId()
+      const response = expectResponse(this.pendingPublishNamespace, requestId)
+      await next.sendPublishNamespace(requestId, trackNamespace, authInfo)
+      await response
+    }
+    for (const { trackNamespace, authInfo } of this.subscribedNamespaces.values()) {
+      const requestId = this.issueRequestId()
+      const response = expectResponse(this.pendingSubscribeNamespace, requestId)
+      await next.sendSubscribeNamespace(requestId, trackNamespace, authInfo)
+      await response
+    }
+    const wireAliases = new Map<bigint, bigint>()
+    for (const [requestId, subscription] of this.activeSubscriptions) {
+      const response = expectResponse(this.pendingSubscribe, requestId)
+      await this.sendSubscribeOn(next, requestId, subscription)
+      const subscribeOk = await response
+      wireAliases.set(subscribeOk.trackAlias, subscription.trackAlias)
+      this.subscriptionTrackAliases.set(requestId, subscription.trackAlias)
+      if (subscription.options.forward === false) {
+        await next.sendSubscribeForward(this.issueRequestId(), requestId, false)
+      }
+    }
+    this.appAliasByWireAlias.clear()
+    for (const [wireAlias, appAlias] of wireAliases) {
+      this.appAliasByWireAlias.set(wireAlias, appAlias)
+    }
+  }
+
+  private sendSubscribeOn(
+    client: MOQTClient,
+    requestId: bigint,
+    { trackNamespace, trackName, authInfo, options }: Omit<ActiveSubscription, 'trackAlias'>
+  ): Promise<void> {
+    return client.sendSubscribe(
+      requestId,
+      trackNamespace,
+      trackName,
+      options.subscriberPriority ?? 0,
+      options.groupOrder ?? GroupOrder.Publisher,
+      options.filterType ?? FilterType.NextGroupStart,
+      options.startGroup,
+      options.startObject,
+      options.endGroup,
+      authInfo,
+      options.forward ?? false,
+      options.deliveryTimeout
+    )
+  }
+
+  private appAlias(wireAlias: bigint): bigint {
+    return this.appAliasByWireAlias.get(wireAlias) ?? wireAlias
   }
 
   private waitForServerSetup(): Promise<void> {
@@ -360,6 +491,7 @@ export class MoqtClientWrapper {
     const response = expectResponse(this.pendingPublishNamespace, requestId)
     await client.sendPublishNamespace(requestId, trackNamespace, authInfo)
     await response
+    this.announcedNamespaces.set(trackNamespace.join('/'), { trackNamespace, authInfo })
   }
 
   async subscribeNamespace(
@@ -372,6 +504,7 @@ export class MoqtClientWrapper {
     const response = expectResponse(this.pendingSubscribeNamespace, requestId)
     await client.sendSubscribeNamespace(requestId, trackNamespacePrefix, authInfo)
     await response
+    this.subscribedNamespaces.set(trackNamespacePrefix.join('/'), { trackNamespace: trackNamespacePrefix, authInfo })
   }
 
   async publish(trackNamespace: string[], trackName: string, authInfo: string): Promise<bigint> {
@@ -434,21 +567,16 @@ export class MoqtClientWrapper {
       }
 
       const response = expectResponse(this.pendingSubscribe, requestId)
-      await client.sendSubscribe(
-        requestId,
+      await this.sendSubscribeOn(client, requestId, { trackNamespace, trackName, authInfo, options })
+      const subscribeOk = await response
+      this.activeSubscriptions.set(requestId, {
         trackNamespace,
         trackName,
-        options.subscriberPriority ?? 0,
-        options.groupOrder ?? GroupOrder.Publisher,
-        options.filterType ?? FilterType.NextGroupStart,
-        options.startGroup,
-        options.startObject,
-        options.endGroup,
         authInfo,
-        options.forward ?? false,
-        options.deliveryTimeout
-      )
-      return { requestId, subscribeOk: await response }
+        options,
+        trackAlias: subscribeOk.trackAlias
+      })
+      return { requestId, subscribeOk }
     } catch (error) {
       this.publishDoneHandlers.delete(requestId)
       throw error
@@ -539,6 +667,7 @@ export class MoqtClientWrapper {
     await client.sendUnsubscribe(requestId)
     this.subscriptionTrackAliases.delete(requestId)
     this.publishDoneHandlers.delete(requestId)
+    this.activeSubscriptions.delete(requestId)
     if (trackAlias !== undefined) {
       this.clearSubgroupObjectHandler(trackAlias)
     }
@@ -547,6 +676,10 @@ export class MoqtClientWrapper {
   async setSubscriptionForward(subscriptionRequestId: bigint, forward: boolean): Promise<void> {
     const client = this.requireConnectedClient()
     await client.sendSubscribeForward(this.issueRequestId(), subscriptionRequestId, forward)
+    const subscription = this.activeSubscriptions.get(subscriptionRequestId)
+    if (subscription) {
+      subscription.options = { ...subscription.options, forward }
+    }
   }
 
   /// A LargestObject SUBSCRIBE delivers only what follows the current largest
@@ -605,10 +738,9 @@ export class MoqtClientWrapper {
     }
   }
 
-  private setupCallbacks(): void {
-    if (!this.client) return
-
-    this.client.onServerSetup((setup: ServerSetupMessage) => {
+  private setupCallbacks(client: MOQTClient): void {
+    let departing = false
+    client.onServerSetup((setup: ServerSetupMessage) => {
       if (this.pendingServerSetup) {
         this.pendingServerSetup.resolve()
         this.pendingServerSetup = null
@@ -616,7 +748,7 @@ export class MoqtClientWrapper {
       this.onServerSetupHandler?.(setup)
     })
 
-    this.client.onPublishNamespace((publishNamespace: PublishNamespaceMessage) => {
+    client.onPublishNamespace((publishNamespace: PublishNamespaceMessage) => {
       const handler = this.onPublishNamespaceHandler ?? defaultIncomingPublishNamespaceHandler
       void handler({
         publishNamespace,
@@ -626,25 +758,25 @@ export class MoqtClientWrapper {
       })
     })
 
-    this.client.onPublishNamespaceDone((message: PublishNamespaceDoneMessage) => {
+    client.onPublishNamespaceDone((message: PublishNamespaceDoneMessage) => {
       this.onPublishNamespaceDoneHandler?.(message)
     })
 
-    this.client.onPublishNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
+    client.onPublishNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
       this.onPublishNamespaceResponseHandler?.(response)
       settle(this.pendingPublishNamespace, 'PUBLISH_NAMESPACE_ERROR', response)
     })
 
-    this.client.onSubscribeNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
+    client.onSubscribeNamespaceResponse((response: NamespaceOkMessage | RequestErrorMessage) => {
       this.onSubscribeNamespaceResponseHandler?.(response)
       settle(this.pendingSubscribeNamespace, 'SUBSCRIBE_NAMESPACE_ERROR', response)
     })
 
-    this.client.onPublishResponse((response: PublishOkMessage | RequestErrorMessage) => {
+    client.onPublishResponse((response: PublishOkMessage | RequestErrorMessage) => {
       settle(this.pendingPublish, 'PUBLISH_ERROR', response)
     })
 
-    this.client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
+    client.onSubscribe(async (subscribe: SubscribeMessage, isSuccess: boolean, code: number) => {
       const handler = this.incomingSubscribeHandler ?? defaultIncomingSubscribeHandler
       await handler({
         subscribe,
@@ -657,7 +789,7 @@ export class MoqtClientWrapper {
       })
     })
 
-    this.client.onSubscribeResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
+    client.onSubscribeResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
       if (isRequestError(response)) {
         this.subscriptionTrackAliases.delete(response.requestId)
       } else {
@@ -667,17 +799,23 @@ export class MoqtClientWrapper {
       this.onSubscribeResponseHandler?.(response)
     })
 
-    this.client.onIncomingUnsubscribe((requestId: bigint) => {
+    client.onIncomingUnsubscribe((requestId: bigint) => {
       this.incomingUnsubscribeHandler?.(requestId)
     })
 
-    this.client.onPublishDone((message: PublishDoneMessage) => {
+    client.onPublishDone((message: PublishDoneMessage) => {
       const requestId = message.requestId
       console.info('[moqt] received PUBLISH_DONE', {
         requestId: requestId.toString(),
         statusCode: message.statusCode.toString(),
         errorReason: message.errorReason
       })
+      // A relay that sent GOAWAY ends its subscriptions when the publisher
+      // moves away first; the switchover carries them to the new relay.
+      if (departing) {
+        return
+      }
+      this.activeSubscriptions.delete(requestId)
       const trackAlias = this.subscriptionTrackAliases.get(requestId)
       this.subscriptionTrackAliases.delete(requestId)
       if (trackAlias !== undefined) {
@@ -688,13 +826,13 @@ export class MoqtClientWrapper {
       handler?.(message)
     })
 
-    this.client.onObjectDatagram((message: ObjectDatagramMessage) => {
+    client.onObjectDatagram((message: ObjectDatagramMessage) => {
       this.onObjectDatagramHandler?.(message)
     })
-    this.client.onObjectDatagramStatus((message: ObjectDatagramStatusMessage) => {
+    client.onObjectDatagramStatus((message: ObjectDatagramStatusMessage) => {
       this.onObjectDatagramStatusHandler?.(message)
     })
-    this.client.onSubgroupHeader((header: SubgroupHeaderMessage) => {
+    client.onSubgroupHeader((header: SubgroupHeaderMessage) => {
       console.debug('[moqt] received subgroup header', {
         trackAlias: header.trackAlias.toString(),
         groupId: header.groupId.toString(),
@@ -703,7 +841,8 @@ export class MoqtClientWrapper {
       })
       this.onSubgroupHeaderHandler?.(header)
     })
-    this.client.onSubgroupObject((trackAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
+    client.onSubgroupObject((wireAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
+      const trackAlias = this.appAlias(wireAlias)
       const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
       if (handler) {
         handler(groupId, subgroupObject)
@@ -711,7 +850,7 @@ export class MoqtClientWrapper {
       }
       this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
     })
-    this.client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
+    client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
       const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
       await handler({
         trackStatus,
@@ -720,11 +859,11 @@ export class MoqtClientWrapper {
           this.requireConnectedClient().sendTrackStatusError(trackStatus.requestId, errorCode, reasonPhrase)
       })
     })
-    this.client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
+    client.onTrackStatusResponse((response: SubscribeOkMessage | RequestErrorMessage) => {
       this.onTrackStatusResponseHandler?.(response)
       settle(this.pendingTrackStatus, 'TRACK_STATUS_ERROR', response)
     })
-    this.client.onFetch(async (fetch: FetchMessage) => {
+    client.onFetch(async (fetch: FetchMessage) => {
       const handler = this.incomingFetchHandler ?? defaultIncomingFetchHandler
       const requestId = fetch.requestId
       const cancellation = new AbortController()
@@ -753,26 +892,36 @@ export class MoqtClientWrapper {
         this.incomingFetchCancellations.delete(requestId)
       }
     })
-    this.client.onFetchCancel((requestId: bigint) => {
+    client.onFetchCancel((requestId: bigint) => {
       this.incomingFetchCancellations.get(requestId)?.abort()
     })
-    this.client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
+    client.onFetchResponse((response: FetchOkMessage | RequestErrorMessage) => {
       settle(this.pendingFetch, 'FETCH_ERROR', response)
     })
-    this.client.onFetchObject((message: FetchObjectMessage) => {
+    client.onFetchObject((message: FetchObjectMessage) => {
       const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
       handler?.(message)
     })
-    this.client.onFetchStreamEnd((message: FetchStreamEndMessage) => {
+    client.onFetchStreamEnd((message: FetchStreamEndMessage) => {
       const requestId = BigInt(message.requestId)
       const handler = this.fetchStreamEndHandlers.get(requestId)
       this.fetchStreamEndHandlers.delete(requestId)
       handler?.(message)
     })
-    this.client.onGoAway((newSessionUri: string) => {
+    client.onGoAway((newSessionUri: string) => {
       console.info('[moqt] received GOAWAY', { newSessionUri })
+      departing = true
+      if (this.client === client) {
+        void this.migrate(newSessionUri)
+      }
     })
-    this.client.onConnectionClosed((info: ConnectionCloseInfo | null) => this.handleConnectionClosed(info ?? {}))
+    client.onConnectionClosed((info: ConnectionCloseInfo | null) => {
+      // A session replaced by a switchover may still close later; only the
+      // current session's close ends the wrapper.
+      if (this.client === client) {
+        this.handleConnectionClosed(info ?? {})
+      }
+    })
   }
 
   private async sendSubgroupTextForAlias(trackAlias: bigint, text: string): Promise<void> {
@@ -825,6 +974,10 @@ export class MoqtClientWrapper {
     this.fetchStreamEndHandlers.clear()
     this.subscriptionTrackAliases.clear()
     this.publishDoneHandlers.clear()
+    this.activeSubscriptions.clear()
+    this.announcedNamespaces.clear()
+    this.subscribedNamespaces.clear()
+    this.appAliasByWireAlias.clear()
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
     this.onPublishNamespaceDoneHandler = null
