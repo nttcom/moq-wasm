@@ -212,13 +212,17 @@ mod tests {
         let notification = notify_datagram(&context, handler.track_alias).await;
 
         // Assert
-        assert!(matches!(
-            notification,
-            IncomingObjectNotification::Discarded
-        ));
+        assert!(
+            matches!(notification, IncomingObjectNotification::Discarded),
+            "{notification:?}"
+        );
         let mut receiver =
             register_and_take_data_receiver(&context, OTHER_REQUEST_ID, handler.track_alias).await;
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        let received = receiver.try_recv();
+        assert!(
+            matches!(&received, Err(TryRecvError::Empty)),
+            "{received:?}"
+        );
         request.abort();
     }
 }

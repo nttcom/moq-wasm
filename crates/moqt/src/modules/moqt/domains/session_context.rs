@@ -111,6 +111,7 @@ impl ObjectSink {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum IncomingObjectNotification {
     Notified,
     Buffered {
@@ -547,10 +548,11 @@ mod tests {
         let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
         // Assert
-        assert!(matches!(
-            receiver.try_recv(),
-            Ok(IncomingObject::Datagram(object)) if object.track_alias == TRACK_ALIAS
-        ));
+        let received = receiver.try_recv();
+        assert!(
+            matches!(&received, Ok(IncomingObject::Datagram(object)) if object.track_alias == TRACK_ALIAS),
+            "{received:?}"
+        );
     }
 
     #[tokio::test]
@@ -569,10 +571,10 @@ mod tests {
 
         // Assert
         assert!(!context.receiver_map.lock().await.contains_key(&TRACK_ALIAS));
-        assert!(matches!(
-            notification,
-            IncomingObjectNotification::Discarded
-        ));
+        assert!(
+            matches!(notification, IncomingObjectNotification::Discarded),
+            "{notification:?}"
+        );
     }
 
     #[tokio::test]
@@ -607,13 +609,17 @@ mod tests {
         let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
         // Assert
-        assert!(matches!(
-            notification,
-            IncomingObjectNotification::Discarded
-        ));
+        assert!(
+            matches!(notification, IncomingObjectNotification::Discarded),
+            "{notification:?}"
+        );
         let mut receiver =
             register_and_take_data_receiver(&context, OTHER_REQUEST_ID, TRACK_ALIAS).await;
-        assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+        let received = receiver.try_recv();
+        assert!(
+            matches!(&received, Err(TryRecvError::Empty)),
+            "{received:?}"
+        );
     }
 
     #[tokio::test]
@@ -638,7 +644,10 @@ mod tests {
         let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
         // Assert
-        assert!(matches!(notification, IncomingObjectNotification::Notified));
+        assert!(
+            matches!(notification, IncomingObjectNotification::Notified),
+            "{notification:?}"
+        );
     }
 
     #[tokio::test]

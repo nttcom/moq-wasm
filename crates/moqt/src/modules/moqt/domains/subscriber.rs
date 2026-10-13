@@ -713,8 +713,11 @@ mod tests {
                 .await
                 .contains_key(&fetch_handle.request_id)
         );
-        assert!(matches!(header, Fetch::Header(_)));
-        assert!(matches!(object, Fetch::Object(field) if field == fetch_object()));
+        assert!(matches!(header, Fetch::Header(_)), "{header:?}");
+        assert!(
+            matches!(&object, Fetch::Object(field) if *field == fetch_object()),
+            "{object:?}"
+        );
     }
 
     #[tokio::test]
