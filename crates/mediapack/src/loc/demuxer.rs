@@ -2,7 +2,6 @@ use anyhow::Result;
 use bytes::Bytes;
 
 use crate::{
-    aac::AudioSpecificConfig,
     h264::{AvcDecoderConfigurationRecord, ParameterSetTracker, avcc::avcc_to_annexb},
     loc::object::LocObject,
     sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
@@ -21,7 +20,7 @@ pub struct Demuxer {
 
 enum Track {
     Video(ParameterSetTracker),
-    Audio(AudioSpecificConfig),
+    Audio(AudioConfig),
 }
 
 impl Demuxer {
@@ -34,13 +33,19 @@ impl Demuxer {
         }
     }
 
-    pub fn audio(config: AudioSpecificConfig) -> Self {
+    pub fn audio(config: AudioConfig) -> Self {
         Self {
             track: Track::Audio(config),
             capture_origin: None,
             last_pts: Timestamp::ZERO,
             announced: false,
         }
+    }
+
+    /// Makes timestamps count from `origin` so several tracks share one
+    /// timeline. Call before the first `push`; later calls are ignored.
+    pub fn set_capture_origin(&mut self, origin: Timestamp) {
+        self.capture_origin.get_or_insert(origin);
     }
 
     pub fn push(&mut self, object: &LocObject) -> Result<Vec<MediaEvent>> {
@@ -52,7 +57,7 @@ impl Demuxer {
                 has_audio: matches!(self.track, Track::Audio(_)),
             }));
             if let Track::Audio(config) = &self.track {
-                events.push(MediaEvent::AudioConfig(AudioConfig::Aac(config.clone())));
+                events.push(MediaEvent::AudioConfig(config.clone()));
             }
         }
 
@@ -184,6 +189,38 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_origin_keeps_the_gap_between_two_tracks() {
+        // Arrange: audio starts 30 ms after the video keyframe
+        let origin = Timestamp::from_micros(1_000_000);
+        let mut video = Demuxer::video();
+        let mut audio = Demuxer::audio(AudioConfig::Aac(mono_48k()));
+        video.set_capture_origin(origin);
+        audio.set_capture_origin(origin);
+        video.set_capture_origin(Timestamp::from_micros(7_000_000));
+
+        // Act
+        let video_events = video
+            .push(&video_object(1_000_000, keyframe_annexb()))
+            .unwrap();
+        let audio_events = audio
+            .push(&LocObject {
+                extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, 1_030_000)],
+                payload: Bytes::from_static(&[0xDE, 0xAD]),
+            })
+            .unwrap();
+
+        // Assert
+        let Some(MediaEvent::Video(video_sample)) = video_events.last() else {
+            panic!("expected a video sample");
+        };
+        let Some(MediaEvent::Audio(audio_sample)) = audio_events.last() else {
+            panic!("expected an audio sample");
+        };
+        assert_eq!(video_sample.pts, Timestamp::ZERO);
+        assert_eq!(audio_sample.pts, Timestamp::from_millis(30));
+    }
+
+    #[test]
     fn converts_a_length_prefixed_payload_using_the_video_config_extension() {
         // Arrange
         let mut config = fixture_record();
@@ -278,7 +315,7 @@ mod tests {
     #[test]
     fn reports_the_audio_configuration_the_caller_supplied() {
         // Arrange
-        let mut demuxer = Demuxer::audio(mono_48k());
+        let mut demuxer = Demuxer::audio(AudioConfig::Aac(mono_48k()));
         let object = LocObject {
             extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, 2_000_000)],
             payload: Bytes::from_static(&[7, 7]),
