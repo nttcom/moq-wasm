@@ -1,12 +1,14 @@
-import type { JitterBufferSubgroupObject } from './jitterBufferTypes'
+import type { VideoChunk } from './locChunk'
 
 const MAX_ENTRIES = 9000
 
 export type VideoJitterBufferEntry = {
   groupId: bigint
+  subgroupId: bigint
+  objectId: bigint
   captureTimestampMicros?: number
   receivedAtMs: number
-  object: JitterBufferSubgroupObject
+  chunk: VideoChunk
 }
 
 export class VideoJitterBuffer {
@@ -27,19 +29,13 @@ export class VideoJitterBuffer {
     return this.buffer[0] ?? null
   }
 
-  private findInsertPos({ groupId, object }: VideoJitterBufferEntry): number {
-    const subgroupId = object.subgroupId ?? 0n
+  private findInsertPos({ groupId, objectId, subgroupId }: VideoJitterBufferEntry): number {
     for (let i = this.buffer.length - 1; i >= 0; i -= 1) {
       const entry = this.buffer[i]
-      const entryObject = entry.object
-      if (entry.groupId === groupId && entryObject.objectId < object.objectId) {
+      if (entry.groupId === groupId && entry.objectId < objectId) {
         return i + 1
       }
-      if (
-        entry.groupId === groupId &&
-        entryObject.objectId === object.objectId &&
-        (entryObject.subgroupId ?? 0n) <= subgroupId
-      ) {
+      if (entry.groupId === groupId && entry.objectId === objectId && entry.subgroupId <= subgroupId) {
         return i + 1
       }
       if (entry.groupId < groupId) {

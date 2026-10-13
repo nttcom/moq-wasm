@@ -1,8 +1,7 @@
 import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBuffer'
 import { base64ToUint8Array } from '../base64'
-import type { JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import { type ChunkMetadata } from '../chunk'
 import { readLocHeader } from '../loc'
 import { buildVideoChunkFromLoc } from '../locChunk'
 
@@ -162,15 +161,15 @@ function decodeBufferedEntry(entry: VideoJitterBufferEntry): void {
   schedulePop(decodeQueueSize > 12 ? POP_INTERVAL_MS : 0)
 }
 
-async function submitForDecode({ groupId, object }: VideoJitterBufferEntry): Promise<void> {
-  const { metadata } = object.cachedChunk
-  if (waitingForKeyFrame && metadata.type !== 'key') {
+async function submitForDecode(entry: VideoJitterBufferEntry): Promise<void> {
+  const { groupId, objectId, chunk } = entry
+  if (waitingForKeyFrame && chunk.type !== 'key') {
     return
   }
-  const pending = outputPendingIds.get(metadata.timestamp) ?? []
-  pending.push({ groupId, objectId: object.objectId })
-  outputPendingIds.set(metadata.timestamp, pending)
-  await decode(groupId, object)
+  const pending = outputPendingIds.get(chunk.timestamp) ?? []
+  pending.push({ groupId, objectId })
+  outputPendingIds.set(chunk.timestamp, pending)
+  await decode(entry)
 }
 
 function takeOutputIds(timestampUs: number): FrameIds | undefined {
@@ -235,9 +234,11 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       const loc = readLocHeader(object.locHeader)
       const entry: VideoJitterBufferEntry = {
         groupId,
+        subgroupId: object.subgroupId ?? 0n,
+        objectId: object.objectId,
         captureTimestampMicros: loc.captureTimestampMicros,
         receivedAtMs: performance.now(),
-        object: { ...object, cachedChunk: buildVideoChunkFromLoc(loc, object.objectPayload, object.objectId) }
+        chunk: buildVideoChunkFromLoc(loc, object.objectPayload, object.objectId)
       }
       if (holdMs === 0) {
         enqueueDirectDecode(entry)
@@ -257,23 +258,17 @@ function enqueueDirectDecode(entry: VideoJitterBufferEntry): void {
     })
 }
 
-async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgroupObject) {
-  const decoded = subgroupStreamObject.cachedChunk
+async function decode({ groupId, objectId, chunk }: VideoJitterBufferEntry) {
   if (isSupersededGroup(groupId)) {
     return
   }
 
-  const resolvedConfig = resolveVideoConfig(decoded.metadata)
+  const resolvedConfig = resolveVideoConfig(chunk.descriptionBase64)
   if (!resolvedConfig) {
     return
   }
 
-  const encodedVideoChunk = new EncodedVideoChunk({
-    type: decoded.metadata.type as EncodedVideoChunkType,
-    timestamp: decoded.metadata.timestamp,
-    duration: decoded.metadata.duration ?? undefined,
-    data: decoded.data
-  })
+  const encodedVideoChunk = new EncodedVideoChunk({ type: chunk.type, timestamp: chunk.timestamp, data: chunk.data })
 
   if (!videoDecoder || videoDecoder.state === 'closed') {
     videoDecoder = await initializeVideoDecoder(buildVideoDecoderConfig(resolvedConfig))
@@ -285,18 +280,18 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
     // The current keyframe's output IDs were registered before decode();
     // preserve them across first decoder configuration so the first frame is not dropped.
     clearOutputQueue(true)
-    if (decoded.metadata.type !== 'key') {
+    if (chunk.type !== 'key') {
       return
     }
   }
 
-  if (waitingForKeyFrame && decoded.metadata.type !== 'key') {
+  if (waitingForKeyFrame && chunk.type !== 'key') {
     return
   }
 
   try {
     videoDecoder.decode(encodedVideoChunk)
-    if (decoded.metadata.type === 'key') {
+    if (chunk.type === 'key') {
       waitingForKeyFrame = false
       newestKeyframeGroupId = groupId
     }
@@ -306,8 +301,8 @@ async function decode(groupId: bigint, subgroupStreamObject: JitterBufferSubgrou
       clearOutputQueue()
       console.warn('[videoDecoder] decode requires key frame; waiting for next key frame', {
         groupId: groupId.toString(),
-        objectId: subgroupStreamObject.objectId.toString(),
-        chunkType: decoded.metadata.type
+        objectId: objectId.toString(),
+        chunkType: chunk.type
       })
       return
     }
@@ -339,12 +334,11 @@ function applyCatalogInfo(codec?: string, descriptionBase64?: string): void {
   }
 }
 
-function resolveVideoConfig(metadata: ChunkMetadata): CachedVideoConfig | null {
+function resolveVideoConfig(descriptionBase64: string | undefined): CachedVideoConfig | null {
   if (cachedVideoConfig) {
     return cachedVideoConfig
   }
-  const codec = metadata.codec ?? catalogCodec
-  if (!codec) {
+  if (!catalogCodec) {
     if (!missingCatalogCodecWarned) {
       missingCatalogCodecWarned = true
       console.warn('[videoDecoder] skip decode until catalog codec is available')
@@ -352,7 +346,7 @@ function resolveVideoConfig(metadata: ChunkMetadata): CachedVideoConfig | null {
     return null
   }
   missingCatalogCodecWarned = false
-  return { codec, descriptionBase64: metadata.descriptionBase64 ?? catalogDescriptionBase64 }
+  return { codec: catalogCodec, descriptionBase64: descriptionBase64 ?? catalogDescriptionBase64 }
 }
 
 function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfig {

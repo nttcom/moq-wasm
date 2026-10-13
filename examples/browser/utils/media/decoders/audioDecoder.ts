@@ -2,11 +2,9 @@ import { GroupOrderGate } from '../groupOrderGate'
 import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import type { ChunkMetadata, DeserializedChunk } from '../chunk'
 import { readLocHeader } from '../loc'
-import { buildAudioChunkFromLoc } from '../locChunk'
 
-type CachedAudioConfig = {
+type AudioConfig = {
   codec: string
   sampleRate: number
   channels: number
@@ -17,12 +15,7 @@ const audioBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', media: 'audio', kbps })
 })
 
-const DEFAULT_AUDIO_DECODER_CONFIG = {
-  codec: 'opus',
-  sampleRate: 48000, // Opusの推奨サンプルレート
-  numberOfChannels: 1 // モノラル
-}
-
+const audioConfig: AudioConfig = { codec: 'opus', sampleRate: 48000, channels: 1 }
 let audioDecoder: AudioDecoder | undefined
 /// The decoder stamps its outputs from the sample count it has produced, not
 /// from the chunk timestamps, so a hole in the source would shift every later
@@ -30,11 +23,6 @@ let audioDecoder: AudioDecoder | undefined
 /// was decoded from instead.
 const pendingCaptureTimestamps: (number | undefined)[] = []
 let decoderSignature: string | null = null
-let cachedAudioConfig: CachedAudioConfig | null = null
-let catalogAudioCodec: string | undefined
-let catalogAudioSampleRate: number | undefined
-let catalogAudioChannels: number | undefined
-let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
 const groupOrder = new GroupOrderGate((_groupId, object) => enqueueDirectDecode(object))
 
@@ -64,10 +52,10 @@ self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
   const data = event.data
   switch (data.type) {
     case 'catalog':
-      catalogAudioCodec = data.codec || catalogAudioCodec
-      catalogAudioSampleRate = data.sampleRate ?? catalogAudioSampleRate
-      catalogAudioChannels = data.channels ?? catalogAudioChannels
-      catalogAudioDescriptionBase64 = data.descriptionBase64 || catalogAudioDescriptionBase64
+      audioConfig.codec = data.codec || audioConfig.codec
+      audioConfig.sampleRate = data.sampleRate ?? audioConfig.sampleRate
+      audioConfig.channels = data.channels ?? audioConfig.channels
+      audioConfig.descriptionBase64 = data.descriptionBase64 || audioConfig.descriptionBase64
       return
     case 'object':
       audioBitrateLogger.addBytes(data.subgroupStreamObject.objectPayloadLength)
@@ -80,70 +68,47 @@ function enqueueDirectDecode(object: SubgroupObjectWithLoc): void {
     return
   }
   directDecodeQueue = directDecodeQueue
-    .then(async () => {
-      const loc = readLocHeader(object.locHeader)
-      await decode(buildAudioChunkFromLoc(loc, object.objectPayload), loc.captureTimestampMicros)
-    })
+    .then(() => decode(object.objectPayload, readLocHeader(object.locHeader).captureTimestampMicros))
     .catch((error) => {
       console.error('[audioDecoder] direct decode failed', error)
     })
 }
 
-async function decode(decoded: DeserializedChunk, captureTimestampMicros?: number) {
-  const resolvedConfig = resolveAudioConfig(decoded.metadata)
-  if (!resolvedConfig) {
-    // メタデータからデコーダ設定を導けるまで待つ
-    return
-  }
-  const desiredSignature = buildSignature(resolvedConfig)
-  if (isPcmAlawCodec(resolvedConfig.codec)) {
+async function decode(payload: Uint8Array, captureTimestampMicros: number | undefined) {
+  const timestamp = captureTimestampMicros ?? 0
+  if (isPcmAlawCodec(audioConfig.codec)) {
     try {
-      decodePcmAlawChunk(decoded.metadata, decoded.data, resolvedConfig, captureTimestampMicros)
-      cachedAudioConfig = resolvedConfig
+      decodePcmAlawChunk(payload, timestamp, captureTimestampMicros)
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
       }
       audioDecoder = undefined
-      decoderSignature = desiredSignature
     } catch (error) {
       console.error('[audioDecoder] pcm alaw decode failed', error)
     }
     return
   }
-  const desiredConfig = buildDecoderConfig(resolvedConfig)
 
+  const desiredSignature = buildSignature(audioConfig)
   if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
     try {
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
       }
-      audioDecoder = await createAudioDecoder(desiredConfig, desiredSignature)
-      cachedAudioConfig = resolvedConfig
+      audioDecoder = await createAudioDecoder(buildDecoderConfig(audioConfig), desiredSignature)
     } catch (e) {
       console.error('[audioDecoder] configure failed', e)
       return
     }
   }
 
-  const encodedAudioChunk = new EncodedAudioChunk({
-    type: decoded.metadata.type as EncodedAudioChunkType,
-    timestamp: decoded.metadata.timestamp,
-    duration: decoded.metadata.duration ?? undefined,
-    data: decoded.data
-  })
-
-  audioDecoder.decode(encodedAudioChunk)
+  audioDecoder.decode(new EncodedAudioChunk({ type: 'key', timestamp, data: payload }))
   pendingCaptureTimestamps.push(captureTimestampMicros)
 }
 
-function decodePcmAlawChunk(
-  metadata: ChunkMetadata,
-  payload: Uint8Array,
-  resolved: CachedAudioConfig,
-  captureTimestampMicros: number | undefined
-): void {
-  const channels = Math.max(1, resolved.channels)
-  const sampleRate = Math.max(1, resolved.sampleRate)
+function decodePcmAlawChunk(payload: Uint8Array, timestamp: number, captureTimestampMicros: number | undefined): void {
+  const channels = Math.max(1, audioConfig.channels)
+  const sampleRate = Math.max(1, audioConfig.sampleRate)
   const totalSamples = payload.byteLength
   const numberOfFrames = Math.floor(totalSamples / channels)
   if (numberOfFrames <= 0) {
@@ -160,7 +125,7 @@ function decodePcmAlawChunk(
     sampleRate,
     numberOfFrames,
     numberOfChannels: channels,
-    timestamp: metadata.timestamp,
+    timestamp,
     data: new Uint8Array(pcm.buffer)
   })
   postAudioData(audioData, captureTimestampMicros)
@@ -190,60 +155,19 @@ function decodeAlawSample(encoded: number): number {
   return (sample & 0x80) !== 0 ? value : -value
 }
 
-function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
-  const hasNewConfig =
-    metadata.codec ||
-    metadata.descriptionBase64 ||
-    metadata.sampleRate ||
-    metadata.channels ||
-    catalogAudioCodec ||
-    catalogAudioSampleRate ||
-    catalogAudioChannels ||
-    catalogAudioDescriptionBase64
-  if (!hasNewConfig && !cachedAudioConfig) {
-    return {
-      codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
-      sampleRate: DEFAULT_AUDIO_DECODER_CONFIG.sampleRate,
-      channels: DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
-    }
-  }
-
-  const codec =
-    metadata.codec ??
-    (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
-    catalogAudioCodec ??
-    cachedAudioConfig?.codec ??
-    DEFAULT_AUDIO_DECODER_CONFIG.codec
-  const sampleRate =
-    metadata.sampleRate ??
-    catalogAudioSampleRate ??
-    cachedAudioConfig?.sampleRate ??
-    DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
-  const channels =
-    metadata.channels ??
-    catalogAudioChannels ??
-    cachedAudioConfig?.channels ??
-    DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
-  const descriptionBase64 =
-    metadata.descriptionBase64 ?? catalogAudioDescriptionBase64 ?? cachedAudioConfig?.descriptionBase64
-
-  return { codec, sampleRate, channels, descriptionBase64 }
-}
-
-function buildDecoderConfig(resolved: CachedAudioConfig): AudioDecoderConfig {
+function buildDecoderConfig(config: AudioConfig): AudioDecoderConfig {
   const description =
-    resolved.codec.startsWith('mp4a') && resolved.descriptionBase64
-      ? base64ToUint8Array(resolved.descriptionBase64)
+    config.codec.startsWith('mp4a') && config.descriptionBase64
+      ? base64ToUint8Array(config.descriptionBase64)
       : undefined
   return {
-    codec: resolved.codec,
-    sampleRate: resolved.sampleRate,
-    numberOfChannels: resolved.channels,
+    codec: config.codec,
+    sampleRate: config.sampleRate,
+    numberOfChannels: config.channels,
     description
   }
 }
 
-function buildSignature(resolved: CachedAudioConfig): string {
-  const desc = resolved.descriptionBase64 ?? ''
-  return `${resolved.codec}:${resolved.sampleRate}:${resolved.channels}:${desc}`
+function buildSignature(config: AudioConfig): string {
+  return `${config.codec}:${config.sampleRate}:${config.channels}:${config.descriptionBase64 ?? ''}`
 }
