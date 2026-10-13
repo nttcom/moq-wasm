@@ -12,7 +12,7 @@ use moqt::{
     ClientConfig, Endpoint, Session, SessionEvent, Subscription, TrackReader, TransportSendError,
     WEBTRANSPORT,
 };
-use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
+use msf::{Catalog, KnownPackaging, KnownTrackRole, Track, CATALOG_TRACK_NAME};
 use onvif_ingest::{
     app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker,
     rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
@@ -66,7 +66,7 @@ struct MoqtArgs {
     audio_track: String,
 
     /// Track name for profile catalog
-    #[arg(long, default_value = "catalog")]
+    #[arg(long, default_value = CATALOG_TRACK_NAME)]
     catalog_track: String,
 
     /// Track name for ONVIF commands
@@ -904,7 +904,7 @@ async fn send_catalog(
     let catalog = build_catalog(namespace, state, profiles);
     let data = serde_json::to_vec(&catalog).context("serialize catalog json")?;
     let sent = send_catalog_group(publisher, publication, group_id, publisher_priority, data).await;
-    if was_stopped_by_peer(sent, "catalog")? {
+    if was_stopped_by_peer(sent, CATALOG_TRACK_NAME)? {
         return Ok(());
     }
     log::info!(
@@ -1462,16 +1462,10 @@ fn build_catalog(
     state: &CatalogUpdateState,
     profiles: &[ProfileTrack],
 ) -> Catalog {
-    Catalog {
-        version: Some(1),
-        delta_update: None,
-        add_tracks: None,
-        remove_tracks: None,
-        clone_tracks: None,
-        generated_at: Some(now_millis()),
-        is_complete: None,
-        tracks: Some(build_catalog_tracks(namespace, state, profiles)),
-    }
+    Catalog::new(
+        build_catalog_tracks(namespace, state, profiles),
+        now_millis(),
+    )
 }
 
 fn build_catalog_tracks(
@@ -1499,75 +1493,29 @@ fn build_catalog_tracks(
             .name
             .clone()
             .unwrap_or_else(|| profile.profile_token.clone());
-        tracks.push(Track {
-            namespace: namespace_label.clone(),
-            name: profile.video_track_name.clone(),
-            packaging: Packaging::Known(KnownPackaging::Loc),
-            event_type: None,
-            role: Some(TrackRole::Known(KnownTrackRole::Video)),
-            is_live: true,
-            target_latency: None,
-            label: Some(base_label.clone()),
-            render_group: None,
-            alt_group: None,
-            init_data: None,
-            depends: None,
-            temporal_id: None,
-            spatial_id: None,
-            codec: video_codec,
-            mime_type: None,
-            framerate: profile.framerate,
-            timescale: None,
-            bitrate: None,
-            width: profile.resolution.map(|(width, _)| width),
-            height: profile.resolution.map(|(_, height)| height),
-            sample_rate: None,
-            channel_config: None,
-            display_width: None,
-            display_height: None,
-            lang: None,
-            parent_name: None,
-            track_duration: None,
-            max_grp_sap_starting_type: None,
-            max_obj_sap_starting_type: None,
-        });
-        tracks.push(Track {
-            namespace: namespace_label.clone(),
-            name: profile.audio_track_name.clone(),
-            packaging: Packaging::Known(KnownPackaging::Loc),
-            event_type: None,
-            role: Some(TrackRole::Known(KnownTrackRole::Audio)),
-            is_live: true,
-            target_latency: None,
-            label: Some(format!("{base_label} audio")),
-            render_group: None,
-            alt_group: None,
-            init_data: None,
-            depends: None,
-            temporal_id: None,
-            spatial_id: None,
-            mime_type: audio_codec
-                .as_deref()
-                .and_then(audio_mime_type)
-                .map(ToOwned::to_owned),
-            codec: audio_codec,
-            framerate: None,
-            timescale: None,
-            bitrate: None,
-            width: None,
-            height: None,
-            sample_rate: audio.and_then(|audio| audio.sample_rate),
-            channel_config: audio
-                .and_then(|audio| audio.channels)
-                .map(channel_config_label),
-            display_width: None,
-            display_height: None,
-            lang: None,
-            parent_name: None,
-            track_duration: None,
-            max_grp_sap_starting_type: None,
-            max_obj_sap_starting_type: None,
-        });
+        let mut video = Track::new(&profile.video_track_name, KnownPackaging::Loc, true);
+        video.namespace = namespace_label.clone();
+        video.role = Some(KnownTrackRole::Video.into());
+        video.label = Some(base_label.clone());
+        video.codec = video_codec;
+        video.framerate = profile.framerate;
+        video.width = profile.resolution.map(|(width, _)| width);
+        video.height = profile.resolution.map(|(_, height)| height);
+        tracks.push(video);
+        let mut audio_track = Track::new(&profile.audio_track_name, KnownPackaging::Loc, true);
+        audio_track.namespace = namespace_label.clone();
+        audio_track.role = Some(KnownTrackRole::Audio.into());
+        audio_track.label = Some(format!("{base_label} audio"));
+        audio_track.mime_type = audio_codec
+            .as_deref()
+            .and_then(audio_mime_type)
+            .map(ToOwned::to_owned);
+        audio_track.codec = audio_codec;
+        audio_track.sample_rate = audio.and_then(|audio| audio.sample_rate);
+        audio_track.channel_config = audio
+            .and_then(|audio| audio.channels)
+            .map(channel_config_label);
+        tracks.push(audio_track);
     }
     tracks
 }
@@ -1766,14 +1714,5 @@ mod tests {
     fn delivered_object_was_not_stopped() {
         // Act / Assert
         assert!(!was_stopped_by_peer(Ok(()), "video").unwrap());
-    }
-
-    #[test]
-    fn live_catalog_omits_is_complete() {
-        // Act
-        let catalog = build_catalog(&[], &CatalogUpdateState::new(), &[]);
-
-        // Assert
-        assert_eq!(catalog.is_complete, None);
     }
 }

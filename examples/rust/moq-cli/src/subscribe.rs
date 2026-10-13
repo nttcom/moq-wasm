@@ -28,8 +28,9 @@ async fn subscribe_stdout(session: &Session, args: &SubscribeArgs) -> Result<()>
     // Subscribe to both tracks up front so NextGroupStart catches the first
     // group; otherwise a burst publisher can finish before we are done
     // reading the catalog and the media subscription would start too late.
-    let mut catalog_reader =
-        TrackReader::new(subscribe_track(session, &track.namespace, catalog::TRACK).await?);
+    let mut catalog_reader = TrackReader::new(
+        subscribe_track(session, &track.namespace, msf::CATALOG_TRACK_NAME).await?,
+    );
     info!(
         namespace = track.namespace,
         track = track.name,

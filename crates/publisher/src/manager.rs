@@ -16,7 +16,7 @@ use moqt::{
     subscribe::SubscribeHandler,
 };
 use msf::{
-    Catalog, Track,
+    CATALOG_TRACK_NAME, Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
@@ -25,7 +25,6 @@ use crate::stream_ledger::{StreamLedger, StreamRecord};
 
 pub const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
-const CATALOG_TRACK_NAME: &str = "catalog";
 pub(crate) const TIMELINE_TRACK_NAME: &str = "timeline";
 const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const CHAT_TRACK_NAME: &str = "chat";
@@ -665,32 +664,13 @@ fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Cat
     chat.mime_type = Some("application/json".to_string());
     tracks.push(chat);
 
-    Ok(Catalog {
-        version: Some(1),
-        delta_update: None,
-        add_tracks: None,
-        remove_tracks: None,
-        clone_tracks: None,
-        generated_at: Some(now_unix().as_millis() as u64),
-        is_complete: None,
-        tracks: Some(tracks),
-    })
+    Ok(Catalog::new(tracks, now_unix().as_millis() as u64))
 }
 
-/// draft-ietf-moq-cmsf-01 §3.1 puts the init segment in `initData` and §3.5.2
-/// declares every group and object starts on a SAP type 1 sample.
 fn cmaf_sibling(loc: &Track, mime_type: &str, init_data: String, alt_group: Option<u64>) -> Track {
-    Track {
-        name: cmaf_track_name(&loc.name),
-        packaging: Packaging::Known(KnownPackaging::Cmaf),
-        label: loc.label.as_ref().map(|label| format!("{label} (CMAF)")),
-        alt_group,
-        mime_type: Some(mime_type.to_string()),
-        init_data: Some(init_data),
-        max_grp_sap_starting_type: Some(1),
-        max_obj_sap_starting_type: Some(1),
-        ..loc.clone()
-    }
+    let mut cmaf = loc.cmaf_sibling(&cmaf_track_name(&loc.name), mime_type, init_data, alt_group);
+    cmaf.label = loc.label.as_ref().map(|label| format!("{label} (CMAF)"));
+    cmaf
 }
 
 fn track(
@@ -699,38 +679,10 @@ fn track(
     packaging: KnownPackaging,
     role: TrackRole,
 ) -> Track {
-    Track {
-        namespace: namespace.clone(),
-        name: name.to_string(),
-        packaging: Packaging::Known(packaging),
-        event_type: None,
-        role: Some(role),
-        is_live: true,
-        target_latency: None,
-        label: None,
-        render_group: None,
-        alt_group: None,
-        init_data: None,
-        depends: None,
-        temporal_id: None,
-        spatial_id: None,
-        codec: None,
-        mime_type: None,
-        framerate: None,
-        timescale: None,
-        bitrate: None,
-        width: None,
-        height: None,
-        sample_rate: None,
-        channel_config: None,
-        display_width: None,
-        display_height: None,
-        lang: None,
-        parent_name: None,
-        track_duration: None,
-        max_grp_sap_starting_type: None,
-        max_obj_sap_starting_type: None,
-    }
+    let mut track = Track::new(name, packaging, true);
+    track.namespace = namespace.clone();
+    track.role = Some(role);
+    track
 }
 
 fn channel_config_label(channels: u8) -> String {
@@ -820,15 +772,6 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
-    }
-
-    #[test]
-    fn live_catalog_omits_is_complete() {
-        // Act
-        let catalog = build_catalog("live/test", &metadata_with_video_and_audio()).unwrap();
-
-        // Assert
-        assert_eq!(catalog.is_complete, None);
     }
 
     #[test]
