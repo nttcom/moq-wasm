@@ -12,7 +12,7 @@ import init, {
   type Mp4VideoTrack
 } from '../../pkg/moqt'
 import { monotonicUnixMicros, timeSeededGroupId } from '../../utils/media/clock'
-import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
+import { buildLocHeader } from '../../utils/media/loc'
 import {
   type ReplayTrack,
   answerFetch,
@@ -535,7 +535,7 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       codec: media.audio.codec,
       samplerate: media.audio.sampleRate,
       channelConfig: channelConfigLabel(media.audio.channels),
-      initData: media.audio.audioSpecificConfig && bytesToBase64(media.audio.audioSpecificConfig)
+      initData: media.audio.audioSpecificConfig && media.audio.audioSpecificConfig.toBase64()
     })
   }
   return buildMsfCatalogJson(tracks)

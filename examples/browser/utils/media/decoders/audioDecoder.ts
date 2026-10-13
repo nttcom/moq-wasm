@@ -1,5 +1,4 @@
 import { GroupOrderGate } from '../groupOrderGate'
-import { base64ToUint8Array } from '../base64'
 import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
@@ -158,7 +157,7 @@ function decodeAlawSample(encoded: number): number {
 function buildDecoderConfig(config: AudioConfig): AudioDecoderConfig {
   const description =
     config.codec.startsWith('mp4a') && config.descriptionBase64
-      ? base64ToUint8Array(config.descriptionBase64)
+      ? Uint8Array.fromBase64(config.descriptionBase64)
       : undefined
   return {
     codec: config.codec,

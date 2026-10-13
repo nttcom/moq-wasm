@@ -1,6 +1,5 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt'
-import { base64ToUint8Array } from '../../utils/media/base64'
 import { parseAudioChannelCount } from '../../utils/media/decoderCatalog'
 import type { MseTrackSource } from '../../utils/media/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
@@ -747,7 +746,7 @@ export class LivePlayer {
       codec: track.codec,
       sampleRate: track.samplerate,
       numberOfChannels: parseAudioChannelCount(track.channelConfig) ?? 2,
-      description: track.initData ? base64ToUint8Array(track.initData) : undefined
+      description: track.initData ? Uint8Array.fromBase64(track.initData) : undefined
     }
   }
 

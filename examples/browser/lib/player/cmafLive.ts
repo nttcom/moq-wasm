@@ -1,4 +1,3 @@
-import { base64ToUint8Array } from '../../utils/media/base64'
 import { MseSink, type MseSources, type MseTrackSource } from '../../utils/media/mseSink'
 import type { MediaKind } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
@@ -9,7 +8,7 @@ export function cmafSource(track: MediaCatalogTrack): MseTrackSource | undefined
     return undefined
   }
   const container = track.role === 'audio' ? 'audio/mp4' : 'video/mp4'
-  return { mimeType: `${container}; codecs="${track.codec}"`, initSegment: base64ToUint8Array(track.initData) }
+  return { mimeType: `${container}; codecs="${track.codec}"`, initSegment: Uint8Array.fromBase64(track.initData) }
 }
 
 /// Live CMAF playback through a MediaSource. MSE decodes from the first random

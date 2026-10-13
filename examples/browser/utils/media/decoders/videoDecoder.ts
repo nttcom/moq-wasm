@@ -1,5 +1,4 @@
 import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBuffer'
-import { base64ToUint8Array } from '../base64'
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
@@ -352,7 +351,7 @@ function resolveVideoConfig(descriptionBase64: string | undefined): CachedVideoC
 function buildVideoDecoderConfig(resolved: CachedVideoConfig): VideoDecoderConfig {
   return {
     codec: resolved.codec,
-    description: resolved.descriptionBase64 ? base64ToUint8Array(resolved.descriptionBase64) : undefined,
+    description: resolved.descriptionBase64 ? Uint8Array.fromBase64(resolved.descriptionBase64) : undefined,
     hardwareAcceleration: 'prefer-software'
   }
 }

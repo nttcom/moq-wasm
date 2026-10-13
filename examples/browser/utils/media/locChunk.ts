@@ -1,4 +1,4 @@
-import { bytesToBase64, type LocMetadata } from './loc'
+import type { LocMetadata } from './loc'
 
 export type VideoChunk = {
   type: EncodedVideoChunkType
@@ -11,7 +11,7 @@ export function buildVideoChunkFromLoc(loc: LocMetadata, payload: Uint8Array, ob
   return {
     type: objectId === 0n ? 'key' : 'delta',
     timestamp: loc.captureTimestampMicros ?? 0,
-    descriptionBase64: loc.videoConfig ? bytesToBase64(loc.videoConfig) : undefined,
+    descriptionBase64: loc.videoConfig?.toBase64(),
     data: payload
   }
 }
