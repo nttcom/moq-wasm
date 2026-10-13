@@ -1,4 +1,3 @@
-import type { MediaCatalogTrack } from '../../examples/media/catalog'
 import { monotonicUnixMicros } from '../../utils/media/clock'
 import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../utils/media/decoderCatalog'
 import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
@@ -7,6 +6,7 @@ import { LivePlayout } from './livePlayout'
 import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from './livePictureSink'
 import type { MediaKind } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
+import type { MediaCatalogTrack } from '../msf/catalog'
 
 const PRESENTATION_MARGIN_MS = 200
 

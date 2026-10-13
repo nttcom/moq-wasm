@@ -1,58 +1,8 @@
-import { DEFAULT_CLOUD_RELAY_URL, configureRelayUrlControls } from '../../utils/relayPresets'
-
-export const DEFAULT_MOQT_URL = DEFAULT_CLOUD_RELAY_URL
 export type MediaVideoHardwareAcceleration = 'prefer-hardware' | 'prefer-software' | 'no-preference'
 
 export type MediaVideoEncodingOverrides = {
   codec?: string
   hardwareAcceleration?: MediaVideoHardwareAcceleration
-}
-
-export function initializeMediaExamplePage(namespaceInputId: string): void {
-  configureRelayUrlControls({ defaultUrl: DEFAULT_MOQT_URL })
-  applyNamespaceOverride(namespaceInputId)
-}
-
-export function parseTrackNamespace(value: string): string[] {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
-export function setStatusText(id: string, text: string): void {
-  const element = document.getElementById(id)
-  if (!(element instanceof HTMLElement)) {
-    return
-  }
-
-  const normalized = text.trim()
-  element.textContent = normalized
-  element.style.display = normalized.length > 0 ? '' : 'none'
-}
-
-export type StatusState = 'idle' | 'ok' | 'review' | 'error'
-
-export function setStatus(id: string, text: string, state: StatusState): void {
-  const element = document.getElementById(id)
-  if (element) {
-    element.textContent = text
-    element.dataset.state = state
-  }
-}
-
-export function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message
-  }
-  if (typeof error === 'string') {
-    return error
-  }
-  try {
-    return JSON.stringify(error)
-  } catch (_error) {
-    return String(error)
-  }
 }
 
 export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {
@@ -65,30 +15,6 @@ export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {
     codec: codec ?? undefined,
     hardwareAcceleration
   }
-}
-
-function applyNamespaceOverride(namespaceInputId: string): void {
-  const input = document.getElementById(namespaceInputId)
-  if (!(input instanceof HTMLInputElement)) {
-    return
-  }
-
-  const params = new URLSearchParams(window.location.search)
-  input.value =
-    firstNonEmptyValue(params, ['trackNamespace', 'namespace']) ?? (input.value.trim() || buildDefaultTrackNamespace())
-}
-
-function buildDefaultTrackNamespace(date = new Date()): string {
-  const year = date.getFullYear()
-  const month = pad(date.getMonth() + 1)
-  const day = pad(date.getDate())
-  const hours = pad(date.getHours())
-  const minutes = pad(date.getMinutes())
-  return `anon/nttcom/${year}${month}${day}/${hours}${minutes}`
-}
-
-function pad(value: number): string {
-  return value < 10 ? `0${value}` : String(value)
 }
 
 function firstNonEmptyValue(params: URLSearchParams, keys: string[]): string | null {
@@ -106,12 +32,4 @@ function parseMediaVideoHardwareAcceleration(value: string | null): MediaVideoHa
     return value
   }
   return undefined
-}
-
-export function element<T extends Element>(id: string): T {
-  const found = document.getElementById(id)
-  if (!found) {
-    throw new Error(`missing element: ${id}`)
-  }
-  return found as Element as T
 }

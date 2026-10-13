@@ -23,7 +23,7 @@ import {
   SubscriptionStateStore,
   SubgroupObjectHandler
 } from './subscriptionStateManager'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { SubgroupWriter } from './subgroupWriter'
 
 type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
 type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
@@ -60,6 +60,9 @@ export interface SubscribeNamespaceOptions {
 export const GroupOrder = { Publisher: 0, Ascending: 1, Descending: 2 } as const
 export type GroupOrder = (typeof GroupOrder)[keyof typeof GroupOrder]
 
+export const FilterType = { NextGroupStart: 0x1, LargestObject: 0x2, AbsoluteStart: 0x3, AbsoluteRange: 0x4 } as const
+export type FilterType = (typeof FilterType)[keyof typeof FilterType]
+
 export const RequestErrorCode = {
   InternalError: 0x0n,
   Timeout: 0x2n,
@@ -89,7 +92,7 @@ export interface SubscribeOptions {
   requestId?: bigint
   subscriberPriority?: number
   groupOrder?: GroupOrder
-  filterType?: number
+  filterType?: FilterType
   startGroup?: bigint
   startObject?: bigint
   endGroup?: bigint
@@ -431,7 +434,7 @@ export class MoqtClientWrapper {
       trackName,
       options.subscriberPriority ?? 0,
       options.groupOrder ?? GroupOrder.Publisher,
-      options.filterType ?? 1,
+      options.filterType ?? FilterType.NextGroupStart,
       options.startGroup,
       options.startObject,
       options.endGroup,
@@ -572,20 +575,45 @@ export class MoqtClientWrapper {
     await client.sendSubscribeForward(this.issueRequestId(), subscriptionRequestId, forward)
   }
 
+  /// A LargestObject SUBSCRIBE delivers only what follows the current largest
+  /// object, so a joining FETCH supplies that one. The two race, so the newest
+  /// group wins whichever arrives first.
+  async subscribeLatest(
+    trackNamespace: string[],
+    trackName: string,
+    authInfo: string,
+    onLatest: (payload: Uint8Array, groupId: bigint) => void
+  ): Promise<SubscribeResult> {
+    let newestGroupId: bigint | undefined
+    const deliver = (groupId: bigint, payload: Uint8Array) => {
+      if (payload.length === 0 || (newestGroupId !== undefined && groupId <= newestGroupId)) {
+        return
+      }
+      newestGroupId = groupId
+      onLatest(payload, groupId)
+    }
+    const result = await this.subscribe(trackNamespace, trackName, authInfo, {
+      filterType: FilterType.LargestObject,
+      forward: true
+    })
+    this.setOnSubgroupObjectHandler(result.subscribeOk.trackAlias, (groupId, object) => {
+      if (object.objectStatus === undefined) {
+        deliver(groupId, new Uint8Array(object.objectPayload))
+      }
+    })
+    if (result.subscribeOk.contentExists) {
+      await this.relativeJoiningFetch(result.requestId, 0n, {
+        onObject: (object) => deliver(object.groupId, object.objectPayload)
+      })
+    }
+    return result
+  }
+
   async sendSingleObjectGroup(trackAlias: bigint, groupId: bigint, payload: Uint8Array): Promise<void> {
-    const client = this.requireConnectedClient()
-    const subgroupId = 0n
-    await client.sendSubgroupHeader(trackAlias, groupId, subgroupId, 0)
-    await client.sendSubgroupObject(trackAlias, groupId, subgroupId, 0n, undefined, payload, undefined)
-    await client.sendSubgroupObject(
-      trackAlias,
-      groupId,
-      subgroupId,
-      1n,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    const writer = new SubgroupWriter(this.requireConnectedClient(), trackAlias)
+    await writer.openGroup(groupId)
+    await writer.send(payload)
+    await writer.closeGroup()
   }
 
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {

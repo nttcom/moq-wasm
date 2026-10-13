@@ -1,8 +1,8 @@
-import type { MediaCatalogTrack } from '../../examples/media/catalog'
 import { AudioGroups } from './audioGroups'
 import { MediaTimeline } from './mediaTimeline'
 import { GroupTimeline } from './rewind'
 import { RELAY_CACHE_TTL_MICROS } from './streamConventions'
+import type { MediaCatalogTrack } from '../msf/catalog'
 
 const MICROS_PER_SECOND = 1_000_000
 

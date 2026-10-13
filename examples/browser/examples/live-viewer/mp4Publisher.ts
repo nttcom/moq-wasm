@@ -11,7 +11,7 @@ import init, {
   type Mp4SampleTable,
   type Mp4VideoTrack
 } from '../../pkg/moqt'
-import { monotonicUnixMicros } from '../../utils/media/clock'
+import { monotonicUnixMicros, timeSeededGroupId } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import {
   type ReplayTrack,
@@ -20,18 +20,16 @@ import {
   endOfGroupObject,
   replayObject
 } from '../../utils/media/fetchReplay'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
-import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
-import { type StatusState, getErrorMessage } from '../media/common'
+import { SubgroupWriter } from '@moqt/subgroupWriter'
 import { PublishedGroupLog } from './publishedGroupLog'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
+import { type StatusState, getErrorMessage } from '../../utils/page'
+import { CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../../lib/msf/catalog'
 
 const VIDEO_TRACK_NAME = 'video'
 const AUDIO_TRACK_NAME = 'audio'
 const TIMELINE_TRACK_NAME = 'timeline'
-const SUBGROUP_ID = 0n
-const PUBLISHER_PRIORITY = 0
 const MAX_REQUEST_ID = 1_000_000n
 const MILLIS_PER_MICRO = 1 / 1_000
 /// The relay's default cache TTL: an older record names a group that can no longer be fetched.
@@ -112,7 +110,7 @@ export class Mp4Publisher {
     const media = await openMp4(options.file)
     let trackAliases: TrackAliases
     try {
-      this.nextCatalogGroupId = BigInt(monotonicUnixMicros())
+      this.nextCatalogGroupId = timeSeededGroupId()
       this.sentStreams.reset()
       this.catalogGroups = new Map()
       this.timelineGroups = new Map()
@@ -170,7 +168,7 @@ export class Mp4Publisher {
       video: await publishTrack(VIDEO_TRACK_NAME),
       audio: media.audio && (await publishTrack(AUDIO_TRACK_NAME)),
       timeline: await publishTrack(TIMELINE_TRACK_NAME),
-      catalog: await publishTrack(MEDIA_CATALOG_TRACK_NAME)
+      catalog: await publishTrack(CATALOG_TRACK_NAME)
     }
     await this.sendCatalog(trackAliases.catalog, buildCatalogJson(options.namespace, media))
     return trackAliases
@@ -204,17 +202,15 @@ export class Mp4Publisher {
   /// until it is shown and deliver the B-frames that precede it late.
   private async pace(media: Mp4Media, options: Mp4PublishOptions, trackAliases: TrackAliases): Promise<boolean> {
     const client = this.requireClient()
-    const video = new TrackSender(client, trackAliases.video, VIDEO_TRACK_NAME, this.sentStreams)
+    const video = this.trackWriter(client, trackAliases.video, VIDEO_TRACK_NAME)
     const audio =
-      trackAliases.audio === undefined
-        ? undefined
-        : new TrackSender(client, trackAliases.audio, AUDIO_TRACK_NAME, this.sentStreams)
-    const timeline = new TrackSender(client, trackAliases.timeline, TIMELINE_TRACK_NAME, this.sentStreams)
+      trackAliases.audio === undefined ? undefined : this.trackWriter(client, trackAliases.audio, AUDIO_TRACK_NAME)
+    const timeline = this.trackWriter(client, trackAliases.timeline, TIMELINE_TRACK_NAME)
     const catalog = buildCatalogJson(options.namespace, media)
     let catalogRefreshMicros = monotonicUnixMicros() + CATALOG_REFRESH_MICROS
     const records: MediaTimelineRecord[] = []
-    let nextTimelineGroupId = BigInt(monotonicUnixMicros())
-    let nextGroupId = BigInt(monotonicUnixMicros())
+    let nextTimelineGroupId = timeSeededGroupId()
+    let nextGroupId = timeSeededGroupId()
     let groupId: bigint | undefined
     const originMicros = monotonicUnixMicros()
     let passOriginMicros = originMicros
@@ -247,7 +243,7 @@ export class Mp4Publisher {
           }
           if (isVideo) {
             this.preview.decode(payload, isSync, presentationMicros)
-            await video.send(groupId, payload, presentationMicros)
+            await sendInGroup(video, groupId, payload, presentationMicros)
             if (isSync) {
               records.push([
                 Math.floor((presentationMicros - originMicros) * MILLIS_PER_MICRO),
@@ -263,10 +259,10 @@ export class Mp4Publisher {
               while (this.timelineGroups.size > records.length) {
                 this.timelineGroups.delete(this.timelineGroups.keys().next().value!)
               }
-              await timeline.send(timelineGroupId, document)
+              await sendInGroup(timeline, timelineGroupId, document)
             }
           } else if (audio) {
-            await audio.send(groupId, payload, presentationMicros)
+            await sendInGroup(audio, groupId, payload, presentationMicros)
           }
         }
         passOriginMicros += media.durationMicros
@@ -323,7 +319,7 @@ export class Mp4Publisher {
 
   private replayTracks(media: Mp4Media): Map<string, ReplayTrack> {
     const tracks = new Map<string, ReplayTrack>([
-      [MEDIA_CATALOG_TRACK_NAME, documentReplayTrack(this.catalogGroups, () => true)],
+      [CATALOG_TRACK_NAME, documentReplayTrack(this.catalogGroups, () => true)],
       [VIDEO_TRACK_NAME, mediaReplayTrack(media, this.mediaGroups, false)],
       [
         TIMELINE_TRACK_NAME,
@@ -347,12 +343,15 @@ export class Mp4Publisher {
     // A viewer fetches the group the relay reports as the largest, which is the newest one.
     this.catalogGroups.clear()
     this.catalogGroups.set(groupId, payload)
-    this.sentStreams.label(trackAlias, MEDIA_CATALOG_TRACK_NAME)
-    await client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-    this.sentStreams.opened(trackAlias, groupId)
-    await client.sendSubgroupObject(trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
-    this.sentStreams.object(trackAlias, groupId, 0n, payload.byteLength, false)
-    await sendEndOfGroup(client, this.sentStreams, trackAlias, groupId, 1n)
+    const writer = this.trackWriter(client, trackAlias, CATALOG_TRACK_NAME)
+    await writer.openGroup(groupId)
+    await writer.send(payload)
+    await writer.closeGroup()
+  }
+
+  private trackWriter(client: MOQTClient, trackAlias: bigint, name: string): SubgroupWriter {
+    this.sentStreams.label(trackAlias, name)
+    return new SubgroupWriter(client, trackAlias, this.sentStreams)
   }
 
   private requireClient(): MOQTClient {
@@ -364,73 +363,16 @@ export class Mp4Publisher {
   }
 }
 
-class TrackSender {
-  private groupId: bigint | undefined
-  private nextObjectId = 0n
-
-  constructor(
-    private readonly client: MOQTClient,
-    private readonly trackAlias: bigint,
-    private readonly name: string,
-    private readonly sentStreams: StreamMonitor
-  ) {}
-
-  async send(groupId: bigint, payload: Uint8Array, captureMicros?: number): Promise<void> {
-    if (groupId !== this.groupId) {
-      await this.closeGroup()
-      this.groupId = groupId
-      this.nextObjectId = 0n
-      this.sentStreams.label(this.trackAlias, this.name)
-      await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-      this.sentStreams.opened(this.trackAlias, groupId)
-    }
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      groupId,
-      SUBGROUP_ID,
-      this.nextObjectId,
-      undefined,
-      payload,
-      captureMicros === undefined ? undefined : buildLocHeader({ captureTimestampMicros: captureMicros })
-    )
-    this.sentStreams.object(
-      this.trackAlias,
-      groupId,
-      this.nextObjectId,
-      payload.byteLength,
-      false,
-      Date.now(),
-      captureMicros
-    )
-    this.nextObjectId += 1n
-  }
-
-  async closeGroup(): Promise<void> {
-    const groupId = this.groupId
-    if (groupId === undefined) {
-      return
-    }
-    await sendEndOfGroup(this.client, this.sentStreams, this.trackAlias, groupId, this.nextObjectId)
-  }
-}
-
-async function sendEndOfGroup(
-  client: MOQTClient,
-  sentStreams: StreamMonitor,
-  trackAlias: bigint,
+async function sendInGroup(
+  writer: SubgroupWriter,
   groupId: bigint,
-  objectId: bigint
+  payload: Uint8Array,
+  captureMicros?: number
 ): Promise<void> {
-  await client.sendSubgroupObject(
-    trackAlias,
-    groupId,
-    SUBGROUP_ID,
-    objectId,
-    OBJECT_STATUS_END_OF_GROUP,
-    new Uint8Array(0),
-    undefined
-  )
-  sentStreams.object(trackAlias, groupId, objectId, 0, true)
+  if (writer.openGroupId !== groupId) {
+    await writer.openGroup(groupId)
+  }
+  await writer.send(payload, captureMicros)
 }
 
 function findReplayTrack(

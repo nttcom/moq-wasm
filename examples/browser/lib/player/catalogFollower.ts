@@ -1,6 +1,6 @@
-import { MEDIA_CATALOG_TRACK_NAME } from '../../examples/media/catalog'
 import { type TextTracks, fetchLatestText } from './textTrack'
 import type { TrackContext } from './trackContext'
+import { CATALOG_TRACK_NAME } from '../msf/catalog'
 
 /// A SUBSCRIBE delivers objects published after the largest one and the bridge
 /// publishes the catalog once per upstream subscription, so a viewer joining a
@@ -26,8 +26,8 @@ export class CatalogFollower {
       this.newestGroupId = groupId
       this.onCatalog(text)
     }
-    const subscribeOk = await this.textTracks.subscribe(MEDIA_CATALOG_TRACK_NAME, onText)
-    await fetchLatestText(this.context, MEDIA_CATALOG_TRACK_NAME, subscribeOk, onText)
+    const subscribeOk = await this.textTracks.subscribe(CATALOG_TRACK_NAME, onText)
+    await fetchLatestText(this.context, CATALOG_TRACK_NAME, subscribeOk, onText)
   }
 
   reset(): void {

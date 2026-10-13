@@ -23,7 +23,6 @@ export interface MediaHandlers extends MediaSubscriberHandlers {
       sendActiveMs: number
       objectSendMs: number
       serializeMs: number
-      endOfGroupMs: number
       queueDepth: number
       objectBytes: number
       objectCount: number

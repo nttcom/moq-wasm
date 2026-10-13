@@ -16,6 +16,8 @@ import {
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
+import { timeSeededGroupId } from '../../../../utils/media/clock'
+import { OBJECT_STATUS_END_OF_GROUP } from '../../../../utils/media/objectStatus'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 type VideoSource = 'camera' | 'screenshare'
@@ -38,7 +40,6 @@ interface MediaPublisherHandlers {
       sendActiveMs: number
       objectSendMs: number
       serializeMs: number
-      endOfGroupMs: number
       queueDepth: number
       objectBytes: number
       objectCount: number
@@ -48,8 +49,6 @@ interface MediaPublisherHandlers {
     source: VideoSource
   ) => void
 }
-
-type GroupState = { groupId: bigint; lastObjectId: bigint }
 
 type VideoTrackEncoderContext = {
   trackName: string
@@ -61,16 +60,12 @@ type VideoTrackEncoderContext = {
   sendQueue: Promise<void>
   pendingSendJobs: number
   activeAliases: Set<string>
-  videoGroupStates: Map<bigint, GroupState>
   videoObjectLogCounts: Map<string, number>
 }
-
-type VideoTrackTransportState = Pick<VideoTrackEncoderContext, 'transportState' | 'videoGroupStates'>
 
 type VideoSendTimingAccumulator = {
   objectSendMs: number
   serializeMs: number
-  endOfGroupMs: number
   objectBytes: number
   objectCount: number
 }
@@ -135,7 +130,7 @@ export class MediaPublisher {
     noiseSuppression: true,
     autoGainControl: true
   }
-  private nextCatalogGroupId = BigInt(Date.now())
+  private nextCatalogGroupId = timeSeededGroupId()
   private readonly catalogGroups = new Map<bigint, Uint8Array>()
 
   constructor(
@@ -558,7 +553,7 @@ export class MediaPublisher {
     trackName: string,
     config: VideoEncodingSettings,
     keyframeInterval: number,
-    retainedState?: VideoTrackTransportState
+    retainedTransportState?: MediaTransportState
   ): void {
     const context: VideoTrackEncoderContext = {
       trackName,
@@ -568,11 +563,10 @@ export class MediaPublisher {
       worker: new Worker(new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
         type: 'module'
       }),
-      transportState: retainedState?.transportState ?? new MediaTransportState(),
+      transportState: retainedTransportState ?? new MediaTransportState(),
       sendQueue: Promise.resolve(),
       pendingSendJobs: 0,
       activeAliases: new Set<string>(),
-      videoGroupStates: retainedState?.videoGroupStates ?? new Map<bigint, GroupState>(),
       videoObjectLogCounts: new Map<string, number>()
     }
 
@@ -779,13 +773,10 @@ export class MediaPublisher {
     if (!context || !this.getSourceTrack(context.source)) {
       return
     }
-    const { source, config, encodingTrack, transportState, videoGroupStates } = context
+    const { source, config, encodingTrack, transportState } = context
     const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, config, keyframeInterval, {
-      transportState,
-      videoGroupStates
-    })
+    this.createVideoTrackContext(source, trackName, config, keyframeInterval, transportState)
     if (encodingTrack) {
       const next = this.videoTrackContexts.get(trackName)
       if (next) {
@@ -850,7 +841,6 @@ export class MediaPublisher {
   ): void {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
       context.transportState.resetAlias(alias)
-      context.videoGroupStates.delete(BigInt(alias))
     })
     if (!aliases.length) {
       return
@@ -889,7 +879,6 @@ export class MediaPublisher {
         const timingAcc: VideoSendTimingAccumulator = {
           objectSendMs: 0,
           serializeMs: 0,
-          endOfGroupMs: 0,
           objectBytes: 0,
           objectCount: 0
         }
@@ -934,7 +923,6 @@ export class MediaPublisher {
             sendActiveMs: Math.max(0, sendFinishedAtMs - sendStartedAtMs),
             objectSendMs: timingAcc.objectSendMs,
             serializeMs: timingAcc.serializeMs,
-            endOfGroupMs: timingAcc.endOfGroupMs,
             queueDepth: Math.max(0, queueDepthAtEnqueue),
             objectBytes: timingAcc.objectBytes,
             objectCount: timingAcc.objectCount,
@@ -1011,22 +999,6 @@ export class MediaPublisher {
     timingAcc?: VideoSendTimingAccumulator,
     logKeyframeSend = false
   ): Promise<void> {
-    const previousState = context.videoGroupStates.get(trackAlias)
-    if (previousState && previousState.groupId !== groupId) {
-      const endObjectId = previousState.lastObjectId + 1n
-      const eogStartedAtMs = performance.now()
-      try {
-        await this.sendEndOfGroup(client, trackAlias, previousState.groupId, endObjectId)
-      } catch (error) {
-        // A failed EndOfGroup must not block the new group's frames; the
-        // stream is eventually freed when the writer is dropped.
-        console.warn(`${context.trackName} EndOfGroup send failed:`, error)
-      }
-      if (timingAcc) {
-        timingAcc.endOfGroupMs += Math.max(0, performance.now() - eogStartedAtMs)
-      }
-    }
-
     if (timingAcc) {
       timingAcc.objectBytes += payload.byteLength
       timingAcc.objectCount += 1
@@ -1054,7 +1026,6 @@ export class MediaPublisher {
         payloadBytes: payload.byteLength
       })
     }
-    context.videoGroupStates.set(trackAlias, { groupId, lastObjectId: objectId })
   }
 
   private shouldLogSampledVideoObject(
@@ -1150,19 +1121,15 @@ export class MediaPublisher {
     if (this.hasAnySubscriberAliasForTrack(trackName)) {
       return
     }
-    const { source, config, transportState, videoGroupStates } = current
+    const { source, config, transportState } = current
     for (const alias of current.activeAliases) {
       current.transportState.resetAlias(alias)
-      current.videoGroupStates.delete(BigInt(alias))
     }
     current.activeAliases.clear()
     const keyframeInterval = this.getKeyframeIntervalForTrackName(trackName)
     this.handlers.onLocalVideoSendTiming?.(null, source)
     this.stopVideoTrackContext(trackName)
-    this.createVideoTrackContext(source, trackName, config, keyframeInterval, {
-      transportState,
-      videoGroupStates
-    })
+    this.createVideoTrackContext(source, trackName, config, keyframeInterval, transportState)
   }
 
   private suspendAudioTrackEncodingIfNoSubscribers(trackName: string, expectedContext: AudioTrackEncoderContext): void {
@@ -1408,7 +1375,15 @@ export class MediaPublisher {
       return
     }
     for (const alias of aliases) {
-      await client.sendSubgroupObject(alias, currentGroupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
+      await client.sendSubgroupObject(
+        alias,
+        currentGroupId,
+        0n,
+        endObjectId,
+        OBJECT_STATUS_END_OF_GROUP,
+        new Uint8Array(0),
+        undefined
+      )
     }
   }
 
@@ -1470,9 +1445,5 @@ export class MediaPublisher {
     this.catalogGroups.set(groupId, payload)
     await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
     await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
-  }
-
-  private async sendEndOfGroup(client: MOQTClient, trackAlias: bigint, groupId: bigint, endObjectId: bigint) {
-    await client.sendSubgroupObject(trackAlias, groupId, 0n, endObjectId, 3, new Uint8Array(0), undefined)
   }
 }

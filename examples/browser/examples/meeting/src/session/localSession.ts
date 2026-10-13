@@ -5,6 +5,7 @@ import {
   SubscribeOkMessage
 } from '../../../../pkg/moqt'
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
@@ -237,77 +238,44 @@ export class LocalSession {
     if (this.state !== LocalSessionState.Ready) {
       throw new Error(`Cannot subscribe catalog when session state is "${this.state}"`)
     }
-    return new Promise<MeetingCatalogTrack[]>((resolve, reject) => {
-      let settled = false
-      const timeoutId = window.setTimeout(() => {
-        if (settled) {
-          return
-        }
-        settled = true
-        reject(new Error('Catalog subscribe timed out'))
-      }, timeoutMs)
-
-      const handleCatalogPayload = (payload: string, source: string, groupId?: bigint) => {
-        try {
-          const tracks = parseMeetingCatalogTracks(payload)
-          console.info('[meeting][catalog] apply', {
-            trackNamespace,
-            source,
-            groupId: groupId?.toString(),
-            tracks: tracks.map((t) => t.role)
-          })
-          onTracksUpdated?.(tracks)
-          if (settled) return
-          settled = true
-          window.clearTimeout(timeoutId)
-          resolve(tracks)
-        } catch (error) {
-          if (settled) {
-            console.error('Failed to parse updated catalog payload:', error)
-            return
-          }
-          settled = true
-          window.clearTimeout(timeoutId)
-          reject(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
-        }
-      }
-
-      this.client
-        // Largest Object (0x2) filter: receive catalog updates after largest_at_subscribe.
-        // The current catalog is backfilled via Joining Fetch below.
-        .subscribe(trackNamespace, 'catalog', authInfo, { filterType: 2 })
-        .then(async ({ requestId: catalogRequestId, subscribeOk }) => {
-          const trackAlias = subscribeOk.trackAlias
-          this.subscribeTrackAliases.set(catalogRequestId, trackAlias)
-
-          // If content exists, fetch the latest catalog via Joining Fetch.
-          // joining_start=0 means "the group at largest_at_subscribe" (0 groups back).
-          // The fetch id is issued internally by moqtClient; joiningRequestId is the
-          // catalog subscribe's request id we just received.
-          const contentExists = (subscribeOk as any).contentExists ?? (subscribeOk as any).content_exists
-          console.info('[meeting][catalog] subscribed', { trackNamespace, contentExists: Boolean(contentExists) })
-          if (contentExists) {
-            await this.client.relativeJoiningFetch(catalogRequestId, 0n, {
-              onObject: (msg) => {
-                if (msg.objectPayload.length > 0) {
-                  handleCatalogPayload(new TextDecoder().decode(new Uint8Array(msg.objectPayload)), 'joining-fetch')
-                }
-              }
+    const {
+      promise: firstTracks,
+      resolve: resolveFirst,
+      reject: rejectFirst
+    } = Promise.withResolvers<MeetingCatalogTrack[]>()
+    const subscribed = async () => {
+      const { requestId, subscribeOk } = await this.client.subscribeLatest(
+        trackNamespace,
+        CATALOG_TRACK_NAME,
+        authInfo,
+        (payload, groupId) => {
+          try {
+            const tracks = parseMeetingCatalogTracks(new TextDecoder().decode(payload))
+            console.info('[meeting][catalog] apply', {
+              trackNamespace,
+              groupId: groupId.toString(),
+              tracks: tracks.map((t) => t.role)
             })
+            onTracksUpdated?.(tracks)
+            resolveFirst(tracks)
+          } catch (error) {
+            console.error('Failed to parse catalog payload:', error)
+            rejectFirst(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
           }
-
-          // Always set up stream handler for future catalog updates.
-          this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
-            handleCatalogPayload(new TextDecoder().decode(new Uint8Array(subgroup.objectPayload)), 'stream', groupId)
-          })
-        })
-        .catch((error) => {
-          if (settled) return
-          settled = true
-          window.clearTimeout(timeoutId)
-          reject(error instanceof Error ? error : new Error('Catalog subscribe failed'))
-        })
+        }
+      )
+      this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
+      return firstTracks
+    }
+    let timeoutId: number | undefined
+    const timedOut = new Promise<never>((_, reject) => {
+      timeoutId = window.setTimeout(() => reject(new Error('Catalog subscribe timed out')), timeoutMs)
     })
+    try {
+      return await Promise.race([subscribed(), timedOut])
+    } finally {
+      window.clearTimeout(timeoutId)
+    }
   }
 
   async unsubscribe(subscribeId: bigint): Promise<void> {

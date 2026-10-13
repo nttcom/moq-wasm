@@ -1,6 +1,6 @@
 # Third-party notices
 
-The browser examples inline SVG icons from [Lucide](https://lucide.dev) (lucide-static 1.49.0), and the Meeting example bundles
+The browser examples serve SVG icons (`public/icons.svg`) from [Lucide](https://lucide.dev) (lucide-static 1.49.0), and the Meeting example bundles
 `lucide-react`. Lucide's license follows.
 
 ```text

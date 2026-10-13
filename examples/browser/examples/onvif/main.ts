@@ -1,7 +1,8 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
 import { PlayerControls } from '@player/ui/playerControls'
-import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
+import { setUpRelayUrlControls } from '../../utils/relayPresets'
+import { timeSeededGroupId } from '../../utils/media/clock'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
 
@@ -38,9 +39,7 @@ const player = new LivePlayer({
 })
 const controls = new PlayerControls(stage, player, log)
 let commandTrackAlias: bigint | null = null
-/// The relay isolates a track whose publisher repeats a location, so a
-/// publisher that comes back must not restart its group ids at zero.
-let nextCommandGroupId = BigInt(Date.now()) * 1_000n
+let nextCommandGroupId = timeSeededGroupId()
 
 function renderPlayer(): void {
   const { catalogStatus, playbackStatus, rewindStatus } = player.state
@@ -190,13 +189,7 @@ function buildCommandUI(): void {
 }
 
 function setupUrlPresets(): void {
-  const urlInput = element<HTMLInputElement>('moqt-url')
-  const presetContainer = urlInput.closest('form')?.querySelector<HTMLElement>('.button-row')
-  configureRelayUrlControls({
-    input: urlInput,
-    presetContainer,
-    defaultUrl: DEFAULT_LOCAL_RELAY_A_URL
-  })
+  setUpRelayUrlControls(element('moqt-url'), element('urlPresets'))
 }
 
 function openSettingsModal(): void {

@@ -1,31 +1,23 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt'
 import { AUTH_INFO } from './const'
-import { sendVideoObjectMessage } from './sender'
 import { getFormElement } from './utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
+import { timeSeededGroupId } from '../../../utils/media/clock'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../utils/media/audioTransport'
 import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
-import {
-  MEDIA_AUDIO_PROFILES,
-  MEDIA_CATALOG_TRACK_NAME,
-  buildMediaCatalogJson,
-  getMediaVideoProfiles
-} from '../catalog'
-import {
-  getErrorMessage,
-  getMediaVideoEncodingOverrides,
-  initializeMediaExamplePage,
-  parseTrackNamespace,
-  setStatusText
-} from '../common'
+import { MEDIA_AUDIO_PROFILES, buildMediaCatalogJson, getMediaVideoProfiles } from '../catalog'
+import { getMediaVideoEncodingOverrides } from '../common'
+import { getErrorMessage, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
+import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
 
 let mediaStream: MediaStream | null = null
 const ENABLE_AUDIO_PUBLISH = false
 const moqtClient = new MoqtClientWrapper()
 let transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
+let nextCatalogGroupId = timeSeededGroupId()
 let setupCompleted = false
 const activeSubscriberTracks = new Set<string>()
 let handlersInitialized = false
@@ -147,7 +139,7 @@ function getForwardingPreference(form: HTMLFormElement): string {
 }
 
 function isCatalogTrack(trackName: string): boolean {
-  return trackName === MEDIA_CATALOG_TRACK_NAME
+  return trackName === CATALOG_TRACK_NAME
 }
 
 function isVideoTrack(trackName: string): boolean {
@@ -198,19 +190,22 @@ async function sendCatalog(client: MOQTClient, trackAlias: bigint, trackNamespac
     console.info('[MediaPublisher] catalog already sent', { trackAlias: aliasKey, trackNamespace })
     return
   }
-  const payload = new TextEncoder().encode(buildMediaCatalogJson(trackNamespace))
+  const payload = new TextEncoder().encode(
+    buildMediaCatalogJson(trackNamespace, 'loc', getMediaVideoProfiles(), MEDIA_AUDIO_PROFILES)
+  )
+  const groupId = nextCatalogGroupId++
   console.info('[MediaPublisher] sending catalog', {
     trackAlias: aliasKey,
     trackNamespace,
-    groupId: '0',
+    groupId: groupId.toString(),
     subgroupId: '0',
     objectId: '0',
     payloadLength: payload.byteLength
   })
-  await client.sendSubgroupHeader(trackAlias, 0n, 0n, 0)
-  await client.sendSubgroupObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
+  await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
+  await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
-  setSendStatus(`Catalog served: ${trackNamespace.join('/')}/${MEDIA_CATALOG_TRACK_NAME}`)
+  setSendStatus(`Catalog served: ${trackNamespace.join('/')}/${CATALOG_TRACK_NAME}`)
   console.info('[MediaPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }
 
@@ -308,8 +303,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
         trackAliases,
         publisherPriority,
         client,
-        transportState,
-        sender: sendVideoObjectMessage
+        transportState
       })
     }
     if (ENABLE_AUDIO_PUBLISH) {

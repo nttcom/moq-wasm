@@ -3,8 +3,9 @@ import type { MOQTClient } from '../../../pkg/moqt'
 import { AUTH_INFO, CMAF_FPS } from '../const'
 import { getFormElement } from '../utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
-import { configureRelayUrlControls } from '../../../utils/relayPresets'
-import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, buildCmafCatalogJson } from '../catalog'
+import { timeSeededGroupId } from '../../../utils/media/clock'
+import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
+import { buildMediaCatalogJson } from '../../media/catalog'
 import {
   Output,
   NullTarget,
@@ -12,11 +13,14 @@ import {
   MediaStreamVideoTrackSource,
   MediaStreamAudioTrackSource
 } from 'mediabunny'
+import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
+import { initializeMediaExamplePage } from '../../../utils/page'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
 const transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
+let nextCatalogGroupId = timeSeededGroupId()
 
 type MoqSendVisualizationState = {
   groupId: bigint | null
@@ -144,7 +148,7 @@ const parseTrackNamespace = (raw: string): string[] => {
 }
 
 const isCatalogTrack = (trackName: string): boolean => {
-  return trackName === MEDIA_CATALOG_TRACK_NAME
+  return trackName === CATALOG_TRACK_NAME
 }
 
 const isVideoTrack = (trackName: string): boolean => {
@@ -180,9 +184,12 @@ const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespac
   if (catalogAliases.has(aliasKey)) {
     return
   }
-  const payload = new TextEncoder().encode(buildCmafCatalogJson(trackNamespace))
-  await client.sendSubgroupHeader(trackAlias, 0n, 0n, 0)
-  await client.sendSubgroupObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
+  const payload = new TextEncoder().encode(
+    buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES)
+  )
+  const groupId = nextCatalogGroupId++
+  await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
+  await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
   console.info('[CmafPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }
@@ -418,7 +425,7 @@ const setupCloseButtonHandler = (): void => {
   })
 }
 
-configureRelayUrlControls()
+initializeMediaExamplePage('publish-track-namespace')
 setUpStartGetUserMediaButton()
 setupMoqSendVisualizationButton()
 setupClientCallbacks()

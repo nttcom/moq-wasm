@@ -1,10 +1,10 @@
-import { getErrorMessage } from '../../examples/media/common'
 import { type GroupMark, type ReviewFrame, sortReviewFrames } from './rewind'
 import { type FetchFailure, fetchFrames, isFetchFailure } from './reviewFetch'
 import type { GroupRange } from './audioGroups'
 import type { SeekTimeline } from './seekTimeline'
 import type { MediaKind, TrackContext } from './trackContext'
 import type { TrackSubscriptions } from './trackSubscriptions'
+import { getErrorMessage } from '../../utils/page'
 
 const REWIND_GROUP_COUNT = 4n
 const CLOSED_GROUP_POLL_MS = 200

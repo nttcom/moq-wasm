@@ -4,13 +4,9 @@ import { AUTH_INFO } from './const'
 import { getFormElement } from './utils'
 import { LocLive, formatLiveStats } from '@player/locLive'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
-import {
-  extractCatalogAudioTracks,
-  extractCatalogVideoTracks,
-  getResolvedMediaVideoCodec,
-  type MediaCatalogTrack
-} from '../catalog'
-import { initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../common'
+import { getResolvedMediaVideoCodec } from '../catalog'
+import { parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
+import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
 
 const moqtClient = new MoqtClientWrapper()
 

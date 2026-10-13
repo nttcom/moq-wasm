@@ -1,6 +1,6 @@
-import { getErrorMessage } from '../../examples/media/common'
 import { type TrackContext, observedObjectHandler } from './trackContext'
 import type { SubscribeOkMessage } from '../../pkg/moqt'
+import { getErrorMessage } from '../../utils/page'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 

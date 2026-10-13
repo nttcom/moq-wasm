@@ -339,19 +339,7 @@
             <h2>Connection</h2>
             <label for="url">URL:</label>
             <input type="url" name="url" id="url" value="https://relay-1.moqt.research.skyway.io:443" />
-            <div id="urlPresets" class="preset-bar">
-              Preset:
-              <button type="button" data-url="https://relay-1.moqt.research.skyway.io:443">
-                https://relay-1.moqt.research.skyway.io:443
-              </button>
-              <button type="button" data-url="https://relay-2.moqt.research.skyway.io:443">
-                https://relay-2.moqt.research.skyway.io:443
-              </button>
-              <button type="button" data-url="https://relay-3.moqt.research.skyway.io:443">
-                https://relay-3.moqt.research.skyway.io:443
-              </button>
-              <button type="button" data-url="https://127.0.0.1:4433">https://127.0.0.1:4433</button>
-            </div>
+            <div id="urlPresets" class="preset-bar">Preset:</div>
             <div class="button-row action-row">
               <button type="button" id="connectBtn">Connect</button>
               <button type="button" id="closeBtn">Close</button>
@@ -847,80 +835,7 @@
       </div>
     </div>
 
-    <script>
-      ;(function () {
-        const preset = document.getElementById('urlPresets')
-        const input = document.getElementById('url')
-        if (!preset || !input) return
-        preset.addEventListener('click', (event) => {
-          const target = event.target
-          if (!(target instanceof HTMLButtonElement)) return
-          const value = target.getAttribute('data-url')
-          if (!value) return
-          input.value = value
-        })
-      })()
-      ;(function () {
-        function pad(n) {
-          return n < 10 ? '0' + n : n
-        }
-        const now = new Date()
-        const yyyy = now.getFullYear()
-        const mm = pad(now.getMonth() + 1)
-        const dd = pad(now.getDate())
-        const HH = pad(now.getHours())
-        const MM = pad(now.getMinutes())
-        const value = `nttcom/${yyyy}${mm}${dd}/${HH}${MM}`
-        const publishNamespaceInput = document.getElementById('publish-track-namespace')
-        const prefixInput = document.getElementById('track-namespace-prefix')
-        const subscribeInput = document.getElementById('subscribe-track-namespace')
-        if (publishNamespaceInput) publishNamespaceInput.value = value
-        if (prefixInput) prefixInput.value = value
-        if (subscribeInput) subscribeInput.value = value
-      })()
-      ;(function () {
-        const panel = document.getElementById('logPanel')
-        if (!panel) return
-        const levels = ['log', 'info', 'warn', 'error']
-        const original = {}
-        const maxEntries = 200
-
-        function append(level, args) {
-          const entry = document.createElement('div')
-          const classLevel = level === 'log' ? 'info' : level
-          entry.className = `log-entry log-${classLevel}`
-          const label = document.createElement('strong')
-          label.textContent = classLevel.toUpperCase()
-          entry.appendChild(label)
-          const text = document.createElement('span')
-          text.textContent = ' ' + args.map(formatArg).join(' ')
-          entry.appendChild(text)
-          panel.appendChild(entry)
-          while (panel.childNodes.length > maxEntries) {
-            panel.removeChild(panel.firstChild)
-          }
-          panel.scrollTop = panel.scrollHeight
-        }
-
-        function formatArg(arg) {
-          if (typeof arg === 'string') return arg
-          if (arg instanceof Error) return arg.message
-          try {
-            return JSON.stringify(arg)
-          } catch (_e) {
-            return String(arg)
-          }
-        }
-
-        for (const level of levels) {
-          original[level] = console[level].bind(console)
-          console[level] = (...args) => {
-            original[level](...args)
-            append(level, args)
-          }
-        }
-      })()
-    </script>
+    <script type="module" src="../../utils/consolePanel.ts"></script>
     <script type="module" src="./main.ts"></script>
     <script type="module" src="../../utils/publicNotice.ts"></script>
   </body>

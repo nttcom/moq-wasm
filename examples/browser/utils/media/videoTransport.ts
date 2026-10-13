@@ -2,6 +2,7 @@ import type { MOQTClient } from '../../pkg/moqt'
 import { MediaTransportState } from './transportState'
 import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
+import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 
 export type VideoChunkSender = (
   trackAlias: bigint,
@@ -21,7 +22,7 @@ export interface VideoChunkSendOptions {
   publisherPriority: number
   client: MOQTClient
   transportState: MediaTransportState
-  sender: VideoChunkSender
+  sender?: VideoChunkSender
 }
 
 export async function sendVideoChunkViaMoqt({
@@ -32,7 +33,7 @@ export async function sendVideoChunkViaMoqt({
   publisherPriority,
   client,
   transportState,
-  sender
+  sender = sendVideoObject
 }: VideoChunkSendOptions): Promise<{ needsKeyframe: boolean }> {
   if (!trackAliases.length) {
     return { needsKeyframe: false }
@@ -56,14 +57,9 @@ export async function sendVideoChunkViaMoqt({
     videoConfig: includeConfig ? configBytes : undefined
   })
 
-  // EndOfGroup for the previous group is sent per alias by
-  // mediaPublisher.sendVideoObjectForTrackContext when it detects the group
-  // change; sending it here as well would race on the same object number.
-  if (chunk.type === 'key' || transportState.getVideoGroupId() < 0n) {
-    transportState.advanceVideoGroup()
-  }
-
   if (chunk.type === 'key') {
+    await endVideoGroup(client, trackAliases, transportState)
+    transportState.advanceVideoGroup()
     // Send the keyframe to every alias and mark each one as having received a keyframe.
     for (const alias of trackAliases) {
       for (const subgroup of transportState.listVideoSubgroups()) {
@@ -124,4 +120,46 @@ export async function sendVideoChunkViaMoqt({
   // sent to; the number is shared across all aliases in the same group.
   transportState.incrementVideoObjectNumber()
   return { needsKeyframe: pending.length > 0 }
+}
+
+async function sendVideoObject(
+  trackAlias: bigint,
+  groupId: bigint,
+  subgroupId: bigint,
+  objectNumber: bigint,
+  payload: Uint8Array,
+  client: MOQTClient,
+  locHeader?: LocHeader
+): Promise<void> {
+  await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectNumber, undefined, payload, locHeader)
+}
+
+/// An alias with subgroup 0 open received every object of the group from its
+/// keyframe on, so the next object number ends the group for all of them.
+async function endVideoGroup(
+  client: MOQTClient,
+  trackAliases: bigint[],
+  transportState: MediaTransportState
+): Promise<void> {
+  const groupId = transportState.getVideoGroupId()
+  const endObjectNumber = transportState.getVideoObjectNumber()
+  for (const alias of trackAliases) {
+    if (!transportState.hasVideoHeaderSent(alias, 0)) {
+      continue
+    }
+    try {
+      await client.sendSubgroupObject(
+        alias,
+        groupId,
+        0n,
+        endObjectNumber,
+        OBJECT_STATUS_END_OF_GROUP,
+        new Uint8Array(0),
+        undefined
+      )
+    } catch (error) {
+      // The new group's frames must not wait on a stream that failed to close.
+      console.warn('[videoTransport] EndOfGroup send failed', { alias: alias.toString(), error })
+    }
+  }
 }

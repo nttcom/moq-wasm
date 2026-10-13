@@ -2,8 +2,8 @@ import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../../pkg/moqt'
 import { AUTH_INFO } from '../const'
 import { getFormElement } from '../utils'
-import { extractCatalogVideoTracks, extractCatalogAudioTracks, type MediaCatalogTrack } from '../catalog'
-import { configureRelayUrlControls } from '../../../utils/relayPresets'
+import { extractCatalogVideoTracks, extractCatalogAudioTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
+import { initializeMediaExamplePage } from '../../../utils/page'
 
 const moqtClient = new MoqtClientWrapper()
 
@@ -873,7 +873,7 @@ moqtClient.setOnSubscribeResponseHandler((subscribeResponse) => {
 
 // --- Init ---
 
-configureRelayUrlControls()
+initializeMediaExamplePage('subscribe-track-namespace')
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {

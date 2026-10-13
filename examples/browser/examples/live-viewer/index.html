@@ -9,47 +9,6 @@
     <link rel="stylesheet" href="./viewer.css" />
   </head>
   <body>
-    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
-      <symbol
-        id="icon-clapperboard"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z" />
-        <path d="m6.2 5.3 3.1 3.9" />
-        <path d="m12.4 3.4 3.1 4" />
-        <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
-      </symbol>
-      <symbol
-        id="icon-workflow"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <rect width="8" height="8" x="3" y="3" rx="2" />
-        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
-        <rect width="8" height="8" x="13" y="13" rx="2" />
-      </symbol>
-      <symbol
-        id="icon-server"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
-        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
-        <line x1="6" x2="6.01" y1="6" y2="6" />
-        <line x1="6" x2="6.01" y1="18" y2="18" />
-      </symbol>
-    </svg>
     <div class="page">
       <header class="hero">
         <div>
@@ -76,13 +35,13 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>MP4 ファイル<small
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>MP4 ファイル<small
                       >ブラウザ</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
@@ -104,19 +63,19 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small
                       >SRT / RTMP</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Cloud Ingestion<small
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>Cloud Ingestion<small
                       >live-ingest</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
@@ -150,17 +109,17 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Local Ingestion<small
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>Local Ingestion<small
                       >GStreamer</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
@@ -194,17 +153,17 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>Local Ingestion<small
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>Local Ingestion<small
                       >GStreamer</small
                     ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small>MoQT</small></span
                   >
                 </h3>
               </summary>
