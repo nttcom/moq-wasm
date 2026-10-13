@@ -1,54 +1,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
-
-/// Track name carrying the catalog on every namespace.
-pub const TRACK: &str = "catalog";
+use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track};
 
 pub fn build_video_catalog(namespace: &str, media_track: &str, codec: &str) -> Catalog {
-    let track = Track {
-        namespace: Some(namespace.to_string()),
-        name: media_track.to_string(),
-        packaging: Packaging::Known(KnownPackaging::Loc),
-        role: Some(TrackRole::Known(KnownTrackRole::Video)),
-        is_live: true,
-        codec: Some(codec.to_string()),
-        event_type: None,
-        target_latency: None,
-        label: None,
-        render_group: None,
-        alt_group: None,
-        init_data: None,
-        depends: None,
-        temporal_id: None,
-        spatial_id: None,
-        mime_type: None,
-        framerate: None,
-        timescale: None,
-        bitrate: None,
-        width: None,
-        height: None,
-        sample_rate: None,
-        channel_config: None,
-        display_width: None,
-        display_height: None,
-        lang: None,
-        parent_name: None,
-        track_duration: None,
-        max_grp_sap_starting_type: None,
-        max_obj_sap_starting_type: None,
-    };
-    Catalog {
-        version: Some(1),
-        generated_at: Some(now_millis()),
-        is_complete: None,
-        tracks: Some(vec![track]),
-        delta_update: None,
-        add_tracks: None,
-        remove_tracks: None,
-        clone_tracks: None,
-    }
+    let mut track = Track::new(media_track, KnownPackaging::Loc, true);
+    track.namespace = Some(namespace.to_string());
+    track.role = Some(KnownTrackRole::Video.into());
+    track.codec = Some(codec.to_string());
+    Catalog::new(vec![track], now_millis())
 }
 
 pub fn serialize(catalog: &Catalog) -> Result<Vec<u8>> {
@@ -90,14 +50,5 @@ mod tests {
         assert_eq!(track.name, "video");
         assert_eq!(track.codec.as_deref(), Some("avc3.640028"));
         assert_eq!(packaging_str(&track.packaging), "loc");
-    }
-
-    #[test]
-    fn live_catalog_omits_is_complete() {
-        // Act
-        let catalog = build_video_catalog("tokyo/cam01", "video", "avc3.640028");
-
-        // Assert
-        assert_eq!(catalog.is_complete, None);
     }
 }

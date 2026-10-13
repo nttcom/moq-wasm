@@ -16,6 +16,12 @@ pub enum Packaging {
     Other(String),
 }
 
+impl From<KnownPackaging> for Packaging {
+    fn from(packaging: KnownPackaging) -> Self {
+        Self::Known(packaging)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KnownTrackRole {
@@ -34,6 +40,12 @@ pub enum KnownTrackRole {
 pub enum TrackRole {
     Known(KnownTrackRole),
     Other(String),
+}
+
+impl From<KnownTrackRole> for TrackRole {
+    fn from(role: KnownTrackRole) -> Self {
+        Self::Known(role)
+    }
 }
 
 #[cfg(test)]

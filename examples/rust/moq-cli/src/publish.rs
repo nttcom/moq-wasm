@@ -46,7 +46,7 @@ async fn publish_stdin(session: &Session, args: &PublishArgs) -> Result<()> {
     let catalog_subscription = publisher
         .publish(
             track.namespace.clone(),
-            catalog::TRACK.to_string(),
+            msf::CATALOG_TRACK_NAME.to_string(),
             PublishOption::default(),
         )
         .await

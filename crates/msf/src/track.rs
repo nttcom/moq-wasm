@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Packaging, TrackRole};
+use crate::types::{KnownPackaging, Packaging, TrackRole};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,29 +64,16 @@ pub struct Track {
     pub max_obj_sap_starting_type: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrackRef {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    pub name: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::{KnownPackaging, Packaging};
-
-    #[test]
-    fn sap_starting_types_use_the_cmsf_field_names() {
-        // Arrange
-        let track = Track {
+impl Track {
+    /// The fields draft-ietf-moq-msf-01 §5.2 requires of every track object.
+    pub fn new(name: &str, packaging: impl Into<Packaging>, is_live: bool) -> Self {
+        Self {
             namespace: None,
-            name: "video".into(),
-            packaging: Packaging::Known(KnownPackaging::Cmaf),
+            name: name.to_string(),
+            packaging: packaging.into(),
             event_type: None,
             role: None,
-            is_live: true,
+            is_live,
             target_latency: None,
             label: None,
             render_group: None,
@@ -109,9 +96,91 @@ mod tests {
             lang: None,
             parent_name: None,
             track_duration: None,
+            max_grp_sap_starting_type: None,
+            max_obj_sap_starting_type: None,
+        }
+    }
+
+    /// Every group and object starts on a SAP type 1 sample
+    /// (draft-ietf-moq-cmsf-01 §3.5.2) and `altGroup` names the switching set
+    /// (§3.2).
+    pub fn cmaf_sibling(
+        &self,
+        name: &str,
+        mime_type: &str,
+        init_data: String,
+        alt_group: Option<u64>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            packaging: Packaging::Known(KnownPackaging::Cmaf),
+            alt_group,
+            mime_type: Some(mime_type.to_string()),
+            init_data: Some(init_data),
             max_grp_sap_starting_type: Some(1),
-            max_obj_sap_starting_type: Some(2),
-        };
+            max_obj_sap_starting_type: Some(1),
+            ..self.clone()
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackRef {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    pub name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::KnownTrackRole;
+
+    #[test]
+    fn new_carries_only_the_required_fields() {
+        // Act
+        let track = Track::new("video", KnownPackaging::Loc, true);
+
+        // Assert
+        assert_eq!(
+            serde_json::to_string(&track).unwrap(),
+            r#"{"name":"video","packaging":"loc","isLive":true}"#
+        );
+    }
+
+    #[test]
+    fn cmaf_sibling_shares_the_properties_and_adds_the_cmsf_fields() {
+        // Arrange
+        let mut loc = Track::new("video", KnownPackaging::Loc, true);
+        loc.namespace = Some("live/test".to_string());
+        loc.role = Some(KnownTrackRole::Video.into());
+        loc.codec = Some("avc1.640028".to_string());
+        loc.width = Some(1280);
+
+        // Act
+        let cmaf = loc.cmaf_sibling("video_cmaf", "video/mp4", "AAAA".to_string(), Some(2));
+
+        // Assert
+        assert_eq!(cmaf.name, "video_cmaf");
+        assert_eq!(cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
+        assert_eq!(cmaf.mime_type.as_deref(), Some("video/mp4"));
+        assert_eq!(cmaf.init_data.as_deref(), Some("AAAA"));
+        assert_eq!(cmaf.alt_group, Some(2));
+        assert_eq!(cmaf.max_grp_sap_starting_type, Some(1));
+        assert_eq!(cmaf.max_obj_sap_starting_type, Some(1));
+        assert_eq!(cmaf.namespace, loc.namespace);
+        assert_eq!(cmaf.role, loc.role);
+        assert_eq!(cmaf.codec, loc.codec);
+        assert_eq!(cmaf.width, loc.width);
+    }
+
+    #[test]
+    fn sap_starting_types_use_the_cmsf_field_names() {
+        // Arrange
+        let mut track = Track::new("video", KnownPackaging::Cmaf, true);
+        track.max_grp_sap_starting_type = Some(1);
+        track.max_obj_sap_starting_type = Some(2);
 
         // Act
         let json = serde_json::to_string(&track).unwrap();
