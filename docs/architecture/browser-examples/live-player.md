@@ -74,9 +74,16 @@ Rules:
   the new session and `sendSubgroupHeader` / `sendSubgroupObject` (and so
   `SubgroupWriter`) translate the application's alias to the new one;
   incoming SUBSCRIBEs accepted on the old session are reported through the
-  incoming-unsubscribe handler, since the new relay sends its own. Not
-  carried over: in-flight FETCHes, and the alias in `SubgroupHeaderMessage`
-  / datagram messages is the wire alias of the current session.
+  incoming-unsubscribe handler, since the new relay sends its own. A FETCH
+  still in flight is re-issued on the new session for what it has not
+  delivered yet: an absolute range resumes after the last object received, a
+  joining FETCH that delivered nothing yet is repeated against the re-issued
+  subscription, and one that did is completed as an absolute range up to the
+  Largest Location its subscription started from; the old session's late
+  objects and end for a carried FETCH are dropped. A FETCH in descending
+  group order is not carried and ends with the old session. The alias in
+  `SubgroupHeaderMessage` / datagram messages is the wire alias of the
+  current session.
 - L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
   `setOnConnectionClosedHandler`); they have one slot per client and belong to
   the page. It registers per-alias and per-request handlers only.

@@ -123,7 +123,34 @@ class FakeRawClient {
     this.sent.push(`OBJECT alias=${trackAlias} group=${groupId} object=${objectId}`)
   }
 
-  /// The relay side: a SUBSCRIBE for a track this client publishes.
+  async sendFetch(
+    requestId: bigint,
+    trackNamespace: string[],
+    trackName: string,
+    startGroupId: bigint,
+    startObjectId: bigint,
+    endGroupId: bigint,
+    endObjectId: bigint
+  ): Promise<void> {
+    this.sent.push(
+      `FETCH ${requestId} ${trackNamespace.join('/')}/${trackName} ${startGroupId}:${startObjectId}-${endGroupId}:${endObjectId}`
+    )
+    this.emit('fetchResponse', { requestId })
+  }
+
+  async sendRelativeJoiningFetch(requestId: bigint, joiningRequestId: bigint, joiningStart: bigint): Promise<void> {
+    this.sent.push(`JOINING_FETCH ${requestId} ${joiningRequestId} ${joiningStart}`)
+    this.emit('fetchResponse', { requestId })
+  }
+
+  receiveFetchObject(requestId: bigint, groupId: bigint, objectId: bigint): void {
+    this.emit('fetchObject', { requestId, groupId, objectId, objectPayload: new Uint8Array(0) })
+  }
+
+  receiveFetchEnd(requestId: bigint): void {
+    this.emit('fetchStreamEnd', { requestId, isReset: false })
+  }
+
   receiveSubscribe(requestId: bigint, trackNamespace: string[], trackName: string): void {
     this.emit('subscribe', { requestId, trackNamespace, trackName }, true, 0)
   }
@@ -288,6 +315,52 @@ test('subscriptions the old relay held on this publisher are reported ended by t
 
   // Assert
   expect(ended).toEqual([11n])
+})
+
+test('an in-flight FETCH resumes on the new relay after the last object delivered', async () => {
+  // Arrange: groups 1 to 5 requested, objects up to 2:1 delivered by relay A
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  const delivered: string[] = []
+  let ended = 0
+  const { requestId } = await wrapper.fetch(['room', 'them'], 'video', 1n, 0n, 5n, 0n, {
+    onObject: (message) => delivered.push(`${message.groupId}:${message.objectId}`),
+    onStreamEnd: () => ended++
+  })
+  const [relayA] = clients
+  relayA.receiveFetchObject(requestId, 1n, 0n)
+  relayA.receiveFetchObject(requestId, 2n, 0n)
+  relayA.receiveFetchObject(requestId, 2n, 1n)
+  await settled()
+
+  // Act
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const relayB = clients[1]
+  relayA.receiveFetchObject(requestId, 2n, 2n)
+  relayB.receiveFetchObject(requestId, 3n, 0n)
+  relayB.receiveFetchEnd(requestId)
+  await settled()
+
+  // Assert: relay B was asked for the rest, relay A's late object was dropped, the stream ended once
+  expect(relayB.sent).toContain(`FETCH ${requestId} room/them/video 2:2-5:0`)
+  expect(delivered).toEqual(['1:0', '2:0', '2:1', '3:0'])
+  expect(ended).toBe(1)
+})
+
+test('a joining FETCH that delivered nothing yet is repeated against the re-issued subscription', async () => {
+  // Arrange
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  const { requestId: subscribeId } = await wrapper.subscribe(['room', 'them'], 'catalog', '')
+  const { requestId } = await wrapper.relativeJoiningFetch(subscribeId, 0n)
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await settled()
+
+  // Assert
+  expect(clients[1].sent).toContain(`JOINING_FETCH ${requestId} ${subscribeId} 0`)
 })
 
 test('a PUBLISH_DONE from the relay that sent GOAWAY does not end the subscription carried over', async () => {
