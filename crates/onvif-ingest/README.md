@@ -31,7 +31,7 @@ cp .env.example .env
 make onvif
 ```
 
-`make onvif` publishes RTSP video/audio as profile-specific MoQT tracks and subscribes to ONVIF command datagrams.
+`make onvif` publishes RTSP video/audio as profile-specific MoQT tracks and subscribes to ONVIF commands, one JSON object per subgroup stream.
 
 When `MOQT_URL` points to `localhost` or `127.0.0.1` and the docker compose `relay-a`
 service is running, `make onvif` rewrites the relay URL to the Docker Desktop bridge

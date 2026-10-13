@@ -371,8 +371,8 @@
         <div class="eyebrow">MoQ + ONVIF</div>
         <h1>Remote PTZ + RTSP over Media over QUIC</h1>
         <p>
-          Publish ONVIF control commands as datagrams and subscribe to RTSP video over MoQ. The browser view shows the
-          decoded stream while controls push PTZ moves through the same namespace.
+          Publish ONVIF control commands and subscribe to RTSP video over MoQ. The browser view shows the decoded stream
+          while controls push PTZ moves through the same namespace.
         </p>
       </header>
 
@@ -464,7 +464,7 @@ make chrome</code></pre>
         <div class="card-header">
           <div>
             <div class="command-title">PTZ Commands</div>
-            <div class="muted">Each command sends a JSON datagram to the ONVIF bridge.</div>
+            <div class="muted">Each command sends one JSON object to the ONVIF bridge.</div>
           </div>
         </div>
         <div id="command-grid" class="commands"></div>

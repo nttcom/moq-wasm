@@ -26,6 +26,7 @@ connect to the cloud relay by default, so nothing needs to be installed.
 | Remote monitoring from USB cameras | [Remote Monitoring](https://nttcom.github.io/moq-wasm/examples/remote-monitoring/) |
 | Real-time chat moderation by an AI agent | [MoQ Chat Moderation](https://nttcom.github.io/moq-wasm/examples/moq-chat-moderation/) |
 | Real-time video analysis by an AI agent | [MoQ Camera Detection](https://nttcom.github.io/moq-wasm/examples/moq-camera-detection/): answers questions about a camera feed |
+| Camera control by an AI agent | [MoQ PTZ Tracking](https://nttcom.github.io/moq-wasm/examples/moq-ptz-tracking/): pans and tilts an ONVIF camera to keep a target centered |
 | Remote monitoring, data collection and control of drones | |
 | Remote monitoring, data collection and control of robots | |
 | Remote monitoring, data collection and control of autonomous vehicles | |

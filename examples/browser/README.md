@@ -22,6 +22,7 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 | `remote-monitoring`                             | Remote monitoring from a USB camera                                                                                        |
 | `moq-chat-moderation`                           | Chat moderated by a pipecat bot, see [`examples/python`](../python/moq-chat-moderation/README.md)                          |
 | `moq-camera-detection`                          | Questions about a camera feed answered by a pipecat bot, see [`examples/python`](../python/moq-camera-detection/README.md) |
+| `moq-ptz-tracking`                              | ONVIF camera kept on a target by a pipecat bot, see [`examples/python`](../python/moq-ptz-tracking/README.md)              |
 
 ## Relay and authentication
 
