@@ -769,6 +769,9 @@ export class MoqtClientWrapper {
       this.fetchStreamEndHandlers.delete(requestId)
       handler?.(message)
     })
+    this.client.onGoAway((newSessionUri: string) => {
+      console.info('[moqt] received GOAWAY', { newSessionUri })
+    })
     this.client.onConnectionClosed((info: ConnectionCloseInfo | null) => this.handleConnectionClosed(info ?? {}))
   }
 
