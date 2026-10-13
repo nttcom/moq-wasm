@@ -1,8 +1,7 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { SubgroupWriter } from '@moqt/subgroupWriter'
 import type { MOQTClient } from '../../../pkg/moqt'
 import { MediaTransportState } from '../../../utils/media/transportState'
-import { timeSeededGroupId } from '../../../utils/media/clock'
+import { requireRawClient } from '../../media/common'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
 import {
@@ -12,15 +11,15 @@ import {
   MediaStreamVideoTrackSource,
   MediaStreamAudioTrackSource
 } from 'mediabunny'
-import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
+import { getTrackAliases, serveSubscribes } from '../../media/serveSubscribes'
 import { element, parseTrackNamespace, initializeMediaExamplePage } from '../../../utils/page'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
 const form = element<HTMLFormElement>('form')
 const transportState = new MediaTransportState()
-const catalogAliases = new Set<string>()
-let nextCatalogGroupId = timeSeededGroupId()
+const videoTrackNames = MEDIA_VIDEO_PROFILES.map((profile) => profile.trackName)
+const audioTrackNames = MEDIA_AUDIO_PROFILES.map((profile) => profile.trackName)
 
 type MoqSendVisualizationState = {
   groupId: bigint | null
@@ -33,14 +32,6 @@ const moqSendVisualization: Record<'video' | 'audio', MoqSendVisualizationState>
 }
 
 let isMoqSendVisualizerVisible = false
-
-const ensureClient = (): MOQTClient => {
-  const client = moqtClient.getRawClient()
-  if (!client) {
-    throw new Error('MOQT client not connected')
-  }
-  return client
-}
 
 const setUpStartGetUserMediaButton = () => {
   const startGetUserMediaBtn = document.getElementById('startGetUserMediaBtn') as HTMLButtonElement
@@ -140,55 +131,6 @@ const setupMoqSendVisualizationButton = (): void => {
   })
 }
 
-const isCatalogTrack = (trackName: string): boolean => {
-  return trackName === CATALOG_TRACK_NAME
-}
-
-const isVideoTrack = (trackName: string): boolean => {
-  return MEDIA_VIDEO_PROFILES.some((profile) => profile.trackName === trackName)
-}
-
-const isAudioTrack = (trackName: string): boolean => {
-  return MEDIA_AUDIO_PROFILES.some((profile) => profile.trackName === trackName)
-}
-
-const getVideoTrackAliases = (client: MOQTClient, trackNamespace: string[]): bigint[] => {
-  const aliases = new Set<string>()
-  for (const profile of MEDIA_VIDEO_PROFILES) {
-    for (const alias of client.getTrackSubscribers(trackNamespace, profile.trackName)) {
-      aliases.add(alias.toString())
-    }
-  }
-  return Array.from(aliases, (alias) => BigInt(alias))
-}
-
-const getAudioTrackAliases = (client: MOQTClient, trackNamespace: string[]): bigint[] => {
-  const aliases = new Set<string>()
-  for (const profile of MEDIA_AUDIO_PROFILES) {
-    for (const alias of client.getTrackSubscribers(trackNamespace, profile.trackName)) {
-      aliases.add(alias.toString())
-    }
-  }
-  return Array.from(aliases, (alias) => BigInt(alias))
-}
-
-const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespace: string[]): Promise<void> => {
-  const aliasKey = trackAlias.toString()
-  if (catalogAliases.has(aliasKey)) {
-    return
-  }
-  const payload = new TextEncoder().encode(
-    buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES)
-  )
-  const groupId = nextCatalogGroupId++
-  const writer = new SubgroupWriter(client, trackAlias)
-  await writer.openGroup(groupId)
-  await writer.send(payload)
-  await writer.closeGroup()
-  catalogAliases.add(aliasKey)
-  console.info('[CmafPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
-}
-
 const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
@@ -215,7 +157,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
     }
     let client: MOQTClient
     try {
-      client = ensureClient()
+      client = requireRawClient(moqtClient)
     } catch (error) {
       console.error(error)
       return
@@ -294,7 +236,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
         fastStart: 'fragmented',
         ...buildMp4Callbacks(
           'video',
-          () => getVideoTrackAliases(client, getTrackNamespace()),
+          () => getTrackAliases(client, getTrackNamespace(), videoTrackNames),
           () => transportState.video.advanceGroup(),
           () => transportState.video.groupId
         )
@@ -308,7 +250,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
         fastStart: 'fragmented',
         ...buildMp4Callbacks(
           'audio',
-          () => getAudioTrackAliases(client, getTrackNamespace()),
+          () => getTrackAliases(client, getTrackNamespace(), audioTrackNames),
           () => transportState.audio.advanceGroup(),
           () => transportState.audio.groupId
         )
@@ -354,38 +296,12 @@ const setupClientCallbacks = (): void => {
     console.log({ subscribeResponseMessage })
   })
 
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
-    console.log({ subscribeMessage: subscribe })
-    const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
-    const requestedNamespace = subscribe.trackNamespace ?? []
-    const trackName = subscribe.trackName ?? ''
-    const namespaceMatched = requestedNamespace.join('/') === trackNamespace.join('/')
-
-    if (isSuccess) {
-      if (!namespaceMatched) {
-        await respondError(404n, 'unknown namespace')
-        return
-      }
-      if (isCatalogTrack(trackName)) {
-        const trackAlias = await respondOk(0n)
-        const client = ensureClient()
-        await sendCatalog(client, trackAlias, trackNamespace)
-        return
-      }
-      if (isVideoTrack(trackName)) {
-        await respondOk(0n)
-        return
-      }
-      if (isAudioTrack(trackName)) {
-        await respondOk(0n)
-        return
-      }
-      await respondError(404n, 'unknown track')
-      return
-    }
-
-    const reasonPhrase = `subscribe error: code=${code}`
-    await respondError(BigInt(code), reasonPhrase)
+  serveSubscribes(moqtClient, {
+    trackNamespace: () => parseTrackNamespace(form['publish-track-namespace'].value),
+    catalogJson: (trackNamespace) =>
+      buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES),
+    mediaTrackNames: [...videoTrackNames, ...audioTrackNames],
+    onStatus: (text) => console.info('[CmafPublisher]', text)
   })
 }
 
@@ -393,7 +309,6 @@ const setupCloseButtonHandler = (): void => {
   const closeBtn = document.getElementById('closeBtn') as HTMLButtonElement
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
-    catalogAliases.clear()
     resetMoqSendVisualizationState()
     if (isMoqSendVisualizerVisible) {
       renderMoqSendVisualization()
@@ -412,7 +327,6 @@ connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
   await moqtClient.connect(url, { sendSetup: false })
-  catalogAliases.clear()
   resetMoqSendVisualizationState()
   if (isMoqSendVisualizerVisible) {
     renderMoqSendVisualization()

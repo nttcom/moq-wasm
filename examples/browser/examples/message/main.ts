@@ -1,6 +1,7 @@
 import { MOQTClient, RequestErrorMessage, SubgroupObjectMessage, SubscribeOkMessage } from '../../pkg/moqt'
 import { FilterType, GroupOrder, MoqtClientWrapper } from '../../lib/moqt/moqtClient'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
+import { requireRawClient } from '../media/common'
 import { element, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
 
 interface TrackMetadata {
@@ -47,14 +48,6 @@ function describeReceivedObject(payload: ArrayBuffer | Uint8Array): void {
   const receivedElement = document.createElement('p')
   receivedElement.textContent = receivedText
   receivedTextElement.prepend(receivedElement)
-}
-
-function ensureRawClient(): MOQTClient {
-  const client = moqtClient.getRawClient()
-  if (!client) {
-    throw new Error('MOQT client connection is not available')
-  }
-  return client
 }
 
 function buildAliasLabel(trackAlias: bigint, metadata?: TrackMetadata): string {
@@ -226,13 +219,15 @@ function onClick(id: string, handler: () => unknown): void {
 function setupControlMessageButtons(): void {
   onClick('sendPublishNamespaceDoneBtn', async () => {
     const trackNamespace = parseTrackNamespace(field('publish-namespace-done-track-namespace').value)
-    await sendControlMessage('PUBLISH_NAMESPACE_DONE', () => ensureRawClient().sendPublishNamespaceDone(trackNamespace))
+    await sendControlMessage('PUBLISH_NAMESPACE_DONE', () =>
+      requireRawClient(moqtClient).sendPublishNamespaceDone(trackNamespace)
+    )
   })
 
   onClick('sendUnsubscribeNamespaceBtn', async () => {
     const trackNamespacePrefix = parseTrackNamespace(field('unsubscribe-namespace-prefix').value)
     await sendControlMessage('UNSUBSCRIBE_NAMESPACE', () =>
-      ensureRawClient().sendUnsubscribeNamespace(trackNamespacePrefix)
+      requireRawClient(moqtClient).sendUnsubscribeNamespace(trackNamespacePrefix)
     )
   })
 
@@ -244,7 +239,7 @@ function setupControlMessageButtons(): void {
     const groupOrder = Number(field('publish-group-order').value)
     const authInfo = field('auth-info').value
     await sendControlMessage('PUBLISH', () =>
-      ensureRawClient().sendPublish(
+      requireRawClient(moqtClient).sendPublish(
         requestId,
         trackNamespace,
         trackName,
@@ -268,7 +263,7 @@ function setupControlMessageButtons(): void {
     const endGroup = BigInt(field('fetch-end-group').value)
     const endObject = BigInt(field('fetch-end-object').value)
     await sendControlMessage('FETCH', () =>
-      ensureRawClient().sendFetch(
+      requireRawClient(moqtClient).sendFetch(
         requestId,
         trackNamespace,
         trackName,
@@ -283,22 +278,24 @@ function setupControlMessageButtons(): void {
 
   onClick('sendGoAwayBtn', async () => {
     const newSessionUri = field('goaway-new-session-uri').value
-    await sendControlMessage('GOAWAY', () => ensureRawClient().sendGoAway(newSessionUri))
+    await sendControlMessage('GOAWAY', () => requireRawClient(moqtClient).sendGoAway(newSessionUri))
   })
 
   onClick('sendMaxRequestIdBtn', async () => {
     const requestId = BigInt(field('max-request-id-value').value)
-    await sendControlMessage('MAX_REQUEST_ID', () => ensureRawClient().sendMaxRequestId(requestId))
+    await sendControlMessage('MAX_REQUEST_ID', () => requireRawClient(moqtClient).sendMaxRequestId(requestId))
   })
 
   onClick('sendRequestsBlockedBtn', async () => {
     const maximumRequestId = BigInt(field('requests-blocked-maximum-request-id').value)
-    await sendControlMessage('REQUESTS_BLOCKED', () => ensureRawClient().sendRequestsBlocked(maximumRequestId))
+    await sendControlMessage('REQUESTS_BLOCKED', () =>
+      requireRawClient(moqtClient).sendRequestsBlocked(maximumRequestId)
+    )
   })
 
   onClick('sendFetchCancelBtn', async () => {
     const requestId = BigInt(field('fetch-cancel-request-id').value)
-    await sendControlMessage('FETCH_CANCEL', () => ensureRawClient().sendFetchCancel(requestId))
+    await sendControlMessage('FETCH_CANCEL', () => requireRawClient(moqtClient).sendFetchCancel(requestId))
   })
 
   onClick('sendSubscribeUpdateBtn', async () => {
@@ -310,7 +307,7 @@ function setupControlMessageButtons(): void {
     const subscriberPriority = Number(field('subscribe-update-subscriber-priority').value)
     const forward = radioValue('forwarding') === 'true'
     await sendControlMessage('SUBSCRIBE_UPDATE', () =>
-      ensureRawClient().sendSubscribeUpdate(
+      requireRawClient(moqtClient).sendSubscribeUpdate(
         requestId,
         subscriptionRequestId,
         startGroup,
@@ -328,7 +325,7 @@ function setupControlMessageButtons(): void {
     const streamCount = BigInt(field('publish-done-stream-count').value)
     const errorReason = field('publish-done-error-reason').value
     await sendControlMessage('PUBLISH_DONE', () =>
-      ensureRawClient().sendPublishDone(requestId, statusCode, streamCount, errorReason)
+      requireRawClient(moqtClient).sendPublishDone(requestId, statusCode, streamCount, errorReason)
     )
   })
 
@@ -337,7 +334,7 @@ function setupControlMessageButtons(): void {
     const errorCode = BigInt(field('publish-namespace-cancel-error-code').value)
     const errorReason = field('publish-namespace-cancel-error-reason').value
     await sendControlMessage('PUBLISH_NAMESPACE_CANCEL', () =>
-      ensureRawClient().sendPublishNamespaceCancel(trackNamespace, errorCode, errorReason)
+      requireRawClient(moqtClient).sendPublishNamespaceCancel(trackNamespace, errorCode, errorReason)
     )
   })
 
@@ -347,7 +344,7 @@ function setupControlMessageButtons(): void {
     const trackName = field('track-status-track-name').value
     const authInfo = field('auth-info').value
     await sendControlMessage('TRACK_STATUS', () =>
-      ensureRawClient().sendTrackStatus(requestId, trackNamespace, trackName, authInfo)
+      requireRawClient(moqtClient).sendTrackStatus(requestId, trackNamespace, trackName, authInfo)
     )
   })
 }
@@ -437,7 +434,7 @@ function setupSessionButtons(): void {
 
 function readObjectInputs(): { client: MOQTClient; trackAlias: bigint; publisherPriority: number } {
   return {
-    client: ensureRawClient(),
+    client: requireRawClient(moqtClient),
     trackAlias: getSelectedTrackAlias(),
     publisherPriority: Number(field('publisher-priority').value)
   }
