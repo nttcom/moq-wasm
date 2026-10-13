@@ -2,7 +2,6 @@ const MAX_ENTRIES = 9000
 
 export type VideoJitterBufferEntry = {
   groupId: bigint
-  subgroupId: bigint
   objectId: bigint
   captureTimestampMicros?: number
   receivedAtMs: number
@@ -28,16 +27,10 @@ export class VideoJitterBuffer {
     return this.buffer[0] ?? null
   }
 
-  private findInsertPos({ groupId, objectId, subgroupId }: VideoJitterBufferEntry): number {
+  private findInsertPos({ groupId, objectId }: VideoJitterBufferEntry): number {
     for (let i = this.buffer.length - 1; i >= 0; i -= 1) {
       const entry = this.buffer[i]
-      if (entry.groupId === groupId && entry.objectId < objectId) {
-        return i + 1
-      }
-      if (entry.groupId === groupId && entry.objectId === objectId && entry.subgroupId <= subgroupId) {
-        return i + 1
-      }
-      if (entry.groupId < groupId) {
+      if (entry.groupId < groupId || (entry.groupId === groupId && entry.objectId <= objectId)) {
         return i + 1
       }
     }

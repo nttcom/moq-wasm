@@ -1,20 +1,13 @@
+const NAMED_CHANNEL_COUNTS = new Map([
+  ['mono', 1],
+  ['stereo', 2]
+])
+
 export function parseAudioChannelCount(channelConfig?: string): number | undefined {
-  const normalized = channelConfig?.trim().toLowerCase()
-  if (!normalized) {
+  if (channelConfig === undefined) {
     return undefined
   }
-  if (normalized === 'mono') {
-    return 1
-  }
-  if (normalized === 'stereo') {
-    return 2
-  }
-  const match = normalized.match(/^(\d+)ch$/)
-  if (match) {
-    const count = Number(match[1])
-    return Number.isInteger(count) && count > 0 ? count : undefined
-  }
-  return undefined
+  return NAMED_CHANNEL_COUNTS.get(channelConfig) ?? (Number(channelConfig.match(/^(\d+)ch$/)?.[1]) || undefined)
 }
 
 export function formatAudioChannelConfig(channels: number): string {

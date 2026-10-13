@@ -3,7 +3,7 @@ import { timeSeededGroupId } from './clock'
 type SubgroupId = number
 type TrackAlias = bigint | string
 
-export class TrackTransportState {
+class TrackTransportState {
   groupId = timeSeededGroupId() - 1n
   nextObjectId = 0n
   private readonly headerSentAliases = new Map<SubgroupId, Set<string>>([[0, new Set()]])

@@ -116,10 +116,8 @@ let catalogDescription: Uint8Array | undefined
 let missingCatalogCodecWarned = false
 let directDecodeQueue: Promise<void> = Promise.resolve()
 
-function clearOutputQueue(preservePendingOutputIds = false): void {
-  if (!preservePendingOutputIds) {
-    outputPendingIds.clear()
-  }
+function clearOutputQueue(): void {
+  outputPendingIds.clear()
   lastOutputMetaResetAtMs = performance.now()
 }
 
@@ -230,7 +228,6 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       const loc = readLocHeader(object.locHeader)
       const entry: VideoJitterBufferEntry = {
         groupId,
-        subgroupId: object.subgroupId ?? 0n,
         objectId: object.objectId,
         captureTimestampMicros: loc.captureTimestampMicros,
         receivedAtMs: performance.now(),
@@ -277,8 +274,8 @@ async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBuff
     cachedVideoConfig = resolvedConfig
     waitingForKeyFrame = true
     // The current keyframe's output IDs were registered before decode();
-    // preserve them across first decoder configuration so the first frame is not dropped.
-    clearOutputQueue(true)
+    // keep them across the first decoder configuration so the first frame is not dropped.
+    lastOutputMetaResetAtMs = performance.now()
     if (chunk.type !== 'key') {
       return
     }
