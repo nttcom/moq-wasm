@@ -161,7 +161,6 @@ export class LocLive {
   private applyDecoderConfig(): void {
     const holdMs = Math.max(0, this.playout.bufferPolicy().minimumMs - PRESENTATION_MARGIN_MS)
     this.videoWorker.postMessage({ type: 'config', holdMs, releaseMarginMs: PRESENTATION_MARGIN_MS })
-    this.audioWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
   }
 }
 
