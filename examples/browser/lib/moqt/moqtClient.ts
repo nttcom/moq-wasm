@@ -508,16 +508,6 @@ export class MoqtClientWrapper {
     }
   }
 
-  /**
-   * Renews the session's authorization token before it expires. The relay
-   * accepts the new JWT as the AUTHORIZATION TOKEN of a TRACK_STATUS request;
-   * it reads neither the namespace nor the track name, which are a fixed
-   * convention shared with the relay.
-   */
-  async refreshAuthToken(appId: string, token: string): Promise<void> {
-    await this.trackStatus([appId], 'update_auth_token', token)
-  }
-
   async unsubscribe(requestId: bigint): Promise<void> {
     const client = this.requireConnectedClient()
     const trackAlias = this.subscriptionTrackAliases.get(requestId)
