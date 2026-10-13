@@ -817,5 +817,3 @@ export class LivePlayer {
 function isLocTrack(track: MediaCatalogTrack): boolean {
   return track.packaging !== 'cmaf'
 }
-
-export { formatSyncOffset } from './locLive'
