@@ -76,7 +76,6 @@ impl PublishOk {
             );
         }
 
-        tracing::trace!("Packetized Publish_OK message.");
         payload
     }
 }

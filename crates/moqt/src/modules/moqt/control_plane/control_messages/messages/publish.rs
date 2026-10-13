@@ -146,7 +146,6 @@ impl Publish {
         payload.put_varint(number_of_parameters);
         payload.unsplit(parameters_payload);
 
-        tracing::trace!("Packetized Publish message.");
         payload
     }
 }

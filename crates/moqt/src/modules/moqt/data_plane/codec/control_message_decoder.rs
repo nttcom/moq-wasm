@@ -51,7 +51,6 @@ impl ControlMessageDecoder {
         message_type: ControlMessageType,
         payload: BytesMut,
     ) -> ReceivedMessage {
-        tracing::debug!("Event: message_type: {:?}", message_type);
         let mut cursor = Cursor::new(payload.as_ref());
 
         match message_type {

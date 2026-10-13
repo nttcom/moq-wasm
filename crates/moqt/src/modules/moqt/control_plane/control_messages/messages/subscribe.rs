@@ -10,7 +10,6 @@ use crate::modules::{
     },
 };
 use bytes::{Buf, BufMut, BytesMut};
-use tracing;
 
 #[derive(Debug, PartialEq)]
 pub struct Subscribe {
@@ -74,7 +73,6 @@ impl Subscribe {
                     VariantType::Odd(_) => unreachable!(),
                     VariantType::Even(value) => value,
                 });
-        tracing::trace!("Depacketized Subscribe message.");
 
         Some(Subscribe {
             request_id,
@@ -126,7 +124,6 @@ impl Subscribe {
         payload.put_varint(number_of_parameters);
         payload.unsplit(parameters_payload);
 
-        tracing::trace!("Packetized Subscribe message.");
         payload
     }
 }

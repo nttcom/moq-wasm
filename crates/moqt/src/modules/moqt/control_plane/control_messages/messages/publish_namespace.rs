@@ -73,7 +73,6 @@ impl PublishNamespace {
             payload.unsplit(param);
         }
 
-        tracing::trace!("Packetized Announce message.");
         payload
     }
 }
