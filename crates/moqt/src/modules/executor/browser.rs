@@ -44,6 +44,22 @@ pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<
     }
 }
 
+/// Monotonic time since an arbitrary origin; only differences are meaningful.
+pub(crate) fn now() -> Duration {
+    let global = js_sys::global();
+    let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance"))
+        .expect("performance is defined in every browser global scope");
+    let now: js_sys::Function = js_sys::Reflect::get(&performance, &JsValue::from_str("now"))
+        .expect("performance.now is defined in every browser global scope")
+        .unchecked_into();
+    let millis = now
+        .call0(&performance)
+        .expect("performance.now takes no arguments")
+        .as_f64()
+        .expect("performance.now returns a number");
+    Duration::from_secs_f64(millis / 1_000.0)
+}
+
 async fn sleep(duration: Duration) {
     let millis = i32::try_from(duration.as_millis()).unwrap_or(i32::MAX);
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
