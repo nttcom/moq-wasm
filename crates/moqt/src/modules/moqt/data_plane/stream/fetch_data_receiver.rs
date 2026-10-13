@@ -1,7 +1,7 @@
 use crate::modules::moqt::data_plane::{
     codec::uni_stream_decoder::UniStreamData,
     object::fetch::{FetchHeader, FetchObjectField},
-    stream::stream_receiver::UniStreamReceiver,
+    stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
 };
 
 #[derive(Debug)]
@@ -39,9 +39,14 @@ impl FetchDataReceiver {
                 unreachable!("Unexpected subgroup data in fetch stream")
             }
             Ok(None) => Ok(Fetch::End),
-            Err(e) => {
-                tracing::error!(?e, "Failed to receive data from fetch stream");
-                anyhow::bail!("Failed to receive data from fetch stream")
+            Err(error) => {
+                match &error {
+                    StreamReceiveError::Decode(_) => {
+                        tracing::error!(%error, "Failed to decode the fetch stream")
+                    }
+                    StreamReceiveError::Closed(_) => tracing::debug!(%error, "Fetch stream ended"),
+                }
+                anyhow::bail!("Failed to receive data from fetch stream: {error}")
             }
         }
     }

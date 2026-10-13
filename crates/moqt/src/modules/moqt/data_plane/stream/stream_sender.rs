@@ -14,7 +14,6 @@ impl StreamSender {
     }
 
     pub async fn send(&self, bytes: &BytesMut) -> anyhow::Result<()> {
-        tracing::debug!("bytes length: {}", bytes.len());
         Ok(self.send_stream.lock().await.send(bytes).await?)
     }
 

@@ -124,7 +124,6 @@ impl StreamDataSender<HeaderSent> {
 
     /// Sends an object on the stream.
     pub async fn send(&mut self, data: SubgroupObjectField) -> anyhow::Result<()> {
-        tracing::debug!("Sending subgroup object");
         let bytes = data.encode();
         self.stream_sender.send(&bytes).await
     }

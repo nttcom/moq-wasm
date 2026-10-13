@@ -49,10 +49,8 @@ impl ConnectTarget {
     ) -> anyhow::Result<quinn::Connection> {
         let remote_address = self.resolve_remote_address().await?;
         let connection = endpoint
-            .connect_with(config, remote_address, &self.server_name())
-            .inspect_err(|e| tracing::error!("failed to connect: {:?}", e.to_string()))?
-            .await
-            .inspect_err(|e| tracing::error!("failed to create connection: {:?}", e.to_string()))?;
+            .connect_with(config, remote_address, &self.server_name())?
+            .await?;
         Ok(connection)
     }
 

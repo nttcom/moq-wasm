@@ -181,15 +181,11 @@ impl SessionContext {
     }
 
     pub(crate) fn get_request_id(&self) -> u64 {
-        let id = self.request_id.fetch_add(2, Ordering::SeqCst);
-        tracing::debug!("request_id: {}", id);
-        id
+        self.request_id.fetch_add(2, Ordering::SeqCst)
     }
 
     pub(crate) fn get_track_alias(&self) -> u64 {
-        let track_alias = self.track_alias.fetch_add(1, Ordering::SeqCst);
-        tracing::debug!("track_alias: {}", track_alias);
-        track_alias
+        self.track_alias.fetch_add(1, Ordering::SeqCst)
     }
 
     /// Inserts the sender into `inflight_requests` and returns a
@@ -480,7 +476,7 @@ impl fmt::Debug for SessionContext {
 
 impl Drop for SessionContext {
     fn drop(&mut self) {
-        tracing::info!("SessionContext dropped.");
+        tracing::debug!("SessionContext dropped.");
         // send goaway
     }
 }

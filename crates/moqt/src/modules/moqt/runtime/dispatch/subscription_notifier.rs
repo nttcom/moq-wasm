@@ -9,7 +9,7 @@ pub(crate) struct SubscriptionNotifier;
 
 impl SubscriptionNotifier {
     #[tracing::instrument(
-        level = "info",
+        level = "trace",
         name = "moqt.subscription_notifier.notify",
         skip_all,
         fields(track_alias = track_alias)
@@ -23,9 +23,7 @@ impl SubscriptionNotifier {
             .notify_incoming_object(track_alias, incoming_object)
             .await
         {
-            IncomingObjectNotification::Notified => {
-                tracing::debug!(track_alias, "notifying registered incoming object receiver");
-            }
+            IncomingObjectNotification::Notified => {}
             IncomingObjectNotification::Buffered {
                 pending_objects,
                 dropped_oldest,
@@ -37,17 +35,20 @@ impl SubscriptionNotifier {
                         "pending incoming object buffer is full; dropping oldest object"
                     );
                 }
-                tracing::debug!(
+                tracing::trace!(
                     track_alias,
                     pending_objects,
                     "buffered incoming object until track alias is registered"
                 );
             }
             IncomingObjectNotification::ReceiverClosed => {
-                tracing::warn!("Failed to notify incoming object: receiver closed");
+                tracing::debug!(
+                    track_alias,
+                    "dropping incoming object: its receiver is closed"
+                );
             }
             IncomingObjectNotification::Discarded => {
-                tracing::debug!(
+                tracing::trace!(
                     track_alias,
                     "discarding incoming object of a cancelled subscription"
                 );

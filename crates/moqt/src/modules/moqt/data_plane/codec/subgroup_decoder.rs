@@ -50,8 +50,6 @@ impl SubgroupDecoder {
                         return Ok(None);
                     }
                     _ => {
-                        // Log the error and return it.
-                        tracing::error!("Failed to decode subgroup header: {:?}", e);
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             format!("Failed to decode subgroup header: {:?}", e),
@@ -78,8 +76,6 @@ impl SubgroupDecoder {
                             return Ok(None);
                         }
                         _ => {
-                            // Log the error and return it.
-                            tracing::error!("Failed to decode subgroup object field: {:?}", e);
                             return Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!("Failed to decode subgroup object field: {:?}", e),

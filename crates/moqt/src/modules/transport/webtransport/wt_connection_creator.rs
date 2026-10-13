@@ -1,4 +1,5 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
+use anyhow::Context;
 use std::net::{Ipv6Addr, SocketAddr};
 
 use async_trait::async_trait;
@@ -31,10 +32,7 @@ impl WtConnectionCreator {
     fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
         let endpoint = client_endpoint(port_num)?;
         let client_config = quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
-        tracing::info!(
-            "Client ready! for WebTransport: {:?}",
-            endpoint.local_addr()?
-        );
+        tracing::debug!(local_addr = ?endpoint.local_addr()?, "WebTransport client endpoint ready");
         Ok(WtConnectionCreator {
             endpoint: WtEndpoint::Client(client_config),
             quic_endpoint: endpoint,
@@ -62,13 +60,13 @@ impl TransportConnectionCreator for WtConnectionCreator {
 
         // 証明書を同期的に読み込む
         let certs: Vec<_> = CertificateDer::pem_file_iter(cert_path)
-            .inspect_err(|e| tracing::error!("Opening certificate file failed: {:?}", e))?
+            .context("failed to open the certificate file")?
             .collect::<Result<Vec<_>, _>>()
-            .inspect_err(|e| tracing::error!("Parsing certificates failed: {:?}", e))?;
+            .context("failed to parse the certificate file")?;
 
         // 秘密鍵を同期的に読み込む
         let key = PrivateKeyDer::from_pem_file(key_path)
-            .inspect_err(|e| tracing::error!("Creating private key failed: {:?}", e.to_string()))?;
+            .context("failed to read the private key file")?;
 
         let addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let server = web_transport_quinn::ServerBuilder::new()
@@ -102,9 +100,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let connection = target
             .connect_quic(&self.quic_endpoint, client_config.clone())
             .await?;
-        let session = web_transport_quinn::Session::connect(connection, target.url.clone())
-            .await
-            .inspect_err(|e| tracing::error!("failed to connect: {:?}", e))?;
+        let session = web_transport_quinn::Session::connect(connection, target.url.clone()).await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }
@@ -123,10 +119,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         };
 
         // リクエストを受け入れてセッションを確立する
-        let session = request
-            .ok()
-            .await
-            .inspect_err(|e| tracing::error!("failed to establish session: {:?}", e))?;
+        let session = request.ok().await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }

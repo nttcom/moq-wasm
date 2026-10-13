@@ -9,7 +9,7 @@ use crate::{
             codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
             stream::{
                 fetch_data_receiver::{Fetch, FetchDataReceiver},
-                stream_receiver::UniStreamReceiver,
+                stream_receiver::{StreamReceiveError, UniStreamReceiver},
             },
         },
         domains::session_context::SessionContext,
@@ -36,8 +36,8 @@ impl UniStreamReceiveTask {
                             let stream = UniStreamReceiver::new(stream, UniStreamDecoder::new());
                             Self::on_stream_received(&context, stream).await;
                         }
-                        Err(_) => {
-                            tracing::error!("Failed to accept uni stream");
+                        Err(error) => {
+                            tracing::debug!(%error, "Uni Stream Receiver stopped: the session ended");
                             break;
                         }
                     }
@@ -47,7 +47,7 @@ impl UniStreamReceiveTask {
         )
     }
 
-    #[tracing::instrument(level = "info", name = "on_stream_received", skip_all)]
+    #[tracing::instrument(level = "debug", name = "on_stream_received", skip_all)]
     async fn on_stream_received(
         context: &Arc<SessionContext>,
         mut stream: UniStreamReceiver,
@@ -55,11 +55,15 @@ impl UniStreamReceiveTask {
         let stream_data = match stream.receive().await {
             Ok(Some(stream_data)) => stream_data,
             Ok(None) => {
-                tracing::info!("Stream closed before receiving data");
+                tracing::debug!("Stream finished before its header");
                 return false;
             }
-            Err(_) => {
-                tracing::error!("Stream closed before receiving data");
+            Err(error @ StreamReceiveError::Closed(_)) => {
+                tracing::debug!(%error, "Stream ended before its header");
+                return false;
+            }
+            Err(error @ StreamReceiveError::Decode(_)) => {
+                tracing::error!(%error, "Failed to decode the stream header");
                 return false;
             }
         };

@@ -1,5 +1,4 @@
 use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
-use anyhow::bail;
 use async_trait::async_trait;
 use bytes::BytesMut;
 
@@ -82,13 +81,8 @@ impl TransportConnection for QUICConnection {
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<bytes::BytesMut> {
-        match self.connection.read_datagram().await {
-            Ok(bytes) => Ok(BytesMut::from(&bytes[..])),
-            Err(e) => {
-                tracing::error!("Failed to receive datagram: {:?}", e);
-                bail!("Failed to receive datagram: {:?}", e)
-            }
-        }
+        let bytes = self.connection.read_datagram().await?;
+        Ok(BytesMut::from(&bytes[..]))
     }
 
     fn stats(&self) -> TransportStats {

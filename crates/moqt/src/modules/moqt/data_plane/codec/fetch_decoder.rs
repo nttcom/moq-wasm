@@ -42,13 +42,10 @@ impl FetchDecoder {
                 Ok(Some(Fetch::Header(header)))
             }
             Err(DecodeError::NeedMoreData) => Ok(None),
-            Err(e) => {
-                tracing::error!("Failed to decode fetch header: {:?}", e);
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to decode fetch header: {:?}", e),
-                ))
-            }
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to decode fetch header: {:?}", e),
+            )),
         }
     }
 
@@ -59,13 +56,10 @@ impl FetchDecoder {
         match FetchObjectField::decode(src) {
             Ok(fields) => Ok(Some(Fetch::Object(fields))),
             Err(DecodeError::NeedMoreData) => Ok(None),
-            Err(e) => {
-                tracing::error!("Failed to decode fetch object fields: {:?}", e);
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to decode fetch object fields: {:?}", e),
-                ))
-            }
+            Err(e) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to decode fetch object fields: {:?}", e),
+            )),
         }
     }
 }
