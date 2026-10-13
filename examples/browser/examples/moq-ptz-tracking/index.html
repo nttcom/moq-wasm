@@ -9,72 +9,6 @@
     <link rel="stylesheet" href="./tracking.css" />
   </head>
   <body>
-    <svg style="display: none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <!-- Icons: Lucide (ISC, partly MIT), https://lucide.dev; license in examples/browser/THIRD_PARTY_NOTICES.md -->
-      <symbol
-        id="icon-monitor"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <rect width="20" height="14" x="2" y="3" rx="2" />
-        <line x1="8" x2="16" y1="21" y2="21" />
-        <line x1="12" x2="12" y1="17" y2="21" />
-      </symbol>
-      <symbol
-        id="icon-server"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
-        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
-        <line x1="6" x2="6.01" y1="6" y2="6" />
-        <line x1="6" x2="6.01" y1="18" y2="18" />
-      </symbol>
-      <symbol
-        id="icon-workflow"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <rect width="8" height="8" x="3" y="3" rx="2" />
-        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
-        <rect width="8" height="8" x="13" y="13" rx="2" />
-      </symbol>
-      <symbol
-        id="icon-cloud"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
-      </symbol>
-      <symbol
-        id="icon-cctv"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M16.75 12h3.632a1 1 0 0 1 .894 1.447l-2.034 4.069a1 1 0 0 1-1.708.134l-2.124-2.97" />
-        <path
-          d="M17.106 9.053a1 1 0 0 1 .447 1.341l-3.106 6.211a1 1 0 0 1-1.342.447L3.61 12.3a2.92 2.92 0 0 1-1.3-3.91L3.69 5.6a2.92 2.92 0 0 1 3.92-1.3z"
-        />
-        <path d="M2 19h3.76a2 2 0 0 0 1.8-1.1L9 15" />
-        <path d="M2 21v-4" />
-        <path d="M7 9h.01" />
-      </symbol>
-    </svg>
     <main class="page">
       <header class="hero">
         <div>
@@ -92,23 +26,23 @@
             <summary>
               <h3 class="setup-flow setup-hub">
                 <span class="setup-node setup-node-local hub-browser"
-                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>このページ</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small>このページ</small></span
                 >
                 <span class="setup-arrow hub-browser-link" aria-hidden="true">↕</span>
                 <span class="setup-node setup-node-local hub-camera"
-                  ><svg aria-hidden="true"><use href="#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
                 >
                 <span class="setup-arrow hub-camera-link" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud hub-relay"
-                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
                 >
                 <span class="setup-arrow hub-bot-link" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud hub-bot"
-                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Cloud VM</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Cloud VM</small></span
                 >
                 <span class="setup-arrow hub-djev-link" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud hub-djev"
-                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
                 >
               </h3>
             </summary>
@@ -128,23 +62,23 @@
             <summary>
               <h3 class="setup-flow setup-hub">
                 <span class="setup-node setup-node-local hub-browser"
-                  ><svg aria-hidden="true"><use href="#icon-monitor" /></svg>Browser<small>このページ</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small>このページ</small></span
                 >
                 <span class="setup-arrow hub-browser-link" aria-hidden="true">↕</span>
                 <span class="setup-node setup-node-local hub-camera"
-                  ><svg aria-hidden="true"><use href="#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera<small>onvif-ingest</small></span
                 >
                 <span class="setup-arrow hub-camera-link" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local hub-relay"
-                  ><svg aria-hidden="true"><use href="#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small>MoQT</small></span
                 >
                 <span class="setup-arrow hub-bot-link" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local hub-bot"
-                  ><svg aria-hidden="true"><use href="#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Python</small></span
                 >
                 <span class="setup-arrow hub-djev-link" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud hub-djev"
-                  ><svg aria-hidden="true"><use href="#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-cloud" /></svg>Cloud Run<small>djev-vision</small></span
                 >
               </h3>
             </summary>
