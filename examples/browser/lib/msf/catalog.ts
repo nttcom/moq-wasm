@@ -46,7 +46,6 @@ export function buildMsfCatalogJson(tracks: MsfTrack[]): string {
   const catalog: MsfCatalog = {
     version: 1,
     generatedAt: Date.now(),
-    isComplete: true,
     tracks
   }
   return JSON.stringify(catalog)

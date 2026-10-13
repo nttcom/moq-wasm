@@ -928,7 +928,7 @@ fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) -> Result<Cat
         remove_tracks: None,
         clone_tracks: None,
         generated_at: Some(now_unix().as_millis() as u64),
-        is_complete: Some(true),
+        is_complete: None,
         tracks: Some(tracks),
     })
 }
@@ -1076,6 +1076,15 @@ mod tests {
         assert!(!awaits_subscribe(&catalog, "video"));
         assert!(!awaits_subscribe(&catalog, "timeline"));
         assert!(!awaits_subscribe(&catalog, "video_720p_cmaf"));
+    }
+
+    #[test]
+    fn live_catalog_omits_is_complete() {
+        // Act
+        let catalog = build_catalog("live/test", &metadata_with_video_and_audio()).unwrap();
+
+        // Assert
+        assert_eq!(catalog.is_complete, None);
     }
 
     #[test]
