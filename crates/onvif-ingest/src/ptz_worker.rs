@@ -4,9 +4,12 @@ use crate::onvif_requests;
 use crate::ptz_config::PtzRange;
 use crate::soap_client;
 use anyhow::{anyhow, Result};
+use serde::Deserialize;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-#[derive(Clone, Copy)]
+/// Deserialized from the viewer's command JSON, e.g. `{"type": "stop"}`.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
     Absolute {
         pan: f32,

@@ -21,7 +21,7 @@ Library components (draft-governed):
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
 | `crates/msf` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
 | `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
-| `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `live-ingest` and `gst-plugin-moqt`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-01.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
+| `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-01.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
 
 Application and integration components (draft reference is normally not required):
 

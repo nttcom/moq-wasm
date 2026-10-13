@@ -2052,6 +2052,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "broadcast",
  "bytes",
  "clap",
  "env_logger",
@@ -2060,7 +2061,6 @@ dependencies = [
  "log",
  "mediapack",
  "moqt",
- "msf",
  "rand 0.10.3",
  "reqwest",
  "roxmltree",
@@ -2069,6 +2069,7 @@ dependencies = [
  "sha1",
  "time",
  "tokio",
+ "tracing",
  "url",
 ]
 

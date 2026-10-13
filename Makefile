@@ -135,10 +135,8 @@ onvif:
 		--subscribe-namespace anon/onvif/viewer \
 		--video-track video \
 		--audio-track audio \
-		--catalog-track catalog \
 		--command-track command \
 		--dump-keyframe \
-		--payload-format annexb \
 		$(ONVIF_TLS_FLAGS)
 
 

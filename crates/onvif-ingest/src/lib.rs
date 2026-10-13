@@ -1,5 +1,6 @@
 pub mod app_config;
 pub mod cli;
+pub mod command_subscriber;
 pub mod onvif_client;
 pub mod onvif_profile_list;
 pub mod onvif_profiles;
@@ -8,7 +9,6 @@ pub mod onvif_services;
 pub mod onvif_stream_uri;
 pub mod ptz_config;
 pub mod ptz_worker;
-pub mod rtsp_frame;
 pub mod rtsp_source;
 pub mod soap_client;
 pub mod wsse_auth;
