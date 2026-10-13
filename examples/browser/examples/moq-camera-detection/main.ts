@@ -1,6 +1,6 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { SubgroupWriter } from '@moqt/subgroupWriter'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
@@ -13,8 +13,6 @@ const VIDEO_TRACK = 'video'
 const PROMPT_TRACK = 'prompt'
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
 const AUTH_INFO = ''
-const SUBGROUP_ID = 0n
-const PUBLISHER_PRIORITY = 0
 const LARGEST_OBJECT_FILTER = 0x2
 const MAX_CHOICES = 9
 const MAX_CHOICE_LENGTH = 40
@@ -29,54 +27,28 @@ const VIDEO_ENCODER_CONFIG = {
 
 class GopSender {
   private nextGroupId = timeSeededGroupId()
-  private groupId: bigint | undefined
-  private nextObjectId = 0n
+  private readonly writer: SubgroupWriter
 
   constructor(
-    private readonly client: MOQTClient,
+    client: MOQTClient,
     readonly requestId: bigint,
-    private readonly trackAlias: bigint
-  ) {}
+    trackAlias: bigint
+  ) {
+    this.writer = new SubgroupWriter(client, trackAlias)
+  }
 
   /// Each keyframe opens a group, so the detector, which starts a decoder at every
   /// group, always starts from a decodable picture.
   async send(chunk: EncodedVideoChunk): Promise<void> {
     if (chunk.type === 'key') {
-      await this.closeGroup()
-      this.groupId = this.nextGroupId++
-      this.nextObjectId = 0n
-      await this.client.sendSubgroupHeader(this.trackAlias, this.groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
+      await this.writer.openGroup(this.nextGroupId++)
     }
-    if (this.groupId === undefined) {
+    if (this.writer.openGroupId === undefined) {
       return
     }
     const payload = new Uint8Array(chunk.byteLength)
     chunk.copyTo(payload)
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      this.groupId,
-      SUBGROUP_ID,
-      this.nextObjectId,
-      undefined,
-      payload,
-      undefined
-    )
-    this.nextObjectId += 1n
-  }
-
-  private async closeGroup(): Promise<void> {
-    if (this.groupId === undefined) {
-      return
-    }
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      this.groupId,
-      SUBGROUP_ID,
-      this.nextObjectId,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    await this.writer.send(payload)
   }
 }
 
