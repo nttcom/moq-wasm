@@ -618,7 +618,7 @@ mod tests {
         ContentExists, ExtensionHeaders, Fetch, FetchObject, FetchObjectField, FetchOption,
         Location, SessionEvent, SubscribeOption, SubscribeUpdateOption,
         modules::test_support::{
-            connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
+            DISCONNECT_TIMEOUT, connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
         },
     };
 
@@ -783,5 +783,31 @@ mod tests {
         assert_eq!(update.end_group(), 9);
         assert_eq!(update.subscriber_priority(), 7);
         assert!(update.forward());
+    }
+
+    #[tokio::test]
+    async fn subscribe_fails_as_soon_as_the_peer_disconnects_without_answering() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-peer-disconnects").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(_) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Act
+        drop(server);
+        let subscribed = tokio::time::timeout(DISCONNECT_TIMEOUT, request).await;
+
+        // Assert
+        assert!(subscribed.unwrap().unwrap().is_err());
     }
 }

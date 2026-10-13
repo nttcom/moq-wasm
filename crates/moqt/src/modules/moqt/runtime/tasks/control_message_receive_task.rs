@@ -73,11 +73,8 @@ impl ControlMessageReceiveTask {
                                 }
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
-                                    let inflight_request = session
-                                        .sender_map
-                                        .lock()
-                                        .expect("sender_map poisoned")
-                                        .remove(&request_id);
+                                    let inflight_request =
+                                        session.take_inflight_request(request_id);
                                     match inflight_request {
                                         Some(InflightRequest::Waiting {
                                             sender,
@@ -119,6 +116,9 @@ impl ControlMessageReceiveTask {
                             tracing::error!("Session dropped.");
                             break;
                         }
+                    }
+                    if let Some(session) = session_context.upgrade() {
+                        session.fail_inflight_requests();
                     }
                 }
             .instrument(receiver_span),
