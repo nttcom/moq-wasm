@@ -17,6 +17,7 @@ import {
 } from '../types/catalog'
 import { pickHighestBitrateTrack } from '../media/meetingCatalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import { checkCodecSupport } from '../utils/codecSupport'
 import type { RemotePlaybackStats } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
 import { buildTrackActionKey, updateSubscriptionState } from '../utils/state/roomState'
@@ -331,14 +332,14 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             .get(memberId)
             ?.find((track) => track.name === trackName && track.role === (role === 'audio' ? 'audio' : 'video'))
     if ((role === 'video' || role === 'screenshare') && selectedTrack) {
-      const validation = await validateVideoDecoderCatalogTrackConfig(selectedTrack)
-      if (!validation.ok) {
+      const unsupportedReason = await checkVideoDecoderSupport(selectedTrack)
+      if (unsupportedReason) {
         console.error(`[meeting][subscribe] blocked unsupported decoder config for ${memberId}/${trackName}`, {
           role,
-          reason: validation.message,
+          reason: unsupportedReason,
           track: selectedTrack
         })
-        window.alert(`Subscribe blocked: ${validation.message}`)
+        window.alert(`Subscribe blocked: ${unsupportedReason}`)
         return
       }
     }
@@ -608,53 +609,15 @@ function ensureSelectedTrackName(
   return pickHighestBitrateTrack(roleTracks)?.name
 }
 
-async function validateVideoDecoderCatalogTrackConfig(
-  track: Pick<MeetingCatalogTrack, 'codec' | 'width' | 'height'>
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (typeof VideoDecoder === 'undefined') {
-    return { ok: false, message: 'VideoDecoder is not available in this browser.' }
+async function checkVideoDecoderSupport({ codec, width, height }: MeetingCatalogTrack): Promise<string | null> {
+  if (!codec) {
+    return 'Track codec is missing in catalog.'
   }
-  if (!track.codec) {
-    return { ok: false, message: 'Track codec is missing in catalog.' }
+  const config: VideoDecoderConfig = {
+    codec,
+    codedWidth: width,
+    codedHeight: height,
+    ...(codec.startsWith('avc') ? { hardwareAcceleration: 'prefer-software' } : {})
   }
-  const config: VideoDecoderConfig = track.codec.startsWith('avc')
-    ? ({
-        codec: track.codec,
-        hardwareAcceleration: 'prefer-software',
-        avc: { format: 'avc' }
-      } as VideoDecoderConfig)
-    : ({ codec: track.codec } as VideoDecoderConfig)
-  if (typeof track.width === 'number' && track.width > 0) {
-    ;(config as any).codedWidth = Math.floor(track.width)
-  }
-  if (typeof track.height === 'number' && track.height > 0) {
-    ;(config as any).codedHeight = Math.floor(track.height)
-  }
-  try {
-    const supported = await VideoDecoder.isConfigSupported(config)
-    if (!supported.supported) {
-      return { ok: false, message: `VideoDecoder config unsupported: ${track.codec}` }
-    }
-  } catch (error) {
-    console.error('[meeting][subscribe] VideoDecoder.isConfigSupported failed', error, config)
-    return { ok: false, message: 'Failed to check VideoDecoder config support.' }
-  }
-  let decoder: VideoDecoder | undefined
-  try {
-    decoder = new VideoDecoder({
-      output: (frame) => frame.close(),
-      error: (error) => console.error('[meeting][subscribe] VideoDecoder error during configure check', error, config)
-    })
-    decoder.configure(config)
-    return { ok: true }
-  } catch (error) {
-    console.error('[meeting][subscribe] VideoDecoder.configure failed', error, config)
-    return { ok: false, message: `VideoDecoder.configure failed: ${track.codec}` }
-  } finally {
-    try {
-      decoder?.close()
-    } catch {
-      // ignore
-    }
-  }
+  return checkCodecSupport(`VideoDecoder config ${codec}`, () => VideoDecoder.isConfigSupported(config))
 }

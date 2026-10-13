@@ -11,6 +11,7 @@ import type { MeetingCatalogTrack, CatalogSubscribeRole, EditableMeetingCatalogT
 import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import { buildTrackActionKey } from '../utils/state/roomState'
+import { checkCodecSupport } from '../utils/codecSupport'
 import type { SidebarStatsSample } from '../types/stats'
 import { MemberStatsCharts } from './MemberStatsCharts'
 import type { RemotePictures, RemotePlaybackStats } from '../media/mediaSubscriber'
@@ -639,9 +640,9 @@ function CatalogTrackEditor({
     if (currentDraft.role === 'video') {
       setIsCheckingDraftConfig(true)
       try {
-        const validation = await validateVideoEncoderCatalogTrackConfig(currentDraft)
-        if (!validation.ok) {
-          setDraftConfigError(validation.message)
+        const unsupportedReason = await checkVideoEncoderSupport(currentDraft)
+        if (unsupportedReason) {
+          setDraftConfigError(unsupportedReason)
           return
         }
       } finally {
@@ -1635,58 +1636,25 @@ function formatTrackBitrateForDisplay(bitrate: number): string {
   return `${Math.round(bitrate / 1000)}kbps`
 }
 
-async function validateVideoEncoderCatalogTrackConfig(
+async function checkVideoEncoderSupport(
   track: Pick<MeetingCatalogTrack, 'codec' | 'width' | 'height' | 'bitrate' | 'framerate' | 'hardwareAcceleration'>
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (typeof VideoEncoder === 'undefined') {
-    return { ok: false, message: 'VideoEncoder is not available in this browser.' }
-  }
-  if (!track.codec || !track.width || !track.height || !track.bitrate) {
-    return { ok: false, message: 'Codec / resolution / bitrate must be set for video tracks.' }
+): Promise<string | null> {
+  const { codec, width, height, bitrate } = track
+  if (!codec || !width || !height || !bitrate) {
+    return 'Codec / resolution / bitrate must be set for video tracks.'
   }
   const config: VideoEncoderConfig = {
-    codec: track.codec,
-    avc: track.codec.startsWith('avc') ? ({ format: 'annexb' } as VideoEncoderConfig['avc']) : undefined,
-    width: Math.floor(track.width),
-    height: Math.floor(track.height),
-    bitrate: Math.floor(track.bitrate),
-    framerate: Math.max(1, Math.min(120, Math.floor(track.framerate ?? 30))),
+    codec,
+    avc: codec.startsWith('avc') ? { format: 'annexb' } : undefined,
+    width,
+    height,
+    bitrate,
+    framerate: track.framerate ?? 30,
     hardwareAcceleration: track.hardwareAcceleration ?? 'prefer-software',
     scalabilityMode: 'L1T1',
     latencyMode: 'realtime'
   }
-  try {
-    const supported = await VideoEncoder.isConfigSupported(config)
-    if (!supported.supported) {
-      return { ok: false, message: `VideoEncoder config unsupported: ${track.codec}` }
-    }
-  } catch (error) {
-    console.error('[meeting][catalog] VideoEncoder.isConfigSupported failed', error, config)
-    return { ok: false, message: 'Failed to check VideoEncoder config support.' }
-  }
-  let encoder: VideoEncoder | undefined
-  try {
-    encoder = new VideoEncoder({
-      output: (chunk) => {
-        // No actual frames are encoded during configure check.
-        void chunk
-      },
-      error: (error) => {
-        console.error('[meeting][catalog] VideoEncoder error during configure check', error, config)
-      }
-    })
-    encoder.configure(config)
-    return { ok: true }
-  } catch (error) {
-    console.error('[meeting][catalog] VideoEncoder.configure failed', error, config)
-    return { ok: false, message: `VideoEncoder.configure failed: ${track.codec}` }
-  } finally {
-    try {
-      encoder?.close()
-    } catch {
-      // ignore
-    }
-  }
+  return checkCodecSupport(`VideoEncoder config ${codec}`, () => VideoEncoder.isConfigSupported(config))
 }
 
 function CatalogsPanel({ subscribedTracks }: { subscribedTracks: SubscribedCatalogTrack[] }) {
