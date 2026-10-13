@@ -452,15 +452,8 @@ impl Fetch {
             track_name: downstream_sub.track_key.track_name.clone(),
             track_key: downstream_sub.track_key,
             start_location,
-            end_location: Self::location_after_largest(largest),
+            end_location: largest.next(),
         })
-    }
-
-    fn location_after_largest(largest: moqt::object::Location) -> moqt::object::Location {
-        moqt::object::Location {
-            group_id: largest.group_id,
-            object_id: largest.object_id + 1,
-        }
     }
 }
 
