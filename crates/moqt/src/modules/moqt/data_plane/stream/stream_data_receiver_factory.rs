@@ -44,7 +44,8 @@ mod tests {
         modules::test_support::{
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track,
         },
-        object::{DataReceiver, MalformedTrackError, SubgroupId},
+        object::{DataReceiver, MalformedTrackError},
+        wire::SubgroupId,
     };
 
     #[tokio::test]

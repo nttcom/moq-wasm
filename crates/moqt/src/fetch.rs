@@ -2,8 +2,6 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::
 pub use crate::modules::moqt::control_plane::handler::fetch_cancel_handler::FetchCancelHandler;
 pub use crate::modules::moqt::control_plane::handler::fetch_handler::FetchHandler;
 pub use crate::modules::moqt::control_plane::options::FetchOption;
-pub use crate::modules::moqt::data_plane::object::fetch::FetchObject;
-pub use crate::modules::moqt::data_plane::object::fetch::FetchObjectField;
 pub use crate::modules::moqt::data_plane::stream::fetch_data_receiver::Fetch;
 pub use crate::modules::moqt::data_plane::stream::fetch_data_receiver::FetchDataReceiver;
 pub use crate::modules::moqt::data_plane::stream::fetch_data_sender::FetchDataSender;

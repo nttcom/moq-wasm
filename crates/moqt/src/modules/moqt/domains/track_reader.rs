@@ -143,7 +143,8 @@ mod tests {
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
-        object::{ExtensionHeaders, MalformedTrackError, SubgroupId, SubgroupObject},
+        object::{ExtensionHeaders, MalformedTrackError},
+        wire::{SubgroupId, SubgroupObject},
     };
 
     const NO_OBJECT_TIMEOUT: Duration = Duration::from_millis(500);

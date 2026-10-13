@@ -22,14 +22,12 @@ use crate::{
         domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
-    object::{
-        DataReceiver, ExtensionHeaders, StreamDataSenderFactory, SubgroupId, SubgroupObject,
-        SubgroupObjectSender,
-    },
+    object::{DataReceiver, ExtensionHeaders, StreamDataSenderFactory, SubgroupObjectSender},
     publish::PublishOption,
     server::Handshake,
     server::ServerConfig,
     subscribe::FilterType,
+    wire::{SubgroupId, SubgroupObject},
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);

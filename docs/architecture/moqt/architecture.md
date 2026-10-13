@@ -36,9 +36,9 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   | `moqt::` | `Endpoint`, `Session`, `SessionEvent`, `Publisher`, `Subscriber`, `Subscription`, `TrackWriter` / `TrackReader`, the transport markers, session-wide handlers (GOAWAY, MAX_REQUEST_ID, REQUESTS_BLOCKED) and errors not tied to one operation |
   | `moqt::subscribe` | SUBSCRIBE, SUBSCRIBE_UPDATE, UNSUBSCRIBE and TRACK_STATUS: options, `FilterType`, handlers |
   | `moqt::publish` | PUBLISH and PUBLISH_DONE: `PublishOption`, handlers |
-  | `moqt::fetch` | FETCH and FETCH_CANCEL: options, handlers, fetch stream sender/receiver and objects |
+  | `moqt::fetch` | FETCH and FETCH_CANCEL: options, `FetchParams`, handlers, fetch stream sender/receiver |
   | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, handlers |
-  | `moqt::object` | Object model (`Location`, `GroupOrder`, `ExtensionHeaders`, subgroup objects) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
+  | `moqt::object` | Draft-independent object model (`Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
   | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
   | `moqt::executor` | `spawn` / `JoinHandle`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
 
@@ -52,7 +52,9 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
 - `wire.rs` re-exports raw control-message structs, framing helpers
   (`encode_control_message` / `take_control_message`), and data-plane object
   types for consumers that need direct wire access (the wasm bindings use
-  the codecs for the JavaScript message types). Types the other crates
+  the codecs for the JavaScript message types). The draft-14 object wire
+  structs (`SubgroupHeader`, `SubgroupObjectField`, `ObjectDatagram`,
+  `FetchObjectField`, …) are exported only here. Types the other crates
   reason about (`AuthorizationToken`, `fetch::FetchParams`, the typed codes)
   are exported from the operation modules instead, so a consumer that does
   not import `wire` depends on no draft-14 message layout.

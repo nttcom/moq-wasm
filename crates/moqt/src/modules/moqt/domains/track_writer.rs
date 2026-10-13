@@ -1,9 +1,9 @@
 use anyhow::{Context, ensure};
 use bytes::Bytes;
 
-use crate::object::{
-    ExtensionHeaders, ObjectStatus, StreamDataSenderFactory, SubgroupId, SubgroupObject,
-    SubgroupObjectSender,
+use crate::{
+    object::{ExtensionHeaders, ObjectStatus, StreamDataSenderFactory, SubgroupObjectSender},
+    wire::{SubgroupId, SubgroupObject},
 };
 
 const PUBLISHER_PRIORITY: u8 = 128;
