@@ -75,12 +75,7 @@ function buildRemoteMember({ existingMember, announcedUser, trackNamespace }: Bu
   if (existingMember) {
     return {
       ...existingMember,
-      announcedTracks: {
-        chat: { isAnnounced: true, trackNamespace },
-        video: { isAnnounced: true, trackNamespace },
-        screenshare: { isAnnounced: true, trackNamespace },
-        audio: { isAnnounced: true, trackNamespace }
-      },
+      trackNamespace,
       // Same-name rejoin is a fresh generation; do not carry stale subscription state forward.
       subscribedTracks: createFreshSubscribedTracks()
     }
@@ -89,12 +84,7 @@ function buildRemoteMember({ existingMember, announcedUser, trackNamespace }: Bu
   return {
     id: announcedUser,
     name: announcedUser,
-    announcedTracks: {
-      chat: { isAnnounced: true, trackNamespace },
-      video: { isAnnounced: true, trackNamespace },
-      screenshare: { isAnnounced: true, trackNamespace },
-      audio: { isAnnounced: true, trackNamespace }
-    },
+    trackNamespace,
     // subscribeId is left undefined until the track is actually subscribed; the
     // id is then taken from subscribe()'s return value (issued by moqtClient).
     subscribedTracks: createFreshSubscribedTracks()

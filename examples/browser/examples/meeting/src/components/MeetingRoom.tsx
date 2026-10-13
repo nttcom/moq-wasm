@@ -232,16 +232,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setChatMessages
   })
 
-  const getTrackNamespace = (member: RemoteMember): string[] | null => {
-    return (
-      member.announcedTracks.video.trackNamespace ??
-      member.announcedTracks.screenshare.trackNamespace ??
-      member.announcedTracks.audio.trackNamespace ??
-      member.announcedTracks.chat.trackNamespace ??
-      null
-    )
-  }
-
   const applyRemoteCatalogTracks = (memberId: string, tracks: MeetingCatalogTrack[]) => {
     setRemoteCatalogTracks((prev) => {
       const next = new Map(prev)
@@ -270,10 +260,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (!member) {
       return
     }
-    const trackNamespace = getTrackNamespace(member)
-    if (!trackNamespace) {
-      return
-    }
+    const { trackNamespace } = member
     if (catalogLoadingMemberIds.has(memberId) || catalogSubscribedMemberIds.has(memberId)) {
       return
     }
@@ -455,10 +442,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (!member) {
       return
     }
-    const trackNamespace = getTrackNamespace(member)
-    if (!trackNamespace) {
-      return
-    }
+    const { trackNamespace } = member
     const selected = remoteCatalogSelections.get(memberId)
     const trackName = getSelectedTrackName(selected, role)
 
@@ -477,10 +461,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       if (chatState.isSubscribed || chatState.isSubscribing || catalogUnsubscribingTrackKeys.has(chatTrackKey)) {
         continue
       }
-      const trackNamespace = getTrackNamespace(member)
-      if (!trackNamespace) {
-        continue
-      }
+      const { trackNamespace } = member
       const selected = remoteCatalogSelections.get(member.id)
       const catalogChatTrackName = remoteCatalogTracks.get(member.id)?.find((track) => track.role === 'chat')?.name
       const chatTrackName = selected?.chat ?? catalogChatTrackName ?? 'chat'
