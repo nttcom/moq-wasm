@@ -272,7 +272,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     })
 
     try {
-      const tracks = await session.subscribeCatalog(trackNamespace, undefined, 5000, (updatedTracks) =>
+      const tracks = await session.subscribeCatalog(trackNamespace, (updatedTracks) =>
         applyRemoteCatalogTracks(memberId, updatedTracks)
       )
       applyRemoteCatalogTracks(memberId, tracks)
@@ -375,7 +375,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     )
 
     try {
-      const requestId = await session.subscribe(trackNamespace, trackName, undefined, role, trackMediaConfig)
+      const requestId = await session.subscribe(trackNamespace, trackName, role, trackMediaConfig)
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,

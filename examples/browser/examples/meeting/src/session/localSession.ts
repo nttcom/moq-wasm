@@ -12,9 +12,11 @@ import { buildNamespacePrefix, buildTrackNamespace, parseTrackNamespace } from '
 interface LocalSessionOptions {
   roomName: string
   userName: string
-  relayUrl?: string
-  defaultAuthInfo?: string
+  relayUrl: string
 }
+
+const AUTH_INFO = 'secret'
+const CATALOG_SUBSCRIBE_TIMEOUT_MS = 5000
 
 export enum LocalSessionState {
   Idle = 'idle',
@@ -27,7 +29,6 @@ export enum LocalSessionState {
 export class LocalSession {
   readonly roomName: string
   private readonly relayUrl: string
-  private readonly defaultAuthInfo: string
   readonly localMember: LocalMember
   private readonly client = new MoqtClientWrapper()
   private readonly mediaController: MeetingMediaController
@@ -35,10 +36,9 @@ export class LocalSession {
   private chatMessageHandler: ((message: ChatMessage) => void) | null
   private readonly subscribeTrackAliases = new Map<bigint, bigint>()
 
-  constructor({ roomName, userName, relayUrl, defaultAuthInfo = 'secret' }: LocalSessionOptions) {
+  constructor({ roomName, userName, relayUrl }: LocalSessionOptions) {
     this.roomName = roomName
-    this.relayUrl = relayUrl ?? 'https://relay-1.moqt.research.skyway.io:443'
-    this.defaultAuthInfo = defaultAuthInfo
+    this.relayUrl = relayUrl
     this.localMember = { id: userName, name: userName }
     this.client.setOnConnectionClosedHandler(() => {
       console.info('[meeting][moqt] connection closed')
@@ -121,7 +121,7 @@ export class LocalSession {
     try {
       await this.client.connect(this.relayUrl, { authToken: readMeetingAuth().token })
       this.transitionToState(LocalSessionState.Ready)
-      await this.publishNamespace(this.trackNamespace, this.defaultAuthInfo)
+      await this.publishNamespace(this.trackNamespace)
     } catch (error) {
       this.transitionToState(LocalSessionState.Idle)
       throw error
@@ -154,37 +154,35 @@ export class LocalSession {
     }
   }
 
-  async publishNamespace(trackNamespace: string[], authInfo: string = this.defaultAuthInfo): Promise<void> {
+  private assertReady(action: string): void {
     if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot publish namespace when session state is "${this.state}"`)
+      throw new Error(`Cannot ${action} when session state is "${this.state}"`)
     }
-    await this.client.publishNamespace(trackNamespace, authInfo)
   }
 
-  async subscribeNamespace(trackNamespacePrefix: string[], authInfo: string = this.defaultAuthInfo): Promise<void> {
-    if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot subscribe namespace when session state is "${this.state}"`)
-    }
-    await this.client.subscribeNamespace(trackNamespacePrefix, authInfo)
+  async publishNamespace(trackNamespace: string[]): Promise<void> {
+    this.assertReady('publish namespace')
+    await this.client.publishNamespace(trackNamespace, AUTH_INFO)
+  }
+
+  async subscribeNamespace(trackNamespacePrefix: string[]): Promise<void> {
+    this.assertReady('subscribe namespace')
+    await this.client.subscribeNamespace(trackNamespacePrefix, AUTH_INFO)
   }
 
   async subscribe(
     trackNamespace: string[],
     trackName: string,
-    authInfo: string = this.defaultAuthInfo,
-    role?: CatalogSubscribeRole,
+    role: CatalogSubscribeRole,
     config?: TrackMediaConfig
   ): Promise<bigint> {
-    if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot subscribe when session state is "${this.state}"`)
-    }
-    const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, authInfo)
+    this.assertReady('subscribe')
+    const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO)
     const trackAlias = subscribeOk.trackAlias
     this.subscribeTrackAliases.set(requestId, trackAlias)
     const remoteUser = parseTrackNamespace(trackNamespace)?.userName ?? `alias-${trackAlias.toString()}`
 
-    const resolvedRole = role ?? this.resolveTrackRole(trackName)
-    if (resolvedRole === 'chat') {
+    if (role === 'chat') {
       this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroup) => {
         try {
           const payload = new Uint8Array(subgroup.objectPayload)
@@ -205,13 +203,10 @@ export class LocalSession {
           console.error('Failed to decode subgroup payload:', error)
         }
       })
-    } else if (resolvedRole === 'video' || resolvedRole === 'screenshare' || resolvedRole === 'audio') {
-      const { subscriber } = this.mediaController
-      if (resolvedRole === 'audio') {
-        subscriber.registerAudioTrack(remoteUser, trackName, trackAlias, config)
-      } else {
-        subscriber.registerVideoTrack(remoteUser, trackName, trackAlias, config)
-      }
+    } else if (role === 'audio') {
+      this.mediaController.subscriber.registerAudioTrack(remoteUser, trackName, trackAlias, config)
+    } else {
+      this.mediaController.subscriber.registerVideoTrack(remoteUser, trackName, trackAlias, config)
     }
 
     return requestId
@@ -219,13 +214,9 @@ export class LocalSession {
 
   async subscribeCatalog(
     trackNamespace: string[],
-    authInfo: string = this.defaultAuthInfo,
-    timeoutMs: number = 5000,
-    onTracksUpdated?: (tracks: MeetingCatalogTrack[]) => void
+    onTracksUpdated: (tracks: MeetingCatalogTrack[]) => void
   ): Promise<MeetingCatalogTrack[]> {
-    if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot subscribe catalog when session state is "${this.state}"`)
-    }
+    this.assertReady('subscribe catalog')
     const {
       promise: firstTracks,
       resolve: resolveFirst,
@@ -235,7 +226,7 @@ export class LocalSession {
       const { requestId, subscribeOk } = await this.client.subscribeLatest(
         trackNamespace,
         CATALOG_TRACK_NAME,
-        authInfo,
+        AUTH_INFO,
         (payload, groupId) => {
           try {
             const tracks = parseMeetingCatalogTracks(new TextDecoder().decode(payload))
@@ -244,7 +235,7 @@ export class LocalSession {
               groupId: groupId.toString(),
               tracks: tracks.map((t) => t.role)
             })
-            onTracksUpdated?.(tracks)
+            onTracksUpdated(tracks)
             resolveFirst(tracks)
           } catch (error) {
             console.error('Failed to parse catalog payload:', error)
@@ -257,7 +248,10 @@ export class LocalSession {
     }
     let timeoutId: number | undefined
     const timedOut = new Promise<never>((_, reject) => {
-      timeoutId = window.setTimeout(() => reject(new Error('Catalog subscribe timed out')), timeoutMs)
+      timeoutId = window.setTimeout(
+        () => reject(new Error('Catalog subscribe timed out')),
+        CATALOG_SUBSCRIBE_TIMEOUT_MS
+      )
     })
     try {
       return await Promise.race([subscribed(), timedOut])
@@ -267,9 +261,7 @@ export class LocalSession {
   }
 
   async unsubscribe(subscribeId: bigint): Promise<void> {
-    if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot unsubscribe when session state is "${this.state}"`)
-    }
+    this.assertReady('unsubscribe')
 
     const trackAlias = this.subscribeTrackAliases.get(subscribeId)
     this.subscribeTrackAliases.delete(subscribeId)
@@ -300,25 +292,12 @@ export class LocalSession {
     if (!message.trim()) {
       return
     }
-    if (this.state !== LocalSessionState.Ready) {
-      throw new Error(`Cannot send chat message when session state is "${this.state}"`)
-    }
+    this.assertReady('send chat message')
     await this.client.sendSubgroupTextForTrack(this.trackNamespace, 'chat', encodeChatPayload(message))
   }
 
   getMediaController(): MeetingMediaController {
     return this.mediaController
-  }
-
-  private resolveTrackRole(trackName: string): CatalogSubscribeRole | null {
-    if (trackName === 'chat') {
-      return 'chat'
-    }
-    const role = this.mediaController.publisher.resolveTrackRole(trackName)
-    if (role === 'video' && trackName.trim().toLowerCase().startsWith('screenshare')) {
-      return 'screenshare'
-    }
-    return role
   }
 }
 
