@@ -38,17 +38,20 @@ TRACK_DOES_NOT_EXIST.
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
 codec bitstream, H.264 in Annex-B and raw AAC frames, and the capture timestamp
-travels as MoQT extension header 2. The audio track's AudioSpecificConfig is
-published Base64-encoded as the catalog `initData`; the video track carries its
-parameter sets in band and has none.
+travels as MoQT extension header 2. A track's initialization data is a
+Base64-encoded entry of the catalog `initDataList` that the track's `initRef`
+names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); each entry takes the name of its
+track as its id, which keeps the ids unique. The audio track's
+AudioSpecificConfig is published this way; the video track carries its parameter
+sets in band and has none.
 
 ## CMAF tracks
 Every media track has a CMAF sibling named with a `_cmaf` suffix (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
-(draft-ietf-moq-cmsf-01). Its init segment travels Base64-encoded in the catalog
-`initData` (§3.1) and every object is one `moof` + `mdat` fragment holding one
-sample (§3.3). Groups start on keyframes and take the same ids as the LOC track
-for the same presentation time, so the LOC and CMAF versions of a rendition are
+(draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
+and every object is one `moof` + `mdat` fragment holding one sample (§3.3).
+Groups start on keyframes and take the same ids as the LOC track for the same
+presentation time, so the LOC and CMAF versions of a rendition are
 interchangeable; each format forms its own switching set (`altGroup` 1 for LOC,
 2 for CMAF).
 

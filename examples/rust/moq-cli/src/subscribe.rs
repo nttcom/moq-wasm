@@ -1,11 +1,11 @@
 use anyhow::Result;
-use moqt::{Session, TrackReader};
+use moqt::Session;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
 use crate::catalog;
 use crate::cli::SubscribeArgs;
-use crate::transport::{connect_relay, subscribe_track};
+use crate::transport::{connect_relay, read_catalog, subscribe, track_reader};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let connection = connect_relay(&args.relay, args.track.app_id()).await?;
@@ -25,25 +25,21 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
 async fn subscribe_stdout(session: &Session, args: &SubscribeArgs) -> Result<()> {
     let track = &args.track;
 
-    // Subscribe to both tracks up front so NextGroupStart catches the first
-    // group; otherwise a burst publisher can finish before we are done
-    // reading the catalog and the media subscription would start too late.
-    let mut catalog_reader = TrackReader::new(
-        subscribe_track(session, &track.namespace, msf::CATALOG_TRACK_NAME).await?,
-    );
+    // Subscribe to both tracks before reading either so NextGroupStart
+    // catches the first media group of a burst publisher.
+    let catalog_subscription =
+        subscribe(session, &track.namespace, msf::CATALOG_TRACK_NAME).await?;
     info!(
         namespace = track.namespace,
         track = track.name,
         "subscribing"
     );
-    let mut media_reader =
-        TrackReader::new(subscribe_track(session, &track.namespace, &track.name).await?);
+    let media_subscription = subscribe(session, &track.namespace, &track.name).await?;
     info!("subscribed");
 
-    match catalog_reader.next_object().await? {
-        Some(object) => describe_catalog(&catalog::parse(&object.payload)?),
-        None => anyhow::bail!("catalog stream ended before any object"),
-    }
+    let catalog = read_catalog(session, &catalog_subscription).await?;
+    describe_catalog(&catalog::parse(&catalog)?);
+    let mut media_reader = track_reader(session, &media_subscription).await?;
 
     let mut out = tokio::io::stdout();
     loop {

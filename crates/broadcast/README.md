@@ -10,7 +10,7 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 
 | Track | Packaging | Content |
 | --- | --- | --- |
-| `catalog` | MSF (draft-ietf-moq-msf-01) | Track list. `initData` carries the AAC config and the CMAF init segments |
+| `catalog` | MSF (draft-ietf-moq-msf-01) | Track list. `initDataList` carries the AAC config and the CMAF init segments, each named by the `initRef` of its track |
 | `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-01) | H.264 Annex-B, parameter sets in band, capture timestamp in extension header 2 |
 | `audio` | LOC | Raw AAC frames |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample |

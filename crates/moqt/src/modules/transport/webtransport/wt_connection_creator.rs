@@ -127,6 +127,10 @@ impl TransportConnectionCreator for WtConnectionCreator {
     async fn wait_idle(&self) {
         self.quic_endpoint.wait_idle().await;
     }
+
+    fn local_port(&self) -> anyhow::Result<u16> {
+        Ok(self.quic_endpoint.local_addr()?.port())
+    }
 }
 
 #[cfg(test)]

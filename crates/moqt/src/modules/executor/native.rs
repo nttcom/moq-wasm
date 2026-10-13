@@ -28,10 +28,18 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     let runtime = tokio::runtime::Handle::try_current().ok()?;
+    // `.cargo/config.toml` sets `--cfg tokio_unstable` only for this workspace;
+    // crates depending on moqt build without it.
+    #[cfg(tokio_unstable)]
     let inner = tokio::task::Builder::new()
         .name(name)
         .spawn_on(future, &runtime)
         .expect("tokio runtime is shutting down");
+    #[cfg(not(tokio_unstable))]
+    let inner = {
+        let _ = name;
+        runtime.spawn(future)
+    };
     Some(JoinHandle { inner })
 }
 

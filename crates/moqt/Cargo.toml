@@ -52,3 +52,6 @@ features = [
 mockall = "0.15.0"
 rcgen = "0.14.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }

@@ -130,6 +130,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     let cmaf_alt_group = alt_group.map(|group| group + 1);
 
     let mut tracks = Vec::new();
+    let mut init_data_list = Vec::new();
     for (name, info) in &metadata.video_tracks {
         let mut loc = track(&namespace, name, KnownPackaging::Loc, video_role.clone());
         loc.label = Some(info.label.clone());
@@ -139,7 +140,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         loc.framerate = Some(30.0);
         loc.width = Some(info.width);
         loc.height = Some(info.height);
-        let cmaf = cmaf_sibling(&loc, "video/mp4", info.init_segment.clone(), cmaf_alt_group);
+        let mut cmaf = cmaf_sibling(&loc, "video/mp4", cmaf_alt_group);
+        init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
         tracks.push(loc);
         tracks.push(cmaf);
     }
@@ -154,20 +156,18 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     audio.label = Some("Audio".to_string());
     audio.codec = Some("mp4a.40.2".to_string());
     audio.mime_type = Some("audio/aac".to_string());
+    let mut audio_cmaf = None;
     if let Some(config) = &metadata.audio_config {
         audio.sample_rate = Some(config.sample_rate);
         audio.channel_config = Some(channel_config_label(config.channel_count()));
-        audio.init_data = Some(general_purpose::STANDARD.encode(config.to_bytes()));
+        let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
+        init_data_list.push(audio.set_inline_init_data(audio_specific_config));
+        let mut cmaf = cmaf_sibling(&audio, "audio/mp4", None);
+        let init_segment = Fmp4TrackMuxer::audio(config.clone()).init_segment()?;
+        init_data_list
+            .push(cmaf.set_inline_init_data(general_purpose::STANDARD.encode(init_segment)));
+        audio_cmaf = Some(cmaf);
     }
-    let audio_cmaf = match &metadata.audio_config {
-        Some(config) => Some(cmaf_sibling(
-            &audio,
-            "audio/mp4",
-            general_purpose::STANDARD.encode(Fmp4TrackMuxer::audio(config.clone()).init_segment()?),
-            None,
-        )),
-        None => None,
-    };
     tracks.push(audio);
     tracks.extend(audio_cmaf);
 
@@ -200,11 +200,13 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     chat.mime_type = Some("application/json".to_string());
     tracks.push(chat);
 
-    Ok(Catalog::new(tracks, now_unix().as_millis() as u64))
+    let mut catalog = Catalog::new(tracks, now_unix().as_millis() as u64);
+    catalog.init_data_list = (!init_data_list.is_empty()).then_some(init_data_list);
+    Ok(catalog)
 }
 
-fn cmaf_sibling(loc: &Track, mime_type: &str, init_data: String, alt_group: Option<u64>) -> Track {
-    let mut cmaf = loc.cmaf_sibling(&cmaf_track_name(&loc.name), mime_type, init_data, alt_group);
+fn cmaf_sibling(loc: &Track, mime_type: &str, alt_group: Option<u64>) -> Track {
+    let mut cmaf = loc.cmaf_sibling(&cmaf_track_name(&loc.name), mime_type, alt_group);
     cmaf.label = loc.label.as_ref().map(|label| format!("{label} (CMAF)"));
     cmaf
 }
@@ -274,6 +276,16 @@ mod tests {
             .unwrap_or_else(|| panic!("missing track {name}"))
     }
 
+    fn init_data_of<'a>(catalog: &'a Catalog, track: &Track) -> Option<&'a str> {
+        let init_ref = track.init_ref.as_ref()?;
+        catalog
+            .init_data_list
+            .iter()
+            .flatten()
+            .find(|init_data| &init_data.id == init_ref)
+            .map(|init_data| init_data.data.as_str())
+    }
+
     #[test]
     fn only_the_cmaf_tracks_of_the_catalog_await_subscribe() {
         // Arrange
@@ -298,30 +310,68 @@ mod tests {
         // Assert
         let video = track_named(&catalog, "video");
         assert_eq!(video.packaging, Packaging::Known(KnownPackaging::Loc));
-        assert_eq!(video.init_data, None);
+        assert_eq!(video.init_ref, None);
         let video_cmaf = track_named(&catalog, "video_cmaf");
         assert_eq!(video_cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
         assert_eq!(video_cmaf.mime_type.as_deref(), Some("video/mp4"));
         assert_eq!(video_cmaf.codec, video.codec);
         assert_eq!(video_cmaf.max_grp_sap_starting_type, Some(1));
-        assert!(
-            video_cmaf
-                .init_data
-                .as_ref()
-                .is_some_and(|data| !data.is_empty())
+        let video_init_segment = &metadata.video_tracks[VIDEO_TRACK_NAME].init_segment;
+        assert_eq!(
+            init_data_of(&catalog, video_cmaf),
+            Some(video_init_segment.as_str())
+        );
+        let config = metadata.audio_config.clone().unwrap();
+        assert_eq!(
+            init_data_of(&catalog, track_named(&catalog, "audio")),
+            Some(general_purpose::STANDARD.encode(config.to_bytes()).as_str())
         );
         let audio_cmaf = track_named(&catalog, "audio_cmaf");
         assert_eq!(audio_cmaf.packaging, Packaging::Known(KnownPackaging::Cmaf));
         assert_eq!(audio_cmaf.mime_type.as_deref(), Some("audio/mp4"));
+        let audio_init_segment =
+            general_purpose::STANDARD.encode(Fmp4TrackMuxer::audio(config).init_segment().unwrap());
+        assert_eq!(
+            init_data_of(&catalog, audio_cmaf),
+            Some(audio_init_segment.as_str())
+        );
+    }
+
+    #[test]
+    fn every_init_ref_names_an_inline_entry_of_its_own() {
+        // Arrange: a second rendition adds a second video CMAF sibling
+        let mut metadata = metadata_with_video_and_audio();
+        let rendition = metadata.video_tracks[VIDEO_TRACK_NAME].clone();
+        metadata
+            .video_tracks
+            .insert("video_480p".to_string(), rendition);
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let init_data_list = catalog.init_data_list.as_ref().unwrap();
         assert!(
-            audio_cmaf
-                .init_data
-                .as_ref()
-                .is_some_and(|data| !data.is_empty())
+            init_data_list
+                .iter()
+                .all(|init_data| init_data.r#type == "inline")
         );
-        assert_ne!(
-            audio_cmaf.init_data,
-            track_named(&catalog, "audio").init_data
+        let mut ids: Vec<&str> = init_data_list
+            .iter()
+            .map(|init_data| init_data.id.as_str())
+            .collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            ["audio", "audio_cmaf", "video_480p_cmaf", "video_cmaf"]
         );
+        let mut init_refs: Vec<&str> = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .filter_map(|track| track.init_ref.as_deref())
+            .collect();
+        init_refs.sort();
+        assert_eq!(init_refs, ids);
     }
 }

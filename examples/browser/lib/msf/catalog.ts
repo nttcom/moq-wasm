@@ -17,7 +17,14 @@ export type MsfTrack = {
   framerate?: number
   samplerate?: number
   channelConfig?: string
-  initData?: string
+  initRef?: string
+}
+
+/// An entry of the catalog `initDataList` (draft-ietf-moq-msf-01 §5.1.7).
+export type MsfInitData = {
+  id: string
+  type: 'inline'
+  data: string
 }
 
 type MsfCatalog = {
@@ -25,6 +32,7 @@ type MsfCatalog = {
   generatedAt?: number
   isComplete?: boolean
   tracks?: MsfTrack[]
+  initDataList?: MsfInitData[]
 }
 
 export type CatalogTrackRole = 'video' | 'audio' | 'mediatimeline'
@@ -44,13 +52,37 @@ export type MediaCatalogTrack = {
   depends?: string[]
 }
 
-export function buildMsfCatalogJson(tracks: MsfTrack[]): string {
+export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitData[] = []): string {
   const catalog: MsfCatalog = {
     version: 1,
     generatedAt: Date.now(),
-    tracks
+    tracks,
+    // Keep after `tracks`: JSON.stringify writes keys in insertion order, and
+    // draft-ietf-moq-msf-01 §5.1.7 requires initDataList to follow tracks.
+    initDataList: initDataList.length > 0 ? initDataList : undefined
   }
   return JSON.stringify(catalog)
+}
+
+/// The Base64 init data of the `initDataList` entry a track's `initRef` names
+/// (draft-ietf-moq-msf-01 §5.2.13). A missing or non-`inline` entry returns
+/// `undefined` and logs a warning instead of rejecting the catalog.
+export function resolveInitData(catalog: unknown, track: Record<string, unknown>): string | undefined {
+  const initRef = asString(track.initRef)
+  if (!initRef) {
+    return undefined
+  }
+  const initDataList = isObject(catalog) && Array.isArray(catalog.initDataList) ? catalog.initDataList : []
+  const entry = initDataList.find((item): item is Record<string, unknown> => isObject(item) && item.id === initRef)
+  const data = entry?.type === 'inline' ? asString(entry.data) : undefined
+  if (!data) {
+    console.warn('[msf] initRef does not resolve to inline init data, so the track has none', {
+      track: track.name,
+      initRef,
+      type: entry?.type
+    })
+  }
+  return data
 }
 
 function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[] {
@@ -80,7 +112,7 @@ function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaC
       channelConfig: asString(track.channelConfig),
       width: asNumber(track.width),
       height: asNumber(track.height),
-      initData: asString(track.initData),
+      initData: resolveInitData(catalog, track),
       depends: asStrings(track.depends)
     })
     return acc
