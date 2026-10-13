@@ -7,12 +7,15 @@ use mediapack::{
     loc::{Muxer as LocMuxer, to_extension_headers},
     mp4::Fmp4TrackMuxer,
 };
-use moqt::publish::{GroupBoundary, OutgoingObject};
+use moqt::{
+    executor,
+    publish::{GroupBoundary, OutgoingObject},
+};
 
 use crate::{
     broadcast::{
         AudioTrackInfo, Broadcast, SourceTracks, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
-        VideoTrackInfo, cmaf_track_name, now_unix,
+        VideoTrackInfo, cmaf_track_name,
     },
     group_alignment::GroupAlignment,
     media_timeline::MediaTimeline,
@@ -299,5 +302,5 @@ impl TrackPublisher {
 }
 
 fn wall_clock() -> Timestamp {
-    Timestamp::from_micros(now_unix().as_micros() as u64)
+    Timestamp::from_micros(executor::system_time().as_micros() as u64)
 }

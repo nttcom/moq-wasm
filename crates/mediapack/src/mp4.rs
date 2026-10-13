@@ -9,5 +9,4 @@ pub mod track_muxer;
 pub use demuxer::Demuxer;
 pub use index::{IndexedSample, Mp4Index, SampleKind};
 pub use muxer::Fmp4Muxer;
-pub use track::AudioCodec;
 pub use track_muxer::{Fmp4TrackMuxer, Fragment};

@@ -6,12 +6,12 @@ layout, the publishing flow or the invariants described here change.
 
 ## Scope
 `crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
-unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC
-and CMAF media tracks, a media timeline and a publisher-side FETCH cache.
-`crates/live-ingest`, `crates/gst-plugin-moqt` and `crates/onvif-ingest`
-build on it. The track
-layout is summarised in [its README](../../../crates/broadcast/README.md);
-this document records why the tracks are shaped that way.
+unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC and
+CMAF media tracks, a media timeline and a publisher-side FETCH cache.
+`crates/live-ingest`, `crates/gst-plugin-moqt`, `crates/onvif-ingest` and the
+Live Viewer's MP4 publisher, through `crates/wasm`, build on it. The track
+layout is summarised in [its README](../../../crates/broadcast/README.md); this
+document records why the tracks are shaped that way.
 
 Three types carry the three multiplicities. `RelayConnection` is one session
 to the relay, opened on first use and shared by every broadcast on it: RTMP
@@ -27,6 +27,10 @@ broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
 The media timeline and the chat describe the default `video` and `audio`, so
 the catalog lists them, and the `audio` placeholder sent before the AAC config
 arrives, only while a default track exists.
+
+Tasks are spawned and clocks read only through `moqt::executor`, so the crate
+also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
+the relay through moqt's `BROWSER` transport (WebTransport) instead of `DUAL`.
 
 ## Publishing without subscribers
 Every track the catalog lists except the CMAF tracks is published with PUBLISH
@@ -49,18 +53,18 @@ TRACK_DOES_NOT_EXIST.
 
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
-codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law or Opus frames, and
-the capture timestamp travels as MoQT extension header 2. A track's
+codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law, Opus or MP3 frames,
+and the capture timestamp travels as MoQT extension header 2. A track's
 initialization data is a Base64-encoded entry of the catalog `initDataList` that
 the track's `initRef` names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); each entry
 takes the name of its track as its id, which keeps the ids unique. An AAC audio
-track's AudioSpecificConfig is published this way; A-law and Opus need none
+track's AudioSpecificConfig is published this way; A-law, Opus and MP3 need none
 beyond the codec, sample rate and channel count the catalog lists, and the video
 track carries its parameter sets in band.
 
 ## CMAF tracks
-Every media track has a CMAF sibling named with a `_cmaf` suffix, except
-A-law and Opus audio, which have no fMP4 muxer here (`video_cmaf`,
+Every media track has a CMAF sibling named with a `_cmaf` suffix, except A-law,
+Opus and MP3 audio, which have no fMP4 muxer here (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
 and every object is one `moof` + `mdat` fragment holding one sample (§3.3).

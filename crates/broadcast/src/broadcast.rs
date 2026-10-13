@@ -1,12 +1,9 @@
-use std::{
-    collections::BTreeMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
 use mediapack::{AudioConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer};
-use moqt::publish::OutgoingObject;
+use moqt::{executor, publish::OutgoingObject};
 use msf::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
@@ -225,7 +222,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         tracks.extend(default_tracks(&namespace, metadata));
     }
 
-    let mut catalog = Catalog::new(tracks, now_unix().as_millis() as u64);
+    let mut catalog = Catalog::new(tracks, executor::system_time().as_millis() as u64);
     catalog.init_data_list = (!init_data_list.is_empty()).then_some(init_data_list);
     Ok(catalog)
 }
@@ -307,6 +304,7 @@ fn audio_mime_type(config: &AudioConfig) -> &'static str {
         AudioConfig::Aac(_) => "audio/aac",
         AudioConfig::Pcma { .. } => "audio/pcma",
         AudioConfig::Opus { .. } => "audio/opus",
+        AudioConfig::Mp3 { .. } => "audio/mpeg",
     }
 }
 
@@ -316,12 +314,6 @@ fn channel_config_label(channels: u8) -> String {
         2 => "stereo".to_string(),
         n => format!("{n}ch"),
     }
-}
-
-pub(crate) fn now_unix() -> Duration {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

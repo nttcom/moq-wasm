@@ -1,7 +1,9 @@
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
+
+use moqt::executor;
 
 const FINISHED_RETENTION: Duration = Duration::from_secs(5);
 
@@ -17,10 +19,12 @@ pub struct StreamLedger {
 pub struct StreamRecord {
     pub track_name: String,
     pub group_id: u64,
-    pub opened_at: Instant,
+    /// `moqt::executor::now()` when the group stream opened.
+    pub opened_at: Duration,
     pub bytes: u64,
-    pub objects: u64,
-    pub finished_at: Option<Instant>,
+    /// `moqt::executor::now()` as each object was sent, in object order.
+    pub object_sent_at: Vec<Duration>,
+    pub finished_at: Option<Duration>,
 }
 
 impl StreamRecord {
@@ -31,7 +35,7 @@ impl StreamRecord {
 
 impl StreamLedger {
     pub(crate) fn open(&self, track_name: &str, group_id: u64) {
-        let now = Instant::now();
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         for record in records.iter_mut() {
             if record.track_name == track_name && record.is_open() {
@@ -43,24 +47,25 @@ impl StreamLedger {
             group_id,
             opened_at: now,
             bytes: 0,
-            objects: 0,
+            object_sent_at: Vec::new(),
             finished_at: None,
         });
     }
 
     pub(crate) fn add_object(&self, track_name: &str, bytes: usize) {
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         if let Some(record) = records
             .iter_mut()
             .find(|record| record.track_name == track_name && record.is_open())
         {
             record.bytes += bytes as u64;
-            record.objects += 1;
+            record.object_sent_at.push(now);
         }
     }
 
     pub(crate) fn finish(&self, track_name: &str) {
-        let now = Instant::now();
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         for record in records.iter_mut() {
             if record.track_name == track_name && record.is_open() {
@@ -70,12 +75,12 @@ impl StreamLedger {
     }
 
     pub fn snapshot(&self) -> Vec<StreamRecord> {
-        let now = Instant::now();
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         records.retain(|record| {
             record
                 .finished_at
-                .is_none_or(|finished_at| now.duration_since(finished_at) < FINISHED_RETENTION)
+                .is_none_or(|finished_at| now.saturating_sub(finished_at) < FINISHED_RETENTION)
         });
         records.clone()
     }
@@ -102,9 +107,9 @@ mod tests {
         let video: Vec<_> = records.iter().filter(|r| r.track_name == "video").collect();
         assert_eq!(video.len(), 2);
         assert!(!video[0].is_open());
-        assert_eq!((video[0].bytes, video[0].objects), (100, 1));
+        assert_eq!((video[0].bytes, video[0].object_sent_at.len()), (100, 1));
         assert!(video[1].is_open());
-        assert_eq!((video[1].bytes, video[1].objects), (5, 1));
+        assert_eq!((video[1].bytes, video[1].object_sent_at.len()), (5, 1));
         assert!(
             records
                 .iter()

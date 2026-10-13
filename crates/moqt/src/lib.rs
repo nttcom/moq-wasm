@@ -2,6 +2,7 @@
 
 mod modules;
 
+pub mod executor;
 pub mod fetch;
 pub mod namespace;
 pub mod object;

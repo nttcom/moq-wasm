@@ -9,7 +9,7 @@ use std::{
 };
 
 use broadcast::{RelayConnection, StreamRecord};
-use moqt::TransportStats;
+use moqt::{TransportStats, executor};
 use tokio::task::JoinHandle;
 
 const LABEL_WIDTH: usize = 40;
@@ -167,7 +167,7 @@ fn render_streams(streams: &[StreamRecord]) -> Vec<String> {
         "    streams: {open} open, {} finished within 5s",
         streams.len() - open
     )];
-    let now = Instant::now();
+    let now = executor::now();
     let mut ordered: Vec<&StreamRecord> = streams.iter().collect();
     ordered.sort_by(|a, b| {
         a.track_name
@@ -178,11 +178,11 @@ fn render_streams(streams: &[StreamRecord]) -> Vec<String> {
         let state = match stream.finished_at {
             None => format!(
                 "open {:>5.1}s",
-                now.duration_since(stream.opened_at).as_secs_f64()
+                now.saturating_sub(stream.opened_at).as_secs_f64()
             ),
             Some(finished_at) => format!(
                 "done {:>5.1}s",
-                finished_at.duration_since(stream.opened_at).as_secs_f64()
+                finished_at.saturating_sub(stream.opened_at).as_secs_f64()
             ),
         };
         let widest_of_track = streams
@@ -197,7 +197,7 @@ fn render_streams(streams: &[StreamRecord]) -> Vec<String> {
             "    {:<12} g{:<16} {state}  {:>4} obj  {:>8.1} KB  {}{}",
             truncate(&stream.track_name, 12),
             stream.group_id,
-            stream.objects,
+            stream.object_sent_at.len(),
             stream.bytes as f64 / 1024.0,
             "█".repeat(filled),
             "·".repeat(BAR_WIDTH - filled),
@@ -307,14 +307,14 @@ mod tests {
     #[test]
     fn stream_lines_scale_each_bar_to_the_largest_stream_of_its_track() {
         // Arrange
-        let opened_at = Instant::now();
+        let opened_at = Duration::from_secs(1);
         let streams = vec![
             StreamRecord {
                 track_name: "video".to_string(),
                 group_id: 7,
                 opened_at,
                 bytes: 3000,
-                objects: 30,
+                object_sent_at: vec![opened_at; 30],
                 finished_at: None,
             },
             StreamRecord {
@@ -322,7 +322,7 @@ mod tests {
                 group_id: 7,
                 opened_at,
                 bytes: 1000,
-                objects: 40,
+                object_sent_at: vec![opened_at; 40],
                 finished_at: Some(opened_at),
             },
         ];

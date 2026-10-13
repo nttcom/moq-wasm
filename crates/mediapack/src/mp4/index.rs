@@ -7,9 +7,9 @@ use crate::{
         atom::{
             HEADER_LENGTH as ATOM_HEADER_LENGTH, atoms, find, full_atom, peek, read_u32, read_u64,
         },
-        track::{AudioCodec, Media, annexb_access_unit, find_path, read_timescale, read_track},
+        track::{Media, annexb_access_unit, find_path, read_timescale, read_track},
     },
-    sample::Timestamp,
+    sample::{AudioConfig, Timestamp},
 };
 
 const MICROS_PER_SECOND: i128 = 1_000_000;
@@ -40,7 +40,7 @@ pub struct IndexedSample {
 /// list applied and rebased so that the earliest sample starts at zero.
 pub struct Mp4Index {
     pub video: Option<AvcDecoderConfigurationRecord>,
-    pub audio: Option<AudioCodec>,
+    pub audio: Option<AudioConfig>,
     samples: Vec<IndexedSample>,
     duration: Timestamp,
 }
@@ -387,6 +387,7 @@ mod tests {
     use super::*;
     use crate::{
         mp4::Demuxer,
+        sample::MediaEvent,
         test_support::{FIXTURE_MP3_MP4, FIXTURE_PROGRESSIVE_MP4},
     };
 
@@ -507,7 +508,7 @@ mod tests {
         // Assert
         assert_eq!(
             index.audio,
-            Some(AudioCodec::Mp3 {
+            Some(AudioConfig::Mp3 {
                 sample_rate: 48_000,
                 channels: 1
             })
@@ -527,14 +528,17 @@ mod tests {
     }
 
     #[test]
-    fn fragment_demuxer_rejects_mp3_audio() {
+    fn fragment_demuxer_describes_mp3_audio() {
         // Arrange
         let mut demuxer = Demuxer::new();
 
         // Act
-        let result = demuxer.push(moov(FIXTURE_MP3_MP4));
+        let events = demuxer.push(moov(FIXTURE_MP3_MP4)).unwrap();
 
         // Assert
-        assert!(result.unwrap_err().to_string().contains("MP3"));
+        assert!(events.contains(&MediaEvent::AudioConfig(AudioConfig::Mp3 {
+            sample_rate: 48_000,
+            channels: 1
+        })));
     }
 }

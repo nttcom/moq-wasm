@@ -1,10 +1,11 @@
 # broadcast
 
 Publishes an MSF broadcast, a catalog and H.264/AAC tracks, into a MoQT relay.
-It is the publishing side shared by `crates/live-ingest`, `crates/gst-plugin-moqt`
-(`moqtsink`) and `crates/onvif-ingest`; the Live Viewer's in-browser MP4 publisher follows the same
-conventions. Every publisher built on it produces the tracks below, so one
-player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
+It is the publishing side shared by `crates/live-ingest`,
+`crates/gst-plugin-moqt` (`moqtsink`), `crates/onvif-ingest` and, built into
+`crates/wasm`, the Live Viewer's in-browser MP4 publisher. Every publisher built
+on it produces the tracks below, so one player,
+`examples/browser/examples/live-viewer`, plays and rewinds all of them.
 
 ## Tracks
 
@@ -12,7 +13,7 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 | --- | --- | --- |
 | `catalog` | MSF (draft-ietf-moq-msf-01) | Track list. `initDataList` carries the AAC config and the CMAF init segments, each named by the `initRef` of its track |
 | `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-01) | H.264 Annex-B, parameter sets in band, capture timestamp in extension header 2 |
-| `audio` | LOC | Raw AAC, G.711 A-law or Opus frames (CMAF sibling for AAC only) |
+| `audio` | LOC | Raw AAC, G.711 A-law, Opus or MP3 frames (CMAF sibling for AAC only) |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample |
 | `timeline` | MSF media timeline | `[presentation time, [group, object], encode wallclock]` per keyframe |
 

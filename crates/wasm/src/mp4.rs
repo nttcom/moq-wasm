@@ -1,7 +1,5 @@
-use mediapack::mp4::{AudioCodec, Mp4Index as SampleIndex, SampleKind};
+use mediapack::mp4::{Mp4Index as SampleIndex, SampleKind};
 use wasm_bindgen::prelude::*;
-
-const MP3_CODEC: &str = "mp3";
 
 #[wasm_bindgen]
 pub struct Mp4VideoTrack {
@@ -18,8 +16,6 @@ pub struct Mp4AudioTrack {
     #[wasm_bindgen(js_name = sampleRate)]
     pub sample_rate: u32,
     pub channels: u8,
-    #[wasm_bindgen(getter_with_clone, js_name = audioSpecificConfig)]
-    pub audio_specific_config: Option<Vec<u8>>,
 }
 
 /// The sample table as parallel columns, one entry per sample in decode
@@ -42,6 +38,13 @@ pub struct Mp4SampleTable {
 #[wasm_bindgen]
 pub struct Mp4Index {
     inner: SampleIndex,
+}
+
+impl Mp4Index {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn sample_index(&self) -> &SampleIndex {
+        &self.inner
+    }
 }
 
 #[wasm_bindgen]
@@ -67,22 +70,11 @@ impl Mp4Index {
     }
 
     pub fn audio(&self) -> Option<Mp4AudioTrack> {
-        Some(match self.inner.audio.as_ref()? {
-            AudioCodec::Aac(config) => Mp4AudioTrack {
-                codec: config.codec_string(),
-                sample_rate: config.sample_rate,
-                channels: config.channel_count(),
-                audio_specific_config: Some(config.to_bytes().to_vec()),
-            },
-            AudioCodec::Mp3 {
-                sample_rate,
-                channels,
-            } => Mp4AudioTrack {
-                codec: MP3_CODEC.to_string(),
-                sample_rate: *sample_rate,
-                channels: *channels,
-                audio_specific_config: None,
-            },
+        let config = self.inner.audio.as_ref()?;
+        Some(Mp4AudioTrack {
+            codec: config.codec_string(),
+            sample_rate: config.sample_rate(),
+            channels: config.channels(),
         })
     }
 
