@@ -1,14 +1,16 @@
+mod broadcast;
 mod group_alignment;
-mod manager;
 mod media_timeline;
 mod publish_queue;
-mod publisher;
+mod relay_connection;
 mod stream_ledger;
 mod track_publisher;
+mod writer;
 
+pub use broadcast::{Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name};
 pub use group_alignment::GroupAlignment;
-pub use manager::{MoqtManager, MoqtTarget, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name};
 pub use moqt::publish::{GroupBoundary, OutgoingObject};
-pub use publisher::MediaPublisher;
+pub use relay_connection::{MoqtTarget, RelayConnection};
 pub use stream_ledger::{StreamLedger, StreamRecord};
 pub use track_publisher::SharedTiming;
+pub use writer::BroadcastWriter;

@@ -12,6 +12,16 @@ and CMAF media tracks, a media timeline and a publisher-side FETCH cache.
 layout is summarised in [its README](../../../crates/broadcast/README.md);
 this document records why the tracks are shaped that way.
 
+Three types carry the three multiplicities. `RelayConnection` is one session
+to the relay, opened on first use and shared by every broadcast on it: RTMP
+publishes every stream key of one connection through the same session, and
+the live-ingest stats panel reads its transport statistics and stream ledger.
+`Broadcast` binds that connection to one namespace: it announces the
+namespace, holds the catalog metadata and sends the objects of its tracks.
+`BroadcastWriter` turns `mediapack::MediaEvent`s into those objects behind a
+queue that never blocks the media source; `live-ingest` adds the transcoded
+renditions through the same `Broadcast`.
+
 ## Publishing without subscribers
 Every track the catalog lists except the CMAF tracks is published with PUBLISH
 (draft-ietf-moq-transport-14 §9.13) before the catalog that lists it is sent, so

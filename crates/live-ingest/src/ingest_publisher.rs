@@ -1,5 +1,5 @@
 use anyhow::Result;
-use broadcast::{MediaPublisher, MoqtManager, MoqtTarget, VideoTrackInfo};
+use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, VideoTrackInfo};
 use mediapack::MediaEvent;
 
 use crate::{renditions::RenditionFanout, stats_panel::ConnectionRegistry};
@@ -12,15 +12,15 @@ pub struct IngestOptions {
 }
 
 pub struct IngestPublisher {
-    media: MediaPublisher,
+    writer: BroadcastWriter,
     transcode: bool,
     renditions: Option<RenditionFanout>,
 }
 
 impl IngestPublisher {
-    pub fn new(moqt: MoqtManager, namespace: Vec<String>, transcode: bool) -> Self {
+    pub fn new(broadcast: Broadcast, transcode: bool) -> Self {
         Self {
-            media: MediaPublisher::run(moqt, namespace),
+            writer: BroadcastWriter::run(broadcast),
             transcode,
             renditions: None,
         }
@@ -30,7 +30,7 @@ impl IngestPublisher {
         match &event {
             MediaEvent::VideoConfig(config) if self.transcode && self.renditions.is_none() => {
                 let source = VideoTrackInfo::from_record(config, "Video".to_string())?;
-                self.renditions = RenditionFanout::run(&self.media, &source)?;
+                self.renditions = RenditionFanout::run(&self.writer, &source)?;
             }
             MediaEvent::Video(sample) => {
                 if let Some(renditions) = &self.renditions {
@@ -39,6 +39,6 @@ impl IngestPublisher {
             }
             _ => {}
         }
-        self.media.push(event)
+        self.writer.push(event)
     }
 }

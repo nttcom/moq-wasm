@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use broadcast::{
-    GroupAlignment, GroupBoundary, MediaPublisher, MoqtManager, OutgoingObject, SharedTiming,
+    Broadcast, BroadcastWriter, GroupAlignment, GroupBoundary, OutgoingObject, SharedTiming,
     VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
 };
 use mediapack::{MediaEvent, VideoSample, loc::to_extension_headers, mp4::Fmp4TrackMuxer};
@@ -19,9 +19,9 @@ pub struct RenditionFanout {
 }
 
 impl RenditionFanout {
-    pub fn run(media: &MediaPublisher, source: &VideoTrackInfo) -> Result<Option<Self>> {
-        let namespace = media.namespace().to_vec();
-        let namespace_path = namespace.join("/");
+    pub fn run(writer: &BroadcastWriter, source: &VideoTrackInfo) -> Result<Option<Self>> {
+        let broadcast = writer.broadcast().clone();
+        let namespace_path = broadcast.namespace().join("/");
         let renditions = ladder_for(source.width, source.height);
         if renditions.is_empty() {
             tracing::info!(namespace = %namespace_path, width = source.width, height = source.height, "source too small for lower renditions");
@@ -49,9 +49,8 @@ impl RenditionFanout {
             }
         });
         let publisher = RenditionPublisher {
-            moqt: media.moqt().clone(),
-            namespace,
-            timing: media.shared_timing(),
+            broadcast,
+            timing: writer.shared_timing(),
             cmaf: (0..renditions.len()).map(|_| None).collect(),
         };
         let publisher = tokio::spawn(publisher.run(transcoder, renditions));
@@ -70,15 +69,14 @@ impl RenditionFanout {
 }
 
 struct RenditionPublisher {
-    moqt: MoqtManager,
-    namespace: Vec<String>,
+    broadcast: Broadcast,
     timing: SharedTiming,
     cmaf: Vec<Option<Fmp4TrackMuxer>>,
 }
 
 impl RenditionPublisher {
     async fn run(mut self, mut transcoder: Transcoder, renditions: Vec<Rendition>) {
-        let namespace_path = self.namespace.join("/");
+        let namespace_path = self.broadcast.namespace().join("/");
         while let Some(output) = transcoder.next().await {
             let output = match output {
                 Ok(output) => output,
@@ -102,9 +100,7 @@ impl RenditionPublisher {
                 self.cmaf[index] = Some(Fmp4TrackMuxer::video(config.clone()));
                 let info =
                     VideoTrackInfo::from_record(&config, format!("Video {}", rendition.name))?;
-                self.moqt
-                    .update_video_catalog(&self.namespace, &track, info)
-                    .await
+                self.broadcast.update_video_catalog(&track, info).await
             }
             MediaEvent::Video(sample) => {
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
@@ -132,9 +128,8 @@ impl RenditionPublisher {
                         "rendition sample before the source seeded the LOC capture origin",
                     )?;
                 if let Some(object) = muxer.push(&MediaEvent::Video(sample)) {
-                    self.moqt
+                    self.broadcast
                         .send_object(
-                            &self.namespace,
                             &track,
                             OutgoingObject {
                                 group,
@@ -152,9 +147,8 @@ impl RenditionPublisher {
                     fragment.is_keyframe,
                     fragment.presentation_time.micros(),
                 );
-                self.moqt
+                self.broadcast
                     .send_object(
-                        &self.namespace,
                         &cmaf_track_name(&track),
                         OutgoingObject::plain(group, fragment.data),
                     )

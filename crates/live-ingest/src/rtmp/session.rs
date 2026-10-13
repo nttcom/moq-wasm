@@ -8,7 +8,7 @@ use mediapack::{
 };
 use rml_rtmp::sessions::{ServerSession, ServerSessionEvent, ServerSessionResult};
 
-use broadcast::MoqtManager;
+use broadcast::{Broadcast, RelayConnection};
 
 use crate::stats_panel::Registration;
 
@@ -27,7 +27,7 @@ pub struct RtmpState {
     label: String,
     pub counters: RtmpCounters,
     pub recorder: Option<FlvRecorder>,
-    pub moqt: MoqtManager,
+    pub connection: RelayConnection,
     _registration: Option<Registration>,
     transcode: bool,
     pub streams: HashMap<String, RtmpStream>,
@@ -40,16 +40,16 @@ pub struct RtmpStream {
 
 impl RtmpState {
     pub fn new(options: &IngestOptions, label: String) -> Self {
-        let moqt = MoqtManager::new(options.moqt.clone());
+        let connection = RelayConnection::new(options.moqt.clone());
         let registration = options
             .stats
             .as_ref()
-            .map(|registry| registry.register(format!("rtmp {label}"), &moqt));
+            .map(|registry| registry.register(format!("rtmp {label}"), &connection));
         Self {
             label,
             counters: RtmpCounters::default(),
             recorder: None,
-            moqt,
+            connection,
             _registration: registration,
             transcode: options.transcode,
             streams: HashMap::new(),
@@ -78,8 +78,10 @@ impl RtmpState {
             .or_insert_with(|| RtmpStream {
                 demuxer: flv::Demuxer::new(),
                 publisher: IngestPublisher::new(
-                    self.moqt.clone(),
-                    namespace_path.split('/').map(str::to_owned).collect(),
+                    Broadcast::new(
+                        self.connection.clone(),
+                        namespace_path.split('/').map(str::to_owned).collect(),
+                    ),
                     self.transcode,
                 ),
             });

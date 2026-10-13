@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use broadcast::{MoqtManager, StreamRecord};
+use broadcast::{RelayConnection, StreamRecord};
 use moqt::TransportStats;
 use tokio::task::JoinHandle;
 
@@ -33,7 +33,7 @@ pub struct ConnectionRegistry {
 struct RegisteredConnection {
     id: u64,
     label: String,
-    moqt: MoqtManager,
+    connection: RelayConnection,
 }
 
 struct ConnectionSnapshot {
@@ -49,12 +49,12 @@ pub struct Registration {
 }
 
 impl ConnectionRegistry {
-    pub fn register(&self, label: String, moqt: &MoqtManager) -> Registration {
+    pub fn register(&self, label: String, connection: &RelayConnection) -> Registration {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.connections.lock().unwrap().push(RegisteredConnection {
             id,
             label,
-            moqt: moqt.clone(),
+            connection: connection.clone(),
         });
         Registration {
             registry: self.clone(),
@@ -70,8 +70,8 @@ impl ConnectionRegistry {
             .map(|c| ConnectionSnapshot {
                 id: c.id,
                 label: c.label.clone(),
-                stats: c.moqt.transport_stats(),
-                streams: c.moqt.streams(),
+                stats: c.connection.transport_stats(),
+                streams: c.connection.streams(),
             })
             .collect()
     }
@@ -368,8 +368,8 @@ mod tests {
     fn dropping_the_registration_removes_the_connection() {
         // Arrange
         let registry = ConnectionRegistry::default();
-        let moqt = MoqtManager::new(None);
-        let registration = registry.register("a".to_string(), &moqt);
+        let connection = RelayConnection::new(None);
+        let registration = registry.register("a".to_string(), &connection);
 
         // Act
         let while_registered = registry.snapshot().len();
