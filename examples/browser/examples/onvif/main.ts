@@ -1,7 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
 import { PlayerControls } from '@player/ui/playerControls'
-import type { MOQTClient } from '../../pkg/moqt'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
@@ -39,7 +38,9 @@ const player = new LivePlayer({
 })
 const controls = new PlayerControls(stage, player, log)
 let commandTrackAlias: bigint | null = null
-let commandObjectId = 0n
+/// The relay isolates a track whose publisher repeats a location, so a
+/// publisher that comes back must not restart its group ids at zero.
+let nextCommandGroupId = BigInt(Date.now()) * 1_000n
 
 function renderPlayer(): void {
   const { catalogStatus, playbackStatus, rewindStatus } = player.state
@@ -72,14 +73,6 @@ function updateStatus(label: string, active: boolean): void {
 
 function updateCommandAlias(alias: bigint | null): void {
   element('command-alias').textContent = alias === null ? '-' : alias.toString()
-}
-
-function ensureClient(): MOQTClient {
-  const client = moqtClient.getRawClient()
-  if (!client) {
-    throw new Error('MOQT client not connected')
-  }
-  return client
 }
 
 function parseNamespace(value: string): string[] {
@@ -120,7 +113,6 @@ function readField(row: HTMLElement, field: FieldKey): number {
 }
 
 async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void> {
-  const client = ensureClient()
   if (commandTrackAlias === null) {
     updateStatus('command track not subscribed', false)
     return
@@ -139,8 +131,8 @@ async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void
         : { type: command, pan, tilt, zoom, speed }
 
   const bytes = new TextEncoder().encode(JSON.stringify(payload))
-  await client.sendObjectDatagram(commandTrackAlias, 0n, commandObjectId, 0, bytes, undefined)
-  commandObjectId += 1n
+  const groupId = nextCommandGroupId++
+  await moqtClient.sendSingleObjectGroup(commandTrackAlias, groupId, bytes)
   updateStatus(`sent ${command}`, true)
 }
 
@@ -266,7 +258,6 @@ async function disconnect(): Promise<void> {
     await moqtClient.disconnect()
   }
   commandTrackAlias = null
-  commandObjectId = 0n
   updateCommandAlias(commandTrackAlias)
   updateStatus('disconnected', false)
 }
