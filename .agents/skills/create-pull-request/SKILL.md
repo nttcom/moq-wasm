@@ -1,6 +1,6 @@
 ---
 name: create-pull-request
-description: Create a pull request for the current branch. Use when the user asks to open, create, or update a PR. Runs the ponytail over-engineering review on the diff first, writes the title and body in Japanese, fills in the repository PR template, has the body reviewed for redundancy and against the i-have-adhd rules, and adds a mermaid diagram when it makes the change easier to review.
+description: Create a pull request for the current branch. Use when the user asks to open, create, or update a PR. Runs the ponytail over-engineering review on the diff first, writes the title and body in Japanese, fills in the repository PR template, has the added comments and the body reviewed for redundancy and against the i-have-adhd rules, and adds a mermaid diagram when it makes the change easier to review.
 ---
 
 # Create Pull Request
@@ -9,12 +9,13 @@ description: Create a pull request for the current branch. Use when the user ask
 
 1. Review the change: `git status`, `git diff origin/master...HEAD`, and `git log origin/master..HEAD --oneline`.
 2. Run the ponytail review on the diff and apply its cuts (see *Ponytail Review*). Repeat until it answers `Lean already. Ship.`
-3. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
-4. Push the branch: `git push -u origin <branch>`.
-5. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
-6. Create the PR with `gh pr create --base master --title <title> --body <body>`.
+3. Have a subagent review the comments the diff adds (see *Comment Review*) and apply its edits.
+4. Commit any uncommitted work. Commit messages are English and follow the Conventional Commits rules in `AGENTS.md`.
+5. Push the branch: `git push -u origin <branch>`.
+6. Draft the title and body, then have a subagent review them (see *Review Before Posting*) and apply its edits.
+7. Create the PR with `gh pr create --base master --title <title> --body <body>`.
    - If a PR already exists for the branch, push the new commits and update the existing PR with `gh pr edit` instead of creating a duplicate.
-7. Report the PR URL.
+8. Report the PR URL.
 
 ## Plugins
 
@@ -32,6 +33,10 @@ Two steps run skills from third-party plugins rather than rules written here:
 Invoke the `ponytail-review` skill on `git diff origin/master...HEAD`. It lists cuts and does not apply them. Run it every time a PR is requested, including via the desktop "Create PR" command and when the user has waived QA.
 
 Apply every cut except those that remove something the user asked for by name (an API, an option, a test). A finding that exposes a bug, such as duplicated logic that has diverged, is fixed in its own `fix` commit rather than folded into the cut.
+
+## Comment Review
+
+Pass every comment and doc comment the diff adds, each with the code around it, to a subagent running the two checks in *Review Before Posting*. Ask for the revised comments plus a one-line reason per edit. For a comment, the Redundancy check reads "restates the diff" as "restates what the surrounding names, types, control flow, or test names already say"; delete such a comment instead of shortening it.
 
 ## Title
 
