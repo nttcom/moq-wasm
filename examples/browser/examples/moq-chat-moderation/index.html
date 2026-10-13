@@ -145,7 +145,7 @@
                 <h4>モデレーターを起動する</h4>
                 <pre><code>cd examples/python/moq-chat-moderation
 uv run python -m moq_chat_moderation.bot --insecure \
-  --jev-url "$(gcloud run services describe djev-dgemma --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
+  --jev-url "$(gcloud run services describe djev-vision --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
   --gcloud-auth</code></pre>
                 <p class="hint">gcloud のアカウントに roles/run.invoker が必要です</p>
               </li>
