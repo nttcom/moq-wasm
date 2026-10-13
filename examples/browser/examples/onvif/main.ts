@@ -3,6 +3,7 @@ import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
 import { PlayerControls } from '@player/ui/playerControls'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { timeSeededGroupId } from '../../utils/media/clock'
+import { element, parseTrackNamespace } from '../../utils/page'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
 
@@ -74,13 +75,6 @@ function updateCommandAlias(alias: bigint | null): void {
   element('command-alias').textContent = alias === null ? '-' : alias.toString()
 }
 
-function parseNamespace(value: string): string[] {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
 function parseBigInt(value: string): bigint {
   try {
     return BigInt(value)
@@ -91,14 +85,6 @@ function parseBigInt(value: string): bigint {
 
 function inputValue(id: string): string {
   return element<HTMLInputElement>(id).value
-}
-
-function element<T extends HTMLElement>(id: string): T {
-  const found = document.getElementById(id)
-  if (!found) {
-    throw new Error(`missing element: ${id}`)
-  }
-  return found as T
 }
 
 function readField(row: HTMLElement, field: FieldKey): number {
@@ -194,8 +180,8 @@ function setupUrlPresets(): void {
 
 async function connect(): Promise<void> {
   const url = inputValue('moqt-url')
-  const publishNamespace = parseNamespace(inputValue('publish-namespace'))
-  const subscribeNamespace = parseNamespace(inputValue('subscribe-namespace'))
+  const publishNamespace = parseTrackNamespace(inputValue('publish-namespace'))
+  const subscribeNamespace = parseTrackNamespace(inputValue('subscribe-namespace'))
   const publishNamespaceLabel = publishNamespace.join('/')
   const commandTrack = inputValue('command-track')
   const authInfo = inputValue('auth-info')
