@@ -16,16 +16,6 @@ const captureTimestamps = new CaptureTimestamps()
 // 5.0: 32 5.1: 33 5.2: 34
 // M1 macではHWEncoderがL1T1しかサポートしていない
 
-// const VIDEO_ENCODER_CONFIG = {
-//   codec: 'av01.0.08M.08',
-//   width: 1280,
-//   height: 720,
-//   bitrate: 1_000_000, //10 Mbps
-//   // scalabilityMode: 'L1T3',
-//   scalabilityMode: 'L1T1',
-//   framerate: 30
-// }
-
 const videoBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
 })
