@@ -48,6 +48,10 @@ pub(crate) async fn yield_now() {
     tokio::task::yield_now().await
 }
 
+pub(crate) async fn sleep(duration: Duration) {
+    tokio::time::sleep(duration).await
+}
+
 pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output, ()> {
     tokio::time::timeout(duration, future).await.map_err(drop)
 }
