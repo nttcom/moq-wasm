@@ -286,16 +286,8 @@ function MetricChart({
   const hasRenderableSeries = visibleSeriesEntries.some((seriesConfig) => seriesConfig.entries.length >= 2)
   const dataValues = visibleSeriesEntries.flatMap((seriesConfig) => seriesConfig.entries.map((entry) => entry.value))
   const tickValuesAll = (yTicks ?? []).filter((value) => Number.isFinite(value))
-  const min = dataValues.length
-    ? Math.min(...dataValues, ...tickValuesAll)
-    : tickValuesAll.length
-      ? Math.min(...tickValuesAll)
-      : 0
-  const max = dataValues.length
-    ? Math.max(...dataValues, ...tickValuesAll)
-    : tickValuesAll.length
-      ? Math.max(...tickValuesAll)
-      : 0
+  const min = Math.min(...dataValues, ...tickValuesAll)
+  const max = Math.max(...dataValues, ...tickValuesAll)
   const rawMin = Number.isFinite(min) ? min : 0
   const rawMax = Number.isFinite(max) ? max : rawMin + 1
   const rawRange = Math.max(1, rawMax - rawMin)
