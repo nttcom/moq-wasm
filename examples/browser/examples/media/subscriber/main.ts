@@ -299,18 +299,22 @@ function sendCatalogSubscribeButtonClickHandler(): void {
   })
 }
 
+function describeSelectedTracks(): string {
+  return `video=${selectedVideoTrackName}, audio=${selectedAudioTrackName ?? 'none'}`
+}
+
 function sendSubscribeButtonClickHandler(): void {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
   sendSubscribeBtn.addEventListener('click', async () => {
     const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
-    const selectedVideoTrack = selectedVideoTrackName ?? ''
-    const selectedAudioTrack = selectedAudioTrackName ?? ''
+    const selectedVideoTrack = selectedVideoTrackName
+    const selectedAudioTrack = selectedAudioTrackName
     const videoSubscribeId = BigInt(form['video-subscribe-id'].value)
     const audioSubscribeId = BigInt(form['audio-subscribe-id'].value)
 
-    if (!selectedVideoTrack || !selectedAudioTrack) {
-      setCatalogTrackStatus('Select video and audio tracks from catalog first')
+    if (!selectedVideoTrack) {
+      setCatalogTrackStatus('Select a video track from catalog first')
       return
     }
 
@@ -320,12 +324,14 @@ function sendSubscribeButtonClickHandler(): void {
     form['video-track-alias'].value = videoTrackAlias.toString()
     setupClientObjectCallbacks('video', videoTrackAlias)
 
-    const audioTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, selectedAudioTrack, AUTH_INFO, { requestId: audioSubscribeId })
-    ).subscribeOk.trackAlias
-    form['audio-track-alias'].value = audioTrackAlias.toString()
-    setupClientObjectCallbacks('audio', audioTrackAlias)
-    setTrackSubscribeStatus(`Track subscribe requested: video=${selectedVideoTrack}, audio=${selectedAudioTrack}`)
+    if (selectedAudioTrack) {
+      const audioTrackAlias = (
+        await moqtClient.subscribe(trackNamespace, selectedAudioTrack, AUTH_INFO, { requestId: audioSubscribeId })
+      ).subscribeOk.trackAlias
+      form['audio-track-alias'].value = audioTrackAlias.toString()
+      setupClientObjectCallbacks('audio', audioTrackAlias)
+    }
+    setTrackSubscribeStatus(`Track subscribe requested: ${describeSelectedTracks()}`)
   })
 }
 
@@ -388,9 +394,7 @@ function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint)
   moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
     receivedVideoObjectCount += 1
     setReceiveStatus(`Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`)
-    if (selectedVideoTrackName && selectedAudioTrackName) {
-      setTrackSubscribeStatus(`Subscribed video=${selectedVideoTrackName}, audio=${selectedAudioTrackName}`)
-    }
+    setTrackSubscribeStatus(`Subscribed ${describeSelectedTracks()}`)
     const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
     if (locSummary.present && locSummary.extensionCount > 0) {
       console.debug('[MediaSubscriber] LoC object (video)', {
