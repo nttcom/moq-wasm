@@ -199,9 +199,7 @@ function materializeDirectObject(
     captureTimestampMicros,
     object: {
       ...object,
-      cachedChunk: parsed,
-      remotePTS: parsed.metadata.timestamp,
-      localPTS: performance.timeOrigin + performance.now()
+      cachedChunk: parsed
     }
   }
 }

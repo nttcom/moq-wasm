@@ -95,11 +95,7 @@ export class LocLive {
 
   configureTrack(kind: MediaKind, track: MediaCatalogTrack): void {
     if (kind === 'video') {
-      postVideoCatalogToWorker(this.videoWorker, {
-        codec: track.codec,
-        initData: track.initData,
-        avcFormat: track.initData ? undefined : 'annexb'
-      })
+      postVideoCatalogToWorker(this.videoWorker, track)
       return
     }
     postAudioCatalogToWorker(this.audioWorker, track)
@@ -164,16 +160,7 @@ export class LocLive {
   /// few decoded frames are ever held.
   private applyDecoderConfig(): void {
     const holdMs = Math.max(0, this.playout.bufferPolicy().minimumMs - PRESENTATION_MARGIN_MS)
-    this.videoWorker.postMessage({
-      type: 'config',
-      config: {
-        telemetryEnabled: true,
-        bypassJitterBuffer: holdMs === 0,
-        holdMs,
-        releaseMarginMs: PRESENTATION_MARGIN_MS,
-        pacing: { preset: 'disabled' }
-      }
-    })
+    this.videoWorker.postMessage({ type: 'config', holdMs, releaseMarginMs: PRESENTATION_MARGIN_MS })
     this.audioWorker.postMessage({ type: 'config', config: { telemetryEnabled: true, bypassJitterBuffer: true } })
   }
 }

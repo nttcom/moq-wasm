@@ -4,6 +4,7 @@ export function postSubgroupObjectToWorker(worker: Worker, groupId: bigint, mess
   const payload = new Uint8Array(message.objectPayload)
   worker.postMessage(
     {
+      type: 'object',
       groupId,
       subgroupStreamObject: {
         subgroupId: message.subgroupId,

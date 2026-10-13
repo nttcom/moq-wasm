@@ -7,9 +7,7 @@ type AudioCatalogTrackLike = {
 
 type VideoCatalogTrackLike = {
   codec?: string
-  framerate?: number
   initData?: string
-  avcFormat?: 'annexb' | 'avc'
 }
 
 export function parseAudioChannelCount(channelConfig?: string): number | undefined {
@@ -45,8 +43,6 @@ export function postVideoCatalogToWorker(worker: Worker, track: VideoCatalogTrac
   worker.postMessage({
     type: 'catalog',
     codec: track.codec,
-    framerate: track.framerate,
-    descriptionBase64: track.initData,
-    avcFormat: track.avcFormat
+    descriptionBase64: track.initData
   })
 }

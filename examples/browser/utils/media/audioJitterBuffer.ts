@@ -42,9 +42,7 @@ export class AudioJitterBuffer {
 
     const bufferObject: JitterBufferSubgroupObject = {
       ...object,
-      cachedChunk: parsed,
-      remotePTS: parsed.metadata.timestamp,
-      localPTS: performance.timeOrigin + performance.now()
+      cachedChunk: parsed
     }
     if (typeof captureTimestampMicros === 'number') {
       onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))

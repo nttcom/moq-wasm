@@ -12,12 +12,11 @@ export type SubgroupObjectWithLoc = SubgroupObject & {
 }
 
 export type SubgroupWorkerMessage = {
+  type: 'object'
   groupId: bigint
   subgroupStreamObject: SubgroupObjectWithLoc
 }
 
 export type JitterBufferSubgroupObject = SubgroupObjectWithLoc & {
   cachedChunk: DeserializedChunk
-  remotePTS: number
-  localPTS: number
 }
