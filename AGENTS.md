@@ -10,7 +10,7 @@
 - Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
   1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
   2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
-  3. Otherwise → name the role in one or two kebab-case words (`relay`, `publisher`, `live-ingest`, `onvif-ingest`).
+  3. Otherwise → name the role in one or two kebab-case words (`relay`, `broadcast`, `live-ingest`, `onvif-ingest`).
   Use an abbreviation only when it is already the identifier in code, flags or environment variables (`msf`, `vts`); otherwise spell it out (`auth-token`). Binaries take the package name.
 
 Library components (draft-governed):
@@ -21,6 +21,7 @@ Library components (draft-governed):
 | `relay` | MoQT relay server, extending `moqt` with server-specific logic | `docs/spec/draft-ietf-moq-transport-14.txt` (`relay`-related sections) |
 | `crates/msf` | Object format for content transported over MoQT | `docs/spec/draft-ietf-moq-msf-01.txt`, `docs/spec/draft-ietf-moq-cmsf-01.txt` |
 | `crates/mediapack` | Container demuxers/muxers (MPEG-TS, FLV, fMP4, LOC), a progressive MP4 sample index and H.264/AAC bitstream helpers; the `moqt` feature maps LOC extensions to MoQT extension headers | `docs/spec/draft-ietf-moq-loc-01.txt` (`loc` module only) |
+| `crates/broadcast` | Builds an MSF broadcast from `mediapack` media events: the catalog, LOC/CMAF tracks, media timeline and publishing policy shared by `live-ingest` and `gst-plugin-moqt`; extends `msf` and `moqt` with original-publisher logic | `docs/spec/draft-ietf-moq-msf-01.txt` (§5 Catalog, §7 Media timeline, §11 Workflow), `docs/spec/draft-ietf-moq-cmsf-01.txt` (§3.2 switching sets) |
 
 Application and integration components (draft reference is normally not required):
 
@@ -28,7 +29,6 @@ Application and integration components (draft reference is normally not required
 | --- | --- |
 | `crates/wasm` | WebAssembly bindings to use `moqt` from the browser |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
-| `crates/publisher` | MoQT session, MSF catalog, LOC/CMAF track publishing and FETCH cache shared by `live-ingest` and `gst-plugin-moqt` |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `crates/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
@@ -91,7 +91,7 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
 - Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
-  - Scope: use the component name (`moqt`, `relay`, `wasm`, `live-ingest`, `onvif`, `msf`, `mediapack`)
+  - Scope: use the component name (`moqt`, `relay`, `wasm`, `broadcast`, `live-ingest`, `onvif`, `msf`, `mediapack`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.

@@ -118,7 +118,7 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 | [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
 | [`crates/live-ingest/`](crates/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
 | [`crates/onvif-ingest/`](crates/onvif-ingest/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
-| [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`publisher/`](crates/publisher/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, track publishing, re-encoding |
+| [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, the broadcast's track layout, re-encoding |
 | [`crates/vts/`](crates/vts/README.md), [`auth-token/`](crates/auth-token/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
@@ -127,7 +127,7 @@ component builds on. Every Rust crate lives in `crates/<package name>/`.
 Architecture documents:
 [`moqt`](docs/architecture/moqt/architecture.md),
 [`relay`](docs/architecture/relay/architecture.md),
-[`publisher`](docs/architecture/publisher/architecture.md),
+[`broadcast`](docs/architecture/broadcast/architecture.md),
 [Live Player](docs/architecture/browser-examples/live-player.md).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
 

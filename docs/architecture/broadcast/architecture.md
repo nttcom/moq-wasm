@@ -1,14 +1,15 @@
-# `publisher` Architecture
+# `broadcast` Architecture
 
 ## Status
 Living document. Update this file in the same change whenever the track
 layout, the publishing flow or the invariants described here change.
 
 ## Scope
-`crates/publisher` turns `mediapack` media events into MoQT tracks: an
-MSF catalog, LOC and CMAF media tracks, a media timeline and a publisher-side
-FETCH cache. `crates/live-ingest` and `crates/gst-plugin-moqt` build on it. The
-track layout is summarised in [its README](../../../crates/publisher/README.md);
+`crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
+unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC
+and CMAF media tracks, a media timeline and a publisher-side FETCH cache.
+`crates/live-ingest` and `crates/gst-plugin-moqt` build on it. The track
+layout is summarised in [its README](../../../crates/broadcast/README.md);
 this document records why the tracks are shaped that way.
 
 ## Publishing without subscribers

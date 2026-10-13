@@ -2,7 +2,7 @@
 
 GStreamer plugin with a `moqtsink` element that publishes H.264 video and AAC
 audio into a MoQT relay. It produces the tracks described in
-[`crates/publisher`](../publisher/README.md), so the
+[`crates/broadcast`](../broadcast/README.md), so the
 [Live Viewer](../../examples/browser/examples/live-viewer/README.md) plays and
 rewinds them like a `live-ingest` stream.
 

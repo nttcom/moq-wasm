@@ -7,8 +7,8 @@ or the loss handling described here changes.
 ## Scope
 `crates/live-ingest` accepts RTMP (FLV) and SRT (MPEG-TS), demuxes the input
 with `mediapack`, optionally re-encodes it with `crates/transcode`, and hands
-the resulting media events to `crates/publisher`, which owns the track
-layout (see [its architecture document](../publisher/architecture.md)).
+the resulting media events to `crates/broadcast`, which owns the track
+layout (see [its architecture document](../broadcast/architecture.md)).
 
 ## Transport stream loss
 The SRT listener reads with a 4 MiB UDP receive buffer: a keyframe arrives as

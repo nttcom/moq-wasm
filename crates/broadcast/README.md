@@ -1,7 +1,7 @@
-# publisher
+# broadcast
 
-Publishes an MSF catalog and H.264/AAC tracks into a MoQT relay. It is the
-publishing side shared by `crates/live-ingest` and `crates/gst-plugin-moqt`
+Publishes an MSF broadcast, a catalog and H.264/AAC tracks, into a MoQT relay.
+It is the publishing side shared by `crates/live-ingest` and `crates/gst-plugin-moqt`
 (`moqtsink`); the Live Viewer's in-browser MP4 publisher follows the same
 conventions. Every publisher built on it produces the tracks below, so one
 player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
@@ -29,4 +29,4 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 - A SUBSCRIBE for a track the catalog does not list is rejected with TRACK_DOES_NOT_EXIST.
 
 The reasoning behind these choices is in the
-[architecture document](../../docs/architecture/publisher/architecture.md).
+[architecture document](../../docs/architecture/broadcast/architecture.md).
