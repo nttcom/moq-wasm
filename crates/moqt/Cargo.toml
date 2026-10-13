@@ -49,5 +49,5 @@ features = [
 ]
 
 [dev-dependencies]
-mockall = "0.14.0"
+mockall = "0.15.0"
 rcgen = "0.14.8"
