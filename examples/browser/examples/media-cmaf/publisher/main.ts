@@ -4,7 +4,6 @@ import { AUTH_INFO, CMAF_FPS } from '../const'
 import { getFormElement } from '../utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
-import { configureRelayUrlControls } from '../../../utils/relayPresets'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
 import {
@@ -15,6 +14,7 @@ import {
   MediaStreamAudioTrackSource
 } from 'mediabunny'
 import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
+import { initializeMediaExamplePage } from '../../../utils/page'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
@@ -425,7 +425,7 @@ const setupCloseButtonHandler = (): void => {
   })
 }
 
-configureRelayUrlControls()
+initializeMediaExamplePage('publish-track-namespace')
 setUpStartGetUserMediaButton()
 setupMoqSendVisualizationButton()
 setupClientCallbacks()

@@ -1,3 +1,5 @@
+import { setUpRelayUrlControls } from './relayPresets'
+
 export type StatusState = 'idle' | 'ok' | 'review' | 'error'
 
 export function setStatus(id: string, text: string, state: StatusState): void {
@@ -46,4 +48,36 @@ export function getErrorMessage(error: unknown): string {
   } catch (_error) {
     return String(error)
   }
+}
+
+export function initializeMediaExamplePage(namespaceInputId: string): void {
+  setUpRelayUrlControls(element('url'), element('urlPresets'))
+  applyNamespaceOverride(namespaceInputId)
+}
+
+function applyNamespaceOverride(namespaceInputId: string): void {
+  const input = document.getElementById(namespaceInputId)
+  if (!(input instanceof HTMLInputElement)) {
+    return
+  }
+
+  const params = new URLSearchParams(window.location.search)
+  input.value =
+    firstNonEmptyValue(params, ['trackNamespace', 'namespace']) ?? (input.value.trim() || buildDefaultTrackNamespace())
+}
+
+export function buildDefaultTrackNamespace(date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+  return `anon/nttcom/${day}/${pad(date.getHours())}${pad(date.getMinutes())}`
+}
+
+function firstNonEmptyValue(params: URLSearchParams, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = params.get(key)?.trim()
+    if (value) {
+      return value
+    }
+  }
+  return null
 }

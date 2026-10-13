@@ -3,7 +3,7 @@ import { showBotOffHoursNotice } from './botHours'
 import { DjevStatusView } from './djevStatus'
 import { timeSeededGroupId } from './media/clock'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
-import { appendCloudRelayPresetButtons, configureRelayUrlControls } from './relayPresets'
+import { setUpRelayUrlControls } from './relayPresets'
 
 const AUTH_INFO = ''
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
@@ -31,8 +31,7 @@ export function setUpDjevBotPage(options: DjevBotPageOptions): void {
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
   const djevStatus = new DjevStatusView(element('djev-status'))
   showBotOffHoursNotice(element('bot-hours'))
-  appendCloudRelayPresetButtons(element('urlPresets'))
-  configureRelayUrlControls()
+  setUpRelayUrlControls(urlInput, element('urlPresets'))
 
   const reset = async (connectionText: string, connectionState: StatusState): Promise<void> => {
     djevStatus.reset()

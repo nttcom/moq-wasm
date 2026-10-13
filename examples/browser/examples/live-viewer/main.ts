@@ -1,6 +1,4 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { appendCloudRelayPresetButtons } from '../../utils/relayPresets'
-import { initializeMediaExamplePage } from '../media/common'
 import type { LivePictureKind } from '@player/livePictureSink'
 import { PlayerControls } from '@player/ui/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
@@ -17,7 +15,7 @@ import {
   streamKbps,
   summarizeStreams
 } from './streamMonitor'
-import { element, getErrorMessage, parseTrackNamespace, setStatus } from '../../utils/page'
+import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 
 const AUTH_INFO = 'secret'
@@ -57,7 +55,6 @@ const mp4Publisher = new Mp4Publisher(
   new PublishPreview(element<HTMLCanvasElement>('publish-preview'))
 )
 
-appendCloudRelayPresetButtons(element('urlPresets'))
 initializeMediaExamplePage('namespace')
 element<HTMLButtonElement>('watchBtn').addEventListener('click', () => void watchStream())
 element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopStream())

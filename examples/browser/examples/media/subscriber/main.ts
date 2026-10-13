@@ -5,8 +5,7 @@ import { getFormElement } from './utils'
 import { LocLive, formatLiveStats } from '@player/locLive'
 import { summarizeLocHeader } from '../../../utils/media/locSummary'
 import { getResolvedMediaVideoCodec } from '../catalog'
-import { initializeMediaExamplePage } from '../common'
-import { parseTrackNamespace, setStatusText } from '../../../utils/page'
+import { parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
 
 const moqtClient = new MoqtClientWrapper()

@@ -8,8 +8,8 @@ import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../utils/media/audioTransport'
 import { KEYFRAME_INTERVAL } from '../../../utils/media/constants'
 import { MEDIA_AUDIO_PROFILES, buildMediaCatalogJson, getMediaVideoProfiles } from '../catalog'
-import { getMediaVideoEncodingOverrides, initializeMediaExamplePage } from '../common'
-import { getErrorMessage, parseTrackNamespace, setStatusText } from '../../../utils/page'
+import { getMediaVideoEncodingOverrides } from '../common'
+import { getErrorMessage, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
 
 let mediaStream: MediaStream | null = null
