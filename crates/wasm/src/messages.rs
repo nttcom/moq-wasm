@@ -798,13 +798,13 @@ impl SubgroupObjectMessage {
 /// has sent: the end is the End Location its FETCH_OK carries (draft-14
 /// §9.17), i.e. the Location after the last Object to send, where Object 0
 /// covers the whole Group.
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct FetchMessage {
     #[wasm_bindgen(js_name = requestId)]
     pub request_id: u64,
-    #[wasm_bindgen(js_name = trackNamespace)]
+    #[wasm_bindgen(getter_with_clone, js_name = trackNamespace)]
     pub track_namespace: Vec<String>,
-    #[wasm_bindgen(js_name = trackName)]
+    #[wasm_bindgen(getter_with_clone, js_name = trackName)]
     pub track_name: String,
     #[wasm_bindgen(js_name = groupOrder)]
     pub group_order: u8,

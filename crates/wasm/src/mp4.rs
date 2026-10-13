@@ -3,20 +3,22 @@ use wasm_bindgen::prelude::*;
 
 const MP3_CODEC: &str = "mp3";
 
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct Mp4VideoTrack {
+    #[wasm_bindgen(getter_with_clone)]
     pub codec: String,
     pub width: u32,
     pub height: u32,
 }
 
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct Mp4AudioTrack {
+    #[wasm_bindgen(getter_with_clone)]
     pub codec: String,
     #[wasm_bindgen(js_name = sampleRate)]
     pub sample_rate: u32,
     pub channels: u8,
-    #[wasm_bindgen(js_name = audioSpecificConfig)]
+    #[wasm_bindgen(getter_with_clone, js_name = audioSpecificConfig)]
     pub audio_specific_config: Option<Vec<u8>>,
 }
 
