@@ -21,11 +21,11 @@ import {
   replayObject
 } from '../../utils/media/fetchReplay'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
-import { MEDIA_CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../media/catalog'
-import { type StatusState, getErrorMessage } from '../media/common'
 import { PublishedGroupLog } from './publishedGroupLog'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor } from './streamMonitor'
+import { type StatusState, getErrorMessage } from '../../utils/page'
+import { CATALOG_TRACK_NAME, type MsfTrack, buildMsfCatalogJson } from '../../lib/msf/catalog'
 
 const VIDEO_TRACK_NAME = 'video'
 const AUDIO_TRACK_NAME = 'audio'
@@ -170,7 +170,7 @@ export class Mp4Publisher {
       video: await publishTrack(VIDEO_TRACK_NAME),
       audio: media.audio && (await publishTrack(AUDIO_TRACK_NAME)),
       timeline: await publishTrack(TIMELINE_TRACK_NAME),
-      catalog: await publishTrack(MEDIA_CATALOG_TRACK_NAME)
+      catalog: await publishTrack(CATALOG_TRACK_NAME)
     }
     await this.sendCatalog(trackAliases.catalog, buildCatalogJson(options.namespace, media))
     return trackAliases
@@ -323,7 +323,7 @@ export class Mp4Publisher {
 
   private replayTracks(media: Mp4Media): Map<string, ReplayTrack> {
     const tracks = new Map<string, ReplayTrack>([
-      [MEDIA_CATALOG_TRACK_NAME, documentReplayTrack(this.catalogGroups, () => true)],
+      [CATALOG_TRACK_NAME, documentReplayTrack(this.catalogGroups, () => true)],
       [VIDEO_TRACK_NAME, mediaReplayTrack(media, this.mediaGroups, false)],
       [
         TIMELINE_TRACK_NAME,
@@ -347,7 +347,7 @@ export class Mp4Publisher {
     // A viewer fetches the group the relay reports as the largest, which is the newest one.
     this.catalogGroups.clear()
     this.catalogGroups.set(groupId, payload)
-    this.sentStreams.label(trackAlias, MEDIA_CATALOG_TRACK_NAME)
+    this.sentStreams.label(trackAlias, CATALOG_TRACK_NAME)
     await client.sendSubgroupHeader(trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
     this.sentStreams.opened(trackAlias, groupId)
     await client.sendSubgroupObject(trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)

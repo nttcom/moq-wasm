@@ -4,8 +4,8 @@ import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
-import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 import { timeSeededGroupId } from '../../utils/media/clock'
+import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'moq-camera-detection', 'camera']
 const DETECTOR_NAMESPACE = ['anon', 'moq-camera-detection', 'detector']

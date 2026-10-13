@@ -1,13 +1,5 @@
 import type { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../pkg/moqt'
-import {
-  type MediaCatalogTrack,
-  extractCatalogAudioTracks,
-  extractCatalogCmafTracks,
-  extractCatalogMediaTimelineTracks,
-  extractCatalogVideoTracks
-} from '../../examples/media/catalog'
-import { type StatusState, getErrorMessage } from '../../examples/media/common'
 import { base64ToUint8Array } from '../../utils/media/base64'
 import { parseAudioChannelCount } from '../../utils/media/decoderCatalog'
 import type { MseTrackSource } from '../../utils/media/mseSink'
@@ -28,6 +20,14 @@ import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import { TrackSubscriptions } from './trackSubscriptions'
+import { type StatusState, getErrorMessage } from '../../utils/page'
+import {
+  type MediaCatalogTrack,
+  extractCatalogAudioTracks,
+  extractCatalogCmafTracks,
+  extractCatalogMediaTimelineTracks,
+  extractCatalogVideoTracks
+} from '../msf/catalog'
 
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000

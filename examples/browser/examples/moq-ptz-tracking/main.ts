@@ -4,8 +4,8 @@ import type { SubgroupObjectMessage } from '../../pkg/moqt'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
-import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 import { timeSeededGroupId } from '../../utils/media/clock'
+import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
 const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']

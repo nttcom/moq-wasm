@@ -5,7 +5,8 @@ import { getFormElement } from '../utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
 import { configureRelayUrlControls } from '../../../utils/relayPresets'
-import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, buildCmafCatalogJson } from '../catalog'
+import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
+import { buildMediaCatalogJson } from '../../media/catalog'
 import {
   Output,
   NullTarget,
@@ -13,6 +14,7 @@ import {
   MediaStreamVideoTrackSource,
   MediaStreamAudioTrackSource
 } from 'mediabunny'
+import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
@@ -146,7 +148,7 @@ const parseTrackNamespace = (raw: string): string[] => {
 }
 
 const isCatalogTrack = (trackName: string): boolean => {
-  return trackName === MEDIA_CATALOG_TRACK_NAME
+  return trackName === CATALOG_TRACK_NAME
 }
 
 const isVideoTrack = (trackName: string): boolean => {
@@ -182,7 +184,9 @@ const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespac
   if (catalogAliases.has(aliasKey)) {
     return
   }
-  const payload = new TextEncoder().encode(buildCmafCatalogJson(trackNamespace))
+  const payload = new TextEncoder().encode(
+    buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES)
+  )
   const groupId = nextCatalogGroupId++
   await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
   await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
