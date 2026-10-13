@@ -1183,7 +1183,6 @@ function RemoteCatalogSubscribePanel({
   onUnsubscribe: (role: CatalogSubscribeRole) => void
 }) {
   const memberName = member.name
-  const hasCatalog = isCatalogSubscribed
   const trackRows = CATALOG_SUBSCRIBE_ROLES.map((role) => {
     const roleTracks = catalogTracksForRole(tracks, role)
     const { isSubscribed, isSubscribing } = member.subscribedTracks[role]
@@ -1204,20 +1203,20 @@ function RemoteCatalogSubscribePanel({
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-blue-100">Catalogs</span>
         <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-blue-300">
-          {isLoading ? 'Loading...' : hasCatalog ? 'Subscribed' : 'Waiting...'}
+          {isLoading ? 'Loading...' : isCatalogSubscribed ? 'Subscribed' : 'Waiting...'}
         </span>
       </div>
       {visibleTrackRows.map((row) => {
         const busy = row.subscribing || row.unsubscribing
-        const canSubscribe = hasCatalog && Boolean(row.selectedTrack) && !row.subscribed && !busy
-        const canUnsubscribe = hasCatalog && row.subscribed && !busy
+        const canSubscribe = isCatalogSubscribed && Boolean(row.selectedTrack) && !row.subscribed && !busy
+        const canUnsubscribe = isCatalogSubscribed && row.subscribed && !busy
         return (
           <TrackSubscribeRow
             key={row.role}
             title={SUBSCRIBE_ROW_TITLES[row.role]}
             tracks={row.tracks}
             selected={row.selectedTrack}
-            disabled={!hasCatalog || row.subscribed || busy}
+            disabled={!isCatalogSubscribed || row.subscribed || busy}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
             statusTestId={`track-status-${row.role}-${memberName}`}
             subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
