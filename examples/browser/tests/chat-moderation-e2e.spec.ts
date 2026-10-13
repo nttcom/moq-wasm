@@ -3,10 +3,11 @@ import {
   ABUSIVE_TEXT,
   LEAVE_BUTTON_TEST_ID,
   REMOVED_MESSAGE_TEXT,
+  JEV_ORIGIN,
   clickJoin,
-  delayJevAnswers,
   joinChat
 } from './chat-moderation-e2e-arrange'
+import { delayDjevAnswers } from './fake-djev'
 import { leaveAllPages } from './leave-all-pages'
 
 const ORDINARY_TEXT = 'こんにちは'
@@ -16,7 +17,7 @@ const LATE_JOIN_ANSWER_MS = 15_000
 test.describe('MoQ Chat Moderation', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, LEAVE_BUTTON_TEST_ID)
-    await delayJevAnswers(0)
+    await delayDjevAnswers(JEV_ORIGIN, 0)
   })
 
   test('replaces only the message the moderator judges abusive', async ({ page }) => {
@@ -70,7 +71,7 @@ test.describe('MoQ Chat Moderation', () => {
   test('shows the djev status while its answers are late', async ({ page }) => {
     // Arrange
     const chat = await joinChat(page)
-    await delayJevAnswers(LATE_ANSWER_MS)
+    await delayDjevAnswers(JEV_ORIGIN, LATE_ANSWER_MS)
 
     // Act
     await chat.send(ABUSIVE_TEXT)
@@ -86,7 +87,7 @@ test.describe('MoQ Chat Moderation', () => {
     // Arrange
     const earlierPage = await browser.newPage()
     const earlierChat = await joinChat(earlierPage)
-    await delayJevAnswers(LATE_JOIN_ANSWER_MS)
+    await delayDjevAnswers(JEV_ORIGIN, LATE_JOIN_ANSWER_MS)
     await earlierChat.send(ABUSIVE_TEXT)
     await expect(earlierPage.getByTestId('chat-moderation-djev-status')).toContainText('djev', { timeout: 10_000 })
 

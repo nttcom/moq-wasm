@@ -12,7 +12,8 @@ import init, {
   type Mp4VideoTrack
 } from '../../pkg/moqt'
 import { monotonicUnixMicros, timeSeededGroupId } from '../../utils/media/clock'
-import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
+import { buildLocHeader } from '../../utils/media/loc'
+import { formatAudioChannelConfig } from '../../utils/media/audioChannelConfig'
 import {
   type ReplayTrack,
   answerFetch,
@@ -534,15 +535,11 @@ function buildCatalogJson(namespace: string[], media: Mp4Media): string {
       label: 'Audio',
       codec: media.audio.codec,
       samplerate: media.audio.sampleRate,
-      channelConfig: channelConfigLabel(media.audio.channels),
-      initData: media.audio.audioSpecificConfig && bytesToBase64(media.audio.audioSpecificConfig)
+      channelConfig: formatAudioChannelConfig(media.audio.channels),
+      initData: media.audio.audioSpecificConfig && media.audio.audioSpecificConfig.toBase64()
     })
   }
   return buildMsfCatalogJson(tracks)
-}
-
-function channelConfigLabel(channels: number): string {
-  return channels === 1 ? 'mono' : channels === 2 ? 'stereo' : `${channels}ch`
 }
 
 function describeMedia(media: Mp4Media): string {

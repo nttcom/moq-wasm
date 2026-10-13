@@ -11,8 +11,6 @@ interface Props {
 }
 
 export function ThumbStrip({ cameraIds, hostOf, onSelect, onSubscribe, subscribedCameras, subscribingCameras }: Props) {
-  if (cameraIds.length === 0) return null
-
   return (
     <div className="flex flex-col gap-2.5 w-[200px]">
       <p className="font-mono text-xs text-center text-zinc-500">他カメラ（クリックで主役に）</p>

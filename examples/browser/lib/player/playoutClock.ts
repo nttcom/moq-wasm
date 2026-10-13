@@ -53,3 +53,15 @@ export class PlayoutClock {
     this.originChanged()
   }
 }
+
+type PlayoutPosition = { positionMicrosAt(nowMs: number): number | undefined }
+
+export function syncOffsetMs(video: PlayoutPosition, audio: PlayoutPosition): number | undefined {
+  const nowMs = performance.now()
+  const videoMicros = video.positionMicrosAt(nowMs)
+  const audioMicros = audio.positionMicrosAt(nowMs)
+  if (videoMicros === undefined || audioMicros === undefined) {
+    return undefined
+  }
+  return (videoMicros - audioMicros) / MICROS_PER_MILLI
+}

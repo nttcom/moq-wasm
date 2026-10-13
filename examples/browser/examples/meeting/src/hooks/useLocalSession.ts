@@ -4,29 +4,27 @@ import { LocalSession } from '../session/localSession'
 interface UseLocalSessionState {
   session: LocalSession | null
   isInitializing: boolean
-  error: Error | null
 }
 
 export function useLocalSession() {
   const sessionRef = useRef<LocalSession | null>(null)
-  const [{ session, isInitializing, error }, setState] = useState<UseLocalSessionState>({
+  const [{ session, isInitializing }, setState] = useState<UseLocalSessionState>({
     session: null,
-    isInitializing: false,
-    error: null
+    isInitializing: false
   })
 
   const connect = useCallback(async (roomName: string, userName: string, relayUrl: string) => {
-    setState({ session: sessionRef.current, isInitializing: true, error: null })
+    setState({ session: sessionRef.current, isInitializing: true })
 
     try {
       const newSession = new LocalSession({ roomName, userName, relayUrl })
       sessionRef.current = newSession
       await newSession.initialize()
-      setState({ session: newSession, isInitializing: false, error: null })
+      setState({ session: newSession, isInitializing: false })
       return newSession
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to initialize session')
-      setState({ session: null, isInitializing: false, error })
+      setState({ session: null, isInitializing: false })
       sessionRef.current = null
       throw error
     }
@@ -42,7 +40,7 @@ export function useLocalSession() {
       await currentSession.disconnect()
     } finally {
       sessionRef.current = null
-      setState({ session: null, isInitializing: false, error: null })
+      setState({ session: null, isInitializing: false })
     }
   }, [])
 
@@ -61,7 +59,6 @@ export function useLocalSession() {
     session,
     connect,
     disconnect,
-    isInitializing,
-    error
+    isInitializing
   }
 }

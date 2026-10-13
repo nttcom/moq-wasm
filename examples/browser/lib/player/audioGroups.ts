@@ -1,5 +1,5 @@
-import { monotonicUnixMicros } from '../../utils/media/clock'
-import { type LocHeader, readLocHeader } from '../../utils/media/loc'
+import type { LocHeader } from '../../utils/media/loc'
+import { ArrivalLag } from './arrivalLag'
 import { RELAY_CACHE_TTL_MICROS } from './streamConventions'
 
 const ALIGNED_TOLERANCE_MICROS = 500_000
@@ -13,16 +13,15 @@ export type GroupRange = { start: bigint; end: bigint }
 /// window can only be found from where its groups start.
 export class AudioGroups {
   private readonly starts = new Map<bigint, number>()
-  private arrivalLagMicros: number | undefined
+  private readonly arrivalLag = new ArrivalLag()
   newestGroupId: bigint | undefined
 
   record(groupId: bigint, locHeader: LocHeader | undefined): void {
     this.noteNewest(groupId)
-    const captureMicros = readLocHeader(locHeader).captureTimestampMicros
-    if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
+    const captureMicros = this.arrivalLag.observe(locHeader)
+    if (captureMicros === undefined) {
       return
     }
-    this.arrivalLagMicros = monotonicUnixMicros() - captureMicros
     const start = this.starts.get(groupId)
     if (start === undefined || captureMicros < start) {
       this.starts.set(groupId, captureMicros)
@@ -30,21 +29,20 @@ export class AudioGroups {
     this.forgetBefore(captureMicros - 2 * RELAY_CACHE_TTL_MICROS)
   }
 
-  /// A group known only by its id, as reported by TRACK_STATUS, is placed at
-  /// the capture time of the objects live delivery was bringing in last.
   recordLiveGroup(groupId: bigint): void {
     if (this.newestGroupId !== undefined && groupId <= this.newestGroupId) {
       return
     }
     this.newestGroupId = groupId
-    if (this.arrivalLagMicros !== undefined) {
-      this.starts.set(groupId, monotonicUnixMicros() - this.arrivalLagMicros)
+    const captureMicros = this.arrivalLag.liveCaptureMicros()
+    if (captureMicros !== undefined) {
+      this.starts.set(groupId, captureMicros)
     }
   }
 
   reset(): void {
     this.starts.clear()
-    this.arrivalLagMicros = undefined
+    this.arrivalLag.reset()
     this.newestGroupId = undefined
   }
 

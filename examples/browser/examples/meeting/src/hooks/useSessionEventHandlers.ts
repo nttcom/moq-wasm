@@ -1,10 +1,5 @@
 import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
-import {
-  PublishNamespaceDoneMessage,
-  PublishNamespaceMessage,
-  RequestErrorMessage,
-  SubscribeOkMessage
-} from '../../../../pkg/moqt'
+import { PublishNamespaceDoneMessage, PublishNamespaceMessage } from '../../../../pkg/moqt'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'
@@ -48,14 +43,6 @@ export function useSessionEventHandlers({ session, roomName, userName, setRoom, 
       session.setOnPublishNamespaceDoneHandler(null)
     }
   }, [roomName, session, setRoom, userName])
-
-  useEffect(() => {
-    const handleSubscribeResponse = createSubscribeResponseHandler(session)
-    session.setOnSubscribeResponseHandler(handleSubscribeResponse)
-    return () => {
-      session.setOnSubscribeResponseHandler(() => {})
-    }
-  }, [session, setRoom])
 
   useEffect(() => {
     const handleChat = createChatHandler(session, setChatMessages)
@@ -124,20 +111,6 @@ function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
     void session.unsubscribe(track.subscribeId).catch((error) => {
       console.warn(`[meeting] failed to unsubscribe departed member ${member.id} (${role})`, error)
     })
-  }
-}
-
-// Subscription state (isSubscribing/isSubscribed/subscribeId) is now driven by
-// the awaited result of session.subscribe() in MeetingRoom, so this handler only
-// surfaces errors for diagnostics.
-function createSubscribeResponseHandler(session: LocalSession) {
-  return (response: SubscribeOkMessage | RequestErrorMessage) => {
-    if (session.status !== LocalSessionState.Ready) {
-      return
-    }
-    if ('errorCode' in response) {
-      console.error('SUBSCRIBE_ERROR:', response.requestId, response.errorCode, response.reasonPhrase)
-    }
   }
 }
 

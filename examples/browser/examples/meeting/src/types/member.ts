@@ -1,9 +1,3 @@
-// Track information
-export interface TrackState {
-  isAnnounced: boolean
-  trackNamespace?: string[]
-}
-
 export interface SubscriptionState {
   isSubscribing: boolean
   isSubscribed: boolean
@@ -14,23 +8,13 @@ export interface SubscriptionState {
 export interface LocalMember {
   id: string
   name: string
-  publishedTracks: {
-    chat: boolean
-    video: boolean
-    audio: boolean
-  }
 }
 
 // Remote member
 export interface RemoteMember {
   id: string
   name: string
-  announcedTracks: {
-    chat: TrackState
-    video: TrackState
-    screenshare: TrackState
-    audio: TrackState
-  }
+  trackNamespace: string[]
   subscribedTracks: {
     chat: SubscriptionState
     video: SubscriptionState

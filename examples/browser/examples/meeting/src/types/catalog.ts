@@ -1,5 +1,7 @@
 export type CatalogTrackRole = 'video' | 'audio' | 'chat'
 export type CatalogSubscribeRole = 'video' | 'screenshare' | 'audio' | 'chat'
+export const CATALOG_SUBSCRIBE_ROLES: CatalogSubscribeRole[] = ['video', 'screenshare', 'audio', 'chat']
+export type CatalogSelections = Partial<Record<CatalogSubscribeRole, string>>
 export type AudioStreamUpdateMode = 'single' | 'interval'
 
 export interface MeetingCatalogTrack {
@@ -27,7 +29,6 @@ export interface EditableMeetingCatalogTrack extends MeetingCatalogTrack {
 
 export type TrackMediaConfig = {
   codec?: string
-  framerate?: number
   samplerate?: number
   channelConfig?: string
   initData?: string

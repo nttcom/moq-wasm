@@ -71,48 +71,7 @@ export function ensureMp4Fixture(audio: Mp4FixtureAudio): string {
   return filePath
 }
 
-export interface LiveViewerPageModel {
-  page: Page
-  urlInput: Locator
-  namespaceInput: Locator
-  watchButton: Locator
-  stopButton: Locator
-  connectionStatus: Locator
-  catalogStatus: Locator
-  playbackStatus: Locator
-  videoTrackSelect: Locator
-  skipBack5Button: Locator
-  skipForward1Button: Locator
-  playPauseButton: Locator
-  volumeSlider: Locator
-  videoStats: Locator
-  liveButton: Locator
-  rewindStatus: Locator
-  seekbar: Locator
-  seekPosition: Locator
-  seekElapsed: Locator
-  seekStart: Locator
-  seekReviewProgress: Locator
-  qualityButton: Locator
-  qualityMenu: Locator
-  packagingSelect: Locator
-  speedSelect: Locator
-  seekAvailableWindow: Locator
-  video: Locator
-  reviewCanvas: Locator
-  visibleVideo: Locator
-  logPanel: Locator
-  mp4FileInput: Locator
-  mp4LoopInput: Locator
-  publishButton: Locator
-  stopPublishButton: Locator
-  publishStatus: Locator
-  publishStreams: Locator
-  publishStreamMonitor: Locator
-  publishStreamStats: Locator
-  publishPreview: Locator
-  publishLatency: Locator
-}
+export type LiveViewerPageModel = ReturnType<typeof createLiveViewerPageModel>
 
 export interface LiveViewerE2ESession {
   context: BrowserContext
@@ -124,11 +83,9 @@ function buildPagePath(path: string, trackNamespace: string): string {
   return `${path}?${params.toString()}`
 }
 
-function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
+function createLiveViewerPageModel(page: Page) {
   return {
     page,
-    urlInput: page.getByTestId('live-viewer-url-input'),
-    namespaceInput: page.getByTestId('live-viewer-namespace-input'),
     watchButton: page.getByTestId('live-viewer-watch-button'),
     stopButton: page.getByTestId('live-viewer-stop-button'),
     connectionStatus: page.getByTestId('live-viewer-connection-status'),
@@ -136,7 +93,6 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     playbackStatus: page.getByTestId('live-viewer-playback-status'),
     videoTrackSelect: page.getByTestId('live-player-video-track-select'),
     skipBack5Button: page.getByTestId('live-player-skip-back-5-button'),
-    skipForward1Button: page.getByTestId('live-player-skip-forward-1-button'),
     playPauseButton: page.getByTestId('live-player-play-pause-button'),
     volumeSlider: page.getByTestId('live-player-volume'),
     videoStats: page.getByTestId('live-viewer-video-stats'),
@@ -157,7 +113,6 @@ function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
     visibleVideo: page.locator('.viewer-stage video:visible'),
     logPanel: page.getByTestId('live-viewer-log-panel'),
     mp4FileInput: page.getByTestId('live-viewer-mp4-file-input'),
-    mp4LoopInput: page.getByTestId('live-viewer-mp4-loop-input'),
     publishButton: page.getByTestId('live-viewer-publish-button'),
     stopPublishButton: page.getByTestId('live-viewer-stop-publish-button'),
     publishStatus: page.getByTestId('live-viewer-publish-status'),

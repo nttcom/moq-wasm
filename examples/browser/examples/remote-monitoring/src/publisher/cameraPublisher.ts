@@ -65,9 +65,6 @@ export class CameraPublisher {
         if (this.chunkCount === 0) {
           log('encoder ready, first chunk produced', { camId: this.camId, source: this.source.type, type: chunk.type })
         }
-        if (this.chunkCount % BITRATE_LOG_INTERVAL_CHUNKS === 0 && this.chunkCount > 0) {
-          log('bitrate', { camId: this.camId, kbps: e.data.kbps })
-        }
         this.chunkCount++
         this.enqueueChunk(chunk, metadata, captureTimestampMicros)
       } else if (e.data.type === 'bitrate') {

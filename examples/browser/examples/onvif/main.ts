@@ -1,8 +1,10 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
+import { LivePlayer } from '@player/livePlayer'
+import { formatLiveStats } from '@player/locLive'
 import { PlayerControls } from '@player/ui/playerControls'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { timeSeededGroupId } from '../../utils/media/clock'
+import { element, parseTrackNamespace } from '../../utils/page'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
 
@@ -49,11 +51,7 @@ function renderPlayer(): void {
 
 function renderVideoStats(): void {
   const stats = player.stats()
-  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : '-'
-  const delay = stats.viewerDelayMs === undefined ? '-' : `${Math.round(stats.viewerDelayMs)} ms`
-  const buffer = stats.bufferMs === undefined ? '-' : `${Math.round(stats.bufferMs)} ms`
-  element('video-stats').textContent =
-    `${size} · delay ${delay} · buffer ${buffer} · ${Math.round(stats.receivedKbps)} kbps · A/V ${formatSyncOffset(stats.syncOffsetMs)}`
+  element('video-stats').textContent = formatLiveStats(stats)
   controls.renderBuffer(stats)
 }
 
@@ -74,31 +72,8 @@ function updateCommandAlias(alias: bigint | null): void {
   element('command-alias').textContent = alias === null ? '-' : alias.toString()
 }
 
-function parseNamespace(value: string): string[] {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
-function parseBigInt(value: string): bigint {
-  try {
-    return BigInt(value)
-  } catch {
-    return 0n
-  }
-}
-
 function inputValue(id: string): string {
   return element<HTMLInputElement>(id).value
-}
-
-function element<T extends HTMLElement>(id: string): T {
-  const found = document.getElementById(id)
-  if (!found) {
-    throw new Error(`missing element: ${id}`)
-  }
-  return found as T
 }
 
 function readField(row: HTMLElement, field: FieldKey): number {
@@ -192,26 +167,14 @@ function setupUrlPresets(): void {
   setUpRelayUrlControls(element('moqt-url'), element('urlPresets'))
 }
 
-function openSettingsModal(): void {
-  const modal = element('settings-modal')
-  modal.classList.add('open')
-  modal.setAttribute('aria-hidden', 'false')
-}
-
-function closeSettingsModal(): void {
-  const modal = element('settings-modal')
-  modal.classList.remove('open')
-  modal.setAttribute('aria-hidden', 'true')
-}
-
 async function connect(): Promise<void> {
   const url = inputValue('moqt-url')
-  const publishNamespace = parseNamespace(inputValue('publish-namespace'))
-  const subscribeNamespace = parseNamespace(inputValue('subscribe-namespace'))
+  const publishNamespace = parseTrackNamespace(inputValue('publish-namespace'))
+  const subscribeNamespace = parseTrackNamespace(inputValue('subscribe-namespace'))
   const publishNamespaceLabel = publishNamespace.join('/')
   const commandTrack = inputValue('command-track')
   const authInfo = inputValue('auth-info')
-  const maxRequestId = parseBigInt(inputValue('max-subscribe-id'))
+  const maxRequestId = BigInt(inputValue('max-subscribe-id'))
 
   if (!publishNamespace.length || !subscribeNamespace.length) {
     updateStatus('namespace required', false)
@@ -268,17 +231,11 @@ element('disconnect-btn').addEventListener('click', () => {
   })
 })
 
-const settingsModal = element('settings-modal')
-element('settings-btn').addEventListener('click', openSettingsModal)
-element('settings-close-btn').addEventListener('click', closeSettingsModal)
+const settingsModal = element<HTMLDialogElement>('settings-modal')
+element('settings-btn').addEventListener('click', () => settingsModal.showModal())
 settingsModal.addEventListener('click', (event) => {
   if (event.target === settingsModal) {
-    closeSettingsModal()
-  }
-})
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && settingsModal.classList.contains('open')) {
-    closeSettingsModal()
+    settingsModal.close()
   }
 })
 

@@ -1,14 +1,12 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../../pkg/moqt'
-import { AUTH_INFO } from './const'
-import { getFormElement } from './utils'
 import { LocLive, formatLiveStats } from '@player/locLive'
-import { summarizeLocHeader } from '../../../utils/media/locSummary'
 import { getResolvedMediaVideoCodec } from '../catalog'
-import { parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
-import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
+import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
+import { setUpCatalogPicker } from '../catalogPicker'
+import type { MediaKind } from '@player/trackContext'
 
 const moqtClient = new MoqtClientWrapper()
+const form = element<HTMLFormElement>('form')
 
 const PLAYOUT_STATS_INTERVAL_MS = 1000
 
@@ -25,13 +23,13 @@ const locLive = new LocLive(videoElement, canvasElement, undefined, {
 videoElement.hidden = locLive.picture.element !== videoElement
 canvasElement.hidden = locLive.picture.element !== canvasElement
 
-let handlersInitialized = false
-let catalogVideoTracks: MediaCatalogTrack[] = []
-let catalogAudioTracks: MediaCatalogTrack[] = []
-let selectedVideoTrackName: string | null = null
-let selectedAudioTrackName: string | null = null
-let receivedVideoObjectCount = 0
-let receivedAudioObjectCount = 0
+const receivedObjectCounts: Record<MediaKind, number> = { video: 0, audio: 0 }
+const catalogPicker = setUpCatalogPicker(moqtClient, form, (kind, track) =>
+  locLive.configureTrack(
+    kind,
+    kind === 'video' ? { ...track, codec: track.codec ?? getResolvedMediaVideoCodec() } : track
+  )
+)
 
 function setPlaybackObjectStatus(kind: 'video', text: string): void {
   const element = document.getElementById(`${kind}-playback-object`)
@@ -55,278 +53,67 @@ function renderPlayoutStats(): void {
     stats.bufferMs === undefined && stats.frameSize === undefined ? 'Waiting for media' : formatLiveStats(stats)
 }
 
-function toBigUint64Array(value: string): BigUint64Array {
-  const values = value
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => BigInt(part))
-  return new BigUint64Array(values)
-}
-
-function setCatalogTrackStatus(text: string): void {
-  setStatusText('catalog-track-status', text)
-}
-
-function setConnectionStatus(text: string): void {
-  setStatusText('subscriber-connection-status', text)
-}
-
-function setSetupStatus(text: string): void {
-  setStatusText('subscriber-setup-status', text)
-}
-
-function setTrackSubscribeStatus(text: string): void {
-  setStatusText('subscriber-track-status', text)
-}
-
-function setReceiveStatus(text: string): void {
-  setStatusText('subscriber-receive-status', text)
-}
-
-function setPlaybackStatus(text: string): void {
-  setStatusText('subscriber-playback-status', text)
-}
-
 function initializeStatuses(): void {
-  setConnectionStatus('Not connected')
-  setSetupStatus('Setup not sent')
-  setCatalogTrackStatus('Catalog not loaded yet')
-  setTrackSubscribeStatus('Subscription idle')
-  setReceiveStatus('Waiting for media objects')
-  setPlaybackStatus('Playback idle')
-}
-
-function getCatalogTrackSelect(kind: 'video' | 'audio'): HTMLSelectElement | null {
-  const id = kind === 'video' ? 'selected-video-track' : 'selected-audio-track'
-  return document.getElementById(id) as HTMLSelectElement | null
-}
-
-function getCatalogTracks(kind: 'video' | 'audio'): MediaCatalogTrack[] {
-  return kind === 'video' ? catalogVideoTracks : catalogAudioTracks
-}
-
-function getSelectedCatalogTrackName(kind: 'video' | 'audio'): string | null {
-  return kind === 'video' ? selectedVideoTrackName : selectedAudioTrackName
-}
-
-function setSelectedCatalogTrackName(kind: 'video' | 'audio', trackName: string | null): void {
-  if (kind === 'video') {
-    selectedVideoTrackName = trackName
-  } else {
-    selectedAudioTrackName = trackName
-  }
-}
-
-function setSelectedCatalogTrack(kind: 'video' | 'audio', trackName: string | null): void {
-  setSelectedCatalogTrackName(kind, trackName)
-  const select = getCatalogTrackSelect(kind)
-  if (select && trackName) {
-    select.value = trackName
-  }
-  if (!trackName) {
-    return
-  }
-  if (kind === 'video') {
-    const track = catalogVideoTracks.find((entry) => entry.name === trackName)
-    locLive.configureTrack('video', {
-      name: trackName,
-      label: track?.label ?? trackName,
-      codec: track?.codec ?? getResolvedMediaVideoCodec(),
-      initData: track?.initData
-    })
-    return
-  }
-  const track = catalogAudioTracks.find((entry) => entry.name === trackName)
-  if (track) {
-    locLive.configureTrack('audio', track)
-  }
-}
-
-function formatCatalogTrackLabel(track: MediaCatalogTrack, kind: 'video' | 'audio'): string {
-  if (kind === 'video') {
-    const resolution =
-      typeof track.width === 'number' && typeof track.height === 'number' ? ` (${track.width}x${track.height})` : ''
-    return `${track.label}${resolution}`
-  }
-  const details: string[] = []
-  if (track.codec) {
-    details.push(track.codec)
-  }
-  if (typeof track.samplerate === 'number') {
-    details.push(`${track.samplerate}Hz`)
-  }
-  if (track.channelConfig) {
-    details.push(track.channelConfig)
-  }
-  if (typeof track.bitrate === 'number') {
-    details.push(`${Math.round(track.bitrate / 1000)}kbps`)
-  }
-  const metadata = details.length > 0 ? ` (${details.join(', ')})` : ''
-  return `${track.label}${metadata}`
-}
-
-function renderCatalogTrackSelect(kind: 'video' | 'audio'): boolean {
-  const select = getCatalogTrackSelect(kind)
-  if (!select) {
-    return false
-  }
-  select.innerHTML = ''
-  const tracks = getCatalogTracks(kind)
-  const isVideo = kind === 'video'
-  const emptyMessage = isVideo ? 'Catalog video tracks are not loaded yet' : 'Catalog audio tracks are not loaded yet'
-
-  if (!tracks.length) {
-    const option = document.createElement('option')
-    option.value = ''
-    option.textContent = emptyMessage
-    option.disabled = true
-    option.selected = true
-    select.appendChild(option)
-    setSelectedCatalogTrack(kind, null)
-    return false
-  }
-
-  let selectedTrackName = getSelectedCatalogTrackName(kind)
-  if (!selectedTrackName || !tracks.some((track) => track.name === selectedTrackName)) {
-    selectedTrackName = tracks[0].name
-    setSelectedCatalogTrackName(kind, selectedTrackName)
-  }
-
-  for (const track of tracks) {
-    const option = document.createElement('option')
-    option.value = track.name
-    option.textContent = formatCatalogTrackLabel(track, kind)
-    option.selected = track.name === selectedTrackName
-    select.appendChild(option)
-  }
-  setSelectedCatalogTrack(kind, selectedTrackName)
-  return true
-}
-
-function renderCatalogTracks(): void {
-  const hasVideoTracks = renderCatalogTrackSelect('video')
-  const hasAudioTracks = renderCatalogTrackSelect('audio')
-
-  if (!hasVideoTracks && !hasAudioTracks) {
-    setCatalogTrackStatus('Catalog not loaded yet')
-    return
-  }
-  setCatalogTrackStatus(`Catalog loaded: video=${catalogVideoTracks.length}, audio=${catalogAudioTracks.length}`)
-}
-
-function setupCatalogSelectionHandler(): void {
-  const videoSelect = getCatalogTrackSelect('video')
-  if (videoSelect) {
-    videoSelect.addEventListener('change', () => {
-      const value = videoSelect.value.trim()
-      setSelectedCatalogTrack('video', value.length > 0 ? value : null)
-    })
-  }
-  const audioSelect = getCatalogTrackSelect('audio')
-  if (audioSelect) {
-    audioSelect.addEventListener('change', () => {
-      const value = audioSelect.value.trim()
-      setSelectedCatalogTrack('audio', value.length > 0 ? value : null)
-    })
-  }
-}
-
-function setupCatalogCallbacks(trackAlias: bigint): void {
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
-    const payloadBytes = subgroupStreamObject.objectPayload
-    console.info('[MediaSubscriber] received catalog object', {
-      trackAlias: trackAlias.toString(),
-      groupId: groupId.toString(),
-      subgroupId: subgroupStreamObject.subgroupId?.toString() ?? '0',
-      objectIdDelta: subgroupStreamObject.objectIdDelta.toString(),
-      payloadLength: subgroupStreamObject.objectPayloadLength
-    })
-    const payload = new TextDecoder().decode(payloadBytes)
-    try {
-      const parsed = parse_msf_catalog_json(payload)
-      catalogVideoTracks = extractCatalogVideoTracks(parsed)
-      catalogAudioTracks = extractCatalogAudioTracks(parsed)
-      console.info('[MediaSubscriber] parsed catalog', {
-        trackAlias: trackAlias.toString(),
-        videoTracks: catalogVideoTracks.length,
-        audioTracks: catalogAudioTracks.length
-      })
-      renderCatalogTracks()
-    } catch (error) {
-      console.error('[MediaSubscriber] failed to parse catalog', error)
-      setCatalogTrackStatus('Catalog parse failed')
-    }
-  })
+  setStatusText('subscriber-connection-status', 'Not connected')
+  setStatusText('subscriber-setup-status', 'Setup not sent')
+  setStatusText('catalog-track-status', 'Catalog not loaded yet')
+  setStatusText('subscriber-track-status', 'Subscription idle')
+  setStatusText('subscriber-receive-status', 'Waiting for media objects')
+  setStatusText('subscriber-playback-status', 'Playback idle')
 }
 
 function sendSetupButtonClickHandler(): void {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-
-    const versions = toBigUint64Array('0xff00000E')
+    const versions = new BigUint64Array([0xff00000en])
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
 
     await moqtClient.sendClientSetup(versions, maxSubscribeId)
-    setSetupStatus('Setup acknowledged')
+    setStatusText('subscriber-setup-status', 'Setup acknowledged')
   })
 }
 
-function sendCatalogSubscribeButtonClickHandler(): void {
-  const sendCatalogSubscribeBtn = document.getElementById('sendCatalogSubscribeBtn') as HTMLButtonElement
-  sendCatalogSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
-    const catalogTrackName = form['catalog-track-name'].value.trim()
-    const catalogSubscribeId = BigInt(form['catalog-subscribe-id'].value)
-    if (!catalogTrackName) {
-      setCatalogTrackStatus('Catalog track is required')
-      return
-    }
-    const catalogTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, catalogTrackName, AUTH_INFO, { requestId: catalogSubscribeId })
-    ).subscribeOk.trackAlias
-    form['catalog-track-alias'].value = catalogTrackAlias.toString()
-    setCatalogTrackStatus(`Catalog subscribe requested: ${catalogTrackName}`)
-    setupCatalogCallbacks(catalogTrackAlias)
-  })
+function describeSelectedTracks(): string {
+  const { video, audio } = catalogPicker.pick
+  return `video=${video.selected?.name}, audio=${audio.selected?.name ?? 'none'}`
 }
 
 function sendSubscribeButtonClickHandler(): void {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
   sendSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
-    const selectedVideoTrack = selectedVideoTrackName ?? ''
-    const selectedAudioTrack = selectedAudioTrackName ?? ''
+    const selectedVideoTrack = catalogPicker.pick.video.selected?.name
+    const selectedAudioTrack = catalogPicker.pick.audio.selected?.name
     const videoSubscribeId = BigInt(form['video-subscribe-id'].value)
     const audioSubscribeId = BigInt(form['audio-subscribe-id'].value)
 
-    if (!selectedVideoTrack || !selectedAudioTrack) {
-      setCatalogTrackStatus('Select video and audio tracks from catalog first')
+    if (!selectedVideoTrack) {
+      setStatusText('catalog-track-status', 'Select a video track from catalog first')
       return
     }
 
     const videoTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, AUTH_INFO, { requestId: videoSubscribeId })
+      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, 'secret', { requestId: videoSubscribeId })
     ).subscribeOk.trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
     setupClientObjectCallbacks('video', videoTrackAlias)
 
-    const audioTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, selectedAudioTrack, AUTH_INFO, { requestId: audioSubscribeId })
-    ).subscribeOk.trackAlias
-    form['audio-track-alias'].value = audioTrackAlias.toString()
-    setupClientObjectCallbacks('audio', audioTrackAlias)
-    setTrackSubscribeStatus(`Track subscribe requested: video=${selectedVideoTrack}, audio=${selectedAudioTrack}`)
+    if (selectedAudioTrack) {
+      const audioTrackAlias = (
+        await moqtClient.subscribe(trackNamespace, selectedAudioTrack, 'secret', { requestId: audioSubscribeId })
+      ).subscribeOk.trackAlias
+      form['audio-track-alias'].value = audioTrackAlias.toString()
+      setupClientObjectCallbacks('audio', audioTrackAlias)
+    }
+    setStatusText('subscriber-track-status', `Track subscribe requested: ${describeSelectedTracks()}`)
   })
 }
 
 function setupVideoPlaybackStatus(): void {
   const videoElement = document.getElementById('video') as HTMLVideoElement
   const updatePlaybackStatus = (label: string) => {
-    setPlaybackStatus(
+    setStatusText(
+      'subscriber-playback-status',
       `${label}: readyState=${videoElement.readyState}, currentTime=${videoElement.currentTime.toFixed(2)}`
     )
   }
@@ -344,71 +131,36 @@ function setupVideoPlaybackStatus(): void {
   })
   videoElement.addEventListener('pause', () => {
     if (videoElement.currentTime === 0) {
-      setPlaybackStatus('Playback paused')
+      setStatusText('subscriber-playback-status', 'Playback paused')
     }
   })
 }
 
-function setupClientObjectCallbacks(type: 'video' | 'audio', trackAlias: bigint): void {
-  const alias = trackAlias
-
-  if (type === 'audio') {
-    moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
-      receivedAudioObjectCount += 1
-      setReceiveStatus(
-        `Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`
-      )
-      const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
-      if (locSummary.present && locSummary.extensionCount > 0) {
-        console.debug('[MediaSubscriber] LoC object (audio)', {
-          trackAlias: alias.toString(),
-          groupId,
-          objectId: subgroupStreamObject.objectId,
-          loc: locSummary
-        })
-      }
-      console.debug('[MediaSubscriber] recv audio object', {
-        groupId,
-        objectId: subgroupStreamObject.objectId,
-        payloadLength: subgroupStreamObject.objectPayloadLength,
-        status: subgroupStreamObject.objectStatus,
-        loc: locSummary
-      })
-      locLive.push('audio', groupId, subgroupStreamObject)
-    })
-    return
-  }
-
-  moqtClient.setOnSubgroupObjectHandler(alias, (groupId, subgroupStreamObject) => {
-    receivedVideoObjectCount += 1
-    setReceiveStatus(`Received video objects: ${receivedVideoObjectCount}, audio objects: ${receivedAudioObjectCount}`)
-    if (selectedVideoTrackName && selectedAudioTrackName) {
-      setTrackSubscribeStatus(`Subscribed video=${selectedVideoTrackName}, audio=${selectedAudioTrackName}`)
+function setupClientObjectCallbacks(kind: MediaKind, trackAlias: bigint): void {
+  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
+    receivedObjectCounts[kind] += 1
+    setStatusText(
+      'subscriber-receive-status',
+      `Received video objects: ${receivedObjectCounts.video}, audio objects: ${receivedObjectCounts.audio}`
+    )
+    if (kind === 'video') {
+      setStatusText('subscriber-track-status', `Subscribed ${describeSelectedTracks()}`)
     }
-    const locSummary = summarizeLocHeader(subgroupStreamObject.locHeader)
-    if (locSummary.present && locSummary.extensionCount > 0) {
-      console.debug('[MediaSubscriber] LoC object (video)', {
-        trackAlias: alias.toString(),
-        groupId,
-        objectId: subgroupStreamObject.objectId,
-        loc: locSummary
-      })
-    }
-    console.debug('[MediaSubscriber] recv video object', {
+    console.debug(`[MediaSubscriber] recv ${kind} object`, {
+      trackAlias: trackAlias.toString(),
       groupId,
       objectId: subgroupStreamObject.objectId,
       payloadLength: subgroupStreamObject.objectPayloadLength,
       status: subgroupStreamObject.objectStatus,
-      loc: locSummary
+      loc: subgroupStreamObject.locHeader
     })
-
-    locLive.push('video', groupId, subgroupStreamObject)
+    locLive.push(kind, groupId, subgroupStreamObject)
   })
 }
 
 moqtClient.setOnServerSetupHandler((serverSetup: any) => {
   console.log({ serverSetup })
-  setSetupStatus('Setup acknowledged')
+  setStatusText('subscriber-setup-status', 'Setup acknowledged')
 })
 
 moqtClient.setOnSubscribeResponseHandler((subscribeResponse) => {
@@ -421,52 +173,37 @@ function setupCloseButtonHandler(): void {
     await moqtClient.disconnect()
     moqtClient.clearSubgroupObjectHandlers()
     locLive.reset()
-    catalogVideoTracks = []
-    catalogAudioTracks = []
-    selectedVideoTrackName = null
-    selectedAudioTrackName = null
     setPlaybackObjectStatus('video', 'Waiting for objects')
-    receivedVideoObjectCount = 0
-    receivedAudioObjectCount = 0
-    renderCatalogTracks()
-    setConnectionStatus('Disconnected')
-    setSetupStatus('Setup not sent')
-    setTrackSubscribeStatus('Subscription idle')
-    setReceiveStatus('Waiting for media objects')
-    setPlaybackStatus('Playback idle')
-    setCatalogTrackStatus('Disconnected')
+    receivedObjectCounts.video = 0
+    receivedObjectCounts.audio = 0
+    catalogPicker.reset()
+    initializeStatuses()
+    setStatusText('subscriber-connection-status', 'Disconnected')
+    setStatusText('catalog-track-status', 'Disconnected')
   })
 }
 
 function setupButtonHandlers(): void {
-  if (handlersInitialized) {
-    return
-  }
   sendSetupButtonClickHandler()
-  sendCatalogSubscribeButtonClickHandler()
   sendSubscribeButtonClickHandler()
-  setupCatalogSelectionHandler()
   setupCloseButtonHandler()
-  handlersInitialized = true
 }
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
-  const form = getFormElement()
   const url = form.url.value
 
   await moqtClient.connect(url, { sendSetup: false })
-  receivedVideoObjectCount = 0
-  receivedAudioObjectCount = 0
-  setConnectionStatus(`Connected: ${url}`)
-  setReceiveStatus('Waiting for media objects')
+  receivedObjectCounts.video = 0
+  receivedObjectCounts.audio = 0
+  setStatusText('subscriber-connection-status', `Connected: ${url}`)
+  setStatusText('subscriber-receive-status', 'Waiting for media objects')
 })
 
 initializeMediaExamplePage('subscribe-track-namespace')
 initializeStatuses()
 setupButtonHandlers()
 setupVideoPlaybackStatus()
-renderCatalogTracks()
 setPlaybackObjectStatus('video', 'Waiting for objects')
 renderPlayoutStats()
 window.setInterval(renderPlayoutStats, PLAYOUT_STATS_INTERVAL_MS)

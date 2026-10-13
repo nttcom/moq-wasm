@@ -1,25 +1,9 @@
-import { AudioJitterBuffer } from '../audioJitterBuffer'
 import { GroupOrderGate } from '../groupOrderGate'
-import { base64ToUint8Array } from '../base64'
-import type { SubgroupObjectWithLoc, JitterBufferSubgroupObject, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
-import { type ChunkMetadata } from '../chunk'
-import { latencyMsFromCaptureMicros } from '../clock'
 import { readLocHeader } from '../loc'
-import { buildAudioChunkFromLoc } from '../locChunk'
-import { trackSubgroupObjectId } from '../subgroupObjectId'
 
-let telemetryEnabled = true
-let bypassJitterBuffer = false
-
-function postTelemetry(message: unknown): void {
-  if (!telemetryEnabled) {
-    return
-  }
-  self.postMessage(message)
-}
-
-type CachedAudioConfig = {
+type AudioConfig = {
   codec: string
   sampleRate: number
   channels: number
@@ -27,15 +11,10 @@ type CachedAudioConfig = {
 }
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
-  postTelemetry({ type: 'bitrate', media: 'audio', kbps })
+  self.postMessage({ type: 'bitrate', media: 'audio', kbps })
 })
 
-const DEFAULT_AUDIO_DECODER_CONFIG = {
-  codec: 'opus',
-  sampleRate: 48000, // Opusの推奨サンプルレート
-  numberOfChannels: 1 // モノラル
-}
-
+const audioConfig: AudioConfig = { codec: 'opus', sampleRate: 48000, channels: 1 }
 let audioDecoder: AudioDecoder | undefined
 /// The decoder stamps its outputs from the sample count it has produced, not
 /// from the chunk timestamps, so a hole in the source would shift every later
@@ -43,14 +22,8 @@ let audioDecoder: AudioDecoder | undefined
 /// was decoded from instead.
 const pendingCaptureTimestamps: (number | undefined)[] = []
 let decoderSignature: string | null = null
-let cachedAudioConfig: CachedAudioConfig | null = null
-let catalogAudioCodec: string | undefined
-let catalogAudioSampleRate: number | undefined
-let catalogAudioChannels: number | undefined
-let catalogAudioDescriptionBase64: string | undefined
 let directDecodeQueue: Promise<void> = Promise.resolve()
-const directLastObjectIds = new Map<string, bigint>()
-const groupOrder = new GroupOrderGate((groupId, object) => enqueueDirectDecode(groupId, object))
+const groupOrder = new GroupOrderGate((_groupId, object) => enqueueDirectDecode(object))
 
 function postAudioData(audioData: AudioData, captureTimestampMicros: number | undefined): void {
   self.postMessage({ type: 'audioData', audioData, captureTimestampMicros }, [audioData])
@@ -70,203 +43,71 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
   return decoder
 }
 
-const POP_INTERVAL_MS = 5
-const jitterBuffer = new AudioJitterBuffer(1800, 'ordered')
-
-function postBufferedObject(groupId: bigint, objectId: bigint) {
-  postTelemetry({
-    type: 'bufferedObject',
-    media: 'audio',
-    groupId,
-    objectId
-  })
-}
-
-setInterval(() => {
-  const jitterBufferEntry = jitterBuffer.pop()
-  if (!jitterBufferEntry) {
-    return
-  }
-  postJitterBufferActivity('pop')
-  const subgroupStreamObject = jitterBufferEntry?.object
-  if (subgroupStreamObject) {
-    decode(subgroupStreamObject, jitterBufferEntry.captureTimestampMicros)
-  }
-}, POP_INTERVAL_MS)
-
-type AudioCatalogMessage = {
-  type: 'catalog'
-  codec?: string
-  sampleRate?: number
-  channels?: number
-  descriptionBase64?: string
-}
-
 type AudioWorkerMessage =
   | SubgroupWorkerMessage
-  | { type: 'config'; config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean } }
-  | AudioCatalogMessage
+  | { type: 'catalog'; codec?: string; sampleRate?: number; channels?: number; descriptionBase64?: string }
 
-self.onmessage = async (event: MessageEvent<AudioWorkerMessage>) => {
-  if ((event.data as { type?: string }).type === 'config') {
-    const config = (
-      event.data as {
-        type: 'config'
-        config: { mode?: string; telemetryEnabled?: boolean; bypassJitterBuffer?: boolean }
-      }
-    ).config
-    telemetryEnabled = config.telemetryEnabled ?? telemetryEnabled
-    bypassJitterBuffer = config.bypassJitterBuffer ?? bypassJitterBuffer
-    if (config.mode === 'ordered' || config.mode === 'latest') {
-      jitterBuffer.setMode(config.mode)
-    }
-    return
-  }
-
-  if ((event.data as { type?: string }).type === 'catalog') {
-    const catalog = event.data as AudioCatalogMessage
-    if (catalog.codec) {
-      catalogAudioCodec = catalog.codec
-    }
-    if (typeof catalog.sampleRate === 'number') {
-      catalogAudioSampleRate = catalog.sampleRate
-    }
-    if (typeof catalog.channels === 'number') {
-      catalogAudioChannels = catalog.channels
-    }
-    if (catalog.descriptionBase64) {
-      catalogAudioDescriptionBase64 = catalog.descriptionBase64
-    }
-    return
-  }
-
-  const message = event.data as SubgroupWorkerMessage
-  const subgroupStreamObject: SubgroupObjectWithLoc = {
-    subgroupId: message.subgroupStreamObject.subgroupId,
-    objectIdDelta: message.subgroupStreamObject.objectIdDelta,
-    objectPayloadLength: message.subgroupStreamObject.objectPayloadLength,
-    objectPayload: message.subgroupStreamObject.objectPayload,
-    objectStatus: message.subgroupStreamObject.objectStatus,
-    locHeader: message.subgroupStreamObject.locHeader
-  }
-  audioBitrateLogger.addBytes(subgroupStreamObject.objectPayloadLength)
-
-  if (bypassJitterBuffer) {
-    groupOrder.push(message.groupId, subgroupStreamObject)
-    return
-  }
-
-  const objectId = jitterBuffer.push(message.groupId, subgroupStreamObject, (latencyMs) =>
-    postReceiveLatency(latencyMs)
-  )
-  if (objectId !== null) {
-    postJitterBufferActivity('push')
-    postBufferedObject(message.groupId, objectId)
+self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
+  const data = event.data
+  switch (data.type) {
+    case 'catalog':
+      audioConfig.codec = data.codec || audioConfig.codec
+      audioConfig.sampleRate = data.sampleRate ?? audioConfig.sampleRate
+      audioConfig.channels = data.channels ?? audioConfig.channels
+      audioConfig.descriptionBase64 = data.descriptionBase64 || audioConfig.descriptionBase64
+      return
+    case 'object':
+      audioBitrateLogger.addBytes(data.subgroupStreamObject.objectPayloadLength)
+      groupOrder.push(data.groupId, data.subgroupStreamObject)
   }
 }
 
-function enqueueDirectDecode(groupId: bigint, subgroupStreamObject: SubgroupObjectWithLoc): void {
+function enqueueDirectDecode(object: SubgroupObjectWithLoc): void {
+  if (!object.objectPayloadLength) {
+    return
+  }
   directDecodeQueue = directDecodeQueue
-    .then(async () => {
-      const entry = materializeDirectObject(groupId, subgroupStreamObject, (latencyMs) => postReceiveLatency(latencyMs))
-      if (!entry) {
-        return
-      }
-      postBufferedObject(groupId, entry.object.objectId)
-      await decode(entry.object, entry.captureTimestampMicros)
-    })
+    .then(() => decode(object.objectPayload, readLocHeader(object.locHeader).captureTimestampMicros))
     .catch((error) => {
       console.error('[audioDecoder] direct decode failed', error)
     })
 }
 
-function materializeDirectObject(
-  groupId: bigint,
-  object: SubgroupObjectWithLoc,
-  onReceiveLatency?: (latencyMs: number) => void
-): { object: JitterBufferSubgroupObject; captureTimestampMicros?: number } | null {
-  const objectId = trackSubgroupObjectId(directLastObjectIds, groupId, object)
-  if (!object.objectPayloadLength) {
-    return null
-  }
-  const loc = readLocHeader(object.locHeader)
-  const captureTimestampMicros = loc.captureTimestampMicros
-  const parsed = buildAudioChunkFromLoc(loc, object.objectPayload)
-
-  if (typeof captureTimestampMicros === 'number') {
-    onReceiveLatency?.(latencyMsFromCaptureMicros(captureTimestampMicros))
-  }
-
-  return {
-    captureTimestampMicros,
-    object: {
-      ...object,
-      objectId,
-      cachedChunk: parsed,
-      remotePTS: parsed.metadata.timestamp,
-      localPTS: performance.timeOrigin + performance.now()
-    }
-  }
-}
-
-async function decode(subgroupStreamObject: JitterBufferSubgroupObject, captureTimestampMicros?: number) {
-  const decoded = subgroupStreamObject.cachedChunk
-  reportAudioLatency(captureTimestampMicros)
-
-  const resolvedConfig = resolveAudioConfig(decoded.metadata)
-  if (!resolvedConfig) {
-    // メタデータからデコーダ設定を導けるまで待つ
-    return
-  }
-  const desiredSignature = buildSignature(resolvedConfig)
-  if (isPcmAlawCodec(resolvedConfig.codec)) {
+async function decode(payload: Uint8Array, captureTimestampMicros: number | undefined) {
+  const timestamp = captureTimestampMicros ?? 0
+  if (isPcmAlawCodec(audioConfig.codec)) {
     try {
-      decodePcmAlawChunk(decoded.metadata, decoded.data, resolvedConfig, captureTimestampMicros)
-      cachedAudioConfig = resolvedConfig
+      decodePcmAlawChunk(payload, timestamp, captureTimestampMicros)
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
       }
       audioDecoder = undefined
-      decoderSignature = desiredSignature
     } catch (error) {
       console.error('[audioDecoder] pcm alaw decode failed', error)
     }
     return
   }
-  const desiredConfig = buildDecoderConfig(resolvedConfig)
 
+  const desiredSignature = buildSignature(audioConfig)
   if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
     try {
       if (audioDecoder && audioDecoder.state !== 'closed') {
         audioDecoder.close()
       }
-      audioDecoder = await createAudioDecoder(desiredConfig, desiredSignature)
-      cachedAudioConfig = resolvedConfig
+      audioDecoder = await createAudioDecoder(buildDecoderConfig(audioConfig), desiredSignature)
     } catch (e) {
       console.error('[audioDecoder] configure failed', e)
       return
     }
   }
 
-  const encodedAudioChunk = new EncodedAudioChunk({
-    type: decoded.metadata.type as EncodedAudioChunkType,
-    timestamp: decoded.metadata.timestamp,
-    duration: decoded.metadata.duration ?? undefined,
-    data: decoded.data
-  })
-
-  audioDecoder.decode(encodedAudioChunk)
+  audioDecoder.decode(new EncodedAudioChunk({ type: 'key', timestamp, data: payload }))
   pendingCaptureTimestamps.push(captureTimestampMicros)
 }
 
-function decodePcmAlawChunk(
-  metadata: ChunkMetadata,
-  payload: Uint8Array,
-  resolved: CachedAudioConfig,
-  captureTimestampMicros: number | undefined
-): void {
-  const channels = Math.max(1, resolved.channels)
-  const sampleRate = Math.max(1, resolved.sampleRate)
+function decodePcmAlawChunk(payload: Uint8Array, timestamp: number, captureTimestampMicros: number | undefined): void {
+  const channels = Math.max(1, audioConfig.channels)
+  const sampleRate = Math.max(1, audioConfig.sampleRate)
   const totalSamples = payload.byteLength
   const numberOfFrames = Math.floor(totalSamples / channels)
   if (numberOfFrames <= 0) {
@@ -283,7 +124,7 @@ function decodePcmAlawChunk(
     sampleRate,
     numberOfFrames,
     numberOfChannels: channels,
-    timestamp: metadata.timestamp,
+    timestamp,
     data: new Uint8Array(pcm.buffer)
   })
   postAudioData(audioData, captureTimestampMicros)
@@ -313,91 +154,19 @@ function decodeAlawSample(encoded: number): number {
   return (sample & 0x80) !== 0 ? value : -value
 }
 
-function reportAudioLatency(captureTimestampMicros: number | undefined) {
-  if (typeof captureTimestampMicros !== 'number') {
-    return
-  }
-  postRenderingLatency(latencyMsFromCaptureMicros(captureTimestampMicros))
-}
-
-function postReceiveLatency(latencyMs: number) {
-  if (latencyMs < 0) {
-    return
-  }
-  postTelemetry({ type: 'receiveLatency', media: 'audio', ms: latencyMs })
-}
-
-function postRenderingLatency(latencyMs: number) {
-  if (latencyMs < 0) {
-    return
-  }
-  postTelemetry({ type: 'renderingLatency', media: 'audio', ms: latencyMs })
-}
-
-function postJitterBufferActivity(event: 'push' | 'pop') {
-  postTelemetry({
-    type: 'jitterBufferActivity',
-    media: 'audio',
-    event,
-    bufferedFrames: jitterBuffer.getBufferedFrameCount(),
-    capacityFrames: jitterBuffer.getMaxBufferSize()
-  })
-}
-
-function resolveAudioConfig(metadata: ChunkMetadata): CachedAudioConfig | null {
-  const hasNewConfig =
-    metadata.codec ||
-    metadata.descriptionBase64 ||
-    metadata.sampleRate ||
-    metadata.channels ||
-    catalogAudioCodec ||
-    catalogAudioSampleRate ||
-    catalogAudioChannels ||
-    catalogAudioDescriptionBase64
-  if (!hasNewConfig && !cachedAudioConfig) {
-    return {
-      codec: DEFAULT_AUDIO_DECODER_CONFIG.codec,
-      sampleRate: DEFAULT_AUDIO_DECODER_CONFIG.sampleRate,
-      channels: DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
-    }
-  }
-
-  const codec =
-    metadata.codec ??
-    (metadata.descriptionBase64 ? 'mp4a.40.2' : undefined) ??
-    catalogAudioCodec ??
-    cachedAudioConfig?.codec ??
-    DEFAULT_AUDIO_DECODER_CONFIG.codec
-  const sampleRate =
-    metadata.sampleRate ??
-    catalogAudioSampleRate ??
-    cachedAudioConfig?.sampleRate ??
-    DEFAULT_AUDIO_DECODER_CONFIG.sampleRate
-  const channels =
-    metadata.channels ??
-    catalogAudioChannels ??
-    cachedAudioConfig?.channels ??
-    DEFAULT_AUDIO_DECODER_CONFIG.numberOfChannels
-  const descriptionBase64 =
-    metadata.descriptionBase64 ?? catalogAudioDescriptionBase64 ?? cachedAudioConfig?.descriptionBase64
-
-  return { codec, sampleRate, channels, descriptionBase64 }
-}
-
-function buildDecoderConfig(resolved: CachedAudioConfig): AudioDecoderConfig {
+function buildDecoderConfig(config: AudioConfig): AudioDecoderConfig {
   const description =
-    resolved.codec.startsWith('mp4a') && resolved.descriptionBase64
-      ? base64ToUint8Array(resolved.descriptionBase64)
+    config.codec.startsWith('mp4a') && config.descriptionBase64
+      ? Uint8Array.fromBase64(config.descriptionBase64)
       : undefined
   return {
-    codec: resolved.codec,
-    sampleRate: resolved.sampleRate,
-    numberOfChannels: resolved.channels,
+    codec: config.codec,
+    sampleRate: config.sampleRate,
+    numberOfChannels: config.channels,
     description
   }
 }
 
-function buildSignature(resolved: CachedAudioConfig): string {
-  const desc = resolved.descriptionBase64 ?? ''
-  return `${resolved.codec}:${resolved.sampleRate}:${resolved.channels}:${desc}`
+function buildSignature(config: AudioConfig): string {
+  return `${config.codec}:${config.sampleRate}:${config.channels}:${config.descriptionBase64 ?? ''}`
 }

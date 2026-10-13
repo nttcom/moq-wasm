@@ -6,18 +6,16 @@ ensureLinuxEnvironment()
 const certificateSpki = computeCertificateSpkiBase64()
 const fakeVideoPath = ensureFakeVideoCaptureFile()
 const baseURL = process.env.MEDIA_E2E_BASE_URL ?? 'http://127.0.0.1:4173'
-const forceQuicOrigins = [
-  process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433',
-  process.env.MEETING_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434',
-  process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-]
-  .map(toHttp3Authority)
-  .filter((origin, index, origins) => origins.indexOf(origin) === index)
+const forceQuicOrigins = new Set(
+  [
+    process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433',
+    process.env.MEETING_E2E_RELAY_B_URL ?? 'https://127.0.0.1:4434',
+    process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
+  ].map((url) => new URL(url).host)
+)
 
 export default defineConfig({
   testDir: './tests',
-  testMatch:
-    /(media-e2e|meeting-e2e|message-e2e|live-viewer-e2e|live-viewer-mp4-e2e|live-viewer-delivery-e2e|chat-moderation-e2e|camera-detection-e2e)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,
@@ -34,7 +32,7 @@ export default defineConfig({
     launchOptions: {
       args: [
         // Force QUIC on the relay origins used by the E2E runners.
-        `--origin-to-force-quic-on=${forceQuicOrigins.join(',')}`,
+        `--origin-to-force-quic-on=${[...forceQuicOrigins].join(',')}`,
         `--ignore-certificate-errors-spki-list=${certificateSpki}`,
         // Fallback for environments where SPKI pinning alone is insufficient.
         '--ignore-certificate-errors',
@@ -48,7 +46,3 @@ export default defineConfig({
     video: 'retain-on-failure'
   }
 })
-
-function toHttp3Authority(url: string): string {
-  return new URL(url).host
-}

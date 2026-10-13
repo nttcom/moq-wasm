@@ -1,188 +1,75 @@
 import { timeSeededGroupId } from './clock'
 
 type SubgroupId = number
+type TrackAlias = bigint | string
 
-interface SubgroupHeaderState {
-  sentAliases: Set<string>
-}
+class TrackTransportState {
+  groupId = timeSeededGroupId() - 1n
+  nextObjectId = 0n
+  private readonly headerSentAliases = new Map<SubgroupId, Set<string>>([[0, new Set()]])
 
-interface TrackCounters {
-  groupId: bigint
-  nextObjectNumber: bigint
-  subgroups: Map<SubgroupId, SubgroupHeaderState>
-}
-
-function normalizeAlias(alias: bigint | string): bigint {
-  if (typeof alias === 'bigint') {
-    return alias
+  ensureSubgroup(subgroupId: SubgroupId): void {
+    if (!this.headerSentAliases.has(subgroupId)) {
+      this.headerSentAliases.set(subgroupId, new Set())
+    }
   }
-  try {
-    return BigInt(alias)
-  } catch {
-    throw new Error(`Invalid alias value: ${alias}`)
-  }
-}
 
-function aliasKey(alias: bigint | string): string {
-  return normalizeAlias(alias).toString()
+  listSubgroups(): SubgroupId[] {
+    return Array.from(this.headerSentAliases.keys())
+  }
+
+  advanceGroup(): void {
+    this.groupId += 1n
+    this.nextObjectId = 0n
+    for (const aliases of this.headerSentAliases.values()) {
+      aliases.clear()
+    }
+  }
+
+  hasHeaderSent(trackAlias: TrackAlias, subgroupId: SubgroupId): boolean {
+    return this.headerSentAliases.get(subgroupId)?.has(String(trackAlias)) ?? false
+  }
+
+  markHeaderSent(trackAlias: TrackAlias, subgroupId: SubgroupId): void {
+    this.ensureSubgroup(subgroupId)
+    this.headerSentAliases.get(subgroupId)!.add(String(trackAlias))
+  }
+
+  resetAlias(trackAlias: TrackAlias): void {
+    for (const aliases of this.headerSentAliases.values()) {
+      aliases.delete(String(trackAlias))
+    }
+  }
 }
 
 export class MediaTransportState {
-  private readonly video: TrackCounters = {
-    groupId: timeSeededGroupId() - 1n,
-    nextObjectNumber: 0n,
-    subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
-  }
-
-  private readonly audio: TrackCounters = {
-    groupId: timeSeededGroupId() - 1n,
-    nextObjectNumber: 0n,
-    subgroups: new Map([[0, { sentAliases: new Set<string>() }]])
-  }
-
-  private readonly audioCodecSent = new Set<string>()
+  readonly video = new TrackTransportState()
+  readonly audio = new TrackTransportState()
   private readonly videoCodecSent = new Set<string>()
-  // Tracks which video aliases have received at least one keyframe object.
-  // Cleared for an alias when it is removed so a re-subscriber starts clean.
   private readonly videoKeyframeDelivered = new Set<string>()
 
-  ensureVideoSubgroup(subgroupId: SubgroupId): void {
-    this.ensureSubgroup(this.video, subgroupId)
+  shouldSendVideoCodec(trackAlias: TrackAlias): boolean {
+    return !this.videoCodecSent.has(String(trackAlias))
   }
 
-  ensureAudioSubgroup(subgroupId: SubgroupId): void {
-    this.ensureSubgroup(this.audio, subgroupId)
+  markVideoCodecSent(trackAlias: TrackAlias): void {
+    this.videoCodecSent.add(String(trackAlias))
   }
 
-  advanceVideoGroup(): void {
-    this.video.groupId += 1n
-    this.video.nextObjectNumber = 0n
-    this.resetHeaders(this.video)
+  hasVideoKeyframeDelivered(trackAlias: TrackAlias): boolean {
+    return this.videoKeyframeDelivered.has(String(trackAlias))
   }
 
-  getVideoGroupId(): bigint {
-    return this.video.groupId
+  markVideoKeyframeDelivered(trackAlias: TrackAlias): void {
+    this.videoKeyframeDelivered.add(String(trackAlias))
   }
 
-  getVideoObjectNumber(): bigint {
-    return this.video.nextObjectNumber
-  }
-
-  incrementVideoObjectNumber(): void {
-    this.video.nextObjectNumber += 1n
-  }
-
-  hasVideoHeaderSent(trackAlias: bigint, subgroupId: SubgroupId): boolean {
-    return this.hasHeaderSent(this.video, trackAlias, subgroupId)
-  }
-
-  markVideoHeaderSent(trackAlias: bigint, subgroupId: SubgroupId): void {
-    this.markHeaderSent(this.video, trackAlias, subgroupId)
-  }
-
-  getAudioGroupId(): bigint {
-    return this.audio.groupId
-  }
-
-  advanceAudioGroup(): void {
-    this.audio.groupId += 1n
-    this.audio.nextObjectNumber = 0n
-    this.resetHeaders(this.audio)
-  }
-
-  getAudioObjectNumber(): bigint {
-    return this.audio.nextObjectNumber
-  }
-
-  incrementAudioObjectNumber(): void {
-    this.audio.nextObjectNumber += 1n
-  }
-
-  getVideoObjectId(): bigint {
-    return this.getVideoObjectNumber()
-  }
-
-  incrementVideoObject(): void {
-    this.incrementVideoObjectNumber()
-  }
-
-  getAudioObjectId(): bigint {
-    return this.getAudioObjectNumber()
-  }
-
-  incrementAudioObject(): void {
-    this.incrementAudioObjectNumber()
-  }
-
-  shouldSendAudioHeader(trackAlias: bigint, subgroupId: SubgroupId): boolean {
-    return !this.hasHeaderSent(this.audio, trackAlias, subgroupId)
-  }
-
-  markAudioHeaderSent(trackAlias: bigint, subgroupId: SubgroupId): void {
-    this.markHeaderSent(this.audio, trackAlias, subgroupId)
-  }
-
-  shouldSendAudioCodec(trackAlias: bigint): boolean {
-    return !this.audioCodecSent.has(aliasKey(trackAlias))
-  }
-
-  markAudioCodecSent(trackAlias: bigint): void {
-    this.audioCodecSent.add(aliasKey(trackAlias))
-  }
-
-  listVideoSubgroups(): SubgroupId[] {
-    return Array.from(this.video.subgroups.keys())
-  }
-
-  shouldSendVideoCodec(trackAlias: bigint): boolean {
-    return !this.videoCodecSent.has(aliasKey(trackAlias))
-  }
-
-  markVideoCodecSent(trackAlias: bigint): void {
-    this.videoCodecSent.add(aliasKey(trackAlias))
-  }
-
-  hasVideoKeyframeDelivered(alias: bigint | string): boolean {
-    return this.videoKeyframeDelivered.has(aliasKey(alias))
-  }
-
-  markVideoKeyframeDelivered(alias: bigint | string): void {
-    this.videoKeyframeDelivered.add(aliasKey(alias))
-  }
-
-  resetAlias(trackAlias: bigint | string): void {
-    const key = aliasKey(trackAlias)
-    for (const subgroup of this.video.subgroups.values()) {
-      subgroup.sentAliases.delete(key)
-    }
-    for (const subgroup of this.audio.subgroups.values()) {
-      subgroup.sentAliases.delete(key)
-    }
-    this.audioCodecSent.delete(key)
-    this.videoCodecSent.delete(key)
-    // A re-subscribing alias must receive a keyframe again from scratch.
-    this.videoKeyframeDelivered.delete(key)
-  }
-
-  private ensureSubgroup(state: TrackCounters, subgroupId: SubgroupId): void {
-    if (!state.subgroups.has(subgroupId)) {
-      state.subgroups.set(subgroupId, { sentAliases: new Set<string>() })
-    }
-  }
-
-  private resetHeaders(state: TrackCounters): void {
-    for (const subgroup of state.subgroups.values()) {
-      subgroup.sentAliases.clear()
-    }
-  }
-
-  private hasHeaderSent(state: TrackCounters, trackAlias: bigint | string, subgroupId: SubgroupId): boolean {
-    this.ensureSubgroup(state, subgroupId)
-    return state.subgroups.get(subgroupId)!.sentAliases.has(aliasKey(trackAlias))
-  }
-
-  private markHeaderSent(state: TrackCounters, trackAlias: bigint | string, subgroupId: SubgroupId): void {
-    this.ensureSubgroup(state, subgroupId)
-    state.subgroups.get(subgroupId)!.sentAliases.add(aliasKey(trackAlias))
+  /// A re-subscribing alias must receive the headers, the codec config and a
+  /// keyframe again from scratch.
+  resetAlias(trackAlias: TrackAlias): void {
+    this.video.resetAlias(trackAlias)
+    this.audio.resetAlias(trackAlias)
+    this.videoCodecSent.delete(String(trackAlias))
+    this.videoKeyframeDelivered.delete(String(trackAlias))
   }
 }

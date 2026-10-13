@@ -32,8 +32,6 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "autoprefixer": "^10.4.21",
-    "baseline-browser-mapping": "^2.9.19",
     "prettier": "^3.2.5",
     "tailwindcss": "^4.1.14",
     "typescript": "^7.0.2",
@@ -41,7 +39,6 @@
   },
   "dependencies": {
     "@types/dom-mediacapture-transform": "^0.1.11",
-    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.56.0",
     "mediabunny": "^1.35.1",

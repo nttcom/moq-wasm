@@ -9,7 +9,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@/*": ["./examples/meeting/src/*"],
       "@moqt/*": ["./lib/moqt/*"],
       "@player/*": ["./lib/player/*"]
     },

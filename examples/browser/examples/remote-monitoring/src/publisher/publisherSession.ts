@@ -49,7 +49,7 @@ export class PublisherSession {
     log('disconnecting...')
     this.client.setOnIncomingSubscribeHandler(null)
     this.client.setOnConnectionClosedHandler(null)
-    await this.client.finish()
+    await this.client.disconnect()
     log('disconnected')
   }
 }

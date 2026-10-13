@@ -1,4 +1,4 @@
-import { Button } from './ui/button'
+import { Button } from '../../../../lib/ui/button'
 
 interface Props {
   onStepBack: () => void

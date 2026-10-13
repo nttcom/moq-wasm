@@ -50,12 +50,12 @@ class TrackGeneratorSink implements LivePictureSink {
   }
 }
 
-class CanvasSink implements LivePictureSink {
+export class CanvasSink implements LivePictureSink {
   private readonly context: CanvasRenderingContext2D | null
 
   constructor(
     readonly element: HTMLCanvasElement,
-    private readonly onPresented: (picture: HTMLElement) => void
+    private readonly onPresented: (picture: HTMLElement) => void = () => {}
   ) {
     this.context = element.getContext('2d')
   }

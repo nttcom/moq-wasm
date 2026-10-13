@@ -39,7 +39,7 @@ export function formatValue(value: number | null | undefined): string {
 
 function timeLabel(ms: number, spanMs: number): string {
   const date = new Date(ms)
-  const hhmm = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  const hhmm = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
   return spanMs >= DAY_MS ? `${date.getMonth() + 1}/${date.getDate()} ${hhmm}` : hhmm
 }
 

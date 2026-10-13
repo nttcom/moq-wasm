@@ -1,6 +1,6 @@
 import type { MOQTClient } from '../../pkg/moqt'
 import { MediaTransportState } from './transportState'
-import { buildLocHeader, arrayBufferToUint8Array, type LocHeader } from './loc'
+import { buildLocHeader, type LocHeader } from './loc'
 import { monotonicUnixMicros } from './clock'
 import { OBJECT_STATUS_END_OF_GROUP } from './objectStatus'
 
@@ -40,11 +40,11 @@ export async function sendVideoChunkViaMoqt({
   }
 
   const subgroupId = Number((metadata as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId ?? 0)
-  transportState.ensureVideoSubgroup(subgroupId)
+  transportState.video.ensureSubgroup(subgroupId)
 
   const shouldIncludeCodec = trackAliases.some((alias) => transportState.shouldSendVideoCodec(alias))
   const decoderConfig = metadata?.decoderConfig as any
-  const configBytes = arrayBufferToUint8Array(decoderConfig?.description)
+  const configBytes: Uint8Array | undefined = decoderConfig?.description && new Uint8Array(decoderConfig.description)
   const includeConfig = chunk.type === 'key' || shouldIncludeCodec
   const payload = new Uint8Array(chunk.byteLength)
   chunk.copyTo(payload)
@@ -59,21 +59,21 @@ export async function sendVideoChunkViaMoqt({
 
   if (chunk.type === 'key') {
     await endVideoGroup(client, trackAliases, transportState)
-    transportState.advanceVideoGroup()
+    transportState.video.advanceGroup()
     // Send the keyframe to every alias and mark each one as having received a keyframe.
     for (const alias of trackAliases) {
-      for (const subgroup of transportState.listVideoSubgroups()) {
-        await client.sendSubgroupHeader(alias, transportState.getVideoGroupId(), BigInt(subgroup), publisherPriority)
-        transportState.markVideoHeaderSent(alias, subgroup)
+      for (const subgroup of transportState.video.listSubgroups()) {
+        await client.sendSubgroupHeader(alias, transportState.video.groupId, BigInt(subgroup), publisherPriority)
+        transportState.video.markHeaderSent(alias, subgroup)
       }
     }
 
     for (const alias of trackAliases) {
       await sender(
         alias,
-        transportState.getVideoGroupId(),
+        transportState.video.groupId,
         BigInt(subgroupId),
-        transportState.getVideoObjectNumber(),
+        transportState.video.nextObjectId,
         payload,
         client,
         locHeader
@@ -84,7 +84,7 @@ export async function sendVideoChunkViaMoqt({
       transportState.markVideoKeyframeDelivered(alias)
     }
 
-    transportState.incrementVideoObjectNumber()
+    transportState.video.nextObjectId += 1n
     return { needsKeyframe: false }
   }
 
@@ -95,18 +95,18 @@ export async function sendVideoChunkViaMoqt({
   const pending = trackAliases.filter((alias) => !transportState.hasVideoKeyframeDelivered(alias))
 
   for (const alias of delivered) {
-    if (!transportState.hasVideoHeaderSent(alias, subgroupId)) {
-      await client.sendSubgroupHeader(alias, transportState.getVideoGroupId(), BigInt(subgroupId), publisherPriority)
-      transportState.markVideoHeaderSent(alias, subgroupId)
+    if (!transportState.video.hasHeaderSent(alias, subgroupId)) {
+      await client.sendSubgroupHeader(alias, transportState.video.groupId, BigInt(subgroupId), publisherPriority)
+      transportState.video.markHeaderSent(alias, subgroupId)
     }
   }
 
   for (const alias of delivered) {
     await sender(
       alias,
-      transportState.getVideoGroupId(),
+      transportState.video.groupId,
       BigInt(subgroupId),
-      transportState.getVideoObjectNumber(),
+      transportState.video.nextObjectId,
       payload,
       client,
       locHeader
@@ -118,7 +118,7 @@ export async function sendVideoChunkViaMoqt({
 
   // Object number advances once per chunk regardless of how many aliases were
   // sent to; the number is shared across all aliases in the same group.
-  transportState.incrementVideoObjectNumber()
+  transportState.video.nextObjectId += 1n
   return { needsKeyframe: pending.length > 0 }
 }
 
@@ -141,10 +141,10 @@ async function endVideoGroup(
   trackAliases: bigint[],
   transportState: MediaTransportState
 ): Promise<void> {
-  const groupId = transportState.getVideoGroupId()
-  const endObjectNumber = transportState.getVideoObjectNumber()
+  const groupId = transportState.video.groupId
+  const endObjectNumber = transportState.video.nextObjectId
   for (const alias of trackAliases) {
-    if (!transportState.hasVideoHeaderSent(alias, 0)) {
+    if (!transportState.video.hasHeaderSent(alias, 0)) {
       continue
     }
     try {
