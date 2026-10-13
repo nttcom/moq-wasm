@@ -7,12 +7,12 @@ use crate::modules::{
         },
     },
     domain::{
-        error_code::SubscribeNamespaceErrorCode,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::MatchingPublication},
         session_id::SessionId,
     },
     session::handler::subscribe_namespace::SubscribeNamespaceHandler,
 };
+use moqt::RequestErrorCode;
 use tracing::Span;
 
 pub(crate) struct SubscribeNameSpace;
@@ -97,7 +97,7 @@ impl SubscribeNameSpace {
                 tracing::warn!(track_namespace_prefix = %track_namespace_prefix, "namespace already has an active subscriber");
                 match handler
                     .error(
-                        SubscribeNamespaceErrorCode::NamespacePrefixOverlap as u64,
+                        RequestErrorCode::NamespacePrefixOverlap,
                         "namespace already subscribed".to_string(),
                     )
                     .await
@@ -250,7 +250,7 @@ mod tests {
 
         async fn error(
             &self,
-            _code: u64,
+            _code: RequestErrorCode,
             _reason_phrase: String,
         ) -> Result<(), moqt::TransportSendError> {
             self.sent.lock().unwrap().push("SUBSCRIBE_NAMESPACE_ERROR");

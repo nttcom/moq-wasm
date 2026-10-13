@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::sync::Arc;
 
 use crate::modules::{
@@ -12,7 +13,6 @@ use crate::modules::{
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
     domain::{
-        error_code::SubscribeErrorCode,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -74,10 +74,10 @@ impl UpstreamSubscriptionError {
     /// SUBSCRIBE_ERROR (code, reason) for the downstream subscriber. An
     /// upstream SUBSCRIBE_ERROR is relayed verbatim; an upstream timeout maps
     /// to TIMEOUT so one slow upstream request stays a request-scoped failure.
-    fn subscribe_error_response(&self) -> (u64, String) {
+    fn subscribe_error_response(&self) -> (RequestErrorCode, String) {
         match self {
             Self::PublisherNotFound => (
-                SubscribeErrorCode::TrackDoesNotExist as u64,
+                RequestErrorCode::TrackDoesNotExist,
                 "Designated namespace and track name do not exist.".to_string(),
             ),
             Self::SubscribeFailed(error) => match error.downcast_ref::<moqt::RequestFailure>() {
@@ -85,16 +85,16 @@ impl UpstreamSubscriptionError {
                     (*code, reason.clone())
                 }
                 Some(moqt::RequestFailure::Timeout) => (
-                    SubscribeErrorCode::Timeout as u64,
+                    RequestErrorCode::Timeout,
                     "Upstream subscribe timed out".to_string(),
                 ),
                 _ => (
-                    SubscribeErrorCode::InternalError as u64,
+                    RequestErrorCode::InternalError,
                     "Failed to create upstream subscription.".to_string(),
                 ),
             },
             Self::IngressStartFailed => (
-                SubscribeErrorCode::InternalError as u64,
+                RequestErrorCode::InternalError,
                 "Failed to start upstream ingress.".to_string(),
             ),
         }
@@ -444,7 +444,7 @@ impl Subscribe {
             let _ = self
                 .response_error(
                     handler,
-                    SubscribeErrorCode::TrackDoesNotExist as u64,
+                    RequestErrorCode::TrackDoesNotExist,
                     "malformed track".to_string(),
                 )
                 .await;
@@ -550,7 +550,7 @@ impl Subscribe {
         let _ = self
             .response_error(
                 handler,
-                SubscribeErrorCode::TrackDoesNotExist as u64,
+                RequestErrorCode::TrackDoesNotExist,
                 "track is no longer available".to_string(),
             )
             .await;
@@ -564,7 +564,7 @@ impl Subscribe {
     async fn response_error(
         &self,
         handler: &dyn SubscribeHandler,
-        code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         let track_namespace = handler.track_namespace();
@@ -573,7 +573,7 @@ impl Subscribe {
             subscribe_id = handler.subscribe_id(),
             track_namespace = %track_namespace,
             track_name = %track_name,
-            error_code = code,
+            error_code = ?code,
             reason_phrase = %reason_phrase,
             "Sending `SUBSCRIBE_ERROR`"
         );
@@ -611,7 +611,7 @@ mod tests {
         let error =
             UpstreamSubscriptionError::SubscribeFailed(moqt::RequestFailure::Timeout.into());
         let (code, _reason) = error.subscribe_error_response();
-        assert_eq!(code, SubscribeErrorCode::Timeout as u64);
+        assert_eq!(code, RequestErrorCode::Timeout);
     }
 
     #[test]
@@ -619,12 +619,12 @@ mod tests {
         let error = UpstreamSubscriptionError::SubscribeFailed(anyhow::Error::new(
             moqt::RequestFailure::Rejected {
                 request_id: 7,
-                code: 0x1,
+                code: RequestErrorCode::Unauthorized,
                 reason: "unauthorized".to_string(),
             },
         ));
         let (code, reason) = error.subscribe_error_response();
-        assert_eq!(code, 0x1);
+        assert_eq!(code, RequestErrorCode::Unauthorized);
         assert_eq!(reason, "unauthorized");
     }
 
@@ -632,7 +632,7 @@ mod tests {
     fn publisher_not_found_maps_to_track_does_not_exist() {
         let (code, _reason) =
             UpstreamSubscriptionError::PublisherNotFound.subscribe_error_response();
-        assert_eq!(code, SubscribeErrorCode::TrackDoesNotExist as u64);
+        assert_eq!(code, RequestErrorCode::TrackDoesNotExist);
     }
 
     async fn create_upstream_and_resolve_largest(

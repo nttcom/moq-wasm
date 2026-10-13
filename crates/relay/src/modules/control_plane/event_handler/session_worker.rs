@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::sync::Arc;
 
 use moqt::object::ContentExists;
@@ -20,10 +21,7 @@ use crate::modules::{
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{
-        error_code::SubscribeErrorCode, pub_sub_directory::entry::PublishDoneReason,
-        session_id::SessionId,
-    },
+    domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
     session::{
         handler::track_status::TrackStatusHandler,
         moqt_session_event::MoqtSessionEvent,
@@ -393,7 +391,7 @@ impl SessionWorker {
                     None => {
                         handler
                             .error(
-                                SubscribeErrorCode::InternalError as u64,
+                                RequestErrorCode::InternalError,
                                 "session not found".to_string(),
                             )
                             .await
@@ -406,7 +404,7 @@ impl SessionWorker {
                     reason = %rejected.reason,
                     "authorization token refresh rejected"
                 );
-                handler.error(rejected.code as u64, rejected.reason).await
+                handler.error(rejected.code, rejected.reason).await
             }
         };
         if let Err(error) = response {

@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::error_codes::DataStreamResetCode;
 use crate::modules::transport::transport_connection::BoxedSendStream;
 use std::marker::PhantomData;
 
@@ -97,8 +98,8 @@ impl StreamDataSender<Uninitialized> {
         self.stream_sender.close().await
     }
 
-    pub async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
-        self.stream_sender.reset(error_code).await
+    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
+        self.stream_sender.reset(code.into()).await
     }
 }
 
@@ -132,7 +133,7 @@ impl StreamDataSender<HeaderSent> {
         self.stream_sender.close().await
     }
 
-    pub async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
-        self.stream_sender.reset(error_code).await
+    pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
+        self.stream_sender.reset(code.into()).await
     }
 }

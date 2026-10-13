@@ -1,13 +1,10 @@
+use moqt::RequestErrorCode;
 use moqt::wire::FetchParams;
 
 use crate::modules::{
     auth::{
         authorize::{Denied, Operation, authorize},
         verified_token::VerifiedToken,
-    },
-    domain::error_code::{
-        FetchErrorCode, PublishErrorCode, PublishNamespaceErrorCode, SubscribeErrorCode,
-        SubscribeNamespaceErrorCode,
     },
     session::moqt_session_event::MoqtSessionEvent,
 };
@@ -64,34 +61,22 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
     let reason = denied.reason.to_string();
     let sent = match event {
         MoqtSessionEvent::PublishNamespace(handler) => {
-            handler
-                .error(PublishNamespaceErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::Publish(handler) => {
-            handler
-                .error(PublishErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::Subscribe(handler) => {
-            handler
-                .error(SubscribeErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::SubscribeNamespace(handler) => {
-            handler
-                .error(SubscribeNamespaceErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::Fetch(handler) => {
-            handler
-                .error(FetchErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         MoqtSessionEvent::TrackStatus(handler) => {
-            handler
-                .error(SubscribeErrorCode::Unauthorized as u64, reason)
-                .await
+            handler.error(RequestErrorCode::Unauthorized, reason).await
         }
         _ => unreachable!("only events with a requested_access are rejected"),
     };
@@ -102,6 +87,7 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
 
 #[cfg(test)]
 mod tests {
+    use moqt::RequestErrorCode;
     use std::time::Duration;
 
     use moqt::{
@@ -154,7 +140,10 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::Unauthorized
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -192,7 +181,10 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::Unauthorized
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -234,7 +226,10 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::Unauthorized
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -256,7 +251,10 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::Unauthorized
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -277,7 +275,10 @@ mod tests {
         .unwrap();
 
         // Assert: NOT_SUPPORTED, because nothing subscribes to the track yet
-        assert_eq!(request_error_code(result.unwrap_err()), 0x3);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::NotSupported
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -298,7 +299,10 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::Unauthorized
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -328,6 +332,9 @@ mod tests {
         .unwrap();
 
         // Assert
-        assert_eq!(request_error_code(result.unwrap_err()), 0x1);
+        assert_eq!(
+            request_error_code(result.unwrap_err()),
+            RequestErrorCode::Unauthorized
+        );
     }
 }

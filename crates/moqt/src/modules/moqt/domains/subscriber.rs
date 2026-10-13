@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use tracing::Instrument;
 
+use crate::modules::moqt::control_plane::error_codes::RequestKind;
+
 use crate::{
     RequestFailure, SubscriberInitiatedSubscription, Subscription,
     fetch::FetchOption,
@@ -31,7 +33,7 @@ use crate::{
     },
     object::{DatagramReceiver, GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
-    wire::{RequestError, TrackStatusOk},
+    wire::TrackStatusOk,
 };
 
 pub enum DataReceiver {
@@ -84,12 +86,12 @@ impl Subscriber {
             }
             ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe namespace error");
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::SubscribeNamespace,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -176,12 +178,12 @@ impl Subscriber {
             }
             ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe error");
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::Subscribe,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -235,12 +237,12 @@ impl Subscriber {
             }
             ResponseMessage::TrackStatusError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Track status error");
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::TrackStatus,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -321,12 +323,12 @@ impl Subscriber {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 self.remove_pending_fetch(request_id).await;
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::Fetch,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -431,12 +433,12 @@ impl Subscriber {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
                 self.remove_pending_fetch(request_id).await;
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::Fetch,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",

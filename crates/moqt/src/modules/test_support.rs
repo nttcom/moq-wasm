@@ -8,6 +8,8 @@ use bytes::Bytes;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 use tracing_subscriber::EnvFilter;
 
+use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+
 use crate::{
     ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
     TransportProtocol,
@@ -28,7 +30,6 @@ use crate::{
     server::Handshake,
     server::ServerConfig,
     subscribe::FilterType,
-    wire::RequestError,
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -270,20 +271,20 @@ pub(crate) async fn register_and_take_data_receiver(
         .unwrap()
 }
 
-pub(crate) fn rejection<T, E: Into<anyhow::Error>>(result: Result<T, E>) -> RequestError {
+pub(crate) struct Rejection {
+    pub(crate) code: RequestErrorCode,
+    pub(crate) reason: String,
+}
+
+pub(crate) fn rejection<T, E: Into<anyhow::Error>>(result: Result<T, E>) -> Rejection {
     let Err(error) = result else {
         panic!("expected the request to fail");
     };
     let error: anyhow::Error = error.into();
     match error.downcast_ref::<RequestFailure>() {
-        Some(RequestFailure::Rejected {
-            request_id,
-            code,
-            reason,
-        }) => RequestError {
-            request_id: *request_id,
-            error_code: *code,
-            reason_phrase: reason.clone(),
+        Some(RequestFailure::Rejected { code, reason, .. }) => Rejection {
+            code: *code,
+            reason: reason.clone(),
         },
         _ => panic!("expected a rejection, got {error:#}"),
     }

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use moqt::{object::ContentExists, wire::publish_done_status_code};
+use moqt::{object::ContentExists, publish::PublishDoneCode};
 
 use crate::modules::domain::{
     session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
@@ -58,21 +58,21 @@ impl UpstreamTrack {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PublishDoneReason {
-    pub(crate) status_code: u64,
+    pub(crate) status_code: PublishDoneCode,
     pub(crate) error_reason: String,
 }
 
 impl PublishDoneReason {
     pub(crate) fn publisher_session_closed() -> Self {
         Self {
-            status_code: publish_done_status_code::TRACK_ENDED,
+            status_code: PublishDoneCode::TrackEnded,
             error_reason: "publisher session closed".to_string(),
         }
     }
 
     pub(crate) fn malformed_track() -> Self {
         Self {
-            status_code: publish_done_status_code::MALFORMED_TRACK,
+            status_code: PublishDoneCode::MalformedTrack,
             error_reason: "malformed track".to_string(),
         }
     }

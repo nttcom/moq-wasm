@@ -10,21 +10,23 @@ use std::{
 
 use bytes::Bytes;
 use moqt::{
-    BROWSER, ClientConfig, Endpoint, RequestFailure, Session, Subscription, TerminationErrorCode,
-    TransportSendError,
+    BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, Subscription,
+    TerminationErrorCode, TransportSendError,
     fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
     namespace::PublishNamespaceHandler,
+    object::DataStreamResetCode,
     object::{
         ContentExists, GroupOrder, Location, ObjectStatus, SubgroupId, SubgroupObject,
         SubgroupObjectSender,
     },
-    publish::{PublishHandler, PublishOption},
+    publish::{PublishDoneCode, PublishHandler, PublishOption},
     subscribe::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
         AuthorizationToken, DatagramField, FetchObject, FetchObjectField, FetchOk, NamespaceOk,
-        ObjectDatagram, ObjectDatagramPayload, PublishOk, RequestError, SubscribeOk, TrackStatusOk,
+        ObjectDatagram, ObjectDatagramPayload, PublishOk, RequestError, RequestKind, SubscribeOk,
+        TrackStatusOk,
     },
 };
 use tokio::sync::Mutex;
@@ -49,9 +51,6 @@ extern "C" {
 
 /// (track alias, group id, subgroup id)
 type WriterKey = (u64, u64, u64);
-
-const ERROR_INTERNAL: u64 = 0x0;
-const ERROR_TIMEOUT: u64 = 0x2;
 
 /// Request handlers the peer is waiting on until JavaScript answers them,
 /// keyed by the peer's request id. A handler dropped unanswered rejects its
@@ -111,7 +110,11 @@ impl ClientShared {
             return;
         };
         spawn_local(async move {
-            let _ = sender.lock().await.reset(0).await;
+            let _ = sender
+                .lock()
+                .await
+                .reset(DataStreamResetCode::InternalError)
+                .await;
         });
     }
 }
@@ -344,7 +347,12 @@ impl MOQTClient {
             .state
             .borrow_mut()
             .finish_publish_namespace_request(request_id, result.is_ok());
-        self.emit_namespace_response(|c| &c.publish_namespace_response, request_id, result);
+        self.emit_namespace_response(
+            |c| &c.publish_namespace_response,
+            RequestKind::PublishNamespace,
+            request_id,
+            result,
+        );
         Ok(())
     }
 
@@ -375,7 +383,10 @@ impl MOQTClient {
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown publish namespace request: {request_id}")))?;
         handler
-            .error(error_code, reason_phrase)
+            .error(
+                RequestErrorCode::from_wire(error_code, RequestKind::PublishNamespace),
+                reason_phrase,
+            )
             .await
             .map_err(send_error)
     }
@@ -408,7 +419,12 @@ impl MOQTClient {
             .state
             .borrow_mut()
             .finish_subscribe_namespace_request(request_id, result.is_ok());
-        self.emit_namespace_response(|c| &c.subscribe_namespace_response, request_id, result);
+        self.emit_namespace_response(
+            |c| &c.subscribe_namespace_response,
+            RequestKind::SubscribeNamespace,
+            request_id,
+            result,
+        );
         Ok(())
     }
 
@@ -472,7 +488,7 @@ impl MOQTClient {
                 Ok(track_alias)
             }
             Err(error) => {
-                let message = request_error_message(request_id, &error);
+                let message = request_error_message(RequestKind::Publish, request_id, &error);
                 emit(
                     &self.shared.callbacks,
                     |c| &c.publish_response,
@@ -535,7 +551,10 @@ impl MOQTClient {
             .remove(&request_id)
             .ok_or_else(|| js_error(format!("unknown publish request: {request_id}")))?;
         handler
-            .error(error_code, reason_phrase)
+            .error(
+                RequestErrorCode::from_wire(error_code, RequestKind::Publish),
+                reason_phrase,
+            )
             .await
             .map_err(send_error)
     }
@@ -605,7 +624,7 @@ impl MOQTClient {
                 ));
             }
             Err(error) => {
-                let message = request_error_message(request_id, &error);
+                let message = request_error_message(RequestKind::Subscribe, request_id, &error);
                 emit(
                     &self.shared.callbacks,
                     |c| &c.subscribe_response,
@@ -803,7 +822,10 @@ impl MOQTClient {
             .borrow_mut()
             .remove_incoming_subscribe(request_id);
         handler
-            .error(error_code, reason_phrase)
+            .error(
+                RequestErrorCode::from_wire(error_code, RequestKind::Subscribe),
+                reason_phrase,
+            )
             .await
             .map_err(send_error)
     }
@@ -921,6 +943,8 @@ impl MOQTClient {
         error_reason: String,
     ) -> Result<(), JsValue> {
         let session = self.session()?;
+        let status_code = PublishDoneCode::try_from(status_code)
+            .map_err(|_| js_error(format!("unknown PUBLISH_DONE status code: {status_code}")))?;
         session
             .publisher()
             .publish_done(request_id, status_code, stream_count, error_reason)
@@ -981,7 +1005,9 @@ impl MOQTClient {
                 ..track_status_ok
             })
             .into(),
-            Err(error) => request_error_message(request_id, &error).into(),
+            Err(error) => {
+                request_error_message(RequestKind::TrackStatus, request_id, &error).into()
+            }
         };
         emit(
             &self.shared.callbacks,
@@ -1032,7 +1058,10 @@ impl MOQTClient {
             .reject_incoming_track_status(request_id)
             .map_err(anyhow_error)?;
         handler
-            .error(error_code, reason_phrase)
+            .error(
+                RequestErrorCode::from_wire(error_code, RequestKind::TrackStatus),
+                reason_phrase,
+            )
             .await
             .map_err(send_error)
     }
@@ -1079,7 +1108,10 @@ impl MOQTClient {
             .remove(&request_id);
         match handler {
             Some(handler) => handler
-                .error(error_code, reason_phrase)
+                .error(
+                    RequestErrorCode::from_wire(error_code, RequestKind::Fetch),
+                    reason_phrase,
+                )
                 .await
                 .map_err(send_error),
             None => Ok(()),
@@ -1310,12 +1342,13 @@ impl MOQTClient {
     fn emit_namespace_response(
         &self,
         select: CallbackSelector,
+        kind: RequestKind,
         request_id: u64,
         result: Result<(), RequestFailure>,
     ) {
         let message: JsValue = match result {
             Ok(()) => NamespaceOkMessage::from(&NamespaceOk { request_id }).into(),
-            Err(error) => request_error_message(request_id, &error).into(),
+            Err(error) => request_error_message(kind, request_id, &error).into(),
         };
         emit(&self.shared.callbacks, select, &[message]);
     }
@@ -1353,7 +1386,7 @@ impl MOQTClient {
                 ));
             }
             Err(error) => {
-                let message = request_error_message(request_id, &error);
+                let message = request_error_message(RequestKind::Fetch, request_id, &error);
                 emit(
                     &self.shared.callbacks,
                     |c| &c.fetch_response,
@@ -1388,7 +1421,7 @@ impl MOQTClient {
             .borrow()
             .contains_incoming_fetch(request_id)
         {
-            let _ = sender.reset(0).await;
+            let _ = sender.reset(DataStreamResetCode::InternalError).await;
             return Err(js_error(format!(
                 "fetch request {request_id} was cancelled"
             )));
@@ -1447,12 +1480,17 @@ fn send_error(error: TransportSendError) -> JsValue {
 }
 
 /// Reports a failed request to JavaScript under the request id it chose.
-fn request_error_message(request_id: u64, error: &RequestFailure) -> RequestErrorMessage {
-    let (error_code, reason_phrase) = match error {
+fn request_error_message(
+    kind: RequestKind,
+    request_id: u64,
+    error: &RequestFailure,
+) -> RequestErrorMessage {
+    let (code, reason_phrase) = match error {
         RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),
-        RequestFailure::Timeout => (ERROR_TIMEOUT, error.to_string()),
-        _ => (ERROR_INTERNAL, error.to_string()),
+        RequestFailure::Timeout => (RequestErrorCode::Timeout, error.to_string()),
+        _ => (RequestErrorCode::InternalError, error.to_string()),
     };
+    let error_code = code.wire_value(kind);
     RequestErrorMessage::from(&RequestError {
         request_id,
         error_code,

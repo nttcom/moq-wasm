@@ -1,21 +1,12 @@
-/// Error codes shared by SUBSCRIBE_ERROR (draft-14 §9.9), which
-/// TRACK_STATUS_ERROR reuses, and FETCH_ERROR (§9.18); INVALID_RANGE and
-/// INVALID_JOINING_REQUEST_ID exist for FETCH_ERROR only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RequestRejection {
-    NotSupported,
-    TrackDoesNotExist,
-    InvalidRange,
-    InvalidJoiningRequestId,
-}
+use moqt::RequestErrorCode;
 
-impl RequestRejection {
-    pub(crate) fn code_and_reason(self) -> (u64, &'static str) {
-        match self {
-            Self::NotSupported => (0x3, "not supported"),
-            Self::TrackDoesNotExist => (0x4, "track does not exist"),
-            Self::InvalidRange => (0x5, "invalid range"),
-            Self::InvalidJoiningRequestId => (0x7, "invalid joining request id"),
-        }
+/// The reason phrase sent with a request this client rejects.
+pub(crate) fn rejection_reason(code: RequestErrorCode) -> &'static str {
+    match code {
+        RequestErrorCode::NotSupported => "not supported",
+        RequestErrorCode::TrackDoesNotExist => "track does not exist",
+        RequestErrorCode::InvalidRange => "invalid range",
+        RequestErrorCode::InvalidJoiningRequestId => "invalid joining request id",
+        _ => "request rejected",
     }
 }

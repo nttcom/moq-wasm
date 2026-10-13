@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::{
     net::UdpSocket,
     path::Path,
@@ -62,7 +63,7 @@ pub(crate) fn relay_token() -> VerifiedToken {
     }
 }
 
-pub(crate) fn request_error_code(error: impl Into<anyhow::Error>) -> u64 {
+pub(crate) fn request_error_code(error: impl Into<anyhow::Error>) -> RequestErrorCode {
     let error = error.into();
     match error.downcast_ref::<RequestFailure>() {
         Some(RequestFailure::Rejected { code, .. }) => *code,

@@ -18,7 +18,7 @@ optionally cascades across relays via a Redis-backed route registry.
 | Directory | Holds |
 | --- | --- |
 | `session/` | The session as the relay sees it: `Session` / `Publisher` / `Subscriber` traits implemented by `moqt::Session` and by the test mocks, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
-| `domain/` | Relay vocabulary and state shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, the `*ErrorCode` enums, the pub/sub directory and its entries |
+| `domain/` | Relay vocabulary and state shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, the pub/sub directory and its entries (error codes are `moqt`'s typed enums) |
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
 | `control_plane/` | Control-message processing: `EventHandler`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, `UpstreamCreationSerializer` |
 | `data_plane/` | Objects in flight: `ingress/`, `cache/`, `egress/`, and the data-plane integration tests |

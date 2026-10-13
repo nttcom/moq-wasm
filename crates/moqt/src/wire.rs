@@ -5,6 +5,7 @@ use std::io::Cursor;
 pub use crate::modules::extensions::buf_get_ext::BufGetExt;
 pub use crate::modules::extensions::buf_put_ext::BufPutExt;
 pub use crate::modules::moqt::control_plane::constants::MOQ_TRANSPORT_VERSION;
+pub use crate::modules::moqt::control_plane::error_codes::RequestKind;
 pub use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
 pub use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
 pub use crate::modules::moqt::control_plane::control_messages::messages::namespace_ok::NamespaceOk;
@@ -19,7 +20,6 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_c
 pub use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
 pub use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_done::PublishDone;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish_done::status_code as publish_done_status_code;
 pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace_cancel::PublishNamespaceCancel;
 pub use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
 pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate;

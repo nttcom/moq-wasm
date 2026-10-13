@@ -3,7 +3,7 @@ pub(crate) mod downstream_publish_task;
 use std::sync::Arc;
 
 use anyhow::bail;
-use moqt::{object::ContentExists, wire::publish_done_status_code};
+use moqt::{object::ContentExists, publish::PublishDoneCode};
 use tokio::sync::{mpsc, oneshot};
 use tracing::Span;
 
@@ -86,7 +86,7 @@ impl DownstreamPublish {
             forward,
         ) else {
             let track_ended = PublishDoneReason {
-                status_code: publish_done_status_code::TRACK_ENDED,
+                status_code: PublishDoneCode::TrackEnded,
                 error_reason: "track ended before PUBLISH_OK".to_string(),
             };
             return self
@@ -258,7 +258,7 @@ mod tests {
         // Assert
         assert_eq!(
             ctx.subscriber.publish_dones(),
-            vec![(PUBLISH_REQUEST_ID, publish_done_status_code::TRACK_ENDED)]
+            vec![(PUBLISH_REQUEST_ID, PublishDoneCode::TrackEnded)]
         );
         assert!(ctx.table.downstream_subscriptions.is_empty());
         assert!(ctx.egress_receiver.try_recv().is_err());

@@ -1,10 +1,10 @@
+use moqt::RequestErrorCode;
 use moqt::{
     fetch::resolve_fetch_range,
     wire::{GroupOrder, Location},
 };
 
 use crate::client_state::TrackKey;
-use crate::request_rejection::RequestRejection;
 
 /// Both ends use the FETCH End Location encoding (draft-14 §9.16.1): the
 /// Location after the last Object, where Object 0 stands for the whole Group.
@@ -19,9 +19,9 @@ impl FetchRange {
         start: Location,
         requested_end: Location,
         largest: Option<Location>,
-    ) -> Result<Self, RequestRejection> {
+    ) -> Result<Self, RequestErrorCode> {
         let end = resolve_fetch_range(start, requested_end, largest)
-            .map_err(|_| RequestRejection::InvalidRange)?;
+            .map_err(|_| RequestErrorCode::InvalidRange)?;
         Ok(Self { start, end })
     }
 }
@@ -103,7 +103,7 @@ mod tests {
         let range = FetchRange::resolve(location(0, 0), location(1, 0), None);
 
         // Assert
-        assert_eq!(range, Err(RequestRejection::InvalidRange));
+        assert_eq!(range, Err(RequestErrorCode::InvalidRange));
     }
 
     #[test]
@@ -112,7 +112,7 @@ mod tests {
         let range = FetchRange::resolve(location(5, 2), location(6, 0), Some(location(5, 1)));
 
         // Assert
-        assert_eq!(range, Err(RequestRejection::InvalidRange));
+        assert_eq!(range, Err(RequestErrorCode::InvalidRange));
     }
 
     #[test]
@@ -121,7 +121,7 @@ mod tests {
         let range = FetchRange::resolve(location(3, 2), location(3, 2), Some(location(5, 1)));
 
         // Assert
-        assert_eq!(range, Err(RequestRejection::InvalidRange));
+        assert_eq!(range, Err(RequestErrorCode::InvalidRange));
     }
 
     #[test]
@@ -130,6 +130,6 @@ mod tests {
         let range = FetchRange::resolve(location(3, 0), location(2, 0), Some(location(5, 1)));
 
         // Assert
-        assert_eq!(range, Err(RequestRejection::InvalidRange));
+        assert_eq!(range, Err(RequestErrorCode::InvalidRange));
     }
 }

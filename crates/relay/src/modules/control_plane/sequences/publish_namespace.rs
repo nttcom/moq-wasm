@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -19,8 +20,8 @@ use crate::modules::{
     },
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{
-        error_code::PublishNamespaceErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
-        session_id::SessionId, session_peer::SessionPeer,
+        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
+        session_peer::SessionPeer,
     },
     session::handler::publish_namespace::PublishNamespaceHandler,
 };
@@ -235,7 +236,7 @@ impl PublishNamespace {
         tracing::warn!(?err, track_namespace = %track_namespace, "failed to register namespace route");
         if handler
             .error(
-                PublishNamespaceErrorCode::InternalError as u64,
+                RequestErrorCode::InternalError,
                 "failed to register the namespace route".to_string(),
             )
             .await

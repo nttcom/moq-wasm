@@ -20,7 +20,8 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestFailure, Session, SessionEvent, Subscription,
+    ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session, SessionEvent,
+    Subscription,
     object::{DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId, SubgroupObject},
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
@@ -30,7 +31,6 @@ use moqt::{
 const DEFAULT_RELAY_A_URL: &str = "moqt://127.0.0.1:4433";
 const DEFAULT_RELAY_B_URL: &str = "moqt://127.0.0.1:4434";
 const TEST_PAYLOAD: &[u8] = b"auth e2e payload";
-const UNAUTHORIZED: u64 = 0x1;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const EXPIRY_TIMEOUT: Duration = Duration::from_secs(60);
 /// tests/auth-e2e/run.sh mints the short token with `--ttl 15s`; probing after
@@ -367,9 +367,12 @@ async fn expect_refreshed_session_outlives_short_token(
 
 fn expect_unauthorized(error: RequestFailure, label: &str) -> anyhow::Result<()> {
     match error {
-        RequestFailure::Rejected { code, .. } if code == UNAUTHORIZED => Ok(()),
+        RequestFailure::Rejected {
+            code: RequestErrorCode::Unauthorized,
+            ..
+        } => Ok(()),
         RequestFailure::Rejected { code, .. } => {
-            bail!("{label}: expected error code {UNAUTHORIZED}, got {code}")
+            bail!("{label}: expected UNAUTHORIZED, got {code:?}")
         }
         other => bail!("{label}: expected a request rejection, got {other}"),
     }

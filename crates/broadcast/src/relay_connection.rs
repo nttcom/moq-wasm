@@ -7,7 +7,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, Session, SessionEvent, TerminationErrorCode, TransportStats,
+    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TerminationErrorCode,
+    TransportStats,
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
@@ -22,8 +23,6 @@ use crate::{
     stream_ledger::{StreamLedger, StreamRecord},
 };
 
-/// SUBSCRIBE_ERROR code, draft-ietf-moq-transport-14 §13.1.2.
-const SUBSCRIBE_TRACK_DOES_NOT_EXIST: u64 = 0x4;
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for a range it never cached can still be answered here.
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
@@ -366,7 +365,7 @@ impl ConnectedRelay {
         if !subscribable {
             if let Err(err) = handler
                 .error(
-                    SUBSCRIBE_TRACK_DOES_NOT_EXIST,
+                    RequestErrorCode::TrackDoesNotExist,
                     format!("{track_name} is neither the catalog nor a CMAF track of it"),
                 )
                 .await

@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::rc::Rc;
 
 use moqt::{
@@ -21,7 +22,7 @@ use crate::{
         FetchMessage, PublishMessage, PublishNamespaceDoneMessage, PublishNamespaceMessage,
         SubscribeMessage,
     },
-    request_rejection::RequestRejection,
+    request_rejection::rejection_reason,
 };
 
 /// Turns the session's events into the JavaScript callbacks and parks every
@@ -148,7 +149,7 @@ fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler) {
 
 fn on_track_status(shared: &ClientShared, handler: TrackStatusHandler) {
     if !has_callback(&shared.callbacks, |c| &c.track_status) {
-        reject_track_status(handler, RequestRejection::NotSupported);
+        reject_track_status(handler, RequestErrorCode::NotSupported);
         return;
     }
     let track_status = TrackStatus {
@@ -179,16 +180,17 @@ fn on_track_status(shared: &ClientShared, handler: TrackStatusHandler) {
     emit(&shared.callbacks, |c| &c.track_status, &[message.into()]);
 }
 
-fn reject_track_status(handler: TrackStatusHandler, rejection: RequestRejection) {
-    let (code, reason) = rejection.code_and_reason();
+fn reject_track_status(handler: TrackStatusHandler, code: RequestErrorCode) {
     spawn_local(async move {
-        let _ = handler.error(code, reason.to_string()).await;
+        let _ = handler
+            .error(code, rejection_reason(code).to_string())
+            .await;
     });
 }
 
 fn on_fetch(shared: &ClientShared, handler: FetchHandler) {
     if !has_callback(&shared.callbacks, |c| &c.fetch) {
-        reject_fetch(handler, RequestRejection::NotSupported);
+        reject_fetch(handler, RequestErrorCode::NotSupported);
         return;
     }
     let accepted = shared
@@ -209,10 +211,11 @@ fn on_fetch(shared: &ClientShared, handler: FetchHandler) {
     }
 }
 
-fn reject_fetch(handler: FetchHandler, rejection: RequestRejection) {
-    let (code, reason) = rejection.code_and_reason();
+fn reject_fetch(handler: FetchHandler, code: RequestErrorCode) {
     spawn_local(async move {
-        let _ = handler.error(code, reason.to_string()).await;
+        let _ = handler
+            .error(code, rejection_reason(code).to_string())
+            .await;
     });
 }
 

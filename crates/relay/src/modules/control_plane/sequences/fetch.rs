@@ -1,5 +1,6 @@
 mod upstream_fetch_task;
 
+use moqt::RequestErrorCode;
 use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::sync::Arc;
@@ -20,8 +21,8 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
     domain::{
-        error_code::FetchErrorCode, pub_sub_directory::InMemoryLocalPubSubDirectory,
-        session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
+        pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId,
+        session_peer::SessionPeer, track_key::TrackKey,
     },
     session::{handler::fetch::FetchHandler, session_event::SessionEvent},
 };
@@ -63,14 +64,14 @@ enum FetchError {
 }
 
 impl FetchError {
-    fn code(&self) -> FetchErrorCode {
+    fn code(&self) -> RequestErrorCode {
         match self {
-            Self::TrackNotFound => FetchErrorCode::TrackDoesNotExist,
-            Self::UnknownJoiningRequestId => FetchErrorCode::InvalidJoiningRequestId,
-            Self::NoObjectsPublished => FetchErrorCode::InvalidRange,
-            Self::InvalidRange => FetchErrorCode::InvalidRange,
-            Self::NoObjects => FetchErrorCode::NoObjects,
-            Self::MalformedTrack => FetchErrorCode::MalformedTrack,
+            Self::TrackNotFound => RequestErrorCode::TrackDoesNotExist,
+            Self::UnknownJoiningRequestId => RequestErrorCode::InvalidJoiningRequestId,
+            Self::NoObjectsPublished => RequestErrorCode::InvalidRange,
+            Self::InvalidRange => RequestErrorCode::InvalidRange,
+            Self::NoObjects => RequestErrorCode::NoObjects,
+            Self::MalformedTrack => RequestErrorCode::MalformedTrack,
         }
     }
 
@@ -114,9 +115,7 @@ impl Fetch {
             match self.resolve_target_and_source(session_id, fetch_params, table, cache_store) {
                 Ok(resolved) => resolved,
                 Err(err) => {
-                    let _ = handler
-                        .error(err.code() as u64, err.reason().to_string())
-                        .await;
+                    let _ = handler.error(err.code(), err.reason().to_string()).await;
                     return;
                 }
             };
@@ -222,7 +221,7 @@ impl Fetch {
                     "No upstream publisher found for fetch"
                 );
                 (
-                    FetchErrorCode::TrackDoesNotExist as u64,
+                    RequestErrorCode::TrackDoesNotExist,
                     FetchError::TrackNotFound.reason().to_string(),
                 )
             }
@@ -299,15 +298,15 @@ impl Fetch {
         }
     }
 
-    fn upstream_fetch_error_response(error: &anyhow::Error) -> (u64, String) {
+    fn upstream_fetch_error_response(error: &anyhow::Error) -> (RequestErrorCode, String) {
         match error.downcast_ref::<moqt::RequestFailure>() {
             Some(moqt::RequestFailure::Rejected { code, reason, .. }) => (*code, reason.clone()),
             Some(moqt::RequestFailure::Timeout) => (
-                FetchErrorCode::Timeout as u64,
+                RequestErrorCode::Timeout,
                 "Upstream fetch timed out".to_string(),
             ),
             _ => (
-                FetchErrorCode::InternalError as u64,
+                RequestErrorCode::InternalError,
                 "Internal relay error".to_string(),
             ),
         }
@@ -633,7 +632,7 @@ mod tests {
         let (code, _reason) = Fetch::upstream_fetch_error_response(&error);
 
         // Assert
-        assert_eq!(code, FetchErrorCode::Timeout as u64);
+        assert_eq!(code, RequestErrorCode::Timeout);
     }
 
     #[test]
@@ -641,7 +640,7 @@ mod tests {
         // Arrange
         let error = anyhow::Error::new(moqt::RequestFailure::Rejected {
             request_id: 7,
-            code: 0x3,
+            code: RequestErrorCode::NotSupported,
             reason: "not supported".to_string(),
         });
 
@@ -649,7 +648,7 @@ mod tests {
         let (code, reason) = Fetch::upstream_fetch_error_response(&error);
 
         // Assert
-        assert_eq!(code, 0x3);
+        assert_eq!(code, RequestErrorCode::NotSupported);
         assert_eq!(reason, "not supported");
     }
 

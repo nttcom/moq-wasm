@@ -5,7 +5,8 @@ use moqt::{
     object::{DataReceiver, GroupOrder},
     publish::PublishHandler,
     subscribe::{FilterType, SubscribeOption},
-    ClientConfig, Endpoint, Session, SessionEvent, Subscriber, Subscription, TrackReader, DUAL,
+    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, Subscriber, Subscription,
+    TrackReader, DUAL,
 };
 use tokio::task::JoinHandle;
 
@@ -118,7 +119,10 @@ async fn follow_commands(
             }
             SessionEvent::Subscribe(handler) => {
                 let _ = handler
-                    .error(0x4, "no tracks on the command session".to_string())
+                    .error(
+                        RequestErrorCode::TrackDoesNotExist,
+                        "no tracks on the command session".to_string(),
+                    )
                     .await;
             }
             SessionEvent::Disconnected() => bail!("command session disconnected"),
@@ -181,7 +185,10 @@ async fn accept_command_publish(
             handler.track_name
         );
         let _ = handler
-            .error(0x4, "unsupported publish track".to_string())
+            .error(
+                RequestErrorCode::Uninterested,
+                "unsupported publish track".to_string(),
+            )
             .await;
         return Ok(None);
     }
@@ -195,7 +202,10 @@ async fn accept_command_publish(
             handler.track_name
         );
         let _ = handler
-            .error(0x4, "command track already active".to_string())
+            .error(
+                RequestErrorCode::Uninterested,
+                "command track already active".to_string(),
+            )
             .await;
         return Ok(None);
     }

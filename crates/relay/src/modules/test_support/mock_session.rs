@@ -1,3 +1,5 @@
+use moqt::RequestErrorCode;
+use moqt::publish::PublishDoneCode;
 use std::sync::{Arc, Mutex};
 
 use moqt::{
@@ -51,7 +53,7 @@ pub(crate) struct RecordedControlMessages {
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
-    publish_dones: Arc<Mutex<Vec<(u64, u64)>>>,
+    publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
 }
 
 impl RecordedControlMessages {
@@ -71,7 +73,7 @@ impl RecordedControlMessages {
         self.publishes.lock().unwrap().clone()
     }
 
-    pub(crate) fn publish_dones(&self) -> Vec<(u64, u64)> {
+    pub(crate) fn publish_dones(&self) -> Vec<(u64, PublishDoneCode)> {
         self.publish_dones.lock().unwrap().clone()
     }
 }
@@ -358,7 +360,7 @@ impl Publisher for MockUpstreamPublisher {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        status_code: PublishDoneCode,
         _stream_count: u64,
         _error_reason: String,
     ) -> anyhow::Result<()> {
@@ -456,7 +458,7 @@ impl Subscriber for MockUpstreamSubscriber {
             FetchAnswer::Never => std::future::pending().await,
             FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::RequestFailure::Rejected {
                 request_id: 0,
-                code: 0x4,
+                code: RequestErrorCode::TrackDoesNotExist,
                 reason: "no objects".to_string(),
             })),
             FetchAnswer::FetchOk => Ok(moqt::fetch::FetchHandle {
@@ -497,7 +499,7 @@ impl UpstreamFetchReceiver for PendingFetchReceiver {
 #[derive(Clone, Default)]
 pub(crate) struct MockSubscribeHandler {
     pub(crate) subscribe_ok_count: Arc<Mutex<usize>>,
-    pub(crate) subscribe_errors: Arc<Mutex<Vec<u64>>>,
+    pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
 }
 
 #[async_trait::async_trait]
@@ -558,7 +560,7 @@ impl SubscribeHandler for MockSubscribeHandler {
 
     async fn error(
         &self,
-        code: u64,
+        code: RequestErrorCode,
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.subscribe_errors.lock().unwrap().push(code);
@@ -605,7 +607,11 @@ impl FetchHandler for MockFetchHandler {
         Ok(())
     }
 
-    async fn error(&self, _code: u64, _reason: String) -> Result<(), moqt::TransportSendError> {
+    async fn error(
+        &self,
+        _code: RequestErrorCode,
+        _reason: String,
+    ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }
 }
@@ -697,7 +703,7 @@ impl PublishHandler for MockPublishHandler {
 
     async fn error(
         &self,
-        _code: u64,
+        _code: RequestErrorCode,
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
@@ -734,7 +740,7 @@ impl PublishNamespaceHandler for MockPublishNamespaceHandler {
 
     async fn error(
         &self,
-        _code: u64,
+        _code: RequestErrorCode,
         _reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())

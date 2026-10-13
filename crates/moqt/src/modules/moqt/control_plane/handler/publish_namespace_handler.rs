@@ -5,11 +5,9 @@ use crate::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
-                messages::{
-                    namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
-                    request_error::RequestError,
-                },
+                messages::{namespace_ok::NamespaceOk, publish_namespace::PublishNamespace},
             },
+            error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
@@ -34,7 +32,7 @@ impl PublishNamespaceHandler {
         let guard = ResponseGuard::new(
             session_context.clone(),
             publish_namespace.request_id,
-            ControlMessageType::PublishNamespaceError,
+            RequestKind::PublishNamespace,
         );
         Self {
             session_context,
@@ -65,19 +63,10 @@ impl PublishNamespaceHandler {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::PublishNamespaceError, err.encode())
-            .await
+        self.guard.reject(code, reason_phrase).await
     }
 }
 
