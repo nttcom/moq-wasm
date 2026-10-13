@@ -1,3 +1,5 @@
+use std::fmt;
+
 use bytes::{Buf, Bytes};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
@@ -14,7 +16,7 @@ enum AliasType {
     UseValue = 0x03,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum AuthorizationToken {
     Delete,
     Register {
@@ -29,6 +31,44 @@ pub enum AuthorizationToken {
         token_type: u64,
         token_value: Bytes,
     },
+}
+
+impl fmt::Debug for AuthorizationToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Delete => f.write_str("Delete"),
+            Self::Register {
+                token_alias,
+                token_type,
+                token_value,
+            } => f
+                .debug_struct("Register")
+                .field("token_alias", token_alias)
+                .field("token_type", token_type)
+                .field("token_value", &RedactedTokenValue(token_value.len()))
+                .finish(),
+            Self::UseAlias { token_alias } => f
+                .debug_struct("UseAlias")
+                .field("token_alias", token_alias)
+                .finish(),
+            Self::UseValue {
+                token_type,
+                token_value,
+            } => f
+                .debug_struct("UseValue")
+                .field("token_type", token_type)
+                .field("token_value", &RedactedTokenValue(token_value.len()))
+                .finish(),
+        }
+    }
+}
+
+struct RedactedTokenValue(usize);
+
+impl fmt::Debug for RedactedTokenValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<{} bytes redacted>", self.0)
+    }
 }
 
 impl AuthorizationToken {
@@ -109,5 +149,46 @@ impl AuthorizationToken {
                 buf
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TOKEN: &str = "eyJhbGciOiJFUzI1NiJ9.payload.signature";
+
+    #[test]
+    fn debug_output_of_a_use_value_token_hides_the_value() {
+        // Arrange
+        let token = AuthorizationToken::use_value_utf8(TOKEN);
+
+        // Act
+        let debug = format!("{token:?}");
+
+        // Assert
+        assert_eq!(
+            debug,
+            format!(
+                "UseValue {{ token_type: 0, token_value: <{} bytes redacted> }}",
+                TOKEN.len()
+            )
+        );
+    }
+
+    #[test]
+    fn debug_output_of_a_register_token_hides_the_value() {
+        // Arrange
+        let token = AuthorizationToken::Register {
+            token_alias: 1,
+            token_type: 0,
+            token_value: Bytes::from_static(TOKEN.as_bytes()),
+        };
+
+        // Act
+        let debug = format!("{token:?}");
+
+        // Assert
+        assert!(!debug.contains(TOKEN), "{debug}");
     }
 }
