@@ -23,7 +23,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         index: resolve(__dirname, 'index.html'),
         message: resolve(__dirname, 'examples/message/index.html'),

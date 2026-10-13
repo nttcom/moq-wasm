@@ -26,18 +26,18 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.14",
     "@playwright/test": "^1.56.1",
+    "@tailwindcss/postcss": "^4.1.14",
     "@types/node": "^24.6.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.0.4",
+    "@vitejs/plugin-react": "^6.1.2",
     "autoprefixer": "^10.4.21",
     "baseline-browser-mapping": "^2.9.19",
     "prettier": "^3.2.5",
     "tailwindcss": "^4.1.14",
     "typescript": "^5.9.3",
-    "vite": "^7.3.5"
+    "vite": "^8.3.4"
   },
   "dependencies": {
     "@types/dom-mediacapture-transform": "^0.1.11",
@@ -50,10 +50,7 @@
     "tailwind-merge": "^3.3.1"
   },
   "overrides": {
-    "rollup": "^4.59.0",
     "postcss": "^8.5.10",
-    "picomatch": "^4.0.4",
-    "@babel/core": "^7.29.6",
-    "esbuild": "^0.28.1"
+    "picomatch": "^4.0.4"
   }
 }
