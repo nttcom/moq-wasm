@@ -65,12 +65,12 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [
       {
         label: 'Camera',
-        accessor: (sample) => sample.localCameraCaptureToEncodeDoneMs,
+        accessor: (sample) => sample.localCameraSend?.captureToEncodeDoneMs,
         colorClass: 'text-cyan-300'
       },
       {
         label: 'Screen',
-        accessor: (sample) => sample.localScreenShareCaptureToEncodeDoneMs,
+        accessor: (sample) => sample.localScreenShareSend?.captureToEncodeDoneMs,
         colorClass: 'text-orange-300'
       }
     ],
@@ -84,12 +84,12 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [
       {
         label: 'Camera',
-        accessor: (sample) => sample.localCameraSendQueueWaitMs,
+        accessor: (sample) => sample.localCameraSend?.queueWaitMs,
         colorClass: 'text-cyan-300'
       },
       {
         label: 'Screen',
-        accessor: (sample) => sample.localScreenShareSendQueueWaitMs,
+        accessor: (sample) => sample.localScreenShareSend?.queueWaitMs,
         colorClass: 'text-orange-300'
       }
     ],
@@ -103,22 +103,17 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [
       {
         label: 'Camera total',
-        accessor: (sample) => sample.localCameraSendActiveMs,
+        accessor: (sample) => sample.localCameraSend?.sendActiveMs,
         colorClass: 'text-emerald-300'
       },
       {
         label: 'Camera object',
-        accessor: (sample) => sample.localCameraSendObjectMs,
+        accessor: (sample) => sample.localCameraSend?.objectSendMs,
         colorClass: 'text-lime-300'
       },
       {
-        label: 'Camera serialize',
-        accessor: (sample) => sample.localCameraSendSerializeMs,
-        colorClass: 'text-teal-300'
-      },
-      {
         label: 'Screen total',
-        accessor: (sample) => sample.localScreenShareSendActiveMs,
+        accessor: (sample) => sample.localScreenShareSend?.sendActiveMs,
         colorClass: 'text-amber-300'
       }
     ],
@@ -132,22 +127,22 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [
       {
         label: 'Camera sendQ',
-        accessor: (sample) => sample.localCameraSendQueueDepth,
+        accessor: (sample) => sample.localCameraSend?.queueDepth,
         colorClass: 'text-fuchsia-300'
       },
       {
         label: 'Camera encQ',
-        accessor: (sample) => sample.localCameraEncodeQueueSize,
+        accessor: (sample) => sample.localCameraSend?.encodeQueueSize,
         colorClass: 'text-violet-300'
       },
       {
         label: 'Screen sendQ',
-        accessor: (sample) => sample.localScreenShareSendQueueDepth,
+        accessor: (sample) => sample.localScreenShareSend?.queueDepth,
         colorClass: 'text-rose-300'
       },
       {
         label: 'Screen encQ',
-        accessor: (sample) => sample.localScreenShareEncodeQueueSize,
+        accessor: (sample) => sample.localScreenShareSend?.encodeQueueSize,
         colorClass: 'text-red-300'
       }
     ],
@@ -162,19 +157,12 @@ const STATS_CHART_CONFIGS: StatsChartConfig[] = [
     series: [
       {
         label: 'Camera',
-        accessor: (sample) =>
-          typeof sample.localCameraSendObjectBytes === 'number' && Number.isFinite(sample.localCameraSendObjectBytes)
-            ? sample.localCameraSendObjectBytes / 1024
-            : null,
+        accessor: (sample) => sample.localCameraSend && sample.localCameraSend.objectBytes / 1024,
         colorClass: 'text-sky-300'
       },
       {
         label: 'Screen',
-        accessor: (sample) =>
-          typeof sample.localScreenShareSendObjectBytes === 'number' &&
-          Number.isFinite(sample.localScreenShareSendObjectBytes)
-            ? sample.localScreenShareSendObjectBytes / 1024
-            : null,
+        accessor: (sample) => sample.localScreenShareSend && sample.localScreenShareSend.objectBytes / 1024,
         colorClass: 'text-yellow-300'
       }
     ],

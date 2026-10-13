@@ -8,6 +8,7 @@ import { answerFetch, documentReplayTrack } from '../../../../utils/media/fetchR
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
+import type { VideoSendTiming } from '../types/stats'
 import { buildMeetingCatalogJson, getDefaultMeetingCatalogTracks } from './meetingCatalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
@@ -31,22 +32,7 @@ interface MediaPublisherHandlers {
   onAudioEncodeError?: (message: string) => void
   onAudioEncodingAdjusted?: (settings: AudioEncodingSettings) => void
   onScreenShareEncodingApplied?: (settings: VideoEncodingSettings) => void
-  onLocalVideoSendTiming?: (
-    timing: {
-      captureToEncodeDoneMs: number | null
-      encodeQueueSize: number
-      queueWaitMs: number
-      sendActiveMs: number
-      objectSendMs: number
-      serializeMs: number
-      queueDepth: number
-      objectBytes: number
-      objectCount: number
-      aliasCount: number
-      keyframe: boolean
-    } | null,
-    source: VideoSource
-  ) => void
+  onLocalVideoSendTiming?: (timing: VideoSendTiming | null, source: VideoSource) => void
 }
 
 type VideoTrackEncoderContext = {
@@ -61,12 +47,7 @@ type VideoTrackEncoderContext = {
   activeAliases: Set<string>
 }
 
-type VideoSendTimingAccumulator = {
-  objectSendMs: number
-  serializeMs: number
-  objectBytes: number
-  objectCount: number
-}
+type VideoSendTimingAccumulator = Pick<VideoSendTiming, 'objectSendMs' | 'objectBytes'>
 
 type AudioTrackEncoderContext = {
   trackName: string
@@ -860,12 +841,7 @@ export class MediaPublisher {
         if (!client) {
           return
         }
-        const timingAcc: VideoSendTimingAccumulator = {
-          objectSendMs: 0,
-          serializeMs: 0,
-          objectBytes: 0,
-          objectCount: 0
-        }
+        const timingAcc: VideoSendTimingAccumulator = { objectSendMs: 0, objectBytes: 0 }
         const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc) => {
           await this.sendVideoObject(trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc, timingAcc)
         }
@@ -895,12 +871,8 @@ export class MediaPublisher {
             queueWaitMs: Math.max(0, sendStartedAtMs - enqueueStartedAtMs),
             sendActiveMs: Math.max(0, sendFinishedAtMs - sendStartedAtMs),
             objectSendMs: timingAcc.objectSendMs,
-            serializeMs: timingAcc.serializeMs,
             queueDepth: Math.max(0, queueDepthAtEnqueue),
-            objectBytes: timingAcc.objectBytes,
-            objectCount: timingAcc.objectCount,
-            aliasCount: aliases.length,
-            keyframe: chunk.type === 'key'
+            objectBytes: timingAcc.objectBytes
           },
           context.source
         )
@@ -959,7 +931,6 @@ export class MediaPublisher {
     timingAcc: VideoSendTimingAccumulator
   ): Promise<void> {
     timingAcc.objectBytes += payload.byteLength
-    timingAcc.objectCount += 1
     const objectSendStartedAtMs = performance.now()
     await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
     timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)

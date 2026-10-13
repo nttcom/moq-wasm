@@ -2,6 +2,7 @@ import { MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { MediaPublisher, type SubscribedCatalogTrack } from './mediaPublisher'
 import { MediaSubscriber, type MediaSubscriberHandlers, type RemotePlaybackStats } from './mediaSubscriber'
 import type { PlayoutSettings } from '../types/playout'
+import type { VideoSendTiming } from '../types/stats'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
@@ -13,22 +14,7 @@ export interface MediaHandlers extends MediaSubscriberHandlers {
   onLocalAudioStream?: (stream: MediaStream | null) => void
   onLocalVideoBitrate?: (mbps: number) => void
   onLocalAudioBitrate?: (mbps: number) => void
-  onLocalVideoSendTiming?: (
-    timing: {
-      captureToEncodeDoneMs: number | null
-      encodeQueueSize: number
-      queueWaitMs: number
-      sendActiveMs: number
-      objectSendMs: number
-      serializeMs: number
-      queueDepth: number
-      objectBytes: number
-      objectCount: number
-      aliasCount: number
-      keyframe: boolean
-    } | null,
-    source: 'camera' | 'screenshare'
-  ) => void
+  onLocalVideoSendTiming?: (timing: VideoSendTiming | null, source: 'camera' | 'screenshare') => void
   onVideoEncodeError?: (message: string) => void
   onAudioEncodeError?: (message: string) => void
   onAudioEncodingAdjusted?: (settings: AudioEncodingSettings) => void

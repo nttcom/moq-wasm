@@ -11,7 +11,7 @@ import { useMeetingMedia } from '../hooks/useMeetingMedia'
 import { useRetryBackoff } from '../hooks/useRetryBackoff'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import type { RemotePlaybackStats } from '../media/mediaSubscriber'
-import type { SidebarStatsSample } from '../types/stats'
+import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
 import { updateSubscriptionState } from '../utils/state/roomState'
 
 interface MeetingRoomProps {
@@ -30,32 +30,8 @@ type StatsSnapshot = {
   localMemberId: string
   localVideoBitrate: number | null
   localAudioBitrate: number | null
-  localCameraVideoSendTiming: {
-    captureToEncodeDoneMs: number | null
-    encodeQueueSize: number
-    queueWaitMs: number
-    sendActiveMs: number
-    objectSendMs: number
-    serializeMs: number
-    queueDepth: number
-    objectBytes: number
-    objectCount: number
-    aliasCount: number
-    keyframe: boolean
-  } | null
-  localScreenShareVideoSendTiming: {
-    captureToEncodeDoneMs: number | null
-    encodeQueueSize: number
-    queueWaitMs: number
-    sendActiveMs: number
-    objectSendMs: number
-    serializeMs: number
-    queueDepth: number
-    objectBytes: number
-    objectCount: number
-    aliasCount: number
-    keyframe: boolean
-  } | null
+  localCameraVideoSendTiming: VideoSendTiming | null
+  localScreenShareVideoSendTiming: VideoSendTiming | null
   remoteMembers: RemoteMember[]
 }
 
@@ -224,37 +200,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           timestamp: sampledAt,
           videoBitrateKbps: snapshot.localVideoBitrate,
           audioBitrateKbps: snapshot.localAudioBitrate,
-          localCameraCaptureToEncodeDoneMs: snapshot.localCameraVideoSendTiming?.captureToEncodeDoneMs ?? null,
-          localCameraEncodeQueueSize: snapshot.localCameraVideoSendTiming?.encodeQueueSize ?? null,
-          localCameraSendQueueWaitMs: snapshot.localCameraVideoSendTiming?.queueWaitMs ?? null,
-          localCameraSendActiveMs: snapshot.localCameraVideoSendTiming?.sendActiveMs ?? null,
-          localCameraSendObjectMs: snapshot.localCameraVideoSendTiming?.objectSendMs ?? null,
-          localCameraSendSerializeMs: snapshot.localCameraVideoSendTiming?.serializeMs ?? null,
-          localCameraSendQueueDepth: snapshot.localCameraVideoSendTiming?.queueDepth ?? null,
-          localCameraSendObjectBytes: snapshot.localCameraVideoSendTiming?.objectBytes ?? null,
-          localCameraSendObjectCount: snapshot.localCameraVideoSendTiming?.objectCount ?? null,
-          localCameraSendAliasCount: snapshot.localCameraVideoSendTiming?.aliasCount ?? null,
-          localCameraSendKeyframe: snapshot.localCameraVideoSendTiming
-            ? snapshot.localCameraVideoSendTiming.keyframe
-              ? 1
-              : 0
-            : null,
-          localScreenShareCaptureToEncodeDoneMs:
-            snapshot.localScreenShareVideoSendTiming?.captureToEncodeDoneMs ?? null,
-          localScreenShareEncodeQueueSize: snapshot.localScreenShareVideoSendTiming?.encodeQueueSize ?? null,
-          localScreenShareSendQueueWaitMs: snapshot.localScreenShareVideoSendTiming?.queueWaitMs ?? null,
-          localScreenShareSendActiveMs: snapshot.localScreenShareVideoSendTiming?.sendActiveMs ?? null,
-          localScreenShareSendObjectMs: snapshot.localScreenShareVideoSendTiming?.objectSendMs ?? null,
-          localScreenShareSendSerializeMs: snapshot.localScreenShareVideoSendTiming?.serializeMs ?? null,
-          localScreenShareSendQueueDepth: snapshot.localScreenShareVideoSendTiming?.queueDepth ?? null,
-          localScreenShareSendObjectBytes: snapshot.localScreenShareVideoSendTiming?.objectBytes ?? null,
-          localScreenShareSendObjectCount: snapshot.localScreenShareVideoSendTiming?.objectCount ?? null,
-          localScreenShareSendAliasCount: snapshot.localScreenShareVideoSendTiming?.aliasCount ?? null,
-          localScreenShareSendKeyframe: snapshot.localScreenShareVideoSendTiming
-            ? snapshot.localScreenShareVideoSendTiming.keyframe
-              ? 1
-              : 0
-            : null
+          localCameraSend: snapshot.localCameraVideoSendTiming,
+          localScreenShareSend: snapshot.localScreenShareVideoSendTiming
         }
         next.set(snapshot.localMemberId, appendStatsSample(prev.get(snapshot.localMemberId), localSample))
         for (const remoteMember of snapshot.remoteMembers) {

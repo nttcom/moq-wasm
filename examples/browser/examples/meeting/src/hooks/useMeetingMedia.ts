@@ -34,6 +34,7 @@ import {
   toEditableCatalogTracks
 } from '../media/meetingCatalog'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
+import type { VideoSendTiming } from '../types/stats'
 
 interface UseMeetingMediaResult {
   cameraEnabled: boolean
@@ -46,8 +47,8 @@ interface UseMeetingMediaResult {
   localAudioStream: MediaStream | null
   localVideoBitrate: number | null
   localAudioBitrate: number | null
-  localCameraVideoSendTiming: LocalVideoSendTiming | null
-  localScreenShareVideoSendTiming: LocalVideoSendTiming | null
+  localCameraVideoSendTiming: VideoSendTiming | null
+  localScreenShareVideoSendTiming: VideoSendTiming | null
   remotePictures: Map<string, RemotePictures>
   toggleCamera: () => Promise<boolean>
   toggleScreenShare: () => Promise<boolean>
@@ -83,20 +84,6 @@ interface UseMeetingMediaResult {
   addCatalogTrack: (track: Omit<EditableMeetingCatalogTrack, 'id'>) => void
   updateCatalogTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   removeCatalogTrack: (id: string) => void
-}
-
-type LocalVideoSendTiming = {
-  captureToEncodeDoneMs: number | null
-  encodeQueueSize: number
-  queueWaitMs: number
-  sendActiveMs: number
-  objectSendMs: number
-  serializeMs: number
-  queueDepth: number
-  objectBytes: number
-  objectCount: number
-  aliasCount: number
-  keyframe: boolean
 }
 
 const DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS: VideoEncodingSettings = {
@@ -191,10 +178,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localAudioStream, setLocalAudioStream] = useState<MediaStream | null>(null)
   const [localVideoBitrate, setLocalVideoBitrate] = useState<number | null>(null)
   const [localAudioBitrate, setLocalAudioBitrate] = useState<number | null>(null)
-  const [localCameraVideoSendTiming, setLocalCameraVideoSendTiming] = useState<LocalVideoSendTiming | null>(null)
-  const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<LocalVideoSendTiming | null>(
-    null
-  )
+  const [localCameraVideoSendTiming, setLocalCameraVideoSendTiming] = useState<VideoSendTiming | null>(null)
+  const [localScreenShareVideoSendTiming, setLocalScreenShareVideoSendTiming] = useState<VideoSendTiming | null>(null)
   const [remotePictures, setRemotePictures] = useState<Map<string, RemotePictures>>(new Map())
   const [playoutSettings, setPlayoutSettingsState] = useState<Map<string, PlayoutSettings>>(new Map())
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
