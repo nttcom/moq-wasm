@@ -201,7 +201,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 | control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
 | `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. |
 | `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
-| `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
+| `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. This is also how a close this side requested with any code other than PROTOCOL_VIOLATION is reported; `close_with_error(ProtocolViolation, ..)` emits `SessionEvent::ProtocolViolation` at once instead. |
 | `PublishDoneExpiryTask` | receives the Request ID of every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription 10 s later (see *Key invariants*). Holds only a `Weak<SessionContext>`. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
