@@ -1,19 +1,8 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { MOQTClient } from '../../pkg/moqt'
-
 export type MediaVideoHardwareAcceleration = 'prefer-hardware' | 'prefer-software' | 'no-preference'
 
 export type MediaVideoEncodingOverrides = {
   codec?: string
   hardwareAcceleration?: MediaVideoHardwareAcceleration
-}
-
-export function requireRawClient(moqtClient: MoqtClientWrapper): MOQTClient {
-  const client = moqtClient.getRawClient()
-  if (!client) {
-    throw new Error('MOQT client not connected')
-  }
-  return client
 }
 
 export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {

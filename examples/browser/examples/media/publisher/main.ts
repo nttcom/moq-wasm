@@ -3,8 +3,14 @@ import type { MOQTClient } from '../../../pkg/moqt'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt } from '../../../utils/media/videoTransport'
 import { buildMediaCatalogJson, getMediaVideoProfiles } from '../catalog'
-import { getMediaVideoEncodingOverrides, requireRawClient } from '../common'
-import { element, getErrorMessage, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
+import { getMediaVideoEncodingOverrides } from '../common'
+import {
+  element,
+  getErrorMessage,
+  parseTrackNamespace,
+  setStatusText,
+  initializeMediaExamplePage
+} from '../../../utils/page'
 import { getTrackAliases, serveSubscribes } from '../serveSubscribes'
 
 /// A keyframe every 2 s at 30 fps.
@@ -149,7 +155,7 @@ function sendSubgroupObjectButtonClickHandler(): void {
     }
     let client: MOQTClient
     try {
-      client = requireRawClient(moqtClient)
+      client = moqtClient.requireConnectedClient()
     } catch (error) {
       setStatusText('publisher-send-status', `Publish failed: ${getErrorMessage(error)}`)
       console.error(error)

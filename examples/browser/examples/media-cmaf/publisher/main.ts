@@ -1,7 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt'
 import { MediaTransportState } from '../../../utils/media/transportState'
-import { requireRawClient } from '../../media/common'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
 import { buildMediaCatalogJson } from '../../media/catalog'
 import {
@@ -112,7 +111,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
     }
     let client: MOQTClient
     try {
-      client = requireRawClient(moqtClient)
+      client = moqtClient.requireConnectedClient()
     } catch (error) {
       console.error(error)
       return

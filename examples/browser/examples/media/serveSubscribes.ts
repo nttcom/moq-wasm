@@ -3,7 +3,6 @@ import { SubgroupWriter } from '@moqt/subgroupWriter'
 import type { MOQTClient } from '../../pkg/moqt'
 import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 import { timeSeededGroupId } from '../../utils/media/clock'
-import { requireRawClient } from './common'
 
 export type MediaPublication = {
   trackNamespace: () => string[]
@@ -38,7 +37,7 @@ export function serveSubscribes(moqtClient: MoqtClientWrapper, publication: Medi
 
     const { trackName } = subscribe
     if (trackName === CATALOG_TRACK_NAME) {
-      const writer = new SubgroupWriter(requireRawClient(moqtClient), await respondOk(0n))
+      const writer = new SubgroupWriter(moqtClient.requireConnectedClient(), await respondOk(0n))
       await writer.openGroup(nextCatalogGroupId++)
       await writer.send(new TextEncoder().encode(publication.catalogJson(trackNamespace)))
       await writer.closeGroup()
