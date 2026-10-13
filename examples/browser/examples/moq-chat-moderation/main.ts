@@ -3,7 +3,6 @@ import type { SubgroupObjectMessage } from '../../pkg/moqt'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
-import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 import {
   type Location,
   MAX_CHAT_TEXT_LENGTH,
@@ -12,6 +11,7 @@ import {
   parseModerationVerdicts
 } from './chatWire'
 import { timeSeededGroupId } from '../../utils/media/clock'
+import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 
 const CHAT_NAMESPACE = ['anon', 'moq-chat-moderation', 'chat']
 const MODERATOR_NAMESPACE = ['anon', 'moq-chat-moderation', 'moderator']

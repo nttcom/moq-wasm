@@ -1,7 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { appendCloudRelayPresetButtons } from '../../utils/relayPresets'
-import { MEDIA_CATALOG_TRACK_NAME } from '../media/catalog'
-import { element, getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatus } from '../media/common'
+import { initializeMediaExamplePage } from '../media/common'
 import type { LivePictureKind } from '@player/livePictureSink'
 import { PlayerControls } from '@player/ui/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
@@ -18,6 +17,8 @@ import {
   streamKbps,
   summarizeStreams
 } from './streamMonitor'
+import { element, getErrorMessage, parseTrackNamespace, setStatus } from '../../utils/page'
+import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
 
 const AUTH_INFO = 'secret'
 
@@ -192,7 +193,7 @@ function renderStreams(): void {
   const liveRecords = records.filter(
     (record) =>
       record.kind === 'subscribe' &&
-      (!reviewing || record.track === MEDIA_CATALOG_TRACK_NAME || record.track === mediaTimelineTrackName)
+      (!reviewing || record.track === CATALOG_TRACK_NAME || record.track === mediaTimelineTrackName)
   )
   const fetchRecords = records.filter((record) => record.kind === 'fetch')
   const playheads = streamMonitor.currentPlayheads()

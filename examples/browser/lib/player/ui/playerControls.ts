@@ -1,11 +1,11 @@
-import { getErrorMessage } from '../../../examples/media/common'
-import type { MediaCatalogTrack } from '../../../examples/media/catalog'
 import type { BufferPolicy } from '../jitterBuffer'
 import type { LivePlayer, LivePlayerState, LivePlayerStats, Packaging } from '../livePlayer'
 import { type CatchUp, DEFAULT_BUFFER_POLICY } from '../livePlayout'
 import { formatElapsed } from '../mediaTimeline'
 import type { LogLevel } from '../trackContext'
 import { CONTROLS_MARKUP } from './controlsMarkup'
+import { getErrorMessage } from '../../../utils/page'
+import type { MediaCatalogTrack } from '../../msf/catalog'
 import './playerControls.css'
 
 const MICROS_PER_SECOND = 1_000_000

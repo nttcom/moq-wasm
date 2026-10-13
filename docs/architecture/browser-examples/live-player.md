@@ -71,9 +71,9 @@ Rules:
   appends its markup and `playerControls.css` to the same container, after the
   pictures and the page's own overlays. The arrow keys skip wherever the focus
   is, so a page holds one `PlayerControls`.
-- L1 still reads the MSF catalog through `examples/media/catalog.ts` and uses
-  `getErrorMessage` from `examples/media/common.ts`; the catalog reader shares
-  its audio track naming with the media publishers there.
+- L1 reads the MSF catalog through `lib/msf/catalog.ts` and uses
+  `getErrorMessage` from `utils/page.ts`; neither `lib/` nor `utils/` imports
+  from `examples/`.
 - Diagnostics stay in L3. L1 reports deliveries to an optional observer
   (`DeliveryObserver`), which the Live Viewer's `StreamMonitor` implements.
 
