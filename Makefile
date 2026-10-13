@@ -2,16 +2,20 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 
 -include .env
 
-LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
+MOQT_URL ?= https://127.0.0.1:4433
+RESOLVED_MOQT_URL = $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
+LOCAL_MOQT_URL ?= $(RESOLVED_MOQT_URL)
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # Only a local relay serves the self-signed development certificate; any other relay is verified.
-LOCAL_RELAY_URL_PATTERNS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
-is_local_relay = $(or $(filter $$(LOCAL_MOQT_URL),$(value $1)),$(filter $(LOCAL_RELAY_URL_PATTERNS),$($1)))
-LIVE_INGEST_TLS_FLAGS = $(if $(call is_local_relay,LIVE_INGEST_MOQT_URL),--insecure-skip-tls-verify)
-ONVIF_TLS_FLAGS = $(if $(call is_local_relay,ONVIF_MOQT_URL),--insecure-skip-tls-verify)
-GST_TLS_PROPERTIES = $(if $(call is_local_relay,GST_MOQT_URL),insecure-skip-tls-verify=true)
+# A loopback MOQT_URL may resolve to the Docker bridge host, which is local as well.
+LOOPBACK_RELAY_URLS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
+LOCAL_RELAY_URLS = $(LOOPBACK_RELAY_URLS) $(if $(filter $(LOOPBACK_RELAY_URLS),$(MOQT_URL)),$(RESOLVED_MOQT_URL))
+is_local_relay = $(filter $(LOCAL_RELAY_URLS),$1)
+LIVE_INGEST_TLS_FLAGS = $(if $(call is_local_relay,$(LIVE_INGEST_MOQT_URL)),--insecure-skip-tls-verify)
+ONVIF_TLS_FLAGS = $(if $(call is_local_relay,$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
+GST_TLS_PROPERTIES = $(if $(call is_local_relay,$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
