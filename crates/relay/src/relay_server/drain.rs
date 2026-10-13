@@ -10,8 +10,9 @@ use crate::modules::{
 /// Session migration, draft-14 §3.5: the relay leaves the route registry's
 /// active set, tells every client session where to reconnect with GOAWAY and
 /// waits for the clients to close. Clients still connected after `timeout`
-/// are closed with GOAWAY_TIMEOUT. Relay-peer sessions are left alone: the
-/// other relays route around a draining relay through the registry.
+/// are closed with GOAWAY_TIMEOUT. Relay-peer sessions receive a GOAWAY with
+/// no URI, which makes the other relay subscribe the remaining publishers of
+/// the tracks this relay feeds it; nothing waits for them.
 pub(crate) async fn drain_client_sessions(
     repo: &Arc<tokio::sync::Mutex<SessionRepository>>,
     route_registry: &dyn RelayRouteRegistry,
@@ -28,18 +29,20 @@ pub(crate) async fn drain_client_sessions(
         }
     };
 
-    let (sessions, mut client_session_count) = {
+    let (sessions, relay_sessions, mut client_session_count) = {
         let repo = repo.lock().await;
         (
             repo.sessions_with_peer(SessionPeer::Client),
+            repo.sessions_with_peer(SessionPeer::Relay),
             repo.client_session_count(),
         )
     };
     tracing::info!(
         client_sessions = sessions.len(),
+        relay_sessions = relay_sessions.len(),
         migration_target = target.as_deref().unwrap_or(""),
         timeout_secs = timeout.as_secs(),
-        "sending GOAWAY to every client session"
+        "sending GOAWAY to every session"
     );
     for session in &sessions {
         let new_session_uri = target
@@ -48,6 +51,11 @@ pub(crate) async fn drain_client_sessions(
             .unwrap_or_default();
         if let Err(error) = session.go_away(new_session_uri).await {
             tracing::warn!(%error, "failed to send GOAWAY");
+        }
+    }
+    for session in &relay_sessions {
+        if let Err(error) = session.go_away(String::new()).await {
+            tracing::warn!(%error, "failed to send GOAWAY to a relay peer");
         }
     }
 
@@ -87,6 +95,7 @@ mod tests {
     use super::drain_client_sessions;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
+        domain::session_peer::SessionPeer,
         session::session_repository::SessionRepository,
         test_support::{
             mock_session::{RecordedControlMessages, mock_new_session},
@@ -157,6 +166,29 @@ mod tests {
                 "the relay is shutting down".to_string()
             )]
         );
+    }
+
+    #[tokio::test]
+    async fn relay_peers_receive_an_empty_go_away_and_are_not_waited_for() {
+        // Arrange
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
+        let (mut new_session, recorded) = mock_new_session(1, VerifiedToken::full_access());
+        new_session.peer = SessionPeer::Relay;
+        repository.lock().await.add(new_session, sender).await;
+        let registry = StubRouteRegistry::with_migration_target(Some("relay-b.example:4433"));
+
+        // Act
+        let drained = tokio::time::timeout(
+            Duration::from_secs(1),
+            drain_client_sessions(&repository, &registry, DRAIN_TIMEOUT),
+        )
+        .await;
+
+        // Assert
+        assert!(drained.is_ok(), "a relay peer must not hold the drain");
+        assert_eq!(recorded.go_aways(), vec![""]);
+        assert!(recorded.closes().is_empty());
     }
 
     #[tokio::test]
