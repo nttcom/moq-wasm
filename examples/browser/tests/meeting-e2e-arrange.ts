@@ -1,4 +1,4 @@
-import { expect, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
+import { expect, type Browser, type Locator, type Page } from '@playwright/test'
 import { MEETING_INDEX_PATH } from '../playwright.helpers'
 
 export const RELAY_A_URL = process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433'
@@ -6,30 +6,9 @@ export const RELAY_B_URL = process.env.MEETING_E2E_RELAY_B_URL ?? 'https://127.0
 // Set by tests/browser-e2e/run-meeting-e2e.mjs: an app-scoped JWT the pages present via ?jwt=.
 export const MEETING_JWT = process.env.MEETING_E2E_JWT || undefined
 
-export interface MeetingClientPageModel {
-  page: Page
-  roomNameInput: Locator
-  userNameInput: Locator
-  relayARadio: Locator
-  relayBRadio: Locator
-  submitButton: Locator
-  roomName: Locator
-  leaveButton: Locator
-  toggleCameraButton: Locator
-  toggleMicrophoneButton: Locator
-  chatInput: Locator
-  chatSendButton: Locator
-  joinError: Locator
-}
-
 export interface ArrangeMeetingClientOptions {
   // Overrides the default JWT (MEETING_JWT). Pass an invalid token to exercise rejection.
   jwt?: string
-}
-
-export interface MeetingE2EClient {
-  context: BrowserContext
-  page: MeetingClientPageModel
 }
 
 // Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
@@ -70,7 +49,7 @@ function forwardFilteredPageConsole(page: Page, label: string): void {
   })
 }
 
-function createMeetingClientPageModel(page: Page): MeetingClientPageModel {
+function createMeetingClientPageModel(page: Page) {
   return {
     page,
     roomNameInput: page.getByTestId('join-room-name-input'),
@@ -88,10 +67,9 @@ function createMeetingClientPageModel(page: Page): MeetingClientPageModel {
   }
 }
 
-export async function arrangeMeetingClient(
-  browser: Browser,
-  { jwt = MEETING_JWT }: ArrangeMeetingClientOptions = {}
-): Promise<MeetingE2EClient> {
+export type MeetingClientPageModel = ReturnType<typeof createMeetingClientPageModel>
+
+export async function arrangeMeetingClient(browser: Browser, { jwt = MEETING_JWT }: ArrangeMeetingClientOptions = {}) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']

@@ -1,19 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
+import { globSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 export default defineConfig({
   base: '/moq-wasm/',
   plugins: [react()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'examples/meeting/src'),
-      '@moqt': resolve(__dirname, 'lib/moqt'),
-      '@player': resolve(__dirname, 'lib/player')
+      '@moqt': resolve(import.meta.dirname, 'lib/moqt'),
+      '@player': resolve(import.meta.dirname, 'lib/player')
     }
   },
   server: {
@@ -24,25 +20,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     rollupOptions: {
-      input: {
-        index: resolve(__dirname, 'index.html'),
-        message: resolve(__dirname, 'examples/message/index.html'),
-        media: resolve(__dirname, 'examples/media/index.html'),
-        publisher: resolve(__dirname, 'examples/media/publisher/index.html'),
-        subscriber: resolve(__dirname, 'examples/media/subscriber/index.html'),
-        'media-cmaf': resolve(__dirname, 'examples/media-cmaf/index.html'),
-        'media-cmaf-publisher': resolve(__dirname, 'examples/media-cmaf/publisher/index.html'),
-        'media-cmaf-subscriber': resolve(__dirname, 'examples/media-cmaf/subscriber/index.html'),
-        onvif: resolve(__dirname, 'examples/onvif/index.html'),
-        meeting: resolve(__dirname, 'examples/meeting/index.html'),
-        webcodecs: resolve(__dirname, 'examples/webcodecs/index.html'),
-        'remote-monitoring': resolve(__dirname, 'examples/remote-monitoring/index.html'),
-        'live-viewer': resolve(__dirname, 'examples/live-viewer/index.html'),
-        'moq-chat-moderation': resolve(__dirname, 'examples/moq-chat-moderation/index.html'),
-        'moq-camera-detection': resolve(__dirname, 'examples/moq-camera-detection/index.html'),
-        'moq-ptz-tracking': resolve(__dirname, 'examples/moq-ptz-tracking/index.html'),
-        observability: resolve(__dirname, 'examples/observability/index.html')
-      }
+      input: globSync('{index.html,examples/**/index.html}', { cwd: import.meta.dirname }).map((page) =>
+        resolve(import.meta.dirname, page)
+      )
     }
   }
 })

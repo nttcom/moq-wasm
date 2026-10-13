@@ -208,22 +208,18 @@
       }
 
       .modal {
-        position: fixed;
-        inset: 0;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        padding: 24px;
-        background: rgba(5, 8, 12, 0.7);
-        z-index: 20;
+        width: min(640px, 100%);
+        padding: 0;
+        border: none;
+        background: transparent;
+        color: inherit;
       }
 
-      .modal.open {
-        display: flex;
+      .modal::backdrop {
+        background: rgba(5, 8, 12, 0.7);
       }
 
       .modal-content {
-        width: min(640px, 100%);
         max-height: 85vh;
         overflow: auto;
         background: var(--card);
@@ -240,12 +236,6 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-      }
-
-      .modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
       }
 
       .muted {
@@ -461,14 +451,16 @@ make chrome</code></pre>
       </section>
     </div>
 
-    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <dialog id="settings-modal" class="modal">
       <div class="modal-content">
         <div class="modal-header">
           <div>
             <div class="command-title">Advanced Settings</div>
             <div class="muted">Tune namespaces and the command track.</div>
           </div>
-          <button id="settings-close-btn" class="secondary" type="button">Close</button>
+          <form method="dialog">
+            <button class="secondary">Close</button>
+          </form>
         </div>
         <label>
           Publish Namespace (announce)
@@ -491,7 +483,7 @@ make chrome</code></pre>
           <input id="max-subscribe-id" type="number" value="100" />
         </label>
       </div>
-    </div>
+    </dialog>
 
     <script type="module" src="./main.ts"></script>
     <script type="module" src="../../utils/publicNotice.ts"></script>

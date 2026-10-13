@@ -3,7 +3,8 @@ import type { LivePictureKind } from '@player/livePictureSink'
 import { PlayerControls } from '@player/ui/playerControls'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
-import { LivePlayer, type LivePlayerState, formatSyncOffset } from '@player/livePlayer'
+import { LivePlayer, type LivePlayerState } from '@player/livePlayer'
+import { formatLiveStats } from '@player/locLive'
 import { PublishPreview } from './publishPreview'
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -134,15 +135,8 @@ function renderPlayer(): void {
 
 function renderVideoStats(): void {
   const stats = player.stats()
-  const delay = stats.viewerDelayMs === undefined ? '' : ` · delay ${Math.round(stats.viewerDelayMs)} ms`
-  const buffer =
-    stats.bufferMs === undefined
-      ? ''
-      : ` · buffer ${Math.round(stats.bufferMs)} ms (target ${Math.round(stats.targetBufferMs)})`
   controls.renderBuffer(stats)
-  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : ''
-  element<HTMLSpanElement>('video-stats').textContent =
-    `${size}${delay}${buffer} · ${Math.round(stats.receivedKbps)} kbps · ${stats.videoObjects} objects · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks} · video ${stats.videoDrops} · shed ${Math.round(stats.shedMs)} ms`
+  element<HTMLSpanElement>('video-stats').textContent = `${formatLiveStats(stats)} · ${stats.videoObjects} objects`
 }
 
 function renderPublishStreams(state: LivePlayerState): void {
