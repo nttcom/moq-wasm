@@ -1,7 +1,6 @@
 import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } from '@moqt/moqtClient'
 import { LivePlayer } from '@player/livePlayer'
-import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import type { SubgroupObjectMessage } from '../../pkg/moqt'
 import { DjevStatusView } from '../../utils/djevStatus'
 import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
@@ -12,8 +11,6 @@ const TRACKER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'tracker']
 const PROMPT_TRACK = 'prompt'
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
 const AUTH_INFO = ''
-const SUBGROUP_ID = 0n
-const PUBLISHER_PRIORITY = 0
 const LARGEST_OBJECT_FILTER = 0x2
 type Prompt = { target: string; video: string } | { target: null }
 
@@ -24,7 +21,7 @@ class PromptPublisher {
   latestGroupId: bigint | undefined
 
   constructor(
-    private readonly client: MOQTClient,
+    private readonly session: MoqtClientWrapper,
     readonly requestId: bigint,
     private readonly trackAlias: bigint
   ) {}
@@ -34,17 +31,7 @@ class PromptPublisher {
     const groupId = this.nextGroupId++
     this.latestGroupId = groupId
     const payload = new TextEncoder().encode(JSON.stringify(prompt))
-    await this.client.sendSubgroupHeader(this.trackAlias, groupId, SUBGROUP_ID, PUBLISHER_PRIORITY)
-    await this.client.sendSubgroupObject(this.trackAlias, groupId, SUBGROUP_ID, 0n, undefined, payload, undefined)
-    await this.client.sendSubgroupObject(
-      this.trackAlias,
-      groupId,
-      SUBGROUP_ID,
-      1n,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    await this.session.sendSingleObjectGroup(this.trackAlias, groupId, payload)
   }
 }
 
@@ -150,9 +137,8 @@ async function acceptTrackerSubscriber({
     return
   }
   const trackAlias = await respondOk()
-  const client = session.getRawClient()
-  if (client) {
-    setPromptPublisher(new PromptPublisher(client, subscribe.requestId, trackAlias))
+  if (session.getRawClient()) {
+    setPromptPublisher(new PromptPublisher(session, subscribe.requestId, trackAlias))
     await sendPrompt(currentPrompt())
   }
 }
