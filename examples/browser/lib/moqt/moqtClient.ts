@@ -575,6 +575,40 @@ export class MoqtClientWrapper {
     await client.sendSubscribeForward(this.issueRequestId(), subscriptionRequestId, forward)
   }
 
+  /// A LargestObject SUBSCRIBE delivers only what follows the current largest
+  /// object, so a joining FETCH supplies that one. The two race, so the newest
+  /// group wins whichever arrives first.
+  async subscribeLatest(
+    trackNamespace: string[],
+    trackName: string,
+    authInfo: string,
+    onLatest: (payload: Uint8Array, groupId: bigint) => void
+  ): Promise<SubscribeResult> {
+    let newestGroupId: bigint | undefined
+    const deliver = (groupId: bigint, payload: Uint8Array) => {
+      if (payload.length === 0 || (newestGroupId !== undefined && groupId <= newestGroupId)) {
+        return
+      }
+      newestGroupId = groupId
+      onLatest(payload, groupId)
+    }
+    const result = await this.subscribe(trackNamespace, trackName, authInfo, {
+      filterType: FilterType.LargestObject,
+      forward: true
+    })
+    this.setOnSubgroupObjectHandler(result.subscribeOk.trackAlias, (groupId, object) => {
+      if (object.objectStatus === undefined) {
+        deliver(groupId, new Uint8Array(object.objectPayload))
+      }
+    })
+    if (result.subscribeOk.contentExists) {
+      await this.relativeJoiningFetch(result.requestId, 0n, {
+        onObject: (object) => deliver(object.groupId, object.objectPayload)
+      })
+    }
+    return result
+  }
+
   async sendSingleObjectGroup(trackAlias: bigint, groupId: bigint, payload: Uint8Array): Promise<void> {
     const writer = new SubgroupWriter(this.requireConnectedClient(), trackAlias)
     await writer.openGroup(groupId)
