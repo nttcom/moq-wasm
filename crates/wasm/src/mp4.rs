@@ -42,6 +42,13 @@ pub struct Mp4Index {
     inner: SampleIndex,
 }
 
+impl Mp4Index {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn sample_index(&self) -> &SampleIndex {
+        &self.inner
+    }
+}
+
 #[wasm_bindgen]
 impl Mp4Index {
     #[wasm_bindgen(constructor)]
