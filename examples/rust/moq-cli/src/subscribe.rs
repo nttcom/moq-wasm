@@ -5,15 +5,15 @@ use tracing::info;
 
 use crate::catalog;
 use crate::cli::SubscribeArgs;
-use crate::transport::{connect_relay, session_closed, subscribe_track};
+use crate::transport::{connect_relay, subscribe_track};
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let connection = connect_relay(&args.relay, args.track.app_id()).await?;
     let session_watch = tokio::spawn({
         let session = connection.session.clone();
         async move {
-            let reason = session_closed(&session).await;
-            tracing::error!(%reason, "session ended");
+            let close = session.closed().await;
+            tracing::error!(%close, "session ended");
         }
     });
     let result = subscribe_stdout(&connection.session, &args).await;
