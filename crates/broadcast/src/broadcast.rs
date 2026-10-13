@@ -50,10 +50,19 @@ impl Broadcast {
         relay.announce(&self.namespace).await
     }
 
-    /// Resolves once the relay has forwarded a SUBSCRIBE for a track of this
-    /// broadcast, which the catalog accepts from `announce` on, so a source
-    /// can start only when someone watches. Resolves at once without a
-    /// target; fails when the relay session ends.
+    /// Announces the namespace and accepts SUBSCRIBEs for `track_names` before
+    /// the catalog lists them.
+    pub async fn declare_tracks(&self, track_names: &[String]) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay.declare_tracks(&self.namespace, track_names).await
+    }
+
+    /// Resolves once a SUBSCRIBE for any track of this broadcast, the catalog
+    /// included, has been accepted, and at once without a target. Call after
+    /// `announce` or `declare_tracks`, since no SUBSCRIBE is accepted before.
+    /// Fails when the relay session ends.
     pub async fn wait_for_subscriber(&self) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());

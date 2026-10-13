@@ -63,6 +63,9 @@ struct RelayState {
     announced_namespaces: HashSet<String>,
     catalogs: HashMap<String, CatalogMetadata>,
     catalog_sent_at: HashMap<String, Instant>,
+    /// Per namespace path, the tracks a SUBSCRIBE is accepted for before the
+    /// catalog lists them.
+    declared_tracks: HashMap<String, HashSet<String>>,
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
@@ -81,11 +84,18 @@ impl RelayState {
             .or_insert_with(|| watch::channel(false).0)
     }
 
-    /// The catalog from the announce on, so a viewer can subscribe before the
-    /// source has produced one, and the CMAF tracks the catalog lists.
+    /// The catalog once the announce has started, the declared tracks, and
+    /// the CMAF tracks the catalog lists.
     fn subscribable(&self, namespace_path: &str, track_name: &str) -> bool {
         if track_name == CATALOG_TRACK_NAME {
-            return self.announced_namespaces.contains(namespace_path);
+            return self.catalogs.contains_key(namespace_path);
+        }
+        if self
+            .declared_tracks
+            .get(namespace_path)
+            .is_some_and(|tracks| tracks.contains(track_name))
+        {
+            return true;
         }
         self.catalogs
             .get(namespace_path)
@@ -364,6 +374,23 @@ impl ConnectedRelay {
             .send_replace(true);
     }
 
+    /// Registers the tracks before the announce, after which the relay may
+    /// forward a SUBSCRIBE for them at once.
+    pub(crate) async fn declare_tracks(
+        &self,
+        namespace: &[String],
+        track_names: &[String],
+    ) -> Result<()> {
+        self.state
+            .lock()
+            .await
+            .declared_tracks
+            .entry(namespace.join("/"))
+            .or_default()
+            .extend(track_names.iter().cloned());
+        self.announce(namespace).await
+    }
+
     pub(crate) async fn wait_for_subscriber(&self, namespace: &[String]) -> Result<()> {
         let mut subscribed = {
             let mut guard = self.state.lock().await;
@@ -546,12 +573,29 @@ mod tests {
     fn the_catalog_is_subscribable_from_the_announce_on() {
         // Arrange
         let mut state = RelayState::default();
-        state.announced_namespaces.insert("live/test".to_string());
+        state
+            .catalogs
+            .insert("live/test".to_string(), CatalogMetadata::default());
 
         // Act / Assert
         assert!(state.subscribable("live/test", CATALOG_TRACK_NAME));
         assert!(!state.subscribable("live/other", CATALOG_TRACK_NAME));
         assert!(!state.subscribable("live/test", "video"));
+    }
+
+    #[test]
+    fn a_declared_track_is_subscribable_before_the_catalog_lists_it() {
+        // Arrange
+        let mut state = RelayState::default();
+        state
+            .declared_tracks
+            .entry("onvif/client".to_string())
+            .or_default()
+            .insert("video/profile_1".to_string());
+
+        // Act / Assert
+        assert!(state.subscribable("onvif/client", "video/profile_1"));
+        assert!(!state.subscribable("onvif/client", "video/profile_2"));
     }
 
     #[tokio::test]

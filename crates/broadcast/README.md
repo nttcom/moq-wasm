@@ -1,8 +1,8 @@
 # broadcast
 
 Publishes an MSF broadcast, a catalog and H.264/AAC tracks, into a MoQT relay.
-It is the publishing side shared by `crates/live-ingest` and `crates/gst-plugin-moqt`
-(`moqtsink`); the Live Viewer's in-browser MP4 publisher follows the same
+It is the publishing side shared by `crates/live-ingest`, `crates/gst-plugin-moqt`
+(`moqtsink`) and `crates/onvif-ingest`; the Live Viewer's in-browser MP4 publisher follows the same
 conventions. Every publisher built on it produces the tracks below, so one
 player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 
@@ -12,12 +12,15 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 | --- | --- | --- |
 | `catalog` | MSF (draft-ietf-moq-msf-01) | Track list. `initDataList` carries the AAC config and the CMAF init segments, each named by the `initRef` of its track |
 | `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-01) | H.264 Annex-B, parameter sets in band, capture timestamp in extension header 2 |
-| `audio` | LOC | Raw AAC frames |
+| `audio` | LOC | Raw AAC, G.711 A-law or Opus frames (CMAF sibling for AAC only) |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample |
 | `timeline` | MSF media timeline | `[presentation time, [group, object], encode wallclock]` per keyframe |
 
 `video_720p` / `video_480p` / `video_360p` appear when the publisher transcodes
 (`crates/transcode`); each is one `altGroup` entry with `width` / `height`.
+A publisher can name its tracks otherwise (`SourceTracks`): `onvif-ingest`
+publishes `video/profile_N` and `audio/profile_N` per camera profile, without
+`timeline`.
 
 ## Behaviour
 
@@ -26,7 +29,7 @@ player, `examples/browser/examples/live-viewer`, plays and rewinds all of them.
 - Every track except the CMAF siblings is sent with PUBLISH before the catalog that lists it, without waiting for a subscriber. CMAF tracks are sent only while the relay subscribes to them.
 - Objects are kept for 60 s and answer standalone FETCHes the relay cannot cover from its own cache.
 - The catalog is re-sent when it changes and every 30 s; its newest object is kept for the publisher's lifetime.
-- A SUBSCRIBE for a track the catalog does not list is rejected with TRACK_DOES_NOT_EXIST.
+- A SUBSCRIBE for the catalog is accepted from the announce on, and one for a track declared with `Broadcast::declare_tracks` before the catalog lists it; `Broadcast::wait_for_subscriber` resolves on the first. Any other SUBSCRIBE for a track the catalog does not list as CMAF is rejected with TRACK_DOES_NOT_EXIST.
 
 The reasoning behind these choices is in the
 [architecture document](../../docs/architecture/broadcast/architecture.md).

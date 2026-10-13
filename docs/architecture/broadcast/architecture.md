@@ -8,7 +8,8 @@ layout, the publishing flow or the invariants described here change.
 `crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
 unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC
 and CMAF media tracks, a media timeline and a publisher-side FETCH cache.
-`crates/live-ingest` and `crates/gst-plugin-moqt` build on it. The track
+`crates/live-ingest`, `crates/gst-plugin-moqt` and `crates/onvif-ingest`
+build on it. The track
 layout is summarised in [its README](../../../crates/broadcast/README.md);
 this document records why the tracks are shaped that way.
 
@@ -20,7 +21,12 @@ the live-ingest stats panel reads its transport statistics and stream ledger.
 namespace, holds the catalog metadata and sends the objects of its tracks.
 `BroadcastWriter` turns `mediapack::MediaEvent`s into those objects behind a
 queue that never blocks the media source; `live-ingest` adds the transcoded
-renditions through the same `Broadcast`.
+renditions through the same `Broadcast`. A writer writes into `video` and
+`audio` by default; `onvif-ingest` runs one writer per camera profile in one
+broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
+The media timeline and the chat describe the default `video` and `audio`, so
+the catalog lists them, and the `audio` placeholder sent before the AAC config
+arrives, only while a default track exists.
 
 ## Publishing without subscribers
 Every track the catalog lists except the CMAF tracks is published with PUBLISH
@@ -36,7 +42,9 @@ connected to. A SUBSCRIBE for the catalog is accepted from the announce on,
 before the source has produced one, and the catalog flows on it once it is
 sent; `Broadcast::wait_for_subscriber` resolves on the first SUBSCRIBE accepted
 in the namespace, so a source such as an ONVIF camera can be started only when
-a viewer arrives. A SUBSCRIBE for any other track is rejected with
+a viewer arrives. `Broadcast::declare_tracks` extends the same to tracks a
+subscriber knows by name before any catalog lists them, such as the camera
+video a tracking bot subscribes to directly. A SUBSCRIBE for any other track is rejected with
 TRACK_DOES_NOT_EXIST.
 
 ## Track format
