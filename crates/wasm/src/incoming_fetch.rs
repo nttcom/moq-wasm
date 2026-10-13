@@ -1,4 +1,7 @@
-use moqt::wire::{GroupOrder, Location};
+use moqt::{
+    fetch::resolve_fetch_range,
+    wire::{GroupOrder, Location},
+};
 
 use crate::client_state::TrackKey;
 use crate::request_rejection::RequestRejection;
@@ -17,15 +20,9 @@ impl FetchRange {
         requested_end: Location,
         largest: Option<Location>,
     ) -> Result<Self, RequestRejection> {
-        match largest {
-            Some(largest) if start <= largest && !ends_at_or_before(start, requested_end) => {
-                Ok(Self {
-                    start,
-                    end: end_location(requested_end, largest),
-                })
-            }
-            _ => Err(RequestRejection::InvalidRange),
-        }
+        let end = resolve_fetch_range(start, requested_end, largest)
+            .map_err(|_| RequestRejection::InvalidRange)?;
+        Ok(Self { start, end })
     }
 }
 
@@ -41,33 +38,6 @@ pub(crate) struct IncomingFetchRequest {
     pub(crate) track_key: TrackKey,
     pub(crate) group_order: GroupOrder,
     pub(crate) range: FetchRange,
-}
-
-fn ends_at_or_before(start: Location, end: Location) -> bool {
-    start.group_id > end.group_id
-        || (start.group_id == end.group_id
-            && end.object_id != 0
-            && start.object_id >= end.object_id)
-}
-
-fn end_location(requested_end: Location, largest: Location) -> Location {
-    let after_largest = location_after(largest);
-    let whole_largest_group = Location {
-        group_id: largest.group_id,
-        object_id: 0,
-    };
-    if requested_end == whole_largest_group {
-        after_largest
-    } else {
-        requested_end.min(after_largest)
-    }
-}
-
-pub(crate) fn location_after(location: Location) -> Location {
-    Location {
-        group_id: location.group_id,
-        object_id: location.object_id + 1,
-    }
 }
 
 #[cfg(test)]
