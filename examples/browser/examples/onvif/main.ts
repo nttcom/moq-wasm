@@ -1,5 +1,6 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { LivePlayer, formatSyncOffset } from '@player/livePlayer'
+import { LivePlayer } from '@player/livePlayer'
+import { formatLiveStats } from '@player/locLive'
 import { PlayerControls } from '@player/ui/playerControls'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { timeSeededGroupId } from '../../utils/media/clock'
@@ -50,11 +51,7 @@ function renderPlayer(): void {
 
 function renderVideoStats(): void {
   const stats = player.stats()
-  const size = stats.frameSize ? `${stats.frameSize.width}x${stats.frameSize.height}` : '-'
-  const delay = stats.viewerDelayMs === undefined ? '-' : `${Math.round(stats.viewerDelayMs)} ms`
-  const buffer = stats.bufferMs === undefined ? '-' : `${Math.round(stats.bufferMs)} ms`
-  element('video-stats').textContent =
-    `${size} · delay ${delay} · buffer ${buffer} · ${Math.round(stats.receivedKbps)} kbps · A/V ${formatSyncOffset(stats.syncOffsetMs)}`
+  element('video-stats').textContent = formatLiveStats(stats)
   controls.renderBuffer(stats)
 }
 
