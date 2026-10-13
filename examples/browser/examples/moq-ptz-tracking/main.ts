@@ -2,7 +2,8 @@ import { type IncomingSubscribeContext, MoqtClientWrapper, RequestErrorCode } fr
 import { LivePlayer } from '@player/livePlayer'
 import type { SubgroupObjectMessage } from '../../pkg/moqt'
 import { DjevStatusView } from '../../utils/djevStatus'
-import { DEFAULT_LOCAL_RELAY_A_URL, configureRelayUrlControls } from '../../utils/relayPresets'
+import { showBotOffHoursNotice } from '../../utils/botHours'
+import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
@@ -60,7 +61,9 @@ const moveLabel = element<HTMLSpanElement>('move')
 const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 const djevStatus = new DjevStatusView(element('djev-status'))
 
-configureRelayUrlControls({ defaultUrl: DEFAULT_LOCAL_RELAY_A_URL })
+showBotOffHoursNotice(element('bot-hours'))
+appendCloudRelayPresetButtons(element('urlPresets'))
+configureRelayUrlControls()
 
 joinButton.addEventListener('click', () => void join())
 leaveButton.addEventListener('click', () => void leave())

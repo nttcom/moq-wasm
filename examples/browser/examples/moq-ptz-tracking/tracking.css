@@ -46,7 +46,7 @@
   background: #fef3c7;
 }
 
-.setup-hub {
+.setup-flow.setup-hub {
   display: grid;
   grid-template-areas:
     '. . browser . . . .'

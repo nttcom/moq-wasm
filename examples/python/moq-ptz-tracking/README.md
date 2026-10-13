@@ -55,7 +55,27 @@ ContinuousMove では逆になりません。
 
 ## 起動
 
-ONVIF カメラは手元のネットワークにあるため、relay・`onvif-ingest`・bot をすべて手元で起動します。
+ONVIF カメラは手元のネットワークにあるため、`onvif-ingest` は常に手元で起動します。relay と bot は、クラウドのものか手元のものを使います。
+
+### クラウドの relay と bot を使う
+
+bot は AI bots VM（平日 9:00〜17:30）で動き、Cloud relay-1 につながっています。
+
+1. ONVIF カメラを Cloud relay-1 に配信する
+
+   リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定します。
+
+   ```shell
+   make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
+   ```
+
+2. ページを開き、Relay URL は既定の Cloud relay-1 のまま Join する
+
+   Cloud relay-1 の `anon/onvif/*` は誰でも見られ、PTZ コマンドも誰でも送れます。
+
+### 手元の relay と bot を使う
+
+Cloud relay-1 にはクラウドの bot がつながっているため、手元の bot は手元の relay につなぎます。
 各コマンドは別々のターミナルで実行します。
 
 1. relay を起動する
@@ -91,7 +111,7 @@ ONVIF カメラは手元のネットワークにあるため、relay・`onvif-in
    make chrome
    ```
 
-   `make chrome` で起動した Chrome でハブから MoQ PTZ Tracking を開き、Local relay-a のまま Join します。
+   `make chrome` で起動した Chrome でハブから MoQ PTZ Tracking を開き、Local relay-a を選んで Join します。
    追従する対象を入力して「追従」を押すと bot がカメラを動かし始め、「停止」かページを閉じると止まります。
 
 ## トラック
