@@ -691,7 +691,7 @@ function CatalogTrackEditor({
                 <OptionSelect
                   label="Codec Preset"
                   options={videoEncodingOptions.codecOptions}
-                  value={findVideoCodecOptionId(videoEncodingOptions, currentDraft.codec)}
+                  value={findOptionId(videoEncodingOptions.codecOptions, 'codec', currentDraft.codec)}
                   onChange={(option) => {
                     const nextResolution = pickSupportedVideoResolutionOption(
                       videoEncodingOptions,
@@ -721,7 +721,7 @@ function CatalogTrackEditor({
                   label="Bitrate Preset"
                   className="col-span-full flex flex-col gap-1 text-xs text-blue-100"
                   options={videoEncodingOptions.bitrateOptions}
-                  value={findVideoBitrateOptionId(videoEncodingOptions, currentDraft.bitrate)}
+                  value={findOptionId(videoEncodingOptions.bitrateOptions, 'bitrate', currentDraft.bitrate)}
                   onChange={(option) => setCurrentDraft({ bitrate: option.bitrate })}
                 />
                 <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
@@ -757,20 +757,24 @@ function CatalogTrackEditor({
                 <OptionSelect
                   label="Codec Preset"
                   options={audioEncodingOptions.codecOptions}
-                  value={findAudioCodecOptionId(audioEncodingOptions, currentDraft.codec)}
+                  value={findOptionId(audioEncodingOptions.codecOptions, 'codec', currentDraft.codec)}
                   onChange={(option) => setCurrentDraft({ codec: option.codec })}
                 />
                 <OptionSelect
                   label="Bitrate Preset"
                   options={audioEncodingOptions.bitrateOptions}
-                  value={findAudioBitrateOptionId(audioEncodingOptions, currentDraft.bitrate)}
+                  value={findOptionId(audioEncodingOptions.bitrateOptions, 'bitrate', currentDraft.bitrate)}
                   onChange={(option) => setCurrentDraft({ bitrate: option.bitrate })}
                 />
                 <OptionSelect
                   label="Channel Preset"
                   className="col-span-full flex flex-col gap-1 text-xs text-blue-100"
                   options={audioEncodingOptions.channelOptions}
-                  value={findAudioChannelOptionId(audioEncodingOptions, currentDraft.channelConfig)}
+                  value={findOptionId(
+                    audioEncodingOptions.channelOptions,
+                    'channels',
+                    parseAudioChannelCount(currentDraft.channelConfig)
+                  )}
                   onChange={(option) =>
                     setCurrentDraft({
                       channelConfig: formatAudioChannelConfig(option.channels),
@@ -988,8 +992,12 @@ function AudioGroupUpdateFields({
   )
 }
 
-function findVideoCodecOptionId(options: VideoEncodingOptionSet, codec: string | undefined): string {
-  return options.codecOptions.find((entry) => entry.codec === codec)?.id ?? options.codecOptions[0]?.id ?? ''
+function findOptionId<Option extends { id: string }, Key extends keyof Option>(
+  options: Option[],
+  key: Key,
+  value: Option[Key] | undefined
+): string {
+  return options.find((entry) => entry[key] === value)?.id ?? options[0]?.id ?? ''
 }
 
 function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableMeetingCatalogTrack, 'id'> {
@@ -1116,23 +1124,6 @@ function pickSupportedVideoResolutionOption(
     }
   }
   return supported[0]
-}
-
-function findVideoBitrateOptionId(options: VideoEncodingOptionSet, bitrate: number | undefined): string {
-  return options.bitrateOptions.find((entry) => entry.bitrate === bitrate)?.id ?? options.bitrateOptions[0]?.id ?? ''
-}
-
-function findAudioCodecOptionId(options: AudioEncodingOptionSet, codec: string | undefined): string {
-  return options.codecOptions.find((entry) => entry.codec === codec)?.id ?? options.codecOptions[0]?.id ?? ''
-}
-
-function findAudioBitrateOptionId(options: AudioEncodingOptionSet, bitrate: number | undefined): string {
-  return options.bitrateOptions.find((entry) => entry.bitrate === bitrate)?.id ?? options.bitrateOptions[0]?.id ?? ''
-}
-
-function findAudioChannelOptionId(options: AudioEncodingOptionSet, channelConfig: string | undefined): string {
-  const channels = parseAudioChannelCount(channelConfig)
-  return options.channelOptions.find((entry) => entry.channels === channels)?.id ?? options.channelOptions[0]?.id ?? ''
 }
 
 function normalizeTrackKeyframeInterval(track: Pick<MeetingCatalogTrack, 'keyframeInterval'>): number {
