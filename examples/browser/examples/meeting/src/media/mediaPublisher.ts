@@ -15,7 +15,6 @@ import {
   type MeetingCatalogTrack
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 import { timeSeededGroupId } from '../../../../utils/media/clock'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../../../utils/media/objectStatus'
 
@@ -60,7 +59,6 @@ type VideoTrackEncoderContext = {
   sendQueue: Promise<void>
   pendingSendJobs: number
   activeAliases: Set<string>
-  videoObjectLogCounts: Map<string, number>
 }
 
 type VideoSendTimingAccumulator = {
@@ -566,8 +564,7 @@ export class MediaPublisher {
       transportState: retainedTransportState ?? new MediaTransportState(),
       sendQueue: Promise.resolve(),
       pendingSendJobs: 0,
-      activeAliases: new Set<string>(),
-      videoObjectLogCounts: new Map<string, number>()
+      activeAliases: new Set<string>()
     }
 
     context.worker.onmessage = async (event: MessageEvent) => {
@@ -846,19 +843,6 @@ export class MediaPublisher {
       return
     }
 
-    const isKeyframe = chunk.type === 'key'
-    if (isKeyframe) {
-      this.logVideoPublisherEvent({
-        event: 'keyframe-chunk',
-        trackName: context.trackName,
-        source: context.source,
-        codec: context.config.codec,
-        chunkType: chunk.type,
-        aliases: aliases.map((alias) => alias.toString()),
-        payloadBytes: chunk.byteLength
-      })
-    }
-
     const enqueueStartedAtMs = performance.now()
     const captureToEncodeDoneMs =
       typeof captureTimestampMicros === 'number' &&
@@ -883,18 +867,7 @@ export class MediaPublisher {
           objectCount: 0
         }
         const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc) => {
-          await this.sendVideoObjectForTrackContext(
-            context,
-            trackAlias,
-            groupId,
-            subgroupId,
-            objectId,
-            payload,
-            rawClient,
-            loc,
-            timingAcc,
-            isKeyframe
-          )
+          await this.sendVideoObject(trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc, timingAcc)
         }
         const { needsKeyframe } = await sendVideoChunkViaMoqt({
           chunk,
@@ -933,17 +906,6 @@ export class MediaPublisher {
         )
       })
       .catch((error) => {
-        if (isKeyframe) {
-          this.logVideoPublisherEvent({
-            event: 'keyframe-send-failed',
-            trackName: context.trackName,
-            source: context.source,
-            codec: context.config.codec,
-            chunkType: chunk.type,
-            aliases: aliases.map((alias) => alias.toString()),
-            payloadBytes: chunk.byteLength
-          })
-        }
         console.error(`${context.trackName} video send failed:`, error)
       })
       .finally(() => {
@@ -986,75 +948,21 @@ export class MediaPublisher {
       })
   }
 
-  private async sendVideoObjectForTrackContext(
-    context: VideoTrackEncoderContext,
+  private async sendVideoObject(
     trackAlias: bigint,
     groupId: bigint,
     subgroupId: bigint,
     objectId: bigint,
     payload: Uint8Array,
     client: MOQTClient,
-    locHeader?: LocHeader,
-    timingAcc?: VideoSendTimingAccumulator,
-    logKeyframeSend = false
+    locHeader: LocHeader | undefined,
+    timingAcc: VideoSendTimingAccumulator
   ): Promise<void> {
-    if (timingAcc) {
-      timingAcc.objectBytes += payload.byteLength
-      timingAcc.objectCount += 1
-    }
-
+    timingAcc.objectBytes += payload.byteLength
+    timingAcc.objectCount += 1
     const objectSendStartedAtMs = performance.now()
     await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
-    if (timingAcc) {
-      timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
-    }
-    if (
-      isMeetingVideoPipelineDebugEnabled() &&
-      (logKeyframeSend || this.shouldLogSampledVideoObject(context, trackAlias, groupId, objectId))
-    ) {
-      this.logVideoPublisherEvent({
-        event: logKeyframeSend ? 'keyframe-object-sent' : 'sampled-delta-object-sent',
-        trackName: context.trackName,
-        source: context.source,
-        codec: context.config.codec,
-        chunkType: logKeyframeSend ? 'key' : 'delta',
-        aliases: [trackAlias.toString()],
-        groupId: groupId.toString(),
-        subgroupId: subgroupId.toString(),
-        objectId: objectId.toString(),
-        payloadBytes: payload.byteLength
-      })
-    }
-  }
-
-  private shouldLogSampledVideoObject(
-    context: VideoTrackEncoderContext,
-    trackAlias: bigint,
-    groupId: bigint,
-    objectId: bigint
-  ): boolean {
-    const key = `${trackAlias.toString()}:${groupId.toString()}`
-    const count = context.videoObjectLogCounts.get(key) ?? 0
-    context.videoObjectLogCounts.set(key, count + 1)
-    return objectId <= 2n || objectId % 30n === 0n
-  }
-
-  private logVideoPublisherEvent(fields: {
-    event: string
-    trackName: string
-    source: VideoSource
-    codec: string
-    chunkType: EncodedVideoChunkType
-    aliases: string[]
-    groupId?: string
-    subgroupId?: string
-    objectId?: string
-    payloadBytes?: number
-  }): void {
-    if (!isMeetingVideoPipelineDebugEnabled()) {
-      return
-    }
-    console.info(VIDEO_PUBLISHER_LOG_PREFIX, JSON.stringify(fields))
+    timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
   }
 
   private collectAliasesForTrack(

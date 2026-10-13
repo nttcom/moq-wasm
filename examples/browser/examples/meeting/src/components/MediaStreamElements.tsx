@@ -1,7 +1,4 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
-import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
-
-const VIDEO_ELEMENT_LOG_PREFIX = '[meeting][media-element][video]'
 
 interface MediaStreamVideoProps {
   stream?: MediaStream | null
@@ -28,20 +25,9 @@ export function MediaStreamVideo({
   useEffect(() => {
     if (ref.current) {
       ref.current.srcObject = stream ?? null
-      logVideoElementEvent(ref.current, 'src-object', testId, stream)
     }
     setHasFirstFrame(false)
-  }, [stream, testId])
-
-  const handleVideoEvent = (event: string) => {
-    if (!ref.current) {
-      return
-    }
-    logVideoElementEvent(ref.current, event, testId, stream)
-    if (event === 'loadeddata') {
-      setHasFirstFrame(true)
-    }
-  }
+  }, [stream])
 
   return (
     <div className="w-full">
@@ -54,13 +40,7 @@ export function MediaStreamVideo({
           playsInline
           muted={muted}
           controls={hasFirstFrame}
-          onLoadedMetadata={() => handleVideoEvent('loadedmetadata')}
-          onLoadedData={() => handleVideoEvent('loadeddata')}
-          onCanPlay={() => handleVideoEvent('canplay')}
-          onPlaying={() => handleVideoEvent('playing')}
-          onWaiting={() => handleVideoEvent('waiting')}
-          onStalled={() => handleVideoEvent('stalled')}
-          onError={() => handleVideoEvent('error')}
+          onLoadedData={() => setHasFirstFrame(true)}
         />
         {overlay && (
           <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-black/70 px-3 py-2 text-sm font-semibold text-white shadow-md">
@@ -70,32 +50,6 @@ export function MediaStreamVideo({
       </div>
       {footer}
     </div>
-  )
-}
-
-function logVideoElementEvent(
-  element: HTMLVideoElement,
-  event: string,
-  testId: string | undefined,
-  stream?: MediaStream | null
-): void {
-  if (!isMeetingVideoPipelineDebugEnabled()) {
-    return
-  }
-  const videoTracks = stream?.getVideoTracks() ?? []
-  console.info(
-    VIDEO_ELEMENT_LOG_PREFIX,
-    JSON.stringify({
-      event,
-      testId,
-      hasStream: Boolean(stream),
-      videoTrackCount: videoTracks.length,
-      readyState: element.readyState,
-      networkState: element.networkState,
-      paused: element.paused,
-      currentTime: element.currentTime,
-      error: element.error?.message ?? null
-    })
   )
 }
 

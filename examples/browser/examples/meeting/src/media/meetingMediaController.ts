@@ -5,10 +5,8 @@ import type { PlayoutSettings } from '../types/playout'
 import type { VideoEncodingSettings } from '../types/videoEncoding'
 import type { AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
-import type { SubscribeMessage } from '../../../../pkg/moqt'
 import type { MeetingCatalogTrack, CatalogSubscribeRole, CatalogTrackRole, TrackMediaConfig } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 
 export interface MediaHandlers extends MediaSubscriberHandlers {
   onLocalVideoStream?: (stream: MediaStream | null, source: 'camera' | 'screenshare') => void
@@ -70,16 +68,7 @@ export class MeetingMediaController {
       const trackName = subscribe.trackName ?? ''
       const isLocalTrack = this.isLocalNamespace(subscribe.trackNamespace)
       const isCatalogTrack = this.publisher.isCatalogTrack(trackName)
-      const debugVideoPipeline = isMeetingVideoPipelineDebugEnabled()
-      if (debugVideoPipeline) {
-        this.logIncomingSubscribe(subscribe, isSuccess, code, isLocalTrack, isCatalogTrack)
-      } else {
-        console.info('[meeting][moqt] received SUBSCRIBE', {
-          subscribe,
-          isSuccess,
-          code
-        })
-      }
+      console.info('[meeting][moqt] received SUBSCRIBE', { subscribe, isSuccess, code })
       if (!isSuccess) {
         await respondError(BigInt(code), 'Subscription validation failed')
         return
@@ -98,9 +87,6 @@ export class MeetingMediaController {
         return
       }
       const role = this.publisher.resolveTrackRole(trackName)
-      if (debugVideoPipeline) {
-        this.logIncomingSubscribe(subscribe, isSuccess, code, isLocalTrack, isCatalogTrack, role)
-      }
       if (!role) {
         await respondError(404n, 'Unknown track')
         return
@@ -228,29 +214,6 @@ export class MeetingMediaController {
 
   setAudioCaptureConstraints(constraints: AudioCaptureConstraints): void {
     this.publisher.setAudioCaptureConstraints(constraints)
-  }
-
-  private logIncomingSubscribe(
-    subscribe: SubscribeMessage,
-    isSuccess: boolean,
-    code: number,
-    isLocalTrack: boolean,
-    isCatalogTrack: boolean,
-    role?: CatalogTrackRole | null
-  ): void {
-    console.info(
-      '[meeting][moqt] received SUBSCRIBE',
-      JSON.stringify({
-        trackNamespace: [...subscribe.trackNamespace],
-        trackName: subscribe.trackName,
-        requestId: subscribe.requestId.toString(),
-        isSuccess,
-        code,
-        isLocalTrack,
-        isCatalogTrack,
-        role: role ?? null
-      })
-    )
   }
 
   private isLocalNamespace(trackNamespace: string[]): boolean {
