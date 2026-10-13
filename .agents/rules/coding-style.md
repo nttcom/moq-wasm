@@ -14,6 +14,7 @@ Shared by all agents (Claude Code, Codex).
 - When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
 
 ## Comments
+- Give an item exported outside the crate a doc comment when its signature does not tell the caller when it fails, the order its calls must follow, or the draft section it implements.
 - Write a comment for the invariant behind `panic!`/`unreachable!` and for the meaning of abbreviations in type declarations.
 - Change history, past implementations, migration notes, review discussion, TODO speculation, and plans for future work do not belong in the code body. Put them in the commit message, the pull request, or an architecture document.
 - Comments a change adds are reviewed for redundancy when the pull request is created (see `.agents/skills/create-pull-request/SKILL.md`).
