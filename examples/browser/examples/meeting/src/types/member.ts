@@ -14,11 +14,6 @@ export interface SubscriptionState {
 export interface LocalMember {
   id: string
   name: string
-  publishedTracks: {
-    chat: boolean
-    video: boolean
-    audio: boolean
-  }
 }
 
 // Remote member

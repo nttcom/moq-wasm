@@ -268,7 +268,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setLocalAudioStream(null)
       setCameraEnabled(false)
       setScreenShareEnabled(false)
-      setMicrophoneEnabled(session.localMember.publishedTracks.audio)
+      setMicrophoneEnabled(false)
       setPlayoutSettingsState(new Map())
       setSubscribedCatalogTracks([])
     }

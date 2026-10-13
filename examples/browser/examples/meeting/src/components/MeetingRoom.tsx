@@ -110,10 +110,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
 
   const [room, setRoom] = useState<Room>(() => ({
     name: roomName,
-    localMember: {
-      ...session.localMember,
-      publishedTracks: { ...session.localMember.publishedTracks }
-    },
+    localMember: session.localMember,
     remoteMembers: new Map()
   }))
 
@@ -145,10 +142,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   useEffect(() => {
     setRoom({
       name: session.roomName,
-      localMember: {
-        ...session.localMember,
-        publishedTracks: { ...session.localMember.publishedTracks }
-      },
+      localMember: session.localMember,
       remoteMembers: new Map()
     })
     setRemoteCatalogTracks(new Map())
@@ -503,36 +497,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     room.remoteMembers
   ])
 
-  const handleToggleCamera = async () => {
-    const enabled = await toggleCamera()
-    session.localMember.publishedTracks.video = enabled || screenShareEnabled
-    setRoom((current) => ({
-      ...current,
-      localMember: {
-        ...current.localMember,
-        publishedTracks: {
-          ...current.localMember.publishedTracks,
-          video: enabled || screenShareEnabled
-        }
-      }
-    }))
-  }
-
-  const handleToggleMicrophone = async () => {
-    const enabled = await toggleMicrophone()
-    session.localMember.publishedTracks.audio = enabled
-    setRoom((current) => ({
-      ...current,
-      localMember: {
-        ...current.localMember,
-        publishedTracks: {
-          ...current.localMember.publishedTracks,
-          audio: enabled
-        }
-      }
-    }))
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 text-white">
       <div className="flex min-h-screen flex-col lg:flex-row">
@@ -547,22 +511,9 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             remoteStats={remoteStats}
             playoutSettings={playoutSettings}
             onChangePlayoutSettings={setPlayoutSettings}
-            onToggleCamera={handleToggleCamera}
-            onToggleScreenShare={async () => {
-              const enabled = await toggleScreenShare()
-              session.localMember.publishedTracks.video = enabled || cameraEnabled
-              setRoom((current) => ({
-                ...current,
-                localMember: {
-                  ...current.localMember,
-                  publishedTracks: {
-                    ...current.localMember.publishedTracks,
-                    video: enabled || cameraEnabled
-                  }
-                }
-              }))
-            }}
-            onToggleMicrophone={handleToggleMicrophone}
+            onToggleCamera={toggleCamera}
+            onToggleScreenShare={toggleScreenShare}
+            onToggleMicrophone={toggleMicrophone}
             cameraEnabled={cameraEnabled}
             screenShareEnabled={screenShareEnabled}
             microphoneEnabled={microphoneEnabled}

@@ -44,15 +44,7 @@ export class LocalSession {
     this.roomName = roomName
     this.relayUrl = relayUrl ?? 'https://relay-1.moqt.research.skyway.io:443'
     this.defaultAuthInfo = defaultAuthInfo
-    this.localMember = {
-      id: userName,
-      name: userName,
-      publishedTracks: {
-        chat: true,
-        video: false,
-        audio: false
-      }
-    }
+    this.localMember = { id: userName, name: userName }
     this.client.setOnConnectionClosedHandler(() => {
       console.info('[meeting][moqt] connection closed')
       this.transitionToState(LocalSessionState.Disconnected)
