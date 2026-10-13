@@ -304,6 +304,7 @@ fn audio_mime_type(config: &AudioConfig) -> &'static str {
         AudioConfig::Aac(_) => "audio/aac",
         AudioConfig::Pcma { .. } => "audio/pcma",
         AudioConfig::Opus { .. } => "audio/opus",
+        AudioConfig::Mp3 { .. } => "audio/mpeg",
     }
 }
 

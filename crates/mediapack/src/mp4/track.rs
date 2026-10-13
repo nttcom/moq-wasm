@@ -5,6 +5,7 @@ use crate::{
     aac::AudioSpecificConfig,
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
     mp4::atom::{Atom, FullAtom, find, full_atom, read_u32},
+    sample::AudioConfig,
 };
 
 const VIDEO_SAMPLE_ENTRIES: [&[u8]; 2] = [b"avc1", b"avc3"];
@@ -18,15 +19,9 @@ const AAC_LC_OBJECT_TYPE: u8 = 2;
 const MPEG2_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x69;
 const MPEG1_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x6B;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AudioCodec {
-    Aac(AudioSpecificConfig),
-    Mp3 { sample_rate: u32, channels: u8 },
-}
-
 pub(super) enum Media {
     Video(AvcDecoderConfigurationRecord),
-    Audio(AudioCodec),
+    Audio(AudioConfig),
 }
 
 pub(super) struct Track {
@@ -120,7 +115,7 @@ fn read_sample_entry(body: &[u8]) -> Result<Option<Media>> {
 /// one falls back to the channel count and sample rate the entry itself
 /// declares. MP3 in an `mp4a` entry is told apart by the objectTypeIndication
 /// of its decoder config descriptor.
-fn read_mpeg4_audio(payload: &[u8]) -> Result<AudioCodec> {
+fn read_mpeg4_audio(payload: &[u8]) -> Result<AudioConfig> {
     let children = payload
         .get(AUDIO_SAMPLE_ENTRY_LENGTH..)
         .context("audio sample entry is truncated")?;
@@ -136,10 +131,10 @@ fn read_mpeg4_audio(payload: &[u8]) -> Result<AudioCodec> {
         Some(EsDescriptor {
             specific_info: Some(info),
             ..
-        }) => Ok(AudioCodec::Aac(AudioSpecificConfig::parse(info)?)),
+        }) => Ok(AudioConfig::Aac(AudioSpecificConfig::parse(info)?)),
         _ => {
             let (sample_rate, channels) = read_audio_entry_format(payload)?;
-            Ok(AudioCodec::Aac(AudioSpecificConfig::new(
+            Ok(AudioConfig::Aac(AudioSpecificConfig::new(
                 AAC_LC_OBJECT_TYPE,
                 sample_rate,
                 channels,
@@ -148,9 +143,9 @@ fn read_mpeg4_audio(payload: &[u8]) -> Result<AudioCodec> {
     }
 }
 
-fn read_mp3(payload: &[u8]) -> Result<AudioCodec> {
+fn read_mp3(payload: &[u8]) -> Result<AudioConfig> {
     let (sample_rate, channels) = read_audio_entry_format(payload)?;
-    Ok(AudioCodec::Mp3 {
+    Ok(AudioConfig::Mp3 {
         sample_rate,
         channels,
     })

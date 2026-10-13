@@ -62,7 +62,7 @@ pub struct VideoSample {
 }
 
 /// `data` is one encoded frame: a raw AAC access unit without an ADTS header,
-/// A-law bytes, or an Opus packet, as the `AudioConfig` says.
+/// A-law bytes, an Opus packet or an MP3 frame, as the `AudioConfig` says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioSample {
     pub data: Bytes,
@@ -78,6 +78,11 @@ pub enum AudioConfig {
         channels: u8,
     },
     Opus {
+        sample_rate: u32,
+        channels: u8,
+    },
+    /// MPEG-1/2 Audio Layer III.
+    Mp3 {
         sample_rate: u32,
         channels: u8,
     },
@@ -98,20 +103,25 @@ impl AudioConfig {
             Self::Aac(config) => config.codec_string(),
             Self::Pcma { .. } => "pcma".to_string(),
             Self::Opus { .. } => "opus".to_string(),
+            Self::Mp3 { .. } => "mp3".to_string(),
         }
     }
 
     pub fn sample_rate(&self) -> u32 {
         match self {
             Self::Aac(config) => config.sample_rate,
-            Self::Pcma { sample_rate, .. } | Self::Opus { sample_rate, .. } => *sample_rate,
+            Self::Pcma { sample_rate, .. }
+            | Self::Opus { sample_rate, .. }
+            | Self::Mp3 { sample_rate, .. } => *sample_rate,
         }
     }
 
     pub fn channels(&self) -> u8 {
         match self {
             Self::Aac(config) => config.channel_count(),
-            Self::Pcma { channels, .. } | Self::Opus { channels, .. } => *channels,
+            Self::Pcma { channels, .. }
+            | Self::Opus { channels, .. }
+            | Self::Mp3 { channels, .. } => *channels,
         }
     }
 }

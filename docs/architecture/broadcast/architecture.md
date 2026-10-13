@@ -53,18 +53,18 @@ TRACK_DOES_NOT_EXIST.
 
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-01): the payload is the
-codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law or Opus frames, and
-the capture timestamp travels as MoQT extension header 2. A track's
+codec bitstream, H.264 in Annex-B and raw AAC, G.711 A-law, Opus or MP3 frames,
+and the capture timestamp travels as MoQT extension header 2. A track's
 initialization data is a Base64-encoded entry of the catalog `initDataList` that
 the track's `initRef` names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); each entry
 takes the name of its track as its id, which keeps the ids unique. An AAC audio
-track's AudioSpecificConfig is published this way; A-law and Opus need none
+track's AudioSpecificConfig is published this way; A-law, Opus and MP3 need none
 beyond the codec, sample rate and channel count the catalog lists, and the video
 track carries its parameter sets in band.
 
 ## CMAF tracks
-Every media track has a CMAF sibling named with a `_cmaf` suffix, except
-A-law and Opus audio, which have no fMP4 muxer here (`video_cmaf`,
+Every media track has a CMAF sibling named with a `_cmaf` suffix, except A-law,
+Opus and MP3 audio, which have no fMP4 muxer here (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
 (draft-ietf-moq-cmsf-01). Its init segment is its `initDataList` entry (§3.1)
 and every object is one `moof` + `mdat` fragment holding one sample (§3.3).
