@@ -371,9 +371,10 @@ mod tests {
         let Some(Subgroup::Object(object)) = object else {
             panic!("expected the next group's first object");
         };
-        assert!(matches!(
-            object.subgroup_object,
-            SubgroupObject::Payload { data, .. } if data == Bytes::from_static(b"b")
-        ));
+        assert!(
+            matches!(&object.subgroup_object, SubgroupObject::Payload { data, .. } if *data == Bytes::from_static(b"b")),
+            "{:?}",
+            object.subgroup_object
+        );
     }
 }
