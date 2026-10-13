@@ -160,7 +160,7 @@ impl GroupSender {
 
         let priority = moqt::object::StreamPriority {
             subscriber_priority: task.subscriber_priority,
-            publisher_priority: first.publisher_priority,
+            publisher_priority: first.object.publisher_priority,
             group_order: task.group_order,
             group_sequence: task.group_sequence,
             subgroup_id,
@@ -189,7 +189,7 @@ impl GroupSender {
         let start = moqt::object::SubgroupStart {
             group_id,
             subgroup_id,
-            publisher_priority: first.publisher_priority,
+            publisher_priority: first.object.publisher_priority,
             ends_group: false,
         };
         tracing::debug!("egress sending subgroup header");
@@ -201,10 +201,10 @@ impl GroupSender {
         let mut object_count = 0u64;
         let mut next = NextObject::Object(first);
         while let NextObject::Object(object) = next {
-            let object_id = object.location.object_id;
+            let object_id = object.object.location.object_id;
             tracing::debug!(object_id, "egress sending subgroup object");
             if sender
-                .send_object(DataObject::SubgroupObject(object.to_object()))
+                .send_object(DataObject::SubgroupObject(object.object.clone()))
                 .await
                 .is_err()
             {
@@ -212,7 +212,7 @@ impl GroupSender {
                 return (object_count, "send_object_failed");
             }
             task.delivery_stats
-                .record_object_sent(object.payload.len(), object.received_at);
+                .record_object_sent(object.object.payload.len(), object.received_at);
             object_count += 1;
             next = match task
                 .cache
@@ -257,7 +257,7 @@ impl GroupSender {
             .next_subgroup_object_or_wait(task.key, task.generation, cursor)
             .await
         {
-            let object_id = object.location.object_id;
+            let object_id = object.object.location.object_id;
             tracing::debug!(
                 track_alias,
                 group_id = task.key.group_id(),
@@ -265,13 +265,13 @@ impl GroupSender {
                 "egress sending datagram object"
             );
             if sender
-                .send_object(DataObject::Datagram(object.to_object()))
+                .send_object(DataObject::Datagram(object.object.clone()))
                 .await
                 .is_err()
             {
                 return;
             }
-            delivery_stats.record_object_sent(object.payload.len(), object.received_at);
+            delivery_stats.record_object_sent(object.object.payload.len(), object.received_at);
             cursor = object_id.saturating_add(1);
         }
     }

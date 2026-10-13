@@ -225,7 +225,7 @@ mod tests {
     use std::time::Duration;
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
-        FetchIngest::append_fetch_object(cache, object.to_object())
+        FetchIngest::append_fetch_object(cache, object.object.clone())
     }
 
     #[tokio::test]

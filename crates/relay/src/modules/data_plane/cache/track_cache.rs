@@ -9,7 +9,9 @@ use std::{
 
 use tokio::sync::{Notify, broadcast};
 
-use crate::modules::data_plane::cache::cached_object::{CachedObject, ForwardingPreference};
+use moqt::object::ForwardingPreference;
+
+use crate::modules::data_plane::cache::cached_object::CachedObject;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
@@ -123,8 +125,10 @@ impl TrackCache {
 
     fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
         self.ingress_stats.record_live_arrival(object.received_at);
-        let registers_knowledge =
-            matches!(object.forwarding, ForwardingPreference::Subgroup { .. });
+        let registers_knowledge = matches!(
+            object.object.forwarding,
+            ForwardingPreference::Subgroup { .. }
+        );
         self.insert_with_knowledge(object, registers_knowledge)
     }
 
@@ -136,9 +140,9 @@ impl TrackCache {
         if self.is_malformed() {
             return Err(TrackMalformed);
         }
-        let payload_bytes = object.payload.len();
+        let payload_bytes = object.object.payload.len();
         self.ingress_stats.record_object(payload_bytes);
-        let at = object.location;
+        let at = object.object.location;
         let mut ledger = self.write();
         let inserted = match ledger.objects.entry(at) {
             Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
@@ -151,7 +155,7 @@ impl TrackCache {
                     // A fetched copy arrived first; the live datagram fixes the
                     // forwarding preference so datagram egress can find it.
                     let mut upgraded = (**existing.get()).clone();
-                    upgraded.forwarding = ForwardingPreference::Datagram;
+                    upgraded.object.forwarding = ForwardingPreference::Datagram;
                     *existing.get_mut() = Arc::new(upgraded);
                 }
                 false
@@ -205,7 +209,7 @@ impl TrackCache {
                     Some(*location) == newest_of_live_track || object.received_at.elapsed() <= ttl;
                 if !keep {
                     removed.push(*location);
-                    removed_payload_bytes += object.payload.len() as u64;
+                    removed_payload_bytes += object.object.payload.len() as u64;
                 }
                 keep
             });
@@ -393,7 +397,7 @@ mod tests {
             .read()
             .objects
             .get(&location(group_id, object_id))
-            .map(|object| object.payload.clone())
+            .map(|object| object.object.payload.clone())
             .expect("object should be cached")
     }
 

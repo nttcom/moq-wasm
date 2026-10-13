@@ -31,7 +31,7 @@ pub(crate) struct OpenSubgroupGuard<'a> {
 
 impl OpenSubgroupGuard<'_> {
     pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
-        let object_id = object.location.object_id;
+        let object_id = object.object.location.object_id;
         if self.first_object_id.set(object_id).is_ok() {
             self.cache
                 .record_stream_start(self.key, self.epoch, object_id);
@@ -236,7 +236,7 @@ impl TrackCache {
             let run_end = ledger.superseded_run_end(key, generation);
             let next_object = ledger
                 .next_subgroup_object(key, from_object_id)
-                .filter(|object| run_end.is_none_or(|end| object.location.object_id < end));
+                .filter(|object| run_end.is_none_or(|end| object.object.location.object_id < end));
             match next_object {
                 Some(object) => Some(NextObject::Object(object)),
                 None if run_end.is_some() => Some(NextObject::Aborted),
@@ -291,7 +291,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // Assert: the exact id is returned (inclusive lower bound)
-        assert_eq!(object.location.object_id, 3);
+        assert_eq!(object.object.location.object_id, 3);
     }
 
     #[tokio::test]
@@ -306,7 +306,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // Assert
-        assert_eq!(object.location.object_id, 5);
+        assert_eq!(object.object.location.object_id, 5);
     }
 
     #[tokio::test]
@@ -350,7 +350,7 @@ mod tests {
             .unwrap()
             .unwrap();
         // Assert
-        assert_eq!(object.location.object_id, 2);
+        assert_eq!(object.object.location.object_id, 2);
     }
 
     #[tokio::test]
@@ -377,7 +377,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
-        assert_eq!(object.location.object_id, 0);
+        assert_eq!(object.object.location.object_id, 0);
     }
 
     #[tokio::test]
@@ -484,9 +484,15 @@ mod tests {
             .next_subgroup_object_or_wait(stream_key(0), 1, 3)
             .await;
         // Assert
-        assert_eq!(superseded_last.unwrap().unwrap().location.object_id, 2);
+        assert_eq!(
+            superseded_last.unwrap().unwrap().object.location.object_id,
+            2
+        );
         assert!(matches!(superseded_end, Ok(NextObject::Aborted)));
-        assert_eq!(reopened_first.unwrap().unwrap().location.object_id, 3);
+        assert_eq!(
+            reopened_first.unwrap().unwrap().object.location.object_id,
+            3
+        );
     }
 
     #[tokio::test]
@@ -568,6 +574,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap()
+                .object
                 .location
                 .object_id,
             1

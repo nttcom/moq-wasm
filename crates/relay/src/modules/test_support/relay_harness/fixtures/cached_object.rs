@@ -1,28 +1,22 @@
 use bytes::Bytes;
-use moqt::object::{ExtensionHeaders, ObjectStatus};
-use tokio::time::Instant;
+use moqt::object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus};
 
 use super::location;
 use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
     cache::{
-        cached_object::{CachedObject, ForwardingPreference, SubgroupHeaderFields},
+        cached_object::CachedObject,
         track_cache::{FetchCursor, FetchInterrupted, OpenSubgroupGuard, TrackCache},
     },
 };
 
 pub(crate) const FIXTURE_PRIORITY: u8 = 128;
 
-pub(crate) fn subgroup_header_fields(group_id: u64, subgroup_id: u64) -> SubgroupHeaderFields {
-    SubgroupHeaderFields {
-        group_id,
-        subgroup_id,
-        publisher_priority: FIXTURE_PRIORITY,
-    }
-}
-
 pub(crate) fn stream_key(group_id: u64) -> SubgroupKey {
-    subgroup_header_fields(group_id, 0).key()
+    SubgroupKey::Stream {
+        group_id,
+        subgroup_id: 0,
+    }
 }
 
 pub(crate) fn stream_object(group_id: u64, object_id: u64) -> CachedObject {
@@ -34,10 +28,9 @@ pub(crate) fn stream_object_in_subgroup(
     subgroup_id: u64,
     object_id: u64,
 ) -> CachedObject {
-    CachedObject {
-        forwarding: ForwardingPreference::Subgroup { subgroup_id },
-        ..stream_object(group_id, object_id)
-    }
+    let mut cached = stream_object(group_id, object_id);
+    cached.object.forwarding = ForwardingPreference::Subgroup { subgroup_id };
+    cached
 }
 
 pub(crate) fn stream_object_with_payload(
@@ -45,30 +38,26 @@ pub(crate) fn stream_object_with_payload(
     object_id: u64,
     payload: Bytes,
 ) -> CachedObject {
-    CachedObject {
+    CachedObject::from_object(Object {
         location: location(group_id, object_id),
         forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
         publisher_priority: FIXTURE_PRIORITY,
         status: ObjectStatus::Normal,
         extension_headers: ExtensionHeaders::default(),
         payload,
-        received_at: Instant::now(),
-    }
+    })
 }
 
 pub(crate) fn status_object(group_id: u64, object_id: u64, status: ObjectStatus) -> CachedObject {
-    CachedObject {
-        status,
-        payload: Bytes::new(),
-        ..stream_object(group_id, object_id)
-    }
+    let mut cached = stream_object_with_payload(group_id, object_id, Bytes::new());
+    cached.object.status = status;
+    cached
 }
 
 pub(crate) fn datagram_object(group_id: u64, object_id: u64) -> CachedObject {
-    CachedObject {
-        forwarding: ForwardingPreference::Datagram,
-        ..stream_object(group_id, object_id)
-    }
+    let mut cached = stream_object(group_id, object_id);
+    cached.object.forwarding = ForwardingPreference::Datagram;
+    cached
 }
 
 /// Opens subgroup 0 of `group_id` as live ingest, inserts the objects, and
@@ -102,7 +91,7 @@ pub(crate) async fn fetch_all(
     let mut cursor = FetchCursor::new(cache, start, end, group_order);
     let mut objects = Vec::new();
     while let Some(object) = cursor.next().await? {
-        objects.push(object.to_object());
+        objects.push(object.object.clone());
     }
     Ok(objects)
 }

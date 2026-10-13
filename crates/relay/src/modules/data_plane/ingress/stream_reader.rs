@@ -1,11 +1,12 @@
-use moqt::object::ObjectStatus;
+use moqt::object::{ObjectStatus, SubgroupStart};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
 use crate::modules::{
     data_plane::{
         cache::{
-            cached_object::{CachedObject, SubgroupHeaderFields},
+            cached_object::CachedObject,
+            subgroup_key::SubgroupKey,
             track_cache::{OpenSubgroupGuard, TrackCache},
         },
         ingress::track_ingest_task::TrackIngest,
@@ -19,13 +20,8 @@ use crate::modules::{
 };
 
 struct ReceivedHeader {
-    fields: SubgroupHeaderFields,
-    ends_group_on_fin: bool,
+    start: SubgroupStart,
     prev_object_id: Option<u64>,
-}
-
-struct SubgroupIngest<'a> {
-    open: OpenSubgroupGuard<'a>,
 }
 
 pub(crate) async fn accept_streams(
@@ -86,7 +82,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
     } = ingest;
     let span = Span::current();
     let mut header: Option<ReceivedHeader> = None;
-    let mut ingest: Option<SubgroupIngest<'_>> = None;
+    let mut ingest: Option<OpenSubgroupGuard<'_>> = None;
     loop {
         let receive_result = tokio::select! {
             _ = stop_receiver.changed() => {
@@ -100,11 +96,9 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
         match receive_result {
             Ok(Some(DataObject::SubgroupHeader(start))) => {
                 span.record("group_id", start.group_id);
-                let fields = SubgroupHeaderFields::from(start);
-                ingest = Some(open_subgroup(&cache, &span, fields));
+                ingest = Some(open_subgroup(&cache, &span, &start));
                 header = Some(ReceivedHeader {
-                    fields,
-                    ends_group_on_fin: start.ends_group,
+                    start,
                     prev_object_id: None,
                 });
             }
@@ -120,11 +114,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     ObjectStatus::EndOfTrack => Some("end_of_track"),
                     _ => None,
                 };
-                if current
-                    .open
-                    .insert(CachedObject::from_object(object))
-                    .is_err()
-                {
+                if current.insert(CachedObject::from_object(object)).is_err() {
                     report_malformed_track(
                         &span,
                         &session_event_sender,
@@ -136,7 +126,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 if let Some(end_reason) = end_reason {
                     span.record("end_reason", end_reason);
                     if let Some(ingest) = ingest.take() {
-                        ingest.open.finish();
+                        ingest.finish();
                     }
                     return;
                 }
@@ -149,12 +139,11 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
             Ok(None) => {
                 span.record("end_reason", "fin");
                 if let (Some(header), Some(ingest)) = (&header, &ingest)
-                    && header.ends_group_on_fin
+                    && header.start.ends_group
                 {
                     let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
                     if ingest
-                        .open
-                        .insert(CachedObject::end_of_group(&header.fields, end_of_group_id))
+                        .insert(CachedObject::end_of_group(&header.start, end_of_group_id))
                         .is_err()
                     {
                         report_malformed_track(
@@ -167,7 +156,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     }
                 }
                 if let Some(ingest) = ingest.take() {
-                    ingest.open.finish();
+                    ingest.finish();
                 }
                 tracing::debug!(%track_key, "stream finished");
                 return;
@@ -212,11 +201,13 @@ fn report_malformed_track(
 fn open_subgroup<'a>(
     cache: &'a TrackCache,
     span: &Span,
-    header: SubgroupHeaderFields,
-) -> SubgroupIngest<'a> {
-    span.record("subgroup_id", header.subgroup_id);
-    let open = cache.open_subgroup(header.key());
-    SubgroupIngest { open }
+    start: &SubgroupStart,
+) -> OpenSubgroupGuard<'a> {
+    span.record("subgroup_id", start.subgroup_id);
+    cache.open_subgroup(SubgroupKey::Stream {
+        group_id: start.group_id,
+        subgroup_id: start.subgroup_id,
+    })
 }
 
 #[cfg(test)]

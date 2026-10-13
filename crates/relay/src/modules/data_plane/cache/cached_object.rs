@@ -1,105 +1,49 @@
 use bytes::Bytes;
-use moqt::object::{ExtensionHeaders, Object, ObjectStatus, SubgroupStart};
+use moqt::object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus, SubgroupStart};
 use tokio::time::Instant;
 
 use crate::modules::data_plane::cache::subgroup_key::SubgroupKey;
 
-pub(crate) use moqt::object::ForwardingPreference;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SubgroupHeaderFields {
-    pub(crate) group_id: u64,
-    pub(crate) subgroup_id: u64,
-    pub(crate) publisher_priority: u8,
-}
-
-impl From<SubgroupStart> for SubgroupHeaderFields {
-    fn from(start: SubgroupStart) -> Self {
-        Self {
-            group_id: start.group_id,
-            subgroup_id: start.subgroup_id,
-            publisher_priority: start.publisher_priority,
-        }
-    }
-}
-
-impl SubgroupHeaderFields {
-    pub(crate) fn key(&self) -> SubgroupKey {
-        SubgroupKey::Stream {
-            group_id: self.group_id,
-            subgroup_id: self.subgroup_id,
-        }
-    }
-}
-
 /// draft-14 §10.2.1 canonical object as stored by the relay cache.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedObject {
-    pub(crate) location: moqt::object::Location,
-    pub(crate) forwarding: ForwardingPreference,
-    pub(crate) publisher_priority: u8,
-    pub(crate) status: ObjectStatus,
-    pub(crate) extension_headers: ExtensionHeaders,
-    pub(crate) payload: Bytes,
+    pub(crate) object: Object,
     pub(crate) received_at: Instant,
 }
 
 impl CachedObject {
     pub(crate) fn from_object(object: Object) -> Self {
         Self {
-            location: object.location,
-            forwarding: object.forwarding,
-            publisher_priority: object.publisher_priority,
-            status: object.status,
-            extension_headers: object.extension_headers,
-            payload: object.payload,
+            object,
             received_at: Instant::now(),
         }
     }
 
-    pub(crate) fn to_object(&self) -> Object {
-        Object {
-            location: self.location,
-            forwarding: self.forwarding,
-            publisher_priority: self.publisher_priority,
-            status: self.status,
-            extension_headers: self.extension_headers.clone(),
-            payload: self.payload.clone(),
-        }
-    }
-
-    pub(crate) fn end_of_group(header: &SubgroupHeaderFields, object_id: u64) -> Self {
-        Self {
-            status: ObjectStatus::EndOfGroup,
-            ..Self::empty_at(header, object_id)
-        }
-    }
-
-    fn empty_at(header: &SubgroupHeaderFields, object_id: u64) -> Self {
-        Self {
+    /// The End of Group status object a FIN implies for `start`'s subgroup.
+    pub(crate) fn end_of_group(start: &SubgroupStart, object_id: u64) -> Self {
+        Self::from_object(Object {
             location: moqt::object::Location {
-                group_id: header.group_id,
+                group_id: start.group_id,
                 object_id,
             },
             forwarding: ForwardingPreference::Subgroup {
-                subgroup_id: header.subgroup_id,
+                subgroup_id: start.subgroup_id,
             },
-            publisher_priority: header.publisher_priority,
-            status: ObjectStatus::Normal,
+            publisher_priority: start.publisher_priority,
+            status: ObjectStatus::EndOfGroup,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::new(),
-            received_at: Instant::now(),
-        }
+        })
     }
 
     pub(crate) fn subgroup_key(&self) -> SubgroupKey {
-        match self.forwarding {
+        match self.object.forwarding {
             ForwardingPreference::Subgroup { subgroup_id } => SubgroupKey::Stream {
-                group_id: self.location.group_id,
+                group_id: self.object.location.group_id,
                 subgroup_id,
             },
             ForwardingPreference::Datagram => SubgroupKey::Datagram {
-                group_id: self.location.group_id,
+                group_id: self.object.location.group_id,
             },
         }
     }
@@ -110,21 +54,23 @@ impl CachedObject {
     /// header changes and transitions involving Does Not Exist are allowed.
     pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
         if self.forwarding_conflicts_with(other)
-            || self.publisher_priority != other.publisher_priority
+            || self.object.publisher_priority != other.object.publisher_priority
         {
             return true;
         }
-        if self.status == ObjectStatus::DoesNotExist || other.status == ObjectStatus::DoesNotExist {
+        if self.object.status == ObjectStatus::DoesNotExist
+            || other.object.status == ObjectStatus::DoesNotExist
+        {
             return false;
         }
-        self.status != other.status || self.payload != other.payload
+        self.object.status != other.object.status || self.object.payload != other.object.payload
     }
 
     /// FETCH carries no forwarding preference; a fetched copy of a datagram
     /// object arrives as a subgroup object whose Subgroup ID is its Object ID
     /// (draft-14 §10.4.4), so that pairing is the same object, not a conflict.
     fn forwarding_conflicts_with(&self, other: &Self) -> bool {
-        match (self.forwarding, other.forwarding) {
+        match (self.object.forwarding, other.object.forwarding) {
             (
                 ForwardingPreference::Subgroup { subgroup_id: a },
                 ForwardingPreference::Subgroup { subgroup_id: b },
@@ -132,13 +78,13 @@ impl CachedObject {
             (ForwardingPreference::Datagram, ForwardingPreference::Datagram) => false,
             (ForwardingPreference::Subgroup { subgroup_id }, ForwardingPreference::Datagram)
             | (ForwardingPreference::Datagram, ForwardingPreference::Subgroup { subgroup_id }) => {
-                subgroup_id != self.location.object_id
+                subgroup_id != self.object.location.object_id
             }
         }
     }
 
     pub(crate) fn is_datagram(&self) -> bool {
-        self.forwarding == ForwardingPreference::Datagram
+        self.object.forwarding == ForwardingPreference::Datagram
     }
 }
 
@@ -177,10 +123,8 @@ mod tests {
     fn differing_priority_is_a_conflict() {
         // Arrange
         let first = stream_object(0, 0);
-        let second = CachedObject {
-            publisher_priority: first.publisher_priority + 1,
-            ..stream_object(0, 0)
-        };
+        let mut second = stream_object(0, 0);
+        second.object.publisher_priority = first.object.publisher_priority + 1;
         // Act / Assert
         assert!(first.conflicts_with(&second));
     }
@@ -215,10 +159,8 @@ mod tests {
     fn differing_extension_headers_are_not_a_conflict() {
         // Arrange: §8.1 allows extension headers to be added, removed or updated
         let first = stream_object(0, 0);
-        let second = CachedObject {
-            extension_headers: extension_headers(),
-            ..stream_object(0, 0)
-        };
+        let mut second = stream_object(0, 0);
+        second.object.extension_headers = extension_headers();
         // Act / Assert
         assert!(!first.conflicts_with(&second));
     }
