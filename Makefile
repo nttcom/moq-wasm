@@ -5,6 +5,8 @@ export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-pat
 LOCAL_MOQT_URL ?= $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
+# Only a local relay serves the self-signed development certificate; any other relay is verified.
+ONVIF_TLS_FLAGS = $(if $(or $(filter $$(LOCAL_MOQT_URL),$(value ONVIF_MOQT_URL)),$(filter https://127.0.0.1:% https://localhost:% https://[::1]:%,$(ONVIF_MOQT_URL))),--insecure-skip-tls-verify)
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 GST_NAMESPACE ?= anon/live/test
@@ -130,7 +132,7 @@ onvif:
 		--command-track command \
 		--dump-keyframe \
 		--payload-format annexb \
-		--insecure-skip-tls-verify
+		$(ONVIF_TLS_FLAGS)
 
 
 # Maintenance
