@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { SubgroupWriter } from '@moqt/subgroupWriter'
 import type { MOQTClient } from '../../../pkg/moqt'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
@@ -135,8 +136,10 @@ async function sendCatalog(client: MOQTClient, trackAlias: bigint, trackNamespac
     objectId: '0',
     payloadLength: payload.byteLength
   })
-  await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
-  await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
+  const writer = new SubgroupWriter(client, trackAlias)
+  await writer.openGroup(groupId)
+  await writer.send(payload)
+  await writer.closeGroup()
   catalogAliases.add(aliasKey)
   setStatusText('publisher-send-status', `Catalog served: ${trackNamespace.join('/')}/${CATALOG_TRACK_NAME}`)
   console.info('[MediaPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })

@@ -125,6 +125,9 @@ const setupCatalogSelectionHandler = (): void => {
 
 const setupCatalogCallbacks = (trackAlias: bigint): void => {
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
+    if (subgroupStreamObject.objectStatus !== undefined) {
+      return
+    }
     const payload = new TextDecoder().decode(new Uint8Array(subgroupStreamObject.objectPayload))
     try {
       const parsed = parse_msf_catalog_json(payload)

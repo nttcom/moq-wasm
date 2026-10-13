@@ -1,4 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
+import { SubgroupWriter } from '@moqt/subgroupWriter'
 import type { MOQTClient } from '../../../pkg/moqt'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
@@ -180,8 +181,10 @@ const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespac
     buildMediaCatalogJson(trackNamespace, 'cmaf', MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES)
   )
   const groupId = nextCatalogGroupId++
-  await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
-  await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
+  const writer = new SubgroupWriter(client, trackAlias)
+  await writer.openGroup(groupId)
+  await writer.send(payload)
+  await writer.closeGroup()
   catalogAliases.add(aliasKey)
   console.info('[CmafPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }

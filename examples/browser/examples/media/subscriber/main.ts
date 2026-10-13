@@ -208,6 +208,9 @@ function setupCatalogSelectionHandler(): void {
 
 function setupCatalogCallbacks(trackAlias: bigint): void {
   moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
+    if (subgroupStreamObject.objectStatus !== undefined) {
+      return
+    }
     const payloadBytes = subgroupStreamObject.objectPayload
     console.info('[MediaSubscriber] received catalog object', {
       trackAlias: trackAlias.toString(),
