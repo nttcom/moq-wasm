@@ -7,8 +7,8 @@ use super::{FetchInterrupted, TrackCache, location};
 pub(crate) struct FetchCursor<'a> {
     cache: &'a TrackCache,
     groups: std::vec::IntoIter<u64>,
-    start: moqt::Location,
-    end: moqt::Location,
+    start: moqt::object::Location,
+    end: moqt::object::Location,
     current: Option<GroupCursor>,
 }
 
@@ -35,12 +35,12 @@ impl GroupCursor {
 impl<'a> FetchCursor<'a> {
     pub(crate) fn new(
         cache: &'a TrackCache,
-        start: moqt::Location,
-        end: moqt::Location,
-        group_order: moqt::GroupOrder,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+        group_order: moqt::object::GroupOrder,
     ) -> Self {
         let mut groups = cache.read().groups_in_range(start.group_id, end.group_id);
-        if matches!(group_order, moqt::GroupOrder::Descending) {
+        if matches!(group_order, moqt::object::GroupOrder::Descending) {
             groups.reverse();
         }
         Self {

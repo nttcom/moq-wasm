@@ -59,7 +59,7 @@ pub(crate) struct RelayHarness {
 
 pub(crate) struct EgressRunnerHandle {
     sent: mpsc::UnboundedReceiver<Sent>,
-    priorities: mpsc::UnboundedReceiver<moqt::StreamPriority>,
+    priorities: mpsc::UnboundedReceiver<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
     forward_sender: watch::Sender<bool>,
     stop_sender: Option<oneshot::Sender<PublishDoneReason>>,
@@ -96,7 +96,7 @@ impl EgressRunnerHandle {
         );
     }
 
-    pub(crate) async fn expect_stream_priority(&mut self) -> moqt::StreamPriority {
+    pub(crate) async fn expect_stream_priority(&mut self) -> moqt::object::StreamPriority {
         tokio::time::timeout(RECV_TIMEOUT, self.priorities.recv())
             .await
             .expect("egress should open a downstream stream")
@@ -241,7 +241,7 @@ impl RelayHarness {
     pub(crate) async fn cached_object_ids(
         &self,
         key: SubgroupKey,
-    ) -> Vec<(u64, moqt::ObjectStatus)> {
+    ) -> Vec<(u64, moqt::object::ObjectStatus)> {
         let mut objects = Vec::new();
         let mut cursor = 0;
         while let NextObject::Object(object) = self
@@ -275,16 +275,16 @@ impl RelayHarness {
 
     pub(crate) async fn start_egress(
         &self,
-        largest_location: Option<moqt::Location>,
+        largest_location: Option<moqt::object::Location>,
     ) -> EgressRunnerHandle {
-        self.start_egress_with_filter(moqt::FilterType::LargestObject, largest_location)
+        self.start_egress_with_filter(moqt::subscribe::FilterType::LargestObject, largest_location)
             .await
     }
 
     pub(crate) async fn start_egress_with_filter(
         &self,
-        filter_type: moqt::FilterType,
-        largest_location: Option<moqt::Location>,
+        filter_type: moqt::subscribe::FilterType,
+        largest_location: Option<moqt::object::Location>,
     ) -> EgressRunnerHandle {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
@@ -327,8 +327,8 @@ impl RelayHarness {
 
     pub(crate) fn start_fetch(
         &self,
-        start_location: moqt::Location,
-        end_location: moqt::Location,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
     ) -> FetchDeliveryHandle {
         let (sender, sent) = MockFetchSender::channel();
         let request = EgressFetchRequest {
@@ -337,7 +337,7 @@ impl RelayHarness {
             cache: self.ingest.cache.clone(),
             start_location,
             end_location,
-            group_order: moqt::GroupOrder::Ascending,
+            group_order: moqt::object::GroupOrder::Ascending,
         };
         let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
         FetchDeliveryHandle { sent, join_handle }
@@ -363,15 +363,18 @@ impl RelayHarness {
             .expect("track should be marked malformed");
     }
 
-    pub(crate) async fn wait_largest_location(&self, expected: moqt::Location) -> moqt::Location {
+    pub(crate) async fn wait_largest_location(
+        &self,
+        expected: moqt::object::Location,
+    ) -> moqt::object::Location {
         wait_largest_location(&self.ingest.cache, expected).await
     }
 }
 
 pub(crate) async fn wait_largest_location(
     cache: &TrackCache,
-    expected: moqt::Location,
-) -> moqt::Location {
+    expected: moqt::object::Location,
+) -> moqt::object::Location {
     let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
     loop {
         if let Some(largest) = cache.largest_location()
@@ -460,7 +463,7 @@ pub(crate) fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
         .iter()
         .filter_map(|object| match object {
             DataObject::SubgroupObject(field) => match &field.subgroup_object {
-                moqt::SubgroupObject::Payload { data, .. } => Some(data.clone()),
+                moqt::object::SubgroupObject::Payload { data, .. } => Some(data.clone()),
                 _ => None,
             },
             _ => None,

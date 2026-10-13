@@ -14,7 +14,7 @@ use crate::modules::transport::transport_connection_creator::TransportConnection
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
-use crate::{Accepting, Connecting, Handshake};
+use crate::{Connecting, server::Accepting, server::Handshake};
 
 const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 

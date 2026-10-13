@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use moqt::{ContentExists, FilterType, GroupOrder};
+use moqt::{
+    object::{ContentExists, GroupOrder},
+    subscribe::FilterType,
+};
 
 use crate::modules::session::subscription::DownstreamSubscription;
 
@@ -28,7 +31,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl SubscribeHandler for moqt::SubscribeHandler {
+impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
     fn subscribe_id(&self) -> u64 {
         self.request_id()
     }
@@ -60,7 +63,7 @@ impl SubscribeHandler for moqt::SubscribeHandler {
         self.delivery_timeout
     }
     fn allocate_track_alias(&self) -> u64 {
-        moqt::SubscribeHandler::allocate_track_alias(self)
+        moqt::subscribe::SubscribeHandler::allocate_track_alias(self)
     }
 
     async fn ok_with_track_alias(
@@ -69,8 +72,13 @@ impl SubscribeHandler for moqt::SubscribeHandler {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), moqt::TransportSendError> {
-        moqt::SubscribeHandler::ok_with_track_alias(self, track_alias, expires, content_exists)
-            .await
+        moqt::subscribe::SubscribeHandler::ok_with_track_alias(
+            self,
+            track_alias,
+            expires,
+            content_exists,
+        )
+        .await
     }
 
     async fn error(

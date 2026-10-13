@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use moqt::{ContentExists, wire::publish_done_status_code};
+use moqt::{object::ContentExists, wire::publish_done_status_code};
 
 use crate::modules::domain::{
     session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
@@ -94,7 +94,7 @@ pub(crate) enum MatchingPublication {
 pub(crate) struct DownstreamSubscription {
     pub(crate) track_key: TrackKey,
     /// The subscription's start location: the Largest Object Location at subscribe time.
-    pub(crate) start_location: Option<moqt::Location>,
+    pub(crate) start_location: Option<moqt::object::Location>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

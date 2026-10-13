@@ -1,6 +1,6 @@
 use crate::{
-    GroupOrder, Location,
     modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk,
+    object::{GroupOrder, Location},
 };
 
 #[derive(Debug)]

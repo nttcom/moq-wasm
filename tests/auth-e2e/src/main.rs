@@ -20,9 +20,10 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder, PublishOption,
-    QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject, SubscribeOption,
-    Subscription,
+    ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
+    object::{DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId, SubgroupObject},
+    publish::PublishOption,
+    subscribe::{FilterType, SubscribeOption},
     wire::{AuthorizationToken, RequestError},
 };
 

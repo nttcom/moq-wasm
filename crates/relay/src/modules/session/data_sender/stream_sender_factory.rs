@@ -2,17 +2,22 @@ use crate::modules::session::{data_sender::DataSender, data_sender::stream_sende
 
 #[async_trait::async_trait]
 pub(crate) trait StreamSenderFactory: Send + 'static {
-    async fn next(&mut self, priority: moqt::StreamPriority)
-    -> anyhow::Result<Box<dyn DataSender>>;
+    async fn next(
+        &mut self,
+        priority: moqt::object::StreamPriority,
+    ) -> anyhow::Result<Box<dyn DataSender>>;
 }
 
 pub(crate) struct ConcreteStreamSenderFactory {
-    inner: moqt::StreamDataSenderFactory,
+    inner: moqt::object::StreamDataSenderFactory,
     subscriber_track_alias: u64,
 }
 
 impl ConcreteStreamSenderFactory {
-    pub(crate) fn new(inner: moqt::StreamDataSenderFactory, subscriber_track_alias: u64) -> Self {
+    pub(crate) fn new(
+        inner: moqt::object::StreamDataSenderFactory,
+        subscriber_track_alias: u64,
+    ) -> Self {
         Self {
             inner,
             subscriber_track_alias,
@@ -24,7 +29,7 @@ impl ConcreteStreamSenderFactory {
 impl StreamSenderFactory for ConcreteStreamSenderFactory {
     async fn next(
         &mut self,
-        priority: moqt::StreamPriority,
+        priority: moqt::object::StreamPriority,
     ) -> anyhow::Result<Box<dyn DataSender>> {
         let sender = self.inner.next().await?;
         sender.set_priority(priority).await?;

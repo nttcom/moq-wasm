@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use moqt::{
-    ClientConfig, DataReceiver, Endpoint, FilterType, GroupOrder, QUIC, Session, SessionEvent,
-    StreamDataReceiverFactory, SubscribeOption,
+    ClientConfig, Endpoint, QUIC, Session, SessionEvent,
+    object::{DataReceiver, GroupOrder, StreamDataReceiverFactory},
+    subscribe::{FilterType, SubscribeOption},
 };
 use tracing::info;
 

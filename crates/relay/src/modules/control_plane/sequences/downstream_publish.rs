@@ -3,7 +3,7 @@ pub(crate) mod downstream_publish_task;
 use std::sync::Arc;
 
 use anyhow::bail;
-use moqt::{ContentExists, wire::publish_done_status_code};
+use moqt::{object::ContentExists, wire::publish_done_status_code};
 use tokio::sync::{mpsc, oneshot};
 use tracing::Span;
 

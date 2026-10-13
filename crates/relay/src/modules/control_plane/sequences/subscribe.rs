@@ -21,7 +21,7 @@ use crate::modules::{
     session::handler::subscribe::SubscribeHandler,
 };
 
-use moqt::ContentExists;
+use moqt::object::ContentExists;
 use tracing::Span;
 
 pub(crate) mod upstream_join_task;
@@ -48,7 +48,7 @@ enum Acceptance {
 pub(super) fn cached_largest(
     cache_store: &TrackCacheStore,
     track_key: &TrackKey,
-) -> Option<moqt::Location> {
+) -> Option<moqt::object::Location> {
     cache_store
         .get(track_key)
         .and_then(|cache| cache.largest_location())
@@ -60,7 +60,7 @@ pub(super) fn cached_largest(
 struct UpstreamTrackAccess {
     track_key: TrackKey,
     upstream_track: UpstreamTrack,
-    largest_location: Option<moqt::Location>,
+    largest_location: Option<moqt::object::Location>,
     late_publishers: Option<UpstreamJoin>,
 }
 
@@ -436,7 +436,7 @@ impl Subscribe {
         subscriber_peer: SessionPeer,
         track_key: TrackKey,
         upstream_track: UpstreamTrack,
-        largest_location: Option<moqt::Location>,
+        largest_location: Option<moqt::object::Location>,
         table: &InMemoryLocalPubSubDirectory,
         egress_sender: &tokio::sync::mpsc::Sender<EgressCommand>,
         cache_store: &Arc<TrackCacheStore>,
@@ -644,9 +644,9 @@ mod tests {
     async fn create_upstream_and_resolve_largest(
         cache_store: Arc<TrackCacheStore>,
         track_key: TrackKey,
-        content_exists: moqt::ContentExists,
+        content_exists: moqt::object::ContentExists,
         bursts_on_subscribe: bool,
-    ) -> Option<moqt::Location> {
+    ) -> Option<moqt::object::Location> {
         const SUBSCRIBER_SESSION: SessionId = 2;
 
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
@@ -796,7 +796,7 @@ mod tests {
             ),
             (
                 NEW_PUBLISHER_SESSION,
-                mock_session_answering_subscribe(|| moqt::ContentExists::False),
+                mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
             ),
         ];
 
@@ -817,11 +817,11 @@ mod tests {
         let publishers = vec![
             (
                 DEAD_PUBLISHER_SESSION,
-                mock_session_answering_subscribe(|| moqt::ContentExists::False),
+                mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
             ),
             (
                 NEW_PUBLISHER_SESSION,
-                mock_session_answering_subscribe(|| moqt::ContentExists::False),
+                mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
             ),
         ];
 
@@ -845,7 +845,7 @@ mod tests {
         let largest = create_upstream_and_resolve_largest(
             cache_store,
             track_key,
-            moqt::ContentExists::False,
+            moqt::object::ContentExists::False,
             true,
         )
         .await;
@@ -868,14 +868,14 @@ mod tests {
         let largest = create_upstream_and_resolve_largest(
             cache_store,
             track_key,
-            moqt::ContentExists::False,
+            moqt::object::ContentExists::False,
             false,
         )
         .await;
 
         assert_eq!(
             largest,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 4,
                 object_id: 0,
             })
@@ -892,8 +892,8 @@ mod tests {
         let largest = create_upstream_and_resolve_largest(
             cache_store,
             track_key,
-            moqt::ContentExists::True {
-                location: moqt::Location {
+            moqt::object::ContentExists::True {
+                location: moqt::object::Location {
                     group_id: 10,
                     object_id: 0,
                 },
@@ -904,7 +904,7 @@ mod tests {
 
         assert_eq!(
             largest,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 10,
                 object_id: 0,
             })
@@ -997,7 +997,7 @@ mod tests {
         );
         let repository = session_repository_with_session(
             PUBLISHER_SESSION,
-            mock_session_answering_subscribe(|| moqt::ContentExists::False),
+            mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
             VerifiedToken::full_access(),
         )
         .await;

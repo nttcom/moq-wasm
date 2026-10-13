@@ -1,4 +1,4 @@
-use crate::GroupOrder;
+use crate::object::GroupOrder;
 
 const GROUP_RANK_BITS: u32 = 12;
 const GROUP_RANK_MASK: u64 = (1 << GROUP_RANK_BITS) - 1;

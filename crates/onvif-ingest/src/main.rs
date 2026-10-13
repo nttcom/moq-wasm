@@ -4,9 +4,13 @@ use bytes::Bytes;
 use clap::Parser;
 use mediapack::loc::{to_extension_headers, LocExtension, CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID};
 use moqt::{
-    ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    Session, SessionEvent, SubgroupId, SubgroupObject, SubgroupObjectSender, SubscribeOption,
-    Subscription, TrackReader, TransportSendError, WEBTRANSPORT,
+    object::{
+        ContentExists, DataReceiver, ExtensionHeaders, GroupOrder, SubgroupId, SubgroupObject,
+        SubgroupObjectSender,
+    },
+    subscribe::{FilterType, SubscribeOption},
+    ClientConfig, Endpoint, Session, SessionEvent, Subscription, TrackReader, TransportSendError,
+    WEBTRANSPORT,
 };
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use onvif_ingest::{
@@ -512,7 +516,7 @@ async fn handle_session_event(
 
 #[allow(clippy::too_many_arguments)]
 async fn handle_media_subscribe_event(
-    handler: moqt::SubscribeHandler,
+    handler: moqt::subscribe::SubscribeHandler,
     publisher: &moqt::Publisher,
     expected_namespace: &str,
     catalog_track: &str,
@@ -630,7 +634,7 @@ async fn handle_media_subscribe_event(
 }
 
 async fn handle_command_namespace_announce(
-    handler: moqt::PublishNamespaceHandler,
+    handler: moqt::namespace::PublishNamespaceHandler,
     session: &Session,
     command_namespace: &str,
     command_track: &str,
@@ -660,7 +664,7 @@ async fn handle_command_namespace_announce(
 }
 
 async fn handle_command_publish_event(
-    handler: moqt::PublishHandler,
+    handler: moqt::publish::PublishHandler,
     session: &Session,
     command_namespace: &str,
     command_track: &str,

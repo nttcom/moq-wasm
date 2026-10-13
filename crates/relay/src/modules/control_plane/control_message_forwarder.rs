@@ -4,7 +4,10 @@ use publish_namespace_response_task::PublishNamespaceResponseTask;
 
 use std::sync::Arc;
 
-use moqt::{ContentExists, FilterType, GroupOrder};
+use moqt::{
+    object::{ContentExists, GroupOrder},
+    subscribe::FilterType,
+};
 
 use crate::modules::{
     domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
@@ -169,10 +172,10 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
-        start_location: moqt::Location,
-        end_location: moqt::Location,
-        option: moqt::FetchOption,
-    ) -> anyhow::Result<moqt::FetchHandle> {
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        option: moqt::fetch::FetchOption,
+    ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         let mut subscriber = self.subscriber(session_id).await?;
         tracing::info!(
             "Forwarding FETCH '{}/{}' to session:{}",

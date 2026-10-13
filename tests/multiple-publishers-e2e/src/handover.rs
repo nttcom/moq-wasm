@@ -14,8 +14,12 @@ use std::{
 use crate::{connect, object_payload};
 use anyhow::{Context as _, bail};
 use moqt::{
-    ContentExists, DataReceiver, ExtensionHeaders, FilterType, GroupOrder, Session, SessionEvent,
-    Subgroup, SubgroupId, SubgroupObject, SubscribeOption, Subscription,
+    Session, SessionEvent, Subscription,
+    object::{
+        ContentExists, DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId,
+        SubgroupObject,
+    },
+    subscribe::{FilterType, SubscribeOption},
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},

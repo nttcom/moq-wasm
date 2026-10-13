@@ -2,8 +2,8 @@ use bytes::BytesMut;
 use tokio_util::codec::Decoder;
 
 use crate::{
-    Subgroup, SubgroupHeader, SubgroupHeaderType, SubgroupObjectField,
     modules::moqt::data_plane::object::decode_error::DecodeError,
+    object::{Subgroup, SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
 };
 
 #[derive(Debug)]

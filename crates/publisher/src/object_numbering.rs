@@ -1,5 +1,5 @@
 use anyhow::{Result, ensure};
-use moqt::Location;
+use moqt::object::Location;
 
 use crate::manager::GroupBoundary;
 

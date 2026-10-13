@@ -28,16 +28,16 @@ pub(crate) struct EgressStartRequest {
     pub(crate) subscribe_ok_receiver: oneshot::Receiver<()>,
     /// From LargestLocation of SUBSCRIBE_OK
     /// None means that no content has been delivered yet.
-    pub(crate) largest_location: Option<moqt::Location>,
+    pub(crate) largest_location: Option<moqt::object::Location>,
 }
 
 pub(crate) struct EgressFetchRequest {
     pub(crate) subscriber_session_id: SessionId,
     pub(crate) request_id: u64,
     pub(crate) cache: Arc<TrackCache>,
-    pub(crate) start_location: moqt::Location,
-    pub(crate) end_location: moqt::Location,
-    pub(crate) group_order: moqt::GroupOrder,
+    pub(crate) start_location: moqt::object::Location,
+    pub(crate) end_location: moqt::object::Location,
+    pub(crate) group_order: moqt::object::GroupOrder,
 }
 
 pub(crate) enum EgressCommand {
@@ -237,7 +237,9 @@ mod tests {
                 subscriber_session_id: SUBSCRIBER_SESSION_ID,
                 downstream_subscribe_id: DOWNSTREAM_SUBSCRIBE_ID,
                 track_key: ctx.track_key.clone(),
-                downstream_subscription: make_subscription(moqt::FilterType::LargestObject),
+                downstream_subscription: make_subscription(
+                    moqt::subscribe::FilterType::LargestObject,
+                ),
                 parent_span: Span::none(),
                 ready_sender,
                 runner_signals: DownstreamRunnerSignals {

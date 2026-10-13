@@ -266,7 +266,7 @@ mod tests {
                 .unwrap();
         }
 
-        async fn wait_largest_location(&self, expected: moqt::Location) {
+        async fn wait_largest_location(&self, expected: moqt::object::Location) {
             wait_largest_location(&self.cache_store.get_or_create(&track_key()), expected).await;
         }
     }

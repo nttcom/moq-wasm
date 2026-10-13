@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::ContentExists;
+use moqt::object::ContentExists;
 use tokio::sync::mpsc;
 
 use crate::modules::{

@@ -4,19 +4,23 @@ use crate::modules::session::data_object::DataObject;
 pub(crate) trait StreamReceiver: Send + Sync + 'static {
     /// `Ok(None)` means the stream finished normally (FIN); errors keep the
     /// transport-closed / decode-failed distinction from `StreamReceiveError`.
-    async fn receive_object(&mut self) -> Result<Option<DataObject>, moqt::StreamReceiveError>;
+    async fn receive_object(
+        &mut self,
+    ) -> Result<Option<DataObject>, moqt::object::StreamReceiveError>;
 }
 
 #[async_trait::async_trait]
-impl StreamReceiver for moqt::StreamDataReceiver {
-    async fn receive_object(&mut self) -> Result<Option<DataObject>, moqt::StreamReceiveError> {
+impl StreamReceiver for moqt::object::StreamDataReceiver {
+    async fn receive_object(
+        &mut self,
+    ) -> Result<Option<DataObject>, moqt::object::StreamReceiveError> {
         let object = self.receive().await?;
         Ok(object.map(|object| match object {
-            moqt::Subgroup::Header(header) => {
+            moqt::object::Subgroup::Header(header) => {
                 tracing::debug!(subgroup_header = ?header, "Received subgroup header");
                 DataObject::SubgroupHeader(header)
             }
-            moqt::Subgroup::Object(field) => DataObject::SubgroupObject(field),
+            moqt::object::Subgroup::Object(field) => DataObject::SubgroupObject(field),
         }))
     }
 }
@@ -27,8 +31,10 @@ pub(crate) trait StreamReceiverFactory: Send + 'static {
 }
 
 #[async_trait::async_trait]
-impl StreamReceiverFactory for moqt::StreamDataReceiverFactory {
+impl StreamReceiverFactory for moqt::object::StreamDataReceiverFactory {
     async fn next(&mut self) -> anyhow::Result<Box<dyn StreamReceiver>> {
-        Ok(Box::new(moqt::StreamDataReceiverFactory::next(self).await?))
+        Ok(Box::new(
+            moqt::object::StreamDataReceiverFactory::next(self).await?,
+        ))
     }
 }

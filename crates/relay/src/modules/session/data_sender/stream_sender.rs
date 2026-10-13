@@ -1,8 +1,8 @@
 use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
 
 enum SenderInner {
-    Uninitialized(moqt::SubgroupHeaderSender),
-    HeaderSent(moqt::SubgroupObjectSender),
+    Uninitialized(moqt::object::SubgroupHeaderSender),
+    HeaderSent(moqt::object::SubgroupObjectSender),
 }
 
 pub(crate) struct StreamSender {
@@ -11,7 +11,10 @@ pub(crate) struct StreamSender {
 }
 
 impl StreamSender {
-    pub(crate) fn new(inner: moqt::SubgroupHeaderSender, subscriber_track_alias: u64) -> Self {
+    pub(crate) fn new(
+        inner: moqt::object::SubgroupHeaderSender,
+        subscriber_track_alias: u64,
+    ) -> Self {
         Self {
             inner: Some(SenderInner::Uninitialized(inner)),
             subscriber_track_alias,

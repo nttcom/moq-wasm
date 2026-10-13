@@ -35,7 +35,7 @@ impl LiveGroup {
 
 #[derive(Default)]
 pub(super) struct Ledger {
-    pub(super) objects: BTreeMap<moqt::Location, Arc<CachedObject>>,
+    pub(super) objects: BTreeMap<moqt::object::Location, Arc<CachedObject>>,
     pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) aborted_subgroups: HashSet<SubgroupKey>,
     pub(super) finished_subgroups: HashSet<SubgroupKey>,
@@ -129,7 +129,7 @@ impl Ledger {
     /// A live object proves only its own position (draft-14 §10.4.2: the ids
     /// skipped by a non-zero delta cannot be inferred); the rest of the group is
     /// decided when its last subgroup closes.
-    pub(super) fn register_live_object(&mut self, location: moqt::Location) {
+    pub(super) fn register_live_object(&mut self, location: moqt::object::Location) {
         self.known_ranges.insert(location, after(location));
         if let Some(live) = self.live_groups.get_mut(&location.group_id) {
             live.knowledge_frontier = live
@@ -193,11 +193,15 @@ impl Ledger {
         groups.into_iter().collect()
     }
 
-    pub(super) fn largest_location(&self) -> Option<moqt::Location> {
+    pub(super) fn largest_location(&self) -> Option<moqt::object::Location> {
         self.objects.last_key_value().map(|(location, _)| *location)
     }
 
-    pub(super) fn has_object_in(&self, start: moqt::Location, end: moqt::Location) -> bool {
+    pub(super) fn has_object_in(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
         let end = KnownRanges::exclusive_end(end);
         start < end && self.objects.range(start..end).next().is_some()
     }

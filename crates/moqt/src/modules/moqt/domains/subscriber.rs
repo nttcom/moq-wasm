@@ -4,8 +4,8 @@ use anyhow::bail;
 use tracing::Instrument;
 
 use crate::{
-    DatagramReceiver, FetchOption, FilterType, GroupOrder, Location, SubscribeOption,
-    SubscribeUpdateOption, SubscriberInitiatedSubscription, Subscription,
+    SubscriberInitiatedSubscription, Subscription,
+    fetch::FetchOption,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -30,6 +30,8 @@ use crate::{
         },
         runtime::dispatch::incoming_object::IncomingObject,
     },
+    object::{DatagramReceiver, GroupOrder, Location},
+    subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
     wire::{RequestError, TrackStatusOk},
 };
 
@@ -615,11 +617,13 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        ContentExists, ExtensionHeaders, Fetch, FetchObject, FetchObjectField, FetchOption,
-        Location, SessionEvent, SubscribeOption, SubscribeUpdateOption,
+        SessionEvent,
+        fetch::{Fetch, FetchObject, FetchObjectField, FetchOption},
         modules::test_support::{
             DISCONNECT_TIMEOUT, connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
         },
+        object::{ContentExists, ExtensionHeaders, Location},
+        subscribe::{SubscribeOption, SubscribeUpdateOption},
     };
 
     const START: Location = Location {

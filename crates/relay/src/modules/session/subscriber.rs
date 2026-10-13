@@ -24,13 +24,13 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         &mut self,
         track_namespace: String,
         track_name: String,
-        start_location: moqt::Location,
-        end_location: moqt::Location,
-        option: moqt::FetchOption,
-    ) -> anyhow::Result<moqt::FetchHandle>;
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        option: moqt::fetch::FetchOption,
+    ) -> anyhow::Result<moqt::fetch::FetchHandle>;
     async fn create_fetch_receiver(
         &mut self,
-        handle: &moqt::FetchHandle,
+        handle: &moqt::fetch::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>>;
     async fn send_fetch_cancel(&self, request_id: u64) -> anyhow::Result<()>;
 }
@@ -49,7 +49,7 @@ impl Subscriber for moqt::Subscriber {
         track_name: String,
         option: SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription> {
-        let option = moqt::SubscribeOption {
+        let option = moqt::subscribe::SubscribeOption {
             subscriber_priority: option.subscriber_priority,
             group_order: option.group_order,
             forward: option.forward,
@@ -91,8 +91,12 @@ impl Subscriber for moqt::Subscriber {
     ) -> anyhow::Result<DataReceiver> {
         let result = self.accept_data_receiver(subscription.as_moqt()).await?;
         match result {
-            moqt::DataReceiver::Stream(factory) => Ok(DataReceiver::Stream(Box::new(factory))),
-            moqt::DataReceiver::Datagram(inner) => Ok(DataReceiver::Datagram(Box::new(inner))),
+            moqt::object::DataReceiver::Stream(factory) => {
+                Ok(DataReceiver::Stream(Box::new(factory)))
+            }
+            moqt::object::DataReceiver::Datagram(inner) => {
+                Ok(DataReceiver::Datagram(Box::new(inner)))
+            }
         }
     }
 
@@ -106,10 +110,10 @@ impl Subscriber for moqt::Subscriber {
         &mut self,
         track_namespace: String,
         track_name: String,
-        start_location: moqt::Location,
-        end_location: moqt::Location,
-        option: moqt::FetchOption,
-    ) -> anyhow::Result<moqt::FetchHandle> {
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        option: moqt::fetch::FetchOption,
+    ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         self.fetch(
             track_namespace,
             track_name,
@@ -128,7 +132,7 @@ impl Subscriber for moqt::Subscriber {
     )]
     async fn create_fetch_receiver(
         &mut self,
-        handle: &moqt::FetchHandle,
+        handle: &moqt::fetch::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
         let receiver = self.accept_fetch_receiver(handle).await?;
         Ok(Box::new(receiver))

@@ -3,9 +3,11 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::mpsc;
 
 use crate::{
-    ExtensionHeaders, MalformedTrackError, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
-    SubgroupHeader, SubgroupId, SubgroupObject,
     modules::executor::{self, JoinHandle},
+    object::{
+        ExtensionHeaders, MalformedTrackError, StreamDataReceiver, StreamDataReceiverFactory,
+        Subgroup, SubgroupHeader, SubgroupId, SubgroupObject,
+    },
 };
 
 /// Bounds how far a reader task runs ahead of `next_object()`; a full channel
@@ -151,12 +153,12 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        ExtensionHeaders, MalformedTrackError, SubgroupId, SubgroupObject, TrackObject,
-        TrackReader,
+        TrackObject, TrackReader,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
+        object::{ExtensionHeaders, MalformedTrackError, SubgroupId, SubgroupObject},
     };
 
     const NO_OBJECT_TIMEOUT: Duration = Duration::from_millis(500);
@@ -281,7 +283,7 @@ mod tests {
         let end_of_group = group_0.create_object_field(
             0,
             ExtensionHeaders::default(),
-            SubgroupObject::new_status(crate::ObjectStatus::EndOfGroup as u64),
+            SubgroupObject::new_status(crate::object::ObjectStatus::EndOfGroup as u64),
         );
         group_0.send(end_of_group).await.unwrap();
         group_0.close().await.unwrap();

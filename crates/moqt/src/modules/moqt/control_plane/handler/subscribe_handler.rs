@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    FilterType, GroupOrder, SubscriberInitiatedSubscription, Subscription,
+    SubscriberInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -16,6 +16,8 @@ use crate::{
         domains::session_context::SessionContext,
     },
     modules::transport::transport_send_stream::TransportSendError,
+    object::GroupOrder,
+    subscribe::FilterType,
 };
 
 #[derive(Debug, Clone)]
@@ -129,10 +131,11 @@ impl SubscribeHandler {
 
 #[cfg(test)]
 mod tests {
-    use crate::SubscribeOption;
+    use crate::subscribe::SubscribeOption;
     use crate::{
-        ContentExists, GroupOrder, SessionEvent,
+        SessionEvent,
         modules::test_support::{connect_sessions, spawn_dual_server},
+        object::{ContentExists, GroupOrder},
     };
 
     #[tokio::test]

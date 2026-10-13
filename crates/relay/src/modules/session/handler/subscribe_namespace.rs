@@ -10,7 +10,7 @@ pub(crate) trait SubscribeNamespaceHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl SubscribeNamespaceHandler for moqt::SubscribeNamespaceHandler {
+impl SubscribeNamespaceHandler for moqt::namespace::SubscribeNamespaceHandler {
     fn track_namespace_prefix(&self) -> &str {
         &self.track_namespace_prefix
     }

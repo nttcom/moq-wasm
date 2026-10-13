@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::{Accepting, Endpoint, TransportProtocol};
+use moqt::{Endpoint, TransportProtocol, server::Accepting};
 use tracing::{Instrument, Span};
 
 use crate::{
@@ -91,7 +91,7 @@ pub struct SessionHandler {
 
 impl SessionHandler {
     pub(crate) fn run<T: TransportProtocol>(
-        config: moqt::ServerConfig,
+        config: moqt::server::ServerConfig,
         intake: SessionIntake,
     ) -> Self {
         let mut endpoint = Endpoint::<T>::create_server(&config)

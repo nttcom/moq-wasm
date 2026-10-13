@@ -1,8 +1,11 @@
 use std::rc::Rc;
 
 use moqt::{
-    FetchHandler, PublishHandler, PublishNamespaceHandler, Session, SessionEvent, SubscribeHandler,
-    TrackStatusHandler,
+    Session, SessionEvent,
+    fetch::FetchHandler,
+    namespace::PublishNamespaceHandler,
+    publish::PublishHandler,
+    subscribe::{SubscribeHandler, TrackStatusHandler},
     wire::{Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus},
 };
 use wasm_bindgen::JsValue;

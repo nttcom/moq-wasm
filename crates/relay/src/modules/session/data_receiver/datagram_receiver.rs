@@ -6,7 +6,7 @@ pub(crate) trait DatagramReceiver: Send + Sync + 'static {
 }
 
 #[async_trait::async_trait]
-impl DatagramReceiver for moqt::DatagramReceiver {
+impl DatagramReceiver for moqt::object::DatagramReceiver {
     async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
         let object = self.receive().await?;
         Ok(DataObject::ObjectDatagram(object))

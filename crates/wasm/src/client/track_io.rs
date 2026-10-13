@@ -1,8 +1,10 @@
 use std::rc::Rc;
 
 use moqt::{
-    DataReceiver, Fetch as FetchData, FetchHandle, Session, StreamDataReceiver, Subgroup,
-    Subscription, wire::SubgroupHeader,
+    Session, Subscription,
+    fetch::{Fetch as FetchData, FetchHandle},
+    object::{DataReceiver, StreamDataReceiver, Subgroup},
+    wire::SubgroupHeader,
 };
 use wasm_bindgen_futures::spawn_local;
 

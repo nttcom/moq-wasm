@@ -30,20 +30,20 @@ pub(crate) struct Fetch;
 
 struct CacheTarget {
     cache: Arc<TrackCache>,
-    start_location: moqt::Location,
-    end_location: moqt::Location,
+    start_location: moqt::object::Location,
+    end_location: moqt::object::Location,
 }
 
 struct FetchTarget {
     track_key: TrackKey,
     track_namespace: String,
     track_name: String,
-    start_location: moqt::Location,
-    end_location: moqt::Location,
+    start_location: moqt::object::Location,
+    end_location: moqt::object::Location,
 }
 
 struct PreparedUpstreamFetch {
-    handle: moqt::FetchHandle,
+    handle: moqt::fetch::FetchHandle,
     upstream_publisher_session_id: SessionId,
 }
 
@@ -266,8 +266,8 @@ impl Fetch {
                 target.track_name.clone(),
                 target.start_location,
                 target.end_location,
-                moqt::FetchOption {
-                    subscriber_priority: moqt::FetchOption::default().subscriber_priority,
+                moqt::fetch::FetchOption {
+                    subscriber_priority: moqt::fetch::FetchOption::default().subscriber_priority,
                     group_order: handler.group_order(),
                 },
             )
@@ -415,7 +415,7 @@ impl Fetch {
         session_id: SessionId,
         joining_request_id: u64,
         table: &InMemoryLocalPubSubDirectory,
-        start_group: impl FnOnce(moqt::Location) -> u64,
+        start_group: impl FnOnce(moqt::object::Location) -> u64,
     ) -> Result<FetchTarget, FetchError> {
         let Some(downstream_sub) =
             table.get_downstream_subscription(session_id, joining_request_id)
@@ -440,7 +440,7 @@ impl Fetch {
             return Err(FetchError::NoObjectsPublished);
         };
 
-        let start_location = moqt::Location {
+        let start_location = moqt::object::Location {
             group_id: start_group(largest),
             object_id: 0,
         };
@@ -456,8 +456,8 @@ impl Fetch {
         })
     }
 
-    fn location_after_largest(largest: moqt::Location) -> moqt::Location {
-        moqt::Location {
+    fn location_after_largest(largest: moqt::object::Location) -> moqt::object::Location {
+        moqt::object::Location {
             group_id: largest.group_id,
             object_id: largest.object_id + 1,
         }
@@ -484,8 +484,8 @@ mod tests {
     };
 
     fn standalone_fetch_params(
-        start_location: moqt::Location,
-        end_location: moqt::Location,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
     ) -> FetchParams {
         FetchParams::Standalone {
             track_namespace: vec!["ns".to_string()],
@@ -666,11 +666,11 @@ mod tests {
     fn fetch_source_is_upstream_when_track_entry_missing() {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
-        let start = moqt::Location {
+        let start = moqt::object::Location {
             group_id: 0,
             object_id: 0,
         };
-        let end = moqt::Location {
+        let end = moqt::object::Location {
             group_id: 0,
             object_id: 1,
         };
@@ -702,11 +702,11 @@ mod tests {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         cache_store.get_or_create(&TrackKey::new("ns", "track"));
-        let start = moqt::Location {
+        let start = moqt::object::Location {
             group_id: 0,
             object_id: 0,
         };
-        let end = moqt::Location {
+        let end = moqt::object::Location {
             group_id: 0,
             object_id: 1,
         };
@@ -732,11 +732,11 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0, 2]);
-        let start = moqt::Location {
+        let start = moqt::object::Location {
             group_id: 0,
             object_id: 0,
         };
-        let end = moqt::Location {
+        let end = moqt::object::Location {
             group_id: 0,
             object_id: 3,
         };
@@ -762,11 +762,11 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
-        let start = moqt::Location {
+        let start = moqt::object::Location {
             group_id: 0,
             object_id: 0,
         };
-        let end = moqt::Location {
+        let end = moqt::object::Location {
             group_id: 1,
             object_id: 2,
         };
@@ -800,11 +800,11 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g0 = open_group(&cache, 0, &[0, 1, 2]);
-        let start = moqt::Location {
+        let start = moqt::object::Location {
             group_id: 0,
             object_id: 0,
         };
-        let requested_end = moqt::Location {
+        let requested_end = moqt::object::Location {
             group_id: 2,
             object_id: 0,
         };
@@ -824,7 +824,7 @@ mod tests {
             FetchSource::Cache(resolved) => {
                 assert_eq!(
                     resolved.end_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 0,
                         object_id: 3
                     }
@@ -849,11 +849,11 @@ mod tests {
         let result = Fetch.resolve_target_and_source(
             2,
             standalone_fetch_params(
-                moqt::Location {
+                moqt::object::Location {
                     group_id: 0,
                     object_id: 1,
                 },
-                moqt::Location {
+                moqt::object::Location {
                     group_id: 0,
                     object_id: 2,
                 },
@@ -880,11 +880,11 @@ mod tests {
         let result = Fetch.resolve_target_and_source(
             2,
             standalone_fetch_params(
-                moqt::Location {
+                moqt::object::Location {
                     group_id: 1,
                     object_id: 0,
                 },
-                moqt::Location {
+                moqt::object::Location {
                     group_id: 1,
                     object_id: 0,
                 },
@@ -904,11 +904,11 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let _open_g1 = open_group(&cache, 1, &[2, 3]);
-        let start = moqt::Location {
+        let start = moqt::object::Location {
             group_id: 1,
             object_id: 2,
         };
-        let end = moqt::Location {
+        let end = moqt::object::Location {
             group_id: 1,
             object_id: 4,
         };
@@ -970,7 +970,7 @@ mod tests {
     #[test]
     fn resolve_joining_target_ends_after_stored_largest() {
         // Arrange
-        let largest = moqt::Location {
+        let largest = moqt::object::Location {
             group_id: 10,
             object_id: 5,
         };
@@ -995,7 +995,7 @@ mod tests {
         assert_eq!(target.track_name, "track");
         assert_eq!(
             target.end_location,
-            moqt::Location {
+            moqt::object::Location {
                 group_id: 10,
                 object_id: 6
             }
@@ -1014,7 +1014,7 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 1,
                 object_id: 1,
             }),
@@ -1042,14 +1042,14 @@ mod tests {
                 assert_eq!(target.track_name, "track");
                 assert_eq!(
                     target.start_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 0,
                         object_id: 0
                     }
                 );
                 assert_eq!(
                     target.end_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 1,
                         object_id: 2
                     }
@@ -1071,7 +1071,7 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 2,
                 object_id: 3,
             }),
@@ -1096,14 +1096,14 @@ mod tests {
             FetchSource::Upstream => {
                 assert_eq!(
                     target.start_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 1,
                         object_id: 0
                     }
                 );
                 assert_eq!(
                     target.end_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 2,
                         object_id: 4
                     }
@@ -1123,7 +1123,7 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 1,
                 object_id: 1,
             }),
@@ -1148,14 +1148,14 @@ mod tests {
             FetchSource::Upstream => {
                 assert_eq!(
                     target.start_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 0,
                         object_id: 0
                     }
                 );
                 assert_eq!(
                     target.end_location,
-                    moqt::Location {
+                    moqt::object::Location {
                         group_id: 1,
                         object_id: 2
                     }
@@ -1175,7 +1175,7 @@ mod tests {
             100,
             SessionPeer::Client,
             upstream_key,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 1,
                 object_id: 1,
             }),

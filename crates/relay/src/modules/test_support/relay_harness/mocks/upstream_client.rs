@@ -14,7 +14,7 @@ use crate::modules::{
     },
 };
 
-type ReceiveResult = Result<Option<DataObject>, moqt::StreamReceiveError>;
+type ReceiveResult = Result<Option<DataObject>, moqt::object::StreamReceiveError>;
 
 struct MockStreamReceiver {
     receiver: mpsc::UnboundedReceiver<ReceiveResult>,
@@ -71,13 +71,13 @@ impl UpstreamSubgroupStream {
     }
 
     pub(crate) fn reset(&self) {
-        self.push(Err(moqt::StreamReceiveError::Closed(
+        self.push(Err(moqt::object::StreamReceiveError::Closed(
             "stream reset by peer".to_string(),
         )));
     }
 
     pub(crate) fn decode_error(&self) {
-        self.push(Err(moqt::StreamReceiveError::Decode(
+        self.push(Err(moqt::object::StreamReceiveError::Decode(
             "malformed object field".to_string(),
         )));
     }

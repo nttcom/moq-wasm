@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use crate::{
-    DatagramSender,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -31,6 +30,7 @@ use crate::{
             subscription::{PublisherInitiatedSubscription, Subscription},
         },
     },
+    object::DatagramSender,
     wire::RequestError,
 };
 
@@ -211,7 +211,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        PublishOption, SessionEvent, modules::test_support::spawn_connected_dual_sessions,
+        SessionEvent, modules::test_support::spawn_connected_dual_sessions, publish::PublishOption,
     };
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(3);

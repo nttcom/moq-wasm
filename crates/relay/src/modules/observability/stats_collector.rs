@@ -231,7 +231,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use bytes::Bytes;
-    use moqt::ContentExists;
+    use moqt::object::ContentExists;
     use relay_stats::SessionPeer as SnapshotPeer;
 
     use super::{StatsCollector, StatsSources};

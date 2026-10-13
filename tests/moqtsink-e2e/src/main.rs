@@ -2,9 +2,10 @@ use std::{collections::BTreeSet, env, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
 use moqt::{
-    ClientConfig, ContentExists, DataReceiver, Endpoint, Fetch, FetchObject, FetchOption,
-    FilterType, GroupOrder, Location, QUIC, Session, Subgroup, SubgroupObject, SubscribeOption,
-    Subscriber, Subscription,
+    ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
+    fetch::{Fetch, FetchObject, FetchOption},
+    object::{ContentExists, DataReceiver, GroupOrder, Location, Subgroup, SubgroupObject},
+    subscribe::{FilterType, SubscribeOption},
 };
 use msf::Catalog;
 use tokio::process::{Child, Command};

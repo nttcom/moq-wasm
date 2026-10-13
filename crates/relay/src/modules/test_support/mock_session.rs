@@ -1,6 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use moqt::{ContentExists, FilterType, GroupOrder, TerminationErrorCode};
+use moqt::{
+    TerminationErrorCode,
+    object::{ContentExists, GroupOrder},
+    subscribe::FilterType,
+};
 use tokio::sync::oneshot;
 
 use crate::modules::{
@@ -292,8 +296,8 @@ impl Session for MockUpstreamSession {
         self.transport_stats
     }
 
-    fn transport_addresses(&self) -> moqt::TransportAddresses {
-        moqt::TransportAddresses::default()
+    fn transport_addresses(&self) -> moqt::server::TransportAddresses {
+        moqt::server::TransportAddresses::default()
     }
 }
 
@@ -444,10 +448,10 @@ impl Subscriber for MockUpstreamSubscriber {
         &mut self,
         _track_namespace: String,
         _track_name: String,
-        _start_location: moqt::Location,
-        end_location: moqt::Location,
-        _option: moqt::FetchOption,
-    ) -> anyhow::Result<moqt::FetchHandle> {
+        _start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        _option: moqt::fetch::FetchOption,
+    ) -> anyhow::Result<moqt::fetch::FetchHandle> {
         match self.answer_fetch {
             FetchAnswer::Never => std::future::pending().await,
             FetchAnswer::Refuse => Err(anyhow::Error::new(moqt::wire::RequestError {
@@ -455,7 +459,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 error_code: 0x4,
                 reason_phrase: "no objects".to_string(),
             })),
-            FetchAnswer::FetchOk => Ok(moqt::FetchHandle {
+            FetchAnswer::FetchOk => Ok(moqt::fetch::FetchHandle {
                 request_id: 0,
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
@@ -466,7 +470,7 @@ impl Subscriber for MockUpstreamSubscriber {
 
     async fn create_fetch_receiver(
         &mut self,
-        _handle: &moqt::FetchHandle,
+        _handle: &moqt::fetch::FetchHandle,
     ) -> anyhow::Result<Box<dyn UpstreamFetchReceiver>> {
         Ok(Box::new(PendingFetchReceiver))
     }
@@ -485,7 +489,7 @@ struct PendingFetchReceiver;
 
 #[async_trait::async_trait]
 impl UpstreamFetchReceiver for PendingFetchReceiver {
-    async fn receive(&mut self) -> anyhow::Result<moqt::Fetch> {
+    async fn receive(&mut self) -> anyhow::Result<moqt::fetch::Fetch> {
         std::future::pending().await
     }
 }
@@ -582,11 +586,11 @@ impl FetchHandler for MockFetchHandler {
         moqt::wire::FetchParams::Standalone {
             track_namespace: vec!["ns".to_string()],
             track_name: "track".to_string(),
-            start_location: moqt::Location {
+            start_location: moqt::object::Location {
                 group_id: 0,
                 object_id: 0,
             },
-            end_location: moqt::Location {
+            end_location: moqt::object::Location {
                 group_id: 1,
                 object_id: 0,
             },
@@ -596,7 +600,7 @@ impl FetchHandler for MockFetchHandler {
     async fn ok(
         &self,
         _end_of_track: bool,
-        _end_location: moqt::Location,
+        _end_location: moqt::object::Location,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }

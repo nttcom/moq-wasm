@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use moqt::{FilterType, GroupOrder};
+use moqt::{object::GroupOrder, subscribe::FilterType};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::modules::data_plane::{
@@ -12,11 +12,11 @@ use crate::modules::data_plane::{
 /// Object (§9.7), so an absolute start at or below it is raised past it.
 fn resolve_start_location(
     filter_type: &FilterType,
-    largest: &Option<moqt::Location>,
-) -> moqt::Location {
+    largest: &Option<moqt::object::Location>,
+) -> moqt::object::Location {
     let start = filter_type.start_location(*largest);
     match largest {
-        Some(largest) if start <= *largest => moqt::Location {
+        Some(largest) if start <= *largest => moqt::object::Location {
             group_id: largest.group_id,
             object_id: largest.object_id + 1,
         },
@@ -56,7 +56,7 @@ pub(crate) struct EgressScheduler {
     sender: mpsc::Sender<GroupSendTask>,
     /// Largest Object at SUBSCRIBE processing time; `None` when no content
     /// has been delivered yet.
-    largest_location: Option<moqt::Location>,
+    largest_location: Option<moqt::object::Location>,
     forward_receiver: watch::Receiver<bool>,
 }
 
@@ -66,7 +66,7 @@ impl EgressScheduler {
         filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
-        largest_location: Option<moqt::Location>,
+        largest_location: Option<moqt::object::Location>,
         forward_receiver: watch::Receiver<bool>,
     ) -> Self {
         Self {
@@ -127,7 +127,7 @@ impl EgressScheduler {
             return;
         }
         self.schedule_cached_objects(
-            &moqt::Location {
+            &moqt::object::Location {
                 group_id: group_id + 1,
                 object_id: 0,
             },
@@ -149,7 +149,7 @@ impl EgressScheduler {
     /// subscribe-time snapshot and event subscription, and lag recovery.
     async fn schedule_cached_objects(
         &self,
-        start: &moqt::Location,
+        start: &moqt::object::Location,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
         for group_id in self.cache.groups_at_or_after(start.group_id) {
@@ -213,7 +213,7 @@ mod tests {
     async fn start_scheduler(
         cache: Arc<TrackCache>,
         filter_type: FilterType,
-        largest_location: Option<moqt::Location>,
+        largest_location: Option<moqt::object::Location>,
     ) -> RunningScheduler {
         start_scheduler_with_forward(cache, filter_type, largest_location, true).await
     }
@@ -221,7 +221,7 @@ mod tests {
     async fn start_scheduler_with_forward(
         cache: Arc<TrackCache>,
         filter_type: FilterType,
-        largest_location: Option<moqt::Location>,
+        largest_location: Option<moqt::object::Location>,
         forward: bool,
     ) -> RunningScheduler {
         let (task_sender, task_receiver) = mpsc::channel(16);
@@ -300,7 +300,7 @@ mod tests {
         let mut scheduler = start_scheduler(
             cache,
             FilterType::AbsoluteStart {
-                location: moqt::Location {
+                location: moqt::object::Location {
                     group_id: 0,
                     object_id: 0,
                 },

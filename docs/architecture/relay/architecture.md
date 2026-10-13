@@ -67,7 +67,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 `SessionHandler` (`relay_server/session_handler.rs`) runs one accept loop per endpoint and hands every accepted
 transport connection to a per-connection task owned by `SessionIntake`:
 
-1. await the `moqt::Accepting` future → `Handshake` (CLIENT_SETUP received,
+1. await the `moqt::server::Accepting` future → `Handshake` (CLIENT_SETUP received,
    SERVER_SETUP not yet sent);
 2. `SessionAuthenticator::authenticate(client_setup, accepted_peer)` extracts
    the JWT, calls the `TokenVerifier`, and checks that `is_relay` matches the
@@ -611,7 +611,7 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   until `next_subgroup_object_or_wait` reports the subgroup finished (FIN
   downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Datagram groups are
   re-emitted with the downstream track alias.
-  Each stream is opened with a `moqt::StreamPriority` (draft-14 §7.2):
+  Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscription's subscriber priority, the first object's publisher
   priority, the subscription's group order with a per-subscription
   `GroupSequence` (incremented for every newer group id the sender sees,

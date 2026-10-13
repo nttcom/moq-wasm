@@ -1,6 +1,6 @@
 use std::{pin::Pin, task::Poll};
 
-use crate::{Handshake, modules::executor::BoxFuture};
+use crate::{modules::executor::BoxFuture, server::Handshake};
 
 pub struct Accepting {
     pub(crate) inner: BoxFuture<anyhow::Result<Handshake>>,

@@ -1,7 +1,10 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use moqt::{ContentExists, FilterType, GroupOrder};
+use moqt::{
+    object::{ContentExists, GroupOrder},
+    subscribe::FilterType,
+};
 
 use crate::modules::session::subscription::UpstreamSubscription;
 
@@ -36,7 +39,7 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
 }
 
 #[async_trait]
-impl PublishHandler for moqt::PublishHandler {
+impl PublishHandler for moqt::publish::PublishHandler {
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use mediapack::loc::{CAPTURE_TIMESTAMP_ID, LocExtension, to_extension_headers};
-use moqt::{PublishOption, Session, TrackWriter};
+use moqt::{Session, TrackWriter, publish::PublishOption};
 use tokio::io::AsyncReadExt;
 use tracing::info;
 

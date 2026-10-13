@@ -1,7 +1,7 @@
 use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
 
 #[async_trait::async_trait]
-impl DataSender for moqt::DatagramSender {
+impl DataSender for moqt::object::DatagramSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         match object {
             DataObject::ObjectDatagram(datagram) => self.send(datagram).await,

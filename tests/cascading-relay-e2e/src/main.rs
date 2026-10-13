@@ -9,9 +9,12 @@ use std::{
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, FilterType, GroupOrder,
-    ObjectDatagramPayload, QUIC, Session, SessionEvent, Subgroup, SubgroupId, SubgroupObject,
-    SubscribeOption, Subscription,
+    ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
+    object::{
+        ContentExists, ExtensionHeaders, GroupOrder, ObjectDatagramPayload, Subgroup, SubgroupId,
+        SubgroupObject,
+    },
+    subscribe::{FilterType, SubscribeOption},
 };
 use redis::AsyncCommands;
 
@@ -346,7 +349,7 @@ async fn run_pub_sub_scenario(
             .publish(
                 track_namespace.to_string(),
                 track_name.to_string(),
-                moqt::PublishOption::default(),
+                moqt::publish::PublishOption::default(),
             )
             .await
             .context("publisher failed to publish track")?;
@@ -738,7 +741,7 @@ async fn subscribe_and_receive_ordered_objects(
 
     let mut payloads = Vec::with_capacity(count);
     match receiver {
-        moqt::DataReceiver::Stream(mut factory) => {
+        moqt::object::DataReceiver::Stream(mut factory) => {
             let mut stream = factory.next().await?;
             while payloads.len() < count {
                 let Some(subgroup) = stream.receive().await? else {
@@ -751,7 +754,7 @@ async fn subscribe_and_receive_ordered_objects(
                 }
             }
         }
-        moqt::DataReceiver::Datagram(_) => {
+        moqt::object::DataReceiver::Datagram(_) => {
             bail!("expected stream data receiver for ordered objects");
         }
     }
@@ -955,7 +958,7 @@ where
     tracing::info!("subscriber accepted data receiver; waiting for object payload");
 
     match receiver {
-        moqt::DataReceiver::Stream(mut factory) => {
+        moqt::object::DataReceiver::Stream(mut factory) => {
             let mut stream = factory.next().await?;
             loop {
                 let Some(subgroup) = stream.receive().await? else {
@@ -972,7 +975,7 @@ where
                 }
             }
         }
-        moqt::DataReceiver::Datagram(mut datagram) => loop {
+        moqt::object::DataReceiver::Datagram(mut datagram) => loop {
             let object = datagram.receive().await?;
             if let ObjectDatagramPayload::Payload(payload) = object.field.payload {
                 tracing::info!(

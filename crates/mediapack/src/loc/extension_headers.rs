@@ -1,4 +1,4 @@
-use moqt::{ExtensionHeaders, KeyValuePair, VariantType};
+use moqt::object::{ExtensionHeaders, KeyValuePair, VariantType};
 
 use crate::loc::object::{LocExtension, LocValue};
 

@@ -10,11 +10,18 @@ use std::{
 
 use bytes::Bytes;
 use moqt::{
-    BROWSER, ClientConfig, ContentExists, Endpoint, FetchDataSender, FetchHandle, FetchHandler,
-    FetchOption, FilterType, GroupOrder, Location, ObjectStatus, PublishHandler,
-    PublishNamespaceHandler, PublishOption, RequestTimeoutError, Session, SubgroupId,
-    SubgroupObject, SubgroupObjectSender, SubscribeHandler, SubscribeOption, SubscribeUpdateOption,
-    Subscription, TerminationErrorCode, TrackStatusHandler, TransportSendError,
+    BROWSER, ClientConfig, Endpoint, RequestTimeoutError, Session, Subscription,
+    TerminationErrorCode, TransportSendError,
+    fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
+    namespace::PublishNamespaceHandler,
+    object::{
+        ContentExists, GroupOrder, Location, ObjectStatus, SubgroupId, SubgroupObject,
+        SubgroupObjectSender,
+    },
+    publish::{PublishHandler, PublishOption},
+    subscribe::{
+        FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
+    },
     wire::{
         AuthorizationToken, DatagramField, FetchObject, FetchObjectField, FetchOk, NamespaceOk,
         ObjectDatagram, ObjectDatagramPayload, PublishOk, RequestError, SubscribeOk, TrackStatusOk,

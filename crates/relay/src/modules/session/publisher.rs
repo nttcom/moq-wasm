@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin};
 
 use async_trait::async_trait;
-use moqt::ContentExists;
+use moqt::object::ContentExists;
 
 use crate::modules::session::{
     data_sender::{
@@ -63,7 +63,7 @@ impl Publisher for moqt::Publisher {
         track_name: String,
         content_exists: ContentExists,
     ) -> anyhow::Result<DownstreamSubscription> {
-        let option = moqt::PublishOption {
+        let option = moqt::publish::PublishOption {
             content_exists,
             ..Default::default()
         };
