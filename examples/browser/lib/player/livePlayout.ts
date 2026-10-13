@@ -12,8 +12,7 @@ const MAX_CATCH_UP_MS = 400
 const MICROS_PER_MILLI = 1_000
 
 type Held = { captureMicros: number; arrivedAtMs: number } & (
-  | { kind: 'video'; frame: VideoFrame }
-  | { kind: 'audio'; audioData: AudioData }
+  { kind: 'video'; frame: VideoFrame } | { kind: 'audio'; audioData: AudioData }
 )
 
 /// Live LOC playback. Both decoders hand over samples as soon as they are

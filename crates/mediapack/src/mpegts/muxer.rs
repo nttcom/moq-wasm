@@ -394,7 +394,7 @@ mod tests {
                 // Act
                 let packets = muxer.packetize(VIDEO_PID, &payload, pcr);
                 let mut recovered = Vec::new();
-                for packet in packets.chunks_exact(PACKET_SIZE) {
+                for packet in packets.as_chunks::<PACKET_SIZE>().0 {
                     recovered.extend_from_slice(
                         crate::mpegts::parser::parse_packet(packet).unwrap().payload,
                     );

@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 msf = { path = "../msf" }
 mediapack = { path = "../mediapack", features = ["moqt"] }
