@@ -9,6 +9,7 @@ It has no dependency on GStreamer or FFmpeg; everything is parsed and written in
 | FLV | `flv::Demuxer` | `flv::Muxer` |
 | fMP4 | `mp4::Demuxer` | `mp4::Fmp4Muxer` |
 | LoC | `loc::Demuxer` | `loc::Muxer` |
+| RTP payloads | `rtp::h264::Depacketizer`, `rtp::aac::Depacketizer` | `rtp::h264::packetize`, `rtp::aac::packetize` |
 
 All four formats share H.264/AAC `MediaEvent`s. MPEG-TS, FLV, and fMP4 can
 be converted in either direction through `Transmuxer`.
@@ -39,6 +40,7 @@ Timestamps are `Timestamp` values in microseconds with conversions to and from
 | `mp4::Demuxer` / `mp4::Fmp4Muxer` | Fragmented MP4; muxing writes an init segment plus one fragment per sample |
 | `mp4::Fmp4TrackMuxer` | One track per muxer with the init segment returned apart from the fragments, the shape draft-ietf-moq-cmsf-01 §3.1/§3.3 gives a MoQT track |
 | `loc` | `Muxer`, `Demuxer`, and transport-independent `LocObject` with typed extensions |
+| `rtp` | `packet::Header` (RFC 3550), the H.264 (RFC 6184) and AAC `MPEG4-GENERIC` (RFC 3640) payload formats, and the `sdp::SessionDescription` subset that describes a plain RTP session |
 | `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions) |
 | `aac` | AudioSpecificConfig and ADTS parsing |
 | `transmux` | `Transmuxer` (push API) and `transmux()` (Read/Write API) |
