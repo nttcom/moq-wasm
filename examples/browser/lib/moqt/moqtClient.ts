@@ -46,6 +46,7 @@ const defaultRawClientFactory: RawClientFactory = async (url) => {
 }
 
 type NamespaceRequest = { trackNamespace: string[]; authInfo: string }
+type Location = { groupId: bigint; objectId: bigint }
 type ActiveSubscription = {
   trackNamespace: string[]
   trackName: string
@@ -53,7 +54,13 @@ type ActiveSubscription = {
   options: SubscribeOptions
   /** The alias the application knows; it survives a relay switchover. */
   trackAlias: bigint
+  /** Largest Location of the first SUBSCRIBE_OK; the end a joining FETCH ran up to. */
+  largest?: Location
 }
+type FetchRequest =
+  | { kind: 'absolute'; trackNamespace: string[]; trackName: string; start: Location; end: Location }
+  | { kind: 'joining'; joiningRequestId: bigint; joiningStart: bigint }
+type InFlightFetch = { request: FetchRequest; groupOrder: GroupOrder; lastDelivered?: Location }
 type PublishedTrack = {
   trackNamespace: string[]
   trackName: string
@@ -216,6 +223,10 @@ export class MoqtClientWrapper {
   private readonly subscribedNamespaces = new Map<string, NamespaceRequest>()
   private readonly activeSubscriptions = new Map<bigint, ActiveSubscription>()
   private readonly publishedTracks = new Map<bigint, PublishedTrack>()
+  private readonly inFlightFetches = new Map<bigint, InFlightFetch>()
+  /** FETCHes re-issued on the current session; the old session's late objects and end for them are dropped. */
+  private readonly carriedFetches = new Set<bigint>()
+  private migratingTo: MOQTClient | null = null
   /** Incoming SUBSCRIBEs accepted on the current session; they end with it. */
   private readonly incomingSubscribeRequestIds = new Set<bigint>()
   /** Aliases of the current session that differ from the application's; empty until a switchover. */
@@ -321,6 +332,7 @@ export class MoqtClientWrapper {
     let next: MOQTClient | null = null
     try {
       next = await this.createRawClient(url)
+      this.migratingTo = next
       await next.start()
       this.setupCallbacks(next)
       const migrated = this.migrateState(next)
@@ -344,6 +356,7 @@ export class MoqtClientWrapper {
       console.warn('[moqt] relay switchover failed; staying on the current session', { url, error })
       await next?.close().catch(() => undefined)
     } finally {
+      this.migratingTo = null
       this.migrating = false
     }
   }
@@ -379,7 +392,47 @@ export class MoqtClientWrapper {
       await response
       aliases.wireAliasByAppAlias.set(track.trackAlias, wireAlias)
     }
+    for (const [requestId, fetch] of this.inFlightFetches) {
+      const remainder = remainingFetch(fetch, this.activeSubscriptions)
+      if (!remainder) {
+        continue
+      }
+      const response = expectResponse(this.pendingFetch, requestId)
+      try {
+        await this.sendFetchOn(next, requestId, remainder, fetch.groupOrder)
+        await response
+        this.carriedFetches.add(requestId)
+      } catch (error) {
+        console.warn('[moqt] FETCH not carried over to the new relay', { requestId: requestId.toString(), error })
+      }
+    }
     return aliases
+  }
+
+  private sendFetchOn(
+    client: MOQTClient,
+    requestId: bigint,
+    request: FetchRequest,
+    groupOrder: GroupOrder
+  ): Promise<void> {
+    if (request.kind === 'joining') {
+      return client.sendRelativeJoiningFetch(requestId, request.joiningRequestId, request.joiningStart, groupOrder)
+    }
+    return client.sendFetch(
+      requestId,
+      request.trackNamespace,
+      request.trackName,
+      request.start.groupId,
+      request.start.objectId,
+      request.end.groupId,
+      request.end.objectId,
+      groupOrder
+    )
+  }
+
+  /** The current session, or the one a switchover is bringing up. */
+  private isLiveClient(client: MOQTClient): boolean {
+    return client === this.client || client === this.migratingTo
   }
 
   private sendPublishOn(
@@ -610,7 +663,11 @@ export class MoqtClientWrapper {
         trackName,
         authInfo,
         options,
-        trackAlias: subscribeOk.trackAlias
+        trackAlias: subscribeOk.trackAlias,
+        largest:
+          subscribeOk.largestGroupId === undefined
+            ? undefined
+            : { groupId: subscribeOk.largestGroupId, objectId: subscribeOk.largestObjectId ?? 0n }
       })
       return { requestId, subscribeOk }
     } catch (error) {
@@ -628,18 +685,13 @@ export class MoqtClientWrapper {
     endObjectId: bigint,
     options: FetchOptions = {}
   ): Promise<FetchResult> {
-    return this.sendFetchRequest(options, (client, requestId, groupOrder) =>
-      client.sendFetch(
-        requestId,
-        trackNamespace,
-        trackName,
-        startGroupId,
-        startObjectId,
-        endGroupId,
-        endObjectId,
-        groupOrder
-      )
-    )
+    return this.sendFetchRequest(options, {
+      kind: 'absolute',
+      trackNamespace,
+      trackName,
+      start: { groupId: startGroupId, objectId: startObjectId },
+      end: { groupId: endGroupId, objectId: endObjectId }
+    })
   }
 
   relativeJoiningFetch(
@@ -647,9 +699,7 @@ export class MoqtClientWrapper {
     joiningStart: bigint,
     options: FetchOptions = {}
   ): Promise<FetchResult> {
-    return this.sendFetchRequest(options, (client, requestId, groupOrder) =>
-      client.sendRelativeJoiningFetch(requestId, joiningRequestId, joiningStart, groupOrder)
-    )
+    return this.sendFetchRequest(options, { kind: 'joining', joiningRequestId, joiningStart })
   }
 
   /// Hands the objects and the stream end of a FETCH sent through the raw
@@ -660,25 +710,25 @@ export class MoqtClientWrapper {
     this.fetchStreamEndHandlers.set(requestId, onStreamEnd)
   }
 
-  private async sendFetchRequest(
-    options: FetchOptions,
-    send: (client: MOQTClient, requestId: bigint, groupOrder: GroupOrder) => Promise<void>
-  ): Promise<FetchResult> {
+  private async sendFetchRequest(options: FetchOptions, request: FetchRequest): Promise<FetchResult> {
     const client = this.requireConnectedClient()
     const requestId = options.requestId ?? this.issueRequestId()
+    const groupOrder = options.groupOrder ?? GroupOrder.Ascending
     if (options.onObject) {
       this.fetchObjectHandlers.set(requestId, options.onObject)
     }
     if (options.onStreamEnd) {
       this.fetchStreamEndHandlers.set(requestId, options.onStreamEnd)
     }
+    this.inFlightFetches.set(requestId, { request, groupOrder })
     const response = expectResponse(this.pendingFetch, requestId)
     try {
-      await send(client, requestId, options.groupOrder ?? GroupOrder.Ascending)
+      await this.sendFetchOn(client, requestId, request, groupOrder)
       return { requestId, fetchOk: await response }
     } catch (error) {
       this.fetchObjectHandlers.delete(requestId)
       this.fetchStreamEndHandlers.delete(requestId)
+      this.inFlightFetches.delete(requestId)
       this.pendingFetch.delete(requestId)
       throw error
     }
@@ -981,11 +1031,23 @@ export class MoqtClientWrapper {
       settle(this.pendingFetch, 'FETCH_ERROR', response)
     })
     client.onFetchObject((message: FetchObjectMessage) => {
-      const handler = this.fetchObjectHandlers.get(BigInt(message.requestId))
-      handler?.(message)
+      const requestId = BigInt(message.requestId)
+      if (!this.isLiveClient(client) && this.carriedFetches.has(requestId)) {
+        return
+      }
+      const fetch = this.inFlightFetches.get(requestId)
+      if (fetch) {
+        fetch.lastDelivered = { groupId: message.groupId, objectId: message.objectId }
+      }
+      this.fetchObjectHandlers.get(requestId)?.(message)
     })
     client.onFetchStreamEnd((message: FetchStreamEndMessage) => {
       const requestId = BigInt(message.requestId)
+      if (!this.isLiveClient(client) && this.carriedFetches.has(requestId)) {
+        return
+      }
+      this.inFlightFetches.delete(requestId)
+      this.carriedFetches.delete(requestId)
       const handler = this.fetchStreamEndHandlers.get(requestId)
       this.fetchStreamEndHandlers.delete(requestId)
       handler?.(message)
@@ -1058,6 +1120,8 @@ export class MoqtClientWrapper {
     this.publishDoneHandlers.clear()
     this.activeSubscriptions.clear()
     this.publishedTracks.clear()
+    this.inFlightFetches.clear()
+    this.carriedFetches.clear()
     this.incomingSubscribeRequestIds.clear()
     this.announcedNamespaces.clear()
     this.subscribedNamespaces.clear()
@@ -1130,6 +1194,51 @@ const defaultIncomingTrackStatusHandler: IncomingTrackStatusHandler = async ({ r
 
 const defaultIncomingFetchHandler: IncomingFetchHandler = async ({ respondError }) => {
   await respondError(RequestErrorCode.NotSupported, 'fetch not supported')
+}
+
+/// What a FETCH still has to deliver after a relay switchover, as a request for
+/// the new relay: an absolute range resumes after the last object delivered,
+/// a joining FETCH that delivered nothing yet is repeated against the
+/// re-issued subscription, and one that did is completed as an absolute range
+/// up to the Largest Location its subscription started from. Only ascending
+/// group order can be resumed from the last object.
+function remainingFetch(
+  fetch: InFlightFetch,
+  subscriptions: Map<bigint, ActiveSubscription>
+): FetchRequest | undefined {
+  if (fetch.groupOrder !== GroupOrder.Ascending) {
+    return undefined
+  }
+  const { request, lastDelivered } = fetch
+  const resumeAt = lastDelivered && { groupId: lastDelivered.groupId, objectId: lastDelivered.objectId + 1n }
+  if (request.kind === 'absolute') {
+    const start = resumeAt ?? request.start
+    return isBefore(start, request.end) ? { ...request, start } : undefined
+  }
+  const subscription = subscriptions.get(request.joiningRequestId)
+  if (!subscription) {
+    return undefined
+  }
+  if (!resumeAt) {
+    return request
+  }
+  if (!subscription.largest) {
+    return undefined
+  }
+  const end = { groupId: subscription.largest.groupId, objectId: subscription.largest.objectId + 1n }
+  return isBefore(resumeAt, end)
+    ? {
+        kind: 'absolute',
+        trackNamespace: subscription.trackNamespace,
+        trackName: subscription.trackName,
+        start: resumeAt,
+        end
+      }
+    : undefined
+}
+
+function isBefore(a: Location, b: Location): boolean {
+  return a.groupId < b.groupId || (a.groupId === b.groupId && a.objectId < b.objectId)
 }
 
 function describeConnectionClose(info: ConnectionCloseInfo): string {
