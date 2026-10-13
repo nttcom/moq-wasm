@@ -10,7 +10,10 @@ WORKDIR /app
 # Copy only what each bot needs: a developer's checkout keeps an untracked .env next to them.
 COPY examples/python/moq-chat-moderation/pyproject.toml examples/python/moq-chat-moderation/uv.lock moq-chat-moderation/
 COPY examples/python/moq-camera-detection/pyproject.toml examples/python/moq-camera-detection/uv.lock moq-camera-detection/
+COPY examples/python/moq-ptz-tracking/pyproject.toml examples/python/moq-ptz-tracking/uv.lock moq-ptz-tracking/
 RUN uv sync --frozen --no-dev --no-install-project --directory moq-chat-moderation \
-    && uv sync --frozen --no-dev --no-install-project --directory moq-camera-detection
+    && uv sync --frozen --no-dev --no-install-project --directory moq-camera-detection \
+    && uv sync --frozen --no-dev --no-install-project --directory moq-ptz-tracking
 COPY examples/python/moq-chat-moderation/moq_chat_moderation moq-chat-moderation/moq_chat_moderation
 COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detection/moq_camera_detection
+COPY examples/python/moq-ptz-tracking/moq_ptz_tracking moq-ptz-tracking/moq_ptz_tracking
