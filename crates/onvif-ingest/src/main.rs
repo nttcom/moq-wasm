@@ -897,17 +897,7 @@ async fn send_catalog(
     let Some(publication) = state.track_publication.as_ref() else {
         return Ok(());
     };
-    let tracks = build_catalog_tracks(namespace, state, profiles);
-    let catalog = Catalog {
-        version: Some(1),
-        delta_update: None,
-        add_tracks: None,
-        remove_tracks: None,
-        clone_tracks: None,
-        generated_at: Some(now_millis()),
-        is_complete: Some(true),
-        tracks: Some(tracks),
-    };
+    let catalog = build_catalog(namespace, state, profiles);
     let data = serde_json::to_vec(&catalog).context("serialize catalog json")?;
     let sent = send_catalog_group(publisher, publication, group_id, publisher_priority, data).await;
     if was_stopped_by_peer(sent, "catalog")? {
@@ -1463,6 +1453,23 @@ async fn maybe_send_audio_catalog_update(
     send_catalog(publisher, state, publisher_priority, namespace, profiles).await
 }
 
+fn build_catalog(
+    namespace: &[String],
+    state: &CatalogUpdateState,
+    profiles: &[ProfileTrack],
+) -> Catalog {
+    Catalog {
+        version: Some(1),
+        delta_update: None,
+        add_tracks: None,
+        remove_tracks: None,
+        clone_tracks: None,
+        generated_at: Some(now_millis()),
+        is_complete: None,
+        tracks: Some(build_catalog_tracks(namespace, state, profiles)),
+    }
+}
+
 fn build_catalog_tracks(
     namespace: &[String],
     state: &CatalogUpdateState,
@@ -1755,5 +1762,14 @@ mod tests {
     fn delivered_object_was_not_stopped() {
         // Act / Assert
         assert!(!was_stopped_by_peer(Ok(()), "video").unwrap());
+    }
+
+    #[test]
+    fn live_catalog_omits_is_complete() {
+        // Act
+        let catalog = build_catalog(&[], &CatalogUpdateState::new(), &[]);
+
+        // Assert
+        assert_eq!(catalog.is_complete, None);
     }
 }
