@@ -29,7 +29,6 @@ async function openExamplePage(page: Page, path: string): Promise<void> {
 
 function createPublisherPageModel(page: Page) {
   return {
-    page,
     urlInput: page.getByTestId('publisher-url-input'),
     namespaceInput: page.getByTestId('publisher-namespace-input'),
     connectButton: page.getByTestId('publisher-connect-button'),
@@ -47,7 +46,6 @@ function createPublisherPageModel(page: Page) {
 
 function createSubscriberPageModel(page: Page) {
   return {
-    page,
     urlInput: page.getByTestId('subscriber-url-input'),
     namespaceInput: page.getByTestId('subscriber-namespace-input'),
     connectButton: page.getByTestId('subscriber-connect-button'),

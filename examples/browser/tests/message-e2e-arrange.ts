@@ -16,7 +16,6 @@ function buildPagePath(moqtUrl: string): string {
 
 function createMessagePageModel(page: Page) {
   return {
-    page,
     urlInput: page.locator('#url'),
     connectButton: page.locator('#connectBtn'),
     closeButton: page.locator('#closeBtn'),
