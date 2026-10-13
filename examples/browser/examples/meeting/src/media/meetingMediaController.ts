@@ -109,8 +109,8 @@ export class MeetingMediaController {
     this.handlers = handlers
   }
 
-  async startCamera(deviceId?: string, constraints?: CameraCaptureConstraints): Promise<void> {
-    await this.publisher.startCamera(deviceId, constraints)
+  async startCamera(deviceId?: string): Promise<void> {
+    await this.publisher.startCamera(deviceId)
   }
 
   async stopCamera(): Promise<void> {
@@ -125,8 +125,8 @@ export class MeetingMediaController {
     await this.publisher.stopScreenShare()
   }
 
-  async startMicrophone(deviceId?: string, constraints?: AudioCaptureConstraints): Promise<void> {
-    await this.publisher.startAudio(deviceId, constraints)
+  async startMicrophone(deviceId?: string): Promise<void> {
+    await this.publisher.startAudio(deviceId)
   }
 
   async stopMicrophone(): Promise<void> {

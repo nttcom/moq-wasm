@@ -222,22 +222,16 @@ export class MediaPublisher {
     this.audioCaptureConstraints = { ...this.audioCaptureConstraints, ...constraints }
   }
 
-  async startCamera(deviceId?: string, constraints?: CameraCaptureConstraints): Promise<void> {
+  async startCamera(deviceId?: string): Promise<void> {
     if (this.cameraStream) {
       return
     }
 
-    const effectiveConstraints: CameraCaptureConstraints = {
-      frameRate: 30,
-      ...this.videoCaptureConstraints,
-      ...constraints
-    }
-
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: effectiveConstraints.width ?? this.videoEncodingSettings.width,
-        height: effectiveConstraints.height ?? this.videoEncodingSettings.height,
-        frameRate: effectiveConstraints.frameRate,
+        width: this.videoCaptureConstraints.width ?? this.videoEncodingSettings.width,
+        height: this.videoCaptureConstraints.height ?? this.videoEncodingSettings.height,
+        frameRate: this.videoCaptureConstraints.frameRate,
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },
       audio: false
@@ -303,22 +297,15 @@ export class MediaPublisher {
     this.handlers.onLocalScreenShareStream?.(null)
   }
 
-  async startAudio(deviceId?: string, constraints?: AudioCaptureConstraints): Promise<void> {
+  async startAudio(deviceId?: string): Promise<void> {
     if (this.audioStream) {
       return
     }
 
     const desiredChannels = this.audioEncodingSettings.channels
-    const effectiveAudioConstraints: AudioCaptureConstraints = {
-      ...this.audioCaptureConstraints,
-      ...constraints
-    }
-
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: effectiveAudioConstraints.echoCancellation,
-        noiseSuppression: effectiveAudioConstraints.noiseSuppression,
-        autoGainControl: effectiveAudioConstraints.autoGainControl,
+        ...this.audioCaptureConstraints,
         channelCount: { ideal: desiredChannels },
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },

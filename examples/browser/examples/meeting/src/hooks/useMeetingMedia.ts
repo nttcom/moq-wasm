@@ -301,7 +301,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     const controller = session.getMediaController()
     const syncSubscribedCatalogTracks = () => {
       const nextTracks = controller.getSubscribedCatalogTracks()
-      setSubscribedCatalogTracks((prev) => (isSameSubscribedCatalogTracks(prev, nextTracks) ? prev : nextTracks))
+      setSubscribedCatalogTracks((prev) => (JSON.stringify(prev) === JSON.stringify(nextTracks) ? prev : nextTracks))
     }
 
     syncSubscribedCatalogTracks()
@@ -429,63 +429,35 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       return cameraEnabled
     }
     const controller = session.getMediaController()
-    setCameraBusy(true)
-    const nextState = !cameraEnabled
-    try {
-      if (nextState) {
-        await controller.startCamera(selectedVideoDeviceId ?? undefined, {
-          frameRate: captureSettings.frameRate,
-          width: captureSettings.width,
-          height: captureSettings.height
-        })
-        ensureCatalogPresetTracks('camera')
-      } else {
+    return withBusy(setCameraBusy, 'Failed to toggle camera:', cameraEnabled, async () => {
+      if (cameraEnabled) {
         await controller.stopCamera()
         removeCatalogPresetTracks('camera')
+      } else {
+        await controller.startCamera(selectedVideoDeviceId ?? undefined)
+        ensureCatalogPresetTracks('camera')
       }
-      setCameraEnabled(nextState)
-      return nextState
-    } catch (error) {
-      console.error('Failed to toggle camera:', error)
-      return cameraEnabled
-    } finally {
-      setCameraBusy(false)
-    }
-  }, [
-    cameraBusy,
-    cameraEnabled,
-    captureSettings.frameRate,
-    captureSettings.height,
-    captureSettings.width,
-    ensureCatalogPresetTracks,
-    removeCatalogPresetTracks,
-    session,
-    selectedVideoDeviceId
-  ])
+      setCameraEnabled(!cameraEnabled)
+      return !cameraEnabled
+    })
+  }, [cameraBusy, cameraEnabled, ensureCatalogPresetTracks, removeCatalogPresetTracks, session, selectedVideoDeviceId])
 
   const toggleScreenShare = useCallback(async () => {
     if (!session || cameraBusy) {
       return screenShareEnabled
     }
     const controller = session.getMediaController()
-    setCameraBusy(true)
-    const nextState = !screenShareEnabled
-    try {
-      if (nextState) {
-        await controller.startScreenShare()
-        ensureCatalogPresetTracks('screenshare')
-      } else {
+    return withBusy(setCameraBusy, 'Failed to toggle screen share:', screenShareEnabled, async () => {
+      if (screenShareEnabled) {
         await controller.stopScreenShare()
         removeCatalogPresetTracks('screenshare')
+      } else {
+        await controller.startScreenShare()
+        ensureCatalogPresetTracks('screenshare')
       }
-      setScreenShareEnabled(nextState)
-      return nextState
-    } catch (error) {
-      console.error('Failed to toggle screen share:', error)
-      return screenShareEnabled
-    } finally {
-      setCameraBusy(false)
-    }
+      setScreenShareEnabled(!screenShareEnabled)
+      return !screenShareEnabled
+    })
   }, [cameraBusy, ensureCatalogPresetTracks, removeCatalogPresetTracks, screenShareEnabled, session])
 
   const toggleMicrophone = useCallback(async () => {
@@ -493,32 +465,18 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       return microphoneEnabled
     }
     const controller = session.getMediaController()
-    setMicrophoneBusy(true)
-    const nextState = !microphoneEnabled
-    try {
-      if (nextState) {
-        await controller.startMicrophone(selectedAudioDeviceId ?? undefined, {
-          echoCancellation: captureSettings.echoCancellation,
-          noiseSuppression: captureSettings.noiseSuppression,
-          autoGainControl: captureSettings.autoGainControl
-        })
-        ensureCatalogPresetTracks('audio')
-      } else {
+    return withBusy(setMicrophoneBusy, 'Failed to toggle microphone:', microphoneEnabled, async () => {
+      if (microphoneEnabled) {
         await controller.stopMicrophone()
         removeCatalogPresetTracks('audio')
+      } else {
+        await controller.startMicrophone(selectedAudioDeviceId ?? undefined)
+        ensureCatalogPresetTracks('audio')
       }
-      setMicrophoneEnabled(nextState)
-      return nextState
-    } catch (error) {
-      console.error('Failed to toggle microphone:', error)
-      return microphoneEnabled
-    } finally {
-      setMicrophoneBusy(false)
-    }
+      setMicrophoneEnabled(!microphoneEnabled)
+      return !microphoneEnabled
+    })
   }, [
-    captureSettings.autoGainControl,
-    captureSettings.echoCancellation,
-    captureSettings.noiseSuppression,
     ensureCatalogPresetTracks,
     removeCatalogPresetTracks,
     microphoneBusy,
@@ -549,22 +507,12 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         return
       }
       const controller = session.getMediaController()
-      setCameraBusy(true)
-      try {
+      await withBusy(setCameraBusy, 'Failed to switch camera device', undefined, async () => {
         await controller.stopCamera()
-        await controller.startCamera(deviceId, {
-          frameRate: captureSettings.frameRate,
-          width: captureSettings.width,
-          height: captureSettings.height
-        })
-        setCameraEnabled(true)
-      } catch (err) {
-        console.error('Failed to switch camera device', err)
-      } finally {
-        setCameraBusy(false)
-      }
+        await controller.startCamera(deviceId)
+      })
     },
-    [cameraEnabled, captureSettings.frameRate, captureSettings.height, captureSettings.width, session]
+    [cameraEnabled, session]
   )
 
   const selectAudioDevice = useCallback(
@@ -574,92 +522,42 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         return
       }
       const controller = session.getMediaController()
-      setMicrophoneBusy(true)
-      try {
+      await withBusy(setMicrophoneBusy, 'Failed to switch audio device', undefined, async () => {
         await controller.stopMicrophone()
-        await controller.startMicrophone(deviceId, {
-          echoCancellation: captureSettings.echoCancellation,
-          noiseSuppression: captureSettings.noiseSuppression,
-          autoGainControl: captureSettings.autoGainControl
-        })
-        setMicrophoneEnabled(true)
-      } catch (err) {
-        console.error('Failed to switch audio device', err)
-      } finally {
-        setMicrophoneBusy(false)
-      }
+        await controller.startMicrophone(deviceId)
+      })
     },
-    [
-      captureSettings.autoGainControl,
-      captureSettings.echoCancellation,
-      captureSettings.noiseSuppression,
-      microphoneEnabled,
-      session
-    ]
+    [microphoneEnabled, session]
   )
 
   const selectVideoEncoding = useCallback(
     async (settings: Partial<VideoEncodingSettings>) => {
-      const next: VideoEncodingSettings = {
-        codec: settings.codec ?? selectedVideoEncoding.codec,
-        width: settings.width ?? selectedVideoEncoding.width,
-        height: settings.height ?? selectedVideoEncoding.height,
-        bitrate: settings.bitrate ?? selectedVideoEncoding.bitrate,
-        framerate: settings.framerate ?? selectedVideoEncoding.framerate,
-        hardwareAcceleration: settings.hardwareAcceleration ?? selectedVideoEncoding.hardwareAcceleration
-      }
+      const next = { ...selectedVideoEncoding, ...settings }
       setSelectedVideoEncoding(next)
       setVideoEncoderError(null)
-      if (!session) {
-        return
-      }
-      const controller = session.getMediaController()
-      await controller.setVideoEncodingSettings(next, selectedVideoDeviceId ?? undefined, cameraEnabled)
-      if (cameraEnabled) {
-        setCameraEnabled(true)
-      }
+      await session
+        ?.getMediaController()
+        .setVideoEncodingSettings(next, selectedVideoDeviceId ?? undefined, cameraEnabled)
     },
     [cameraEnabled, selectedVideoDeviceId, selectedVideoEncoding, session]
   )
 
   const selectScreenShareEncoding = useCallback(
     async (settings: Partial<VideoEncodingSettings>) => {
-      const next: VideoEncodingSettings = {
-        codec: settings.codec ?? selectedScreenShareEncoding.codec,
-        width: settings.width ?? selectedScreenShareEncoding.width,
-        height: settings.height ?? selectedScreenShareEncoding.height,
-        bitrate: settings.bitrate ?? selectedScreenShareEncoding.bitrate,
-        framerate: settings.framerate ?? selectedScreenShareEncoding.framerate,
-        hardwareAcceleration: settings.hardwareAcceleration ?? selectedScreenShareEncoding.hardwareAcceleration
-      }
+      const next = { ...selectedScreenShareEncoding, ...settings }
       setSelectedScreenShareEncoding(next)
       setVideoEncoderError(null)
-      if (!session) {
-        return
-      }
-      const controller = session.getMediaController()
-      await controller.setScreenShareEncodingSettings(next)
+      await session?.getMediaController().setScreenShareEncodingSettings(next)
     },
     [selectedScreenShareEncoding, session]
   )
 
   const selectAudioEncoding = useCallback(
     async (settings: Partial<AudioEncodingSettings>) => {
-      const next: AudioEncodingSettings = {
-        codec: settings.codec ?? selectedAudioEncoding.codec,
-        bitrate: settings.bitrate ?? selectedAudioEncoding.bitrate,
-        channels: settings.channels ?? selectedAudioEncoding.channels
-      }
+      const next = { ...selectedAudioEncoding, ...settings }
       setSelectedAudioEncoding(next)
       setAudioEncoderError(null)
-      if (!session) {
-        return
-      }
-      const controller = session.getMediaController()
-      await controller.setAudioEncodingSettings(next, microphoneEnabled)
-      if (microphoneEnabled) {
-        setMicrophoneEnabled(true)
-      }
+      await session?.getMediaController().setAudioEncodingSettings(next, microphoneEnabled)
     },
     [microphoneEnabled, selectedAudioEncoding, session]
   )
@@ -673,19 +571,16 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       return
     }
     const controller = session.getMediaController()
-    setCameraBusy(true)
-    setMicrophoneBusy(true)
-    try {
+    const setCaptureBusy = (busy: boolean) => {
+      setCameraBusy(busy)
+      setMicrophoneBusy(busy)
+    }
+    await withBusy(setCaptureBusy, 'Failed to apply getUserMedia settings', undefined, async () => {
       if (captureSettings.videoEnabled) {
-        const isCameraEnabling = !cameraEnabled
         await controller.stopCamera()
-        await controller.startCamera(selectedVideoDeviceId ?? undefined, {
-          frameRate: captureSettings.frameRate,
-          width: captureSettings.width,
-          height: captureSettings.height
-        })
+        await controller.startCamera(selectedVideoDeviceId ?? undefined)
         await controller.setVideoEncodingSettings(selectedVideoEncoding, selectedVideoDeviceId ?? undefined, true)
-        if (isCameraEnabling) {
+        if (!cameraEnabled) {
           ensureCatalogPresetTracks('camera')
         }
         setCameraEnabled(true)
@@ -696,14 +591,9 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       }
 
       if (captureSettings.audioEnabled) {
-        const isMicrophoneEnabling = !microphoneEnabled
-        await controller.startMicrophone(selectedAudioDeviceId ?? undefined, {
-          echoCancellation: captureSettings.echoCancellation,
-          noiseSuppression: captureSettings.noiseSuppression,
-          autoGainControl: captureSettings.autoGainControl
-        })
+        await controller.startMicrophone(selectedAudioDeviceId ?? undefined)
         await controller.setAudioEncodingSettings(selectedAudioEncoding, true)
-        if (isMicrophoneEnabling) {
+        if (!microphoneEnabled) {
           ensureCatalogPresetTracks('audio')
         }
         setMicrophoneEnabled(true)
@@ -712,19 +602,10 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         removeCatalogPresetTracks('audio')
         setMicrophoneEnabled(false)
       }
-    } catch (err) {
-      console.error('Failed to apply getUserMedia settings', err)
-    } finally {
-      setCameraBusy(false)
-      setMicrophoneBusy(false)
-    }
+    })
   }, [
     cameraEnabled,
     captureSettings.audioEnabled,
-    captureSettings.autoGainControl,
-    captureSettings.echoCancellation,
-    captureSettings.frameRate,
-    captureSettings.noiseSuppression,
     captureSettings.videoEnabled,
     ensureCatalogPresetTracks,
     removeCatalogPresetTracks,
@@ -811,35 +692,21 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   }
 }
 
-function isSameSubscribedCatalogTracks(left: SubscribedCatalogTrack[], right: SubscribedCatalogTrack[]): boolean {
-  if (left.length !== right.length) {
-    return false
+async function withBusy<T>(
+  setBusy: (busy: boolean) => void,
+  failureMessage: string,
+  fallback: T,
+  action: () => Promise<T>
+): Promise<T> {
+  setBusy(true)
+  try {
+    return await action()
+  } catch (error) {
+    console.error(failureMessage, error)
+    return fallback
+  } finally {
+    setBusy(false)
   }
-  for (let index = 0; index < left.length; index += 1) {
-    const l = left[index]
-    const r = right[index]
-    if (
-      l.name !== r.name ||
-      l.subscriberCount !== r.subscriberCount ||
-      l.label !== r.label ||
-      l.role !== r.role ||
-      l.codec !== r.codec ||
-      l.bitrate !== r.bitrate ||
-      l.width !== r.width ||
-      l.height !== r.height ||
-      l.framerate !== r.framerate ||
-      l.hardwareAcceleration !== r.hardwareAcceleration ||
-      l.keyframeInterval !== r.keyframeInterval ||
-      l.samplerate !== r.samplerate ||
-      l.channelConfig !== r.channelConfig ||
-      l.audioStreamUpdateMode !== r.audioStreamUpdateMode ||
-      l.audioStreamUpdateIntervalSeconds !== r.audioStreamUpdateIntervalSeconds ||
-      l.isLive !== r.isLive
-    ) {
-      return false
-    }
-  }
-  return true
 }
 
 function hasCatalogTrackForSource(tracks: EditableMeetingCatalogTrack[], source: CatalogPresetSource): boolean {
