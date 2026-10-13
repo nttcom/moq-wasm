@@ -397,9 +397,6 @@ function buildAdaptiveTicks(
   maxTickCount?: number,
   rangeMode: 'zeroBased' | 'dataFocused' = 'zeroBased'
 ): number[] {
-  if (!Number.isFinite(step) || step <= 0) {
-    return []
-  }
   const values = accessors.flatMap((accessor) => buildMetricEntries(samples, accessor).map((entry) => entry.value))
   if (!values.length) {
     return [step]
@@ -423,11 +420,11 @@ function buildAdaptiveTicks(
 }
 
 function resolveAdaptiveStep(baseStep: number, maxWithHeadroom: number, maxTickCount?: number): number {
-  if (!Number.isFinite(maxTickCount) || typeof maxTickCount !== 'number' || maxTickCount <= 0) {
+  if (!maxTickCount) {
     return baseStep
   }
   const requiredStep = maxWithHeadroom / maxTickCount
-  if (!Number.isFinite(requiredStep) || requiredStep <= baseStep) {
+  if (requiredStep <= baseStep) {
     return baseStep
   }
   return Math.ceil(requiredStep / baseStep) * baseStep
