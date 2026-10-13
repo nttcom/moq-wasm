@@ -181,7 +181,7 @@ async fn accept_command_publish(
             handler.track_name
         );
         let _ = handler
-            .error(404, "unsupported publish track".to_string())
+            .error(0x4, "unsupported publish track".to_string())
             .await;
         return Ok(None);
     }
@@ -195,7 +195,7 @@ async fn accept_command_publish(
             handler.track_name
         );
         let _ = handler
-            .error(409, "command track already active".to_string())
+            .error(0x4, "command track already active".to_string())
             .await;
         return Ok(None);
     }
