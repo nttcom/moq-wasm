@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use mediapack::{
-    AudioConfig, MediaEvent, Timestamp, VideoSample, aac::AudioSpecificConfig,
-    h264::ParameterSetTracker,
+    AudioConfig, MediaEvent, Timestamp, aac::AudioSpecificConfig, h264::ParameterSetTracker,
 };
 
 /// H.264 arrives as Annex-B access units. Parameter sets have to travel in band
@@ -23,23 +22,13 @@ impl VideoInput {
         let Some(unit) = self.tracker.track(annexb)? else {
             return Ok(Vec::new());
         };
-        let mut events = Vec::with_capacity(2);
-        if let Some(config) = unit.config_changed {
-            self.config_seen = true;
-            events.push(MediaEvent::VideoConfig(config));
-        }
+        self.config_seen |= unit.config_changed.is_some();
         if unit.is_keyframe && !self.config_seen {
             tracing::warn!(
                 "keyframe without SPS/PPS in band; add `h264parse config-interval=-1` upstream"
             );
         }
-        events.push(MediaEvent::Video(VideoSample {
-            data: unit.data,
-            is_keyframe: unit.is_keyframe,
-            pts,
-            dts,
-        }));
-        Ok(events)
+        Ok(unit.into_events(pts, dts))
     }
 }
 

@@ -200,7 +200,9 @@ through the raw stream senders.
   `NotSent` covers a `Within` object with no open group, a track without a
   writer, and a writer that still waits for the next group start.
   `write_group` sends one object as a finished group (the MSF catalog layout).
-- `publish` sends PUBLISH and writes from the next group; `accept_subscribe`
+- `publish` sends PUBLISH and writes from the next group; it is a no-op while
+  a subscription is served and after a PUBLISH was released, but publishes a
+  track again whose SUBSCRIBE the peer released; `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
   largest sent location) and writes from the next group; `release(request_id)`
   drops the writer on UNSUBSCRIBE and returns the track so the caller can

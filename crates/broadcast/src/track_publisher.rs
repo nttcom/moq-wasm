@@ -11,13 +11,13 @@ use moqt::publish::{GroupBoundary, OutgoingObject};
 
 use crate::{
     broadcast::{
-        Broadcast, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name, now_unix,
+        AudioTrackInfo, Broadcast, SourceTracks, TIMELINE_TRACK_NAME, VIDEO_TRACK_NAME,
+        VideoTrackInfo, cmaf_track_name, now_unix,
     },
     group_alignment::GroupAlignment,
     media_timeline::MediaTimeline,
 };
 
-const AUDIO_TRACK: &str = "audio";
 /// One DEBUG line per sample as it enters (`ingest`) and as it is sent to the
 /// relay (`publish`, with the group id and LOC capture timestamp a viewer
 /// sees), so that what a viewer received can be checked against
@@ -35,6 +35,7 @@ pub struct SharedTiming {
 
 pub(crate) struct TrackPublisher {
     broadcast: Broadcast,
+    tracks: SourceTracks,
     announced: bool,
     /// The video keyframe group the audio is being written into, so that the
     /// audio tracks start a group exactly when the video tracks do.
@@ -47,9 +48,10 @@ pub(crate) struct TrackPublisher {
 }
 
 impl TrackPublisher {
-    pub(crate) fn new(broadcast: Broadcast) -> Self {
+    pub(crate) fn new(broadcast: Broadcast, tracks: SourceTracks) -> Self {
         Self {
             broadcast,
+            tracks,
             announced: false,
             audio_group_id: None,
             audio_config: None,
@@ -72,9 +74,9 @@ impl TrackPublisher {
             MediaEvent::Streams(_) => Ok(()),
             MediaEvent::VideoConfig(config) => {
                 self.video_cmaf = Some(Fmp4TrackMuxer::video(config.clone()));
-                let info = VideoTrackInfo::from_record(config, "Video".to_string())?;
+                let info = VideoTrackInfo::from_record(config, self.tracks.video_label.clone())?;
                 self.broadcast
-                    .update_video_catalog(VIDEO_TRACK_NAME, info)
+                    .update_video_catalog(&self.tracks.video, info)
                     .await
             }
             MediaEvent::AudioConfig(config) => {
@@ -82,7 +84,13 @@ impl TrackPublisher {
                     AudioConfig::Aac(config) => Some(Fmp4TrackMuxer::audio(config.clone())),
                     _ => None,
                 };
-                self.broadcast.update_audio_catalog(config.clone()).await?;
+                let info = AudioTrackInfo {
+                    label: self.tracks.audio_label.clone(),
+                    config: config.clone(),
+                };
+                self.broadcast
+                    .update_audio_catalog(&self.tracks.audio, info)
+                    .await?;
                 self.audio_config = Some(config.clone());
                 Ok(())
             }
@@ -97,7 +105,7 @@ impl TrackPublisher {
             target: DELIVERY_LOG_TARGET,
             stage = "ingest",
             namespace = %self.broadcast.namespace().join("/"),
-            track = VIDEO_TRACK_NAME,
+            track = %self.tracks.video,
             pts_us = sample.pts.micros(),
             bytes = sample.data.len(),
             keyframe = sample.is_keyframe
@@ -116,7 +124,7 @@ impl TrackPublisher {
         let written = self
             .broadcast
             .send_object(
-                VIDEO_TRACK_NAME,
+                &self.tracks.video,
                 OutgoingObject {
                     group: keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At),
                     extension_headers: to_extension_headers(&object.extensions),
@@ -129,7 +137,7 @@ impl TrackPublisher {
                 target: DELIVERY_LOG_TARGET,
                 stage = "publish",
                 namespace = %self.broadcast.namespace().join("/"),
-                track = VIDEO_TRACK_NAME,
+                track = %self.tracks.video,
                 group_id = self
                     .timing
                     .alignment
@@ -145,6 +153,9 @@ impl TrackPublisher {
         let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
             return Ok(());
         };
+        if self.tracks.video != VIDEO_TRACK_NAME {
+            return Ok(());
+        }
         self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
             .await
     }
@@ -167,7 +178,7 @@ impl TrackPublisher {
         };
         self.broadcast
             .send_object(
-                &cmaf_track_name(VIDEO_TRACK_NAME),
+                &cmaf_track_name(&self.tracks.video),
                 OutgoingObject::plain(group, fragment.data),
             )
             .await?;
@@ -202,7 +213,7 @@ impl TrackPublisher {
             target: DELIVERY_LOG_TARGET,
             stage = "ingest",
             namespace = %self.broadcast.namespace().join("/"),
-            track = AUDIO_TRACK,
+            track = %self.tracks.audio,
             pts_us = sample.pts.micros(),
             bytes = sample.data.len()
         );
@@ -220,7 +231,7 @@ impl TrackPublisher {
         let written = self
             .broadcast
             .send_object(
-                AUDIO_TRACK,
+                &self.tracks.audio,
                 OutgoingObject {
                     group,
                     extension_headers: to_extension_headers(&object.extensions),
@@ -233,7 +244,7 @@ impl TrackPublisher {
                 target: DELIVERY_LOG_TARGET,
                 stage = "publish",
                 namespace = %self.broadcast.namespace().join("/"),
-                track = AUDIO_TRACK,
+                track = %self.tracks.audio,
                 group_id = self.audio_group_id.unwrap_or_default(),
                 capture_us,
                 pts_us = sample.pts.micros(),
@@ -256,7 +267,7 @@ impl TrackPublisher {
         };
         self.broadcast
             .send_object(
-                &cmaf_track_name(AUDIO_TRACK),
+                &cmaf_track_name(&self.tracks.audio),
                 OutgoingObject::plain(group, fragment.data),
             )
             .await?;

@@ -3,7 +3,7 @@ use mediapack::MediaEvent;
 use tokio::task::JoinHandle;
 
 use crate::{
-    broadcast::Broadcast,
+    broadcast::{Broadcast, SourceTracks},
     publish_queue::{PublishQueue, QueueConsumer},
     track_publisher::{SharedTiming, TrackPublisher},
 };
@@ -16,8 +16,8 @@ pub struct BroadcastWriter {
 }
 
 impl BroadcastWriter {
-    pub fn run(broadcast: Broadcast) -> Self {
-        let tracks = TrackPublisher::new(broadcast.clone());
+    pub fn run(broadcast: Broadcast, tracks: SourceTracks) -> Self {
+        let tracks = TrackPublisher::new(broadcast.clone(), tracks);
         let timing = tracks.shared_timing();
         let (queue, consumer) = PublishQueue::open(broadcast.connection().clone());
         Self {
@@ -76,7 +76,7 @@ mod tests {
             verify_certificate: true,
         };
         let broadcast = Broadcast::new(RelayConnection::new(Some(target)), vec!["ns".to_string()]);
-        let mut writer = BroadcastWriter::run(broadcast);
+        let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
 
         // Act
         let queued = writer.push(keyframe());

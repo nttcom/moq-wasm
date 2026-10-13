@@ -1,10 +1,13 @@
 use anyhow::Result;
 use bytes::Bytes;
 
-use crate::h264::{
-    AvcDecoderConfigurationRecord, NalUnitType,
-    annexb::{nal_units, with_start_codes},
-    nal::nal_unit_type,
+use crate::{
+    h264::{
+        AvcDecoderConfigurationRecord, NalUnitType,
+        annexb::{nal_units, with_start_codes},
+        nal::nal_unit_type,
+    },
+    sample::{MediaEvent, Timestamp, VideoSample},
 };
 
 #[derive(Default)]
@@ -18,6 +21,21 @@ pub struct TrackedAccessUnit {
     pub data: Bytes,
     pub is_keyframe: bool,
     pub config_changed: Option<AvcDecoderConfigurationRecord>,
+}
+
+impl TrackedAccessUnit {
+    /// The `VideoConfig` first when the parameter sets changed, then the
+    /// sample.
+    pub fn into_events(self, pts: Timestamp, dts: Timestamp) -> Vec<MediaEvent> {
+        let config = self.config_changed.map(MediaEvent::VideoConfig);
+        let sample = MediaEvent::Video(VideoSample {
+            data: self.data,
+            is_keyframe: self.is_keyframe,
+            pts,
+            dts,
+        });
+        config.into_iter().chain([sample]).collect()
+    }
 }
 
 impl ParameterSetTracker {
@@ -126,6 +144,32 @@ mod tests {
         assert!(!unit.is_keyframe);
         assert!(unit.config_changed.is_none());
         assert_eq!(unit.data, delta_frame_annexb());
+    }
+
+    #[test]
+    fn a_changed_config_precedes_the_sample_it_came_with() {
+        // Arrange
+        let mut tracker = ParameterSetTracker::new();
+        let pts = Timestamp::from_millis(40);
+
+        // Act
+        let events = tracker
+            .track(&keyframe_annexb())
+            .unwrap()
+            .unwrap()
+            .into_events(pts, pts);
+
+        // Assert
+        assert_eq!(events[0], MediaEvent::VideoConfig(fixture_record()));
+        assert_eq!(
+            events[1],
+            MediaEvent::Video(VideoSample {
+                data: keyframe_annexb(),
+                is_keyframe: true,
+                pts,
+                dts: pts,
+            })
+        );
     }
 
     #[test]

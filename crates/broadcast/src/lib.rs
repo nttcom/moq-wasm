@@ -7,7 +7,9 @@ mod stream_ledger;
 mod track_publisher;
 mod writer;
 
-pub use broadcast::{Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name};
+pub use broadcast::{
+    AudioTrackInfo, Broadcast, SourceTracks, VIDEO_TRACK_NAME, VideoTrackInfo, cmaf_track_name,
+};
 pub use group_alignment::GroupAlignment;
 pub use moqt::publish::{GroupBoundary, OutgoingObject};
 pub use relay_connection::{MoqtTarget, RelayConnection};
