@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::SystemTime,
+};
 
 use async_trait::async_trait;
 use redis::AsyncCommands;
@@ -24,6 +31,10 @@ impl RouteKind {
 
 pub(crate) struct RedisRelayRouteRegistry {
     relay: RelayInfo,
+    /// The `host[:port]` clients connect to, named in GOAWAY by a draining
+    /// relay; distinct from `relay.host:relay.port`, which other relays dial.
+    public_host: String,
+    draining: AtomicBool,
     connection: redis::aio::ConnectionManager,
     owned_routes: tokio::sync::Mutex<HashMap<String, RouteKind>>,
 }
@@ -32,19 +43,37 @@ impl RedisRelayRouteRegistry {
     const RELAY_TTL_SECONDS: u64 = 15;
     const ROUTE_TTL_SECONDS: u64 = 15;
     const ACTIVE_STATUS: &str = "active";
+    const DRAINING_STATUS: &str = "draining";
     const PUBLISHER_NAMESPACE_KEY_PREFIX: &str = "route:publisher:namespace:";
+    const RELAY_KEY_PREFIX: &str = "relay:";
 
-    pub(crate) async fn connect(redis_url: &str, relay: RelayInfo) -> anyhow::Result<Arc<Self>> {
+    pub(crate) async fn connect(
+        redis_url: &str,
+        relay: RelayInfo,
+        public_host: String,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = redis::Client::open(redis_url)?;
         let connection = redis::aio::ConnectionManager::new(client).await?;
         let registry = Arc::new(Self {
             relay,
+            public_host,
+            draining: AtomicBool::new(false),
             connection,
             owned_routes: tokio::sync::Mutex::new(HashMap::new()),
         });
         registry.register_relay().await?;
         registry.spawn_heartbeat();
         Ok(registry)
+    }
+
+    /// Written to the `status` field of the relay hash; `find_active_routes`
+    /// and the Lua scripts route only to `active` relays.
+    fn status(&self) -> &'static str {
+        if self.draining.load(Ordering::SeqCst) {
+            Self::DRAINING_STATUS
+        } else {
+            Self::ACTIVE_STATUS
+        }
     }
 
     fn spawn_heartbeat(self: &Arc<Self>) {
@@ -77,7 +106,8 @@ impl RedisRelayRouteRegistry {
                     ("relay_id", relay.relay_id.as_str()),
                     ("host", relay.host.as_str()),
                     ("port", &relay.port.to_string()),
-                    ("status", Self::ACTIVE_STATUS),
+                    ("public_host", self.public_host.as_str()),
+                    ("status", self.status()),
                     ("updated_at", &Self::now_millis().to_string()),
                 ],
             )
@@ -190,7 +220,27 @@ impl RedisRelayRouteRegistry {
     }
 
     fn relay_key(relay_id: &str) -> String {
-        format!("relay:{relay_id}")
+        format!("{}{relay_id}", Self::RELAY_KEY_PREFIX)
+    }
+
+    /// The lowest relay id wins so that every session of this relay is sent
+    /// to the same place; `self` and relays that are not `active` are skipped.
+    fn pick_migration_target(
+        self_relay_id: &str,
+        relays: &[(String, HashMap<String, String>)],
+    ) -> Option<String> {
+        relays
+            .iter()
+            .filter(|(relay_id, values)| {
+                relay_id != self_relay_id
+                    && values.get("status").map(String::as_str) == Some(Self::ACTIVE_STATUS)
+            })
+            .filter_map(|(relay_id, values)| {
+                let public_host = values.get("public_host")?;
+                (!public_host.is_empty()).then(|| (relay_id, public_host.clone()))
+            })
+            .min_by(|(a, _), (b, _)| a.cmp(b))
+            .map(|(_, public_host)| public_host)
     }
 
     fn publisher_namespace_key(track_namespace: &str) -> String {
@@ -215,6 +265,27 @@ impl RedisRelayRouteRegistry {
 
 #[async_trait]
 impl RelayRouteRegistry for RedisRelayRouteRegistry {
+    async fn mark_draining(&self) -> anyhow::Result<()> {
+        self.draining.store(true, Ordering::SeqCst);
+        self.register_relay().await
+    }
+
+    async fn find_migration_target(&self) -> anyhow::Result<Option<String>> {
+        let mut connection = self.connection.clone();
+        let keys: Vec<String> = connection
+            .keys(format!("{}*", Self::RELAY_KEY_PREFIX))
+            .await?;
+        let mut relays = Vec::with_capacity(keys.len());
+        for key in keys {
+            let Some(relay_id) = key.strip_prefix(Self::RELAY_KEY_PREFIX) else {
+                continue;
+            };
+            let values: HashMap<String, String> = connection.hgetall(&key).await?;
+            relays.push((relay_id.to_string(), values));
+        }
+        Ok(Self::pick_migration_target(&self.relay.relay_id, &relays))
+    }
+
     async fn register_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {
         Ok(self
             .register_route(
@@ -335,5 +406,63 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         }
 
         Ok(routes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::RedisRelayRouteRegistry;
+
+    fn relay(status: &str, public_host: &str) -> HashMap<String, String> {
+        HashMap::from([
+            ("status".to_string(), status.to_string()),
+            ("public_host".to_string(), public_host.to_string()),
+        ])
+    }
+
+    #[test]
+    fn migration_target_is_the_lowest_active_relay_other_than_self() {
+        // Arrange
+        let relays = [
+            ("relay-c".to_string(), relay("active", "c.example:4433")),
+            ("relay-a".to_string(), relay("active", "a.example:4433")),
+            ("relay-b".to_string(), relay("active", "b.example:4433")),
+        ];
+
+        // Act
+        let target = RedisRelayRouteRegistry::pick_migration_target("relay-a", &relays);
+
+        // Assert
+        assert_eq!(target.as_deref(), Some("b.example:4433"));
+    }
+
+    #[test]
+    fn draining_relays_and_relays_without_a_public_host_are_not_targets() {
+        // Arrange
+        let relays = [
+            ("relay-a".to_string(), relay("draining", "a.example:4433")),
+            ("relay-b".to_string(), relay("active", "")),
+            ("relay-c".to_string(), relay("active", "c.example:4433")),
+        ];
+
+        // Act
+        let target = RedisRelayRouteRegistry::pick_migration_target("relay-self", &relays);
+
+        // Assert
+        assert_eq!(target.as_deref(), Some("c.example:4433"));
+    }
+
+    #[test]
+    fn no_target_when_this_relay_is_the_only_active_one() {
+        // Arrange
+        let relays = [("relay-a".to_string(), relay("active", "a.example:4433"))];
+
+        // Act
+        let target = RedisRelayRouteRegistry::pick_migration_target("relay-a", &relays);
+
+        // Assert
+        assert_eq!(target, None);
     }
 }
