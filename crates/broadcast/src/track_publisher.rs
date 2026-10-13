@@ -84,7 +84,7 @@ impl TrackPublisher {
             }
             MediaEvent::AudioConfig(config) => {
                 self.audio_cmaf = match config {
-                    AudioConfig::Aac(config) => Some(Fmp4TrackMuxer::audio(config.clone())),
+                    AudioConfig::Aac(_) => Some(Fmp4TrackMuxer::audio(config.clone())),
                     _ => None,
                 };
                 let info = AudioTrackInfo {

@@ -13,6 +13,8 @@ const VISUAL_SAMPLE_ENTRY_LENGTH: usize = 78;
 const AUDIO_SAMPLE_ENTRY_LENGTH: usize = 28;
 const MPEG4_AUDIO_SAMPLE_ENTRY: &[u8] = b"mp4a";
 const MP3_SAMPLE_ENTRY: &[u8] = b".mp3";
+const OPUS_SAMPLE_ENTRY: &[u8] = b"Opus";
+const ALAW_SAMPLE_ENTRY: &[u8] = b"alaw";
 const DEFAULT_TIMESCALE: u32 = 90_000;
 const AAC_LC_OBJECT_TYPE: u8 = 2;
 /// ISO/IEC 14496-1 Table 5: objectTypeIndication of MPEG-2 and MPEG-1 audio.
@@ -107,8 +109,32 @@ fn read_sample_entry(body: &[u8]) -> Result<Option<Media>> {
         if entry.kind == MP3_SAMPLE_ENTRY {
             return Ok(Some(Media::Audio(read_mp3(entry.payload)?)));
         }
+        if entry.kind == OPUS_SAMPLE_ENTRY {
+            return Ok(Some(Media::Audio(read_opus(entry.payload)?)));
+        }
+        if entry.kind == ALAW_SAMPLE_ENTRY {
+            let (sample_rate, channels) = read_audio_entry_format(entry.payload)?;
+            return Ok(Some(Media::Audio(AudioConfig::Pcma {
+                sample_rate,
+                channels,
+            })));
+        }
     }
     Ok(None)
+}
+
+/// The OpusSpecificBox states the encoder's input rate and channel count; the
+/// sample entry itself always says 48 kHz.
+fn read_opus(payload: &[u8]) -> Result<AudioConfig> {
+    let children = payload
+        .get(AUDIO_SAMPLE_ENTRY_LENGTH..)
+        .context("audio sample entry is truncated")?;
+    let dops = find(children, b"dOps").context("Opus sample entry has no dOps")?;
+    let channels = *dops.payload.get(1).context("dOps has no channel count")?;
+    Ok(AudioConfig::Opus {
+        sample_rate: read_u32(dops.payload, 4)?,
+        channels,
+    })
 }
 
 /// The esds decoder specific info is optional, so an AAC sample entry without

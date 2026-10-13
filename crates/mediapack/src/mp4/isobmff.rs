@@ -1,13 +1,16 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
     aac::{AudioSpecificConfig, asc::SAMPLES_PER_FRAME},
     h264::{AvcDecoderConfigurationRecord, annexb::annexb_to_avcc_without_parameter_sets},
-    sample::{AudioSample, VideoSample},
+    sample::{AudioConfig, AudioSample, VideoSample},
 };
 
 pub(super) const VIDEO_TIMESCALE: u32 = 90_000;
+/// Opus in ISO BMFF (the Opus-in-ISOBMFF binding §4.3.2) always counts
+/// samples at 48 kHz, whatever rate the encoder was fed.
+const OPUS_TIMESCALE: u32 = 48_000;
 const MOVIE_TIMESCALE: u32 = 1_000;
 pub(super) const SYNC_SAMPLE_FLAGS: u32 = 0x0200_0000;
 pub(super) const NON_SYNC_SAMPLE_FLAGS: u32 = 0x0101_0000;
@@ -60,21 +63,67 @@ pub(super) fn video_fragment(
     )
 }
 
+/// Fails for MP3, an empty or truncated Opus packet, or A-law with no channels.
 pub(super) fn audio_fragment(
     sequence_number: u32,
     track_id: u32,
     sample: &AudioSample,
-    timescale: u32,
-) -> Bytes {
-    moof_mdat(
+    config: &AudioConfig,
+) -> Result<Bytes> {
+    Ok(moof_mdat(
         sequence_number,
         track_id,
-        sample.pts.ticks(timescale),
-        SAMPLES_PER_FRAME as u32,
+        sample.pts.ticks(audio_timescale(config)),
+        audio_sample_duration(config, &sample.data)?,
         SYNC_SAMPLE_FLAGS,
         0,
         &sample.data,
-    )
+    ))
+}
+
+fn audio_timescale(config: &AudioConfig) -> u32 {
+    match config {
+        AudioConfig::Opus { .. } => OPUS_TIMESCALE,
+        other => other.sample_rate(),
+    }
+}
+
+/// The duration of one encoded frame in ticks of `audio_timescale`.
+fn audio_sample_duration(config: &AudioConfig, data: &[u8]) -> Result<u32> {
+    match config {
+        AudioConfig::Aac(_) => Ok(SAMPLES_PER_FRAME as u32),
+        AudioConfig::Opus { .. } => opus_packet_duration(data),
+        AudioConfig::Pcma { channels, .. } => {
+            ensure!(*channels > 0, "A-law audio without channels");
+            Ok((data.len() / *channels as usize) as u32)
+        }
+        AudioConfig::Mp3 { .. } => bail!("MP3 audio cannot be muxed into fMP4"),
+    }
+}
+
+/// RFC 6716 §3.1: the TOC byte's configuration number gives the frame size
+/// and its code the frame count; code 3 stores the count in the next byte.
+fn opus_packet_duration(packet: &[u8]) -> Result<u32> {
+    let toc = *packet.first().context("empty Opus packet")?;
+    let configuration = toc >> 3;
+    let frame_ticks = match configuration {
+        0..=11 => [480, 960, 1_920, 2_880][(configuration % 4) as usize],
+        12..=15 => [480, 960][(configuration % 2) as usize],
+        _ => [120, 240, 480, 960][(configuration % 4) as usize],
+    };
+    let frame_count = match toc & 0x03 {
+        0 => 1,
+        1 | 2 => 2,
+        _ => {
+            let count = packet
+                .get(1)
+                .context("Opus code 3 packet without a frame count")?
+                & 0x3F;
+            ensure!(count > 0, "Opus code 3 packet with zero frames");
+            count as u32
+        }
+    };
+    Ok(frame_ticks * frame_count)
 }
 
 fn moof_mdat(
@@ -141,24 +190,63 @@ pub(super) fn video_trak(track_id: u32, config: &AvcDecoderConfigurationRecord) 
     ))
 }
 
-pub(super) fn audio_trak(track_id: u32, config: &AudioSpecificConfig) -> Bytes {
+/// Fails for MP3, which has no sample entry here.
+pub(super) fn audio_trak(track_id: u32, config: &AudioConfig) -> Result<Bytes> {
+    let timescale = audio_timescale(config);
+    let sample_entry = match config {
+        AudioConfig::Aac(config) => plain_box(
+            b"mp4a",
+            &audio_sample_entry(config.channel_count(), 16, timescale, &esds(config)),
+        ),
+        AudioConfig::Opus {
+            sample_rate,
+            channels,
+        } => plain_box(
+            b"Opus",
+            &audio_sample_entry(*channels, 16, timescale, &dops(*sample_rate, *channels)),
+        ),
+        // ISO BMFF has no MPEG-4 object type for G.711, so this writes the
+        // QuickTime `alaw` sample entry, which ffmpeg and VLC read.
+        AudioConfig::Pcma { channels, .. } => {
+            plain_box(b"alaw", &audio_sample_entry(*channels, 8, timescale, &[]))
+        }
+        AudioConfig::Mp3 { .. } => bail!("MP3 audio cannot be muxed into fMP4"),
+    };
+    let smhd = full_box(b"smhd", 0, 0, &[0; 4]);
+    Ok(trak(
+        tkhd(track_id, 0x0100, 0, 0),
+        mdhd(timescale),
+        hdlr(b"soun", "SoundHandler"),
+        smhd,
+        stbl(&sample_entry),
+    ))
+}
+
+/// ISO/IEC 14496-12 §12.2.3 AudioSampleEntry followed by the codec's boxes.
+fn audio_sample_entry(channels: u8, sample_size: u16, sample_rate: u32, children: &[u8]) -> Bytes {
     let mut entry = BytesMut::new();
     entry.put_bytes(0, 6);
     entry.put_u16(1);
     entry.put_bytes(0, 8);
-    entry.put_u16(config.channel_count() as u16);
-    entry.put_u16(16);
+    entry.put_u16(channels as u16);
+    entry.put_u16(sample_size);
     entry.put_u32(0);
-    entry.put_u32(config.sample_rate << 16);
-    entry.put_slice(&esds(config));
-    let smhd = full_box(b"smhd", 0, 0, &[0; 4]);
-    trak(
-        tkhd(track_id, 0x0100, 0, 0),
-        mdhd(config.sample_rate),
-        hdlr(b"soun", "SoundHandler"),
-        smhd,
-        stbl(&plain_box(b"mp4a", &entry)),
-    )
+    entry.put_u32(sample_rate << 16);
+    entry.put_slice(children);
+    entry.freeze()
+}
+
+/// OpusSpecificBox (Opus-in-ISOBMFF binding §4.3.2): no pre-skip or output
+/// gain is known here, and channel mapping family 0 covers mono and stereo.
+fn dops(input_sample_rate: u32, channels: u8) -> Bytes {
+    let mut payload = BytesMut::new();
+    payload.put_u8(0);
+    payload.put_u8(channels);
+    payload.put_u16(0);
+    payload.put_u32(input_sample_rate);
+    payload.put_i16(0);
+    payload.put_u8(0);
+    plain_box(b"dOps", &payload)
 }
 
 pub(super) fn plain_box(kind: &[u8; 4], payload: &[u8]) -> Bytes {
@@ -322,6 +410,127 @@ fn trex(track_id: u32) -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{mp4::muxer::tests::boxes, sample::Timestamp};
+
+    fn child<'a>(payload: &'a [u8], path: &[&str]) -> &'a [u8] {
+        path.iter().fold(payload, |payload, kind| {
+            boxes(payload)
+                .into_iter()
+                .find(|(name, _)| name == kind)
+                .unwrap_or_else(|| panic!("missing box {kind}"))
+                .1
+        })
+    }
+
+    /// `stsd` is a full box: skip version/flags and the entry count (8 bytes)
+    /// to reach the first entry.
+    fn sample_entry(trak: &[u8]) -> (String, Vec<u8>) {
+        let stsd = child(trak, &["mdia", "minf", "stbl", "stsd"]);
+        let (kind, payload) = boxes(&stsd[8..]).remove(0);
+        (kind, payload.to_vec())
+    }
+
+    fn mdhd_timescale(trak: &[u8]) -> u32 {
+        let mdhd = child(trak, &["mdia", "mdhd"]);
+        u32::from_be_bytes(mdhd[12..16].try_into().unwrap())
+    }
+
+    #[test]
+    fn opus_track_declares_48k_samples_and_describes_the_encoder_in_dops() {
+        // Arrange / Act
+        let config = AudioConfig::Opus {
+            sample_rate: 24_000,
+            channels: 2,
+        };
+        let trak = audio_trak(2, &config).unwrap();
+        let trak = child(&trak, &["trak"]);
+
+        // Assert: the entry runs at 48 kHz while dOps keeps the 24 kHz input rate
+        assert_eq!(mdhd_timescale(trak), 48_000);
+        let (kind, entry) = sample_entry(trak);
+        assert_eq!(kind, "Opus");
+        assert_eq!(&entry[16..18], 2_u16.to_be_bytes());
+        assert_eq!(&entry[24..28], (48_000_u32 << 16).to_be_bytes());
+        let dops = child(&entry[28..], &["dOps"]);
+        assert_eq!(dops, [0, 2, 0, 0, 0, 0, 0x5D, 0xC0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn alaw_track_uses_the_quicktime_entry_with_8_bit_samples() {
+        // Arrange / Act
+        let config = AudioConfig::Pcma {
+            sample_rate: 8_000,
+            channels: 1,
+        };
+        let trak = audio_trak(2, &config).unwrap();
+        let trak = child(&trak, &["trak"]);
+
+        // Assert
+        assert_eq!(mdhd_timescale(trak), 8_000);
+        let (kind, entry) = sample_entry(trak);
+        assert_eq!(kind, "alaw");
+        assert_eq!(&entry[16..18], 1_u16.to_be_bytes());
+        assert_eq!(&entry[18..20], 8_u16.to_be_bytes());
+        assert_eq!(&entry[24..28], (8_000_u32 << 16).to_be_bytes());
+        assert_eq!(entry.len(), 28);
+    }
+
+    #[test]
+    fn mp3_audio_has_no_sample_entry() {
+        // Arrange
+        let config = AudioConfig::Mp3 {
+            sample_rate: 44_100,
+            channels: 2,
+        };
+
+        // Act / Assert
+        assert!(audio_trak(2, &config).is_err());
+    }
+
+    #[test]
+    fn opus_packet_duration_follows_the_toc_byte() {
+        // Arrange: (packet, expected 48 kHz ticks)
+        let cases: [(&[u8], u32); 5] = [
+            (&[0x00, 1, 2], 480),         // SILK 10 ms, one frame
+            (&[0x68, 1, 2], 960),         // Hybrid 20 ms, one frame
+            (&[0x81, 1, 2], 240),         // CELT 2.5 ms, two frames
+            (&[0xFA, 1, 2], 1_920),       // CELT 20 ms, two frames
+            (&[0x0B, 0x03, 1, 2], 2_880), // SILK 20 ms, code 3 with three frames
+        ];
+
+        // Act / Assert
+        for (packet, expected) in cases {
+            assert_eq!(
+                opus_packet_duration(packet).unwrap(),
+                expected,
+                "{packet:?}"
+            );
+        }
+        assert!(opus_packet_duration(&[]).is_err());
+        assert!(opus_packet_duration(&[0x0B, 0x00]).is_err());
+    }
+
+    #[test]
+    fn alaw_fragment_lasts_one_tick_per_sample_of_each_channel() {
+        // Arrange
+        let config = AudioConfig::Pcma {
+            sample_rate: 8_000,
+            channels: 2,
+        };
+        let sample = AudioSample {
+            data: Bytes::from(vec![0xD5; 320]),
+            pts: Timestamp::from_millis(20),
+        };
+
+        // Act
+        let fragment = audio_fragment(1, 2, &sample, &config).unwrap();
+
+        // Assert
+        let trun = child(&fragment, &["moof", "traf", "trun"]);
+        assert_eq!(&trun[12..16], 160_u32.to_be_bytes());
+        let tfdt = child(&fragment, &["moof", "traf", "tfdt"]);
+        assert_eq!(&tfdt[4..12], 160_u64.to_be_bytes());
+    }
 
     #[test]
     fn encodes_multi_byte_descriptor_sizes() {

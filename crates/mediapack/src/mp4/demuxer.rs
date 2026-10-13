@@ -94,8 +94,6 @@ impl Demuxer {
         Ok(Vec::new())
     }
 
-    /// `MediaEvent` carries AAC audio only, so a fragmented file with MP3 audio
-    /// is rejected rather than demuxed without its sound.
     fn read_movie(&mut self, payload: &[u8]) -> Result<Vec<MediaEvent>> {
         for trak in atoms(payload).filter(|atom| atom.kind == b"trak") {
             if let Some((track_id, track)) = read_track(&trak)? {
@@ -333,6 +331,7 @@ mod tests {
     use super::*;
     use crate::{
         mp4::Fmp4Muxer,
+        sample::AudioConfig,
         test_support::{FIXTURE_MP4, FIXTURE_TS, audio_samples, count_events, video_samples},
     };
 
@@ -427,6 +426,59 @@ mod tests {
         }
         assert_eq!(audio_samples(&actual).len(), audio_samples(&expected).len());
     }
+    #[test]
+    fn round_trips_opus_and_alaw_audio_the_muxer_wrote() {
+        // Arrange: each frame lasts 20 ms (Opus TOC 0xFC, 160 A-law bytes at 8 kHz)
+        let cases = [
+            (
+                AudioConfig::Opus {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                Bytes::from_static(&[0xFC, 0x01, 0x02, 0x03]),
+            ),
+            (
+                AudioConfig::Pcma {
+                    sample_rate: 8_000,
+                    channels: 1,
+                },
+                Bytes::from(vec![0xD5; 160]),
+            ),
+        ];
+        for (config, frame) in cases {
+            let mut muxer = Fmp4Muxer::new();
+            let mut stream = BytesMut::new();
+            muxer
+                .push(&MediaEvent::Streams(StreamSet {
+                    has_video: false,
+                    has_audio: true,
+                }))
+                .unwrap();
+            muxer
+                .push(&MediaEvent::AudioConfig(config.clone()))
+                .unwrap();
+            for index in 0..3 {
+                let sample = AudioSample {
+                    data: frame.clone(),
+                    pts: Timestamp::from_millis(20 * index),
+                };
+                stream.extend_from_slice(&muxer.push(&MediaEvent::Audio(sample)).unwrap());
+            }
+
+            // Act
+            let events = demux(&stream, stream.len());
+
+            // Assert
+            assert_eq!(events[1], MediaEvent::AudioConfig(config.clone()));
+            let samples = audio_samples(&events);
+            assert_eq!(samples.len(), 3, "{config:?}");
+            for (index, sample) in samples.iter().enumerate() {
+                assert_eq!(sample.data, frame);
+                assert_eq!(sample.pts, Timestamp::from_millis(20 * index as u64));
+            }
+        }
+    }
+
     #[test]
     fn rejects_incomplete_input_on_finish() {
         // Arrange
