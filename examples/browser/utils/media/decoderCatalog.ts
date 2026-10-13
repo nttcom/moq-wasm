@@ -1,15 +1,3 @@
-type AudioCatalogTrackLike = {
-  codec?: string
-  samplerate?: number
-  channelConfig?: string
-  initData?: string
-}
-
-type VideoCatalogTrackLike = {
-  codec?: string
-  initData?: string
-}
-
 export function parseAudioChannelCount(channelConfig?: string): number | undefined {
   const normalized = channelConfig?.trim().toLowerCase()
   if (!normalized) {
@@ -27,22 +15,4 @@ export function parseAudioChannelCount(channelConfig?: string): number | undefin
     return Number.isInteger(count) && count > 0 ? count : undefined
   }
   return undefined
-}
-
-export function postAudioCatalogToWorker(worker: Worker, track: AudioCatalogTrackLike): void {
-  worker.postMessage({
-    type: 'catalog',
-    codec: track.codec,
-    sampleRate: track.samplerate,
-    channels: parseAudioChannelCount(track.channelConfig),
-    descriptionBase64: track.initData
-  })
-}
-
-export function postVideoCatalogToWorker(worker: Worker, track: VideoCatalogTrackLike): void {
-  worker.postMessage({
-    type: 'catalog',
-    codec: track.codec,
-    descriptionBase64: track.initData
-  })
 }

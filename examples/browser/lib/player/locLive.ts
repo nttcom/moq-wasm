@@ -1,6 +1,6 @@
 import { monotonicUnixMicros } from '../../utils/media/clock'
-import { postAudioCatalogToWorker, postVideoCatalogToWorker } from '../../utils/media/decoderCatalog'
-import { postSubgroupObjectToWorker } from '../../utils/media/decoderWorker'
+import { parseAudioChannelCount } from '../../utils/media/decoderCatalog'
+import type { SubgroupWorkerMessage } from '../../utils/media/jitterBufferTypes'
 import type { BufferPolicy } from './jitterBuffer'
 import { LivePlayout } from './livePlayout'
 import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from './livePictureSink'
@@ -95,14 +95,34 @@ export class LocLive {
 
   configureTrack(kind: MediaKind, track: MediaCatalogTrack): void {
     if (kind === 'video') {
-      postVideoCatalogToWorker(this.videoWorker, track)
+      this.videoWorker.postMessage({ type: 'catalog', codec: track.codec, descriptionBase64: track.initData })
       return
     }
-    postAudioCatalogToWorker(this.audioWorker, track)
+    this.audioWorker.postMessage({
+      type: 'catalog',
+      codec: track.codec,
+      sampleRate: track.samplerate,
+      channels: parseAudioChannelCount(track.channelConfig),
+      descriptionBase64: track.initData
+    })
   }
 
   push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void {
-    postSubgroupObjectToWorker(kind === 'video' ? this.videoWorker : this.audioWorker, groupId, object)
+    const objectPayload = new Uint8Array(object.objectPayload)
+    const message: SubgroupWorkerMessage = {
+      type: 'object',
+      groupId,
+      subgroupStreamObject: {
+        subgroupId: object.subgroupId,
+        objectId: object.objectId,
+        objectPayloadLength: object.objectPayloadLength,
+        objectPayload,
+        objectStatus: object.objectStatus,
+        locHeader: object.locHeader
+      }
+    }
+    const worker = kind === 'video' ? this.videoWorker : this.audioWorker
+    worker.postMessage(message, [objectPayload.buffer])
   }
 
   setBufferPolicy(policy: BufferPolicy): void {
