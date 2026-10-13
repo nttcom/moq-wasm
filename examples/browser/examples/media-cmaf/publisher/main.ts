@@ -1,7 +1,5 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import type { MOQTClient } from '../../../pkg/moqt'
-import { AUTH_INFO, CMAF_FPS } from '../const'
-import { getFormElement } from '../utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
 import { timeSeededGroupId } from '../../../utils/media/clock'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES } from '../catalog'
@@ -14,10 +12,11 @@ import {
   MediaStreamAudioTrackSource
 } from 'mediabunny'
 import { CATALOG_TRACK_NAME } from '../../../lib/msf/catalog'
-import { initializeMediaExamplePage } from '../../../utils/page'
+import { element, parseTrackNamespace, initializeMediaExamplePage } from '../../../utils/page'
 
 let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
+const form = element<HTMLFormElement>('form')
 const transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
 let nextCatalogGroupId = timeSeededGroupId()
@@ -140,13 +139,6 @@ const setupMoqSendVisualizationButton = (): void => {
   })
 }
 
-const parseTrackNamespace = (raw: string): string[] => {
-  return raw
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
 const isCatalogTrack = (trackName: string): boolean => {
   return trackName === CATALOG_TRACK_NAME
 }
@@ -197,8 +189,7 @@ const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespac
 const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const versions = new BigUint64Array('0xff00000E'.split(',').map(BigInt))
+    const versions = new BigUint64Array([0xff00000en])
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
     await moqtClient.sendClientSetup(versions, maxSubscribeId)
   })
@@ -207,9 +198,8 @@ const sendSetupButtonClickHandler = (): void => {
 const sendPublishNamespaceButtonClickHandler = (): void => {
   const sendPublishNamespaceBtn = document.getElementById('sendPublishNamespaceBtn') as HTMLButtonElement
   sendPublishNamespaceBtn.addEventListener('click', async () => {
-    const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
-    await moqtClient.publishNamespace(trackNamespace, AUTH_INFO)
+    await moqtClient.publishNamespace(trackNamespace, 'secret')
   })
 }
 
@@ -228,13 +218,9 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       return
     }
 
-    const form = getFormElement()
     const keyFrameIntervalSec = Number(form['keyframe-interval'].value)
 
-    const getTrackNamespace = () => {
-      const form = getFormElement()
-      return parseTrackNamespace(form['publish-track-namespace'].value)
-    }
+    const getTrackNamespace = () => parseTrackNamespace(form['publish-track-namespace'].value)
 
     // --- fMP4 fragment コールバック生成 ---
     // mediabunny はキーフレーム境界でフラグメントを切るため、
@@ -276,7 +262,6 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
           fragment.set(lastMoof, 0)
           fragment.set(data, lastMoof.byteLength)
 
-          const form = getFormElement()
           const publisherPriority = Number(form['video-publisher-priority'].value)
           const trackAliases = getAliases()
           if (!trackAliases.length) {
@@ -335,7 +320,7 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
       latencyMode: 'realtime',
       keyFrameInterval: keyFrameIntervalSec
     })
-    videoOutput.addVideoTrack(videoSource, { frameRate: CMAF_FPS })
+    videoOutput.addVideoTrack(videoSource, { frameRate: 30 })
     videoSource.errorPromise.catch((error) => {
       console.error('[CmafPublisher] video source error', error)
     })
@@ -357,20 +342,9 @@ const sendSubgroupObjectButtonClickHandler = (): void => {
   })
 }
 
-const setupButtonClickHandler = (): void => {
-  sendSetupButtonClickHandler()
-  sendPublishNamespaceButtonClickHandler()
-  sendSubgroupObjectButtonClickHandler()
-}
-
 const setupClientCallbacks = (): void => {
   moqtClient.setOnServerSetupHandler((serverSetup: any) => {
     console.log({ serverSetup })
-  })
-
-  moqtClient.setOnPublishNamespaceHandler(async ({ publishNamespace, respondOk }) => {
-    console.log({ publishNamespace })
-    await respondOk()
   })
 
   moqtClient.setOnSubscribeResponseHandler((subscribeResponseMessage) => {
@@ -379,7 +353,6 @@ const setupClientCallbacks = (): void => {
 
   moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
     console.log({ subscribeMessage: subscribe })
-    const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['publish-track-namespace'].value)
     const requestedNamespace = subscribe.trackNamespace ?? []
     const trackName = subscribe.trackName ?? ''
@@ -433,7 +406,6 @@ setupCloseButtonHandler()
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
-  const form = getFormElement()
   const url = form.url.value
 
   await moqtClient.connect(url, { sendSetup: false })
@@ -442,5 +414,8 @@ connectBtn.addEventListener('click', async () => {
   if (isMoqSendVisualizerVisible) {
     renderMoqSendVisualization()
   }
-  setupButtonClickHandler()
 })
+
+sendSetupButtonClickHandler()
+sendPublishNamespaceButtonClickHandler()
+sendSubgroupObjectButtonClickHandler()

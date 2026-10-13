@@ -1,13 +1,11 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { parse_msf_catalog_json } from '../../../pkg/moqt'
-import { AUTH_INFO } from '../const'
-import { getFormElement } from '../utils'
+import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { extractCatalogVideoTracks, extractCatalogAudioTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
-import { initializeMediaExamplePage } from '../../../utils/page'
 
 const moqtClient = new MoqtClientWrapper()
+const form = element<HTMLFormElement>('form')
 
-let handlersInitialized = false
 let catalogVideoTracks: MediaCatalogTrack[] = []
 let catalogAudioTracks: MediaCatalogTrack[] = []
 let selectedVideoTrackName: string | null = null
@@ -45,7 +43,6 @@ const LIVE_EDGE_CATCHUP_COOLDOWN_MS = 1500
 let playbackStarted = false
 let sourceBufferVisualizerIntervalId: number | null = null
 let lastLiveEdgeCatchupAtMs = 0
-let liveEdgeCatchupHandlerInitialized = false
 let isRealtimeCatchupEnabled = true
 
 type SourceBufferSpeedState = {
@@ -59,35 +56,7 @@ const sourceBufferSpeedState: Record<'video' | 'audio', SourceBufferSpeedState> 
   audio: { lastWallTimeMs: null, lastBufferedEndSec: null, speedX: null }
 }
 
-// --- Helpers ---
-
-const toBigUint64Array = (value: string): BigUint64Array => {
-  const values = value
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => BigInt(part))
-  return new BigUint64Array(values)
-}
-
-const parseTrackNamespace = (value: string): string[] => {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
 // --- Catalog ---
-
-const setCatalogTrackStatus = (text: string): void => {
-  const status = document.getElementById('catalog-track-status')
-  if (!status) {
-    return
-  }
-  const normalized = text.trim()
-  status.textContent = normalized
-  status.style.display = normalized.length > 0 ? '' : 'none'
-}
 
 const getCatalogTrackSelect = (): HTMLSelectElement | null => {
   return document.getElementById('selected-video-track') as HTMLSelectElement | null
@@ -135,10 +104,13 @@ const renderCatalogTracks = (): void => {
   const hasVideoTracks = renderCatalogTrackSelect()
 
   if (!hasVideoTracks) {
-    setCatalogTrackStatus('')
+    setStatusText('catalog-track-status', '')
     return
   }
-  setCatalogTrackStatus(`Catalog loaded: video=${catalogVideoTracks.length} audio=${catalogAudioTracks.length}`)
+  setStatusText(
+    'catalog-track-status',
+    `Catalog loaded: video=${catalogVideoTracks.length} audio=${catalogAudioTracks.length}`
+  )
 }
 
 const setupCatalogSelectionHandler = (): void => {
@@ -161,7 +133,7 @@ const setupCatalogCallbacks = (trackAlias: bigint): void => {
       renderCatalogTracks()
     } catch (error) {
       console.error('[CmafSubscriber] failed to parse catalog', error)
-      setCatalogTrackStatus('Catalog parse failed')
+      setStatusText('catalog-track-status', 'Catalog parse failed')
     }
   })
 }
@@ -254,15 +226,11 @@ const catchupToLiveEdgeIfNeeded = (reason: 'visibility' | 'periodic'): void => {
 }
 
 const setupLiveEdgeCatchupHandler = (): void => {
-  if (liveEdgeCatchupHandlerInitialized) {
-    return
-  }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       catchupToLiveEdgeIfNeeded('visibility')
     }
   })
-  liveEdgeCatchupHandlerInitialized = true
 }
 
 const syncLiveCatchupModeButton = (toggleBtn: HTMLButtonElement): void => {
@@ -748,8 +716,7 @@ const setupAudioObjectCallbacks = (trackAlias: bigint): void => {
 const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const versions = toBigUint64Array('0xff00000E')
+    const versions = new BigUint64Array([0xff00000en])
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
     await moqtClient.sendClientSetup(versions, maxSubscribeId)
   })
@@ -758,34 +725,32 @@ const sendSetupButtonClickHandler = (): void => {
 const sendCatalogSubscribeButtonClickHandler = (): void => {
   const sendCatalogSubscribeBtn = document.getElementById('sendCatalogSubscribeBtn') as HTMLButtonElement
   sendCatalogSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const catalogTrackName = form['catalog-track-name'].value.trim()
     const catalogSubscribeId = BigInt(form['catalog-subscribe-id'].value)
     if (!catalogTrackName) {
-      setCatalogTrackStatus('Catalog track is required')
+      setStatusText('catalog-track-status', 'Catalog track is required')
       return
     }
     const catalogTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, catalogTrackName, AUTH_INFO, { requestId: catalogSubscribeId })
+      await moqtClient.subscribe(trackNamespace, catalogTrackName, 'secret', { requestId: catalogSubscribeId })
     ).subscribeOk.trackAlias
     form['catalog-track-alias'].value = catalogTrackAlias.toString()
     setupCatalogCallbacks(catalogTrackAlias)
-    setCatalogTrackStatus(`Catalog subscribed: ${catalogTrackName}`)
+    setStatusText('catalog-track-status', `Catalog subscribed: ${catalogTrackName}`)
   })
 }
 
 const sendSubscribeButtonClickHandler = (): void => {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
   sendSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const selectedVideoTrack = selectedVideoTrackName ?? ''
     const videoSubscribeId = BigInt(form['video-subscribe-id'].value)
     const audioSubscribeId = BigInt(form['audio-subscribe-id'].value)
 
     if (!selectedVideoTrack) {
-      setCatalogTrackStatus('Select a video track from catalog first')
+      setStatusText('catalog-track-status', 'Select a video track from catalog first')
       return
     }
 
@@ -793,23 +758,23 @@ const sendSubscribeButtonClickHandler = (): void => {
     const audioTrack = catalogAudioTracks[0]
 
     if (!videoTrack?.codec || !audioTrack?.codec) {
-      setCatalogTrackStatus('Video or audio codec not found in catalog')
+      setStatusText('catalog-track-status', 'Video or audio codec not found in catalog')
       return
     }
 
     setupMediaSource(videoTrack.codec, audioTrack.codec)
     const videoTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, AUTH_INFO, { requestId: videoSubscribeId })
+      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, 'secret', { requestId: videoSubscribeId })
     ).subscribeOk.trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
     setupVideoObjectCallbacks(videoTrackAlias)
 
     const audioTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, audioTrack.name, AUTH_INFO, { requestId: audioSubscribeId })
+      await moqtClient.subscribe(trackNamespace, audioTrack.name, 'secret', { requestId: audioSubscribeId })
     ).subscribeOk.trackAlias
     form['audio-track-alias'].value = audioTrackAlias.toString()
     setupAudioObjectCallbacks(audioTrackAlias)
-    setCatalogTrackStatus(`Subscribed video=${selectedVideoTrack} audio=${audioTrack.name}`)
+    setStatusText('catalog-track-status', `Subscribed video=${selectedVideoTrack} audio=${audioTrack.name}`)
   })
 }
 
@@ -842,14 +807,11 @@ const setupCloseButtonHandler = (): void => {
       renderMoqObjectVisualization()
     }
     renderCatalogTracks()
-    setCatalogTrackStatus('Disconnected')
+    setStatusText('catalog-track-status', 'Disconnected')
   })
 }
 
 const setupButtonHandlers = (): void => {
-  if (handlersInitialized) {
-    return
-  }
   sendSetupButtonClickHandler()
   sendCatalogSubscribeButtonClickHandler()
   sendSubscribeButtonClickHandler()
@@ -858,7 +820,6 @@ const setupButtonHandlers = (): void => {
   setupCatalogSelectionHandler()
   setupCloseButtonHandler()
   setupLiveEdgeCatchupHandler()
-  handlersInitialized = true
 }
 
 // --- Client callbacks ---
@@ -877,11 +838,10 @@ initializeMediaExamplePage('subscribe-track-namespace')
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
-  const form = getFormElement()
   const url = form.url.value
 
   await moqtClient.connect(url, { sendSetup: false })
-  setCatalogTrackStatus('Connected')
+  setStatusText('catalog-track-status', 'Connected')
 })
 
 setupButtonHandlers()
