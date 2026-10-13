@@ -90,6 +90,12 @@ impl<T: TransportProtocol> Endpoint<T> {
     pub async fn wait_idle(&self) {
         self.session_creator.transport_creator.wait_idle().await;
     }
+
+    /// The UDP port the endpoint is bound to; for `ServerConfig { port: 0, .. }`
+    /// it is the port the OS picked. Fails on `BROWSER`, which has no socket.
+    pub fn local_port(&self) -> anyhow::Result<u16> {
+        self.session_creator.transport_creator.local_port()
+    }
 }
 
 #[cfg(test)]

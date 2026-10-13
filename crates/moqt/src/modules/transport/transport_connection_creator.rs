@@ -25,4 +25,5 @@ pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
     -> anyhow::Result<BoxedConnection>;
     async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection>;
     async fn wait_idle(&self);
+    fn local_port(&self) -> anyhow::Result<u16>;
 }

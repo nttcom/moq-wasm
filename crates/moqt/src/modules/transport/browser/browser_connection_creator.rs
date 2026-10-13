@@ -56,4 +56,8 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
     }
 
     async fn wait_idle(&self) {}
+
+    fn local_port(&self) -> anyhow::Result<u16> {
+        anyhow::bail!("a browser endpoint has no local socket")
+    }
 }

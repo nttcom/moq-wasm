@@ -180,6 +180,14 @@ impl TransportConnectionCreator for DualProtocolCreator {
         };
         endpoint.wait_idle().await;
     }
+
+    fn local_port(&self) -> anyhow::Result<u16> {
+        let endpoint = match &self.endpoint {
+            DualEndpoint::Server(endpoint) => endpoint,
+            DualEndpoint::Client(client) => &client.endpoint,
+        };
+        Ok(endpoint.local_addr()?.port())
+    }
 }
 
 #[cfg(test)]
