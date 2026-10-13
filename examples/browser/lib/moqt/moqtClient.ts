@@ -718,8 +718,40 @@ export class MoqtClientWrapper {
     return result
   }
 
+  /// The subgroup header and objects of a track this client publishes.
+  /// `trackAlias` is the alias the application holds (from `publish()` or an
+  /// accepted incoming SUBSCRIBE); it is sent on the current session.
+  async sendSubgroupHeader(
+    trackAlias: bigint,
+    groupId: bigint,
+    subgroupId: bigint,
+    publisherPriority: number
+  ): Promise<void> {
+    await this.requireConnectedClient().sendSubgroupHeader(trackAlias, groupId, subgroupId, publisherPriority)
+  }
+
+  async sendSubgroupObject(
+    trackAlias: bigint,
+    groupId: bigint,
+    subgroupId: bigint,
+    objectId: bigint,
+    objectStatus: number | undefined,
+    payload: Uint8Array,
+    locHeader: unknown
+  ): Promise<void> {
+    await this.requireConnectedClient().sendSubgroupObject(
+      trackAlias,
+      groupId,
+      subgroupId,
+      objectId,
+      objectStatus,
+      payload,
+      locHeader
+    )
+  }
+
   async sendSingleObjectGroup(trackAlias: bigint, groupId: bigint, payload: Uint8Array): Promise<void> {
-    const writer = new SubgroupWriter(this.requireConnectedClient(), trackAlias)
+    const writer = new SubgroupWriter(this, trackAlias)
     await writer.openGroup(groupId)
     await writer.send(payload)
     await writer.closeGroup()

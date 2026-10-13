@@ -1,4 +1,4 @@
-import type { MOQTClient } from '../../pkg/moqt'
+import type { MoqtClientWrapper } from './moqtClient'
 import { buildLocHeader } from '../../utils/media/loc'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
 
@@ -22,8 +22,10 @@ export class SubgroupWriter {
   private groupId: bigint | undefined
   private nextObjectId = 0n
 
+  /// `trackAlias` is the alias the application was given; the wrapper sends
+  /// on whatever session it currently holds.
   constructor(
-    private readonly client: MOQTClient,
+    private readonly client: MoqtClientWrapper,
     private readonly trackAlias: bigint,
     private readonly observer?: SubgroupObserver
   ) {}
