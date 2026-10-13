@@ -103,6 +103,13 @@ impl EgressRunnerHandle {
             .expect("egress dropped its publisher before opening a stream")
     }
 
+    pub(crate) async fn expect_sent_object(&mut self) -> DataObject {
+        match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+            Ok(Some(Sent::Object(object))) => object,
+            other => panic!("egress should send an object downstream, got {other:?}"),
+        }
+    }
+
     pub(crate) fn assert_no_publish_done(&mut self) {
         assert!(
             self.publish_done.try_recv().is_err(),

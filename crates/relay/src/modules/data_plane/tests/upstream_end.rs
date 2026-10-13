@@ -13,6 +13,7 @@ async fn upstream_end_is_relayed_as_publish_done_counting_the_opened_streams() {
     stream.header(0);
     stream.object(0);
     egress.expect_stream_priority().await;
+    egress.expect_sent_object().await;
 
     // Act
     egress.end_upstream(PublishDoneReason::publisher_session_closed());
