@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
-import { RemoteMember, type SubscriptionState } from '../types/member'
+import { RemoteMember } from '../types/member'
 import { ChatSidebar } from './ChatSidebar'
 import { MemberGrid } from './MemberGrid'
 import { RoomHeader } from './RoomHeader'
@@ -20,7 +20,7 @@ import { catalogTracksForRole, pickHighestBitrateTrack } from '../media/meetingC
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { RemotePlaybackStats } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
-import { buildTrackActionKey, updateSubscriptionState } from '../utils/state/roomState'
+import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 
 interface MeetingRoomProps {
   session: LocalSession
@@ -411,7 +411,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     try {
       await session.unsubscribe(subscribeId)
       setRoom((currentRoom) =>
-        updateSubscriptionState(currentRoom, subscribeId, (track) => ({
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
           isSubscribing: false,
           isSubscribed: false
@@ -560,24 +560,6 @@ function appendStatsSample(
     return next
   }
   return next.slice(next.length - SIDEBAR_STATS_HISTORY_LIMIT)
-}
-
-function updateMemberSubscriptionStateByRole(
-  room: Room,
-  memberId: string,
-  role: CatalogSubscribeRole,
-  updater: (track: SubscriptionState) => SubscriptionState
-): Room {
-  const member = room.remoteMembers.get(memberId)
-  if (!member) {
-    return room
-  }
-  const updatedMembers = new Map(room.remoteMembers)
-  updatedMembers.set(memberId, {
-    ...member,
-    subscribedTracks: { ...member.subscribedTracks, [role]: updater(member.subscribedTracks[role]) }
-  })
-  return { ...room, remoteMembers: updatedMembers }
 }
 
 function ensureSelectedTrackName(

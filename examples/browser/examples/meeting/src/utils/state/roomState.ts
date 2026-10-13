@@ -25,40 +25,22 @@ export function removeRemoteMember(room: Room, userId: string): Room {
   return { ...room, remoteMembers: updatedMembers }
 }
 
-export function updateSubscriptionState(
+export function updateMemberSubscriptionStateByRole(
   room: Room,
-  subscribeId: bigint,
+  memberId: string,
+  role: CatalogSubscribeRole,
   updater: (track: SubscriptionState) => SubscriptionState
 ): Room {
-  const updatedMembers = new Map(room.remoteMembers)
-  let updated = false
-
-  for (const [memberId, member] of updatedMembers.entries()) {
-    const trackEntries = Object.entries(member.subscribedTracks) as Array<
-      [keyof RemoteMember['subscribedTracks'], SubscriptionState]
-    >
-
-    for (const [trackKey, trackState] of trackEntries) {
-      if (trackState.subscribeId === subscribeId) {
-        const updatedMember: RemoteMember = {
-          ...member,
-          subscribedTracks: {
-            ...member.subscribedTracks,
-            [trackKey]: updater(trackState)
-          }
-        }
-        updatedMembers.set(memberId, updatedMember)
-        updated = true
-        break
-      }
-    }
-
-    if (updated) {
-      break
-    }
+  const member = room.remoteMembers.get(memberId)
+  if (!member) {
+    return room
   }
-
-  return updated ? { ...room, remoteMembers: updatedMembers } : room
+  const updatedMembers = new Map(room.remoteMembers)
+  updatedMembers.set(memberId, {
+    ...member,
+    subscribedTracks: { ...member.subscribedTracks, [role]: updater(member.subscribedTracks[role]) }
+  })
+  return { ...room, remoteMembers: updatedMembers }
 }
 
 interface BuildRemoteMemberOptions {
