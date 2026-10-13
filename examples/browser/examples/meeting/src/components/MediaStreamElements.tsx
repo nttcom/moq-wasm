@@ -3,22 +3,11 @@ import { ReactNode, useEffect, useRef, useState } from 'react'
 interface MediaStreamVideoProps {
   stream?: MediaStream | null
   muted?: boolean
-  className?: string
-  placeholder?: string
-  overlay?: ReactNode
   footer?: ReactNode
   testId?: string
 }
 
-export function MediaStreamVideo({
-  stream,
-  muted = false,
-  className,
-  placeholder = 'Video unavailable',
-  overlay,
-  footer,
-  testId
-}: MediaStreamVideoProps) {
+export function MediaStreamVideo({ stream, muted = false, footer, testId }: MediaStreamVideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null)
   const [hasFirstFrame, setHasFirstFrame] = useState(false)
 
@@ -31,7 +20,7 @@ export function MediaStreamVideo({
 
   return (
     <div className="w-full">
-      <div className={`relative w-full aspect-video overflow-hidden rounded-lg bg-black ${className}`}>
+      <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-black">
         <video
           ref={ref}
           data-testid={testId}
@@ -42,11 +31,6 @@ export function MediaStreamVideo({
           controls={hasFirstFrame}
           onLoadedData={() => setHasFirstFrame(true)}
         />
-        {overlay && (
-          <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-black/70 px-3 py-2 text-sm font-semibold text-white shadow-md">
-            {overlay}
-          </div>
-        )}
       </div>
       {footer}
     </div>

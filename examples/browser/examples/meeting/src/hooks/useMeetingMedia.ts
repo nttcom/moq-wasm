@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import type { RemotePictures } from '../media/mediaSubscriber'
-import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
+import type { PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
   DEFAULT_VIDEO_ENCODING_SETTINGS,

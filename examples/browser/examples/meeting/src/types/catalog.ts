@@ -27,7 +27,6 @@ export interface EditableMeetingCatalogTrack extends MeetingCatalogTrack {
 
 export type TrackMediaConfig = {
   codec?: string
-  framerate?: number
   samplerate?: number
   channelConfig?: string
   initData?: string

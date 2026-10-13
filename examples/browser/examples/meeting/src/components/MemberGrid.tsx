@@ -1,6 +1,6 @@
 import { LocalMember, RemoteMember } from '../types/member'
 import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
 import { BarChart3, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOff } from 'lucide-react'
@@ -436,13 +436,7 @@ function MemberCard({
       {picture !== undefined ? (
         <PictureFrame picture={picture} placeholder={placeholder} footer={videoFooter} />
       ) : (
-        <MediaStreamVideo
-          stream={videoStream}
-          muted={muted}
-          placeholder={placeholder}
-          footer={videoFooter}
-          testId={videoTestId}
-        />
+        <MediaStreamVideo stream={videoStream} muted={muted} footer={videoFooter} testId={videoTestId} />
       )}
       {(secondaryPicture || secondaryVideoStream) && (
         <div className="mt-2 space-y-1">
@@ -452,7 +446,7 @@ function MemberCard({
           {secondaryPicture ? (
             <PictureFrame picture={secondaryPicture} placeholder={secondaryPlaceholder} />
           ) : (
-            <MediaStreamVideo stream={secondaryVideoStream} muted={muted} placeholder={secondaryPlaceholder} />
+            <MediaStreamVideo stream={secondaryVideoStream} muted={muted} />
           )}
         </div>
       )}

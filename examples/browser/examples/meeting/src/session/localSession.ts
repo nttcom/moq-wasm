@@ -1,9 +1,4 @@
-import {
-  PublishNamespaceDoneMessage,
-  PublishNamespaceMessage,
-  RequestErrorMessage,
-  SubscribeOkMessage
-} from '../../../../pkg/moqt'
+import { PublishNamespaceDoneMessage, PublishNamespaceMessage, SubscribeOkMessage } from '../../../../pkg/moqt'
 import { MoqtClientWrapper } from '@moqt/moqtClient'
 import { CATALOG_TRACK_NAME } from '../../../../lib/msf/catalog'
 import { LocalMember } from '../types/member'
@@ -58,6 +53,17 @@ export class LocalSession {
     this.client.setOnSubscribeNamespaceResponseHandler((response) => {
       console.info('[meeting][moqt] received SUBSCRIBE_NAMESPACE response', response)
     })
+    this.client.setOnSubscribeResponseHandler((response) => {
+      if (response instanceof SubscribeOkMessage) {
+        console.info('[meeting][moqt] received SUBSCRIBE_OK', {
+          contentExists: (response as any).contentExists ?? (response as any).content_exists,
+          largestGroupId: response.largestGroupId?.toString(),
+          largestObjectId: response.largestObjectId?.toString()
+        })
+      } else {
+        console.info('[meeting][moqt] received SUBSCRIBE response', response)
+      }
+    })
     this.mediaController = new MeetingMediaController(this.client, this.trackNamespace)
     this.state = LocalSessionState.Idle
     this.chatMessageHandler = null
@@ -99,21 +105,6 @@ export class LocalSession {
     this.client.setOnPublishNamespaceDoneHandler((message) => {
       console.info('[meeting][moqt] received PUBLISH_NAMESPACE_DONE', message.trackNamespace)
       handler(message)
-    })
-  }
-
-  setOnSubscribeResponseHandler(handler: (response: SubscribeOkMessage | RequestErrorMessage) => void): void {
-    this.client.setOnSubscribeResponseHandler((response) => {
-      if (response instanceof SubscribeOkMessage) {
-        console.info('[meeting][moqt] received SUBSCRIBE_OK', {
-          contentExists: (response as any).contentExists ?? (response as any).content_exists,
-          largestGroupId: response.largestGroupId?.toString(),
-          largestObjectId: response.largestObjectId?.toString()
-        })
-      } else {
-        console.info('[meeting][moqt] received SUBSCRIBE response', response)
-      }
-      handler(response)
     })
   }
 

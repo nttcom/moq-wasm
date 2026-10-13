@@ -353,7 +353,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       role === 'audio' || role === 'video' || role === 'screenshare'
         ? {
             codec: selectedTrack?.codec,
-            framerate: role === 'video' || role === 'screenshare' ? selectedTrack?.framerate : undefined,
             samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
             channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
             initData: selectedTrack?.initData
