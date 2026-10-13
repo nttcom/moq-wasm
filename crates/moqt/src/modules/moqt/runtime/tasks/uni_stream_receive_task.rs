@@ -9,7 +9,7 @@ use crate::{
             codec::uni_stream_decoder::{UniStreamData, UniStreamDecoder},
             stream::{
                 fetch_data_receiver::{Fetch, FetchDataReceiver},
-                stream_receiver::UniStreamReceiver,
+                stream_receiver::{StreamReceiveError, UniStreamReceiver},
             },
         },
         domains::session_context::SessionContext,
@@ -55,11 +55,15 @@ impl UniStreamReceiveTask {
         let stream_data = match stream.receive().await {
             Ok(Some(stream_data)) => stream_data,
             Ok(None) => {
-                tracing::info!("Stream closed before receiving data");
+                tracing::debug!("Stream finished before its header");
                 return false;
             }
-            Err(_) => {
-                tracing::error!("Stream closed before receiving data");
+            Err(error @ StreamReceiveError::Closed(_)) => {
+                tracing::debug!(%error, "Stream ended before its header");
+                return false;
+            }
+            Err(error @ StreamReceiveError::Decode(_)) => {
+                tracing::error!(%error, "Failed to decode the stream header");
                 return false;
             }
         };

@@ -110,7 +110,7 @@ impl ControlMessageReceiveTask {
                                 }
                             }
                         } else {
-                            tracing::error!("Session dropped.");
+                            tracing::debug!("Control Message Receiver stopped: the session was dropped");
                             break;
                         }
                     }
