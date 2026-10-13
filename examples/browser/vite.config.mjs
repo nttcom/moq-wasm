@@ -8,7 +8,6 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@': resolve(import.meta.dirname, 'examples/meeting/src'),
       '@moqt': resolve(import.meta.dirname, 'lib/moqt'),
       '@player': resolve(import.meta.dirname, 'lib/player')
     }
