@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
+import type { Browser, Page } from '@playwright/test'
 import { MEDIA_PUBLISHER_PATH, MEDIA_SUBSCRIBER_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
@@ -11,44 +11,6 @@ export const mediaE2EConfig = {
   namespace,
   videoCodec,
   videoEncoderHardwareAcceleration
-}
-
-export interface PublisherPageModel {
-  page: Page
-  urlInput: Locator
-  namespaceInput: Locator
-  connectButton: Locator
-  connectionStatus: Locator
-  setupButton: Locator
-  setupStatus: Locator
-  announceButton: Locator
-  announceStatus: Locator
-  getUserMediaButton: Locator
-  captureStatus: Locator
-  sendButton: Locator
-  sendStatus: Locator
-}
-
-export interface SubscriberPageModel {
-  page: Page
-  urlInput: Locator
-  namespaceInput: Locator
-  connectButton: Locator
-  connectionStatus: Locator
-  setupButton: Locator
-  setupStatus: Locator
-  catalogSubscribeButton: Locator
-  catalogStatus: Locator
-  trackSubscribeButton: Locator
-  receiveStatus: Locator
-  playbackStatus: Locator
-  video: Locator
-}
-
-export interface MediaE2ESession {
-  context: BrowserContext
-  publisher: PublisherPageModel
-  subscriber: SubscriberPageModel
 }
 
 function buildPagePath(path: string): string {
@@ -65,7 +27,7 @@ async function openExamplePage(page: Page, path: string): Promise<void> {
   await page.goto(buildPagePath(path), { waitUntil: 'domcontentloaded' })
 }
 
-function createPublisherPageModel(page: Page): PublisherPageModel {
+function createPublisherPageModel(page: Page) {
   return {
     page,
     urlInput: page.getByTestId('publisher-url-input'),
@@ -83,7 +45,7 @@ function createPublisherPageModel(page: Page): PublisherPageModel {
   }
 }
 
-function createSubscriberPageModel(page: Page): SubscriberPageModel {
+function createSubscriberPageModel(page: Page) {
   return {
     page,
     urlInput: page.getByTestId('subscriber-url-input'),
@@ -101,7 +63,10 @@ function createSubscriberPageModel(page: Page): SubscriberPageModel {
   }
 }
 
-export async function arrangeMediaE2ESession(browser: Browser): Promise<MediaE2ESession> {
+export type PublisherPageModel = ReturnType<typeof createPublisherPageModel>
+export type SubscriberPageModel = ReturnType<typeof createSubscriberPageModel>
+
+export async function arrangeMediaE2ESession(browser: Browser) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']

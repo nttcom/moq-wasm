@@ -71,48 +71,7 @@ export function ensureMp4Fixture(audio: Mp4FixtureAudio): string {
   return filePath
 }
 
-export interface LiveViewerPageModel {
-  page: Page
-  urlInput: Locator
-  namespaceInput: Locator
-  watchButton: Locator
-  stopButton: Locator
-  connectionStatus: Locator
-  catalogStatus: Locator
-  playbackStatus: Locator
-  videoTrackSelect: Locator
-  skipBack5Button: Locator
-  skipForward1Button: Locator
-  playPauseButton: Locator
-  volumeSlider: Locator
-  videoStats: Locator
-  liveButton: Locator
-  rewindStatus: Locator
-  seekbar: Locator
-  seekPosition: Locator
-  seekElapsed: Locator
-  seekStart: Locator
-  seekReviewProgress: Locator
-  qualityButton: Locator
-  qualityMenu: Locator
-  packagingSelect: Locator
-  speedSelect: Locator
-  seekAvailableWindow: Locator
-  video: Locator
-  reviewCanvas: Locator
-  visibleVideo: Locator
-  logPanel: Locator
-  mp4FileInput: Locator
-  mp4LoopInput: Locator
-  publishButton: Locator
-  stopPublishButton: Locator
-  publishStatus: Locator
-  publishStreams: Locator
-  publishStreamMonitor: Locator
-  publishStreamStats: Locator
-  publishPreview: Locator
-  publishLatency: Locator
-}
+export type LiveViewerPageModel = ReturnType<typeof createLiveViewerPageModel>
 
 export interface LiveViewerE2ESession {
   context: BrowserContext
@@ -124,7 +83,7 @@ function buildPagePath(path: string, trackNamespace: string): string {
   return `${path}?${params.toString()}`
 }
 
-function createLiveViewerPageModel(page: Page): LiveViewerPageModel {
+function createLiveViewerPageModel(page: Page) {
   return {
     page,
     urlInput: page.getByTestId('live-viewer-url-input'),

@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Locator, Page } from '@playwright/test'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { MESSAGE_INDEX_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MESSAGE_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
@@ -9,60 +9,12 @@ export const messageE2EConfig = {
   namespace
 }
 
-export interface MessagePageModel {
-  page: Page
-  urlInput: Locator
-  connectButton: Locator
-  closeButton: Locator
-  logPanel: Locator
-  sendStatus: Locator
-  setupButton: Locator
-  publishNamespaceButton: Locator
-  publishNamespaceInput: Locator
-  publishNamespaceDoneButton: Locator
-  publishNamespaceDoneInput: Locator
-  subscribeNamespaceButton: Locator
-  subscribeNamespaceInput: Locator
-  unsubscribeNamespaceButton: Locator
-  unsubscribeNamespaceInput: Locator
-  subscribeButton: Locator
-  subscribeNamespaceFieldInput: Locator
-  subscribeTrackNameInput: Locator
-  unsubscribeButton: Locator
-  publishButton: Locator
-  publishMessageNamespaceInput: Locator
-  fetchButton: Locator
-  fetchRequestIdInput: Locator
-  fetchNamespaceInput: Locator
-  fetchTrackNameInput: Locator
-  fetchStartGroupInput: Locator
-  fetchStartObjectInput: Locator
-  fetchEndGroupInput: Locator
-  fetchEndObjectInput: Locator
-  goAwayButton: Locator
-  goAwayUriInput: Locator
-  maxRequestIdButton: Locator
-  requestsBlockedButton: Locator
-  fetchCancelButton: Locator
-  subscribeUpdateButton: Locator
-  publishDoneButton: Locator
-  publishNamespaceCancelButton: Locator
-  publishNamespaceCancelInput: Locator
-  trackStatusButton: Locator
-  trackStatusNamespaceInput: Locator
-}
-
-export interface MessageE2ESession {
-  context: BrowserContext
-  client: MessagePageModel
-}
-
 function buildPagePath(moqtUrl: string): string {
   const params = new URLSearchParams({ moqtUrl })
   return `${MESSAGE_INDEX_PATH}?${params.toString()}`
 }
 
-function createMessagePageModel(page: Page): MessagePageModel {
+function createMessagePageModel(page: Page) {
   return {
     page,
     urlInput: page.locator('#url'),
@@ -107,7 +59,9 @@ function createMessagePageModel(page: Page): MessagePageModel {
   }
 }
 
-export async function arrangeMessageE2ESession(browser: Browser): Promise<MessageE2ESession> {
+export type MessagePageModel = ReturnType<typeof createMessagePageModel>
+
+export async function arrangeMessageE2ESession(browser: Browser) {
   const context = await browser.newContext()
   return { context, client: await openMessagePage(context, moqtUrl) }
 }
