@@ -217,7 +217,9 @@ code consumes inbound control messages through
 transport close itself (the signal `DisconnectWatchTask` turns into
 `SessionEvent::Disconnected`) and returns the peer's termination code and
 reason as `TransportClose`; it reads no session events, so a task can await it
-beside `receive_event()`.
+beside `receive_event()`. `Session::url_scheme()` is `moqt` for raw QUIC and
+`https` for WebTransport, so a server sending GOAWAY can name the new session
+URI in the scheme the client connected with (§9.4).
 `Publisher::begin_publish_namespace` returns once PUBLISH_NAMESPACE is written,
 with a `PendingPublishNamespace` whose `accepted()` awaits the reply, so a
 caller fanning out to many sessions can keep the writes ordered without
