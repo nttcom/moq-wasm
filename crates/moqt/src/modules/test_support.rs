@@ -1,4 +1,8 @@
-use std::{net::UdpSocket, path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
@@ -32,9 +36,10 @@ const PUBLISHER_PRIORITY: u8 = 128;
 /// fails the wait.
 pub(crate) const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(crate) fn free_udp_port() -> u16 {
-    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-    socket.local_addr().unwrap().port()
+fn unique_cert_dir(name: &str) -> PathBuf {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("moqt-test-{name}-{}-{id}", std::process::id()))
 }
 
 fn write_self_signed_cert(dir: &Path) -> ServerConfig {
@@ -58,11 +63,9 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    let port = free_udp_port();
-    let cert_dir = std::env::temp_dir().join(format!("moqt-test-{name}-{port}"));
-    let mut server_config = write_self_signed_cert(&cert_dir);
-    server_config.port = port;
+    let server_config = write_self_signed_cert(&unique_cert_dir(name));
     let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+    let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
 }
