@@ -18,11 +18,7 @@ import init, {
   SubscribeMessage,
   SubscribeOkMessage
 } from '../../pkg/moqt'
-import {
-  InMemorySubscriptionStateManager,
-  SubscriptionStateStore,
-  SubgroupObjectHandler
-} from './subscriptionStateManager'
+import { SubscriptionStateManager, type SubgroupObjectHandler } from './subscriptionStateManager'
 import { SubgroupWriter } from './subgroupWriter'
 
 type PendingResponse<T> = { resolve: (response: T) => void; reject: (error: Error) => void }
@@ -191,7 +187,7 @@ export class MoqtClientWrapper {
   private onSubgroupHeaderHandler: SubgroupHeaderHandler = null
   private readonly fetchObjectHandlers = new Map<bigint, FetchObjectHandler>()
   private readonly fetchStreamEndHandlers = new Map<bigint, FetchStreamEndHandler>()
-  private readonly subscriptionState: SubscriptionStateStore
+  private readonly subscriptionState = new SubscriptionStateManager()
   private readonly pendingPublishNamespace: PendingResponses<NamespaceOkMessage> = new Map()
   private readonly pendingSubscribeNamespace: PendingResponses<NamespaceOkMessage> = new Map()
   private readonly pendingPublish: PendingResponses<PublishOkMessage> = new Map()
@@ -199,10 +195,6 @@ export class MoqtClientWrapper {
   private readonly pendingFetch: PendingResponses<FetchOkMessage> = new Map()
   private readonly subscriptionTrackAliases = new Map<bigint, bigint>()
   private nextRequestId = 0n
-
-  constructor(subscriptionState?: SubscriptionStateStore) {
-    this.subscriptionState = subscriptionState ?? new InMemorySubscriptionStateManager()
-  }
 
   async connect(url: string, options: ConnectOptions = {}): Promise<void> {
     if (this.getConnectionStatus()) {
