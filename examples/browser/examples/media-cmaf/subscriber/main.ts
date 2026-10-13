@@ -12,12 +12,10 @@ const catalogPicker = setUpCatalogPicker(moqtClient, form)
 let mediaSource: MediaSource | null = null
 
 let videoSourceBuffer: SourceBuffer | null = null
-let videoInitReceived = false
 const videoAppendQueue: Uint8Array[] = []
 let isVideoAppending = false
 
 let audioSourceBuffer: SourceBuffer | null = null
-let audioInitReceived = false
 const audioAppendQueue: Uint8Array[] = []
 let isAudioAppending = false
 
@@ -467,95 +465,46 @@ const setupMediaSource = (videoCodec: string, audioCodec: string): void => {
 
 // --- MoQ Object handlers ---
 
-const setupVideoObjectCallbacks = (trackAlias: bigint): void => {
-  videoInitReceived = false
-  let lastVideoGroupId: bigint | null = null
-  let videoInitSize = 0
+const setupObjectCallbacks = (
+  kind: 'video' | 'audio',
+  trackAlias: bigint,
+  append: (data: Uint8Array) => void
+): void => {
+  let initReceived = false
+  let initSize = 0
 
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
-    const raw = new Uint8Array(subgroupStreamObject.objectPayload)
-    const objectId = subgroupStreamObject.objectId
-    const objectStatus = subgroupStreamObject.objectStatus
-    const payload = raw
-
-    if (_groupId !== lastVideoGroupId) {
-      lastVideoGroupId = _groupId
-    }
+  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
+    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+    const { objectId, objectStatus } = subgroupStreamObject
 
     if (objectId === 0n) {
-      videoInitSize = payload.byteLength
-      setMoqObjectVisualizationState('video', _groupId, objectId)
-      if (!videoInitReceived) {
-        console.info('[CmafSubscriber] video init segment received', { byteLength: payload.byteLength })
-        videoInitReceived = true
-        appendToVideo(payload)
+      initSize = payload.byteLength
+      setMoqObjectVisualizationState(kind, groupId, objectId)
+      if (!initReceived) {
+        console.info(`[CmafSubscriber] ${kind} init segment received`, { byteLength: payload.byteLength })
+        initReceived = true
+        append(payload)
       }
       return
     }
 
     if (objectStatus != null) {
-      setMoqObjectVisualizationState('video', _groupId, objectId)
+      setMoqObjectVisualizationState(kind, groupId, objectId)
       return
     }
 
     if (payload.byteLength < 4) {
-      console.warn('[CmafSubscriber] video payload too short for moof', { groupId: _groupId, objectId, objectStatus })
+      console.warn(`[CmafSubscriber] ${kind} payload too short for moof`, { groupId, objectId, objectStatus })
       return
     }
 
     const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
     const mdatSize = payload.byteLength - moofSize
-    const headerBytes = videoInitSize + moofSize
+    const headerBytes = initSize + moofSize
     const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
-    updateOverheadDisplay('video', videoInitSize, moofSize, mdatSize, overhead)
-    setMoqObjectVisualizationState('video', _groupId, objectId)
-    appendToVideo(payload)
-  })
-}
-
-const setupAudioObjectCallbacks = (trackAlias: bigint): void => {
-  audioInitReceived = false
-  let lastAudioGroupId: bigint | null = null
-  let audioInitSize = 0
-
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
-    const raw = new Uint8Array(subgroupStreamObject.objectPayload)
-    const objectId = subgroupStreamObject.objectId
-    const objectStatus = subgroupStreamObject.objectStatus
-    const payload = raw
-
-    if (_groupId !== lastAudioGroupId) {
-      lastAudioGroupId = _groupId
-    }
-
-    if (objectId === 0n) {
-      audioInitSize = payload.byteLength
-      setMoqObjectVisualizationState('audio', _groupId, objectId)
-      if (!audioInitReceived) {
-        console.info('[CmafSubscriber] audio init segment received', { byteLength: payload.byteLength })
-        audioInitReceived = true
-        appendToAudio(payload)
-      }
-      return
-    }
-
-    if (objectStatus != null) {
-      setMoqObjectVisualizationState('audio', _groupId, objectId)
-      return
-    }
-
-    if (payload.byteLength < 4) {
-      console.warn('[CmafSubscriber] audio payload too short for moof', { groupId: _groupId, objectId, objectStatus })
-      return
-    }
-
-    const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
-    const mdatSize = payload.byteLength - moofSize
-    const headerBytes = audioInitSize + moofSize
-    const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
-    updateOverheadDisplay('audio', audioInitSize, moofSize, mdatSize, overhead)
-    setMoqObjectVisualizationState('audio', _groupId, objectId)
-    appendToAudio(payload)
+    updateOverheadDisplay(kind, initSize, moofSize, mdatSize, overhead)
+    setMoqObjectVisualizationState(kind, groupId, objectId)
+    append(payload)
   })
 }
 
@@ -593,13 +542,13 @@ const sendSubscribeButtonClickHandler = (): void => {
       await moqtClient.subscribe(trackNamespace, videoTrack.name, 'secret', { requestId: videoSubscribeId })
     ).subscribeOk.trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
-    setupVideoObjectCallbacks(videoTrackAlias)
+    setupObjectCallbacks('video', videoTrackAlias, appendToVideo)
 
     const audioTrackAlias = (
       await moqtClient.subscribe(trackNamespace, audioTrack.name, 'secret', { requestId: audioSubscribeId })
     ).subscribeOk.trackAlias
     form['audio-track-alias'].value = audioTrackAlias.toString()
-    setupAudioObjectCallbacks(audioTrackAlias)
+    setupObjectCallbacks('audio', audioTrackAlias, appendToAudio)
     setStatusText('catalog-track-status', `Subscribed video=${videoTrack.name} audio=${audioTrack.name}`)
   })
 }
@@ -611,11 +560,9 @@ const setupCloseButtonHandler = (): void => {
     moqtClient.clearSubgroupObjectHandlers()
     playbackStarted = false
     lastLiveEdgeCatchupAtMs = 0
-    videoInitReceived = false
     videoAppendQueue.length = 0
     isVideoAppending = false
     videoSourceBuffer = null
-    audioInitReceived = false
     audioAppendQueue.length = 0
     isAudioAppending = false
     audioSourceBuffer = null
