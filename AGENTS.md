@@ -32,6 +32,7 @@ Application and integration components (draft reference is normally not required
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `crates/live-ingest` | Bridge converting RTMP/SRT streams into MoQT |
 | `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
+| `crates/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
 | `crates/auth-token` | Claims of the client JWT, shared by `relay` (reads them from the VTS) and `vts` (signs them) |
 | `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
 | `crates/observability` | Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP |

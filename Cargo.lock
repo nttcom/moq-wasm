@@ -2577,6 +2577,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "recorder"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "mediapack",
+ "moqt",
+ "msf",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "redis"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
