@@ -210,7 +210,7 @@ export function MemberStatsCharts({
   chartHeightClass?: string
 }) {
   const visibleCharts = STATS_CHART_CONFIGS.filter((chart) =>
-    chart.series.some((series) => hasMetricDataInSamples(samples, series.accessor))
+    chart.series.some((series) => buildMetricEntries(samples, series.accessor).length > 0)
   )
 
   if (!visibleCharts.length) {
@@ -390,13 +390,6 @@ function MetricChart({
   )
 }
 
-function hasMetricDataInSamples(samples: SidebarStatsSample[], accessor: MetricAccessor): boolean {
-  return samples.some((sample) => {
-    const value = accessor(sample)
-    return typeof value === 'number' && Number.isFinite(value)
-  })
-}
-
 function buildAdaptiveTicks(
   samples: SidebarStatsSample[],
   accessors: MetricAccessor[],
@@ -407,11 +400,7 @@ function buildAdaptiveTicks(
   if (!Number.isFinite(step) || step <= 0) {
     return []
   }
-  const values = accessors.flatMap((accessor) =>
-    samples
-      .map((sample) => accessor(sample))
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-  )
+  const values = accessors.flatMap((accessor) => buildMetricEntries(samples, accessor).map((entry) => entry.value))
   if (!values.length) {
     return [step]
   }
