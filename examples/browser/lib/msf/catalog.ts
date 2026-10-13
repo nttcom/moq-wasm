@@ -4,6 +4,7 @@ export type MsfTrack = {
   namespace?: string
   name: string
   packaging: string
+  eventType?: string
   role?: string
   isLive: boolean
   label?: string
@@ -13,6 +14,7 @@ export type MsfTrack = {
   bitrate?: number
   width?: number
   height?: number
+  framerate?: number
   samplerate?: number
   channelConfig?: string
   initData?: string

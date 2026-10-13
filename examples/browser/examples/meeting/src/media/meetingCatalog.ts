@@ -1,12 +1,18 @@
 import { parse_msf_catalog_json } from '../../../../pkg/moqt'
+import { buildMsfCatalogJson, type MsfTrack } from '../../../../lib/msf/catalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
   type AudioStreamUpdateMode,
   type MeetingCatalogTrack,
   type CatalogTrackRole,
+  type CatalogSubscribeRole,
   type EditableMeetingCatalogTrack
 } from '../types/catalog'
+import type { VideoEncodingSettings } from '../types/videoEncoding'
+import type { AudioEncodingSettings } from '../types/audioEncoding'
+import { parseAudioChannelCount } from '../../../../utils/media/audioChannelConfig'
+import { isScreenShareTrackName } from '../utils/catalogTrackName'
 
 type E2ECameraSettings = {
   width: number
@@ -61,7 +67,7 @@ function resolveE2ECameraSettings(): E2ECameraSettings | null {
 }
 
 const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
-const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
+export const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 
 const DEFAULT_CAMERA_PROFILES = [
   { id: 'base', label: 'Base', codec: 'avc1.42001F', maxEncodePixels: 1280 * 720 },
@@ -114,8 +120,6 @@ const CAMERA_CATALOG_TRACKS: MeetingCatalogTrack[] = CAMERA_PROFILES.flatMap((pr
     })
   )
 )
-
-const DEFAULT_MEETING_CATALOG_TRACKS: MeetingCatalogTrack[] = []
 
 const SCREENSHARE_CATALOG_TRACKS: MeetingCatalogTrack[] = [
   {
@@ -193,37 +197,6 @@ const CHAT_TRACK_NAME = 'chat'
 const CHAT_TRACK_LABEL = 'Chat'
 const CHAT_EVENT_TYPE = 'com.skyway.chat.v1'
 
-type MsfTrack = {
-  namespace?: string
-  name: string
-  packaging: string
-  eventType?: string
-  role?: string
-  isLive?: boolean
-  label?: string
-  codec?: string
-  mimeType?: string
-  depends?: string[]
-  bitrate?: number
-  width?: number
-  height?: number
-  framerate?: number
-  hardwareAcceleration?: HardwareAcceleration
-  samplerate?: number
-  channelConfig?: string
-}
-
-type MsfCatalog = {
-  version?: number
-  generatedAt?: number
-  isComplete?: boolean
-  tracks?: MsfTrack[]
-}
-
-export function getDefaultMeetingCatalogTracks(): MeetingCatalogTrack[] {
-  return DEFAULT_MEETING_CATALOG_TRACKS.map((track) => ({ ...track }))
-}
-
 export function getCameraCatalogTracks(): MeetingCatalogTrack[] {
   return CAMERA_CATALOG_TRACKS.map((track) => ({ ...track }))
 }
@@ -250,13 +223,10 @@ export function buildMeetingCatalogJson(trackNamespace: string[], tracks: Meetin
     width: track.width,
     height: track.height,
     framerate: track.framerate,
-    hardwareAcceleration: track.hardwareAcceleration,
     samplerate: track.samplerate,
     channelConfig: track.channelConfig
   }))
-  const existingNames = new Set(catalogTracks.map((track) => track.name))
-  if (!existingNames.has(CHAT_TRACK_NAME)) {
-    const depends = tracks.map((track) => track.name)
+  if (!catalogTracks.some((track) => track.name === CHAT_TRACK_NAME)) {
     catalogTracks.push({
       namespace,
       name: CHAT_TRACK_NAME,
@@ -266,55 +236,71 @@ export function buildMeetingCatalogJson(trackNamespace: string[], tracks: Meetin
       label: CHAT_TRACK_LABEL,
       mimeType: 'application/json',
       eventType: CHAT_EVENT_TYPE,
-      depends
+      depends: tracks.map((track) => track.name)
     })
   }
-  const catalog: MsfCatalog = {
-    version: 1,
-    generatedAt: Date.now(),
-    tracks: catalogTracks
-  }
-  return JSON.stringify(catalog)
+  return buildMsfCatalogJson(catalogTracks)
 }
 
 export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
-  const parsed = parse_msf_catalog_json(payload)
-  return extractMeetingCatalogTracks(parsed)
+  const catalog: { tracks?: MsfTrack[] } = parse_msf_catalog_json(payload)
+  return (catalog.tracks ?? []).flatMap((track) => {
+    const role = resolveRole(track)
+    if (!role) {
+      return []
+    }
+    return [
+      {
+        name: track.name,
+        label: track.label ?? track.name,
+        role,
+        codec: track.codec,
+        bitrate: track.bitrate,
+        width: track.width,
+        height: track.height,
+        framerate: track.framerate,
+        samplerate: track.samplerate,
+        channelConfig: track.channelConfig,
+        initData: track.initData,
+        isLive: track.isLive
+      }
+    ]
+  })
 }
 
-export function extractMeetingCatalogTracks(catalog: unknown): MeetingCatalogTrack[] {
-  const tracks = Array.isArray((catalog as { tracks?: unknown[] } | undefined)?.tracks)
-    ? ((catalog as { tracks: unknown[] }).tracks ?? [])
-    : []
-  return tracks.reduce<MeetingCatalogTrack[]>((acc, rawTrack) => {
-    if (!isObject(rawTrack)) {
-      return acc
-    }
-    const name = asString(rawTrack.name)
-    if (!name) {
-      return acc
-    }
-    const role = resolveRole(rawTrack, name)
-    if (!role) {
-      return acc
-    }
-    acc.push({
-      name,
-      label: asString(rawTrack.label) ?? name,
-      role,
-      codec: asString(rawTrack.codec),
-      bitrate: asNumber(rawTrack.bitrate),
-      width: asNumber(rawTrack.width),
-      height: asNumber(rawTrack.height),
-      framerate: asNumber(rawTrack.framerate),
-      hardwareAcceleration: asHardwareAcceleration(rawTrack.hardwareAcceleration),
-      samplerate: asNumber(rawTrack.samplerate),
-      channelConfig: asString(rawTrack.channelConfig),
-      initData: asString(rawTrack.initData),
-      isLive: asBoolean(rawTrack.isLive)
-    })
-    return acc
-  }, [])
+export function trackVideoEncoding(track: MeetingCatalogTrack, fallback: VideoEncodingSettings): VideoEncodingSettings {
+  return {
+    codec: track.codec ?? fallback.codec,
+    width: track.width ?? fallback.width,
+    height: track.height ?? fallback.height,
+    bitrate: track.bitrate ?? fallback.bitrate,
+    framerate: track.framerate ?? fallback.framerate,
+    hardwareAcceleration: track.hardwareAcceleration ?? fallback.hardwareAcceleration
+  }
+}
+
+export function trackAudioEncoding(track: MeetingCatalogTrack, fallback: AudioEncodingSettings): AudioEncodingSettings {
+  return {
+    codec: track.codec ?? fallback.codec,
+    bitrate: track.bitrate ?? fallback.bitrate,
+    channels: parseAudioChannelCount(track.channelConfig) ?? fallback.channels
+  }
+}
+
+export function catalogTracksForRole<T extends MeetingCatalogTrack>(tracks: T[], role: CatalogSubscribeRole): T[] {
+  if (role === 'audio' || role === 'chat') {
+    return tracks.filter((track) => track.role === role)
+  }
+  return tracks.filter(
+    (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (role === 'screenshare')
+  )
+}
+
+export function pickHighestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
+  const tracksWithBitrate = tracks
+    .filter((track) => typeof track.bitrate === 'number')
+    .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
+  return tracksWithBitrate[0] ?? tracks[0]
 }
 
 export function toEditableCatalogTracks(tracks: MeetingCatalogTrack[]): EditableMeetingCatalogTrack[] {
@@ -379,18 +365,6 @@ export function removeCatalogTracksByNames(
   return changed ? next : tracks
 }
 
-export function getCameraCatalogTrackNames(): string[] {
-  return CAMERA_CATALOG_TRACKS.map((track) => track.name)
-}
-
-export function getScreenShareCatalogTrackNames(): string[] {
-  return SCREENSHARE_CATALOG_TRACKS.map((track) => track.name)
-}
-
-export function getAudioCatalogTrackNames(): string[] {
-  return AUDIO_CATALOG_TRACKS.map((track) => track.name)
-}
-
 export function createCatalogTrackId(): string {
   return `catalog-track-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
 }
@@ -428,8 +402,7 @@ function sanitizeTrack(track: EditableMeetingCatalogTrack): MeetingCatalogTrack 
   }
 }
 
-function resolveRole(track: Record<string, unknown>, name: string): CatalogTrackRole | null {
-  const role = asString(track.role)
+function resolveRole({ role, name }: MsfTrack): CatalogTrackRole | null {
   if (role === 'chat' || name === CHAT_TRACK_NAME) {
     return 'chat'
   }
@@ -443,22 +416,6 @@ function resolveRole(track: Record<string, unknown>, name: string): CatalogTrack
     return 'audio'
   }
   return null
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
 }
 
 function asHardwareAcceleration(value: unknown): HardwareAcceleration | undefined {

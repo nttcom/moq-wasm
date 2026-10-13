@@ -1,15 +1,24 @@
 import { LocalMember, RemoteMember } from '../types/member'
 import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
 import { BarChart3, Mic, MicOff, Minus, Monitor, Plus, Settings2, Video, VideoOff } from 'lucide-react'
 import { DeviceSelector } from './DeviceSelector'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
-import type { MeetingCatalogTrack, CatalogSubscribeRole, EditableMeetingCatalogTrack } from '../types/catalog'
-import { DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS, DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
-import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import {
+  CATALOG_SUBSCRIBE_ROLES,
+  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
+  DEFAULT_VIDEO_KEYFRAME_INTERVAL,
+  type CatalogSelections,
+  type CatalogSubscribeRole,
+  type EditableMeetingCatalogTrack,
+  type MeetingCatalogTrack
+} from '../types/catalog'
+import { catalogTracksForRole } from '../media/meetingCatalog'
+import { buildTrackActionKey } from '../utils/state/roomState'
+import { checkCodecSupport } from '../utils/codecSupport'
 import type { SidebarStatsSample } from '../types/stats'
 import { MemberStatsCharts } from './MemberStatsCharts'
 import type { RemotePictures, RemotePlaybackStats } from '../media/mediaSubscriber'
@@ -21,6 +30,7 @@ import type {
   VideoEncodingSettings
 } from '../types/videoEncoding'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
+import { formatAudioChannelConfig, parseAudioChannelCount } from '../../../../utils/media/audioChannelConfig'
 
 type VideoEncodingOptionSet = {
   codecOptions: VideoCodecOption[]
@@ -35,6 +45,13 @@ type AudioEncodingOptionSet = {
 }
 
 type CatalogTabKey = 'video' | 'screenshare' | 'audio'
+
+const TRACK_KIND_OPTIONS: { id: CatalogTabKey; label: string }[] = [
+  { id: 'video', label: 'Video' },
+  { id: 'screenshare', label: 'Screenshare' },
+  { id: 'audio', label: 'Audio' }
+]
+const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-blue-50'
 
 interface MemberGridProps {
   localMember: LocalMember
@@ -75,19 +92,13 @@ interface MemberGridProps {
   onUpdateCatalogTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   onRemoveCatalogTrack: (id: string) => void
   remoteCatalogTracks: Map<string, MeetingCatalogTrack[]>
-  remoteCatalogSelections: Map<string, { video?: string; screenshare?: string; audio?: string; chat?: string }>
+  remoteCatalogSelections: Map<string, CatalogSelections>
   catalogLoadingMemberIds: Set<string>
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribeVideoTrack: (memberId: string) => void
-  onSubscribeScreenshareTrack: (memberId: string) => void
-  onSubscribeAudioTrack: (memberId: string) => void
-  onSubscribeChatTrack: (memberId: string) => void
-  onUnsubscribeVideoTrack: (memberId: string) => void
-  onUnsubscribeScreenshareTrack: (memberId: string) => void
-  onUnsubscribeAudioTrack: (memberId: string) => void
-  onUnsubscribeChatTrack: (memberId: string) => void
+  onSubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
+  onUnsubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
   statsHistory: Map<string, SidebarStatsSample[]>
 }
 
@@ -135,14 +146,8 @@ export function MemberGrid({
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
   onSelectCatalogTrack,
-  onSubscribeVideoTrack,
-  onSubscribeScreenshareTrack,
-  onSubscribeAudioTrack,
-  onSubscribeChatTrack,
-  onUnsubscribeVideoTrack,
-  onUnsubscribeScreenshareTrack,
-  onUnsubscribeAudioTrack,
-  onUnsubscribeChatTrack,
+  onSubscribeTrack,
+  onUnsubscribeTrack,
   statsHistory
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
@@ -211,7 +216,7 @@ export function MemberGrid({
         muted
         placeholder="Camera disabled"
         secondaryPlaceholder="Screen share disabled"
-        details={<CatalogsPanel tracks={catalogTracks} subscribedTracks={subscribedCatalogTracks} />}
+        details={<CatalogsPanel subscribedTracks={subscribedCatalogTracks} />}
       />
       {isDeviceModalOpen && (
         <DeviceModal title="Select Devices" onClose={() => setIsDeviceModalOpen(false)}>
@@ -238,42 +243,20 @@ export function MemberGrid({
             />
             <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
               <div className="text-sm font-semibold text-white">Video encoder hardware acceleration</div>
-              <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
-                <span>Camera</span>
-                <select
-                  value={selectedVideoEncoding.hardwareAcceleration}
-                  onChange={(event) =>
-                    void onSelectVideoEncoding({
-                      hardwareAcceleration: event.target.value as HardwareAcceleration
-                    })
-                  }
-                  className="w-44 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-blue-400"
-                >
-                  {videoHardwareAccelerationOptions.map((option) => (
-                    <option key={option.id} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
-                <span>Screen share</span>
-                <select
-                  value={selectedScreenShareEncoding.hardwareAcceleration}
-                  onChange={(event) =>
-                    void onSelectScreenShareEncoding({
-                      hardwareAcceleration: event.target.value as HardwareAcceleration
-                    })
-                  }
-                  className="w-44 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-1 focus:ring-blue-400"
-                >
-                  {videoHardwareAccelerationOptions.map((option) => (
-                    <option key={option.id} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <OptionSelect
+                label="Camera"
+                className={DEVICE_MODAL_FIELD_CLASS}
+                options={videoHardwareAccelerationOptions}
+                value={selectedVideoEncoding.hardwareAcceleration}
+                onChange={(option) => void onSelectVideoEncoding({ hardwareAcceleration: option.value })}
+              />
+              <OptionSelect
+                label="Screen share"
+                className={DEVICE_MODAL_FIELD_CLASS}
+                options={videoHardwareAccelerationOptions}
+                value={selectedScreenShareEncoding.hardwareAcceleration}
+                onChange={(option) => void onSelectScreenShareEncoding({ hardwareAcceleration: option.value })}
+              />
             </div>
           </div>
         </DeviceModal>
@@ -331,34 +314,15 @@ export function MemberGrid({
             secondaryPlaceholder="Awaiting screen share"
             details={
               <RemoteCatalogSubscribePanel
-                memberName={member.name}
+                member={member}
                 tracks={remoteCatalogTracks.get(member.id) ?? []}
                 selected={remoteCatalogSelections.get(member.id)}
                 isLoading={catalogLoadingMemberIds.has(member.id)}
                 isCatalogSubscribed={catalogSubscribedMemberIds.has(member.id)}
-                isVideoSubscribed={member.subscribedTracks.video.isSubscribed}
-                isVideoSubscribing={member.subscribedTracks.video.isSubscribing}
-                isVideoUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'video'))}
-                isScreenshareSubscribed={member.subscribedTracks.screenshare.isSubscribed}
-                isScreenshareSubscribing={member.subscribedTracks.screenshare.isSubscribing}
-                isScreenshareUnsubscribing={catalogUnsubscribingTrackKeys.has(
-                  buildTrackActionKey(member.id, 'screenshare')
-                )}
-                isAudioSubscribed={member.subscribedTracks.audio.isSubscribed}
-                isAudioSubscribing={member.subscribedTracks.audio.isSubscribing}
-                isAudioUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'audio'))}
-                isChatSubscribed={member.subscribedTracks.chat.isSubscribed}
-                isChatSubscribing={member.subscribedTracks.chat.isSubscribing}
-                isChatUnsubscribing={catalogUnsubscribingTrackKeys.has(buildTrackActionKey(member.id, 'chat'))}
+                unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
                 onSelectTrack={(role, trackName) => onSelectCatalogTrack(member.id, role, trackName)}
-                onSubscribeVideo={() => onSubscribeVideoTrack(member.id)}
-                onSubscribeScreenshare={() => onSubscribeScreenshareTrack(member.id)}
-                onSubscribeAudio={() => onSubscribeAudioTrack(member.id)}
-                onSubscribeChat={() => onSubscribeChatTrack(member.id)}
-                onUnsubscribeVideo={() => onUnsubscribeVideoTrack(member.id)}
-                onUnsubscribeScreenshare={() => onUnsubscribeScreenshareTrack(member.id)}
-                onUnsubscribeAudio={() => onUnsubscribeAudioTrack(member.id)}
-                onUnsubscribeChat={() => onUnsubscribeChatTrack(member.id)}
+                onSubscribe={(role) => onSubscribeTrack(member.id, role)}
+                onUnsubscribe={(role) => onUnsubscribeTrack(member.id, role)}
               />
             }
           />
@@ -384,7 +348,7 @@ export function MemberGrid({
           size="wide"
         >
           <div className="space-y-4">
-            <MemberStatsCharts samples={statsHistory.get(statsModalTarget) ?? []} chartHeightClass="h-64" />
+            <MemberStatsCharts samples={statsHistory.get(statsModalTarget) ?? []} />
           </div>
         </DeviceModal>
       )}
@@ -395,7 +359,6 @@ export function MemberGrid({
 interface MemberCardProps {
   title: string
   testId?: string
-  videoTestId?: string
   headerActions?: ReactNode
   videoStream?: MediaStream | null
   picture?: HTMLElement | null
@@ -414,7 +377,6 @@ interface MemberCardProps {
 function MemberCard({
   title,
   testId,
-  videoTestId,
   headerActions,
   videoStream,
   picture,
@@ -436,13 +398,7 @@ function MemberCard({
       {picture !== undefined ? (
         <PictureFrame picture={picture} placeholder={placeholder} footer={videoFooter} />
       ) : (
-        <MediaStreamVideo
-          stream={videoStream}
-          muted={muted}
-          placeholder={placeholder}
-          footer={videoFooter}
-          testId={videoTestId}
-        />
+        <MediaStreamVideo stream={videoStream} muted={muted} footer={videoFooter} />
       )}
       {(secondaryPicture || secondaryVideoStream) && (
         <div className="mt-2 space-y-1">
@@ -452,7 +408,7 @@ function MemberCard({
           {secondaryPicture ? (
             <PictureFrame picture={secondaryPicture} placeholder={secondaryPlaceholder} />
           ) : (
-            <MediaStreamVideo stream={secondaryVideoStream} muted={muted} placeholder={secondaryPlaceholder} />
+            <MediaStreamVideo stream={secondaryVideoStream} muted={muted} />
           )}
         </div>
       )}
@@ -580,9 +536,6 @@ function CatalogTrackEditor({
   onUpdateTrack: (id: string, patch: Partial<EditableMeetingCatalogTrack>) => void
   onRemoveTrack: (id: string) => void
 }) {
-  const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
-  const screenshareTracks = tracks.filter((track) => track.role === 'video' && isScreenShareTrackName(track.name))
-  const audioTracks = tracks.filter((track) => track.role === 'audio')
   const [activeTab, setActiveTab] = useState<CatalogTabKey>('video')
   const [isAddingTrack, setIsAddingTrack] = useState(false)
   const [addTrackKind, setAddTrackKind] = useState<CatalogTabKey>('video')
@@ -602,19 +555,19 @@ function CatalogTrackEditor({
       key: 'video',
       title: 'Video',
       description: 'Camera tracks',
-      tracks: videoTracks
+      tracks: catalogTracksForRole(tracks, 'video')
     },
     {
       key: 'screenshare',
       title: 'Screenshare',
       description: 'Display capture tracks',
-      tracks: screenshareTracks
+      tracks: catalogTracksForRole(tracks, 'screenshare')
     },
     {
       key: 'audio',
       title: 'Audio',
       description: 'Microphone tracks',
-      tracks: audioTracks
+      tracks: catalogTracksForRole(tracks, 'audio')
     }
   ]
   const currentTab = tabItems.find((tab) => tab.key === activeTab) ?? tabItems[0]
@@ -625,7 +578,7 @@ function CatalogTrackEditor({
       ? getSupportedVideoResolutionOptions(videoEncodingOptions, currentDraft.codec)
       : videoEncodingOptions.resolutionOptions
 
-  const setCurrentDraft = (patch: Partial<Omit<EditableMeetingCatalogTrack, 'id'>>) => {
+  const setCurrentDraft = (patch: TrackPatch) => {
     setDraftConfigError(null)
     if (addTrackKind === 'video') {
       setVideoDraft((prev) => ({ ...prev, ...patch }))
@@ -646,9 +599,9 @@ function CatalogTrackEditor({
     if (currentDraft.role === 'video') {
       setIsCheckingDraftConfig(true)
       try {
-        const validation = await validateVideoEncoderCatalogTrackConfig(currentDraft)
-        if (!validation.ok) {
-          setDraftConfigError(validation.message)
+        const unsupportedReason = await checkVideoEncoderSupport(currentDraft)
+        if (unsupportedReason) {
+          setDraftConfigError(unsupportedReason)
           return
         }
       } finally {
@@ -710,24 +663,12 @@ function CatalogTrackEditor({
         <section className="space-y-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
           <div className="text-sm font-semibold text-white">Track Setup</div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs text-blue-100">
-              <span>Track Type</span>
-              <select
-                className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                value={addTrackKind}
-                onChange={(event) => setAddTrackKind(event.target.value as CatalogTabKey)}
-              >
-                <option value="video" className="bg-slate-900 text-white">
-                  Video
-                </option>
-                <option value="screenshare" className="bg-slate-900 text-white">
-                  Screenshare
-                </option>
-                <option value="audio" className="bg-slate-900 text-white">
-                  Audio
-                </option>
-              </select>
-            </label>
+            <OptionSelect
+              label="Track Type"
+              options={TRACK_KIND_OPTIONS}
+              value={addTrackKind}
+              onChange={(option) => setAddTrackKind(option.id)}
+            />
             <div />
             <label className="flex flex-col gap-1 text-xs text-blue-100">
               <span>Name</span>
@@ -747,80 +688,42 @@ function CatalogTrackEditor({
             </label>
             {currentDraft.role === 'video' ? (
               <>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Codec Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoCodecOptionId(videoEncodingOptions, currentDraft.codec)}
-                    onChange={(event) => {
-                      const option = videoEncodingOptions.codecOptions.find((entry) => entry.id === event.target.value)
-                      if (option) {
-                        const nextResolution = pickSupportedVideoResolutionOption(
-                          videoEncodingOptions,
-                          option.codec,
-                          currentDraft.width,
-                          currentDraft.height,
-                          '1080p'
-                        )
-                        setCurrentDraft({
-                          codec: option.codec,
-                          width: nextResolution?.width ?? currentDraft.width,
-                          height: nextResolution?.height ?? currentDraft.height
-                        })
-                      }
-                    }}
-                  >
-                    {videoEncodingOptions.codecOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Resolution Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoResolutionOptionIdFromList(
-                      currentVideoResolutionOptions,
+                <OptionSelect
+                  label="Codec Preset"
+                  options={videoEncodingOptions.codecOptions}
+                  value={findOptionId(videoEncodingOptions.codecOptions, 'codec', currentDraft.codec)}
+                  onChange={(option) => {
+                    const nextResolution = pickSupportedVideoResolutionOption(
+                      videoEncodingOptions,
+                      option.codec,
                       currentDraft.width,
-                      currentDraft.height
-                    )}
-                    onChange={(event) => {
-                      const option = currentVideoResolutionOptions.find((entry) => entry.id === event.target.value)
-                      if (option) {
-                        setCurrentDraft({ width: option.width, height: option.height })
-                      }
-                    }}
-                  >
-                    {currentVideoResolutionOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="col-span-full flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Bitrate Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoBitrateOptionId(videoEncodingOptions, currentDraft.bitrate)}
-                    onChange={(event) => {
-                      const option = videoEncodingOptions.bitrateOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
-                      if (option) {
-                        setCurrentDraft({ bitrate: option.bitrate })
-                      }
-                    }}
-                  >
-                    {videoEncodingOptions.bitrateOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                      currentDraft.height,
+                      '1080p'
+                    )
+                    setCurrentDraft({
+                      codec: option.codec,
+                      width: nextResolution?.width ?? currentDraft.width,
+                      height: nextResolution?.height ?? currentDraft.height
+                    })
+                  }}
+                />
+                <OptionSelect
+                  label="Resolution Preset"
+                  options={currentVideoResolutionOptions}
+                  value={findVideoResolutionOptionIdFromList(
+                    currentVideoResolutionOptions,
+                    currentDraft.width,
+                    currentDraft.height
+                  )}
+                  onChange={(option) => setCurrentDraft({ width: option.width, height: option.height })}
+                />
+                <OptionSelect
+                  label="Bitrate Preset"
+                  className="col-span-full flex flex-col gap-1 text-xs text-blue-100"
+                  options={videoEncodingOptions.bitrateOptions}
+                  value={findOptionId(videoEncodingOptions.bitrateOptions, 'bitrate', currentDraft.bitrate)}
+                  onChange={(option) => setCurrentDraft({ bitrate: option.bitrate })}
+                />
                 <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
                   <span>Framerate (fps)</span>
                   <input
@@ -837,149 +740,54 @@ function CatalogTrackEditor({
                     className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Hardware Acceleration</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={currentDraft.hardwareAcceleration ?? 'prefer-software'}
-                    onChange={(event) =>
-                      setCurrentDraft({
-                        hardwareAcceleration: event.target.value as HardwareAcceleration
-                      })
-                    }
-                  >
-                    {videoHardwareAccelerationOptions.map((option) => (
-                      <option key={option.id} value={option.value} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="col-span-full flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                  <span>Keyframe Interval (frames)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={normalizeTrackKeyframeInterval(currentDraft)}
-                    onChange={(event) =>
-                      setCurrentDraft({
-                        keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
-                      })
-                    }
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                  />
-                </label>
+                <OptionSelect
+                  label="Hardware Acceleration"
+                  options={videoHardwareAccelerationOptions}
+                  value={currentDraft.hardwareAcceleration ?? 'prefer-software'}
+                  onChange={(option) => setCurrentDraft({ hardwareAcceleration: option.value })}
+                />
+                <KeyframeIntervalField
+                  className="col-span-full flex max-w-xs flex-col gap-1 text-xs text-blue-100"
+                  track={currentDraft}
+                  onChange={setCurrentDraft}
+                />
               </>
             ) : (
               <>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Codec Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findAudioCodecOptionId(audioEncodingOptions, currentDraft.codec)}
-                    onChange={(event) => {
-                      const option = audioEncodingOptions.codecOptions.find((entry) => entry.id === event.target.value)
-                      if (option) {
-                        setCurrentDraft({ codec: option.codec })
-                      }
-                    }}
-                  >
-                    {audioEncodingOptions.codecOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Bitrate Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findAudioBitrateOptionId(audioEncodingOptions, currentDraft.bitrate)}
-                    onChange={(event) => {
-                      const option = audioEncodingOptions.bitrateOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
-                      if (option) {
-                        setCurrentDraft({ bitrate: option.bitrate })
-                      }
-                    }}
-                  >
-                    {audioEncodingOptions.bitrateOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="col-span-full flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Channel Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findAudioChannelOptionId(audioEncodingOptions, currentDraft.channelConfig)}
-                    onChange={(event) => {
-                      const option = audioEncodingOptions.channelOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
-                      if (option) {
-                        setCurrentDraft({
-                          channelConfig: channelConfigForChannels(option.channels),
-                          samplerate: currentDraft.samplerate ?? 48_000
-                        })
-                      }
-                    }}
-                  >
-                    {audioEncodingOptions.channelOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="col-span-full rounded border border-white/10 bg-white/5 p-2">
-                  <div className="text-xs font-semibold text-white">Audio Group Update</div>
-                  <div className="mt-2 flex flex-wrap items-center gap-4">
-                    <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                      <input
-                        type="radio"
-                        name="draft-audio-stream-update-mode"
-                        checked={resolveAudioStreamUpdateMode(currentDraft) === 'single'}
-                        onChange={() => setCurrentDraft({ audioStreamUpdateMode: 'single' })}
-                      />
-                      <span>単一 Stream</span>
-                    </label>
-                    <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                      <input
-                        type="radio"
-                        name="draft-audio-stream-update-mode"
-                        checked={resolveAudioStreamUpdateMode(currentDraft) === 'interval'}
-                        onChange={() => setCurrentDraft({ audioStreamUpdateMode: 'interval' })}
-                      />
-                      <span>N 秒ごとに更新</span>
-                    </label>
-                  </div>
-                  {resolveAudioStreamUpdateMode(currentDraft) === 'interval' ? (
-                    <label className="mt-2 flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                      <span>更新間隔 (秒)</span>
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={resolveAudioStreamUpdateIntervalSeconds(currentDraft)}
-                        onChange={(event) =>
-                          setCurrentDraft({
-                            audioStreamUpdateIntervalSeconds: toPositiveInteger(
-                              event.target.value,
-                              DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
-                            )
-                          })
-                        }
-                        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                      />
-                    </label>
-                  ) : null}
-                </div>
+                <OptionSelect
+                  label="Codec Preset"
+                  options={audioEncodingOptions.codecOptions}
+                  value={findOptionId(audioEncodingOptions.codecOptions, 'codec', currentDraft.codec)}
+                  onChange={(option) => setCurrentDraft({ codec: option.codec })}
+                />
+                <OptionSelect
+                  label="Bitrate Preset"
+                  options={audioEncodingOptions.bitrateOptions}
+                  value={findOptionId(audioEncodingOptions.bitrateOptions, 'bitrate', currentDraft.bitrate)}
+                  onChange={(option) => setCurrentDraft({ bitrate: option.bitrate })}
+                />
+                <OptionSelect
+                  label="Channel Preset"
+                  className="col-span-full flex flex-col gap-1 text-xs text-blue-100"
+                  options={audioEncodingOptions.channelOptions}
+                  value={findOptionId(
+                    audioEncodingOptions.channelOptions,
+                    'channels',
+                    parseAudioChannelCount(currentDraft.channelConfig)
+                  )}
+                  onChange={(option) =>
+                    setCurrentDraft({
+                      channelConfig: formatAudioChannelConfig(option.channels),
+                      samplerate: currentDraft.samplerate ?? 48_000
+                    })
+                  }
+                />
+                <AudioGroupUpdateFields
+                  className="col-span-full space-y-2 rounded border border-white/10 bg-white/5 p-2"
+                  radioName="draft-audio-stream-update-mode"
+                  track={currentDraft}
+                  onChange={setCurrentDraft}
+                />
               </>
             )}
           </div>
@@ -1034,65 +842,13 @@ function CatalogTrackEditor({
                     ) : null}
                     <div className="mt-2">
                       {track.role === 'video' ? (
-                        <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                          <span>Keyframe Interval (frames)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={normalizeTrackKeyframeInterval(track)}
-                            onChange={(event) =>
-                              onUpdateTrack(track.id, {
-                                keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
-                              })
-                            }
-                            className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                          />
-                        </label>
+                        <KeyframeIntervalField track={track} onChange={(patch) => onUpdateTrack(track.id, patch)} />
                       ) : (
-                        <div className="space-y-2">
-                          <div className="text-xs font-semibold text-white">Audio Group Update</div>
-                          <div className="flex flex-wrap items-center gap-4">
-                            <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                              <input
-                                type="radio"
-                                name={`audio-stream-update-mode-${track.id}`}
-                                checked={resolveAudioStreamUpdateMode(track) === 'single'}
-                                onChange={() => onUpdateTrack(track.id, { audioStreamUpdateMode: 'single' })}
-                              />
-                              <span>単一 Stream</span>
-                            </label>
-                            <label className="inline-flex items-center gap-2 text-xs text-blue-100">
-                              <input
-                                type="radio"
-                                name={`audio-stream-update-mode-${track.id}`}
-                                checked={resolveAudioStreamUpdateMode(track) === 'interval'}
-                                onChange={() => onUpdateTrack(track.id, { audioStreamUpdateMode: 'interval' })}
-                              />
-                              <span>N 秒ごとに更新</span>
-                            </label>
-                          </div>
-                          {resolveAudioStreamUpdateMode(track) === 'interval' ? (
-                            <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
-                              <span>更新間隔 (秒)</span>
-                              <input
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={resolveAudioStreamUpdateIntervalSeconds(track)}
-                                onChange={(event) =>
-                                  onUpdateTrack(track.id, {
-                                    audioStreamUpdateIntervalSeconds: toPositiveInteger(
-                                      event.target.value,
-                                      DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
-                                    )
-                                  })
-                                }
-                                className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                              />
-                            </label>
-                          ) : null}
-                        </div>
+                        <AudioGroupUpdateFields
+                          radioName={`audio-stream-update-mode-${track.id}`}
+                          track={track}
+                          onChange={(patch) => onUpdateTrack(track.id, patch)}
+                        />
                       )}
                     </div>
                   </div>
@@ -1113,8 +869,135 @@ function CatalogTrackEditor({
   )
 }
 
-function findVideoCodecOptionId(options: VideoEncodingOptionSet, codec: string | undefined): string {
-  return options.codecOptions.find((entry) => entry.codec === codec)?.id ?? options.codecOptions[0]?.id ?? ''
+function OptionSelect<T extends { id: string; label: string }>({
+  label,
+  options,
+  value,
+  onChange,
+  className = 'flex flex-col gap-1 text-xs text-blue-100'
+}: {
+  label: string
+  options: T[]
+  value: string
+  onChange: (option: T) => void
+  className?: string
+}) {
+  return (
+    <label className={className}>
+      <span>{label}</span>
+      <select
+        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+        value={value}
+        onChange={(event) => {
+          const option = options.find((entry) => entry.id === event.target.value)
+          if (option) {
+            onChange(option)
+          }
+        }}
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id} className="bg-slate-900 text-white">
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+type TrackPatch = Partial<Omit<EditableMeetingCatalogTrack, 'id'>>
+
+function KeyframeIntervalField({
+  track,
+  onChange,
+  className = 'flex max-w-xs flex-col gap-1 text-xs text-blue-100'
+}: {
+  track: Pick<MeetingCatalogTrack, 'keyframeInterval'>
+  onChange: (patch: TrackPatch) => void
+  className?: string
+}) {
+  return (
+    <label className={className}>
+      <span>Keyframe Interval (frames)</span>
+      <input
+        type="number"
+        min={1}
+        step={1}
+        value={normalizeTrackKeyframeInterval(track)}
+        onChange={(event) =>
+          onChange({ keyframeInterval: toPositiveInteger(event.target.value, DEFAULT_VIDEO_KEYFRAME_INTERVAL) })
+        }
+        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+      />
+    </label>
+  )
+}
+
+function AudioGroupUpdateFields({
+  track,
+  radioName,
+  onChange,
+  className = 'space-y-2'
+}: {
+  track: Pick<MeetingCatalogTrack, 'audioStreamUpdateMode' | 'audioStreamUpdateIntervalSeconds'>
+  radioName: string
+  onChange: (patch: TrackPatch) => void
+  className?: string
+}) {
+  const mode = resolveAudioStreamUpdateMode(track)
+  return (
+    <div className={className}>
+      <div className="text-xs font-semibold text-white">Audio Group Update</div>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+          <input
+            type="radio"
+            name={radioName}
+            checked={mode === 'single'}
+            onChange={() => onChange({ audioStreamUpdateMode: 'single' })}
+          />
+          <span>単一 Stream</span>
+        </label>
+        <label className="inline-flex items-center gap-2 text-xs text-blue-100">
+          <input
+            type="radio"
+            name={radioName}
+            checked={mode === 'interval'}
+            onChange={() => onChange({ audioStreamUpdateMode: 'interval' })}
+          />
+          <span>N 秒ごとに更新</span>
+        </label>
+      </div>
+      {mode === 'interval' ? (
+        <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
+          <span>更新間隔 (秒)</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={resolveAudioStreamUpdateIntervalSeconds(track)}
+            onChange={(event) =>
+              onChange({
+                audioStreamUpdateIntervalSeconds: toPositiveInteger(
+                  event.target.value,
+                  DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+                )
+              })
+            }
+            className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+          />
+        </label>
+      ) : null}
+    </div>
+  )
+}
+
+function findOptionId<Option extends { id: string }, Key extends keyof Option>(
+  options: Option[],
+  key: Key,
+  value: Option[Key] | undefined
+): string {
+  return options.find((entry) => entry[key] === value)?.id ?? options[0]?.id ?? ''
 }
 
 function createVideoTrackDraft(options: VideoEncodingOptionSet): Omit<EditableMeetingCatalogTrack, 'id'> {
@@ -1179,19 +1062,11 @@ function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableMe
     hardwareAcceleration: undefined,
     keyframeInterval: undefined,
     samplerate: 48_000,
-    channelConfig: channelConfigForChannels(channels),
+    channelConfig: formatAudioChannelConfig(channels),
     audioStreamUpdateMode: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode,
     audioStreamUpdateIntervalSeconds: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds,
     isLive: true
   }
-}
-
-function findVideoResolutionOptionId(
-  options: VideoEncodingOptionSet,
-  width: number | undefined,
-  height: number | undefined
-): string {
-  return findVideoResolutionOptionIdFromList(options.resolutionOptions, width, height)
 }
 
 function findVideoResolutionOptionIdFromList(
@@ -1251,39 +1126,6 @@ function pickSupportedVideoResolutionOption(
   return supported[0]
 }
 
-function findVideoBitrateOptionId(options: VideoEncodingOptionSet, bitrate: number | undefined): string {
-  return options.bitrateOptions.find((entry) => entry.bitrate === bitrate)?.id ?? options.bitrateOptions[0]?.id ?? ''
-}
-
-function findAudioCodecOptionId(options: AudioEncodingOptionSet, codec: string | undefined): string {
-  return options.codecOptions.find((entry) => entry.codec === codec)?.id ?? options.codecOptions[0]?.id ?? ''
-}
-
-function findAudioBitrateOptionId(options: AudioEncodingOptionSet, bitrate: number | undefined): string {
-  return options.bitrateOptions.find((entry) => entry.bitrate === bitrate)?.id ?? options.bitrateOptions[0]?.id ?? ''
-}
-
-function findAudioChannelOptionId(options: AudioEncodingOptionSet, channelConfig: string | undefined): string {
-  const normalized = channelConfig?.toLowerCase() ?? ''
-  if (normalized.includes('mono')) {
-    return options.channelOptions.find((entry) => entry.channels === 1)?.id ?? options.channelOptions[0]?.id ?? ''
-  }
-  if (normalized.includes('stereo')) {
-    return options.channelOptions.find((entry) => entry.channels === 2)?.id ?? options.channelOptions[0]?.id ?? ''
-  }
-  return options.channelOptions[0]?.id ?? ''
-}
-
-function channelConfigForChannels(channels: number): string {
-  if (channels <= 1) {
-    return 'mono'
-  }
-  if (channels === 2) {
-    return 'stereo'
-  }
-  return `${channels}ch`
-}
-
 function normalizeTrackKeyframeInterval(track: Pick<MeetingCatalogTrack, 'keyframeInterval'>): number {
   return toPositiveInteger(track.keyframeInterval, DEFAULT_VIDEO_KEYFRAME_INTERVAL)
 }
@@ -1312,126 +1154,47 @@ function toPositiveInteger(value: unknown, fallback: number): number {
   return Math.floor(parsed)
 }
 
+const SUBSCRIBE_ROW_TITLES: Record<CatalogSubscribeRole, string> = {
+  video: 'Video Track',
+  screenshare: 'Screenshare Track',
+  audio: 'Audio Track',
+  chat: 'Chat Track'
+}
+
 function RemoteCatalogSubscribePanel({
-  memberName,
+  member,
   tracks,
   selected,
   isLoading,
   isCatalogSubscribed,
-  isVideoSubscribed,
-  isVideoSubscribing,
-  isVideoUnsubscribing,
-  isScreenshareSubscribed,
-  isScreenshareSubscribing,
-  isScreenshareUnsubscribing,
-  isAudioSubscribed,
-  isAudioSubscribing,
-  isAudioUnsubscribing,
-  isChatSubscribed,
-  isChatSubscribing,
-  isChatUnsubscribing,
+  unsubscribingTrackKeys,
   onSelectTrack,
-  onSubscribeVideo,
-  onSubscribeScreenshare,
-  onSubscribeAudio,
-  onSubscribeChat,
-  onUnsubscribeVideo,
-  onUnsubscribeScreenshare,
-  onUnsubscribeAudio,
-  onUnsubscribeChat
+  onSubscribe,
+  onUnsubscribe
 }: {
-  memberName: string
+  member: RemoteMember
   tracks: MeetingCatalogTrack[]
-  selected?: { video?: string; screenshare?: string; audio?: string; chat?: string }
+  selected?: CatalogSelections
   isLoading: boolean
   isCatalogSubscribed: boolean
-  isVideoSubscribed: boolean
-  isVideoSubscribing: boolean
-  isVideoUnsubscribing: boolean
-  isScreenshareSubscribed: boolean
-  isScreenshareSubscribing: boolean
-  isScreenshareUnsubscribing: boolean
-  isAudioSubscribed: boolean
-  isAudioSubscribing: boolean
-  isAudioUnsubscribing: boolean
-  isChatSubscribed: boolean
-  isChatSubscribing: boolean
-  isChatUnsubscribing: boolean
+  unsubscribingTrackKeys: Set<string>
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribeVideo: () => void
-  onSubscribeScreenshare: () => void
-  onSubscribeAudio: () => void
-  onSubscribeChat: () => void
-  onUnsubscribeVideo: () => void
-  onUnsubscribeScreenshare: () => void
-  onUnsubscribeAudio: () => void
-  onUnsubscribeChat: () => void
+  onSubscribe: (role: CatalogSubscribeRole) => void
+  onUnsubscribe: (role: CatalogSubscribeRole) => void
 }) {
-  const videoTracks = tracks.filter((track) => track.role === 'video' && !isScreenShareTrackName(track.name))
-  const screenshareTracks = tracks.filter((track) => track.role === 'video' && isScreenShareTrackName(track.name))
-  const audioTracks = tracks.filter((track) => track.role === 'audio')
-  const chatTracks = tracks.filter((track) => track.role === 'chat')
-  const selectedVideo = selected?.video ?? videoTracks[0]?.name ?? ''
-  const selectedScreenshare = selected?.screenshare ?? screenshareTracks[0]?.name ?? ''
-  const selectedAudio = selected?.audio ?? audioTracks[0]?.name ?? ''
-  const selectedChat = selected?.chat ?? chatTracks[0]?.name ?? ''
-  const hasCatalog = isCatalogSubscribed
-  const trackRows: {
-    role: CatalogSubscribeRole
-    title: string
-    tracks: MeetingCatalogTrack[]
-    selectedTrack: string
-    subscribed: boolean
-    subscribing: boolean
-    unsubscribing: boolean
-    onSubscribe: () => void
-    onUnsubscribe: () => void
-  }[] = [
-    {
-      role: 'video',
-      title: 'Video Track',
-      tracks: videoTracks,
-      selectedTrack: selectedVideo,
-      subscribed: isVideoSubscribed,
-      subscribing: isVideoSubscribing,
-      unsubscribing: isVideoUnsubscribing,
-      onSubscribe: onSubscribeVideo,
-      onUnsubscribe: onUnsubscribeVideo
-    },
-    {
-      role: 'screenshare',
-      title: 'Screenshare Track',
-      tracks: screenshareTracks,
-      selectedTrack: selectedScreenshare,
-      subscribed: isScreenshareSubscribed,
-      subscribing: isScreenshareSubscribing,
-      unsubscribing: isScreenshareUnsubscribing,
-      onSubscribe: onSubscribeScreenshare,
-      onUnsubscribe: onUnsubscribeScreenshare
-    },
-    {
-      role: 'audio',
-      title: 'Audio Track',
-      tracks: audioTracks,
-      selectedTrack: selectedAudio,
-      subscribed: isAudioSubscribed,
-      subscribing: isAudioSubscribing,
-      unsubscribing: isAudioUnsubscribing,
-      onSubscribe: onSubscribeAudio,
-      onUnsubscribe: onUnsubscribeAudio
-    },
-    {
-      role: 'chat',
-      title: 'Chat Track',
-      tracks: chatTracks,
-      selectedTrack: selectedChat,
-      subscribed: isChatSubscribed,
-      subscribing: isChatSubscribing,
-      unsubscribing: isChatUnsubscribing,
-      onSubscribe: onSubscribeChat,
-      onUnsubscribe: onUnsubscribeChat
+  const memberName = member.name
+  const trackRows = CATALOG_SUBSCRIBE_ROLES.map((role) => {
+    const roleTracks = catalogTracksForRole(tracks, role)
+    const { isSubscribed, isSubscribing } = member.subscribedTracks[role]
+    return {
+      role,
+      tracks: roleTracks,
+      selectedTrack: selected?.[role] ?? roleTracks[0]?.name ?? '',
+      subscribed: isSubscribed,
+      subscribing: isSubscribing,
+      unsubscribing: unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role))
     }
-  ]
+  })
   const visibleTrackRows = trackRows.filter(
     (row) => row.tracks.length > 0 || row.subscribed || row.subscribing || row.unsubscribing
   )
@@ -1440,20 +1203,20 @@ function RemoteCatalogSubscribePanel({
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-blue-100">Catalogs</span>
         <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-blue-300">
-          {isLoading ? 'Loading...' : hasCatalog ? 'Subscribed' : 'Waiting...'}
+          {isLoading ? 'Loading...' : isCatalogSubscribed ? 'Subscribed' : 'Waiting...'}
         </span>
       </div>
       {visibleTrackRows.map((row) => {
         const busy = row.subscribing || row.unsubscribing
-        const canSubscribe = hasCatalog && Boolean(row.selectedTrack) && !row.subscribed && !busy
-        const canUnsubscribe = hasCatalog && row.subscribed && !busy
+        const canSubscribe = isCatalogSubscribed && Boolean(row.selectedTrack) && !row.subscribed && !busy
+        const canUnsubscribe = isCatalogSubscribed && row.subscribed && !busy
         return (
           <TrackSubscribeRow
             key={row.role}
-            title={row.title}
+            title={SUBSCRIBE_ROW_TITLES[row.role]}
             tracks={row.tracks}
             selected={row.selectedTrack}
-            disabled={!hasCatalog || row.subscribed || busy}
+            disabled={!isCatalogSubscribed || row.subscribed || busy}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
             statusTestId={`track-status-${row.role}-${memberName}`}
             subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
@@ -1464,8 +1227,8 @@ function RemoteCatalogSubscribePanel({
             canUnsubscribe={canUnsubscribe}
             busy={busy}
             onChange={(trackName) => onSelectTrack(row.role, trackName)}
-            onSubscribe={row.onSubscribe}
-            onUnsubscribe={row.onUnsubscribe}
+            onSubscribe={() => onSubscribe(row.role)}
+            onUnsubscribe={() => onUnsubscribe(row.role)}
           />
         )
       })}
@@ -1578,10 +1341,6 @@ function formatSubscribeStatus(subscribed: boolean, subscribing: boolean, unsubs
   return subscribed ? 'Subscribed' : 'Not subscribed'
 }
 
-function buildTrackActionKey(memberId: string, role: CatalogSubscribeRole): string {
-  return `${memberId}:${role}`
-}
-
 function formatCatalogTrackLabel(track: MeetingCatalogTrack): string {
   const parts: string[] = [track.label || track.name]
   if (typeof track.bitrate === 'number') {
@@ -1654,124 +1413,61 @@ function formatTrackBitrateForDisplay(bitrate: number): string {
   return `${Math.round(bitrate / 1000)}kbps`
 }
 
-async function validateVideoEncoderCatalogTrackConfig(
+async function checkVideoEncoderSupport(
   track: Pick<MeetingCatalogTrack, 'codec' | 'width' | 'height' | 'bitrate' | 'framerate' | 'hardwareAcceleration'>
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (typeof VideoEncoder === 'undefined') {
-    return { ok: false, message: 'VideoEncoder is not available in this browser.' }
-  }
-  if (!track.codec || !track.width || !track.height || !track.bitrate) {
-    return { ok: false, message: 'Codec / resolution / bitrate must be set for video tracks.' }
+): Promise<string | null> {
+  const { codec, width, height, bitrate } = track
+  if (!codec || !width || !height || !bitrate) {
+    return 'Codec / resolution / bitrate must be set for video tracks.'
   }
   const config: VideoEncoderConfig = {
-    codec: track.codec,
-    avc: track.codec.startsWith('avc') ? ({ format: 'annexb' } as VideoEncoderConfig['avc']) : undefined,
-    width: Math.floor(track.width),
-    height: Math.floor(track.height),
-    bitrate: Math.floor(track.bitrate),
-    framerate: Math.max(1, Math.min(120, Math.floor(track.framerate ?? 30))),
+    codec,
+    avc: codec.startsWith('avc') ? { format: 'annexb' } : undefined,
+    width,
+    height,
+    bitrate,
+    framerate: track.framerate ?? 30,
     hardwareAcceleration: track.hardwareAcceleration ?? 'prefer-software',
     scalabilityMode: 'L1T1',
     latencyMode: 'realtime'
   }
-  try {
-    const supported = await VideoEncoder.isConfigSupported(config)
-    if (!supported.supported) {
-      return { ok: false, message: `VideoEncoder config unsupported: ${track.codec}` }
-    }
-  } catch (error) {
-    console.error('[meeting][catalog] VideoEncoder.isConfigSupported failed', error, config)
-    return { ok: false, message: 'Failed to check VideoEncoder config support.' }
-  }
-  let encoder: VideoEncoder | undefined
-  try {
-    encoder = new VideoEncoder({
-      output: (chunk) => {
-        // No actual frames are encoded during configure check.
-        void chunk
-      },
-      error: (error) => {
-        console.error('[meeting][catalog] VideoEncoder error during configure check', error, config)
-      }
-    })
-    encoder.configure(config)
-    return { ok: true }
-  } catch (error) {
-    console.error('[meeting][catalog] VideoEncoder.configure failed', error, config)
-    return { ok: false, message: `VideoEncoder.configure failed: ${track.codec}` }
-  } finally {
-    try {
-      encoder?.close()
-    } catch {
-      // ignore
-    }
-  }
+  return checkCodecSupport(`VideoEncoder config ${codec}`, () => VideoEncoder.isConfigSupported(config))
 }
 
-function CatalogsPanel({
-  tracks,
-  subscribedTracks
-}: {
-  tracks: EditableMeetingCatalogTrack[]
-  subscribedTracks: SubscribedCatalogTrack[]
-}) {
-  const subscribedByName = new Map(subscribedTracks.map((track) => [track.name, track]))
-
-  const sortTracks = (left: MeetingCatalogTrack, right: MeetingCatalogTrack) => {
-    if (left.role !== right.role) {
-      return left.role.localeCompare(right.role)
-    }
-    return (left.label || left.name).localeCompare(right.label || right.name)
-  }
-
-  const activeTracks = [...subscribedTracks].sort(sortTracks)
-
+function CatalogsPanel({ subscribedTracks }: { subscribedTracks: SubscribedCatalogTrack[] }) {
+  const activeTracks = [...subscribedTracks].sort((left, right) =>
+    left.role !== right.role
+      ? left.role.localeCompare(right.role)
+      : (left.label || left.name).localeCompare(right.label || right.name)
+  )
   return (
     <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
       <div className="text-sm font-semibold text-blue-100">Catalogs</div>
-      <TrackSettingsTiles
-        title="Subscribed"
-        tracks={activeTracks}
-        getSubscriberCount={(trackName) => subscribedByName.get(trackName)?.subscriberCount ?? 0}
-        emptyText="No active subscribers"
-      />
-    </div>
-  )
-}
-
-function TrackSettingsTiles({
-  title,
-  tracks,
-  getSubscriberCount,
-  emptyText
-}: {
-  title: string
-  tracks: MeetingCatalogTrack[]
-  getSubscriberCount: (trackName: string) => number
-  emptyText: string
-}) {
-  return (
-    <div className="space-y-2 text-[10px] text-blue-100/90">
-      <div className="text-[10px] font-medium text-blue-200/90">{title}</div>
-      {tracks.length ? (
-        <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-          {tracks.map((track) => (
-            <TrackSettingTile
-              key={track.name}
-              title={`${track.label || track.name} (${formatTrackRoleLabel(track.role)})`}
-              rows={[
-                ['Track', track.name],
-                ['Subscribers', `${getSubscriberCount(track.name)}`],
-                ...buildCatalogTrackMetadataEntries(track).map<[string, string]>((entry) => [entry.label, entry.value])
-              ]}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">
-          {emptyText}
-        </div>
-      )}
+      <div className="space-y-2 text-[10px] text-blue-100/90">
+        <div className="text-[10px] font-medium text-blue-200/90">Subscribed</div>
+        {activeTracks.length ? (
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {activeTracks.map((track) => (
+              <TrackSettingTile
+                key={track.name}
+                title={`${track.label || track.name} (${formatTrackRoleLabel(track.role)})`}
+                rows={[
+                  ['Track', track.name],
+                  ['Subscribers', `${track.subscriberCount}`],
+                  ...buildCatalogTrackMetadataEntries(track).map<[string, string]>((entry) => [
+                    entry.label,
+                    entry.value
+                  ])
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-blue-200">
+            No active subscribers
+          </div>
+        )}
+      </div>
     </div>
   )
 }

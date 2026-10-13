@@ -1,21 +1,26 @@
 import { type IncomingFetchContext, MoqtClientWrapper } from '@moqt/moqtClient'
+import { SubgroupWriter } from '@moqt/subgroupWriter'
 import type { MOQTClient } from '../../../../pkg/moqt'
 import { MediaTransportState } from '../../../../utils/media/transportState'
 import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/media/videoTransport'
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
 import type { LocHeader } from '../../../../utils/media/loc'
 import { answerFetch, documentReplayTrack } from '../../../../utils/media/fetchReplay'
-import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
+import {
+  DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
+  DEFAULT_VIDEO_ENCODING_SETTINGS,
+  type VideoEncodingSettings
+} from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
-import { buildMeetingCatalogJson, getDefaultMeetingCatalogTracks } from './meetingCatalog'
+import type { VideoSendTiming } from '../types/stats'
+import { buildMeetingCatalogJson, trackAudioEncoding, trackVideoEncoding } from './meetingCatalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
   type MeetingCatalogTrack
 } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
-import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
 import { timeSeededGroupId } from '../../../../utils/media/clock'
 import { OBJECT_STATUS_END_OF_GROUP } from '../../../../utils/media/objectStatus'
 
@@ -32,22 +37,7 @@ interface MediaPublisherHandlers {
   onAudioEncodeError?: (message: string) => void
   onAudioEncodingAdjusted?: (settings: AudioEncodingSettings) => void
   onScreenShareEncodingApplied?: (settings: VideoEncodingSettings) => void
-  onLocalVideoSendTiming?: (
-    timing: {
-      captureToEncodeDoneMs: number | null
-      encodeQueueSize: number
-      queueWaitMs: number
-      sendActiveMs: number
-      objectSendMs: number
-      serializeMs: number
-      queueDepth: number
-      objectBytes: number
-      objectCount: number
-      aliasCount: number
-      keyframe: boolean
-    } | null,
-    source: VideoSource
-  ) => void
+  onLocalVideoSendTiming?: (timing: VideoSendTiming | null, source: VideoSource) => void
 }
 
 type VideoTrackEncoderContext = {
@@ -60,15 +50,9 @@ type VideoTrackEncoderContext = {
   sendQueue: Promise<void>
   pendingSendJobs: number
   activeAliases: Set<string>
-  videoObjectLogCounts: Map<string, number>
 }
 
-type VideoSendTimingAccumulator = {
-  objectSendMs: number
-  serializeMs: number
-  objectBytes: number
-  objectCount: number
-}
+type VideoSendTimingAccumulator = Pick<VideoSendTiming, 'objectSendMs' | 'objectBytes'>
 
 type AudioTrackEncoderContext = {
   trackName: string
@@ -97,7 +81,7 @@ const MAX_VIDEO_STREAM_RECOVERY_ATTEMPTS = 3
 
 export class MediaPublisher {
   private handlers: MediaPublisherHandlers = {}
-  private catalogTracks: MeetingCatalogTrack[] = getDefaultMeetingCatalogTracks()
+  private catalogTracks: MeetingCatalogTrack[] = []
 
   private readonly videoTrackContexts = new Map<string, VideoTrackEncoderContext>()
   private readonly audioTrackContexts = new Map<string, AudioTrackEncoderContext>()
@@ -111,18 +95,10 @@ export class MediaPublisher {
   private audioStream: MediaStream | null = null
 
   private videoEncodingSettings: VideoEncodingSettings = DEFAULT_VIDEO_ENCODING_SETTINGS
-  private screenShareEncodingSettings: VideoEncodingSettings = {
-    codec: 'av01.0.08M.08',
-    width: 1920,
-    height: 1080,
-    bitrate: 1_000_000,
-    framerate: 30,
-    hardwareAcceleration: 'prefer-software'
-  }
+  private screenShareEncodingSettings: VideoEncodingSettings = DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS
   private audioEncodingSettings: AudioEncodingSettings = DEFAULT_AUDIO_ENCODING_SETTINGS
 
   private currentCameraDeviceId: string | null = null
-  private currentAudioDeviceId: string | null = null
 
   private videoCaptureConstraints: CameraCaptureConstraints = { frameRate: 30 }
   private audioCaptureConstraints: AudioCaptureConstraints = {
@@ -163,7 +139,7 @@ export class MediaPublisher {
   }
 
   async setCatalogTracks(tracks: MeetingCatalogTrack[]): Promise<void> {
-    this.catalogTracks = this.normalizeCatalogTracks(tracks)
+    this.catalogTracks = tracks
     this.syncVideoTrackContexts('camera')
     this.syncVideoTrackContexts('screenshare')
     this.syncAudioTrackContexts()
@@ -200,14 +176,6 @@ export class MediaPublisher {
     )
   }
 
-  handleIncomingUnsubscribe(subscribeId: bigint): void {
-    this.handleSubscriptionEnded('unsubscribe', subscribeId)
-  }
-
-  handleSubscribeDone(subscribeId: bigint): void {
-    this.handleSubscriptionEnded('subscribe_done', subscribeId)
-  }
-
   async dispose(): Promise<void> {
     await this.stopCamera()
     await this.stopScreenShare()
@@ -215,9 +183,7 @@ export class MediaPublisher {
     this.handlers = {}
   }
 
-  private handleSubscriptionEnded(type: 'unsubscribe' | 'subscribe_done', subscribeId: bigint): void {
-    void type
-    void subscribeId
+  handleIncomingUnsubscribe(): void {
     for (const [trackName, context] of this.videoTrackContexts.entries()) {
       if (!context.encodingTrack) {
         continue
@@ -240,22 +206,16 @@ export class MediaPublisher {
     this.audioCaptureConstraints = { ...this.audioCaptureConstraints, ...constraints }
   }
 
-  async startCamera(deviceId?: string, constraints?: CameraCaptureConstraints): Promise<void> {
+  async startCamera(deviceId?: string): Promise<void> {
     if (this.cameraStream) {
       return
     }
 
-    const effectiveConstraints: CameraCaptureConstraints = {
-      frameRate: 30,
-      ...this.videoCaptureConstraints,
-      ...constraints
-    }
-
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: effectiveConstraints.width ?? this.videoEncodingSettings.width,
-        height: effectiveConstraints.height ?? this.videoEncodingSettings.height,
-        frameRate: effectiveConstraints.frameRate,
+        width: this.videoCaptureConstraints.width ?? this.videoEncodingSettings.width,
+        height: this.videoCaptureConstraints.height ?? this.videoEncodingSettings.height,
+        frameRate: this.videoCaptureConstraints.frameRate,
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },
       audio: false
@@ -321,29 +281,21 @@ export class MediaPublisher {
     this.handlers.onLocalScreenShareStream?.(null)
   }
 
-  async startAudio(deviceId?: string, constraints?: AudioCaptureConstraints): Promise<void> {
+  async startAudio(deviceId?: string): Promise<void> {
     if (this.audioStream) {
       return
     }
 
     const desiredChannels = this.audioEncodingSettings.channels
-    const effectiveAudioConstraints: AudioCaptureConstraints = {
-      ...this.audioCaptureConstraints,
-      ...constraints
-    }
-
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: effectiveAudioConstraints.echoCancellation,
-        noiseSuppression: effectiveAudioConstraints.noiseSuppression,
-        autoGainControl: effectiveAudioConstraints.autoGainControl,
+        ...this.audioCaptureConstraints,
         channelCount: { ideal: desiredChannels },
         ...(deviceId ? { deviceId: { exact: deviceId } } : {})
       },
       video: false
     })
 
-    this.currentAudioDeviceId = deviceId ?? null
     this.audioStream = stream
     this.handlers.onLocalAudioStream?.(stream)
 
@@ -363,7 +315,6 @@ export class MediaPublisher {
     this.stopAllAudioTrackContexts()
     this.audioStream?.getTracks().forEach((track) => track.stop())
     this.audioStream = null
-    this.currentAudioDeviceId = null
     this.handlers.onLocalAudioStream?.(null)
   }
 
@@ -371,8 +322,8 @@ export class MediaPublisher {
     this.videoEncodingSettings = settings
     this.syncVideoTrackContexts('camera')
     if (restartIfActive && this.cameraStream) {
-      const targetDevice = deviceId ?? this.currentCameraDeviceId ?? undefined
-      await this.forceKeyframeAndRestartCamera(targetDevice)
+      await this.stopCamera()
+      await this.startCamera(deviceId ?? this.currentCameraDeviceId ?? undefined)
     }
   }
 
@@ -385,14 +336,10 @@ export class MediaPublisher {
   async setAudioEncodingSettings(settings: AudioEncodingSettings, restartIfActive: boolean = false) {
     this.audioEncodingSettings = settings
     if (restartIfActive && this.audioStream) {
-      await this.restartAudioForNewSubscriber()
+      this.restartAllAudioTrackContexts()
       return
     }
     this.syncAudioTrackContexts()
-  }
-
-  async restartAudioForNewSubscriber(): Promise<void> {
-    this.restartAllAudioTrackContexts()
   }
 
   async applyVideoEncodingForTrack(trackName: string): Promise<void> {
@@ -402,8 +349,8 @@ export class MediaPublisher {
     }
     const source: VideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
     const fallback = source === 'screenshare' ? this.screenShareEncodingSettings : this.videoEncodingSettings
-    const settings = this.buildVideoEncodingFromTrack(track, fallback)
-    const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
+    const settings = trackVideoEncoding(track, fallback)
+    const keyframeInterval = track.keyframeInterval ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
 
     const existing = this.videoTrackContexts.get(trackName)
     if (existing) {
@@ -431,7 +378,7 @@ export class MediaPublisher {
     if (!track) {
       return
     }
-    const settings = this.buildAudioEncodingFromTrack(track, this.audioEncodingSettings)
+    const settings = trackAudioEncoding(track, this.audioEncodingSettings)
     const streamUpdateSettings = this.resolveAudioStreamUpdateSettingsForTrack(track)
     const context = this.audioTrackContexts.get(trackName)
     if (context) {
@@ -459,18 +406,6 @@ export class MediaPublisher {
     this.restartAudioTrackContext(trackName)
   }
 
-  private forceKeyframeAndRestartCamera(deviceId?: string): Promise<void> {
-    const restart = async () => {
-      try {
-        await this.stopCamera()
-      } catch (error) {
-        console.warn('Failed to stop camera before restart', error)
-      }
-      await this.startCamera(deviceId)
-    }
-    return restart()
-  }
-
   private syncVideoTrackContexts(source: VideoSource): void {
     const desiredTracks = this.getVideoTracksBySource(source)
     const desiredNames = new Set(desiredTracks.map((track) => track.name))
@@ -488,8 +423,8 @@ export class MediaPublisher {
     const fallback = source === 'screenshare' ? this.screenShareEncodingSettings : this.videoEncodingSettings
 
     for (const track of desiredTracks) {
-      const config = this.buildVideoEncodingFromTrack(track, fallback)
-      const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
+      const config = trackVideoEncoding(track, fallback)
+      const keyframeInterval = track.keyframeInterval ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
       const existing = this.videoTrackContexts.get(track.name)
       if (existing) {
         this.applyVideoTrackSettings(existing, config, keyframeInterval)
@@ -530,7 +465,7 @@ export class MediaPublisher {
     }
 
     for (const track of desiredTracks) {
-      const config = this.buildAudioEncodingFromTrack(track, this.audioEncodingSettings)
+      const config = trackAudioEncoding(track, this.audioEncodingSettings)
       const streamUpdateSettings = this.resolveAudioStreamUpdateSettingsForTrack(track)
       const existing = this.audioTrackContexts.get(track.name)
       if (existing) {
@@ -566,8 +501,7 @@ export class MediaPublisher {
       transportState: retainedTransportState ?? new MediaTransportState(),
       sendQueue: Promise.resolve(),
       pendingSendJobs: 0,
-      activeAliases: new Set<string>(),
-      videoObjectLogCounts: new Map<string, number>()
+      activeAliases: new Set<string>()
     }
 
     context.worker.onmessage = async (event: MessageEvent) => {
@@ -584,20 +518,13 @@ export class MediaPublisher {
         | { type: 'configError'; reason: string; config: any }
         | { type: 'encoderError'; message: string }
         | { type: 'streamEnded'; error?: string }
-        | {
-            chunk: EncodedVideoChunk
-            metadata: EncodedVideoChunkMetadata | undefined
-            captureTimestampMicros?: number
-            encodeDoneTimestampMicros?: number
-            encodeQueueSize?: number
-          }
 
-      if ('type' in data && data.type === 'bitrate') {
+      if (data.type === 'bitrate') {
         this.videoBitrateByTrackName.set(trackName, data.kbps)
         this.reportVideoBitrate(source)
         return
       }
-      if ('type' in data && data.type === 'configError') {
+      if (data.type === 'configError') {
         const cfg = data.config as { codec?: string; width?: number; height?: number; bitrate?: number }
         const codecText = cfg?.codec ? `codec ${cfg.codec}` : 'selected codec'
         const resText =
@@ -607,28 +534,23 @@ export class MediaPublisher {
         )
         return
       }
-      if ('type' in data && data.type === 'encoderError') {
+      if (data.type === 'encoderError') {
         console.warn(`${VIDEO_PUBLISHER_LOG_PREFIX} encoder error`, { trackName, message: data.message })
         return
       }
-      if ('type' in data && data.type === 'streamEnded') {
+      if (data.type === 'streamEnded') {
         this.recoverEndedVideoStream(context, data.error)
         return
       }
 
       this.videoStreamRecoveryAttemptsByTrackName.delete(trackName)
-      const chunkData = 'type' in data ? data.chunk : data.chunk
-      const metadata = 'type' in data ? data.metadata : data.metadata
-      const captureTimestampMicros = 'type' in data ? data.captureTimestampMicros : data.captureTimestampMicros
-      const encodeDoneTimestampMicros = 'type' in data ? data.encodeDoneTimestampMicros : data.encodeDoneTimestampMicros
-      const encodeQueueSize = 'type' in data ? data.encodeQueueSize : data.encodeQueueSize
       this.handleVideoTrackChunk(
         context,
-        chunkData,
-        metadata,
-        captureTimestampMicros,
-        encodeDoneTimestampMicros,
-        encodeQueueSize
+        data.chunk,
+        data.metadata,
+        data.captureTimestampMicros,
+        data.encodeDoneTimestampMicros,
+        data.encodeQueueSize
       )
     }
 
@@ -679,15 +601,14 @@ export class MediaPublisher {
           }
         | { type: 'bitrate'; media: 'audio'; kbps: number }
         | { type: 'configError'; media: 'audio'; reason: string; config: any }
-        | { chunk: EncodedAudioChunk; metadata: EncodedAudioChunkMetadata | undefined; captureTimestampMicros?: number }
 
-      if ('type' in data && data.type === 'bitrate') {
+      if (data.type === 'bitrate') {
         this.audioBitrateByTrackName.set(trackName, data.kbps)
         this.reportAudioBitrate()
         return
       }
 
-      if ('type' in data && data.type === 'configError') {
+      if (data.type === 'configError') {
         const cfg = data.config as { codec?: string; bitrate?: number }
         const codecText = cfg?.codec ?? 'selected codec'
         const suggestion =
@@ -700,10 +621,7 @@ export class MediaPublisher {
         return
       }
 
-      const chunkData = 'type' in data ? data.chunk : data.chunk
-      const metadata = 'type' in data ? data.metadata : data.metadata
-      const captureTimestampMicros = 'type' in data ? data.captureTimestampMicros : data.captureTimestampMicros
-      this.handleAudioTrackChunk(context, chunkData, metadata, captureTimestampMicros)
+      this.handleAudioTrackChunk(context, data.chunk, data.captureTimestampMicros)
     }
 
     context.worker.postMessage({ type: 'config', config: this.buildAudioEncoderConfig(config) })
@@ -846,19 +764,6 @@ export class MediaPublisher {
       return
     }
 
-    const isKeyframe = chunk.type === 'key'
-    if (isKeyframe) {
-      this.logVideoPublisherEvent({
-        event: 'keyframe-chunk',
-        trackName: context.trackName,
-        source: context.source,
-        codec: context.config.codec,
-        chunkType: chunk.type,
-        aliases: aliases.map((alias) => alias.toString()),
-        payloadBytes: chunk.byteLength
-      })
-    }
-
     const enqueueStartedAtMs = performance.now()
     const captureToEncodeDoneMs =
       typeof captureTimestampMicros === 'number' &&
@@ -876,25 +781,9 @@ export class MediaPublisher {
         if (!client) {
           return
         }
-        const timingAcc: VideoSendTimingAccumulator = {
-          objectSendMs: 0,
-          serializeMs: 0,
-          objectBytes: 0,
-          objectCount: 0
-        }
+        const timingAcc: VideoSendTimingAccumulator = { objectSendMs: 0, objectBytes: 0 }
         const sender: VideoChunkSender = async (trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc) => {
-          await this.sendVideoObjectForTrackContext(
-            context,
-            trackAlias,
-            groupId,
-            subgroupId,
-            objectId,
-            payload,
-            rawClient,
-            loc,
-            timingAcc,
-            isKeyframe
-          )
+          await this.sendVideoObject(trackAlias, groupId, subgroupId, objectId, payload, rawClient, loc, timingAcc)
         }
         const { needsKeyframe } = await sendVideoChunkViaMoqt({
           chunk,
@@ -922,28 +811,13 @@ export class MediaPublisher {
             queueWaitMs: Math.max(0, sendStartedAtMs - enqueueStartedAtMs),
             sendActiveMs: Math.max(0, sendFinishedAtMs - sendStartedAtMs),
             objectSendMs: timingAcc.objectSendMs,
-            serializeMs: timingAcc.serializeMs,
             queueDepth: Math.max(0, queueDepthAtEnqueue),
-            objectBytes: timingAcc.objectBytes,
-            objectCount: timingAcc.objectCount,
-            aliasCount: aliases.length,
-            keyframe: chunk.type === 'key'
+            objectBytes: timingAcc.objectBytes
           },
           context.source
         )
       })
       .catch((error) => {
-        if (isKeyframe) {
-          this.logVideoPublisherEvent({
-            event: 'keyframe-send-failed',
-            trackName: context.trackName,
-            source: context.source,
-            codec: context.config.codec,
-            chunkType: chunk.type,
-            aliases: aliases.map((alias) => alias.toString()),
-            payloadBytes: chunk.byteLength
-          })
-        }
         console.error(`${context.trackName} video send failed:`, error)
       })
       .finally(() => {
@@ -954,7 +828,6 @@ export class MediaPublisher {
   private handleAudioTrackChunk(
     context: AudioTrackEncoderContext,
     chunk: EncodedAudioChunk,
-    metadata: EncodedAudioChunkMetadata | undefined,
     captureTimestampMicros?: number
   ): void {
     const aliases = this.collectAliasesForTrack(context.trackName, context.activeAliases, (alias) => {
@@ -986,75 +859,20 @@ export class MediaPublisher {
       })
   }
 
-  private async sendVideoObjectForTrackContext(
-    context: VideoTrackEncoderContext,
+  private async sendVideoObject(
     trackAlias: bigint,
     groupId: bigint,
     subgroupId: bigint,
     objectId: bigint,
     payload: Uint8Array,
     client: MOQTClient,
-    locHeader?: LocHeader,
-    timingAcc?: VideoSendTimingAccumulator,
-    logKeyframeSend = false
+    locHeader: LocHeader | undefined,
+    timingAcc: VideoSendTimingAccumulator
   ): Promise<void> {
-    if (timingAcc) {
-      timingAcc.objectBytes += payload.byteLength
-      timingAcc.objectCount += 1
-    }
-
+    timingAcc.objectBytes += payload.byteLength
     const objectSendStartedAtMs = performance.now()
     await client.sendSubgroupObject(trackAlias, groupId, subgroupId, objectId, undefined, payload, locHeader)
-    if (timingAcc) {
-      timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
-    }
-    if (
-      isMeetingVideoPipelineDebugEnabled() &&
-      (logKeyframeSend || this.shouldLogSampledVideoObject(context, trackAlias, groupId, objectId))
-    ) {
-      this.logVideoPublisherEvent({
-        event: logKeyframeSend ? 'keyframe-object-sent' : 'sampled-delta-object-sent',
-        trackName: context.trackName,
-        source: context.source,
-        codec: context.config.codec,
-        chunkType: logKeyframeSend ? 'key' : 'delta',
-        aliases: [trackAlias.toString()],
-        groupId: groupId.toString(),
-        subgroupId: subgroupId.toString(),
-        objectId: objectId.toString(),
-        payloadBytes: payload.byteLength
-      })
-    }
-  }
-
-  private shouldLogSampledVideoObject(
-    context: VideoTrackEncoderContext,
-    trackAlias: bigint,
-    groupId: bigint,
-    objectId: bigint
-  ): boolean {
-    const key = `${trackAlias.toString()}:${groupId.toString()}`
-    const count = context.videoObjectLogCounts.get(key) ?? 0
-    context.videoObjectLogCounts.set(key, count + 1)
-    return objectId <= 2n || objectId % 30n === 0n
-  }
-
-  private logVideoPublisherEvent(fields: {
-    event: string
-    trackName: string
-    source: VideoSource
-    codec: string
-    chunkType: EncodedVideoChunkType
-    aliases: string[]
-    groupId?: string
-    subgroupId?: string
-    objectId?: string
-    payloadBytes?: number
-  }): void {
-    if (!isMeetingVideoPipelineDebugEnabled()) {
-      return
-    }
-    console.info(VIDEO_PUBLISHER_LOG_PREFIX, JSON.stringify(fields))
+    timingAcc.objectSendMs += Math.max(0, performance.now() - objectSendStartedAtMs)
   }
 
   private collectAliasesForTrack(
@@ -1163,32 +981,6 @@ export class MediaPublisher {
     return stream?.getVideoTracks()[0] ?? null
   }
 
-  private buildVideoEncodingFromTrack(
-    track: MeetingCatalogTrack,
-    fallback: VideoEncodingSettings
-  ): VideoEncodingSettings {
-    return {
-      codec: this.normalizeNonEmptyString(track.codec) ?? fallback.codec,
-      width: this.normalizePositiveNumber(track.width) ?? fallback.width,
-      height: this.normalizePositiveNumber(track.height) ?? fallback.height,
-      bitrate: this.normalizePositiveNumber(track.bitrate) ?? fallback.bitrate,
-      framerate: this.normalizePositiveNumber(track.framerate) ?? fallback.framerate,
-      hardwareAcceleration:
-        this.normalizeHardwareAcceleration(track.hardwareAcceleration) ?? fallback.hardwareAcceleration
-    }
-  }
-
-  private buildAudioEncodingFromTrack(
-    track: MeetingCatalogTrack,
-    fallback: AudioEncodingSettings
-  ): AudioEncodingSettings {
-    return {
-      codec: this.normalizeNonEmptyString(track.codec) ?? fallback.codec,
-      bitrate: this.normalizePositiveNumber(track.bitrate) ?? fallback.bitrate,
-      channels: this.parseAudioChannels(track.channelConfig) ?? fallback.channels
-    }
-  }
-
   private buildAudioEncoderConfig(settings: AudioEncodingSettings): AudioEncoderConfig {
     return {
       codec: settings.codec,
@@ -1213,88 +1005,33 @@ export class MediaPublisher {
     return left.codec === right.codec && left.bitrate === right.bitrate && left.channels === right.channels
   }
 
-  private parseAudioChannels(channelConfig: string | undefined): number | undefined {
-    const normalized = this.normalizeNonEmptyString(channelConfig)?.toLowerCase()
-    if (!normalized) {
-      return undefined
-    }
-    if (normalized.includes('mono')) {
-      return 1
-    }
-    if (normalized.includes('stereo')) {
-      return 2
-    }
-    const matched = normalized.match(/(\d+)/)
-    if (!matched) {
-      return undefined
-    }
-    const parsed = Number(matched[1])
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
-  }
-
-  private normalizePositiveNumber(value: number | undefined): number | undefined {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-      return undefined
-    }
-    return Math.floor(value)
-  }
-
-  private normalizeNonEmptyString(value: string | undefined): string | undefined {
-    if (typeof value !== 'string') {
-      return undefined
-    }
-    const trimmed = value.trim()
-    return trimmed.length > 0 ? trimmed : undefined
-  }
-
-  private normalizeHardwareAcceleration(value: HardwareAcceleration | undefined): HardwareAcceleration | undefined {
-    return value === 'prefer-hardware' || value === 'prefer-software' || value === 'no-preference' ? value : undefined
-  }
-
   private reportVideoBitrate(source: VideoSource): void {
-    const values = Array.from(this.videoTrackContexts.values())
+    const kbps = Array.from(this.videoTrackContexts.values())
       .filter((context) => context.source === source)
       .map((context) => this.videoBitrateByTrackName.get(context.trackName) ?? 0)
-
-    if (values.length === 0) {
-      this.handlers.onEncodedVideoBitrate?.(0)
-      return
-    }
-
-    const maxKbps = values.reduce((max, value) => Math.max(max, value), 0)
-    this.handlers.onEncodedVideoBitrate?.(maxKbps)
+    this.handlers.onEncodedVideoBitrate?.(Math.max(0, ...kbps))
   }
 
   private reportAudioBitrate(): void {
-    const values = Array.from(this.audioTrackContexts.values()).map(
+    const kbps = Array.from(this.audioTrackContexts.values()).map(
       (context) => this.audioBitrateByTrackName.get(context.trackName) ?? 0
     )
-    if (values.length === 0) {
-      this.handlers.onEncodedAudioBitrate?.(0)
-      return
-    }
-    const maxKbps = values.reduce((max, value) => Math.max(max, value), 0)
-    this.handlers.onEncodedAudioBitrate?.(maxKbps)
+    this.handlers.onEncodedAudioBitrate?.(Math.max(0, ...kbps))
   }
 
   private getKeyframeIntervalForTrackName(trackName: string): number {
     const track = this.catalogTracks.find((entry) => entry.name === trackName && entry.role === 'video')
-    return this.normalizeTrackKeyframeInterval(track?.keyframeInterval)
-  }
-
-  private normalizeTrackKeyframeInterval(value: number | undefined): number {
-    return this.normalizePositiveNumber(value) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
+    return track?.keyframeInterval ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
   }
 
   private resolveAudioStreamUpdateSettingsForTrack(track: MeetingCatalogTrack): {
     mode: 'single' | 'interval'
     intervalSeconds: number
   } {
-    const mode = track.audioStreamUpdateMode === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
-    const intervalSeconds =
-      this.normalizePositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
-      DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
-    return { mode, intervalSeconds }
+    return {
+      mode: track.audioStreamUpdateMode ?? DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode,
+      intervalSeconds: track.audioStreamUpdateIntervalSeconds ?? DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+    }
   }
 
   private applyAudioStreamUpdateSettingsToContext(
@@ -1386,30 +1123,6 @@ export class MediaPublisher {
     }
   }
 
-  private normalizeCatalogTracks(tracks: MeetingCatalogTrack[]): MeetingCatalogTrack[] {
-    const normalized: MeetingCatalogTrack[] = []
-    for (const track of tracks) {
-      const name = track.name.trim()
-      if (!name) {
-        continue
-      }
-      const keyframeInterval =
-        track.role === 'video' ? this.normalizeTrackKeyframeInterval(track.keyframeInterval) : undefined
-      const audioStreamSettings =
-        track.role === 'audio' ? this.resolveAudioStreamUpdateSettingsForTrack(track) : undefined
-      normalized.push({
-        ...track,
-        name,
-        label: track.label.trim() || name,
-        keyframeInterval,
-        audioStreamUpdateMode: audioStreamSettings?.mode,
-        audioStreamUpdateIntervalSeconds: audioStreamSettings?.intervalSeconds,
-        isLive: track.isLive ?? true
-      })
-    }
-    return normalized
-  }
-
   private async broadcastCatalog(): Promise<void> {
     const client = this.client.getRawClient()
     if (!client) {
@@ -1442,7 +1155,9 @@ export class MediaPublisher {
     })
     const payload = new TextEncoder().encode(buildMeetingCatalogJson(this.trackNamespace, this.catalogTracks))
     this.catalogGroups.set(groupId, payload)
-    await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
-    await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
+    const writer = new SubgroupWriter(client, trackAlias)
+    await writer.openGroup(groupId)
+    await writer.send(payload)
+    await writer.closeGroup()
   }
 }

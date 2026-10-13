@@ -7,7 +7,7 @@ interface Props {
   onJump?: (seconds: number) => void
 }
 
-function fmt(secs: number): string {
+export function formatBehindLive(secs: number): string {
   const s = Math.max(0, Math.round(secs))
   return `−${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 }
@@ -31,14 +31,14 @@ export function SeekBar({ replayableStartSeconds, liveEdgeSeconds, playheadSecon
       <div>
         <div className="flex justify-between items-baseline mb-1.5">
           <span className="text-zinc-500">
-            遡れる範囲：{fmt(totalSeconds)} 〜 LIVE
+            遡れる範囲：{formatBehindLive(totalSeconds)} 〜 LIVE
             {onJump && (
               <span className="text-zinc-600 ml-2" style={{ fontSize: '10px' }}>
                 クリック＝ジャンプ
               </span>
             )}
           </span>
-          <span className="text-amber-400 font-bold">遅れ {fmt(behindSeconds)}</span>
+          <span className="text-amber-400 font-bold">遅れ {formatBehindLive(behindSeconds)}</span>
         </div>
         <div
           className={`relative h-11 rounded-lg overflow-hidden bg-zinc-800 ${onJump ? 'cursor-pointer' : 'cursor-default'}`}

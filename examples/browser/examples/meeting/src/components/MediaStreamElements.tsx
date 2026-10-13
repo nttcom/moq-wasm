@@ -1,51 +1,26 @@
 import { ReactNode, useEffect, useRef, useState } from 'react'
-import { isMeetingVideoPipelineDebugEnabled } from '../utils/debug'
-
-const VIDEO_ELEMENT_LOG_PREFIX = '[meeting][media-element][video]'
 
 interface MediaStreamVideoProps {
   stream?: MediaStream | null
   muted?: boolean
-  className?: string
-  placeholder?: string
-  overlay?: ReactNode
   footer?: ReactNode
   testId?: string
 }
 
-export function MediaStreamVideo({
-  stream,
-  muted = false,
-  className,
-  placeholder = 'Video unavailable',
-  overlay,
-  footer,
-  testId
-}: MediaStreamVideoProps) {
+export function MediaStreamVideo({ stream, muted = false, footer, testId }: MediaStreamVideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null)
   const [hasFirstFrame, setHasFirstFrame] = useState(false)
 
   useEffect(() => {
     if (ref.current) {
       ref.current.srcObject = stream ?? null
-      logVideoElementEvent(ref.current, 'src-object', testId, stream)
     }
     setHasFirstFrame(false)
-  }, [stream, testId])
-
-  const handleVideoEvent = (event: string) => {
-    if (!ref.current) {
-      return
-    }
-    logVideoElementEvent(ref.current, event, testId, stream)
-    if (event === 'loadeddata') {
-      setHasFirstFrame(true)
-    }
-  }
+  }, [stream])
 
   return (
     <div className="w-full">
-      <div className={`relative w-full aspect-video overflow-hidden rounded-lg bg-black ${className}`}>
+      <div className="relative w-full aspect-video overflow-hidden rounded-lg bg-black">
         <video
           ref={ref}
           data-testid={testId}
@@ -54,48 +29,11 @@ export function MediaStreamVideo({
           playsInline
           muted={muted}
           controls={hasFirstFrame}
-          onLoadedMetadata={() => handleVideoEvent('loadedmetadata')}
-          onLoadedData={() => handleVideoEvent('loadeddata')}
-          onCanPlay={() => handleVideoEvent('canplay')}
-          onPlaying={() => handleVideoEvent('playing')}
-          onWaiting={() => handleVideoEvent('waiting')}
-          onStalled={() => handleVideoEvent('stalled')}
-          onError={() => handleVideoEvent('error')}
+          onLoadedData={() => setHasFirstFrame(true)}
         />
-        {overlay && (
-          <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-black/70 px-3 py-2 text-sm font-semibold text-white shadow-md">
-            {overlay}
-          </div>
-        )}
       </div>
       {footer}
     </div>
-  )
-}
-
-function logVideoElementEvent(
-  element: HTMLVideoElement,
-  event: string,
-  testId: string | undefined,
-  stream?: MediaStream | null
-): void {
-  if (!isMeetingVideoPipelineDebugEnabled()) {
-    return
-  }
-  const videoTracks = stream?.getVideoTracks() ?? []
-  console.info(
-    VIDEO_ELEMENT_LOG_PREFIX,
-    JSON.stringify({
-      event,
-      testId,
-      hasStream: Boolean(stream),
-      videoTrackCount: videoTracks.length,
-      readyState: element.readyState,
-      networkState: element.networkState,
-      paused: element.paused,
-      currentTime: element.currentTime,
-      error: element.error?.message ?? null
-    })
   )
 }
 
