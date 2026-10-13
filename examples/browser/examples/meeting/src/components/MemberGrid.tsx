@@ -45,6 +45,13 @@ type AudioEncodingOptionSet = {
 
 type CatalogTabKey = 'video' | 'screenshare' | 'audio'
 
+const TRACK_KIND_OPTIONS: { id: CatalogTabKey; label: string }[] = [
+  { id: 'video', label: 'Video' },
+  { id: 'screenshare', label: 'Screenshare' },
+  { id: 'audio', label: 'Audio' }
+]
+const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-blue-50'
+
 interface MemberGridProps {
   localMember: LocalMember
   remoteMembers: RemoteMember[]
@@ -235,42 +242,20 @@ export function MemberGrid({
             />
             <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
               <div className="text-sm font-semibold text-white">Video encoder hardware acceleration</div>
-              <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
-                <span>Camera</span>
-                <select
-                  value={selectedVideoEncoding.hardwareAcceleration}
-                  onChange={(event) =>
-                    void onSelectVideoEncoding({
-                      hardwareAcceleration: event.target.value as HardwareAcceleration
-                    })
-                  }
-                  className="w-44 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-blue-400"
-                >
-                  {videoHardwareAccelerationOptions.map((option) => (
-                    <option key={option.id} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
-                <span>Screen share</span>
-                <select
-                  value={selectedScreenShareEncoding.hardwareAcceleration}
-                  onChange={(event) =>
-                    void onSelectScreenShareEncoding({
-                      hardwareAcceleration: event.target.value as HardwareAcceleration
-                    })
-                  }
-                  className="w-44 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-1 focus:ring-blue-400"
-                >
-                  {videoHardwareAccelerationOptions.map((option) => (
-                    <option key={option.id} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <OptionSelect
+                label="Camera"
+                className={DEVICE_MODAL_FIELD_CLASS}
+                options={videoHardwareAccelerationOptions}
+                value={selectedVideoEncoding.hardwareAcceleration}
+                onChange={(option) => void onSelectVideoEncoding({ hardwareAcceleration: option.value })}
+              />
+              <OptionSelect
+                label="Screen share"
+                className={DEVICE_MODAL_FIELD_CLASS}
+                options={videoHardwareAccelerationOptions}
+                value={selectedScreenShareEncoding.hardwareAcceleration}
+                onChange={(option) => void onSelectScreenShareEncoding({ hardwareAcceleration: option.value })}
+              />
             </div>
           </div>
         </DeviceModal>
@@ -677,24 +662,12 @@ function CatalogTrackEditor({
         <section className="space-y-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
           <div className="text-sm font-semibold text-white">Track Setup</div>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-xs text-blue-100">
-              <span>Track Type</span>
-              <select
-                className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                value={addTrackKind}
-                onChange={(event) => setAddTrackKind(event.target.value as CatalogTabKey)}
-              >
-                <option value="video" className="bg-slate-900 text-white">
-                  Video
-                </option>
-                <option value="screenshare" className="bg-slate-900 text-white">
-                  Screenshare
-                </option>
-                <option value="audio" className="bg-slate-900 text-white">
-                  Audio
-                </option>
-              </select>
-            </label>
+            <OptionSelect
+              label="Track Type"
+              options={TRACK_KIND_OPTIONS}
+              value={addTrackKind}
+              onChange={(option) => setAddTrackKind(option.id)}
+            />
             <div />
             <label className="flex flex-col gap-1 text-xs text-blue-100">
               <span>Name</span>
@@ -714,80 +687,42 @@ function CatalogTrackEditor({
             </label>
             {currentDraft.role === 'video' ? (
               <>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Codec Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoCodecOptionId(videoEncodingOptions, currentDraft.codec)}
-                    onChange={(event) => {
-                      const option = videoEncodingOptions.codecOptions.find((entry) => entry.id === event.target.value)
-                      if (option) {
-                        const nextResolution = pickSupportedVideoResolutionOption(
-                          videoEncodingOptions,
-                          option.codec,
-                          currentDraft.width,
-                          currentDraft.height,
-                          '1080p'
-                        )
-                        setCurrentDraft({
-                          codec: option.codec,
-                          width: nextResolution?.width ?? currentDraft.width,
-                          height: nextResolution?.height ?? currentDraft.height
-                        })
-                      }
-                    }}
-                  >
-                    {videoEncodingOptions.codecOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Resolution Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoResolutionOptionIdFromList(
-                      currentVideoResolutionOptions,
+                <OptionSelect
+                  label="Codec Preset"
+                  options={videoEncodingOptions.codecOptions}
+                  value={findVideoCodecOptionId(videoEncodingOptions, currentDraft.codec)}
+                  onChange={(option) => {
+                    const nextResolution = pickSupportedVideoResolutionOption(
+                      videoEncodingOptions,
+                      option.codec,
                       currentDraft.width,
-                      currentDraft.height
-                    )}
-                    onChange={(event) => {
-                      const option = currentVideoResolutionOptions.find((entry) => entry.id === event.target.value)
-                      if (option) {
-                        setCurrentDraft({ width: option.width, height: option.height })
-                      }
-                    }}
-                  >
-                    {currentVideoResolutionOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="col-span-full flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Bitrate Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findVideoBitrateOptionId(videoEncodingOptions, currentDraft.bitrate)}
-                    onChange={(event) => {
-                      const option = videoEncodingOptions.bitrateOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
-                      if (option) {
-                        setCurrentDraft({ bitrate: option.bitrate })
-                      }
-                    }}
-                  >
-                    {videoEncodingOptions.bitrateOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                      currentDraft.height,
+                      '1080p'
+                    )
+                    setCurrentDraft({
+                      codec: option.codec,
+                      width: nextResolution?.width ?? currentDraft.width,
+                      height: nextResolution?.height ?? currentDraft.height
+                    })
+                  }}
+                />
+                <OptionSelect
+                  label="Resolution Preset"
+                  options={currentVideoResolutionOptions}
+                  value={findVideoResolutionOptionIdFromList(
+                    currentVideoResolutionOptions,
+                    currentDraft.width,
+                    currentDraft.height
+                  )}
+                  onChange={(option) => setCurrentDraft({ width: option.width, height: option.height })}
+                />
+                <OptionSelect
+                  label="Bitrate Preset"
+                  className="col-span-full flex flex-col gap-1 text-xs text-blue-100"
+                  options={videoEncodingOptions.bitrateOptions}
+                  value={findVideoBitrateOptionId(videoEncodingOptions, currentDraft.bitrate)}
+                  onChange={(option) => setCurrentDraft({ bitrate: option.bitrate })}
+                />
                 <label className="flex max-w-xs flex-col gap-1 text-xs text-blue-100">
                   <span>Framerate (fps)</span>
                   <input
@@ -804,24 +739,12 @@ function CatalogTrackEditor({
                     className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Hardware Acceleration</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={currentDraft.hardwareAcceleration ?? 'prefer-software'}
-                    onChange={(event) =>
-                      setCurrentDraft({
-                        hardwareAcceleration: event.target.value as HardwareAcceleration
-                      })
-                    }
-                  >
-                    {videoHardwareAccelerationOptions.map((option) => (
-                      <option key={option.id} value={option.value} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <OptionSelect
+                  label="Hardware Acceleration"
+                  options={videoHardwareAccelerationOptions}
+                  value={currentDraft.hardwareAcceleration ?? 'prefer-software'}
+                  onChange={(option) => setCurrentDraft({ hardwareAcceleration: option.value })}
+                />
                 <label className="col-span-full flex max-w-xs flex-col gap-1 text-xs text-blue-100">
                   <span>Keyframe Interval (frames)</span>
                   <input
@@ -840,70 +763,30 @@ function CatalogTrackEditor({
               </>
             ) : (
               <>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Codec Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findAudioCodecOptionId(audioEncodingOptions, currentDraft.codec)}
-                    onChange={(event) => {
-                      const option = audioEncodingOptions.codecOptions.find((entry) => entry.id === event.target.value)
-                      if (option) {
-                        setCurrentDraft({ codec: option.codec })
-                      }
-                    }}
-                  >
-                    {audioEncodingOptions.codecOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Bitrate Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findAudioBitrateOptionId(audioEncodingOptions, currentDraft.bitrate)}
-                    onChange={(event) => {
-                      const option = audioEncodingOptions.bitrateOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
-                      if (option) {
-                        setCurrentDraft({ bitrate: option.bitrate })
-                      }
-                    }}
-                  >
-                    {audioEncodingOptions.bitrateOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="col-span-full flex flex-col gap-1 text-xs text-blue-100">
-                  <span>Channel Preset</span>
-                  <select
-                    className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
-                    value={findAudioChannelOptionId(audioEncodingOptions, currentDraft.channelConfig)}
-                    onChange={(event) => {
-                      const option = audioEncodingOptions.channelOptions.find(
-                        (entry) => entry.id === event.target.value
-                      )
-                      if (option) {
-                        setCurrentDraft({
-                          channelConfig: channelConfigForChannels(option.channels),
-                          samplerate: currentDraft.samplerate ?? 48_000
-                        })
-                      }
-                    }}
-                  >
-                    {audioEncodingOptions.channelOptions.map((option) => (
-                      <option key={option.id} value={option.id} className="bg-slate-900 text-white">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <OptionSelect
+                  label="Codec Preset"
+                  options={audioEncodingOptions.codecOptions}
+                  value={findAudioCodecOptionId(audioEncodingOptions, currentDraft.codec)}
+                  onChange={(option) => setCurrentDraft({ codec: option.codec })}
+                />
+                <OptionSelect
+                  label="Bitrate Preset"
+                  options={audioEncodingOptions.bitrateOptions}
+                  value={findAudioBitrateOptionId(audioEncodingOptions, currentDraft.bitrate)}
+                  onChange={(option) => setCurrentDraft({ bitrate: option.bitrate })}
+                />
+                <OptionSelect
+                  label="Channel Preset"
+                  className="col-span-full flex flex-col gap-1 text-xs text-blue-100"
+                  options={audioEncodingOptions.channelOptions}
+                  value={findAudioChannelOptionId(audioEncodingOptions, currentDraft.channelConfig)}
+                  onChange={(option) =>
+                    setCurrentDraft({
+                      channelConfig: channelConfigForChannels(option.channels),
+                      samplerate: currentDraft.samplerate ?? 48_000
+                    })
+                  }
+                />
                 <div className="col-span-full rounded border border-white/10 bg-white/5 p-2">
                   <div className="text-xs font-semibold text-white">Audio Group Update</div>
                   <div className="mt-2 flex flex-wrap items-center gap-4">
@@ -1077,6 +960,42 @@ function CatalogTrackEditor({
         )}
       </section>
     </div>
+  )
+}
+
+function OptionSelect<T extends { id: string; label: string }>({
+  label,
+  options,
+  value,
+  onChange,
+  className = 'flex flex-col gap-1 text-xs text-blue-100'
+}: {
+  label: string
+  options: T[]
+  value: string
+  onChange: (option: T) => void
+  className?: string
+}) {
+  return (
+    <label className={className}>
+      <span>{label}</span>
+      <select
+        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+        value={value}
+        onChange={(event) => {
+          const option = options.find((entry) => entry.id === event.target.value)
+          if (option) {
+            onChange(option)
+          }
+        }}
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id} className="bg-slate-900 text-white">
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 
