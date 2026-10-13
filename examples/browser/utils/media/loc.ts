@@ -5,8 +5,6 @@ export type LocExtension = { id: number; value: LocValue }
 export type LocHeader = LocExtension[]
 
 export const CAPTURE_TIMESTAMP_ID = 2
-export const VIDEO_FRAME_MARKING_ID = 4
-export const AUDIO_LEVEL_ID = 6
 export const VIDEO_CONFIG_ID = 13
 
 export type LocMetadata = {

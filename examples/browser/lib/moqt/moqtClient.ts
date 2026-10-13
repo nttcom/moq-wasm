@@ -786,7 +786,7 @@ export class MoqtClientWrapper {
     this.clearSubgroupObjectHandlers()
   }
 
-  private requireConnectedClient(): MOQTClient {
+  requireConnectedClient(): MOQTClient {
     if (!this.client || !this.client.isConnected()) {
       throw new Error('MOQT client is not connected')
     }

@@ -12,7 +12,7 @@
         <div>
           <span class="pill">Publisher</span>
           <h1>MoQT Media Publisher</h1>
-          <p>Low-level controls for publishing video and audio objects over MoQT.</p>
+          <p>Low-level controls for publishing video objects over MoQT.</p>
         </div>
       </header>
       <div id="app">
@@ -76,25 +76,6 @@
           </section>
 
           <section class="card stack">
-            <h2>Forwarding Preference</h2>
-            <div class="radio-group">
-              <label
-                ><input type="radio" name="forwarding-preference" id="selectDatagram" value="datagram" />Datagram
-              </label>
-              <label
-                ><input
-                  type="radio"
-                  name="forwarding-preference"
-                  id="selectSubgroup"
-                  value="subgroup"
-                  checked
-                />Subgroup
-              </label>
-            </div>
-            <p class="hint">You must select at first</p>
-          </section>
-
-          <section class="card stack">
             <h3>CLIENT_SETUP</h3>
             <label>Max Request ID: <input type="text" name="max-subscribe-id" id="" value="100" /></label>
             <div class="button-row action-row">
@@ -127,38 +108,20 @@
               <h4>Header</h4>
             </div>
             <p class="hint">
-              Published tracks: catalog, audio_128kbps, audio_64kbps, audio_32kbps, video_1080p, video_720p, video_480p
-              (catalog returns the 3 video profiles and 3 audio profiles)
+              Published tracks: catalog, video_1080p, video_720p, video_480p
             </p>
             <div class="field-row">
               <label
                 >Video Publisher Priority: <input type="text" name="video-publisher-priority" id="" value="0" />
               </label>
-              <label
-                >Audio Publisher Priority: <input type="text" name="audio-publisher-priority" id="" value="0" />
-              </label>
             </div>
             <div id="objectField" style="display: blocked">
               <h4>Object</h4>
-            </div>
-            <div id="datagramObjectContents" style="display: none">
-              Group ID:
-              <p id="datagramGroupId">0</p>
-              <div class="button-row">
-                <button type="button" id="descendDatagramGroupIdBtn">&lt;</button>
-                <button type="button" id="ascendDatagramGroupIdBtn">&gt;</button>
-              </div>
             </div>
             <div class="button-row">
               <button type="button" id="startGetUserMediaBtn" data-testid="publisher-get-user-media-button">
                 getUserMedia
               </button>
-              <button type="button" id="getSampleVideo" data-testid="publisher-get-sample-video-button">
-                getSampleVideo
-              </button>
-            </div>
-            <div id="sendDatagramObject" style="display: none">
-              <button type="button" id="sendDatagramObjectBtn">Send</button>
             </div>
             <div id="sendSubgroupObject" style="display: blocked">
               <button type="button" id="sendSubgroupObjectBtn" data-testid="publisher-send-button">Send</button>

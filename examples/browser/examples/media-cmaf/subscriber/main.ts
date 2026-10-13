@@ -1,27 +1,21 @@
 import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../../pkg/moqt'
-import { AUTH_INFO } from '../const'
-import { getFormElement } from '../utils'
-import { extractCatalogVideoTracks, extractCatalogAudioTracks, type MediaCatalogTrack } from '../../../lib/msf/catalog'
-import { initializeMediaExamplePage } from '../../../utils/page'
+import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
+import { setUpCatalogPicker } from '../../media/catalogPicker'
+import { setUpVisualizerToggle } from '../../media/visualizerToggle'
 
 const moqtClient = new MoqtClientWrapper()
+const form = element<HTMLFormElement>('form')
 
-let handlersInitialized = false
-let catalogVideoTracks: MediaCatalogTrack[] = []
-let catalogAudioTracks: MediaCatalogTrack[] = []
-let selectedVideoTrackName: string | null = null
+const catalogPicker = setUpCatalogPicker(moqtClient, form)
 
 // MSE state
 let mediaSource: MediaSource | null = null
 
 let videoSourceBuffer: SourceBuffer | null = null
-let videoInitReceived = false
 const videoAppendQueue: Uint8Array[] = []
 let isVideoAppending = false
 
 let audioSourceBuffer: SourceBuffer | null = null
-let audioInitReceived = false
 const audioAppendQueue: Uint8Array[] = []
 let isAudioAppending = false
 
@@ -35,8 +29,6 @@ const moqObjectVisualization: Record<'video' | 'audio', MoqObjectVisualizationSt
   audio: { groupId: null, objectId: null }
 }
 
-let isMoqVisualizerVisible = false
-
 const PLAYBACK_BUFFER_THRESHOLD = 1.0 // バッファがこの秒数を超えたら再生開始（1フラグメント分）
 const SOURCE_BUFFER_VISUALIZER_INTERVAL_MS = 250
 const LIVE_EDGE_CATCHUP_THRESHOLD_SEC = 8
@@ -45,7 +37,6 @@ const LIVE_EDGE_CATCHUP_COOLDOWN_MS = 1500
 let playbackStarted = false
 let sourceBufferVisualizerIntervalId: number | null = null
 let lastLiveEdgeCatchupAtMs = 0
-let liveEdgeCatchupHandlerInitialized = false
 let isRealtimeCatchupEnabled = true
 
 type SourceBufferSpeedState = {
@@ -57,113 +48,6 @@ type SourceBufferSpeedState = {
 const sourceBufferSpeedState: Record<'video' | 'audio', SourceBufferSpeedState> = {
   video: { lastWallTimeMs: null, lastBufferedEndSec: null, speedX: null },
   audio: { lastWallTimeMs: null, lastBufferedEndSec: null, speedX: null }
-}
-
-// --- Helpers ---
-
-const toBigUint64Array = (value: string): BigUint64Array => {
-  const values = value
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => BigInt(part))
-  return new BigUint64Array(values)
-}
-
-const parseTrackNamespace = (value: string): string[] => {
-  return value
-    .split('/')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-}
-
-// --- Catalog ---
-
-const setCatalogTrackStatus = (text: string): void => {
-  const status = document.getElementById('catalog-track-status')
-  if (!status) {
-    return
-  }
-  const normalized = text.trim()
-  status.textContent = normalized
-  status.style.display = normalized.length > 0 ? '' : 'none'
-}
-
-const getCatalogTrackSelect = (): HTMLSelectElement | null => {
-  return document.getElementById('selected-video-track') as HTMLSelectElement | null
-}
-
-const formatCatalogTrackLabel = (track: MediaCatalogTrack): string => {
-  const resolution =
-    typeof track.width === 'number' && typeof track.height === 'number' ? ` (${track.width}x${track.height})` : ''
-  return `${track.label}${resolution}`
-}
-
-const renderCatalogTrackSelect = (): boolean => {
-  const select = getCatalogTrackSelect()
-  if (!select) {
-    return false
-  }
-  select.innerHTML = ''
-
-  if (!catalogVideoTracks.length) {
-    const option = document.createElement('option')
-    option.value = ''
-    option.textContent = 'Catalog video tracks are not loaded yet'
-    option.disabled = true
-    option.selected = true
-    select.appendChild(option)
-    selectedVideoTrackName = null
-    return false
-  }
-
-  if (!selectedVideoTrackName || !catalogVideoTracks.some((track) => track.name === selectedVideoTrackName)) {
-    selectedVideoTrackName = catalogVideoTracks[0].name
-  }
-
-  for (const track of catalogVideoTracks) {
-    const option = document.createElement('option')
-    option.value = track.name
-    option.textContent = formatCatalogTrackLabel(track)
-    option.selected = track.name === selectedVideoTrackName
-    select.appendChild(option)
-  }
-  return true
-}
-
-const renderCatalogTracks = (): void => {
-  const hasVideoTracks = renderCatalogTrackSelect()
-
-  if (!hasVideoTracks) {
-    setCatalogTrackStatus('')
-    return
-  }
-  setCatalogTrackStatus(`Catalog loaded: video=${catalogVideoTracks.length} audio=${catalogAudioTracks.length}`)
-}
-
-const setupCatalogSelectionHandler = (): void => {
-  const videoSelect = getCatalogTrackSelect()
-  if (videoSelect) {
-    videoSelect.addEventListener('change', () => {
-      const value = videoSelect.value.trim()
-      selectedVideoTrackName = value.length > 0 ? value : null
-    })
-  }
-}
-
-const setupCatalogCallbacks = (trackAlias: bigint): void => {
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
-    const payload = new TextDecoder().decode(new Uint8Array(subgroupStreamObject.objectPayload))
-    try {
-      const parsed = parse_msf_catalog_json(payload)
-      catalogVideoTracks = extractCatalogVideoTracks(parsed)
-      catalogAudioTracks = extractCatalogAudioTracks(parsed)
-      renderCatalogTracks()
-    } catch (error) {
-      console.error('[CmafSubscriber] failed to parse catalog', error)
-      setCatalogTrackStatus('Catalog parse failed')
-    }
-  })
 }
 
 const setElementText = (id: string, text: string): void => {
@@ -254,15 +138,11 @@ const catchupToLiveEdgeIfNeeded = (reason: 'visibility' | 'periodic'): void => {
 }
 
 const setupLiveEdgeCatchupHandler = (): void => {
-  if (liveEdgeCatchupHandlerInitialized) {
-    return
-  }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       catchupToLiveEdgeIfNeeded('visibility')
     }
   })
-  liveEdgeCatchupHandlerInitialized = true
 }
 
 const syncLiveCatchupModeButton = (toggleBtn: HTMLButtonElement): void => {
@@ -426,25 +306,9 @@ const startSourceBufferVisualizationLoop = (): void => {
 }
 
 const resetSourceBufferVisualization = (): void => {
-  const ids = [
-    'sb-video-updating',
-    'sb-audio-updating',
-    'sb-video-queue',
-    'sb-audio-queue',
-    'sb-video-ranges',
-    'sb-audio-ranges',
-    'sb-video-ahead',
-    'sb-audio-ahead',
-    'sb-video-end',
-    'sb-audio-end',
-    'sb-video-speed',
-    'sb-audio-speed',
-    'sb-video-time',
-    'sb-audio-time'
-  ]
-  for (const id of ids) {
-    setElementText(id, '-')
-  }
+  document.querySelectorAll('[id^="sb-"]').forEach((cell) => {
+    cell.textContent = '-'
+  })
   resetSourceBufferSpeedState()
   lastLiveEdgeCatchupAtMs = 0
 }
@@ -458,51 +322,17 @@ const updateOverheadDisplay = (
   mdat: number,
   overhead: string
 ): void => {
-  const setText = (id: string, text: string) => {
-    const el = document.getElementById(id)
-    if (el) {
-      el.textContent = text
-    }
-  }
-  setText(`oh-${type}-init`, `${init} bytes`)
-  setText(`oh-${type}-moof`, `${moof} bytes`)
-  setText(`oh-${type}-mdat`, `${mdat} bytes`)
-  setText(`oh-${type}-pct`, `${overhead}%`)
+  setElementText(`oh-${type}-init`, `${init} bytes`)
+  setElementText(`oh-${type}-moof`, `${moof} bytes`)
+  setElementText(`oh-${type}-mdat`, `${mdat} bytes`)
+  setElementText(`oh-${type}-pct`, `${overhead}%`)
 }
 
 const setMoqObjectVisualizationState = (type: 'video' | 'audio', groupId: bigint, objectId: bigint): void => {
   moqObjectVisualization[type] = { groupId, objectId }
-  if (isMoqVisualizerVisible) {
+  if (isMoqVisualizerVisible()) {
     renderMoqObjectVisualization()
   }
-}
-
-const getVisualizerEyeSvg = (active: boolean): string => {
-  if (active) {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 3l18 18"></path>
-        <path d="M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6"></path>
-        <path d="M9.9 5.3A11.6 11.6 0 0 1 12 5c6.5 0 10 7 10 7a15 15 0 0 1-4 4.9"></path>
-        <path d="M6.6 6.6A15.1 15.1 0 0 0 2 12s3.5 7 10 7a11.3 11.3 0 0 0 5.1-1.2"></path>
-      </svg>
-    `
-  }
-  return `
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
-      <circle cx="12" cy="12" r="3"></circle>
-    </svg>
-  `
-}
-
-const syncMoqVisualizerButton = (toggleBtn: HTMLButtonElement): void => {
-  toggleBtn.innerHTML = getVisualizerEyeSvg(isMoqVisualizerVisible)
-  toggleBtn.classList.toggle('active', isMoqVisualizerVisible)
-  toggleBtn.setAttribute('aria-pressed', isMoqVisualizerVisible ? 'true' : 'false')
-  const label = isMoqVisualizerVisible ? 'MoQ受信可視化を非表示' : 'MoQ受信可視化を表示'
-  toggleBtn.setAttribute('aria-label', label)
-  toggleBtn.setAttribute('title', label)
 }
 
 const resetMoqObjectVisualizationState = (): void => {
@@ -511,38 +341,22 @@ const resetMoqObjectVisualizationState = (): void => {
 }
 
 const renderMoqObjectVisualization = (): void => {
-  const setText = (id: string, text: string) => {
-    const el = document.getElementById(id)
-    if (el) {
-      el.textContent = text
-    }
+  for (const kind of ['video', 'audio'] as const) {
+    const { groupId, objectId } = moqObjectVisualization[kind]
+    setElementText(`viz-${kind}-group-id`, groupId?.toString() ?? '-')
+    setElementText(`viz-${kind}-object-id`, objectId?.toString() ?? '-')
   }
-  const formatBigInt = (value: bigint | null): string => (value === null ? '-' : value.toString())
-
-  setText('viz-video-group-id', formatBigInt(moqObjectVisualization.video.groupId))
-  setText('viz-video-object-id', formatBigInt(moqObjectVisualization.video.objectId))
-  setText('viz-audio-group-id', formatBigInt(moqObjectVisualization.audio.groupId))
-  setText('viz-audio-object-id', formatBigInt(moqObjectVisualization.audio.objectId))
 }
 
-const setupMoqObjectVisualizationButton = (): void => {
-  const toggleBtn = document.getElementById('toggleMoqVisualizerBtn') as HTMLButtonElement | null
-  const panel = document.getElementById('moqVisualizerPanel')
-  if (!toggleBtn || !panel) {
-    return
+const isMoqVisualizerVisible = setUpVisualizerToggle(
+  'toggleMoqVisualizerBtn',
+  'moqVisualizerPanel',
+  'MoQ受信可視化',
+  () => {
+    renderMoqObjectVisualization()
+    renderSourceBufferVisualization()
   }
-  syncMoqVisualizerButton(toggleBtn)
-
-  toggleBtn.addEventListener('click', () => {
-    isMoqVisualizerVisible = !isMoqVisualizerVisible
-    panel.classList.toggle('is-visible', isMoqVisualizerVisible)
-    syncMoqVisualizerButton(toggleBtn)
-    if (isMoqVisualizerVisible) {
-      renderMoqObjectVisualization()
-      renderSourceBufferVisualization()
-    }
-  })
-}
+)
 
 // --- MSE helpers ---
 
@@ -651,95 +465,46 @@ const setupMediaSource = (videoCodec: string, audioCodec: string): void => {
 
 // --- MoQ Object handlers ---
 
-const setupVideoObjectCallbacks = (trackAlias: bigint): void => {
-  videoInitReceived = false
-  let lastVideoGroupId: bigint | null = null
-  let videoInitSize = 0
+const setupObjectCallbacks = (
+  kind: 'video' | 'audio',
+  trackAlias: bigint,
+  append: (data: Uint8Array) => void
+): void => {
+  let initReceived = false
+  let initSize = 0
 
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
-    const raw = new Uint8Array(subgroupStreamObject.objectPayload)
-    const objectId = subgroupStreamObject.objectId
-    const objectStatus = subgroupStreamObject.objectStatus
-    const payload = raw
-
-    if (_groupId !== lastVideoGroupId) {
-      lastVideoGroupId = _groupId
-    }
+  moqtClient.setOnSubgroupObjectHandler(trackAlias, (groupId, subgroupStreamObject) => {
+    const payload = new Uint8Array(subgroupStreamObject.objectPayload)
+    const { objectId, objectStatus } = subgroupStreamObject
 
     if (objectId === 0n) {
-      videoInitSize = payload.byteLength
-      setMoqObjectVisualizationState('video', _groupId, objectId)
-      if (!videoInitReceived) {
-        console.info('[CmafSubscriber] video init segment received', { byteLength: payload.byteLength })
-        videoInitReceived = true
-        appendToVideo(payload)
+      initSize = payload.byteLength
+      setMoqObjectVisualizationState(kind, groupId, objectId)
+      if (!initReceived) {
+        console.info(`[CmafSubscriber] ${kind} init segment received`, { byteLength: payload.byteLength })
+        initReceived = true
+        append(payload)
       }
       return
     }
 
     if (objectStatus != null) {
-      setMoqObjectVisualizationState('video', _groupId, objectId)
+      setMoqObjectVisualizationState(kind, groupId, objectId)
       return
     }
 
     if (payload.byteLength < 4) {
-      console.warn('[CmafSubscriber] video payload too short for moof', { groupId: _groupId, objectId, objectStatus })
+      console.warn(`[CmafSubscriber] ${kind} payload too short for moof`, { groupId, objectId, objectStatus })
       return
     }
 
     const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
     const mdatSize = payload.byteLength - moofSize
-    const headerBytes = videoInitSize + moofSize
+    const headerBytes = initSize + moofSize
     const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
-    updateOverheadDisplay('video', videoInitSize, moofSize, mdatSize, overhead)
-    setMoqObjectVisualizationState('video', _groupId, objectId)
-    appendToVideo(payload)
-  })
-}
-
-const setupAudioObjectCallbacks = (trackAlias: bigint): void => {
-  audioInitReceived = false
-  let lastAudioGroupId: bigint | null = null
-  let audioInitSize = 0
-
-  moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, subgroupStreamObject) => {
-    const raw = new Uint8Array(subgroupStreamObject.objectPayload)
-    const objectId = subgroupStreamObject.objectId
-    const objectStatus = subgroupStreamObject.objectStatus
-    const payload = raw
-
-    if (_groupId !== lastAudioGroupId) {
-      lastAudioGroupId = _groupId
-    }
-
-    if (objectId === 0n) {
-      audioInitSize = payload.byteLength
-      setMoqObjectVisualizationState('audio', _groupId, objectId)
-      if (!audioInitReceived) {
-        console.info('[CmafSubscriber] audio init segment received', { byteLength: payload.byteLength })
-        audioInitReceived = true
-        appendToAudio(payload)
-      }
-      return
-    }
-
-    if (objectStatus != null) {
-      setMoqObjectVisualizationState('audio', _groupId, objectId)
-      return
-    }
-
-    if (payload.byteLength < 4) {
-      console.warn('[CmafSubscriber] audio payload too short for moof', { groupId: _groupId, objectId, objectStatus })
-      return
-    }
-
-    const moofSize = new DataView(payload.buffer, payload.byteOffset, 4).getUint32(0)
-    const mdatSize = payload.byteLength - moofSize
-    const headerBytes = audioInitSize + moofSize
-    const overhead = ((headerBytes / (headerBytes + mdatSize)) * 100).toFixed(2)
-    updateOverheadDisplay('audio', audioInitSize, moofSize, mdatSize, overhead)
-    setMoqObjectVisualizationState('audio', _groupId, objectId)
-    appendToAudio(payload)
+    updateOverheadDisplay(kind, initSize, moofSize, mdatSize, overhead)
+    setMoqObjectVisualizationState(kind, groupId, objectId)
+    append(payload)
   })
 }
 
@@ -748,68 +513,43 @@ const setupAudioObjectCallbacks = (trackAlias: bigint): void => {
 const sendSetupButtonClickHandler = (): void => {
   const sendSetupBtn = document.getElementById('sendSetupBtn') as HTMLButtonElement
   sendSetupBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const versions = toBigUint64Array('0xff00000E')
+    const versions = new BigUint64Array([0xff00000en])
     const maxSubscribeId = BigInt(form['max-subscribe-id'].value)
     await moqtClient.sendClientSetup(versions, maxSubscribeId)
-  })
-}
-
-const sendCatalogSubscribeButtonClickHandler = (): void => {
-  const sendCatalogSubscribeBtn = document.getElementById('sendCatalogSubscribeBtn') as HTMLButtonElement
-  sendCatalogSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
-    const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
-    const catalogTrackName = form['catalog-track-name'].value.trim()
-    const catalogSubscribeId = BigInt(form['catalog-subscribe-id'].value)
-    if (!catalogTrackName) {
-      setCatalogTrackStatus('Catalog track is required')
-      return
-    }
-    const catalogTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, catalogTrackName, AUTH_INFO, { requestId: catalogSubscribeId })
-    ).subscribeOk.trackAlias
-    form['catalog-track-alias'].value = catalogTrackAlias.toString()
-    setupCatalogCallbacks(catalogTrackAlias)
-    setCatalogTrackStatus(`Catalog subscribed: ${catalogTrackName}`)
   })
 }
 
 const sendSubscribeButtonClickHandler = (): void => {
   const sendSubscribeBtn = document.getElementById('sendSubscribeBtn') as HTMLButtonElement
   sendSubscribeBtn.addEventListener('click', async () => {
-    const form = getFormElement()
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
-    const selectedVideoTrack = selectedVideoTrackName ?? ''
+    const videoTrack = catalogPicker.pick.video.selected
+    const audioTrack = catalogPicker.pick.audio.selected
     const videoSubscribeId = BigInt(form['video-subscribe-id'].value)
     const audioSubscribeId = BigInt(form['audio-subscribe-id'].value)
 
-    if (!selectedVideoTrack) {
-      setCatalogTrackStatus('Select a video track from catalog first')
+    if (!videoTrack) {
+      setStatusText('catalog-track-status', 'Select a video track from catalog first')
       return
     }
-
-    const videoTrack = catalogVideoTracks.find((t) => t.name === selectedVideoTrack)
-    const audioTrack = catalogAudioTracks[0]
-
-    if (!videoTrack?.codec || !audioTrack?.codec) {
-      setCatalogTrackStatus('Video or audio codec not found in catalog')
+    if (!videoTrack.codec || !audioTrack?.codec) {
+      setStatusText('catalog-track-status', 'Video or audio codec not found in catalog')
       return
     }
 
     setupMediaSource(videoTrack.codec, audioTrack.codec)
     const videoTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, selectedVideoTrack, AUTH_INFO, { requestId: videoSubscribeId })
+      await moqtClient.subscribe(trackNamespace, videoTrack.name, 'secret', { requestId: videoSubscribeId })
     ).subscribeOk.trackAlias
     form['video-track-alias'].value = videoTrackAlias.toString()
-    setupVideoObjectCallbacks(videoTrackAlias)
+    setupObjectCallbacks('video', videoTrackAlias, appendToVideo)
 
     const audioTrackAlias = (
-      await moqtClient.subscribe(trackNamespace, audioTrack.name, AUTH_INFO, { requestId: audioSubscribeId })
+      await moqtClient.subscribe(trackNamespace, audioTrack.name, 'secret', { requestId: audioSubscribeId })
     ).subscribeOk.trackAlias
     form['audio-track-alias'].value = audioTrackAlias.toString()
-    setupAudioObjectCallbacks(audioTrackAlias)
-    setCatalogTrackStatus(`Subscribed video=${selectedVideoTrack} audio=${audioTrack.name}`)
+    setupObjectCallbacks('audio', audioTrackAlias, appendToAudio)
+    setStatusText('catalog-track-status', `Subscribed video=${videoTrack.name} audio=${audioTrack.name}`)
   })
 }
 
@@ -818,16 +558,11 @@ const setupCloseButtonHandler = (): void => {
   closeBtn.addEventListener('click', async () => {
     await moqtClient.disconnect()
     moqtClient.clearSubgroupObjectHandlers()
-    catalogVideoTracks = []
-    catalogAudioTracks = []
-    selectedVideoTrackName = null
     playbackStarted = false
     lastLiveEdgeCatchupAtMs = 0
-    videoInitReceived = false
     videoAppendQueue.length = 0
     isVideoAppending = false
     videoSourceBuffer = null
-    audioInitReceived = false
     audioAppendQueue.length = 0
     isAudioAppending = false
     audioSourceBuffer = null
@@ -838,27 +573,20 @@ const setupCloseButtonHandler = (): void => {
     stopSourceBufferVisualizationLoop()
     resetSourceBufferVisualization()
     resetMoqObjectVisualizationState()
-    if (isMoqVisualizerVisible) {
+    if (isMoqVisualizerVisible()) {
       renderMoqObjectVisualization()
     }
-    renderCatalogTracks()
-    setCatalogTrackStatus('Disconnected')
+    catalogPicker.reset()
+    setStatusText('catalog-track-status', 'Disconnected')
   })
 }
 
 const setupButtonHandlers = (): void => {
-  if (handlersInitialized) {
-    return
-  }
   sendSetupButtonClickHandler()
-  sendCatalogSubscribeButtonClickHandler()
   sendSubscribeButtonClickHandler()
-  setupMoqObjectVisualizationButton()
   setupLiveCatchupModeButton()
-  setupCatalogSelectionHandler()
   setupCloseButtonHandler()
   setupLiveEdgeCatchupHandler()
-  handlersInitialized = true
 }
 
 // --- Client callbacks ---
@@ -877,12 +605,10 @@ initializeMediaExamplePage('subscribe-track-namespace')
 
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
-  const form = getFormElement()
   const url = form.url.value
 
   await moqtClient.connect(url, { sendSetup: false })
-  setCatalogTrackStatus('Connected')
+  setStatusText('catalog-track-status', 'Connected')
 })
 
 setupButtonHandlers()
-renderCatalogTracks()
