@@ -1,4 +1,5 @@
 import { monotonicUnixMicros } from '../../utils/media/clock'
+import { ArrivalLag } from './arrivalLag'
 import { type LocHeader, readLocHeader } from '../../utils/media/loc'
 
 const MICROS_PER_SECOND = 1_000_000
@@ -21,26 +22,22 @@ export class GroupTimeline {
   /// the relay starts caching a track only once it has a subscriber, so this
   /// group holds no keyframe for a FETCH replay to start from.
   private joinGroupId: bigint | undefined
-  private arrivalLagMicros: number | undefined
+  private readonly arrivalLag = new ArrivalLag()
 
   constructor(private readonly retentionMicros: number) {}
 
   record(groupId: bigint, locHeader: LocHeader | undefined): void {
-    const captureMicros = readLocHeader(locHeader).captureTimestampMicros
-    if (typeof captureMicros !== 'number' || !Number.isFinite(captureMicros)) {
-      return
+    const captureMicros = this.arrivalLag.observe(locHeader)
+    if (captureMicros !== undefined) {
+      this.recordCapture(groupId, captureMicros)
     }
-    this.arrivalLagMicros = monotonicUnixMicros() - captureMicros
-    this.recordCapture(groupId, captureMicros)
   }
 
-  /// A group known only by its id, as reported by TRACK_STATUS, is placed at
-  /// the capture time of the objects live delivery was bringing in last.
   recordLiveGroup(groupId: bigint): void {
-    if (this.arrivalLagMicros === undefined) {
-      return
+    const captureMicros = this.arrivalLag.liveCaptureMicros()
+    if (captureMicros !== undefined) {
+      this.recordCapture(groupId, captureMicros)
     }
-    this.recordCapture(groupId, monotonicUnixMicros() - this.arrivalLagMicros)
   }
 
   recordCapture(groupId: bigint, captureMicros: number): void {
@@ -56,7 +53,7 @@ export class GroupTimeline {
   reset(): void {
     this.marks = []
     this.joinGroupId = undefined
-    this.arrivalLagMicros = undefined
+    this.arrivalLag.reset()
   }
 
   get latest(): GroupMark | undefined {
