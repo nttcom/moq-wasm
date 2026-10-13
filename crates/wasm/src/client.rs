@@ -267,6 +267,13 @@ impl MOQTClient {
         self.shared.callbacks.borrow_mut().track_status_response = Some(callback);
     }
 
+    /// Called with the New Session URI of a GOAWAY (draft-14 §9.4): the URL
+    /// to reconnect to, or an empty string to reuse the current one.
+    #[wasm_bindgen(js_name = onGoAway)]
+    pub fn set_go_away_callback(&mut self, callback: js_sys::Function) {
+        self.shared.callbacks.borrow_mut().go_away = Some(callback);
+    }
+
     #[wasm_bindgen(js_name = onConnectionClosed)]
     pub fn set_connection_closed_callback(&mut self, callback: js_sys::Function) {
         self.shared.callbacks.borrow_mut().connection_closed = Some(callback);
