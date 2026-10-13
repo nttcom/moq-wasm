@@ -6,6 +6,7 @@ use rcgen::{CertifiedKey, generate_simple_self_signed};
 use crate::{
     ClientConfig, DUAL, Endpoint, Session, SessionEvent, Subscription, TrackReader,
     TransportProtocol,
+    fetch::{Fetch, FetchDataReceiver, FetchObjectField},
     modules::moqt::{
         data_plane::object::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
@@ -199,6 +200,17 @@ pub(crate) async fn subscribed_track_reader(
         panic!("expected a subgroup stream receiver");
     };
     TrackReader::new(factory)
+}
+
+pub(crate) async fn read_fetch_objects(receiver: &mut FetchDataReceiver) -> Vec<FetchObjectField> {
+    let mut objects = Vec::new();
+    loop {
+        match receiver.receive().await.unwrap() {
+            Fetch::Header(_) => {}
+            Fetch::Object(object) => objects.push(object),
+            Fetch::End => return objects,
+        }
+    }
 }
 
 pub(crate) fn object_datagram(track_alias: u64) -> ObjectDatagram {

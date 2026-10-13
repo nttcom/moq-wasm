@@ -1,4 +1,10 @@
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
+
+static START: OnceLock<Instant> = OnceLock::new();
 
 pub(crate) struct JoinHandle {
     inner: tokio::task::JoinHandle<()>,
@@ -35,4 +41,9 @@ pub(crate) async fn yield_now() {
 
 pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<F::Output, ()> {
     tokio::time::timeout(duration, future).await.map_err(drop)
+}
+
+/// Monotonic time since an arbitrary origin; only differences are meaningful.
+pub(crate) fn now() -> Duration {
+    START.get_or_init(Instant::now).elapsed()
 }
