@@ -28,6 +28,10 @@ The media timeline and the chat describe the default `video` and `audio`, so
 the catalog lists them, and the `audio` placeholder sent before the AAC config
 arrives, only while a default track exists.
 
+Tasks are spawned and clocks read only through `moqt::executor`, so the crate
+also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
+the relay through moqt's `BROWSER` transport (WebTransport) instead of `DUAL`.
+
 ## Publishing without subscribers
 Every track the catalog lists except the CMAF tracks is published with PUBLISH
 (draft-ietf-moq-transport-14 §9.13) before the catalog that lists it is sent, so

@@ -7,21 +7,17 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, DUAL, Endpoint, Session, SessionEvent, TerminationErrorCode, TransportStats,
+    ClientConfig, Endpoint, Session, SessionEvent, TerminationErrorCode, TransportStats,
+    executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
 };
 use msf::CATALOG_TRACK_NAME;
-use tokio::{
-    sync::{Mutex, watch},
-    task::JoinHandle,
-    time::Instant,
-};
+use tokio::sync::{Mutex, watch};
 
 use crate::{
     broadcast::{
         AudioTrackInfo, CatalogMetadata, VideoTrackInfo, awaits_subscribe, build_catalog, is_cmaf,
-        now_unix,
     },
     stream_ledger::{StreamLedger, StreamRecord},
 };
@@ -35,6 +31,12 @@ const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
 /// before it falls out of the relay cache (draft-ietf-moq-msf-01 §5) and a viewer
 /// arriving long after the last change still finds one.
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// A browser reaches the relay over WebTransport only.
+#[cfg(not(target_arch = "wasm32"))]
+type RelayTransport = moqt::DUAL;
+#[cfg(target_arch = "wasm32")]
+type RelayTransport = moqt::BROWSER;
 
 #[derive(Debug, Clone)]
 pub struct MoqtTarget {
@@ -62,7 +64,8 @@ type TrackKey = (String, String);
 struct RelayState {
     announced_namespaces: HashSet<String>,
     catalogs: HashMap<String, CatalogMetadata>,
-    catalog_sent_at: HashMap<String, Instant>,
+    /// `executor::now()` at the last send.
+    catalog_sent_at: HashMap<String, Duration>,
     /// Per namespace path, the tracks a SUBSCRIBE is accepted for before the
     /// catalog lists them.
     declared_tracks: HashMap<String, HashSet<String>>,
@@ -103,23 +106,26 @@ impl RelayState {
             .is_some_and(|catalog| awaits_subscribe(&catalog, track_name))
     }
 
-    fn catalog_refresh_due(&self, namespace_path: &str) -> bool {
+    fn catalog_refresh_due(&self, namespace_path: &str, now: Duration) -> bool {
         self.catalog_sent_at
             .get(namespace_path)
-            .is_some_and(|sent_at| sent_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+            .is_some_and(|sent_at| now.saturating_sub(*sent_at) >= CATALOG_REFRESH_INTERVAL)
     }
 }
 
 pub(crate) struct ConnectedRelay {
-    endpoint: Endpoint<DUAL>,
+    endpoint: Endpoint<RelayTransport>,
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
     ledger: StreamLedger,
-    event_task: JoinHandle<()>,
+    event_task: JoinHandle,
 }
 
 impl RelayConnection {
+    // The browser session is !Send, but wasm32 runs on one thread; natively
+    // the Arc is shared across tokio worker threads.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub fn new(target: Option<MoqtTarget>) -> Self {
         Self {
             target,
@@ -148,6 +154,7 @@ impl RelayConnection {
         Some(connected.session.transport_stats())
     }
 
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) async fn connected(&self) -> Result<Option<Arc<ConnectedRelay>>> {
         let Some(target) = &self.target else {
             return Ok(None);
@@ -163,8 +170,9 @@ impl RelayConnection {
 }
 
 impl ConnectedRelay {
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
-        let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
+        let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
             port: 0,
             verify_certificate: target.verify_certificate,
             authorization_token: target.auth_token.clone(),
@@ -205,8 +213,8 @@ impl ConnectedRelay {
         origin: Origin,
         state: Arc<Mutex<RelayState>>,
         ledger: StreamLedger,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
+    ) -> JoinHandle {
+        executor::spawn("broadcast-relay-events", async move {
             loop {
                 let event = match session.receive_event().await {
                     Ok(event) => event,
@@ -315,7 +323,12 @@ impl ConnectedRelay {
         object: OutgoingObject,
     ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
-        if self.state.lock().await.catalog_refresh_due(&key.0) {
+        if self
+            .state
+            .lock()
+            .await
+            .catalog_refresh_due(&key.0, executor::now())
+        {
             self.send_catalog(&key.0).await?;
         }
         if self.state.lock().await.disconnected {
@@ -488,7 +501,7 @@ impl ConnectedRelay {
             .lock()
             .await
             .catalog_sent_at
-            .insert(namespace_path.to_string(), Instant::now());
+            .insert(namespace_path.to_string(), executor::now());
         let bytes = payload.len();
         match self
             .origin
@@ -536,7 +549,12 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
         Retention::For(FETCH_CACHE_RETENTION)
     };
     origin
-        .ensure_track(&key.0, &key.1, now_unix().as_micros() as u64, retention)
+        .ensure_track(
+            &key.0,
+            &key.1,
+            executor::system_time().as_micros() as u64,
+            retention,
+        )
         .await;
 }
 
@@ -553,20 +571,21 @@ mod tests {
         assert_eq!(connection.transport_stats(), None);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
+    #[test]
+    fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
         // Arrange
+        let sent_at = Duration::from_secs(100);
         let mut state = RelayState::default();
         state
             .catalog_sent_at
-            .insert("live/test".to_string(), Instant::now());
+            .insert("live/test".to_string(), sent_at);
 
         // Act / Assert
-        tokio::time::advance(CATALOG_REFRESH_INTERVAL - Duration::from_secs(1)).await;
-        assert!(!state.catalog_refresh_due("live/test"));
-        tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(state.catalog_refresh_due("live/test"));
-        assert!(!state.catalog_refresh_due("live/other"));
+        let almost = sent_at + CATALOG_REFRESH_INTERVAL - Duration::from_secs(1);
+        assert!(!state.catalog_refresh_due("live/test", almost));
+        let due = sent_at + CATALOG_REFRESH_INTERVAL;
+        assert!(state.catalog_refresh_due("live/test", due));
+        assert!(!state.catalog_refresh_due("live/other", due));
     }
 
     #[test]

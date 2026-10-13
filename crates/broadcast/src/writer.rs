@@ -1,6 +1,6 @@
 use anyhow::Result;
 use mediapack::MediaEvent;
-use tokio::task::JoinHandle;
+use moqt::executor::{self, JoinHandle};
 
 use crate::{
     broadcast::{Broadcast, SourceTracks},
@@ -12,7 +12,7 @@ pub struct BroadcastWriter {
     broadcast: Broadcast,
     timing: SharedTiming,
     queue: PublishQueue,
-    _publish_task: JoinHandle<()>,
+    _publish_task: JoinHandle,
 }
 
 impl BroadcastWriter {
@@ -24,7 +24,10 @@ impl BroadcastWriter {
             broadcast,
             timing,
             queue,
-            _publish_task: tokio::spawn(publish_queued_events(consumer, tracks)),
+            _publish_task: executor::spawn(
+                "broadcast-publish",
+                publish_queued_events(consumer, tracks),
+            ),
         }
     }
 
@@ -52,6 +55,8 @@ async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPub
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bytes::Bytes;
     use mediapack::{Timestamp, VideoSample};
 
@@ -80,12 +85,19 @@ mod tests {
 
         // Act
         let queued = writer.push(keyframe());
-        (&mut writer._publish_task).await.unwrap();
-        let failed = writer.push(keyframe());
+        let err = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                tokio::task::yield_now().await;
+                if let Err(err) = writer.push(keyframe()) {
+                    return err;
+                }
+            }
+        })
+        .await
+        .expect("the publish task stops on the connect failure");
 
         // Assert
         assert!(queued.is_ok());
-        let err = failed.unwrap_err();
         assert!(
             format!("{err:#}").contains(r#"unsupported connect url scheme "ftp""#),
             "{err:#}"

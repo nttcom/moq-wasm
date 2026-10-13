@@ -1,7 +1,9 @@
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
+
+use moqt::executor;
 
 const FINISHED_RETENTION: Duration = Duration::from_secs(5);
 
@@ -17,10 +19,11 @@ pub struct StreamLedger {
 pub struct StreamRecord {
     pub track_name: String,
     pub group_id: u64,
-    pub opened_at: Instant,
+    /// `moqt::executor::now()` when the group stream opened.
+    pub opened_at: Duration,
     pub bytes: u64,
     pub objects: u64,
-    pub finished_at: Option<Instant>,
+    pub finished_at: Option<Duration>,
 }
 
 impl StreamRecord {
@@ -31,7 +34,7 @@ impl StreamRecord {
 
 impl StreamLedger {
     pub(crate) fn open(&self, track_name: &str, group_id: u64) {
-        let now = Instant::now();
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         for record in records.iter_mut() {
             if record.track_name == track_name && record.is_open() {
@@ -60,7 +63,7 @@ impl StreamLedger {
     }
 
     pub(crate) fn finish(&self, track_name: &str) {
-        let now = Instant::now();
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         for record in records.iter_mut() {
             if record.track_name == track_name && record.is_open() {
@@ -70,12 +73,12 @@ impl StreamLedger {
     }
 
     pub fn snapshot(&self) -> Vec<StreamRecord> {
-        let now = Instant::now();
+        let now = executor::now();
         let mut records = self.records.lock().unwrap();
         records.retain(|record| {
             record
                 .finished_at
-                .is_none_or(|finished_at| now.duration_since(finished_at) < FINISHED_RETENTION)
+                .is_none_or(|finished_at| now.saturating_sub(finished_at) < FINISHED_RETENTION)
         });
         records.clone()
     }
