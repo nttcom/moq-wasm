@@ -23,7 +23,7 @@ import {
   SubscriptionStateStore,
   SubgroupObjectHandler
 } from './subscriptionStateManager'
-import { OBJECT_STATUS_END_OF_GROUP } from '../../utils/media/objectStatus'
+import { SubgroupWriter } from './subgroupWriter'
 
 type PendingVoidResolver = { resolve: () => void; reject: (error: Error) => void }
 type PendingSubscribeResolver = { resolve: (response: SubscribeOkMessage) => void; reject: (error: Error) => void }
@@ -573,19 +573,10 @@ export class MoqtClientWrapper {
   }
 
   async sendSingleObjectGroup(trackAlias: bigint, groupId: bigint, payload: Uint8Array): Promise<void> {
-    const client = this.requireConnectedClient()
-    const subgroupId = 0n
-    await client.sendSubgroupHeader(trackAlias, groupId, subgroupId, 0)
-    await client.sendSubgroupObject(trackAlias, groupId, subgroupId, 0n, undefined, payload, undefined)
-    await client.sendSubgroupObject(
-      trackAlias,
-      groupId,
-      subgroupId,
-      1n,
-      OBJECT_STATUS_END_OF_GROUP,
-      new Uint8Array(0),
-      undefined
-    )
+    const writer = new SubgroupWriter(this.requireConnectedClient(), trackAlias)
+    await writer.openGroup(groupId)
+    await writer.send(payload)
+    await writer.closeGroup()
   }
 
   async sendSubgroupTextForTrack(trackNamespace: string[], trackName: string, text: string): Promise<void> {

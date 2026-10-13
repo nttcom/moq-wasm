@@ -37,7 +37,6 @@ type StatsSnapshot = {
     sendActiveMs: number
     objectSendMs: number
     serializeMs: number
-    endOfGroupMs: number
     queueDepth: number
     objectBytes: number
     objectCount: number
@@ -51,7 +50,6 @@ type StatsSnapshot = {
     sendActiveMs: number
     objectSendMs: number
     serializeMs: number
-    endOfGroupMs: number
     queueDepth: number
     objectBytes: number
     objectCount: number
@@ -232,7 +230,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           localCameraSendActiveMs: snapshot.localCameraVideoSendTiming?.sendActiveMs ?? null,
           localCameraSendObjectMs: snapshot.localCameraVideoSendTiming?.objectSendMs ?? null,
           localCameraSendSerializeMs: snapshot.localCameraVideoSendTiming?.serializeMs ?? null,
-          localCameraSendEndOfGroupMs: snapshot.localCameraVideoSendTiming?.endOfGroupMs ?? null,
           localCameraSendQueueDepth: snapshot.localCameraVideoSendTiming?.queueDepth ?? null,
           localCameraSendObjectBytes: snapshot.localCameraVideoSendTiming?.objectBytes ?? null,
           localCameraSendObjectCount: snapshot.localCameraVideoSendTiming?.objectCount ?? null,
@@ -249,7 +246,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           localScreenShareSendActiveMs: snapshot.localScreenShareVideoSendTiming?.sendActiveMs ?? null,
           localScreenShareSendObjectMs: snapshot.localScreenShareVideoSendTiming?.objectSendMs ?? null,
           localScreenShareSendSerializeMs: snapshot.localScreenShareVideoSendTiming?.serializeMs ?? null,
-          localScreenShareSendEndOfGroupMs: snapshot.localScreenShareVideoSendTiming?.endOfGroupMs ?? null,
           localScreenShareSendQueueDepth: snapshot.localScreenShareVideoSendTiming?.queueDepth ?? null,
           localScreenShareSendObjectBytes: snapshot.localScreenShareVideoSendTiming?.objectBytes ?? null,
           localScreenShareSendObjectCount: snapshot.localScreenShareVideoSendTiming?.objectCount ?? null,
