@@ -7,10 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestFailure, Session,
-    wire::{AuthorizationToken, ClientSetup, SetupParameter},
-};
+use moqt::{ClientConfig, Endpoint, QUIC, RequestFailure, Session};
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 use crate::{
@@ -31,20 +28,6 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 // Picking a free port and binding it are two steps; tests spawning relays in
 // parallel must not interleave them or two relays race for the same port.
 static PORT_BIND_LOCK: Mutex<()> = Mutex::new(());
-
-pub(crate) fn client_setup(authorization_token: Vec<AuthorizationToken>) -> ClientSetup {
-    ClientSetup::new(
-        vec![moqt::wire::MOQ_TRANSPORT_VERSION],
-        SetupParameter {
-            path: None,
-            max_request_id: 1,
-            authorization_token,
-            max_auth_token_cache_size: None,
-            authority: None,
-            moq_implementation: None,
-        },
-    )
-}
 
 pub(crate) fn app_token(publish: Option<&str>, subscribe: Option<&str>) -> VerifiedToken {
     VerifiedToken {

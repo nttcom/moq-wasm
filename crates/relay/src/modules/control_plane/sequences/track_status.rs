@@ -63,7 +63,7 @@ impl TrackStatus {
 mod tests {
     use std::sync::Mutex;
 
-    use moqt::wire::AuthorizationToken;
+    use moqt::AuthorizationToken;
 
     use super::*;
     use crate::modules::{

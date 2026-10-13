@@ -1,5 +1,5 @@
 use moqt::RequestErrorCode;
-use moqt::wire::FetchParams;
+use moqt::fetch::FetchParams;
 
 use crate::modules::{
     auth::{

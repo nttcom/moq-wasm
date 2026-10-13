@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::{TerminationErrorCode, wire::ClientSetup};
+use moqt::{AuthorizationToken, TerminationErrorCode};
 
 use crate::{
     AuthConfig,
@@ -37,11 +37,11 @@ impl SessionAuthenticator {
 
     pub(crate) async fn authenticate(
         &self,
-        client_setup: &ClientSetup,
+        authorization_tokens: &[AuthorizationToken],
         accepted_peer: &SessionPeer,
     ) -> Result<VerifiedToken, Rejected> {
         let relay_endpoint = matches!(accepted_peer, SessionPeer::Relay);
-        let token = match extract_token(&client_setup.setup_parameters.authorization_token) {
+        let token = match extract_token(authorization_tokens) {
             Ok(token) => token,
             Err(TokenParameterError::Missing) if !relay_endpoint => {
                 return Ok(VerifiedToken::anonymous());
@@ -89,12 +89,12 @@ impl SessionAuthenticator {
 mod tests {
     use std::sync::Arc;
 
-    use moqt::{TerminationErrorCode, wire::AuthorizationToken};
+    use moqt::{AuthorizationToken, TerminationErrorCode};
 
     use super::SessionAuthenticator;
     use crate::modules::{
         auth::{
-            test_support::{StubOutcome, StubVerifier, app_token, client_setup, relay_token},
+            test_support::{StubOutcome, StubVerifier, app_token, relay_token},
             verified_token::VerifiedToken,
         },
         domain::session_peer::SessionPeer,
@@ -106,8 +106,8 @@ mod tests {
         }
     }
 
-    fn setup_with_jwt() -> moqt::wire::ClientSetup {
-        client_setup(vec![AuthorizationToken::use_value_utf8("jwt")])
+    fn jwt_tokens() -> Vec<AuthorizationToken> {
+        vec![AuthorizationToken::use_value_utf8("jwt")]
     }
 
     #[tokio::test]
@@ -117,7 +117,7 @@ mod tests {
 
         // Act
         let token = authenticator
-            .authenticate(&client_setup(vec![]), &SessionPeer::Client)
+            .authenticate(&[], &SessionPeer::Client)
             .await
             .unwrap();
 
@@ -132,7 +132,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(&client_setup(vec![]), &SessionPeer::Relay)
+            .authenticate(&[], &SessionPeer::Relay)
             .await
             .unwrap_err();
 
@@ -147,7 +147,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(&setup_with_jwt(), &SessionPeer::Client)
+            .authenticate(&jwt_tokens(), &SessionPeer::Client)
             .await
             .unwrap_err();
 
@@ -163,7 +163,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(&setup_with_jwt(), &SessionPeer::Client)
+            .authenticate(&jwt_tokens(), &SessionPeer::Client)
             .await
             .unwrap_err();
 
@@ -178,7 +178,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(&setup_with_jwt(), &SessionPeer::Client)
+            .authenticate(&jwt_tokens(), &SessionPeer::Client)
             .await
             .unwrap_err();
 
@@ -193,7 +193,7 @@ mod tests {
 
         // Act
         let rejected = authenticator
-            .authenticate(&setup_with_jwt(), &SessionPeer::Relay)
+            .authenticate(&jwt_tokens(), &SessionPeer::Relay)
             .await
             .unwrap_err();
 
@@ -208,7 +208,7 @@ mod tests {
 
         // Act
         let token = authenticator
-            .authenticate(&setup_with_jwt(), &SessionPeer::Client)
+            .authenticate(&jwt_tokens(), &SessionPeer::Client)
             .await
             .unwrap();
 

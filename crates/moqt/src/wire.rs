@@ -9,7 +9,6 @@ pub use crate::modules::moqt::control_plane::error_codes::RequestKind;
 pub use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
 pub use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
 pub use crate::modules::moqt::control_plane::control_messages::messages::namespace_ok::NamespaceOk;
-pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::filter_type::FilterType;
 pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
@@ -25,7 +24,6 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::request
 pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate;
 pub use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe::Unsubscribe;
 pub use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe_namespace::UnsubscribeNamespace;
-pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchParams;
 pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchHeader;
 pub use crate::modules::moqt::data_plane::object::fetch::FetchObject;

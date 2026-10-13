@@ -2,7 +2,7 @@ use crate::modules::transport::transport_connection::BoxedConnection;
 use std::sync::atomic::AtomicU64;
 
 use crate::{
-    Session, TerminationErrorCode,
+    AuthorizationToken, Session, TerminationErrorCode,
     modules::moqt::{
         control_plane::control_messages::messages::client_setup::ClientSetup,
         data_plane::stream::{bi_stream_sender::BiStreamSender, stream_receiver::BiStreamReceiver},
@@ -20,7 +20,14 @@ pub struct Handshake {
 }
 
 impl Handshake {
-    pub fn client_setup(&self) -> &ClientSetup {
+    /// The AUTHORIZATION TOKEN parameters of the CLIENT_SETUP, for the
+    /// application to decide between `accept` and `reject`.
+    pub fn authorization_tokens(&self) -> &[AuthorizationToken] {
+        &self.client_setup.setup_parameters.authorization_token
+    }
+
+    #[cfg(test)]
+    pub(crate) fn client_setup(&self) -> &ClientSetup {
         &self.client_setup
     }
 

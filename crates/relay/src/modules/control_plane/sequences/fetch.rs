@@ -5,7 +5,7 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::sync::Arc;
 
-use moqt::wire::FetchParams;
+use moqt::fetch::FetchParams;
 use tracing::Span;
 
 use crate::modules::{
