@@ -296,6 +296,11 @@ impl ControlMessageReceiveTask {
                 ))
             }
             ReceivedMessage::GoAway(go_away) => {
+                if let Err(reason) = session.note_go_away_received(&go_away.new_session_uri) {
+                    tracing::error!("Protocol violation: {reason}");
+                    session.close_with_error(TerminationErrorCode::ProtocolViolation, reason);
+                    return DepacketizeResult::SessionClosed;
+                }
                 let go_away_handler = GoAwayHandler::new(go_away);
                 DepacketizeResult::SessionEvent(SessionEvent::GoAway(go_away_handler))
             }

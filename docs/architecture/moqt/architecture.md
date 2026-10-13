@@ -220,6 +220,10 @@ reason as `TransportClose`; it reads no session events, so a task can await it
 beside `receive_event()`. `Session::url_scheme()` is `moqt` for raw QUIC and
 `https` for WebTransport, so a server sending GOAWAY can name the new session
 URI in the scheme the client connected with (§9.4).
+`SessionContext` knows whether it is the server side and whether a GOAWAY
+was already received: a second GOAWAY, or one carrying a New Session
+URI at a server, closes the session with PROTOCOL_VIOLATION before any event
+is emitted (§9.4 MUSTs).
 `Publisher::begin_publish_namespace` returns once PUBLISH_NAMESPACE is written,
 with a `PendingPublishNamespace` whose `accepted()` awaits the reply, so a
 caller fanning out to many sessions can keep the writes ordered without

@@ -320,6 +320,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_go_away_names_the_new_session_uri_to_the_client() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-go-away-uri").await;
+
+        // Act
+        server
+            .go_away("moqt://relay-b.example:4433".to_string())
+            .await
+            .unwrap();
+
+        // Assert
+        let SessionEvent::GoAway(go_away) = client.receive_event().await.unwrap() else {
+            panic!("expected GOAWAY from the server");
+        };
+        assert_eq!(go_away.new_session_uri(), "moqt://relay-b.example:4433");
+    }
+
+    #[tokio::test]
+    async fn second_go_away_is_a_protocol_violation() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-go-away-twice").await;
+        server.go_away(String::new()).await.unwrap();
+        assert!(matches!(
+            client.receive_event().await.unwrap(),
+            SessionEvent::GoAway(_)
+        ));
+
+        // Act
+        server.go_away(String::new()).await.unwrap();
+
+        // Assert: the client closes the session
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(0x3));
+        assert_eq!(close.reason, "received a second GOAWAY");
+    }
+
+    #[tokio::test]
+    async fn go_away_with_a_uri_sent_to_a_server_is_a_protocol_violation() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("session-go-away-to-server").await;
+
+        // Act
+        client
+            .go_away("moqt://relay-b.example:4433".to_string())
+            .await
+            .unwrap();
+
+        // Assert: the server closes the session
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(0x3));
+        assert_eq!(
+            close.reason,
+            "GOAWAY sent to a server carries a New Session URI"
+        );
+        drop(server);
+    }
+
+    #[tokio::test]
     async fn go_away_reaches_the_peer_with_its_uri() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("session-go-away").await;
