@@ -5,6 +5,7 @@ import { DjevStatusView } from '../../utils/djevStatus'
 import { showBotOffHoursNotice } from '../../utils/botHours'
 import { appendCloudRelayPresetButtons, configureRelayUrlControls } from '../../utils/relayPresets'
 import { type StatusState, element, getErrorMessage, setStatus } from '../media/common'
+import { timeSeededGroupId } from '../../utils/media/clock'
 
 const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
 const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']
@@ -16,9 +17,7 @@ const LARGEST_OBJECT_FILTER = 0x2
 type Prompt = { target: string; video: string } | { target: null }
 
 class PromptPublisher {
-  /// The relay isolates a track whose publisher repeats a location, so a
-  /// publisher that comes back must not restart its group ids at zero.
-  private nextGroupId = BigInt(Date.now()) * 1_000n
+  private nextGroupId = timeSeededGroupId()
   latestGroupId: bigint | undefined
 
   constructor(

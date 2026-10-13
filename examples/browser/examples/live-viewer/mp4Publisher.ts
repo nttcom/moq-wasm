@@ -11,7 +11,7 @@ import init, {
   type Mp4SampleTable,
   type Mp4VideoTrack
 } from '../../pkg/moqt'
-import { monotonicUnixMicros } from '../../utils/media/clock'
+import { monotonicUnixMicros, timeSeededGroupId } from '../../utils/media/clock'
 import { buildLocHeader, bytesToBase64 } from '../../utils/media/loc'
 import {
   type ReplayTrack,
@@ -112,7 +112,7 @@ export class Mp4Publisher {
     const media = await openMp4(options.file)
     let trackAliases: TrackAliases
     try {
-      this.nextCatalogGroupId = BigInt(monotonicUnixMicros())
+      this.nextCatalogGroupId = timeSeededGroupId()
       this.sentStreams.reset()
       this.catalogGroups = new Map()
       this.timelineGroups = new Map()
@@ -213,8 +213,8 @@ export class Mp4Publisher {
     const catalog = buildCatalogJson(options.namespace, media)
     let catalogRefreshMicros = monotonicUnixMicros() + CATALOG_REFRESH_MICROS
     const records: MediaTimelineRecord[] = []
-    let nextTimelineGroupId = BigInt(monotonicUnixMicros())
-    let nextGroupId = BigInt(monotonicUnixMicros())
+    let nextTimelineGroupId = timeSeededGroupId()
+    let nextGroupId = timeSeededGroupId()
     let groupId: bigint | undefined
     const originMicros = monotonicUnixMicros()
     let passOriginMicros = originMicros

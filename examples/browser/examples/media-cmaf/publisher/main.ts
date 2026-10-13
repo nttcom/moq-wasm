@@ -3,6 +3,7 @@ import type { MOQTClient } from '../../../pkg/moqt'
 import { AUTH_INFO, CMAF_FPS } from '../const'
 import { getFormElement } from '../utils'
 import { MediaTransportState } from '../../../utils/media/transportState'
+import { timeSeededGroupId } from '../../../utils/media/clock'
 import { configureRelayUrlControls } from '../../../utils/relayPresets'
 import { MEDIA_VIDEO_PROFILES, MEDIA_AUDIO_PROFILES, MEDIA_CATALOG_TRACK_NAME, buildCmafCatalogJson } from '../catalog'
 import {
@@ -17,6 +18,7 @@ let mediaStream: MediaStream | null = null
 const moqtClient = new MoqtClientWrapper()
 const transportState = new MediaTransportState()
 const catalogAliases = new Set<string>()
+let nextCatalogGroupId = timeSeededGroupId()
 
 type MoqSendVisualizationState = {
   groupId: bigint | null
@@ -181,8 +183,9 @@ const sendCatalog = async (client: MOQTClient, trackAlias: bigint, trackNamespac
     return
   }
   const payload = new TextEncoder().encode(buildCmafCatalogJson(trackNamespace))
-  await client.sendSubgroupHeader(trackAlias, 0n, 0n, 0)
-  await client.sendSubgroupObject(trackAlias, 0n, 0n, 0n, undefined, payload, undefined)
+  const groupId = nextCatalogGroupId++
+  await client.sendSubgroupHeader(trackAlias, groupId, 0n, 0)
+  await client.sendSubgroupObject(trackAlias, groupId, 0n, 0n, undefined, payload, undefined)
   catalogAliases.add(aliasKey)
   console.info('[CmafPublisher] sent catalog', { trackAlias: aliasKey, trackNamespace })
 }
