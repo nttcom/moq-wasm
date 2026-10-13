@@ -10,8 +10,9 @@ use moqt::{
 };
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use onvif_ingest::{
-    app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_decoder,
+    app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker,
     rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
+    rtsp_source::{self, now_micros},
     soap_client,
 };
 use serde::Deserialize;
@@ -79,9 +80,9 @@ struct MoqtArgs {
     #[arg(long, default_value = "avc1.640028")]
     video_codec: String,
 
-    /// Payload format to send over MoQ: annexb or avcc
-    #[arg(long, default_value = "annexb")]
-    payload_format: String,
+    /// Payload format to send over MoQ
+    #[arg(long, value_enum, default_value = "annexb")]
+    payload_format: rtsp_source::PayloadFormat,
 
     /// Dump the first keyframe AnnexB payload for ffprobe (default: /tmp/moqt-onvif-keyframe.h264)
     #[arg(
@@ -148,21 +149,11 @@ async fn main() -> Result<()> {
         command_namespace
     );
 
-    let payload_format = match rtsp_decoder::PayloadFormat::parse(&args.payload_format) {
-        Some(format) => format,
-        None => {
-            log::warn!(
-                "unknown payload format '{}', fallback to annexb",
-                args.payload_format
-            );
-            rtsp_decoder::PayloadFormat::AnnexB
-        }
-    };
     run_moqt_bridge(BridgeContext {
         session,
         publisher,
         video_codec: args.video_codec,
-        payload_format,
+        payload_format: args.payload_format,
         catalog_track,
         expected_tracks,
         publisher_priority: args.publisher_priority,
@@ -184,7 +175,7 @@ struct BridgeContext {
     session: std::sync::Arc<Session>,
     publisher: moqt::Publisher,
     video_codec: String,
-    payload_format: rtsp_decoder::PayloadFormat,
+    payload_format: rtsp_source::PayloadFormat,
     catalog_track: String,
     expected_tracks: HashSet<String>,
     publisher_priority: u8,
@@ -373,12 +364,14 @@ enum MediaTrackKind {
 fn spawn_rtsp_bridge(
     rtsp_url: String,
     codec_label: String,
-    payload_format: rtsp_decoder::PayloadFormat,
+    payload_format: rtsp_source::PayloadFormat,
     tx: mpsc::Sender<RtspPacket>,
     err_tx: std_mpsc::Sender<String>,
 ) {
     std::thread::spawn(move || {
-        rtsp_decoder::run_encoded_url(rtsp_url, codec_label, payload_format, tx, err_tx);
+        if let Err(err) = rtsp_source::run(&rtsp_url, payload_format, codec_label, tx) {
+            let _ = err_tx.send(format!("{err:#}"));
+        }
     });
 }
 
@@ -1423,9 +1416,6 @@ async fn maybe_send_video_catalog_update(
     if !packet.is_keyframe {
         return Ok(());
     }
-    if packet.description_base64.is_none() {
-        return Ok(());
-    }
     let Some(codec) = packet.codec.as_deref() else {
         return Ok(());
     };
@@ -1675,13 +1665,6 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     duration.as_millis() as u64
-}
-
-fn now_micros() -> u64 {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    duration.as_micros() as u64
 }
 
 fn init_logger() {
