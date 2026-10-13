@@ -3,7 +3,7 @@ import { CHAT_MODERATION_PATH } from '../playwright.helpers'
 import { leavePage } from './leave-all-pages'
 
 const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-const jevOrigin = process.env.CHAT_MODERATION_E2E_JEV_ORIGIN!
+export const JEV_ORIGIN = process.env.CHAT_MODERATION_E2E_JEV_ORIGIN!
 
 export const LEAVE_BUTTON_TEST_ID = 'chat-moderation-leave-button'
 export const ABUSIVE_TEXT = 'e2e-abusive'
@@ -13,11 +13,6 @@ export interface ChatPage {
   messages: Locator
   send(text: string): Promise<void>
   leave(): Promise<void>
-}
-
-export async function delayJevAnswers(milliseconds: number): Promise<void> {
-  const response = await fetch(`${jevOrigin}/delay`, { method: 'PUT', body: String(milliseconds) })
-  expect(response.ok).toBe(true)
 }
 
 export async function joinChat(page: Page): Promise<ChatPage> {
