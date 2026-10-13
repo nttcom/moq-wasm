@@ -2,6 +2,7 @@ use std::{net::UdpSocket, path::Path, time::Duration};
 
 use bytes::Bytes;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+use tracing_subscriber::EnvFilter;
 
 use crate::{
     ClientConfig, DUAL, Endpoint, Session, SessionEvent, Subscription, TrackReader,
@@ -32,6 +33,14 @@ const PUBLISHER_PRIORITY: u8 = 128;
 /// fails the wait.
 pub(crate) const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
+fn init_test_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _already_initialized = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_test_writer()
+        .try_init();
+}
+
 pub(crate) fn free_udp_port() -> u16 {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
     socket.local_addr().unwrap().port()
@@ -58,6 +67,7 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
+    init_test_tracing();
     let port = free_udp_port();
     let cert_dir = std::env::temp_dir().join(format!("moqt-test-{name}-{port}"));
     let mut server_config = write_self_signed_cert(&cert_dir);
