@@ -52,6 +52,7 @@ pub(crate) struct RecordedControlMessages {
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
+    go_aways: Arc<Mutex<Vec<String>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
     publish_namespace_dones: Arc<Mutex<Vec<String>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
@@ -65,6 +66,11 @@ impl RecordedControlMessages {
 
     pub(crate) fn closes(&self) -> Vec<(TerminationErrorCode, String)> {
         self.closes.lock().unwrap().clone()
+    }
+
+    /// The New Session URIs of the GOAWAYs sent on the session.
+    pub(crate) fn go_aways(&self) -> Vec<String> {
+        self.go_aways.lock().unwrap().clone()
     }
 
     pub(crate) fn publish_namespaces(&self) -> Vec<String> {
@@ -300,12 +306,21 @@ impl Session for MockUpstreamSession {
             .push((code, reason.to_string()));
     }
 
+    async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
+        self.recorded.go_aways.lock().unwrap().push(new_session_uri);
+        Ok(())
+    }
+
     fn transport_stats(&self) -> moqt::TransportStats {
         self.transport_stats
     }
 
     fn transport_addresses(&self) -> moqt::server::TransportAddresses {
         moqt::server::TransportAddresses::default()
+    }
+
+    fn url_scheme(&self) -> &'static str {
+        "moqt"
     }
 }
 

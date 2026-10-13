@@ -61,9 +61,15 @@ impl AuthConfig {
 pub struct RelayConfig {
     pub relay_id: String,
     pub advertise_host: String,
+    /// `host[:port]` clients connect to; a draining relay publishes it so
+    /// that other relays can name it in GOAWAY.
+    pub public_host: String,
     pub port: u16,
     pub inner_port: u16,
     pub redis_url: Option<String>,
+    /// How long a shutdown waits for the clients to leave after GOAWAY
+    /// before closing them with GOAWAY_TIMEOUT.
+    pub drain_timeout: Duration,
     pub auth: AuthConfig,
 }
 
@@ -86,7 +92,14 @@ impl RelayConfig {
             .map(|value| value.parse::<u16>())
             .transpose()?
             .unwrap_or(port + 1);
+        let public_host =
+            non_empty_env("RELAY_PUBLIC_HOST").unwrap_or_else(|| format!("localhost:{port}"));
         let redis_url = std::env::var("REDIS_URL").ok();
+        let drain_timeout = seconds(
+            non_empty_env("RELAY_DRAIN_TIMEOUT_SECS"),
+            "RELAY_DRAIN_TIMEOUT_SECS",
+            Duration::from_secs(30),
+        )?;
         let auth = AuthConfig::from_env_values(AuthEnv {
             vts_url: non_empty_env("AUTH_VTS_URL"),
             relay_token: non_empty_env("AUTH_RELAY_TOKEN"),
@@ -97,9 +110,11 @@ impl RelayConfig {
         Ok(Self {
             relay_id,
             advertise_host,
+            public_host,
             port,
             inner_port,
             redis_url,
+            drain_timeout,
             auth,
         })
     }

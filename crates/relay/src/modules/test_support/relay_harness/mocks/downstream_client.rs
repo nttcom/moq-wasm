@@ -226,11 +226,19 @@ impl Session for MockDownstreamSession {
 
     fn close(&self, _code: moqt::TerminationErrorCode, _reason: &str) {}
 
+    async fn go_away(&self, _new_session_uri: String) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     fn transport_stats(&self) -> moqt::TransportStats {
         moqt::TransportStats::default()
     }
 
     fn transport_addresses(&self) -> moqt::server::TransportAddresses {
         moqt::server::TransportAddresses::default()
+    }
+
+    fn url_scheme(&self) -> &'static str {
+        "moqt"
     }
 }

@@ -37,8 +37,10 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 1. `init_logging` (tracing + OpenTelemetry OTLP export).
 2. Generate self-signed certs under `RELAY_CERT_DIR` (default `crates/relay/keys/`) if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
-   `RELAY_PORT` (default 4433), `RELAY_INNER_PORT` (default port+1),
-   `REDIS_URL` (optional), and the authentication settings (`AuthConfig`):
+   `RELAY_PUBLIC_HOST` (the `host[:port]` clients connect to, default
+   `localhost:RELAY_PORT`), `RELAY_PORT` (default 4433), `RELAY_INNER_PORT`
+   (default port+1), `REDIS_URL` (optional), and the authentication settings
+   (`AuthConfig`):
    `AUTH_VTS_URL` and `AUTH_RELAY_TOKEN` are both required; startup fails
    without them. There is no unauthenticated mode: a relay that should serve
    only anonymous clients still needs a VTS to reject the tokens it cannot
@@ -60,6 +62,39 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
   `InterRelayConnectionManager`, `UpstreamPublisherResolver`, `IngressCoordinator`, `EgressCoordinator`,
   `EventHandler` (with the `WorkerDeps` every session worker clones), and the
   cache-eviction job, and returns the relay-wide `SessionEvent` sender.
+
+## Shutdown
+
+Session migration, draft-14 §3.5 (`relay_server/drain.rs`). On the first
+Ctrl+C `main.rs` stops the client transport's accept loop
+(`SessionHandler::stop_accepting`; the inner endpoint keeps accepting) and
+calls `RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
+
+1. marks the relay `draining` in the route registry, so other relays stop
+   routing new cascaded subscriptions to it and no longer pick it as a
+   migration target;
+2. asks the registry for a migration target: the `public_host` of the
+   lowest-id other `active` relay, or none standalone / when every other relay
+   is draining;
+3. sends GOAWAY to every `SessionPeer::Client` session with the target in the
+   scheme the client connected with (`moqt://host` for raw QUIC,
+   `https://host` for WebTransport, from `Session::url_scheme`), or with
+   an empty URI when there is no target, which tells the client to reconnect
+   to the same URI once the relay is back;
+4. waits on `SessionRepository::client_session_count` until no client
+   session is left, which happens when every client closed its session after
+   migrating;
+5. closes the client sessions still present at the timeout with
+   `GOAWAY_TIMEOUT` (§3.5 SHOULD).
+
+`main.rs` then waits up to 3 s for the client endpoint to go idle
+(`SessionHandler::wait_idle`), so the CONNECTION_CLOSE of a session closed at
+the timeout leaves the socket before the process exits. A second Ctrl+C
+during the drain exits at once. Relay-peer sessions receive no GOAWAY: the
+remote relay does not act on one, and it reaches the publisher again through
+the registry once this relay is gone. A client whose handshake completes
+between the accept loop stopping and the GOAWAYs being sent is closed at the
+timeout like a client that ignored its GOAWAY.
 
 ## Control plane
 
@@ -664,6 +699,15 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   rewrites the relay info hash and re-registers any owned route whose entry is
   missing, so state that expired while the relay, its host or Redis was
   stalled is restored instead of staying lost until restart.
+- The relay info hash `relay:<RELAY_ID>` carries two addresses: `host:port`
+  (`RELAY_ADVERTISE_HOST`, `RELAY_INNER_PORT`) is what other relays dial, and
+  `public_host` (`RELAY_PUBLIC_HOST`) is what clients connect to. Its `status`
+  is `active` until `mark_draining` turns it into `draining` for the rest of
+  the process (the heartbeat keeps writing it): the route lookups and the Lua
+  scripts only return `active` relays, so a draining relay receives no new
+  cascaded subscriptions, and `find_migration_target` names the `public_host`
+  of the lowest-id other `active` relay for the GOAWAY a draining relay sends
+  (see "Shutdown").
 - Only **client-origin** namespaces register routes: `PublishNamespace`
   registers the publisher route and notifies remote subscriber relays;
   `SubscribeNamespace` registers the subscriber route when the first client
@@ -798,6 +842,9 @@ so cache, fan-out, FETCH and authorization need no separate path.
 - **Relay subscriptions serve clients**: an upstream subscription to another
   relay only exists while a client of this relay watches the track, and a
   relay's SUBSCRIBE is never forwarded to a third relay.
+- **A draining relay is left by its clients, not by the relay**: after
+  GOAWAY the relay only waits; it closes a client session itself only at the
+  drain timeout, with `GOAWAY_TIMEOUT`.
 
 ## Testing conventions
 Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —

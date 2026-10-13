@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Weak},
 };
 
+use tokio::sync::watch;
 use tracing::{Instrument, Span};
 
 use crate::modules::{
@@ -19,6 +20,9 @@ use crate::modules::{
 
 pub(crate) struct SessionRepository {
     sessions: HashMap<SessionId, SessionEntry>,
+    /// Number of `SessionPeer::Client` sessions; a draining relay waits for
+    /// it to reach zero.
+    client_session_count: watch::Sender<usize>,
 }
 
 struct SessionEntry {
@@ -62,7 +66,17 @@ impl SessionRepository {
     pub(crate) fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            client_session_count: watch::Sender::new(0),
         }
+    }
+
+    fn update_client_session_count(&self) {
+        let count = self
+            .sessions
+            .values()
+            .filter(|entry| entry.peer == SessionPeer::Client)
+            .count();
+        self.client_session_count.send_replace(count);
     }
 
     pub(crate) async fn add(
@@ -112,16 +126,30 @@ impl SessionRepository {
                 _event_forward_task: event_forward_task,
             },
         );
+        self.update_client_session_count();
     }
 
     pub(crate) fn remove(&mut self, session_id: SessionId) {
         let session_removed = self.sessions.remove(&session_id).is_some();
+        self.update_client_session_count();
         tracing::info!(
             session_id = %session_id,
             session_removed,
             remaining_sessions = self.sessions.len(),
             "session removed from repository"
         );
+    }
+
+    pub(crate) fn sessions_with_peer(&self, peer: SessionPeer) -> Vec<Arc<dyn Session>> {
+        self.sessions
+            .values()
+            .filter(|entry| entry.peer == peer)
+            .map(|entry| entry.session.clone())
+            .collect()
+    }
+
+    pub(crate) fn client_session_count(&self) -> watch::Receiver<usize> {
+        self.client_session_count.subscribe()
     }
 
     pub(crate) fn session_span(&self, session_id: SessionId) -> Option<Span> {

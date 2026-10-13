@@ -1,11 +1,15 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 const CERT_DIR: &str = "keys";
+/// Bound on waiting for the CONNECTION_CLOSE of the sessions closed with
+/// GOAWAY_TIMEOUT to leave the socket before the process exits.
+const CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn cert_dir() -> PathBuf {
     std::env::var_os("RELAY_CERT_DIR")
@@ -60,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     let cert_path = get_cert_path().to_str().unwrap().to_string();
 
     let server = relay::RelayServer::new_with_config(&key_path, &cert_path, config.clone()).await?;
-    let _client_handler = server.spawn_client_transport::<moqt::DUAL>(config.port);
+    let mut client_handler = server.spawn_client_transport::<moqt::DUAL>(config.port);
     let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port);
     let _stats_publisher = server.spawn_stats_publisher(config.relay_id.clone(), config.inner_port);
 
@@ -72,7 +76,19 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Ctrl+C to shutdown");
 
     tokio::signal::ctrl_c().await?;
-    tracing::info!("Shutdown signal received. Closing...");
-    tracing::info!("Relay server gracefully shutdown.");
+    tracing::info!(
+        drain_timeout_secs = config.drain_timeout.as_secs(),
+        "Shutdown signal received; draining client sessions (Ctrl+C again to exit at once)"
+    );
+    client_handler.stop_accepting();
+    tokio::select! {
+        _ = server.drain(config.drain_timeout) => {
+            let _ = tokio::time::timeout(CLOSE_FLUSH_TIMEOUT, client_handler.wait_idle()).await;
+            tracing::info!("Relay server gracefully shutdown.");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::warn!("Second shutdown signal received; exiting without waiting for the clients");
+        }
+    }
     Ok(())
 }

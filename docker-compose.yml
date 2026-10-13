@@ -38,6 +38,7 @@ services:
     environment:
       RELAY_ID: relay-a
       RELAY_ADVERTISE_HOST: relay-a
+      RELAY_PUBLIC_HOST: localhost:4433
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
@@ -69,6 +70,7 @@ services:
     environment:
       RELAY_ID: relay-b
       RELAY_ADVERTISE_HOST: relay-b
+      RELAY_PUBLIC_HOST: localhost:4434
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
       REDIS_URL: redis://redis:6379
