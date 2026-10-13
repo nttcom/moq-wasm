@@ -192,7 +192,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     const timer = window.setInterval(() => {
       const snapshot = statsSnapshotRef.current
       const sampledAt = Date.now()
-      const controller = session.getMediaController()
+      const { subscriber } = session.getMediaController()
       const latestRemoteStats = new Map<string, RemotePlaybackStats>()
       setStatsHistory((prev) => {
         const next = new Map<string, SidebarStatsSample[]>()
@@ -205,7 +205,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         }
         next.set(snapshot.localMemberId, appendStatsSample(prev.get(snapshot.localMemberId), localSample))
         for (const remoteMember of snapshot.remoteMembers) {
-          const stats = controller.getRemotePlaybackStats(remoteMember.id)
+          const stats = subscriber.stats(remoteMember.id)
           latestRemoteStats.set(remoteMember.id, stats)
           const primary = stats.camera ?? stats.screenshare
           const remoteSample: SidebarStatsSample = {

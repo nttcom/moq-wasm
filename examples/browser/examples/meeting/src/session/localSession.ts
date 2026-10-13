@@ -223,7 +223,12 @@ export class LocalSession {
         }
       })
     } else if (resolvedRole === 'video' || resolvedRole === 'screenshare' || resolvedRole === 'audio') {
-      this.mediaController.registerRemoteTrack(remoteUser, trackName, trackAlias, resolvedRole, config)
+      const { subscriber } = this.mediaController
+      if (resolvedRole === 'audio') {
+        subscriber.registerAudioTrack(remoteUser, trackName, trackAlias, config)
+      } else {
+        subscriber.registerVideoTrack(remoteUser, trackName, trackAlias, config)
+      }
     }
 
     return requestId
@@ -286,7 +291,7 @@ export class LocalSession {
     const trackAlias = this.subscribeTrackAliases.get(subscribeId)
     this.subscribeTrackAliases.delete(subscribeId)
     if (trackAlias !== undefined) {
-      this.mediaController.unregisterRemoteTrack(trackAlias)
+      this.mediaController.subscriber.unregisterTrack(trackAlias)
     }
 
     await this.client.unsubscribe(subscribeId)
@@ -326,7 +331,7 @@ export class LocalSession {
     if (trackName === 'chat') {
       return 'chat'
     }
-    const role = this.mediaController.resolveTrackRole(trackName)
+    const role = this.mediaController.publisher.resolveTrackRole(trackName)
     if (role === 'video' && trackName.trim().toLowerCase().startsWith('screenshare')) {
       return 'screenshare'
     }
