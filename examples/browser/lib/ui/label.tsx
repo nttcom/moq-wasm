@@ -1,10 +1,9 @@
 import * as React from 'react'
 import { cn } from './classNames'
 
-export const Label = React.forwardRef<HTMLLabelElement, React.LabelHTMLAttributes<HTMLLabelElement>>(
-  ({ className, ...props }, ref) => (
+export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
+  return (
     <label
-      ref={ref}
       className={cn(
         'text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70',
         className
@@ -12,5 +11,4 @@ export const Label = React.forwardRef<HTMLLabelElement, React.LabelHTMLAttribute
       {...props}
     />
   )
-)
-Label.displayName = 'Label'
+}
