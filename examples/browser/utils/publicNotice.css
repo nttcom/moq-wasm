@@ -1,0 +1,16 @@
+.public-notice {
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid rgba(217, 119, 6, 0.55);
+  border-left-width: 4px;
+  border-radius: 0.6rem;
+  background: rgba(251, 191, 36, 0.14);
+  color: inherit;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+body > .public-notice {
+  margin: 0.75rem;
+}
