@@ -119,7 +119,6 @@ impl FetchIngest {
                 }
             };
             match received {
-                moqt::fetch::Fetch::Header(_) => {}
                 moqt::fetch::Fetch::Object(object) => {
                     Self::append_fetch_object(&cache, object)?;
                 }
@@ -144,13 +143,10 @@ impl FetchIngest {
         }
     }
 
-    fn append_fetch_object(
-        cache: &TrackCache,
-        object: moqt::fetch::FetchObjectField,
-    ) -> anyhow::Result<()> {
-        let (group_id, object_id) = (object.group_id, object.object_id);
+    fn append_fetch_object(cache: &TrackCache, object: moqt::object::Object) -> anyhow::Result<()> {
+        let (group_id, object_id) = (object.location.group_id, object.location.object_id);
         cache
-            .insert(CachedObject::from_fetch_object(object))
+            .insert(CachedObject::from_object(object))
             .map_err(|_| {
                 anyhow::anyhow!(
                     "malformed track detected during fetch fill (group {group_id}, object {object_id})"
@@ -229,7 +225,7 @@ mod tests {
     use std::time::Duration;
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
-        FetchIngest::append_fetch_object(cache, object.to_fetch_object_field())
+        FetchIngest::append_fetch_object(cache, object.to_object())
     }
 
     #[tokio::test]

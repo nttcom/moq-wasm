@@ -24,8 +24,7 @@ use moqt::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
-        FetchObject, FetchObjectField, FetchOk, NamespaceOk, PublishOk, RequestError, RequestKind,
-        SubscribeOk, TrackStatusOk,
+        FetchOk, NamespaceOk, PublishOk, RequestError, RequestKind, SubscribeOk, TrackStatusOk,
     },
 };
 use tokio::sync::Mutex;
@@ -1152,21 +1151,24 @@ impl MOQTClient {
         object_payload: Vec<u8>,
         loc_header: JsValue,
     ) -> Result<(), JsValue> {
-        let fetch_object = match object_status {
-            Some(status) => FetchObject::Status(object_status_from(status)?),
-            None => FetchObject::Payload(Bytes::from(object_payload)),
-        };
-        let field = FetchObjectField::new(
-            group_id,
-            subgroup_id,
-            object_id,
-            publisher_priority,
-            crate::loc::parse_loc_header(loc_header)?,
-            fetch_object,
+        let (status, payload) = status_and_payload(
+            object_status.map(object_status_from).transpose()?,
+            object_payload,
         );
+        let object = Object {
+            location: Location {
+                group_id,
+                object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup { subgroup_id },
+            publisher_priority,
+            status,
+            extension_headers: crate::loc::parse_loc_header(loc_header)?,
+            payload,
+        };
         let sender = self.fetch_sender(request_id).await?;
         let sender = sender.lock().await;
-        sender.send(field).await.map_err(anyhow_error)
+        sender.send_object(&object).await.map_err(anyhow_error)
     }
 
     #[wasm_bindgen(js_name = finishFetch)]

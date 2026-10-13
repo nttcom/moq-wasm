@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, env, time::Duration};
 use anyhow::{Context, Result, bail, ensure};
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
-    fetch::{Fetch, FetchObject, FetchOption},
+    fetch::{Fetch, FetchOption},
     object::{ContentExists, DataReceiver, GroupOrder, Location, Subgroup},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -155,8 +155,8 @@ async fn fetch_catalog_track_names(
             .context("catalog FETCH timed out")??
         {
             Fetch::Object(object) => {
-                if let FetchObject::Payload(payload) = object.fetch_object {
-                    let catalog: Catalog = serde_json::from_slice(&payload)?;
+                if !object.payload.is_empty() {
+                    let catalog: Catalog = serde_json::from_slice(&object.payload)?;
                     return Ok(catalog
                         .tracks
                         .unwrap_or_default()
@@ -165,7 +165,6 @@ async fn fetch_catalog_track_names(
                         .collect());
                 }
             }
-            Fetch::Header(_) => {}
             Fetch::End => bail!("catalog FETCH returned no object"),
         }
     }

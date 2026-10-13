@@ -1,8 +1,5 @@
 use bytes::Bytes;
-use moqt::{
-    fetch::{FetchObject, FetchObjectField},
-    object::{ExtensionHeaders, Object, ObjectStatus, SubgroupStart},
-};
+use moqt::object::{ExtensionHeaders, Object, ObjectStatus, SubgroupStart};
 use tokio::time::Instant;
 
 use crate::modules::data_plane::cache::subgroup_key::SubgroupKey;
@@ -95,27 +92,6 @@ impl CachedObject {
         }
     }
 
-    pub(crate) fn from_fetch_object(field: FetchObjectField) -> Self {
-        let (status, payload) = match field.fetch_object {
-            FetchObject::Payload(payload) => (ObjectStatus::Normal, payload),
-            FetchObject::Status(status) => (status, Bytes::new()),
-        };
-        Self {
-            location: moqt::object::Location {
-                group_id: field.group_id,
-                object_id: field.object_id,
-            },
-            forwarding: ForwardingPreference::Subgroup {
-                subgroup_id: field.subgroup_id,
-            },
-            publisher_priority: field.publisher_priority,
-            status,
-            extension_headers: field.extension_headers,
-            payload,
-            received_at: Instant::now(),
-        }
-    }
-
     pub(crate) fn subgroup_key(&self) -> SubgroupKey {
         match self.forwarding {
             ForwardingPreference::Subgroup { subgroup_id } => SubgroupKey::Stream {
@@ -163,26 +139,6 @@ impl CachedObject {
 
     pub(crate) fn is_datagram(&self) -> bool {
         self.forwarding == ForwardingPreference::Datagram
-    }
-
-    pub(crate) fn to_fetch_object_field(&self) -> FetchObjectField {
-        let subgroup_id = match self.forwarding {
-            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
-            ForwardingPreference::Datagram => self.location.object_id,
-        };
-        let fetch_object = if self.payload.is_empty() {
-            FetchObject::Status(self.status)
-        } else {
-            FetchObject::Payload(self.payload.clone())
-        };
-        FetchObjectField::new(
-            self.location.group_id,
-            subgroup_id,
-            self.location.object_id,
-            self.publisher_priority,
-            self.extension_headers.clone(),
-            fetch_object,
-        )
     }
 }
 
@@ -284,56 +240,5 @@ mod tests {
         let end_of_group = status_object(0, 0, ObjectStatus::EndOfGroup);
         // Act / Assert
         assert!(normal.conflicts_with(&end_of_group));
-    }
-
-    #[test]
-    fn fetch_field_of_datagram_object_uses_object_id_as_subgroup_id() {
-        // Arrange / Act
-        let field = datagram_object(1, 7).to_fetch_object_field();
-        // Assert: §10.4.4
-        assert_eq!(field.subgroup_id, 7);
-        assert_eq!(field.object_id, 7);
-    }
-
-    #[test]
-    fn empty_payload_is_encoded_as_explicit_status() {
-        // Arrange: a zero-length Normal object must encode Object Status 0x0
-        let cached = stream_object_with_payload(0, 0, Bytes::new());
-        // Act
-        let fetch_field = cached.to_fetch_object_field();
-        // Assert
-        assert_eq!(
-            fetch_field.fetch_object,
-            FetchObject::Status(ObjectStatus::Normal)
-        );
-    }
-
-    #[test]
-    fn fetch_object_converts_one_to_one() {
-        // Arrange
-        let field = FetchObjectField::new(
-            3,
-            1,
-            4,
-            200,
-            extension_headers(),
-            FetchObject::Payload(Bytes::from_static(b"p")),
-        );
-        // Act
-        let cached = CachedObject::from_fetch_object(field.clone());
-        // Assert
-        assert_eq!(
-            cached.location,
-            moqt::object::Location {
-                group_id: 3,
-                object_id: 4
-            }
-        );
-        assert_eq!(
-            cached.forwarding,
-            ForwardingPreference::Subgroup { subgroup_id: 1 }
-        );
-        assert_eq!(cached.publisher_priority, 200);
-        assert_eq!(cached.to_fetch_object_field(), field);
     }
 }

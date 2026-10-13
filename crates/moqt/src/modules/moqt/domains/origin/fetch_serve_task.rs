@@ -6,9 +6,9 @@ use tokio::sync::Mutex;
 use super::{FETCH_PUBLISHER_PRIORITY, FETCH_SUBGROUP_ID, OriginState, object_cache::CachedObject};
 use crate::{
     Session,
-    fetch::{FetchHandler, FetchObject, FetchObjectField},
+    fetch::FetchHandler,
     modules::executor::{self, JoinHandle},
-    object::{GroupOrder, Location},
+    object::{ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
 };
 
 pub(super) struct FetchServeTask {
@@ -56,14 +56,16 @@ async fn respond(
         .await?;
     for object in in_group_order(objects, handler.group_order) {
         sender
-            .send(FetchObjectField::new(
-                object.location.group_id,
-                FETCH_SUBGROUP_ID,
-                object.location.object_id,
-                FETCH_PUBLISHER_PRIORITY,
-                object.extension_headers,
-                FetchObject::Payload(object.payload),
-            ))
+            .send_object(&Object {
+                location: object.location,
+                forwarding: ForwardingPreference::Subgroup {
+                    subgroup_id: FETCH_SUBGROUP_ID,
+                },
+                publisher_priority: FETCH_PUBLISHER_PRIORITY,
+                status: ObjectStatus::Normal,
+                extension_headers: object.extension_headers,
+                payload: object.payload,
+            })
             .await?;
     }
     sender.close().await

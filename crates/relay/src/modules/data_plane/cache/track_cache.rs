@@ -835,10 +835,10 @@ mod fetch_tests {
         },
     };
 
-    fn object_ids(objects: &[moqt::fetch::FetchObjectField]) -> Vec<(u64, u64)> {
+    fn object_ids(objects: &[moqt::object::Object]) -> Vec<(u64, u64)> {
         objects
             .iter()
-            .map(|object| (object.group_id, object.object_id))
+            .map(|object| (object.location.group_id, object.location.object_id))
             .collect()
     }
 
@@ -846,7 +846,7 @@ mod fetch_tests {
         cache: &Arc<TrackCache>,
         start: moqt::object::Location,
         end: moqt::object::Location,
-    ) -> JoinHandle<Result<Vec<moqt::fetch::FetchObjectField>, FetchInterrupted>> {
+    ) -> JoinHandle<Result<Vec<moqt::object::Object>, FetchInterrupted>> {
         let cache = cache.clone();
         tokio::spawn(async move {
             fetch_all(&cache, start, end, moqt::object::GroupOrder::Ascending).await
@@ -857,7 +857,7 @@ mod fetch_tests {
         cache: &TrackCache,
         start: moqt::object::Location,
         end: moqt::object::Location,
-    ) -> Vec<moqt::fetch::FetchObjectField> {
+    ) -> Vec<moqt::object::Object> {
         fetch_all(cache, start, end, moqt::object::GroupOrder::Ascending)
             .await
             .unwrap()
@@ -1092,10 +1092,8 @@ mod fetch_tests {
         let objects = fetch(&cache, location(0, 0), location(0, 3)).await;
         // Assert
         assert_eq!(object_ids(&objects), vec![(0, 2)]);
-        assert!(matches!(
-            objects[0].fetch_object,
-            moqt::fetch::FetchObject::Status(ObjectStatus::DoesNotExist)
-        ));
+        assert_eq!(objects[0].status, ObjectStatus::DoesNotExist);
+        assert!(objects[0].payload.is_empty());
     }
 
     #[tokio::test]
@@ -1158,16 +1156,20 @@ mod fetch_tests {
     }
 
     #[tokio::test]
-    async fn fetch_objects_includes_datagram_objects_with_object_id_as_subgroup_id() {
+    async fn fetch_objects_includes_datagram_objects() {
         // Arrange
         let cache = TrackCache::new();
         insert_closed_group(&cache, 0, &[0]);
         let _ = cache.insert_live(datagram_object(0, 1));
         // Act
         let objects = fetch(&cache, location(0, 0), location(0, 2)).await;
-        // Assert: §10.4.4
+        // Assert: the cache keeps the datagram preference; moqt gives it its object id as
+        // subgroup id when encoding (§10.4.4)
         assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1)]);
-        assert_eq!(objects[1].subgroup_id, 1);
+        assert_eq!(
+            objects[1].forwarding,
+            moqt::object::ForwardingPreference::Datagram
+        );
     }
 
     #[tokio::test]

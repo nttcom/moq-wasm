@@ -1,13 +1,14 @@
 use crate::modules::moqt::data_plane::{
-    codec::uni_stream_decoder::UniStreamData,
-    object::fetch::{FetchHeader, FetchObjectField},
+    codec::{fetch_decoder::FetchFrame, uni_stream_decoder::UniStreamData},
+    object::{canonical_object::Object, fetch::FetchHeader},
     stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
 };
 
 #[derive(Debug)]
 pub enum Fetch {
-    Header(FetchHeader),
-    Object(FetchObjectField),
+    Object(Object),
+    /// The publisher finished the stream (FIN): every object of the range
+    /// was delivered.
     End,
 }
 
@@ -15,26 +16,25 @@ pub enum Fetch {
 pub struct FetchDataReceiver {
     stream_receiver: UniStreamReceiver,
     pub request_id: u64,
-    first_fetch_header: Option<FetchHeader>,
 }
 
 impl FetchDataReceiver {
     pub(crate) fn new(stream: UniStreamReceiver, fetch_header: FetchHeader) -> Self {
-        let request_id = fetch_header.request_id;
         Self {
             stream_receiver: stream,
-            request_id,
-            first_fetch_header: Some(fetch_header),
+            request_id: fetch_header.request_id,
         }
     }
 
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {
-        if let Some(fetch_header) = self.first_fetch_header.take() {
-            return Ok(Fetch::Header(fetch_header));
-        }
-
         match self.stream_receiver.receive().await {
-            Ok(Some(UniStreamData::Fetch(fetch))) => Ok(fetch),
+            Ok(Some(UniStreamData::Fetch(FetchFrame::Object(field)))) => {
+                Ok(Fetch::Object(field.into_object()))
+            }
+            // The decoder yields the header once, and the stream task took it.
+            Ok(Some(UniStreamData::Fetch(FetchFrame::Header(_)))) => {
+                unreachable!("a FETCH stream has one header")
+            }
             Ok(Some(UniStreamData::Subgroup(_))) => {
                 unreachable!("Unexpected subgroup data in fetch stream")
             }

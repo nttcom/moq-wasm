@@ -17,7 +17,7 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
     loop {
         match objects.next().await {
             Ok(Some(object)) => {
-                if let Err(e) = sender.send(object.to_fetch_object_field()).await {
+                if let Err(e) = sender.send(object.to_object()).await {
                     tracing::error!(?e, "failed to send fetch object");
                     return;
                 }

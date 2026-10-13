@@ -30,7 +30,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session,
-    fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
+    fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
         ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location,
         Object, ObjectStatus, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup,
@@ -167,20 +167,20 @@ async fn run_fetch_ns(
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
-            Ok(Fetch::Header(_)) => {}
             Ok(Fetch::Object(obj)) => {
-                let payload = match &obj.fetch_object {
-                    FetchObject::Payload(b) => String::from_utf8_lossy(b).to_string(),
-                    FetchObject::Status(s) => format!("{:?}", s),
+                let payload = if obj.payload.is_empty() {
+                    format!("{:?}", obj.status)
+                } else {
+                    String::from_utf8_lossy(&obj.payload).to_string()
                 };
                 tracing::info!(
                     "[{}] g{}:o{} = {}",
                     label,
-                    obj.group_id,
-                    obj.object_id,
+                    obj.location.group_id,
+                    obj.location.object_id,
                     payload
                 );
-                received.push((obj.group_id, obj.object_id));
+                received.push((obj.location.group_id, obj.location.object_id));
             }
             Ok(Fetch::End) => {
                 tracing::info!(
@@ -241,20 +241,20 @@ async fn run_joining_fetch_with_label(
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
-            Ok(Fetch::Header(_)) => {}
             Ok(Fetch::Object(obj)) => {
-                let payload = match &obj.fetch_object {
-                    FetchObject::Payload(b) => String::from_utf8_lossy(b).to_string(),
-                    FetchObject::Status(s) => format!("{:?}", s),
+                let payload = if obj.payload.is_empty() {
+                    format!("{:?}", obj.status)
+                } else {
+                    String::from_utf8_lossy(&obj.payload).to_string()
                 };
                 tracing::info!(
                     "[{}] joining g{}:o{} = {}",
                     label,
-                    obj.group_id,
-                    obj.object_id,
+                    obj.location.group_id,
+                    obj.location.object_id,
                     payload
                 );
-                received.push((obj.group_id, obj.object_id));
+                received.push((obj.location.group_id, obj.location.object_id));
             }
             Ok(Fetch::End) => {
                 tracing::info!("[{}] joining fetch done", label);

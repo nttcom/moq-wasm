@@ -174,8 +174,9 @@ async fn fetch_group(namespace: &str, group_id: u64) -> anyhow::Result<Vec<(u64,
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
-            Ok(Fetch::Header(_)) => {}
-            Ok(Fetch::Object(obj)) => received.push((obj.group_id, obj.object_id)),
+            Ok(Fetch::Object(obj)) => {
+                received.push((obj.location.group_id, obj.location.object_id))
+            }
             Ok(Fetch::End) => break,
             Err(e) => return Err(anyhow::anyhow!("fetch receive failed: {}", e)),
         }

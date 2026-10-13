@@ -2,10 +2,7 @@ use std::cell::RefCell;
 
 use js_sys::Function;
 use mediapack::loc::from_extension_headers;
-use moqt::{
-    object::{Object, SubgroupStart},
-    wire::FetchObjectField,
-};
+use moqt::object::{Object, SubgroupStart};
 use wasm_bindgen::JsValue;
 
 use crate::messages::{
@@ -118,12 +115,8 @@ pub(crate) fn emit_subgroup_object(
     );
 }
 
-pub(crate) fn emit_fetch_object(
-    callbacks: &RefCell<Callbacks>,
-    request_id: u64,
-    field: &FetchObjectField,
-) {
-    let message = FetchObjectMessage::new(request_id, field);
+pub(crate) fn emit_fetch_object(callbacks: &RefCell<Callbacks>, request_id: u64, object: &Object) {
+    let message = FetchObjectMessage::new(request_id, object);
     emit(callbacks, |c| &c.fetch_object, &[message.into()]);
 }
 

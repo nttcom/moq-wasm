@@ -13,7 +13,7 @@ use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 use crate::{
     ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
     TransportProtocol,
-    fetch::{Fetch, FetchDataReceiver, FetchObjectField},
+    fetch::{Fetch, FetchDataReceiver},
     modules::moqt::{
         data_plane::object::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
@@ -234,11 +234,12 @@ pub(crate) async fn subscribed_track_reader(
     TrackReader::new(factory)
 }
 
-pub(crate) async fn read_fetch_objects(receiver: &mut FetchDataReceiver) -> Vec<FetchObjectField> {
+pub(crate) async fn read_fetch_objects(
+    receiver: &mut FetchDataReceiver,
+) -> Vec<crate::object::Object> {
     let mut objects = Vec::new();
     loop {
         match receiver.receive().await.unwrap() {
-            Fetch::Header(_) => {}
             Fetch::Object(object) => objects.push(object),
             Fetch::End => return objects,
         }

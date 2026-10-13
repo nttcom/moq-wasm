@@ -7,11 +7,12 @@ use crate::{
     modules::moqt::{
         data_plane::{
             codec::{
+                fetch_decoder::FetchFrame,
                 subgroup_decoder::SubgroupFrame,
                 uni_stream_decoder::{UniStreamData, UniStreamDecoder},
             },
             stream::{
-                fetch_data_receiver::{Fetch, FetchDataReceiver},
+                fetch_data_receiver::FetchDataReceiver,
                 stream_receiver::{StreamReceiveError, UniStreamReceiver},
             },
         },
@@ -86,7 +87,7 @@ impl UniStreamReceiveTask {
                 )
                 .await;
             }
-            UniStreamData::Fetch(Fetch::Header(header)) => {
+            UniStreamData::Fetch(FetchFrame::Header(header)) => {
                 FetchNotifier::notify(
                     context,
                     header.request_id,

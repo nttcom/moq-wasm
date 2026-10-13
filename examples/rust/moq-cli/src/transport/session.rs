@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, QUIC, Session, Subscription, TrackReader,
-    fetch::{Fetch, FetchObject, FetchObjectField, FetchOption},
+    fetch::{Fetch, FetchOption},
     object::{DataReceiver, GroupOrder},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -119,11 +119,7 @@ async fn fetch_joining_group(
     let mut latest = None;
     loop {
         match receiver.receive().await? {
-            Fetch::Header(_) => {}
-            Fetch::Object(FetchObjectField {
-                fetch_object: FetchObject::Payload(payload),
-                ..
-            }) => latest = Some(payload),
+            Fetch::Object(object) if !object.payload.is_empty() => latest = Some(object.payload),
             Fetch::Object(_) => {}
             Fetch::End => return Ok(latest),
         }
