@@ -245,6 +245,11 @@ pub(crate) async fn read_fetch_objects(receiver: &mut FetchDataReceiver) -> Vec<
     }
 }
 
+/// The object `object_datagram` carries, for tests that send it.
+pub(crate) fn datagram_object() -> crate::object::Object {
+    object_datagram(0).into_object()
+}
+
 pub(crate) fn object_datagram(track_alias: u64) -> ObjectDatagram {
     ObjectDatagram::new(
         track_alias,

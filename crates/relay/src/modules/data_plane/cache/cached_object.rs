@@ -1,10 +1,7 @@
 use bytes::Bytes;
 use moqt::{
     fetch::{FetchObject, FetchObjectField},
-    object::{
-        DatagramField, ExtensionHeaders, Object, ObjectDatagram, ObjectDatagramPayload,
-        ObjectStatus, SubgroupStart,
-    },
+    object::{ExtensionHeaders, Object, ObjectStatus, SubgroupStart},
 };
 use tokio::time::Instant;
 
@@ -98,29 +95,6 @@ impl CachedObject {
         }
     }
 
-    pub(crate) fn from_datagram(object_id: u64, datagram: ObjectDatagram) -> Self {
-        let field = datagram.field;
-        let (status, payload) = match field.payload {
-            ObjectDatagramPayload::Payload(payload) if field.end_of_group => {
-                (ObjectStatus::EndOfGroup, payload)
-            }
-            ObjectDatagramPayload::Payload(payload) => (ObjectStatus::Normal, payload),
-            ObjectDatagramPayload::Status(status) => (status, Bytes::new()),
-        };
-        Self {
-            location: moqt::object::Location {
-                group_id: datagram.group_id,
-                object_id,
-            },
-            forwarding: ForwardingPreference::Datagram,
-            publisher_priority: field.publisher_priority,
-            status,
-            extension_headers: field.extension_headers.unwrap_or_default(),
-            payload,
-            received_at: Instant::now(),
-        }
-    }
-
     pub(crate) fn from_fetch_object(field: FetchObjectField) -> Self {
         let (status, payload) = match field.fetch_object {
             FetchObject::Payload(payload) => (ObjectStatus::Normal, payload),
@@ -210,31 +184,13 @@ impl CachedObject {
             fetch_object,
         )
     }
-
-    pub(crate) fn to_object_datagram(&self, track_alias: u64) -> ObjectDatagram {
-        // draft-14 §10.2.1.1: zero-length objects encode their status explicitly.
-        let payload = if self.payload.is_empty() {
-            ObjectDatagramPayload::Status(self.status)
-        } else {
-            ObjectDatagramPayload::Payload(self.payload.clone())
-        };
-        let field = DatagramField {
-            object_id: Some(self.location.object_id),
-            publisher_priority: self.publisher_priority,
-            extension_headers: (!self.extension_headers.key_value_pairs.is_empty())
-                .then(|| self.extension_headers.clone()),
-            end_of_group: !self.payload.is_empty() && self.status == ObjectStatus::EndOfGroup,
-            payload,
-        };
-        ObjectDatagram::new(track_alias, self.location.group_id, field)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::cached_object::{
-        FIXTURE_PRIORITY, datagram_object, status_object, stream_object, stream_object_in_subgroup,
+        datagram_object, status_object, stream_object, stream_object_in_subgroup,
         stream_object_with_payload,
     };
     use moqt::object::{KeyValuePair, VariantType};
@@ -328,85 +284,6 @@ mod tests {
         let end_of_group = status_object(0, 0, ObjectStatus::EndOfGroup);
         // Act / Assert
         assert!(normal.conflicts_with(&end_of_group));
-    }
-
-    #[test]
-    fn end_of_group_datagram_with_payload_keeps_both_on_round_trip() {
-        // Arrange: Type 0x06 carries a payload, an implicit object id and End of Group
-        let datagram = ObjectDatagram::new(
-            9,
-            4,
-            DatagramField {
-                object_id: None,
-                publisher_priority: 3,
-                extension_headers: None,
-                end_of_group: true,
-                payload: ObjectDatagramPayload::Payload(Bytes::from_static(b"last")),
-            },
-        );
-        // Act
-        let cached = CachedObject::from_datagram(2, datagram);
-        let regenerated = cached.to_object_datagram(11);
-        // Assert: canonical status plus payload, re-emitted with an explicit id
-        assert_eq!(cached.status, ObjectStatus::EndOfGroup);
-        assert_eq!(cached.payload, Bytes::from_static(b"last"));
-        assert_eq!(regenerated.track_alias, 11);
-        assert_eq!(regenerated.group_id, 4);
-        assert_eq!(
-            regenerated.field,
-            DatagramField {
-                object_id: Some(2),
-                publisher_priority: 3,
-                extension_headers: None,
-                end_of_group: true,
-                payload: ObjectDatagramPayload::Payload(Bytes::from_static(b"last")),
-            }
-        );
-    }
-
-    #[test]
-    fn status_datagram_round_trips_as_status_type() {
-        // Arrange
-        let cached = status_object(0, 5, ObjectStatus::DoesNotExist);
-        let cached = CachedObject {
-            forwarding: ForwardingPreference::Datagram,
-            ..cached
-        };
-        // Act
-        let field = cached.to_object_datagram(0).field;
-        // Assert
-        assert_eq!(
-            field,
-            DatagramField {
-                object_id: Some(5),
-                publisher_priority: FIXTURE_PRIORITY,
-                extension_headers: None,
-                end_of_group: false,
-                payload: ObjectDatagramPayload::Status(ObjectStatus::DoesNotExist),
-            }
-        );
-    }
-
-    #[test]
-    fn zero_length_normal_datagram_is_emitted_as_an_explicit_status() {
-        // Arrange
-        let cached = CachedObject {
-            forwarding: ForwardingPreference::Datagram,
-            ..stream_object_with_payload(0, 4, Bytes::new())
-        };
-        // Act
-        let field = cached.to_object_datagram(0).field;
-        // Assert: §10.2.1.1
-        assert_eq!(
-            field,
-            DatagramField {
-                object_id: Some(4),
-                publisher_priority: FIXTURE_PRIORITY,
-                extension_headers: None,
-                end_of_group: false,
-                payload: ObjectDatagramPayload::Status(ObjectStatus::Normal),
-            }
-        );
     }
 
     #[test]

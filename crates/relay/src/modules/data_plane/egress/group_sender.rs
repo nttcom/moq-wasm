@@ -264,9 +264,8 @@ impl GroupSender {
                 object_id,
                 "egress sending datagram object"
             );
-            let datagram = object.to_object_datagram(track_alias);
             if sender
-                .send_object(DataObject::ObjectDatagram(datagram))
+                .send_object(DataObject::Datagram(object.to_object()))
                 .await
                 .is_err()
             {

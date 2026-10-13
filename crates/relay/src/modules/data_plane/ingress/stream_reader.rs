@@ -141,7 +141,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     return;
                 }
             }
-            Ok(Some(DataObject::ObjectDatagram(_))) => {
+            Ok(Some(DataObject::Datagram(_))) => {
                 span.record("end_reason", "unexpected_datagram");
                 tracing::error!(%track_key, "datagram received on a subgroup stream");
                 return;

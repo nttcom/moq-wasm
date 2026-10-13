@@ -140,7 +140,7 @@ mod tests {
     use crate::{
         TrackObject, TrackReader,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track, send_payload,
+            HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
         object::{ExtensionHeaders, MalformedTrackError, SubgroupId, SubgroupObject},
@@ -298,7 +298,7 @@ mod tests {
         // Act
         publisher
             .create_datagram(&track.published)
-            .send(object_datagram(track.published.track_alias()))
+            .send_object(&datagram_object())
             .await
             .unwrap();
         let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())

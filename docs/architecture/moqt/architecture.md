@@ -343,6 +343,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     types (0x12/0x13/0x1A/0x1B) are returned only once the first object
     arrived (a stream that ends before it yields no header). An Object Status
     draft-14 does not define is `StreamReceiveError::ProtocolViolation`.
+  - `DatagramSender::send_object(&Object)` / `DatagramReceiver::receive()
+    -> Object` do the same for datagrams (`ObjectDatagram::from_object` /
+    `into_object`): an object id is always sent explicitly, a zero-length
+    object is sent as its status (§10.2.1.1), and a payload that ends its
+    group is an End of Group type, received back as status `EndOfGroup` with
+    its payload.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

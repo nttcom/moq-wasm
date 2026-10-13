@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use moqt::object::Object;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
@@ -134,7 +135,7 @@ impl StreamReceiverFactory for FailingUpstream {
 
 #[async_trait::async_trait]
 impl DatagramReceiver for FailingUpstream {
-    async fn receive_object(&mut self) -> anyhow::Result<DataObject> {
+    async fn receive_object(&mut self) -> anyhow::Result<Object> {
         Err(self.0())
     }
 }

@@ -7,10 +7,7 @@ use crate::modules::{
         ingress::track_ingest_task::TrackIngest,
     },
     domain::{session_id::SessionId, track_key::TrackKey},
-    session::{
-        data_object::DataObject, data_receiver::datagram_receiver::DatagramReceiver,
-        session_event::SessionEvent,
-    },
+    session::{data_receiver::datagram_receiver::DatagramReceiver, session_event::SessionEvent},
 };
 
 pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn DatagramReceiver>) {
@@ -33,11 +30,7 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
 
         match receive_result {
             Ok(object) => {
-                let DataObject::ObjectDatagram(datagram) = object else {
-                    tracing::error!(%track_key, "non-datagram object on datagram receiver");
-                    continue;
-                };
-                let group_id = datagram.group_id;
+                let group_id = object.location.group_id;
                 let open = match &mut current_group {
                     Some((current_group_id, open)) if *current_group_id == group_id => open,
                     slot => {
@@ -49,11 +42,7 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
                         open
                     }
                 };
-                let object_id = datagram.field.resolve_object_id();
-                if open
-                    .insert(CachedObject::from_datagram(object_id, datagram))
-                    .is_err()
-                {
+                if open.insert(CachedObject::from_object(object)).is_err() {
                     report_malformed_track(&session_event_sender, publisher_session_id, &track_key);
                     break;
                 }
