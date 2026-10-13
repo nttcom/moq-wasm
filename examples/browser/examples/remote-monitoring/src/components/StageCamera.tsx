@@ -1,6 +1,7 @@
 import { cn } from '../../../../lib/ui/classNames'
 import { CameraId, MonitorMode, ConnState } from '../types/monitoring'
 import { PlayerHost } from './PlayerHost'
+import { formatBehindLive } from './SeekBar'
 
 interface Props {
   cameraId: CameraId
@@ -28,10 +29,7 @@ export function StageCamera({
   const isReview = mode === 'review'
   const isUnhealthy = connState !== 'connected'
 
-  const timestamp =
-    isReview && behindSeconds != null
-      ? `−${String(Math.floor(behindSeconds / 60)).padStart(2, '0')}:${String(Math.round(behindSeconds) % 60).padStart(2, '0')}`
-      : 'NOW'
+  const timestamp = isReview && behindSeconds != null ? formatBehindLive(behindSeconds) : 'NOW'
 
   return (
     <div
