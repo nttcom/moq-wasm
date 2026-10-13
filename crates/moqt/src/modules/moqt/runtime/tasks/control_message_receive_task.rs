@@ -298,8 +298,8 @@ impl ControlMessageReceiveTask {
                 );
                 DepacketizeResult::SessionClosed
             }
-            ReceivedMessage::FatalError() => {
-                tracing::error!("Protocol violation: malformed control message payload");
+            ReceivedMessage::FatalError(reason) => {
+                tracing::error!(%reason, "Protocol violation: malformed control message payload");
                 session.close_with_error(
                     TerminationErrorCode::ProtocolViolation,
                     "malformed control message payload",

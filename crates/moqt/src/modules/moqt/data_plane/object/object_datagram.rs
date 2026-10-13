@@ -1,8 +1,8 @@
+use anyhow::Context;
 use bytes::BytesMut;
 
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
-use crate::modules::extensions::result_ext::ResultExt;
 use crate::modules::moqt::data_plane::object::datagram_field::DatagramField;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,13 +21,13 @@ impl ObjectDatagram {
         }
     }
 
-    pub fn decode(buf: &mut BytesMut) -> Option<Self> {
-        let message_type = buf.try_get_varint().log_context("datagram type").ok()?;
-        let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
-        let group_id = buf.try_get_varint().log_context("group id").ok()?;
+    pub fn decode(buf: &mut BytesMut) -> anyhow::Result<Self> {
+        let message_type = buf.try_get_varint().context("datagram type")?;
+        let track_alias = buf.try_get_varint().context("track alias")?;
+        let group_id = buf.try_get_varint().context("group id")?;
         let field = DatagramField::decode(message_type, buf)?;
 
-        Some(Self {
+        Ok(Self {
             track_alias,
             group_id,
             field,

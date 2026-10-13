@@ -1,7 +1,8 @@
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{filter_type::FilterType, group_order::GroupOrder},
@@ -22,21 +23,16 @@ pub struct PublishOk {
 }
 
 impl PublishOk {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
-        let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
-        let subscriber_priority = buf.try_get_u8().log_context("subscriber priority").ok()?;
-        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
-        let group_order = GroupOrder::try_from(group_order_u8)
-            .log_context("group order")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let forward_u8 = buf.try_get_u8().context("forward u8")?;
+        let forward = util::u8_to_bool(forward_u8).context("forward")?;
+        let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
+        let group_order_u8 = buf.try_get_u8().context("group order u8")?;
+        let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
         let filter_type = FilterType::decode(buf)?;
 
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut delivery_timeout = None;
         for _ in 0..number_of_parameters {
             if let KeyValuePair {
@@ -48,7 +44,7 @@ impl PublishOk {
             }
         }
 
-        Some(Self {
+        Ok(Self {
             request_id,
             forward,
             subscriber_priority,

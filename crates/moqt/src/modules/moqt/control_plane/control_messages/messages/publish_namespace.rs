@@ -1,7 +1,8 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
 };
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,21 +28,17 @@ impl PublishNamespace {
         }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
-            .log_context("track namespace tuple length")
-            .ok()?;
+            .context("track namespace tuple length")?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().log_context("track namespace").ok()?;
+            let track_namespace = buf.try_get_string().context("track namespace")?;
             track_namespace_tuple.push(track_namespace);
         }
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut authorization_token = vec![];
         for _ in 0..number_of_parameters {
             let token = AuthorizationToken::decode(buf)?;
@@ -55,7 +52,7 @@ impl PublishNamespace {
             authorization_token,
         };
 
-        Some(announce_message)
+        Ok(announce_message)
     }
 
     pub fn encode(&self) -> BytesMut {

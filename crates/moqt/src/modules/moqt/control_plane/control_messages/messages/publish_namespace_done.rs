@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,18 +12,16 @@ impl PublishNamespaceDone {
         Self { track_namespace }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let track_namespace_tuple_length = buf
-            .try_get_varint()
-            .log_context("track namespace length")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let track_namespace_tuple_length =
+            buf.try_get_varint().context("track namespace length")?;
         let mut track_namespace_tuple = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().log_context("track namespace").ok()?;
+            let track_namespace = buf.try_get_string().context("track namespace")?;
             track_namespace_tuple.push(track_namespace);
         }
 
-        Some(Self {
+        Ok(Self {
             track_namespace: track_namespace_tuple,
         })
     }

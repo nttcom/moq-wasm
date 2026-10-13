@@ -1,8 +1,7 @@
+use anyhow::Context;
 use bytes::{Buf, Bytes, BytesMut};
 
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariantType {
@@ -17,37 +16,27 @@ pub struct KeyValuePair {
 }
 
 impl KeyValuePair {
-    pub(crate) fn decode(bytes: &mut impl Buf) -> Option<Self> {
-        let key = bytes
-            .try_get_varint()
-            .log_context("KeyValuePair key")
-            .ok()?;
+    pub(crate) fn decode(bytes: &mut impl Buf) -> anyhow::Result<Self> {
+        let key = bytes.try_get_varint().context("KeyValuePair key")?;
         if key % 2 == 0 {
-            let value = bytes
-                .try_get_varint()
-                .log_context("KeyValuePair value")
-                .ok()?;
-            Some(Self {
+            let value = bytes.try_get_varint().context("KeyValuePair value")?;
+            Ok(Self {
                 key,
                 value: VariantType::Even(value),
             })
         } else {
-            let length = bytes
-                .try_get_varint()
-                .log_context("KeyValuePair length")
-                .ok()?;
+            let length = bytes.try_get_varint().context("KeyValuePair length")?;
             // copy_to_bytes panics when the buffer is shorter than the
             // peer-controlled length, so reject truncated input first.
             if bytes.remaining() < length as usize {
-                tracing::error!(
+                anyhow::bail!(
                     "KeyValuePair value truncated: length {} > remaining {}",
                     length,
                     bytes.remaining()
                 );
-                return None;
             }
             let value = bytes.copy_to_bytes(length as usize);
-            Some(Self {
+            Ok(Self {
                 key,
                 value: VariantType::Odd(value),
             })
@@ -153,7 +142,7 @@ mod tests {
             let bytes = [0x0b_u8, 0x03, 0x01];
             let mut buf = std::io::Cursor::new(&bytes[..]);
 
-            assert!(KeyValuePair::decode(&mut buf).is_none());
+            assert!(KeyValuePair::decode(&mut buf).is_err());
         }
 
         #[test]
@@ -162,7 +151,7 @@ mod tests {
             let bytes = [0x0b_u8, 0x03];
             let mut buf = std::io::Cursor::new(&bytes[..]);
 
-            assert!(KeyValuePair::decode(&mut buf).is_none());
+            assert!(KeyValuePair::decode(&mut buf).is_err());
         }
 
         #[test]
@@ -171,7 +160,7 @@ mod tests {
             let bytes = [0x3c_u8];
             let mut buf = std::io::Cursor::new(&bytes[..]);
 
-            assert!(KeyValuePair::decode(&mut buf).is_none());
+            assert!(KeyValuePair::decode(&mut buf).is_err());
         }
     }
 }

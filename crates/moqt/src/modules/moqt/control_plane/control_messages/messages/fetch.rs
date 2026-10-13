@@ -1,8 +1,9 @@
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{
@@ -56,23 +57,21 @@ pub enum FetchParams {
 }
 
 impl FetchParams {
-    fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let fetch_type_value = buf.try_get_varint().log_context("fetch type").ok()?;
-        let wire_type = FetchTypeValue::try_from(fetch_type_value)
-            .log_context("fetch type value")
-            .ok()?;
+    fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let fetch_type_value = buf.try_get_varint().context("fetch type")?;
+        let wire_type = FetchTypeValue::try_from(fetch_type_value).context("fetch type value")?;
         match wire_type {
             FetchTypeValue::Standalone => {
-                let namespace_length = buf.try_get_varint().log_context("namespace length").ok()?;
+                let namespace_length = buf.try_get_varint().context("namespace length")?;
                 let mut track_namespace = Vec::new();
                 for _ in 0..namespace_length {
-                    let ns = buf.try_get_string().log_context("namespace").ok()?;
+                    let ns = buf.try_get_string().context("namespace")?;
                     track_namespace.push(ns);
                 }
-                let track_name = buf.try_get_string().log_context("track name").ok()?;
+                let track_name = buf.try_get_string().context("track name")?;
                 let start_location = Location::decode(buf)?;
                 let end_location = Location::decode(buf)?;
-                Some(FetchParams::Standalone {
+                Ok(FetchParams::Standalone {
                     track_namespace,
                     track_name,
                     start_location,
@@ -80,23 +79,17 @@ impl FetchParams {
                 })
             }
             FetchTypeValue::RelativeJoining => {
-                let joining_request_id = buf
-                    .try_get_varint()
-                    .log_context("joining request id")
-                    .ok()?;
-                let joining_start = buf.try_get_varint().log_context("joining start").ok()?;
-                Some(FetchParams::RelativeJoining {
+                let joining_request_id = buf.try_get_varint().context("joining request id")?;
+                let joining_start = buf.try_get_varint().context("joining start")?;
+                Ok(FetchParams::RelativeJoining {
                     joining_request_id,
                     joining_start,
                 })
             }
             FetchTypeValue::AbsoluteJoining => {
-                let joining_request_id = buf
-                    .try_get_varint()
-                    .log_context("joining request id")
-                    .ok()?;
-                let joining_start = buf.try_get_varint().log_context("joining start").ok()?;
-                Some(FetchParams::AbsoluteJoining {
+                let joining_request_id = buf.try_get_varint().context("joining request id")?;
+                let joining_start = buf.try_get_varint().context("joining start")?;
+                Ok(FetchParams::AbsoluteJoining {
                     joining_request_id,
                     joining_start,
                 })
@@ -168,18 +161,13 @@ pub struct Fetch {
 }
 
 impl Fetch {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let subscriber_priority = buf.try_get_u8().log_context("subscriber priority").ok()?;
-        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
-        let group_order = GroupOrder::try_from(group_order_u8)
-            .log_context("group order")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
+        let group_order_u8 = buf.try_get_u8().context("group order u8")?;
+        let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
         let fetch_params = FetchParams::decode(buf)?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
             let kv = KeyValuePair::decode(buf)?;
@@ -189,14 +177,11 @@ impl Fetch {
             .iter()
             .filter(|kv| kv.key == 0x03)
             .filter_map(|kv| match &kv.value {
-                VariantType::Odd(value) => {
-                    let mut cursor = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut cursor)
-                }
+                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
                 VariantType::Even(_) => unreachable!(),
             })
             .collect();
-        Some(Fetch {
+        Ok(Fetch {
             request_id,
             subscriber_priority,
             group_order,
@@ -451,7 +436,7 @@ mod tests {
                 4, // Fetch Type = 0x4 (invalid)
             ];
             let mut cursor = std::io::Cursor::new(&bytes[..]);
-            assert!(Fetch::decode(&mut cursor).is_none());
+            assert!(Fetch::decode(&mut cursor).is_err());
         }
 
         #[test]
@@ -462,7 +447,7 @@ mod tests {
                 3, // Group Order = 0x3 (invalid)
             ];
             let mut cursor = std::io::Cursor::new(&bytes[..]);
-            assert!(Fetch::decode(&mut cursor).is_none());
+            assert!(Fetch::decode(&mut cursor).is_err());
         }
     }
 }

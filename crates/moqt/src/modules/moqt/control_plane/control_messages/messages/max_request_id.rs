@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,9 +13,9 @@ impl MaxRequestId {
         Self { request_id }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        Some(Self { request_id })
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        Ok(Self { request_id })
     }
 
     pub fn encode(&self) -> BytesMut {

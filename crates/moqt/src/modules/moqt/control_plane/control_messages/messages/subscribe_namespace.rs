@@ -1,7 +1,8 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
 };
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,25 +30,18 @@ impl SubscribeNamespace {
 }
 
 impl SubscribeNamespace {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
         let track_namespace_prefix_tuple_length = buf
             .try_get_varint()
-            .log_context("track namespace prefix length")
-            .ok()?;
+            .context("track namespace prefix length")?;
         let mut track_namespace_prefix_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_prefix_tuple_length {
-            let track_namespace_prefix = buf
-                .try_get_string()
-                .log_context("track namespace prefix")
-                .ok()?;
+            let track_namespace_prefix = buf.try_get_string().context("track namespace prefix")?;
             track_namespace_prefix_tuple.push(track_namespace_prefix);
         }
 
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
 
         let mut authorization_tokens = Vec::new();
         for _ in 0..number_of_parameters {
@@ -55,7 +49,7 @@ impl SubscribeNamespace {
             authorization_tokens.push(authorization_token);
         }
 
-        Some(SubscribeNamespace {
+        Ok(SubscribeNamespace {
             request_id,
             track_namespace_prefix: track_namespace_prefix_tuple,
             number_of_parameters,

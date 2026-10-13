@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 
 const MAX_NEW_SESSION_URI_LENGTH: usize = 8192;
@@ -16,17 +15,16 @@ impl GoAway {
         Self { new_session_uri }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let new_session_uri = buf.try_get_string().log_context("new session uri").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let new_session_uri = buf.try_get_string().context("new session uri")?;
         if new_session_uri.len() > MAX_NEW_SESSION_URI_LENGTH {
-            tracing::error!(
-                length = new_session_uri.len(),
-                "GOAWAY New Session URI exceeds the maximum length"
+            anyhow::bail!(
+                "GOAWAY New Session URI exceeds the maximum length: {}",
+                new_session_uri.len()
             );
-            return None;
         }
 
-        Some(Self { new_session_uri })
+        Ok(Self { new_session_uri })
     }
 
     pub fn encode(&self) -> BytesMut {
@@ -84,7 +82,7 @@ mod tests {
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = GoAway::decode(&mut cursor);
 
-            assert!(decoded.is_none());
+            assert!(decoded.is_err());
         }
     }
 }

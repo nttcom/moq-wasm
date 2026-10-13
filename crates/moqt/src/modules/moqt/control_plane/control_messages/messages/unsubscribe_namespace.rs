@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,21 +14,17 @@ impl UnsubscribeNamespace {
         }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let track_namespace_prefix_tuple_length = buf
             .try_get_varint()
-            .log_context("track namespace prefix length")
-            .ok()?;
+            .context("track namespace prefix length")?;
         let mut track_namespace_prefix_tuple = Vec::new();
         for _ in 0..track_namespace_prefix_tuple_length {
-            let track_namespace_prefix = buf
-                .try_get_string()
-                .log_context("track namespace prefix")
-                .ok()?;
+            let track_namespace_prefix = buf.try_get_string().context("track namespace prefix")?;
             track_namespace_prefix_tuple.push(track_namespace_prefix);
         }
 
-        Some(Self {
+        Ok(Self {
             track_namespace_prefix: track_namespace_prefix_tuple,
         })
     }

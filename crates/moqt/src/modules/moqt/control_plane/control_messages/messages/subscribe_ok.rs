@@ -1,10 +1,11 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{content_exists::ContentExists, group_order::GroupOrder},
     },
 };
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -19,23 +20,18 @@ pub struct SubscribeOk {
 }
 
 impl SubscribeOk {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
-        let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
-        let expires = buf.try_get_varint().log_context("expires").ok()?;
-        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
+        let track_alias = buf.try_get_varint().context("track alias")?;
+        let expires = buf.try_get_varint().context("expires")?;
+        let group_order_u8 = buf.try_get_u8().context("group order u8")?;
 
         // Values larger than 0x2 are a Protocol Violation.
-        let group_order = GroupOrder::try_from(group_order_u8)
-            .log_context("group order")
-            .ok()?;
+        let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
 
         let content_exists = ContentExists::decode(buf)?;
 
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
             let params = KeyValuePair::decode(buf)?;
@@ -57,7 +53,7 @@ impl SubscribeOk {
                 VariantType::Even(value) => value,
             });
 
-        Some(SubscribeOk {
+        Ok(SubscribeOk {
             request_id,
             track_alias,
             expires,

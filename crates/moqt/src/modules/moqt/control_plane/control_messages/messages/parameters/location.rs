@@ -1,8 +1,8 @@
+use anyhow::Context;
 use bytes::BytesMut;
 
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
-use crate::modules::extensions::result_ext::ResultExt;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct Location {
@@ -11,13 +11,10 @@ pub struct Location {
 }
 
 impl Location {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let group_id = buf.try_get_varint().log_context("location group id").ok()?;
-        let object_id = buf
-            .try_get_varint()
-            .log_context("location object id")
-            .ok()?;
-        Some(Self {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let group_id = buf.try_get_varint().context("location group id")?;
+        let object_id = buf.try_get_varint().context("location object id")?;
+        Ok(Self {
             group_id,
             object_id,
         })

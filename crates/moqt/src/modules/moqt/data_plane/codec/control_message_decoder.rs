@@ -195,15 +195,12 @@ impl ControlMessageDecoder {
 
     fn decode_payload<T>(
         cursor: &mut Cursor<&[u8]>,
-        decode: fn(&mut Cursor<&[u8]>) -> Option<T>,
+        decode: fn(&mut Cursor<&[u8]>) -> anyhow::Result<T>,
         wrap: fn(T) -> ReceivedMessage,
     ) -> ReceivedMessage {
         match decode(cursor) {
-            Some(message) => wrap(message),
-            None => {
-                tracing::error!("Protocol violation is detected.");
-                ReceivedMessage::FatalError()
-            }
+            Ok(message) => wrap(message),
+            Err(error) => ReceivedMessage::FatalError(format!("{error:#}")),
         }
     }
 }
@@ -349,7 +346,7 @@ mod tests {
             .decode(&mut buf)
             .expect("framing should succeed")
             .expect("frame should be complete");
-        assert!(matches!(message, ReceivedMessage::FatalError()));
+        assert!(matches!(message, ReceivedMessage::FatalError(_)));
     }
     #[test]
     fn decode_control_messages_added_in_draft14() {

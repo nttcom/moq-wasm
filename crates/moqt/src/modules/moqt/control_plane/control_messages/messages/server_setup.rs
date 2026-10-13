@@ -1,7 +1,8 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter,
 };
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,15 +21,15 @@ impl ServerSetup {
 }
 
 impl ServerSetup {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let selected_version = buf.try_get_varint().log_context("selected version").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let selected_version = buf.try_get_varint().context("selected version")?;
         let setup_parameters = SetupParameter::decode(buf)?;
 
         let server_setup_message = ServerSetup {
             selected_version: selected_version as u32,
             setup_parameters,
         };
-        Some(server_setup_message)
+        Ok(server_setup_message)
     }
 
     pub fn encode(&self) -> BytesMut {

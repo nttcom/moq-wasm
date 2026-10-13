@@ -1,6 +1,5 @@
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt,
-};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,20 +18,18 @@ impl PublishNamespaceCancel {
         }
     }
 
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let track_namespace_tuple_length = buf
-            .try_get_varint()
-            .log_context("track namespace length")
-            .ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let track_namespace_tuple_length =
+            buf.try_get_varint().context("track namespace length")?;
         let mut track_namespace = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let namespace_element = buf.try_get_string().log_context("track namespace").ok()?;
+            let namespace_element = buf.try_get_string().context("track namespace")?;
             track_namespace.push(namespace_element);
         }
-        let error_code = buf.try_get_varint().log_context("error code").ok()?;
-        let error_reason = buf.try_get_string().log_context("error reason").ok()?;
+        let error_code = buf.try_get_varint().context("error code")?;
+        let error_reason = buf.try_get_string().context("error reason")?;
 
-        Some(Self {
+        Ok(Self {
             track_namespace,
             error_code,
             error_reason,

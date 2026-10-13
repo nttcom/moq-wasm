@@ -1,7 +1,8 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter,
 };
+use anyhow::Context;
 use bytes::BytesMut;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,15 +23,14 @@ impl ClientSetup {
 }
 
 impl ClientSetup {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let number_of_supported_versions = buf
             .try_get_varint()
-            .log_context("number_of_supported_versions")
-            .ok()?;
+            .context("number_of_supported_versions")?;
 
         let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
         for _ in 0..number_of_supported_versions {
-            let supported_version = buf.try_get_varint().log_context("supported_version").ok()?;
+            let supported_version = buf.try_get_varint().context("supported_version")?;
             supported_versions.push(supported_version as u32);
         }
         let setup_parameters = SetupParameter::decode(buf)?;
@@ -41,7 +41,7 @@ impl ClientSetup {
             setup_parameters,
         };
 
-        Some(client_setup_message)
+        Ok(client_setup_message)
     }
 
     pub fn encode(&self) -> BytesMut {

@@ -1,7 +1,8 @@
+use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, result_ext::ResultExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
         messages::parameters::{
@@ -27,31 +28,25 @@ pub struct Publish {
 }
 
 impl Publish {
-    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> Option<Self> {
-        let request_id = buf.try_get_varint().log_context("request id").ok()?;
+    pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
+        let request_id = buf.try_get_varint().context("request id")?;
         let track_namespace_tuple_length = buf
             .try_get_varint()
-            .log_context("track namespace tuple length")
-            .ok()?;
+            .context("track namespace tuple length")?;
         let mut track_namespace_tuple: Vec<String> = Vec::new();
         for _ in 0..track_namespace_tuple_length {
-            let track_namespace = buf.try_get_string().log_context("track namespace").ok()?;
+            let track_namespace = buf.try_get_string().context("track namespace")?;
             track_namespace_tuple.push(track_namespace);
         }
-        let track_name = buf.try_get_string().log_context("track name").ok()?;
-        let track_alias = buf.try_get_varint().log_context("track alias").ok()?;
-        let group_order_u8 = buf.try_get_u8().log_context("group order u8").ok()?;
-        let group_order = GroupOrder::try_from(group_order_u8)
-            .log_context("group order")
-            .ok()?;
+        let track_name = buf.try_get_string().context("track name")?;
+        let track_alias = buf.try_get_varint().context("track alias")?;
+        let group_order_u8 = buf.try_get_u8().context("group order u8")?;
+        let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;
         let content_exists = ContentExists::decode(buf)?;
 
-        let forward_u8 = buf.try_get_u8().log_context("forward u8").ok()?;
-        let forward = util::u8_to_bool(forward_u8).log_context("forward").ok()?;
-        let number_of_parameters = buf
-            .try_get_varint()
-            .log_context("number of parameters")
-            .ok()?;
+        let forward_u8 = buf.try_get_u8().context("forward u8")?;
+        let forward = util::u8_to_bool(forward_u8).context("forward")?;
+        let number_of_parameters = buf.try_get_varint().context("number of parameters")?;
         let mut parameters = vec![];
         for _ in 0..number_of_parameters {
             let params = KeyValuePair::decode(buf)?;
@@ -61,10 +56,7 @@ impl Publish {
             .iter()
             .filter(|kv_pair| kv_pair.key == 0x03)
             .filter_map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => {
-                    let mut value = std::io::Cursor::new(&value[..]);
-                    AuthorizationToken::decode(&mut value)
-                }
+                VariantType::Odd(value) => AuthorizationToken::decode_parameter(value),
                 VariantType::Even(_) => unreachable!(),
             })
             .collect();
@@ -83,7 +75,7 @@ impl Publish {
                 VariantType::Odd(_) => unreachable!(),
                 VariantType::Even(value) => value,
             });
-        Some(Self {
+        Ok(Self {
             request_id,
             track_namespace_tuple,
             track_name,
