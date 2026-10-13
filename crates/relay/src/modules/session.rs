@@ -22,7 +22,7 @@ pub(crate) trait Session: 'static + Send + Sync {
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent>;
     fn close(&self, code: moqt::TerminationErrorCode, reason: &str);
     fn transport_stats(&self) -> moqt::TransportStats;
-    fn transport_addresses(&self) -> moqt::TransportAddresses;
+    fn transport_addresses(&self) -> moqt::server::TransportAddresses;
 }
 
 #[async_trait]
@@ -43,7 +43,7 @@ impl Session for moqt::Session {
         moqt::Session::transport_stats(self)
     }
 
-    fn transport_addresses(&self) -> moqt::TransportAddresses {
+    fn transport_addresses(&self) -> moqt::server::TransportAddresses {
         moqt::Session::transport_addresses(self)
     }
 

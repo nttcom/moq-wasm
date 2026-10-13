@@ -25,7 +25,7 @@ struct Delivery {
     publisher: Arc<dyn Publisher>,
     downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
-    largest_location: Option<moqt::Location>,
+    largest_location: Option<moqt::object::Location>,
     forward_receiver: watch::Receiver<bool>,
     delivery_stats: Arc<DeliveryStats>,
 }
@@ -37,7 +37,7 @@ impl EgressRunner {
         publisher: Box<dyn Publisher>,
         downstream_subscription: DownstreamSubscription,
         ready_sender: oneshot::Sender<anyhow::Result<()>>,
-        largest_location: Option<moqt::Location>,
+        largest_location: Option<moqt::object::Location>,
         signals: DownstreamRunnerSignals,
     ) -> Self {
         let DownstreamRunnerSignals {

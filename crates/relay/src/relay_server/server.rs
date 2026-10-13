@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::ServerConfig;
+use moqt::server::ServerConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{

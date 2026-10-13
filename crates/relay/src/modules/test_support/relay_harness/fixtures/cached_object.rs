@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use moqt::{ExtensionHeaders, ObjectStatus};
+use moqt::object::{ExtensionHeaders, ObjectStatus};
 use tokio::time::Instant;
 
 use super::location;
@@ -95,10 +95,10 @@ pub(crate) fn insert_aborted_group(cache: &TrackCache, group_id: u64, object_ids
 
 pub(crate) async fn fetch_all(
     cache: &TrackCache,
-    start: moqt::Location,
-    end: moqt::Location,
-    group_order: moqt::GroupOrder,
-) -> Result<Vec<moqt::FetchObjectField>, FetchInterrupted> {
+    start: moqt::object::Location,
+    end: moqt::object::Location,
+    group_order: moqt::object::GroupOrder,
+) -> Result<Vec<moqt::fetch::FetchObjectField>, FetchInterrupted> {
     let mut cursor = FetchCursor::new(cache, start, end, group_order);
     let mut objects = Vec::new();
     while let Some(object) = cursor.next().await? {

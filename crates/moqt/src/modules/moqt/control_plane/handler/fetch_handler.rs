@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    GroupOrder,
     modules::{
         moqt::{
             control_plane::{
@@ -18,6 +17,7 @@ use crate::{
         },
         transport::transport_send_stream::TransportSendError,
     },
+    object::GroupOrder,
 };
 
 #[derive(Debug, Clone)]
@@ -87,8 +87,10 @@ impl FetchHandler {
 #[cfg(test)]
 mod tests {
     use crate::{
-        FetchOption, GroupOrder, Location, SessionEvent,
+        SessionEvent,
+        fetch::FetchOption,
         modules::test_support::{connect_sessions, spawn_dual_server},
+        object::{GroupOrder, Location},
     };
 
     const START: Location = Location {

@@ -1,4 +1,7 @@
-use moqt::{ContentExists, FilterType, GroupOrder};
+use moqt::{
+    object::{ContentExists, GroupOrder},
+    subscribe::FilterType,
+};
 
 #[derive(Clone)]
 pub(crate) struct UpstreamSubscription {

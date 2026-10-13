@@ -13,7 +13,8 @@ the browser, and the bridges/examples use its client API natively.
 ## Layering
 
 ```
-lib.rs (public re-exports)        wire.rs (raw message codecs, wasm-safe)
+lib.rs + subscribe.rs, publish.rs, fetch.rs,     wire.rs (raw message codecs, wasm-safe)
+namespace.rs, object.rs, server.rs (public re-exports)
         │
         ▼
 modules/moqt/domains      ← public API objects (Endpoint, Session, Publisher, …)
@@ -27,9 +28,23 @@ modules/transport         ← transport abstraction + quinn/web-transport-quinn 
 modules/executor          ← task spawning, yielding and timeouts (tokio natively, wasm-bindgen-futures on wasm32)
 ```
 
-- `lib.rs` re-exports the session-level API. The whole stack compiles for
-  `wasm32` as well; the quinn-based transports and their markers
-  (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`
+- The public API is grouped by MoQT operation, so the type that sends a
+  request and the handler that answers it share a module:
+
+  | Path | Contents |
+  | --- | --- |
+  | `moqt::` | `Endpoint`, `Session`, `SessionEvent`, `Publisher`, `Subscriber`, `Subscription`, `TrackWriter` / `TrackReader`, the transport markers, session-wide handlers (GOAWAY, MAX_REQUEST_ID, REQUESTS_BLOCKED) and errors not tied to one operation |
+  | `moqt::subscribe` | SUBSCRIBE, SUBSCRIBE_UPDATE, UNSUBSCRIBE and TRACK_STATUS: options, `FilterType`, handlers |
+  | `moqt::publish` | PUBLISH and PUBLISH_DONE: `PublishOption`, handlers |
+  | `moqt::fetch` | FETCH and FETCH_CANCEL: options, handlers, fetch stream sender/receiver and objects |
+  | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, handlers |
+  | `moqt::object` | Object model (`Location`, `GroupOrder`, `ExtensionHeaders`, subgroup objects) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
+  | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
+
+  Implementation files under `modules/` are not arranged by these modules;
+  each public module only re-exports.
+- The whole stack compiles for `wasm32` as well; the quinn-based transports
+  and their markers (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
   `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
   API; it also uses the message codecs for the JavaScript message types.

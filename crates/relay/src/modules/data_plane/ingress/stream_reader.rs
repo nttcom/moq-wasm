@@ -1,4 +1,4 @@
-use moqt::ObjectStatus;
+use moqt::object::ObjectStatus;
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
@@ -48,7 +48,7 @@ pub(crate) async fn accept_streams(
                 let receiver = match receiver {
                     Ok(receiver) => receiver,
                     Err(error) => {
-                        if error.is::<moqt::MalformedTrackError>() {
+                        if error.is::<moqt::object::MalformedTrackError>() {
                             ingest.cache.mark_malformed();
                             report_malformed_track(
                                 &Span::current(),
@@ -106,9 +106,9 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 ingest = None;
                 span.record("group_id", received.group_id);
                 let subgroup_id = match received.subgroup_id {
-                    moqt::SubgroupId::None => Some(0),
-                    moqt::SubgroupId::Value(subgroup_id) => Some(subgroup_id),
-                    moqt::SubgroupId::FirstObjectIdDelta => None,
+                    moqt::object::SubgroupId::None => Some(0),
+                    moqt::object::SubgroupId::Value(subgroup_id) => Some(subgroup_id),
+                    moqt::object::SubgroupId::FirstObjectIdDelta => None,
                 };
                 let received = ReceivedHeader {
                     group_id: received.group_id,
@@ -137,12 +137,12 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     open_subgroup(&cache, &span, header.with_subgroup_id(object_id))
                 });
                 let end_reason = match &field.subgroup_object {
-                    moqt::SubgroupObject::Status { code, .. }
+                    moqt::object::SubgroupObject::Status { code, .. }
                         if *code == ObjectStatus::EndOfGroup as u64 =>
                     {
                         Some("end_of_group")
                     }
-                    moqt::SubgroupObject::Status { code, .. }
+                    moqt::object::SubgroupObject::Status { code, .. }
                         if *code == ObjectStatus::EndOfTrack as u64 =>
                     {
                         Some("end_of_track")
@@ -214,12 +214,12 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                 tracing::debug!(%track_key, "stream finished");
                 return;
             }
-            Err(moqt::StreamReceiveError::Closed(error)) => {
+            Err(moqt::object::StreamReceiveError::Closed(error)) => {
                 span.record("end_reason", "transport_closed");
                 tracing::info!(%track_key, %error, "stream transport closed");
                 return;
             }
-            Err(moqt::StreamReceiveError::Decode(error)) => {
+            Err(moqt::object::StreamReceiveError::Decode(error)) => {
                 span.record("end_reason", "decode_error");
                 tracing::error!(%track_key, %error, "failed to decode stream data");
                 return;
@@ -265,7 +265,7 @@ impl ReceivedHeader {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use moqt::{ObjectStatus, SubgroupId};
+    use moqt::object::{ObjectStatus, SubgroupId};
 
     use super::*;
     use crate::modules::{
@@ -460,7 +460,7 @@ mod tests {
         let mut harness = RelayHarness::new();
         // Act
         harness
-            .run_stream_ingest(FailingUpstream(|| moqt::MalformedTrackError.into()))
+            .run_stream_ingest(FailingUpstream(|| moqt::object::MalformedTrackError.into()))
             .await;
         // Assert
         harness.wait_track_malformed().await;

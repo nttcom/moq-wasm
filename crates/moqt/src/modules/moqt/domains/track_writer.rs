@@ -1,7 +1,7 @@
 use anyhow::{Context, ensure};
 use bytes::Bytes;
 
-use crate::{
+use crate::object::{
     ExtensionHeaders, ObjectStatus, StreamDataSenderFactory, SubgroupId, SubgroupObject,
     SubgroupObjectSender,
 };
@@ -180,12 +180,15 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        DataReceiver, ExtensionHeaders, KeyValuePair, PublishOption, Subgroup, SubgroupObject,
-        TrackWriter, VariantType,
+        TrackWriter,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, spawn_dual_server,
             subscribed_track_reader,
         },
+        object::{
+            DataReceiver, ExtensionHeaders, KeyValuePair, Subgroup, SubgroupObject, VariantType,
+        },
+        publish::PublishOption,
     };
 
     #[tokio::test]

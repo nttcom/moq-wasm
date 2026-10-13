@@ -35,9 +35,13 @@
 use std::{env, time::Duration};
 
 use moqt::{
-    ClientConfig, ContentExists, Endpoint, ExtensionHeaders, Fetch, FetchDataReceiver, FetchOption,
-    FilterType, GroupOrder, Location, QUIC, Session, StreamDataSenderFactory, SubgroupId,
-    SubgroupObject, SubscribeOption,
+    ClientConfig, Endpoint, QUIC, Session,
+    fetch::{Fetch, FetchDataReceiver, FetchOption},
+    object::{
+        ContentExists, ExtensionHeaders, GroupOrder, Location, StreamDataSenderFactory, SubgroupId,
+        SubgroupObject,
+    },
+    subscribe::{FilterType, SubscribeOption},
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";

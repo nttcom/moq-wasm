@@ -1,6 +1,6 @@
 use crate::{
-    Location,
     modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate,
+    object::Location,
 };
 
 #[derive(Clone, Debug)]

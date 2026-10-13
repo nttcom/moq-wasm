@@ -1,9 +1,10 @@
 use crate::{
-    Accepting, Connecting, TransportProtocol,
+    Connecting, TransportProtocol,
     modules::{
         moqt::domains::session_creator::SessionCreator,
         transport::transport_connection_creator::TransportConnectionCreator,
     },
+    server::Accepting,
 };
 
 pub struct ClientConfig {

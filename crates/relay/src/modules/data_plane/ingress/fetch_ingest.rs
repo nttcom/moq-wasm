@@ -18,7 +18,7 @@ const DEFAULT_FETCH_FILL_TIMEOUT_SECS: u64 = 20;
 pub(crate) struct FetchIngestStart {
     pub(crate) track_key: TrackKey,
     pub(crate) upstream_publisher_session_id: SessionId,
-    pub(crate) fetch_handle: moqt::FetchHandle,
+    pub(crate) fetch_handle: moqt::fetch::FetchHandle,
     pub(crate) egress_start: EgressFetchRequest,
 }
 
@@ -118,11 +118,11 @@ impl FetchIngest {
                 }
             };
             match received {
-                moqt::Fetch::Header(_) => {}
-                moqt::Fetch::Object(object) => {
+                moqt::fetch::Fetch::Header(_) => {}
+                moqt::fetch::Fetch::Object(object) => {
                     Self::append_fetch_object(&cache, object)?;
                 }
-                moqt::Fetch::End => {
+                moqt::fetch::Fetch::End => {
                     if cache.eviction_generation() != start_eviction_generation {
                         tracing::warn!(
                             request_id = start.egress_start.request_id,
@@ -145,7 +145,7 @@ impl FetchIngest {
 
     fn append_fetch_object(
         cache: &TrackCache,
-        object: moqt::FetchObjectField,
+        object: moqt::fetch::FetchObjectField,
     ) -> anyhow::Result<()> {
         let (group_id, object_id) = (object.group_id, object.object_id);
         cache
@@ -223,7 +223,7 @@ mod tests {
         },
     };
     use bytes::Bytes;
-    use moqt::ObjectStatus;
+    use moqt::object::ObjectStatus;
     use std::time::Duration;
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
@@ -256,9 +256,9 @@ mod tests {
         let start = FetchIngestStart {
             track_key: TrackKey::new("ns", "track"),
             upstream_publisher_session_id: UPSTREAM_SESSION,
-            fetch_handle: moqt::FetchHandle {
+            fetch_handle: moqt::fetch::FetchHandle {
                 request_id: UPSTREAM_FETCH_REQUEST_ID,
-                group_order: moqt::GroupOrder::Ascending,
+                group_order: moqt::object::GroupOrder::Ascending,
                 end_of_track: false,
                 end_location: location(0, 1),
             },
@@ -268,7 +268,7 @@ mod tests {
                 cache: cache.clone(),
                 start_location: location(0, 0),
                 end_location: location(0, 1),
-                group_order: moqt::GroupOrder::Ascending,
+                group_order: moqt::object::GroupOrder::Ascending,
             },
         };
 

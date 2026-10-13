@@ -493,7 +493,6 @@ mod tests {
 
     use super::{IncomingObjectNotification, LateResponseAction};
     use crate::{
-        GroupOrder,
         modules::{
             moqt::{
                 control_plane::{
@@ -508,6 +507,7 @@ mod tests {
                 notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
             },
         },
+        object::GroupOrder,
     };
 
     const REQUEST_ID: u64 = 1;

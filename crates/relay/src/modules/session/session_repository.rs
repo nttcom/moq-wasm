@@ -35,7 +35,7 @@ pub(crate) struct SessionState {
     pub(crate) peer: SessionPeer,
     pub(crate) app_id: String,
     pub(crate) transport: moqt::TransportStats,
-    pub(crate) addresses: moqt::TransportAddresses,
+    pub(crate) addresses: moqt::server::TransportAddresses,
 }
 
 pub(crate) struct NewSession {

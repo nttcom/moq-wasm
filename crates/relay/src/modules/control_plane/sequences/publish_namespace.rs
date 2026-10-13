@@ -328,7 +328,7 @@ mod tests {
     async fn announce(table: &Arc<InMemoryLocalPubSubDirectory>) -> mpsc::Receiver<IngressCommand> {
         let repository = session_repository_with_session(
             ANNOUNCING_PUBLISHER,
-            mock_session_answering_subscribe(|| moqt::ContentExists::False),
+            mock_session_answering_subscribe(|| moqt::object::ContentExists::False),
             VerifiedToken::full_access(),
         )
         .await;

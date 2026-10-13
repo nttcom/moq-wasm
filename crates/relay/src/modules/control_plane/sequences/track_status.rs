@@ -1,4 +1,4 @@
-use moqt::ContentExists;
+use moqt::object::ContentExists;
 use tracing::Span;
 
 use crate::modules::{

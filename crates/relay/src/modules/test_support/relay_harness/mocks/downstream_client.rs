@@ -46,14 +46,14 @@ impl DataSender for MockDataSender {
 
 struct MockStreamSenderFactory {
     sent: mpsc::UnboundedSender<Sent>,
-    priorities: mpsc::UnboundedSender<moqt::StreamPriority>,
+    priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
 }
 
 #[async_trait::async_trait]
 impl StreamSenderFactory for MockStreamSenderFactory {
     async fn next(
         &mut self,
-        priority: moqt::StreamPriority,
+        priority: moqt::object::StreamPriority,
     ) -> anyhow::Result<Box<dyn DataSender>> {
         self.priorities
             .send(priority)
@@ -74,13 +74,13 @@ pub(crate) struct SentPublishDone {
 #[derive(Clone)]
 pub(crate) struct MockPublisher {
     sent: mpsc::UnboundedSender<Sent>,
-    priorities: mpsc::UnboundedSender<moqt::StreamPriority>,
+    priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
 }
 
 pub(crate) struct MockPublisherObservers {
     pub(crate) sent: mpsc::UnboundedReceiver<Sent>,
-    pub(crate) priorities: mpsc::UnboundedReceiver<moqt::StreamPriority>,
+    pub(crate) priorities: mpsc::UnboundedReceiver<moqt::object::StreamPriority>,
     pub(crate) publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
 }
 
@@ -121,7 +121,7 @@ impl Publisher for MockPublisher {
         &self,
         _track_namespace: String,
         _track_name: String,
-        _content_exists: moqt::ContentExists,
+        _content_exists: moqt::object::ContentExists,
     ) -> anyhow::Result<DownstreamSubscription> {
         unreachable!("not used by the egress path under test")
     }
@@ -166,7 +166,7 @@ impl Publisher for MockPublisher {
 
 #[derive(Debug)]
 pub(crate) enum FetchSent {
-    Object(moqt::FetchObjectField),
+    Object(moqt::fetch::FetchObjectField),
     Closed,
     Reset(u64),
 }
@@ -184,7 +184,7 @@ impl MockFetchSender {
 
 #[async_trait::async_trait]
 impl FetchSender for MockFetchSender {
-    async fn send(&self, object: moqt::FetchObjectField) -> anyhow::Result<()> {
+    async fn send(&self, object: moqt::fetch::FetchObjectField) -> anyhow::Result<()> {
         self.sent
             .send(FetchSent::Object(object))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
@@ -227,7 +227,7 @@ impl Session for MockDownstreamSession {
         moqt::TransportStats::default()
     }
 
-    fn transport_addresses(&self) -> moqt::TransportAddresses {
-        moqt::TransportAddresses::default()
+    fn transport_addresses(&self) -> moqt::server::TransportAddresses {
+        moqt::server::TransportAddresses::default()
     }
 }

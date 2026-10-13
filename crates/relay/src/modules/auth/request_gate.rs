@@ -104,7 +104,9 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
 mod tests {
     use std::time::Duration;
 
-    use moqt::{FetchOption, Location, PublishOption, SubscribeOption};
+    use moqt::{
+        fetch::FetchOption, object::Location, publish::PublishOption, subscribe::SubscribeOption,
+    };
 
     use crate::modules::auth::{
         test_support::{app_token, request_error_code, spawn_relay_and_connect_client},

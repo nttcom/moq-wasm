@@ -29,10 +29,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use moqt::{
-    ClientConfig, ContentExists, DataReceiver, Endpoint, ExtensionHeaders, Fetch,
-    FetchDataReceiver, FetchObject, FetchOption, FilterType, GroupOrder, Location, PublishOption,
-    QUIC, Session, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId,
-    SubgroupObject, SubscribeOption,
+    ClientConfig, Endpoint, QUIC, Session,
+    fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
+    object::{
+        ContentExists, DataReceiver, ExtensionHeaders, GroupOrder, Location,
+        StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
+    },
+    publish::PublishOption,
+    subscribe::{FilterType, SubscribeOption},
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";

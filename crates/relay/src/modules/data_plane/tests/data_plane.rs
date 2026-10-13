@@ -69,7 +69,7 @@ async fn next_group_start_delivers_a_first_group_with_nonzero_id_cached_before_e
     // Act
     let mut egress = harness
         .start_egress_with_filter(
-            moqt::FilterType::NextGroupStart,
+            moqt::subscribe::FilterType::NextGroupStart,
             no_content_before_subscribe,
         )
         .await;
@@ -178,7 +178,7 @@ async fn downstream_header_is_regenerated_from_the_cached_objects() {
         panic!("downstream stream should start with a subgroup header");
     };
     assert_eq!(header.group_id, 0);
-    assert_eq!(header.subgroup_id, moqt::SubgroupId::Value(0));
+    assert_eq!(header.subgroup_id, moqt::object::SubgroupId::Value(0));
     assert_eq!(header.publisher_priority, FIXTURE_PRIORITY);
 }
 

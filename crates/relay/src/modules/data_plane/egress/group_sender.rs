@@ -46,7 +46,7 @@ struct StreamSendTask {
     factory: SharedStreamSenderFactory,
     delivery_stats: Arc<DeliveryStats>,
     subscriber_priority: u8,
-    group_order: moqt::GroupOrder,
+    group_order: moqt::object::GroupOrder,
     group_sequence: u64,
 }
 
@@ -162,7 +162,7 @@ impl GroupSender {
             return (0, "no_objects");
         };
 
-        let priority = moqt::StreamPriority {
+        let priority = moqt::object::StreamPriority {
             subscriber_priority: task.subscriber_priority,
             publisher_priority: first.publisher_priority,
             group_order: task.group_order,
@@ -193,10 +193,10 @@ impl GroupSender {
         // The header is regenerated from the object's canonical properties;
         // extensions are always declared present so no later object can lose
         // its extension headers on the wire.
-        let header = moqt::SubgroupHeader::new(
+        let header = moqt::object::SubgroupHeader::new(
             task.track_alias,
             group_id,
-            moqt::SubgroupId::Value(subgroup_id),
+            moqt::object::SubgroupId::Value(subgroup_id),
             first.publisher_priority,
             true,
             false,

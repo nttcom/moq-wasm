@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use moqt::{ObjectStatus, SubgroupId};
+use moqt::object::{ObjectStatus, SubgroupId};
 
 use crate::modules::session::data_object::DataObject;
 
@@ -16,7 +16,7 @@ pub(crate) fn make_header_with(
     subgroup_id: SubgroupId,
     has_end_of_group: bool,
 ) -> DataObject {
-    DataObject::SubgroupHeader(moqt::SubgroupHeader::new(
+    DataObject::SubgroupHeader(moqt::object::SubgroupHeader::new(
         0,
         group_id,
         subgroup_id,
@@ -27,7 +27,10 @@ pub(crate) fn make_header_with(
 }
 
 pub(crate) fn make_payload_object(object_id_delta: u64, payload: Bytes) -> DataObject {
-    make_subgroup_object(object_id_delta, moqt::SubgroupObject::new_payload(payload))
+    make_subgroup_object(
+        object_id_delta,
+        moqt::object::SubgroupObject::new_payload(payload),
+    )
 }
 
 pub(crate) fn make_status_object(object_id_delta: u64, status: ObjectStatus) -> DataObject {
@@ -35,16 +38,23 @@ pub(crate) fn make_status_object(object_id_delta: u64, status: ObjectStatus) -> 
 }
 
 pub(crate) fn make_raw_status_object(object_id_delta: u64, code: u64) -> DataObject {
-    make_subgroup_object(object_id_delta, moqt::SubgroupObject::new_status(code))
+    make_subgroup_object(
+        object_id_delta,
+        moqt::object::SubgroupObject::new_status(code),
+    )
 }
 
-fn make_subgroup_object(object_id_delta: u64, subgroup_object: moqt::SubgroupObject) -> DataObject {
+fn make_subgroup_object(
+    object_id_delta: u64,
+    subgroup_object: moqt::object::SubgroupObject,
+) -> DataObject {
     let message_type =
-        moqt::SubgroupHeader::new(0, 0, SubgroupId::Value(0), 128, false, false).message_type;
-    DataObject::SubgroupObject(moqt::SubgroupObjectField {
+        moqt::object::SubgroupHeader::new(0, 0, SubgroupId::Value(0), 128, false, false)
+            .message_type;
+    DataObject::SubgroupObject(moqt::object::SubgroupObjectField {
         message_type,
         object_id_delta,
-        extension_headers: moqt::ExtensionHeaders::default(),
+        extension_headers: moqt::object::ExtensionHeaders::default(),
         subgroup_object,
     })
 }

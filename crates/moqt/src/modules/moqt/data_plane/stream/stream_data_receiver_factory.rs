@@ -41,10 +41,10 @@ impl StreamDataReceiverFactory {
 #[cfg(test)]
 mod tests {
     use crate::{
-        DataReceiver, MalformedTrackError, SubgroupId,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track,
         },
+        object::{DataReceiver, MalformedTrackError, SubgroupId},
     };
 
     #[tokio::test]

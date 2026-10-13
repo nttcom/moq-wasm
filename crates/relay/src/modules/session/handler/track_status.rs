@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use moqt::{ContentExists, wire::AuthorizationToken};
+use moqt::{object::ContentExists, wire::AuthorizationToken};
 
 #[async_trait]
 pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
@@ -18,7 +18,7 @@ pub(crate) trait TrackStatusHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl TrackStatusHandler for moqt::TrackStatusHandler {
+impl TrackStatusHandler for moqt::subscribe::TrackStatusHandler {
     fn request_id(&self) -> u64 {
         self.request_id()
     }

@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use moqt::{ExtensionHeaders, Location};
+use moqt::object::{ExtensionHeaders, Location};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CachedObject {

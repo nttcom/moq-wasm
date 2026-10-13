@@ -14,14 +14,14 @@ use crate::modules::data_plane::cache::cached_object::{CachedObject, ForwardingP
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
 
-fn location(group_id: u64, object_id: u64) -> moqt::Location {
-    moqt::Location {
+fn location(group_id: u64, object_id: u64) -> moqt::object::Location {
+    moqt::object::Location {
         group_id,
         object_id,
     }
 }
 
-fn after(at: moqt::Location) -> moqt::Location {
+fn after(at: moqt::object::Location) -> moqt::object::Location {
     location(at.group_id, at.object_id.saturating_add(1))
 }
 
@@ -181,7 +181,7 @@ impl TrackCache {
         self.read().subgroup_runs_in_group(group_id)
     }
 
-    pub(crate) fn largest_location(&self) -> Option<moqt::Location> {
+    pub(crate) fn largest_location(&self) -> Option<moqt::object::Location> {
         self.read().largest_location()
     }
 
@@ -223,7 +223,11 @@ impl TrackCache {
         }
     }
 
-    pub(crate) fn insert_fetch_known_range(&self, start: moqt::Location, end: moqt::Location) {
+    pub(crate) fn insert_fetch_known_range(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
         self.write().known_ranges.insert(start, end);
     }
 
@@ -232,7 +236,11 @@ impl TrackCache {
     }
 
     #[cfg(test)]
-    pub(crate) fn covers(&self, start: moqt::Location, end: moqt::Location) -> bool {
+    pub(crate) fn covers(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
         self.read().known_ranges.contains_range(start, end)
     }
 
@@ -261,7 +269,9 @@ impl From<TrackMalformed> for FetchInterrupted {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FetchRangeResolution {
-    Serve { end_location: moqt::Location },
+    Serve {
+        end_location: moqt::object::Location,
+    },
     InvalidRange,
     NoObjects,
     NotCovered,
@@ -270,8 +280,8 @@ pub(crate) enum FetchRangeResolution {
 impl TrackCache {
     pub(crate) fn resolve_fetch_range(
         &self,
-        start: moqt::Location,
-        end: moqt::Location,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
     ) -> FetchRangeResolution {
         if Self::explicit_end_before_or_equal_start(start, end) {
             return FetchRangeResolution::InvalidRange;
@@ -306,8 +316,8 @@ impl TrackCache {
     fn serves_after_in_flight_wait(
         &self,
         ledger: &Ledger,
-        start: moqt::Location,
-        end: moqt::Location,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
     ) -> bool {
         if self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0 {
             return false;
@@ -320,7 +330,10 @@ impl TrackCache {
         })
     }
 
-    fn explicit_end_before_or_equal_start(start: moqt::Location, end: moqt::Location) -> bool {
+    fn explicit_end_before_or_equal_start(
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
         start.group_id > end.group_id
             || (start.group_id == end.group_id
                 && end.object_id != 0
@@ -329,9 +342,9 @@ impl TrackCache {
 
     fn resolve_fetch_end_location(
         ledger: &Ledger,
-        requested_end: moqt::Location,
-        largest: moqt::Location,
-    ) -> moqt::Location {
+        requested_end: moqt::object::Location,
+        largest: moqt::object::Location,
+    ) -> moqt::object::Location {
         if requested_end.group_id > largest.group_id
             || (requested_end.group_id == largest.group_id
                 && requested_end.object_id != 0
@@ -810,7 +823,7 @@ mod tests {
 
 #[cfg(test)]
 mod fetch_tests {
-    use moqt::ObjectStatus;
+    use moqt::object::ObjectStatus;
     use tokio::task::JoinHandle;
 
     use super::*;
@@ -822,7 +835,7 @@ mod fetch_tests {
         },
     };
 
-    fn object_ids(objects: &[moqt::FetchObjectField]) -> Vec<(u64, u64)> {
+    fn object_ids(objects: &[moqt::fetch::FetchObjectField]) -> Vec<(u64, u64)> {
         objects
             .iter()
             .map(|object| (object.group_id, object.object_id))
@@ -831,21 +844,21 @@ mod fetch_tests {
 
     fn spawn_fetch(
         cache: &Arc<TrackCache>,
-        start: moqt::Location,
-        end: moqt::Location,
-    ) -> JoinHandle<Result<Vec<moqt::FetchObjectField>, FetchInterrupted>> {
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> JoinHandle<Result<Vec<moqt::fetch::FetchObjectField>, FetchInterrupted>> {
         let cache = cache.clone();
-        tokio::spawn(
-            async move { fetch_all(&cache, start, end, moqt::GroupOrder::Ascending).await },
-        )
+        tokio::spawn(async move {
+            fetch_all(&cache, start, end, moqt::object::GroupOrder::Ascending).await
+        })
     }
 
     async fn fetch(
         cache: &TrackCache,
-        start: moqt::Location,
-        end: moqt::Location,
-    ) -> Vec<moqt::FetchObjectField> {
-        fetch_all(cache, start, end, moqt::GroupOrder::Ascending)
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> Vec<moqt::fetch::FetchObjectField> {
+        fetch_all(cache, start, end, moqt::object::GroupOrder::Ascending)
             .await
             .unwrap()
     }
@@ -1081,7 +1094,7 @@ mod fetch_tests {
         assert_eq!(object_ids(&objects), vec![(0, 2)]);
         assert!(matches!(
             objects[0].fetch_object,
-            moqt::FetchObject::Status(ObjectStatus::DoesNotExist)
+            moqt::fetch::FetchObject::Status(ObjectStatus::DoesNotExist)
         ));
     }
 
@@ -1168,7 +1181,7 @@ mod fetch_tests {
             &cache,
             location(0, 0),
             location(1, 2),
-            moqt::GroupOrder::Descending,
+            moqt::object::GroupOrder::Descending,
         )
         .await
         .unwrap();

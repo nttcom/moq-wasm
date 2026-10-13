@@ -1,6 +1,6 @@
 #[derive(Debug, Clone)]
 pub(crate) enum DataObject {
-    SubgroupHeader(moqt::SubgroupHeader),
-    SubgroupObject(moqt::SubgroupObjectField),
-    ObjectDatagram(moqt::ObjectDatagram),
+    SubgroupHeader(moqt::object::SubgroupHeader),
+    SubgroupObject(moqt::object::SubgroupObjectField),
+    ObjectDatagram(moqt::object::ObjectDatagram),
 }

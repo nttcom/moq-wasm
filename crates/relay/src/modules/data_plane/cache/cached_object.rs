@@ -1,7 +1,10 @@
 use bytes::Bytes;
 use moqt::{
-    DatagramField, ExtensionHeaders, FetchObject, FetchObjectField, ObjectDatagram,
-    ObjectDatagramPayload, ObjectStatus, SubgroupHeaderType, SubgroupObject, SubgroupObjectField,
+    fetch::{FetchObject, FetchObjectField},
+    object::{
+        DatagramField, ExtensionHeaders, ObjectDatagram, ObjectDatagramPayload, ObjectStatus,
+        SubgroupHeaderType, SubgroupObject, SubgroupObjectField,
+    },
 };
 use tokio::time::Instant;
 
@@ -32,7 +35,7 @@ impl SubgroupHeaderFields {
 /// draft-14 §10.2.1 canonical object as stored by the relay cache.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedObject {
-    pub(crate) location: moqt::Location,
+    pub(crate) location: moqt::object::Location,
     pub(crate) forwarding: ForwardingPreference,
     pub(crate) publisher_priority: u8,
     pub(crate) status: ObjectStatus,
@@ -68,7 +71,7 @@ impl CachedObject {
 
     fn empty_at(header: &SubgroupHeaderFields, object_id: u64) -> Self {
         Self {
-            location: moqt::Location {
+            location: moqt::object::Location {
                 group_id: header.group_id,
                 object_id,
             },
@@ -93,7 +96,7 @@ impl CachedObject {
             ObjectDatagramPayload::Status(status) => (status, Bytes::new()),
         };
         Self {
-            location: moqt::Location {
+            location: moqt::object::Location {
                 group_id: datagram.group_id,
                 object_id,
             },
@@ -112,7 +115,7 @@ impl CachedObject {
             FetchObject::Status(status) => (status, Bytes::new()),
         };
         Self {
-            location: moqt::Location {
+            location: moqt::object::Location {
                 group_id: field.group_id,
                 object_id: field.object_id,
             },
@@ -252,7 +255,7 @@ mod tests {
         FIXTURE_PRIORITY, datagram_object, status_object, stream_object, stream_object_in_subgroup,
         stream_object_with_payload, subgroup_header_fields,
     };
-    use moqt::{KeyValuePair, SubgroupHeader, VariantType};
+    use moqt::object::{KeyValuePair, SubgroupHeader, VariantType};
 
     fn extension_headers() -> ExtensionHeaders {
         ExtensionHeaders::new(vec![KeyValuePair {
@@ -349,7 +352,8 @@ mod tests {
     fn subgroup_object_with_invalid_status_code_is_rejected() {
         // Arrange
         let message_type =
-            SubgroupHeader::new(0, 0, moqt::SubgroupId::Value(0), 0, false, false).message_type;
+            SubgroupHeader::new(0, 0, moqt::object::SubgroupId::Value(0), 0, false, false)
+                .message_type;
         let field = SubgroupObjectField {
             message_type,
             object_id_delta: 0,
@@ -455,7 +459,8 @@ mod tests {
         // Arrange: a zero-length Normal object must encode Object Status 0x0
         let cached = stream_object_with_payload(0, 0, Bytes::new());
         let message_type =
-            SubgroupHeader::new(0, 0, moqt::SubgroupId::Value(0), 0, true, false).message_type;
+            SubgroupHeader::new(0, 0, moqt::object::SubgroupId::Value(0), 0, true, false)
+                .message_type;
         // Act
         let fetch_field = cached.to_fetch_object_field();
         let subgroup_field = cached.to_subgroup_object_field(message_type, None);
@@ -474,7 +479,8 @@ mod tests {
     fn subgroup_object_delta_is_relative_to_the_previously_sent_object() {
         // Arrange
         let message_type =
-            SubgroupHeader::new(0, 0, moqt::SubgroupId::Value(0), 0, true, false).message_type;
+            SubgroupHeader::new(0, 0, moqt::object::SubgroupId::Value(0), 0, true, false)
+                .message_type;
         let first = stream_object(0, 7).to_subgroup_object_field(message_type, None);
         let second = stream_object(0, 9).to_subgroup_object_field(message_type, Some(7));
         // Act
@@ -502,7 +508,7 @@ mod tests {
         // Assert
         assert_eq!(
             cached.location,
-            moqt::Location {
+            moqt::object::Location {
                 group_id: 3,
                 object_id: 4
             }

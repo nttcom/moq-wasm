@@ -28,7 +28,7 @@ use crate::modules::{
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
 
-use moqt::FilterType;
+use moqt::subscribe::FilterType;
 use tracing::Span;
 
 pub(crate) struct Publish;

@@ -2,11 +2,11 @@ use std::ops::Range;
 
 #[derive(Debug, Default)]
 pub(crate) struct KnownRanges {
-    ranges: Vec<Range<moqt::Location>>,
+    ranges: Vec<Range<moqt::object::Location>>,
 }
 
 impl KnownRanges {
-    pub(crate) fn insert(&mut self, start: moqt::Location, end: moqt::Location) {
+    pub(crate) fn insert(&mut self, start: moqt::object::Location, end: moqt::object::Location) {
         let end = Self::exclusive_end(end);
         if start >= end {
             return;
@@ -47,7 +47,11 @@ impl KnownRanges {
         self.ranges = next_ranges;
     }
 
-    pub(crate) fn remove_range(&mut self, start: moqt::Location, end: moqt::Location) {
+    pub(crate) fn remove_range(
+        &mut self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
         let end = Self::exclusive_end(end);
         if start >= end {
             return;
@@ -70,7 +74,11 @@ impl KnownRanges {
         self.ranges = ranges;
     }
 
-    pub(crate) fn contains_range(&self, start: moqt::Location, end: moqt::Location) -> bool {
+    pub(crate) fn contains_range(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
         let end = Self::exclusive_end(end);
         if start >= end {
             return false;
@@ -84,15 +92,15 @@ impl KnownRanges {
     /// known-nonexistent, so readers never need to wait on them.
     pub(crate) fn end_of_range_containing(
         &self,
-        location: moqt::Location,
-    ) -> Option<moqt::Location> {
+        location: moqt::object::Location,
+    ) -> Option<moqt::object::Location> {
         self.ranges
             .iter()
             .find(|range| range.contains(&location))
             .map(|range| range.end)
     }
 
-    pub(crate) fn exclusive_end(location: moqt::Location) -> moqt::Location {
+    pub(crate) fn exclusive_end(location: moqt::object::Location) -> moqt::object::Location {
         if location.object_id != 0 {
             return location;
         }
@@ -100,7 +108,7 @@ impl KnownRanges {
         // `{group, 0}` denotes the whole group as an End Location. Internally we
         // keep half-open ranges, so this becomes the next group's first object.
         // u64::MAX groups are not practically reachable; saturating keeps ordering valid.
-        moqt::Location {
+        moqt::object::Location {
             group_id: location.group_id.saturating_add(1),
             object_id: 0,
         }

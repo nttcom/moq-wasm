@@ -29,7 +29,7 @@ impl PublishNamespaceDone {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
-        handler: &moqt::PublishNamespaceDoneHandler,
+        handler: &moqt::namespace::PublishNamespaceDoneHandler,
     ) {
         let track_namespace = handler.track_namespace();
         tracing::info!(

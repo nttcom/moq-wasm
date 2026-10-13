@@ -653,7 +653,7 @@ impl InMemoryLocalPubSubDirectory {
         downstream_subscribe_id: u64,
         subscriber_peer: SessionPeer,
         track_key: TrackKey,
-        start_location: Option<moqt::Location>,
+        start_location: Option<moqt::object::Location>,
         forward: bool,
     ) -> Option<DownstreamRunnerSignals> {
         // The track entry stays locked until the registration is inserted: a concurrent removal
@@ -1058,7 +1058,7 @@ mod tests {
     fn register_downstream_subscription_stores_start_location() {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        let largest = moqt::Location {
+        let largest = moqt::object::Location {
             group_id: 5,
             object_id: 3,
         };
@@ -1079,7 +1079,7 @@ mod tests {
         assert_eq!(sub.track_key, track_key);
         assert_eq!(
             sub.start_location,
-            Some(moqt::Location {
+            Some(moqt::object::Location {
                 group_id: 5,
                 object_id: 3
             })

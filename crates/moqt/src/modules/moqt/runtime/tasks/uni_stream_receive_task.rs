@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tracing::{Instrument, Span};
 
 use crate::{
-    Subgroup,
     modules::executor::{self, JoinHandle},
     modules::moqt::{
         data_plane::{
@@ -19,6 +18,7 @@ use crate::{
             subscription_notifier::SubscriptionNotifier,
         },
     },
+    object::Subgroup,
 };
 
 pub(crate) struct UniStreamReceiveTask;

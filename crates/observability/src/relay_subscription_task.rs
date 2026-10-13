@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use moqt::{
-    DataReceiver, FilterType, GroupOrder, Session, SessionEvent, SubscribeOption, TrackReader,
+    Session, SessionEvent, TrackReader,
+    object::{DataReceiver, GroupOrder},
+    subscribe::{FilterType, SubscribeOption},
 };
 use relay_stats::RelaySnapshot;
 use tokio::{sync::mpsc, task::JoinHandle};

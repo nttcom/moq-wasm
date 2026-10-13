@@ -13,8 +13,10 @@ use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moqt::{
-    ClientConfig, Endpoint, ExtensionHeaders, Fetch, FetchDataReceiver, FetchObject, FetchOption,
-    Location, PublishOption, QUIC, Session, StreamDataSenderFactory, SubgroupId, SubgroupObject,
+    ClientConfig, Endpoint, QUIC, Session,
+    fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
+    object::{ExtensionHeaders, Location, StreamDataSenderFactory, SubgroupId, SubgroupObject},
+    publish::PublishOption,
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";

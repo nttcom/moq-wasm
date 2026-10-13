@@ -10,7 +10,7 @@ pub(crate) trait PublishNamespaceHandler: 'static + Send + Sync {
 }
 
 #[async_trait]
-impl PublishNamespaceHandler for moqt::PublishNamespaceHandler {
+impl PublishNamespaceHandler for moqt::namespace::PublishNamespaceHandler {
     fn track_namespace(&self) -> &str {
         &self.track_namespace
     }

@@ -22,9 +22,13 @@ use std::env;
 use std::time::Duration;
 
 use moqt::{
-    ClientConfig, DataReceiver, Endpoint, ExtensionHeaders, FilterType, GroupOrder, PublishOption,
-    QUIC, Session, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupId,
-    SubgroupObject, SubscribeOption,
+    ClientConfig, Endpoint, QUIC, Session,
+    object::{
+        DataReceiver, ExtensionHeaders, GroupOrder, StreamDataReceiverFactory,
+        StreamDataSenderFactory, Subgroup, SubgroupId, SubgroupObject,
+    },
+    publish::PublishOption,
+    subscribe::{FilterType, SubscribeOption},
 };
 use tokio::sync::oneshot;
 

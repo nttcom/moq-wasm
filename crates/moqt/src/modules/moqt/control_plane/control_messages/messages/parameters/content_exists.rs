@@ -1,10 +1,10 @@
 use bytes::{Buf, BufMut, BytesMut};
 
 use crate::{
-    Location,
     modules::{
         extensions::result_ext::ResultExt, moqt::control_plane::control_messages::util::u8_to_bool,
     },
+    object::Location,
 };
 
 #[derive(Debug, Clone, PartialEq, Copy)]

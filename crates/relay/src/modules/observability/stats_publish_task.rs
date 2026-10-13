@@ -2,7 +2,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use bytes::Bytes;
-use moqt::{PublishOption, TrackWriter};
+use moqt::{TrackWriter, publish::PublishOption};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::observability::{process_memory, stats_collector::StatsCollector};

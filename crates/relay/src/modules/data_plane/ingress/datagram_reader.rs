@@ -58,7 +58,7 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
                     break;
                 }
             }
-            Err(error) if error.is::<moqt::MalformedTrackError>() => {
+            Err(error) if error.is::<moqt::object::MalformedTrackError>() => {
                 cache.mark_malformed();
                 report_malformed_track(&session_event_sender, publisher_session_id, &track_key);
                 break;
@@ -96,7 +96,7 @@ mod tests {
         let mut harness = RelayHarness::new();
         // Act
         harness
-            .run_datagram_ingest(FailingUpstream(|| moqt::MalformedTrackError.into()))
+            .run_datagram_ingest(FailingUpstream(|| moqt::object::MalformedTrackError.into()))
             .await;
         // Assert
         harness.wait_track_malformed().await;
