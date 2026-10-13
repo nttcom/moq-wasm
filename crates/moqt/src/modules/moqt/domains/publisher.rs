@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use anyhow::bail;
-
 use crate::{
+    RequestFailure,
     modules::moqt::{
         control_plane::{
             control_messages::{
@@ -39,7 +38,7 @@ pub struct Publisher {
 }
 
 impl Publisher {
-    pub async fn publish_namespace(&self, namespace: String) -> anyhow::Result<()> {
+    pub async fn publish_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
         self.begin_publish_namespace(namespace)
             .await?
             .accepted()
@@ -49,7 +48,7 @@ impl Publisher {
     pub async fn begin_publish_namespace(
         &self,
         namespace: String,
-    ) -> anyhow::Result<PendingPublishNamespace> {
+    ) -> Result<PendingPublishNamespace, RequestFailure> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -132,7 +131,7 @@ impl Publisher {
         track_namespace: String,
         track_name: String,
         option: PublishOption,
-    ) -> anyhow::Result<Subscription> {
+    ) -> Result<Subscription, RequestFailure> {
         let track_alias = self.session.get_track_alias();
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -165,7 +164,9 @@ impl Publisher {
         match response {
             ResponseMessage::PublishOk(message) => {
                 if request_id != message.request_id {
-                    bail!("Protocol violation")
+                    Err(RequestFailure::ProtocolViolation(
+                        "response for another request ID",
+                    ))
                 } else {
                     tracing::info!("Publish ok");
                     Ok(Subscription::PublisherInitiated(
@@ -188,7 +189,9 @@ impl Publisher {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 

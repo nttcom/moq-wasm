@@ -80,24 +80,19 @@ impl UpstreamSubscriptionError {
                 SubscribeErrorCode::TrackDoesNotExist as u64,
                 "Designated namespace and track name do not exist.".to_string(),
             ),
-            Self::SubscribeFailed(error) => {
-                if let Some(subscribe_error) = error.downcast_ref::<moqt::wire::RequestError>() {
-                    (
-                        subscribe_error.error_code,
-                        subscribe_error.reason_phrase.clone(),
-                    )
-                } else if error.downcast_ref::<moqt::RequestTimeoutError>().is_some() {
-                    (
-                        SubscribeErrorCode::Timeout as u64,
-                        "Upstream subscribe timed out".to_string(),
-                    )
-                } else {
-                    (
-                        SubscribeErrorCode::InternalError as u64,
-                        "Failed to create upstream subscription.".to_string(),
-                    )
+            Self::SubscribeFailed(error) => match error.downcast_ref::<moqt::RequestFailure>() {
+                Some(moqt::RequestFailure::Rejected { code, reason, .. }) => {
+                    (*code, reason.clone())
                 }
-            }
+                Some(moqt::RequestFailure::Timeout) => (
+                    SubscribeErrorCode::Timeout as u64,
+                    "Upstream subscribe timed out".to_string(),
+                ),
+                _ => (
+                    SubscribeErrorCode::InternalError as u64,
+                    "Failed to create upstream subscription.".to_string(),
+                ),
+            },
             Self::IngressStartFailed => (
                 SubscribeErrorCode::InternalError as u64,
                 "Failed to start upstream ingress.".to_string(),
@@ -613,9 +608,8 @@ mod tests {
 
     #[test]
     fn upstream_timeout_maps_to_subscribe_error_timeout() {
-        let error = UpstreamSubscriptionError::SubscribeFailed(anyhow::Error::new(
-            moqt::RequestTimeoutError,
-        ));
+        let error =
+            UpstreamSubscriptionError::SubscribeFailed(moqt::RequestFailure::Timeout.into());
         let (code, _reason) = error.subscribe_error_response();
         assert_eq!(code, SubscribeErrorCode::Timeout as u64);
     }
@@ -623,10 +617,10 @@ mod tests {
     #[test]
     fn upstream_subscribe_error_code_is_relayed_verbatim() {
         let error = UpstreamSubscriptionError::SubscribeFailed(anyhow::Error::new(
-            moqt::wire::RequestError {
+            moqt::RequestFailure::Rejected {
                 request_id: 7,
-                error_code: 0x1,
-                reason_phrase: "unauthorized".to_string(),
+                code: 0x1,
+                reason: "unauthorized".to_string(),
             },
         ));
         let (code, reason) = error.subscribe_error_response();

@@ -7,6 +7,7 @@ pub(crate) mod handshake;
 pub(crate) mod origin;
 pub(crate) mod pending_publish_namespace;
 pub(crate) mod publisher;
+pub(crate) mod request_failure;
 pub(crate) mod session;
 pub(crate) mod session_context;
 pub(crate) mod session_context_factory;

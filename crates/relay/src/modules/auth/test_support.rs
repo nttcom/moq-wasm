@@ -7,8 +7,8 @@ use std::{
 
 use async_trait::async_trait;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session,
-    wire::{AuthorizationToken, ClientSetup, RequestError, SetupParameter},
+    ClientConfig, Endpoint, QUIC, RequestFailure, Session,
+    wire::{AuthorizationToken, ClientSetup, SetupParameter},
 };
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
@@ -62,11 +62,12 @@ pub(crate) fn relay_token() -> VerifiedToken {
     }
 }
 
-pub(crate) fn request_error_code(error: anyhow::Error) -> u64 {
-    error
-        .downcast_ref::<RequestError>()
-        .unwrap_or_else(|| panic!("expected a request error, got {error:?}"))
-        .error_code
+pub(crate) fn request_error_code(error: impl Into<anyhow::Error>) -> u64 {
+    let error = error.into();
+    match error.downcast_ref::<RequestFailure>() {
+        Some(RequestFailure::Rejected { code, .. }) => *code,
+        _ => panic!("expected a request rejection, got {error:?}"),
+    }
 }
 
 pub(crate) enum StubOutcome {

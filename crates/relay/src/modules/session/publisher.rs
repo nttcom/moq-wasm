@@ -50,7 +50,7 @@ impl Publisher for moqt::Publisher {
         namespaces: String,
     ) -> anyhow::Result<PublishNamespaceResponse> {
         let pending = self.begin_publish_namespace(namespaces).await?;
-        Ok(Box::pin(pending.accepted()))
+        Ok(Box::pin(async move { Ok(pending.accepted().await?) }))
     }
 
     async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {

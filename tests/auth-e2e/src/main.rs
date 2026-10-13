@@ -20,11 +20,11 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
+    ClientConfig, Endpoint, QUIC, RequestFailure, Session, SessionEvent, Subscription,
     object::{DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId, SubgroupObject},
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
-    wire::{AuthorizationToken, RequestError},
+    wire::AuthorizationToken,
 };
 
 const DEFAULT_RELAY_A_URL: &str = "moqt://127.0.0.1:4433";
@@ -365,17 +365,14 @@ async fn expect_refreshed_session_outlives_short_token(
     Ok(())
 }
 
-fn expect_unauthorized(error: anyhow::Error, label: &str) -> anyhow::Result<()> {
-    let request_error = error
-        .downcast_ref::<RequestError>()
-        .with_context(|| format!("{label}: expected a request error, got {error:?}"))?;
-    if request_error.error_code != UNAUTHORIZED {
-        bail!(
-            "{label}: expected error code {UNAUTHORIZED}, got {}",
-            request_error.error_code
-        );
+fn expect_unauthorized(error: RequestFailure, label: &str) -> anyhow::Result<()> {
+    match error {
+        RequestFailure::Rejected { code, .. } if code == UNAUTHORIZED => Ok(()),
+        RequestFailure::Rejected { code, .. } => {
+            bail!("{label}: expected error code {UNAUTHORIZED}, got {code}")
+        }
+        other => bail!("{label}: expected a request rejection, got {other}"),
     }
-    Ok(())
 }
 
 async fn send_test_object(session: Arc<Session>, subscription: Subscription) -> anyhow::Result<()> {

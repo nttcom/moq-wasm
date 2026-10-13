@@ -4,7 +4,7 @@ use bytes::Bytes;
 use rcgen::{CertifiedKey, generate_simple_self_signed};
 
 use crate::{
-    ClientConfig, DUAL, Endpoint, Session, SessionEvent, Subscription, TrackReader,
+    ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
     TransportProtocol,
     fetch::{Fetch, FetchDataReceiver, FetchObjectField},
     modules::moqt::{
@@ -23,6 +23,7 @@ use crate::{
     server::Handshake,
     server::ServerConfig,
     subscribe::FilterType,
+    wire::RequestError,
 };
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -254,4 +255,23 @@ pub(crate) async fn register_and_take_data_receiver(
         .await
         .remove(&track_alias)
         .unwrap()
+}
+
+pub(crate) fn rejection<T, E: Into<anyhow::Error>>(result: Result<T, E>) -> RequestError {
+    let Err(error) = result else {
+        panic!("expected the request to fail");
+    };
+    let error: anyhow::Error = error.into();
+    match error.downcast_ref::<RequestFailure>() {
+        Some(RequestFailure::Rejected {
+            request_id,
+            code,
+            reason,
+        }) => RequestError {
+            request_id: *request_id,
+            error_code: *code,
+            reason_phrase: reason.clone(),
+        },
+        _ => panic!("expected a rejection, got {error:#}"),
+    }
 }

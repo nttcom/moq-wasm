@@ -10,8 +10,8 @@ use std::{
 
 use bytes::Bytes;
 use moqt::{
-    BROWSER, ClientConfig, Endpoint, RequestTimeoutError, Session, Subscription,
-    TerminationErrorCode, TransportSendError,
+    BROWSER, ClientConfig, Endpoint, RequestFailure, Session, Subscription, TerminationErrorCode,
+    TransportSendError,
     fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
     namespace::PublishNamespaceHandler,
     object::{
@@ -1311,7 +1311,7 @@ impl MOQTClient {
         &self,
         select: CallbackSelector,
         request_id: u64,
-        result: anyhow::Result<()>,
+        result: Result<(), RequestFailure>,
     ) {
         let message: JsValue = match result {
             Ok(()) => NamespaceOkMessage::from(&NamespaceOk { request_id }).into(),
@@ -1324,7 +1324,7 @@ impl MOQTClient {
         &self,
         session: Rc<Session>,
         request_id: u64,
-        result: anyhow::Result<FetchHandle>,
+        result: Result<FetchHandle, RequestFailure>,
     ) {
         match result {
             Ok(fetch_handle) => {
@@ -1447,26 +1447,17 @@ fn send_error(error: TransportSendError) -> JsValue {
 }
 
 /// Reports a failed request to JavaScript under the request id it chose.
-/// A `RequestError` keeps the peer's code and reason; a timeout maps to
-/// TIMEOUT and anything else to INTERNAL_ERROR (draft-14 §13.1).
-fn request_error_message(request_id: u64, error: &anyhow::Error) -> RequestErrorMessage {
-    let request_error = match error.downcast_ref::<RequestError>() {
-        Some(request_error) => RequestError {
-            request_id,
-            error_code: request_error.error_code,
-            reason_phrase: request_error.reason_phrase.clone(),
-        },
-        None => RequestError {
-            request_id,
-            error_code: if error.downcast_ref::<RequestTimeoutError>().is_some() {
-                ERROR_TIMEOUT
-            } else {
-                ERROR_INTERNAL
-            },
-            reason_phrase: format!("{error:#}"),
-        },
+fn request_error_message(request_id: u64, error: &RequestFailure) -> RequestErrorMessage {
+    let (error_code, reason_phrase) = match error {
+        RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),
+        RequestFailure::Timeout => (ERROR_TIMEOUT, error.to_string()),
+        _ => (ERROR_INTERNAL, error.to_string()),
     };
-    RequestErrorMessage::from(&request_error)
+    RequestErrorMessage::from(&RequestError {
+        request_id,
+        error_code,
+        reason_phrase,
+    })
 }
 
 fn authorization_tokens(auth_info: &str) -> Vec<AuthorizationToken> {

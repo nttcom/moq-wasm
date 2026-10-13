@@ -300,19 +300,17 @@ impl Fetch {
     }
 
     fn upstream_fetch_error_response(error: &anyhow::Error) -> (u64, String) {
-        if let Some(fetch_error) = error.downcast_ref::<moqt::wire::RequestError>() {
-            return (fetch_error.error_code, fetch_error.reason_phrase.clone());
-        }
-        if error.downcast_ref::<moqt::RequestTimeoutError>().is_some() {
-            return (
+        match error.downcast_ref::<moqt::RequestFailure>() {
+            Some(moqt::RequestFailure::Rejected { code, reason, .. }) => (*code, reason.clone()),
+            Some(moqt::RequestFailure::Timeout) => (
                 FetchErrorCode::Timeout as u64,
                 "Upstream fetch timed out".to_string(),
-            );
+            ),
+            _ => (
+                FetchErrorCode::InternalError as u64,
+                "Internal relay error".to_string(),
+            ),
         }
-        (
-            FetchErrorCode::InternalError as u64,
-            "Internal relay error".to_string(),
-        )
     }
 
     fn resolve_target_and_source(
@@ -629,7 +627,7 @@ mod tests {
     #[test]
     fn upstream_timeout_maps_to_fetch_error_timeout() {
         // Arrange
-        let error = anyhow::Error::new(moqt::RequestTimeoutError);
+        let error = anyhow::Error::new(moqt::RequestFailure::Timeout);
 
         // Act
         let (code, _reason) = Fetch::upstream_fetch_error_response(&error);
@@ -641,10 +639,10 @@ mod tests {
     #[test]
     fn upstream_request_error_code_is_relayed_verbatim() {
         // Arrange
-        let error = anyhow::Error::new(moqt::wire::RequestError {
+        let error = anyhow::Error::new(moqt::RequestFailure::Rejected {
             request_id: 7,
-            error_code: 0x3,
-            reason_phrase: "not supported".to_string(),
+            code: 0x3,
+            reason: "not supported".to_string(),
         });
 
         // Act

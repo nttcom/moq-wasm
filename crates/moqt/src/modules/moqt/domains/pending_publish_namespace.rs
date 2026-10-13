@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use anyhow::bail;
-
 use crate::{
+    RequestFailure,
     modules::moqt::{
         control_plane::enums::{RequestId, ResponseMessage},
         domains::session_context::{RegisteredSender, SessionContext},
@@ -19,7 +18,7 @@ pub struct PendingPublishNamespace {
 }
 
 impl PendingPublishNamespace {
-    pub async fn accepted(self) -> anyhow::Result<()> {
+    pub async fn accepted(self) -> Result<(), RequestFailure> {
         match self.session.await_response(self.receiver).await? {
             ResponseMessage::PublishNamespaceOk(request_id) if request_id == self.request_id => {
                 Ok(())
@@ -32,7 +31,9 @@ impl PendingPublishNamespace {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 }

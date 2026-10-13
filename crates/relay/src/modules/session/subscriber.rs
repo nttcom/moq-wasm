@@ -114,14 +114,15 @@ impl Subscriber for moqt::Subscriber {
         end_location: moqt::object::Location,
         option: moqt::fetch::FetchOption,
     ) -> anyhow::Result<moqt::fetch::FetchHandle> {
-        self.fetch(
-            track_namespace,
-            track_name,
-            start_location,
-            end_location,
-            option,
-        )
-        .await
+        Ok(self
+            .fetch(
+                track_namespace,
+                track_name,
+                start_location,
+                end_location,
+                option,
+            )
+            .await?)
     }
 
     #[tracing::instrument(

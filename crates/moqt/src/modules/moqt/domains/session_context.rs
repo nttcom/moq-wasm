@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    SessionEvent,
+    RequestFailure, SessionEvent,
     modules::{
         executor,
         moqt::{
@@ -35,20 +35,6 @@ use crate::{
 };
 
 const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Returned by [`SessionContext::await_response`] when the peer does
-/// not answer in time. Callers map this to a per-request failure (e.g.
-/// FETCH_ERROR TIMEOUT) and keep the session open.
-#[derive(Debug)]
-pub struct RequestTimeoutError;
-
-impl fmt::Display for RequestTimeoutError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "request response timed out")
-    }
-}
-
-impl std::error::Error for RequestTimeoutError {}
 
 /// How to withdraw a request whose success response arrives after the caller
 /// stopped waiting (timeout or cancellation). Late error responses never need
@@ -342,11 +328,11 @@ impl SessionContext {
     pub(crate) async fn await_response(
         &self,
         receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
-    ) -> anyhow::Result<ResponseMessage> {
+    ) -> Result<ResponseMessage, RequestFailure> {
         match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => anyhow::bail!("control stream closed before the response arrived"),
-            Err(_) => Err(RequestTimeoutError.into()),
+            Ok(Err(_)) => Err(RequestFailure::SessionClosed),
+            Err(_) => Err(RequestFailure::Timeout),
         }
     }
 

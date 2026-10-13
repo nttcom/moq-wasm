@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::bail;
 use tracing::Instrument;
 
 use crate::{
-    SubscriberInitiatedSubscription, Subscription,
+    RequestFailure, SubscriberInitiatedSubscription, Subscription,
     fetch::FetchOption,
     modules::moqt::{
         control_plane::{
@@ -51,7 +50,7 @@ impl Subscriber {
         skip_all,
         fields(namespace = %namespace)
     )]
-    pub async fn subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+    pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
         let vec_namespace: Vec<String> = namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -75,7 +74,9 @@ impl Subscriber {
         match response {
             ResponseMessage::SubscribeNameSpaceOk(response_request_id) => {
                 if request_id != response_request_id {
-                    bail!("Protocol violation")
+                    Err(RequestFailure::ProtocolViolation(
+                        "response for another request ID",
+                    ))
                 } else {
                     tracing::info!("Subscribe namespace ok");
                     Ok(())
@@ -90,7 +91,9 @@ impl Subscriber {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 
@@ -105,7 +108,7 @@ impl Subscriber {
         track_namespace: String,
         track_name: String,
         option: SubscribeOption,
-    ) -> anyhow::Result<Subscription> {
+    ) -> Result<Subscription, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let filter_type = option.filter_type;
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -134,7 +137,9 @@ impl Subscriber {
         match response {
             ResponseMessage::SubscribeOk(message) => {
                 if request_id != message.request_id {
-                    bail!("Protocol violation")
+                    Err(RequestFailure::ProtocolViolation(
+                        "response for another request ID",
+                    ))
                 } else {
                     tracing::info!("Subscribe ok");
                     if let Err(code) = self
@@ -150,7 +155,9 @@ impl Subscriber {
                         );
                         self.session
                             .close_with_error(code, "SUBSCRIBE_OK reused an in-use track alias");
-                        bail!("Duplicate track alias")
+                        return Err(RequestFailure::ProtocolViolation(
+                            "SUBSCRIBE_OK reused an in-use track alias",
+                        ));
                     }
                     tracing::info!(
                         track_alias = message.track_alias,
@@ -176,7 +183,9 @@ impl Subscriber {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 
@@ -191,7 +200,7 @@ impl Subscriber {
         track_namespace: String,
         track_name: String,
         authorization_tokens: Vec<AuthorizationToken>,
-    ) -> anyhow::Result<TrackStatusOk> {
+    ) -> Result<TrackStatusOk, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let (sender, receiver) = tokio::sync::oneshot::channel::<ResponseMessage>();
         let request_id = self.session.get_request_id();
@@ -217,7 +226,9 @@ impl Subscriber {
         match response {
             ResponseMessage::TrackStatusOk(message) => {
                 if request_id != message.request_id {
-                    bail!("Protocol violation")
+                    return Err(RequestFailure::ProtocolViolation(
+                        "response for another request ID",
+                    ));
                 }
                 tracing::info!("Track status ok");
                 Ok(message)
@@ -231,7 +242,9 @@ impl Subscriber {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 
@@ -248,7 +261,7 @@ impl Subscriber {
         start_location: Location,
         end_location: Location,
         option: FetchOption,
-    ) -> anyhow::Result<FetchHandle> {
+    ) -> Result<FetchHandle, RequestFailure> {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let request_id = self.session.get_request_id();
 
@@ -315,7 +328,9 @@ impl Subscriber {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 
@@ -359,7 +374,7 @@ impl Subscriber {
         joining_request_id: u64,
         joining_start: u64,
         option: FetchOption,
-    ) -> anyhow::Result<FetchHandle> {
+    ) -> Result<FetchHandle, RequestFailure> {
         let request_id = self.session.get_request_id();
 
         let (fetch_stream_tx, fetch_stream_rx) =
@@ -423,7 +438,9 @@ impl Subscriber {
                 }
                 .into())
             }
-            _ => bail!("Protocol violation"),
+            _ => Err(RequestFailure::ProtocolViolation(
+                "response type does not match the request",
+            )),
         }
     }
 
