@@ -1,3 +1,4 @@
+import { CanvasSink } from './livePictureSink'
 import { ReviewPlayout } from './reviewPlayout'
 import type { ReviewFrame } from './rewind'
 import type { Playhead } from './deliveryObserver'
@@ -14,11 +15,13 @@ export type LocReviewCallbacks = {
 export class LocReview {
   readonly playout: ReviewPlayout
   private readonly frameIds = new Map<number, Omit<Playhead, 'captureMicros'>>()
+  private readonly picture: CanvasSink
 
   constructor(
     readonly canvas: HTMLCanvasElement,
     private readonly callbacks: LocReviewCallbacks
   ) {
+    this.picture = new CanvasSink(canvas)
     this.playout = new ReviewPlayout(
       (frame) => this.show(frame),
       (message) => callbacks.onLog('error', message)
@@ -92,15 +95,10 @@ export class LocReview {
   }
 
   private show(frame: VideoFrame): void {
-    const ids = this.frameIds.get(frame.timestamp)
-    this.frameIds.delete(frame.timestamp)
-    const context = this.canvas.getContext('2d')
-    if (context) {
-      this.canvas.width = frame.displayWidth
-      this.canvas.height = frame.displayHeight
-      context.drawImage(frame, 0, 0)
-      this.callbacks.onFrameShown(frame.timestamp, ids && { ...ids, captureMicros: frame.timestamp })
-    }
-    frame.close()
+    const captureMicros = frame.timestamp
+    const ids = this.frameIds.get(captureMicros)
+    this.frameIds.delete(captureMicros)
+    this.picture.present(frame)
+    this.callbacks.onFrameShown(captureMicros, ids && { ...ids, captureMicros })
   }
 }
