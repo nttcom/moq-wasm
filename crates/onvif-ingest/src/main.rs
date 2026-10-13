@@ -1,35 +1,21 @@
 use anyhow::{anyhow, bail, Context, Result};
-use base64::{engine::general_purpose, Engine as _};
-use bytes::Bytes;
+use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
 use clap::Parser;
-use mediapack::loc::{to_extension_headers, LocExtension, CAPTURE_TIMESTAMP_ID, VIDEO_CONFIG_ID};
-use moqt::{
-    object::{
-        ContentExists, DataReceiver, ExtensionHeaders, GroupOrder, SubgroupId, SubgroupObject,
-        SubgroupObjectSender,
-    },
-    subscribe::{FilterType, SubscribeOption},
-    ClientConfig, Endpoint, Session, SessionEvent, Subscription, TrackReader, TransportSendError,
-    WEBTRANSPORT,
-};
-use msf::{Catalog, KnownPackaging, KnownTrackRole, Track, CATALOG_TRACK_NAME};
+use mediapack::MediaEvent;
+use moqt::ClientConfig;
 use onvif_ingest::{
-    app_config, cli, onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker,
-    rtsp_frame::{EncodedAudioPacket, EncodedPacket, RtspPacket},
-    rtsp_source::{self, now_micros},
-    soap_client,
+    app_config, cli,
+    command_subscriber::{CommandSubscriber, CommandTrack},
+    onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_source, soap_client,
 };
-use serde::Deserialize;
-use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::mpsc as std_mpsc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+};
 
-const AUDIO_GROUP_ROTATION_INTERVAL_US: u64 = 2_000_000;
-const DEFAULT_AUDIO_PACKET_DURATION_US: u64 = 20_000;
-const NO_EXPIRY: u64 = 0;
+const RTSP_EVENT_CAPACITY: usize = 64;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Bridge ONVIF PTZ and RTSP media over MoQ")]
@@ -37,7 +23,7 @@ struct MoqtArgs {
     #[command(flatten)]
     onvif: cli::Args,
 
-    /// MoQ WebTransport URL (e.g. https://localhost:4433)
+    /// MoQ relay URL (e.g. https://localhost:4433 for WebTransport, moqt://localhost:4433 for QUIC)
     #[arg(long)]
     moqt_url: String,
 
@@ -65,10 +51,6 @@ struct MoqtArgs {
     #[arg(long, default_value = "audio")]
     audio_track: String,
 
-    /// Track name for profile catalog
-    #[arg(long, default_value = CATALOG_TRACK_NAME)]
-    catalog_track: String,
-
     /// Track name for ONVIF commands
     #[arg(long, default_value = "command")]
     command_track: String,
@@ -77,19 +59,12 @@ struct MoqtArgs {
     #[arg(long, default_value_t = 0)]
     subscriber_priority: u8,
 
-    /// Publisher priority for video stream
-    #[arg(long, default_value_t = 0)]
-    publisher_priority: u8,
+    /// Publish this RTSP stream as profile 1 instead of the camera's ONVIF
+    /// profiles, e.g. a local test server
+    #[arg(long, value_name = "URL")]
+    rtsp_url: Option<String>,
 
-    /// Codec string advertised in video metadata
-    #[arg(long, default_value = "avc1.640028")]
-    video_codec: String,
-
-    /// Payload format to send over MoQ
-    #[arg(long, value_enum, default_value = "annexb")]
-    payload_format: rtsp_source::PayloadFormat,
-
-    /// Dump the first keyframe AnnexB payload for ffprobe (default: /tmp/moqt-onvif-keyframe.h264)
+    /// Dump the first keyframe AnnexB payload of profile 1 for ffprobe (default: /tmp/moqt-onvif-keyframe.h264)
     #[arg(
         long,
         value_name = "PATH",
@@ -97,6 +72,11 @@ struct MoqtArgs {
         default_missing_value = "/tmp/moqt-onvif-keyframe.h264"
     )]
     dump_keyframe: Option<PathBuf>,
+}
+
+struct ProfileSource {
+    tracks: SourceTracks,
+    rtsp_url: String,
 }
 
 #[tokio::main]
@@ -114,1208 +94,133 @@ async fn main() -> Result<()> {
     }
 
     let command_sender = ptz_worker::spawn(target.clone());
+    let sources = match &args.rtsp_url {
+        Some(rtsp_url) => vec![ProfileSource {
+            tracks: profile_tracks(&args, 1, "RTSP"),
+            rtsp_url: rtsp_url.clone(),
+        }],
+        None => fetch_profile_sources(&target, &args).await?,
+    };
 
-    let profile_tracks =
-        fetch_profile_tracks(&target, &args.video_track, &args.audio_track).await?;
-    if profile_tracks.is_empty() {
-        bail!("no video profiles available");
-    }
-    let catalog_track = args.catalog_track.clone();
-    let expected_tracks = build_expected_tracks(&catalog_track, &profile_tracks);
-
-    let wt_connect_started = Instant::now();
     let client_config = ClientConfig {
         port: 0,
         verify_certificate: !args.insecure_skip_tls_verify,
         authorization_token: args.auth_token.clone(),
     };
-    let session = connect_session(&args.moqt_url, &client_config)
-        .await
-        .context("connect moqt session")?;
-    let publisher = session.publisher();
-    log::info!(
-        "WebTransport connected: url={} elapsed_ms={}",
-        args.moqt_url,
-        wt_connect_started.elapsed().as_millis()
-    );
-    publisher
-        .publish_namespace(publish_namespace.join("/"))
-        .await
-        .context("publisher publish_namespace")?;
-
-    let command_subscriber = session.subscriber();
-    let command_namespace = subscribe_namespace.join("/");
-    command_subscriber
-        .subscribe_namespace(command_namespace.clone())
-        .await
-        .context("subscribe command namespace")?;
-    log::info!(
-        "Subscribed command namespace for late join viewers: {}",
-        command_namespace
-    );
-
-    run_moqt_bridge(BridgeContext {
-        session,
-        publisher,
-        video_codec: args.video_codec,
-        payload_format: args.payload_format,
-        catalog_track,
-        expected_tracks,
-        publisher_priority: args.publisher_priority,
-        dump_keyframe: args.dump_keyframe,
-        publish_namespace,
-        profile_tracks,
-        command_namespace,
-        command_track: args.command_track,
+    let mut commands = CommandSubscriber::run(
+        &args.moqt_url,
+        &client_config,
+        CommandTrack {
+            namespace: subscribe_namespace.join("/"),
+            track: args.command_track.clone(),
+            subscriber_priority: args.subscriber_priority,
+        },
         command_sender,
-        command_subscribe_priority: args.subscriber_priority,
-    })
-    .await?;
-
-    Ok(())
-}
-
-struct BridgeContext {
-    session: std::sync::Arc<Session>,
-    publisher: moqt::Publisher,
-    video_codec: String,
-    payload_format: rtsp_source::PayloadFormat,
-    catalog_track: String,
-    expected_tracks: HashSet<String>,
-    publisher_priority: u8,
-    dump_keyframe: Option<PathBuf>,
-    publish_namespace: Vec<String>,
-    profile_tracks: Vec<ProfileTrack>,
-    command_namespace: String,
-    command_track: String,
-    command_sender: std_mpsc::Sender<ptz_worker::Command>,
-    command_subscribe_priority: u8,
-}
-
-async fn run_moqt_bridge(ctx: BridgeContext) -> Result<()> {
-    let BridgeContext {
-        session,
-        publisher,
-        video_codec,
-        payload_format,
-        catalog_track,
-        expected_tracks,
-        publisher_priority,
-        dump_keyframe,
-        publish_namespace,
-        profile_tracks,
-        command_namespace,
-        command_track,
-        command_sender,
-        command_subscribe_priority,
-    } = ctx;
-    let (rtsp_tx, mut rtsp_rx) = mpsc::channel(32);
-    let (rtsp_err_tx, rtsp_err_rx) = std_mpsc::channel();
-    spawn_rtsp_error_logger(rtsp_err_rx);
-
-    let expected_namespace = publish_namespace.join("/");
-    let mut selected_profile_index: Option<usize> = None;
-    let mut video_publication: Option<Subscription> = None;
-    let mut audio_publication: Option<Subscription> = None;
-    let mut video_state = VideoStreamState::default();
-    let mut audio_state = AudioStreamState::default();
-    let mut dump_state = dump_keyframe.map(KeyframeDump::new);
-    let mut catalog_state = CatalogUpdateState::new();
-    let mut rtsp_started = false;
-    let mut command_receiver: Option<CommandReceiver> = None;
-
-    loop {
-        if !rtsp_started {
-            let event = session.receive_event().await?;
-            if let Some(start_profile) = handle_session_event(
-                event,
-                &publisher,
-                &expected_namespace,
-                &catalog_track,
-                &expected_tracks,
-                &publish_namespace,
-                &profile_tracks,
-                publisher_priority,
-                &mut catalog_state,
-                &mut selected_profile_index,
-                &mut video_publication,
-                &mut audio_publication,
-                &mut video_state,
-                &mut audio_state,
-                &session,
-                &command_namespace,
-                &command_track,
-                &command_sender,
-                command_subscribe_priority,
-                &mut command_receiver,
-            )
-            .await?
-            {
-                spawn_rtsp_bridge(
-                    start_profile.rtsp_url.clone(),
-                    video_codec.clone(),
-                    payload_format,
-                    rtsp_tx.clone(),
-                    rtsp_err_tx.clone(),
-                );
-                rtsp_started = true;
-            }
-            continue;
-        }
-
-        tokio::select! {
-            event = session.receive_event() => {
-                if let Some(start_profile) = handle_session_event(
-                    event?,
-                    &publisher,
-                    &expected_namespace,
-                    &catalog_track,
-                    &expected_tracks,
-                    &publish_namespace,
-                    &profile_tracks,
-                    publisher_priority,
-                    &mut catalog_state,
-                    &mut selected_profile_index,
-                    &mut video_publication,
-                    &mut audio_publication,
-                    &mut video_state,
-                    &mut audio_state,
-                    &session,
-                    &command_namespace,
-                    &command_track,
-                    &command_sender,
-                    command_subscribe_priority,
-                    &mut command_receiver,
-                ).await? {
-                    spawn_rtsp_bridge(
-                        start_profile.rtsp_url.clone(),
-                        video_codec.clone(),
-                        payload_format,
-                        rtsp_tx.clone(),
-                        rtsp_err_tx.clone(),
-                    );
-                }
-            }
-            maybe_packet = rtsp_rx.recv() => {
-                let Some(packet) = maybe_packet else {
-                    break;
-                };
-                match packet {
-                    RtspPacket::Video(packet) => {
-                        maybe_send_video_catalog_update(
-                            &publisher,
-                            &mut catalog_state,
-                            &publish_namespace,
-                            &profile_tracks,
-                            publisher_priority,
-                            &packet,
-                        )
-                        .await?;
-                        if let Some(publication) = video_publication.as_ref() {
-                            let sent = send_video_packet(
-                                &publisher,
-                                &mut video_state,
-                                publication,
-                                publisher_priority,
-                                &mut dump_state,
-                                packet,
-                            )
-                            .await;
-                            if was_stopped_by_peer(sent, "video")? {
-                                video_state.stream = None;
-                            }
-                        }
-                    }
-                    RtspPacket::Audio(packet) => {
-                        maybe_send_audio_catalog_update(
-                            &publisher,
-                            &mut catalog_state,
-                            &publish_namespace,
-                            &profile_tracks,
-                            publisher_priority,
-                            &packet,
-                        )
-                        .await?;
-                        if let Some(publication) = audio_publication.as_ref() {
-                            let sent = send_audio_packet(
-                                &publisher,
-                                &mut audio_state,
-                                publication,
-                                publisher_priority,
-                                packet,
-                            )
-                            .await;
-                            if was_stopped_by_peer(sent, "audio")? {
-                                audio_state.stream = None;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MediaTrackKind {
-    Video,
-    Audio,
-}
-
-fn spawn_rtsp_bridge(
-    rtsp_url: String,
-    codec_label: String,
-    payload_format: rtsp_source::PayloadFormat,
-    tx: mpsc::Sender<RtspPacket>,
-    err_tx: std_mpsc::Sender<String>,
-) {
-    std::thread::spawn(move || {
-        if let Err(err) = rtsp_source::run(&rtsp_url, payload_format, codec_label, tx) {
-            let _ = err_tx.send(format!("{err:#}"));
-        }
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn handle_session_event(
-    event: SessionEvent,
-    publisher: &moqt::Publisher,
-    expected_namespace: &str,
-    catalog_track: &str,
-    expected_tracks: &HashSet<String>,
-    publish_namespace: &[String],
-    profile_tracks: &[ProfileTrack],
-    publisher_priority: u8,
-    catalog_state: &mut CatalogUpdateState,
-    selected_profile_index: &mut Option<usize>,
-    video_publication: &mut Option<Subscription>,
-    audio_publication: &mut Option<Subscription>,
-    video_state: &mut VideoStreamState,
-    audio_state: &mut AudioStreamState,
-    session: &Session,
-    command_namespace: &str,
-    command_track: &str,
-    command_sender: &std_mpsc::Sender<ptz_worker::Command>,
-    command_subscribe_priority: u8,
-    command_receiver: &mut Option<CommandReceiver>,
-) -> Result<Option<ProfileTrack>> {
-    match event {
-        SessionEvent::Subscribe(handler) => {
-            handle_media_subscribe_event(
-                handler,
-                publisher,
-                expected_namespace,
-                catalog_track,
-                expected_tracks,
-                publish_namespace,
-                profile_tracks,
-                publisher_priority,
-                catalog_state,
-                selected_profile_index,
-                video_publication,
-                audio_publication,
-                video_state,
-                audio_state,
-            )
-            .await
-        }
-        SessionEvent::PublishNamespaceDone(handler) => {
-            eprintln!(
-                "[moqt] publish_namespace_done ns={}",
-                handler.track_namespace
-            );
-            Ok(None)
-        }
-        SessionEvent::PublishNamespace(handler) => {
-            handle_command_namespace_announce(
-                handler,
-                session,
-                command_namespace,
-                command_track,
-                command_sender,
-                command_subscribe_priority,
-                command_receiver,
-            )
-            .await?;
-            Ok(None)
-        }
-        SessionEvent::Publish(handler) => {
-            handle_command_publish_event(
-                handler,
-                session,
-                command_namespace,
-                command_track,
-                command_sender,
-                command_subscribe_priority,
-                command_receiver,
-            )
-            .await?;
-            Ok(None)
-        }
-        SessionEvent::Unsubscribe(handler) => {
-            let request_id = handler.subscribe_id();
-            log::info!("Unsubscribe received: subscribe_id={request_id}");
-            let unsubscribed =
-                |publication: &mut Subscription| publication.request_id() == request_id;
-            catalog_state.track_publication.take_if(unsubscribed);
-            if video_publication.take_if(unsubscribed).is_some() {
-                *video_state = VideoStreamState::default();
-            }
-            if audio_publication.take_if(unsubscribed).is_some() {
-                *audio_state = AudioStreamState::default();
-            }
-            Ok(None)
-        }
-        SessionEvent::UnsubscribeNamespace(handler) => {
-            log::info!(
-                "Command/media unsubscribe namespace event received: prefix={}",
-                handler.track_namespace_prefix()
-            );
-            Ok(None)
-        }
-        SessionEvent::Disconnected() => {
-            bail!("moqt session disconnected");
-        }
-        SessionEvent::ProtocolViolation() => {
-            bail!("moqt session protocol violation");
-        }
-        SessionEvent::SubscribeNameSpace(handler) => {
-            log::warn!(
-                "Unexpected inbound SUBSCRIBE_NAMESPACE: prefix={}",
-                handler.track_namespace_prefix
-            );
-            let _ = handler
-                .error(405, "unsupported subscribe namespace".to_string())
-                .await;
-            Ok(None)
-        }
-        SessionEvent::PublishDone(handler) => {
-            if command_receiver
-                .as_ref()
-                .is_some_and(|receiver| receiver.request_id == handler.request_id())
-            {
-                log::info!("command publisher finished; waiting for the next command publisher");
-                *command_receiver = None;
-            }
-            Ok(None)
-        }
-        event @ (SessionEvent::GoAway(_)
-        | SessionEvent::MaxRequestId(_)
-        | SessionEvent::RequestsBlocked(_)
-        | SessionEvent::PublishNamespaceCancel(_)
-        | SessionEvent::SubscribeUpdate(_)
-        | SessionEvent::Fetch(_)
-        | SessionEvent::FetchCancel(_)
-        | SessionEvent::TrackStatus(_)) => {
-            log::warn!("Unhandled inbound control message: {event:?}");
-            Ok(None)
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn handle_media_subscribe_event(
-    handler: moqt::subscribe::SubscribeHandler,
-    publisher: &moqt::Publisher,
-    expected_namespace: &str,
-    catalog_track: &str,
-    expected_tracks: &HashSet<String>,
-    publish_namespace: &[String],
-    profile_tracks: &[ProfileTrack],
-    publisher_priority: u8,
-    catalog_state: &mut CatalogUpdateState,
-    selected_profile_index: &mut Option<usize>,
-    video_publication: &mut Option<Subscription>,
-    audio_publication: &mut Option<Subscription>,
-    video_state: &mut VideoStreamState,
-    audio_state: &mut AudioStreamState,
-) -> Result<Option<ProfileTrack>> {
-    let track_name = handler.track_name.clone();
-    if handler.track_namespace != expected_namespace || !expected_tracks.contains(&track_name) {
-        log::warn!(
-            "Subscribe received for unsupported track: ns={} track={}",
-            handler.track_namespace,
-            track_name
-        );
-        let _ = handler.error(404, "unsupported track".to_string()).await;
-        return Ok(None);
-    }
-
-    if track_name == catalog_track {
-        log::info!(
-            "Catalog subscribe received: namespace={} track={} subscribe_id={}",
-            handler.track_namespace,
-            track_name,
-            handler.request_id()
-        );
-        let alias = handler
-            .ok(NO_EXPIRY, ContentExists::False)
-            .await
-            .context("send SUBSCRIBE_OK for catalog")?;
-        log::info!(
-            "Catalog subscribe accepted: namespace={} track={} track_alias={}",
-            handler.track_namespace,
-            track_name,
-            alias
-        );
-        let publication = handler.into_subscription(alias);
-        log::info!(
-            "Sending initial catalog object: namespace={} track={} group_id={} track_alias={}",
-            handler.track_namespace,
-            track_name,
-            catalog_state.next_group_id,
-            publication.track_alias()
-        );
-        catalog_state.track_publication = Some(publication);
-        send_catalog(
-            publisher,
-            catalog_state,
-            publisher_priority,
-            publish_namespace,
-            profile_tracks,
-        )
-        .await
-        .context("send initial catalog object")?;
-        return Ok(None);
-    }
-
-    let Some((profile_index, profile, media_kind)) =
-        resolve_profile_track(profile_tracks, &track_name)
-    else {
-        log::warn!("Subscribe received for unknown track: {}", track_name);
-        return Ok(None);
-    };
-
-    if let Some(selected_index) = selected_profile_index {
-        if *selected_index != profile_index {
-            log::warn!(
-                "Subscribe rejected for non-selected profile: track={} selected_profile_token={}",
-                track_name,
-                profile_tracks[*selected_index].profile_token
-            );
-            let _ = handler
-                .error(409, "another profile is already active".to_string())
-                .await;
-            return Ok(None);
-        }
-    }
-
-    let should_start_rtsp = selected_profile_index.is_none();
-    let alias = handler.ok(NO_EXPIRY, ContentExists::False).await?;
-    let publication = handler.into_subscription(alias);
-    if let Some(selected_index) = selected_profile_index {
-        debug_assert_eq!(*selected_index, profile_index);
-    } else {
-        *selected_profile_index = Some(profile_index);
-        catalog_state.selected_video_track = Some(profile.video_track_name.clone());
-        catalog_state.selected_audio_track = Some(profile.audio_track_name.clone());
-    }
-
-    match media_kind {
-        MediaTrackKind::Video => {
-            *video_publication = Some(publication);
-            *video_state = VideoStreamState::default();
-        }
-        MediaTrackKind::Audio => {
-            *audio_publication = Some(publication);
-            *audio_state = AudioStreamState::default();
-        }
-    }
-
-    log::info!(
-        "Selected profile subscribe accepted: profile_token={} video_track={} audio_track={} kind={:?}",
-        profile.profile_token,
-        profile.video_track_name,
-        profile.audio_track_name,
-        media_kind
-    );
-    Ok(should_start_rtsp.then(|| profile.clone()))
-}
-
-async fn handle_command_namespace_announce(
-    handler: moqt::namespace::PublishNamespaceHandler,
-    session: &Session,
-    command_namespace: &str,
-    command_track: &str,
-    command_sender: &std_mpsc::Sender<ptz_worker::Command>,
-    command_subscribe_priority: u8,
-    command_receiver: &mut Option<CommandReceiver>,
-) -> Result<()> {
-    let announced_namespace = handler.track_namespace.clone();
-    handler.ok().await?;
-    log::info!(
-        "Command namespace announced: announced_namespace={} expected_namespace={}",
-        announced_namespace,
-        command_namespace
-    );
-    if announced_namespace != command_namespace {
-        return Ok(());
-    }
-    ensure_command_track_subscription(
-        session,
-        command_namespace,
-        command_track,
-        command_sender,
-        command_subscribe_priority,
-        command_receiver,
     )
-    .await
-}
+    .await?;
+    let connection = RelayConnection::new(Some(MoqtTarget {
+        url: args.moqt_url.clone(),
+        auth_token: args.auth_token.clone(),
+        verify_certificate: client_config.verify_certificate,
+    }));
+    let broadcast = Broadcast::new(connection.clone(), publish_namespace);
 
-async fn handle_command_publish_event(
-    handler: moqt::publish::PublishHandler,
-    session: &Session,
-    command_namespace: &str,
-    command_track: &str,
-    command_sender: &std_mpsc::Sender<ptz_worker::Command>,
-    command_subscribe_priority: u8,
-    command_receiver: &mut Option<CommandReceiver>,
-) -> Result<()> {
-    if handler.track_namespace != command_namespace || handler.track_name != command_track {
-        log::warn!(
-            "Ignoring unexpected command publish: ns={} track={}",
-            handler.track_namespace,
-            handler.track_name
-        );
-        let _ = handler
-            .error(404, "unsupported publish track".to_string())
-            .await;
-        return Ok(());
-    }
-    if command_receiver
-        .as_ref()
-        .is_some_and(CommandReceiver::is_running)
-    {
-        log::info!(
-            "Command publish received after subscription already active: ns={} track={}",
-            handler.track_namespace,
-            handler.track_name
-        );
-        let _ = handler
-            .error(409, "command track already active".to_string())
-            .await;
-        return Ok(());
-    }
-
-    let subscription = handler
-        .ok(
-            command_subscribe_priority,
-            FilterType::NextGroupStart,
-            NO_EXPIRY,
-        )
-        .await
-        .context("accept command publish")?;
-    let track_alias = subscription.track_alias();
-    *command_receiver = Some(CommandReceiver::run(
-        session.subscriber(),
-        subscription,
-        command_sender.clone(),
-    ));
-    log::info!(
-        "Accepted command publish via SUBSCRIBE_NAMESPACE discovery: ns={} track={} alias={}",
-        command_namespace,
-        command_track,
-        track_alias
-    );
-    Ok(())
-}
-
-async fn ensure_command_track_subscription(
-    session: &Session,
-    command_namespace: &str,
-    command_track: &str,
-    command_sender: &std_mpsc::Sender<ptz_worker::Command>,
-    command_subscribe_priority: u8,
-    command_receiver: &mut Option<CommandReceiver>,
-) -> Result<()> {
-    if command_receiver
-        .as_ref()
-        .is_some_and(CommandReceiver::is_running)
-    {
-        return Ok(());
-    }
-
-    let mut subscriber = session.subscriber();
-
-    let subscription = subscriber
-        .subscribe(
-            command_namespace.to_string(),
-            command_track.to_string(),
-            SubscribeOption {
-                subscriber_priority: command_subscribe_priority,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::NextGroupStart,
-            },
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "subscribe command track after namespace announce: {}/{}",
-                command_namespace, command_track
-            )
-        })?;
-    let track_alias = subscription.track_alias();
-    *command_receiver = Some(CommandReceiver::run(
-        subscriber,
-        subscription,
-        command_sender.clone(),
-    ));
-    log::info!(
-        "Command track subscribed after namespace announce: ns={} track={} alias={}",
-        command_namespace,
-        command_track,
-        track_alias
-    );
-    Ok(())
-}
-
-async fn send_video_packet(
-    publisher: &moqt::Publisher,
-    state: &mut VideoStreamState,
-    publication: &Subscription,
-    publisher_priority: u8,
-    dump_state: &mut Option<KeyframeDump>,
-    packet: EncodedPacket,
-) -> Result<()> {
-    if let Some(dump_state) = dump_state.as_mut() {
-        dump_state.maybe_write(&packet)?;
-    }
-    let mut pending_group_close: Option<PendingGroupClose> = None;
-    if packet.is_keyframe {
-        pending_group_close = state
-            .start_group(publisher, publication, publisher_priority)
-            .await
-            .context("send subgroup header")?;
-    } else if !state.started {
-        log::warn!("skipping non-keyframe packet before first keyframe");
-        return Ok(());
-    }
-
-    let extension_headers = to_extension_headers(&video_loc_extensions(&packet));
-    let payload = Bytes::from(packet.data);
-    let Some(stream) = state.stream.as_mut() else {
-        return Ok(());
+    let result = tokio::select! {
+        result = publish_profiles(broadcast, sources, args.dump_keyframe) => result,
+        result = commands.finished() => result,
     };
-    let object =
-        stream.create_object_field(0, extension_headers, SubgroupObject::new_payload(payload));
-    stream.send(object).await.context("send subgroup object")?;
-    let total_delay_us = now_micros().saturating_sub(packet.ingest_wallclock_micros);
+    connection.close().await;
+    result
+}
+
+/// Starts every profile on the first SUBSCRIBE to the catalog or a profile
+/// track; fails once every profile has ended.
+async fn publish_profiles(
+    broadcast: Broadcast,
+    sources: Vec<ProfileSource>,
+    mut dump_keyframe: Option<PathBuf>,
+) -> Result<()> {
+    let track_names: Vec<String> = sources
+        .iter()
+        .flat_map(|source| [source.tracks.video.clone(), source.tracks.audio.clone()])
+        .collect();
+    broadcast.declare_tracks(&track_names).await?;
     log::info!(
-        "MoQ send video packet group_id={} object_id={} timestamp_us={} total_delay_ms={} keyframe={}",
-        state.group_id,
-        state.object_id,
-        packet.timestamp_us,
-        total_delay_us / 1_000,
-        packet.is_keyframe
+        "Waiting for the first subscriber of {}",
+        broadcast.namespace().join("/")
     );
-    if let Some(last_ts) = state.last_timestamp_us {
-        let delta = packet.timestamp_us.saturating_sub(last_ts);
-        if delta >= 200_000 {
-            log::warn!(
-                "MoQ send video timestamp gap: group_id={} object_id={} delta_us={}",
-                state.group_id,
-                state.object_id,
-                delta
-            );
+    broadcast.wait_for_subscriber().await?;
+
+    let mut profiles = JoinSet::new();
+    for source in sources {
+        profiles.spawn(publish_profile(
+            broadcast.clone(),
+            source,
+            dump_keyframe.take(),
+        ));
+    }
+    while let Some(result) = profiles.join_next().await {
+        if let Err(err) = result.context("profile task").and_then(|ended| ended) {
+            log::warn!("Profile ended: {err:#}");
         }
     }
-    state.last_timestamp_us = Some(packet.timestamp_us);
-    state.object_id += 1;
-    if let Some(pending) = pending_group_close {
-        spawn_pending_group_close(pending);
-    }
-    Ok(())
+    bail!("every profile has ended")
 }
 
-async fn send_audio_packet(
-    publisher: &moqt::Publisher,
-    state: &mut AudioStreamState,
-    publication: &Subscription,
-    publisher_priority: u8,
-    packet: EncodedAudioPacket,
+async fn publish_profile(
+    broadcast: Broadcast,
+    source: ProfileSource,
+    mut dump_keyframe: Option<PathBuf>,
 ) -> Result<()> {
-    let rotate_group = state.should_rotate_before_packet(packet.duration_us);
-    let mut pending_group_close = if !state.started || rotate_group {
-        state
-            .start_group(publisher, publication, publisher_priority)
-            .await
-            .context("send audio subgroup header")?
-    } else {
-        None
-    };
-
-    let extension_headers = to_extension_headers(&[LocExtension::varint(
-        CAPTURE_TIMESTAMP_ID,
-        packet.ingest_wallclock_micros,
-    )]);
-    let payload = Bytes::from(packet.data);
-    let Some(stream) = state.stream.as_mut() else {
-        return Ok(());
-    };
-    let object =
-        stream.create_object_field(0, extension_headers, SubgroupObject::new_payload(payload));
-    stream
-        .send(object)
-        .await
-        .context("send audio subgroup object")?;
-    let total_delay_us = now_micros().saturating_sub(packet.ingest_wallclock_micros);
     log::info!(
-        "MoQ send audio packet group_id={} object_id={} timestamp_us={} total_delay_ms={} codec={} sample_rate={:?} channels={:?}",
-        state.group_id,
-        state.object_id,
-        packet.timestamp_us,
-        total_delay_us / 1_000,
-        packet.codec,
-        packet.sample_rate,
-        packet.channels
+        "Starting RTSP for {}: {}",
+        source.tracks.video,
+        redact_rtsp_url(&source.rtsp_url)
     );
-    if let Some(last_ts) = state.last_timestamp_us {
-        let delta = packet.timestamp_us.saturating_sub(last_ts);
-        if delta >= 200_000 {
-            log::warn!(
-                "MoQ send audio timestamp gap: group_id={} object_id={} delta_us={}",
-                state.group_id,
-                state.object_id,
-                delta
-            );
-        }
-    }
-    state.last_timestamp_us = Some(packet.timestamp_us);
-    state.object_id += 1;
-    if let Some(pending) = pending_group_close.take() {
-        spawn_pending_group_close(pending);
-    }
-    Ok(())
-}
-
-async fn send_catalog(
-    publisher: &moqt::Publisher,
-    state: &mut CatalogUpdateState,
-    publisher_priority: u8,
-    namespace: &[String],
-    profiles: &[ProfileTrack],
-) -> Result<()> {
-    let group_id = state.next_group_id;
-    let Some(publication) = state.track_publication.as_ref() else {
-        return Ok(());
-    };
-    let catalog = build_catalog(namespace, state, profiles);
-    let data = serde_json::to_vec(&catalog).context("serialize catalog json")?;
-    let sent = send_catalog_group(publisher, publication, group_id, publisher_priority, data).await;
-    if was_stopped_by_peer(sent, CATALOG_TRACK_NAME)? {
-        return Ok(());
-    }
-    log::info!(
-        "Catalog sent: tracks={} video_codec={:?} audio_codec={:?} group_id={}",
-        profiles.len(),
-        state.last_video_codec,
-        state.last_audio.as_ref().map(|audio| &audio.codec),
-        group_id
-    );
-    state.next_group_id += 1;
-    Ok(())
-}
-
-async fn send_catalog_group(
-    publisher: &moqt::Publisher,
-    publication: &Subscription,
-    group_id: u64,
-    publisher_priority: u8,
-    data: Vec<u8>,
-) -> Result<()> {
-    let uninit_stream = publisher
-        .create_stream(publication)
-        .next()
-        .await
-        .context("open catalog subgroup stream")?;
-    let header =
-        uninit_stream.create_header(group_id, SubgroupId::None, publisher_priority, false, false);
-    let mut stream = uninit_stream
-        .send_header(header)
-        .await
-        .context("send catalog subgroup header")?;
-    let object = stream.create_object_field(
-        0,
-        empty_extension_headers(),
-        SubgroupObject::new_payload(data.into()),
-    );
-    stream
-        .send(object)
-        .await
-        .context("send catalog subgroup object")?;
-    stream
-        .close()
-        .await
-        .context("close catalog subgroup stream")
-}
-
-fn was_stopped_by_peer(sent: Result<()>, track: &str) -> Result<bool> {
-    match sent {
-        Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
-            log::info!("Subscriber stopped the {track} subgroup stream: {error:#}");
-            Ok(true)
-        }
-        sent => sent.map(|()| false),
-    }
-}
-
-struct KeyframeDump {
-    path: PathBuf,
-    written: bool,
-}
-
-impl KeyframeDump {
-    fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            written: false,
-        }
-    }
-
-    fn maybe_write(&mut self, packet: &EncodedPacket) -> Result<()> {
-        if self.written || !packet.is_keyframe {
-            return Ok(());
-        }
-        std::fs::write(&self.path, &packet.data).with_context(|| {
-            format!("write keyframe payload to {}", self.path.to_string_lossy())
-        })?;
-        self.written = true;
-        log::info!(
-            "RTSP keyframe payload dumped for ffprobe: {}",
-            self.path.display()
-        );
-        Ok(())
-    }
-}
-
-fn handle_command_payload(
-    payload: &[u8],
-    command_sender: &std_mpsc::Sender<ptz_worker::Command>,
-) -> Result<()> {
-    let command: CommandPayload = serde_json::from_slice(payload).context("parse command json")?;
-    let mapped = command.into_command();
-    log::info!("PTZ command received: {}", mapped.label());
-    let _ = command_sender.send(mapped.inner);
-    Ok(())
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum CommandPayload {
-    Absolute {
-        pan: f32,
-        tilt: f32,
-        zoom: f32,
-        speed: f32,
-    },
-    Relative {
-        pan: f32,
-        tilt: f32,
-        zoom: f32,
-        speed: f32,
-    },
-    Continuous {
-        pan: f32,
-        tilt: f32,
-        zoom: f32,
-        speed: f32,
-    },
-    Stop,
-    Center {
-        speed: f32,
-    },
-}
-
-struct MappedCommand {
-    inner: ptz_worker::Command,
-    label: &'static str,
-}
-
-impl MappedCommand {
-    fn label(&self) -> &'static str {
-        self.label
-    }
-}
-
-impl CommandPayload {
-    fn into_command(self) -> MappedCommand {
-        match self {
-            CommandPayload::Absolute {
-                pan,
-                tilt,
-                zoom,
-                speed,
-            } => MappedCommand {
-                inner: ptz_worker::Command::Absolute {
-                    pan,
-                    tilt,
-                    zoom,
-                    speed,
-                },
-                label: "AbsoluteMove",
-            },
-            CommandPayload::Relative {
-                pan,
-                tilt,
-                zoom,
-                speed,
-            } => MappedCommand {
-                inner: ptz_worker::Command::Relative {
-                    pan,
-                    tilt,
-                    zoom,
-                    speed,
-                },
-                label: "RelativeMove",
-            },
-            CommandPayload::Continuous {
-                pan,
-                tilt,
-                zoom,
-                speed,
-            } => MappedCommand {
-                inner: ptz_worker::Command::Continuous {
-                    pan,
-                    tilt,
-                    zoom,
-                    speed,
-                },
-                label: "ContinuousMove",
-            },
-            CommandPayload::Stop => MappedCommand {
-                inner: ptz_worker::Command::Stop,
-                label: "Stop",
-            },
-            CommandPayload::Center { speed } => MappedCommand {
-                inner: ptz_worker::Command::Center { speed },
-                label: "Center",
-            },
-        }
-    }
-}
-
-fn video_loc_extensions(packet: &EncodedPacket) -> Vec<LocExtension> {
-    let mut extensions = vec![LocExtension::varint(
-        CAPTURE_TIMESTAMP_ID,
-        packet.ingest_wallclock_micros,
-    )];
-    if packet.is_keyframe {
-        if let Some(description) = packet.description_base64.as_deref() {
-            match general_purpose::STANDARD.decode(description) {
-                Ok(bytes) => {
-                    extensions.push(LocExtension::bytes(VIDEO_CONFIG_ID, Bytes::from(bytes)));
-                }
-                Err(err) => {
-                    log::warn!("failed to decode avcC base64: {err}");
-                }
-            }
-        }
-    }
-    extensions
-}
-
-#[derive(Default)]
-struct VideoStreamState {
-    group_id: u64,
-    object_id: u64,
-    started: bool,
-    stream: Option<SubgroupObjectSender>,
-    last_timestamp_us: Option<u64>,
-}
-
-#[derive(Default)]
-struct AudioStreamState {
-    group_id: u64,
-    object_id: u64,
-    started: bool,
-    stream: Option<SubgroupObjectSender>,
-    last_timestamp_us: Option<u64>,
-    current_group_duration_us: u64,
-}
-
-struct PendingGroupClose {
-    track_alias: u64,
-    group_id: u64,
-    end_object_id: u64,
-    stream: SubgroupObjectSender,
-}
-
-impl VideoStreamState {
-    fn take_pending_group_close(&mut self, track_alias: u64) -> Option<PendingGroupClose> {
-        let stream = self.stream.take()?;
-        Some(PendingGroupClose {
-            track_alias,
-            group_id: self.group_id,
-            end_object_id: self.object_id,
-            stream,
-        })
-    }
-
-    async fn start_group(
-        &mut self,
-        publisher: &moqt::Publisher,
-        publication: &Subscription,
-        publisher_priority: u8,
-    ) -> Result<Option<PendingGroupClose>> {
-        let pending_close = self.take_pending_group_close(publication.track_alias());
-        self.group_id = if self.started {
-            self.group_id + 1
-        } else {
-            first_group_id()
-        };
-        self.object_id = 0;
-        let uninit_stream = publisher
-            .create_stream(publication)
-            .next()
-            .await
-            .context("open video subgroup stream")?;
-        let header = uninit_stream.create_header(
-            self.group_id,
-            SubgroupId::None,
-            publisher_priority,
-            false,
-            true,
-        );
-        let stream = uninit_stream.send_header(header).await?;
-        self.stream = Some(stream);
-        self.started = true;
-        Ok(pending_close)
-    }
-}
-
-impl AudioStreamState {
-    fn take_pending_group_close(&mut self, track_alias: u64) -> Option<PendingGroupClose> {
-        let stream = self.stream.take()?;
-        Some(PendingGroupClose {
-            track_alias,
-            group_id: self.group_id,
-            end_object_id: self.object_id,
-            stream,
-        })
-    }
-
-    fn should_rotate_before_packet(&mut self, duration_us: Option<u64>) -> bool {
-        let duration_us = duration_us.unwrap_or(DEFAULT_AUDIO_PACKET_DURATION_US);
-        if self.current_group_duration_us == 0 {
-            self.current_group_duration_us = duration_us;
-            return false;
-        }
-        if self.current_group_duration_us.saturating_add(duration_us)
-            > AUDIO_GROUP_ROTATION_INTERVAL_US
-        {
-            self.current_group_duration_us = duration_us;
-            return true;
-        }
-        self.current_group_duration_us = self.current_group_duration_us.saturating_add(duration_us);
-        false
-    }
-
-    async fn start_group(
-        &mut self,
-        publisher: &moqt::Publisher,
-        publication: &Subscription,
-        publisher_priority: u8,
-    ) -> Result<Option<PendingGroupClose>> {
-        let pending_close = self.take_pending_group_close(publication.track_alias());
-        self.group_id = if self.started {
-            self.group_id + 1
-        } else {
-            first_group_id()
-        };
-        self.object_id = 0;
-        let uninit_stream = publisher
-            .create_stream(publication)
-            .next()
-            .await
-            .context("open audio subgroup stream")?;
-        let header = uninit_stream.create_header(
-            self.group_id,
-            SubgroupId::None,
-            publisher_priority,
-            false,
-            true,
-        );
-        let stream = uninit_stream.send_header(header).await?;
-        self.stream = Some(stream);
-        self.started = true;
-        Ok(pending_close)
-    }
-}
-
-/// A relay latches a track whose publisher re-sends a location with other
-/// content as malformed (draft-14 §2.5), so a track restarted by a new
-/// subscription or a new process starts from the wall clock, not from 0.
-fn first_group_id() -> u64 {
-    now_micros()
-}
-
-fn spawn_pending_group_close(pending: PendingGroupClose) {
-    tokio::spawn(async move {
-        let PendingGroupClose {
-            track_alias,
-            group_id,
-            end_object_id,
-            mut stream,
-        } = pending;
-        let close_result = async {
-            let object = stream.create_object_field(
-                0,
-                empty_extension_headers(),
-                SubgroupObject::new_status(moqt::wire::ObjectStatus::EndOfGroup as u64),
-            );
-            stream.send(object).await.context("write end of group")?;
-            stream.close().await.context("finish subgroup stream")?;
-            Result::<()>::Ok(())
-        }
-        .await;
-        match close_result {
-            Ok(()) => {
-                log::info!(
-                    "MoQ close g={} end_o={} alias={}",
-                    group_id,
-                    end_object_id,
-                    track_alias
-                );
-            }
-            Err(err) => {
-                log::warn!(
-                    "MoQ close failed g={} end_o={} alias={} err={}",
-                    group_id,
-                    end_object_id,
-                    track_alias,
-                    err
-                );
-            }
-        }
+    let (event_sender, mut event_receiver) = mpsc::channel(RTSP_EVENT_CAPACITY);
+    let (rtsp_result_sender, rtsp_result) = oneshot::channel();
+    let rtsp_url = source.rtsp_url;
+    // A thread rather than spawn_blocking, which the runtime would wait for on
+    // exit while GStreamer still plays.
+    std::thread::spawn(move || {
+        let _ = rtsp_result_sender.send(rtsp_source::run(&rtsp_url, event_sender));
     });
+    let mut writer = BroadcastWriter::run(broadcast, source.tracks);
+    while let Some(event) = event_receiver.recv().await {
+        if let (Some(path), MediaEvent::Video(sample)) = (&dump_keyframe, &event) {
+            if sample.is_keyframe {
+                std::fs::write(path, &sample.data)
+                    .with_context(|| format!("write keyframe payload to {}", path.display()))?;
+                log::info!(
+                    "RTSP keyframe payload dumped for ffprobe: {}",
+                    path.display()
+                );
+                dump_keyframe = None;
+            }
+        }
+        writer.push(event)?;
+    }
+    rtsp_result.await.context("RTSP thread")?
 }
 
-#[derive(Clone)]
-struct ProfileTrack {
-    video_track_name: String,
-    audio_track_name: String,
-    profile_token: String,
-    rtsp_url: String,
-    name: Option<String>,
-    resolution: Option<(u32, u32)>,
-    framerate: Option<f64>,
+fn profile_tracks(args: &MoqtArgs, profile_index: usize, label: &str) -> SourceTracks {
+    SourceTracks {
+        video: format!("{}/profile_{profile_index}", args.video_track),
+        video_label: label.to_string(),
+        audio: format!("{}/profile_{profile_index}", args.audio_track),
+        audio_label: format!("{label} audio"),
+    }
 }
 
-async fn fetch_profile_tracks(
+async fn fetch_profile_sources(
     target: &app_config::Target,
-    video_track_prefix: &str,
-    audio_track_prefix: &str,
-) -> Result<Vec<ProfileTrack>> {
+    args: &MoqtArgs,
+) -> Result<Vec<ProfileSource>> {
     let client = soap_client::build(target)?;
     let onvif = onvif_client::OnvifClient::initialize_media(client, target.clone()).await?;
     let profiles = onvif_profile_list::fetch(&onvif).await?;
-    let mut tracks = Vec::new();
+    let mut sources = Vec::new();
     for (index, profile) in profiles.into_iter().enumerate() {
-        let profile_index = index + 1;
-        let video_track_name = format!("{}/profile_{}", video_track_prefix, profile_index);
-        let audio_track_name = format!("{}/profile_{}", audio_track_prefix, profile_index);
         let uri = match onvif_stream_uri::fetch(&onvif, &profile.token).await {
             Ok(uri) => uri,
             Err(err) => {
@@ -1327,218 +232,25 @@ async fn fetch_profile_tracks(
             }
         };
         let rtsp_url = apply_rtsp_credentials(&uri, target);
-        let resolution = profile.video_resolution;
-        let framerate = profile.video_framerate;
-        let resolution_label = resolution
-            .map(|(width, height)| format!("{width}x{height}"))
-            .unwrap_or_else(|| "-".to_string());
-        let framerate_label = framerate
-            .map(|value| format!("{value:.2}"))
-            .unwrap_or_else(|| "-".to_string());
-        let name_label = profile.name.clone().unwrap_or_else(|| "-".to_string());
-        log::info!(
-            "MoQ media tracks mapped: video_track={} audio_track={} profile_token={} name={} resolution={} framerate={} rtsp={}",
-            video_track_name,
-            audio_track_name,
-            profile.token,
-            name_label,
-            resolution_label,
-            framerate_label,
-            redact_rtsp_url(&rtsp_url)
-        );
-        tracks.push(ProfileTrack {
-            video_track_name,
-            audio_track_name,
-            profile_token: profile.token,
-            rtsp_url,
-            name: profile.name,
-            resolution,
-            framerate,
-        });
-    }
-    if tracks.is_empty() {
-        return Err(anyhow!("no usable video profiles"));
-    }
-    Ok(tracks)
-}
-
-fn build_expected_tracks(catalog_track: &str, profile_tracks: &[ProfileTrack]) -> HashSet<String> {
-    let mut tracks = HashSet::new();
-    for track in profile_tracks {
-        tracks.insert(track.video_track_name.clone());
-        tracks.insert(track.audio_track_name.clone());
-    }
-    tracks.insert(catalog_track.to_string());
-    tracks
-}
-
-fn resolve_profile_track<'a>(
-    profile_tracks: &'a [ProfileTrack],
-    track_name: &str,
-) -> Option<(usize, &'a ProfileTrack, MediaTrackKind)> {
-    for (index, profile) in profile_tracks.iter().enumerate() {
-        if profile.video_track_name == track_name {
-            return Some((index, profile, MediaTrackKind::Video));
-        }
-        if profile.audio_track_name == track_name {
-            return Some((index, profile, MediaTrackKind::Audio));
-        }
-    }
-    None
-}
-
-struct CatalogUpdateState {
-    track_publication: Option<Subscription>,
-    next_group_id: u64,
-    last_video_codec: Option<String>,
-    last_audio: Option<CatalogAudioSnapshot>,
-    selected_video_track: Option<String>,
-    selected_audio_track: Option<String>,
-}
-
-impl CatalogUpdateState {
-    fn new() -> Self {
-        Self {
-            track_publication: None,
-            next_group_id: first_group_id(),
-            last_video_codec: None,
-            last_audio: None,
-            selected_video_track: None,
-            selected_audio_track: None,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct CatalogAudioSnapshot {
-    codec: String,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-}
-
-async fn maybe_send_video_catalog_update(
-    publisher: &moqt::Publisher,
-    state: &mut CatalogUpdateState,
-    namespace: &[String],
-    profiles: &[ProfileTrack],
-    publisher_priority: u8,
-    packet: &EncodedPacket,
-) -> Result<()> {
-    if !packet.is_keyframe {
-        return Ok(());
-    }
-    let Some(codec) = packet.codec.as_deref() else {
-        return Ok(());
-    };
-    if state.last_video_codec.as_deref() == Some(codec) {
-        return Ok(());
-    }
-    state.last_video_codec = Some(codec.to_string());
-    send_catalog(publisher, state, publisher_priority, namespace, profiles).await
-}
-
-async fn maybe_send_audio_catalog_update(
-    publisher: &moqt::Publisher,
-    state: &mut CatalogUpdateState,
-    namespace: &[String],
-    profiles: &[ProfileTrack],
-    publisher_priority: u8,
-    packet: &EncodedAudioPacket,
-) -> Result<()> {
-    let next = CatalogAudioSnapshot {
-        codec: packet.codec.clone(),
-        sample_rate: packet.sample_rate,
-        channels: packet.channels,
-    };
-    if state.last_audio.as_ref() == Some(&next) {
-        return Ok(());
-    }
-    state.last_audio = Some(next);
-    send_catalog(publisher, state, publisher_priority, namespace, profiles).await
-}
-
-fn build_catalog(
-    namespace: &[String],
-    state: &CatalogUpdateState,
-    profiles: &[ProfileTrack],
-) -> Catalog {
-    Catalog::new(
-        build_catalog_tracks(namespace, state, profiles),
-        now_millis(),
-    )
-}
-
-fn build_catalog_tracks(
-    namespace: &[String],
-    state: &CatalogUpdateState,
-    profiles: &[ProfileTrack],
-) -> Vec<Track> {
-    let namespace_label = if namespace.is_empty() {
-        None
-    } else {
-        Some(namespace.join("/"))
-    };
-    let mut tracks = Vec::with_capacity(profiles.len() * 2);
-    for profile in profiles {
-        let video_codec = state
-            .last_video_codec
-            .clone()
-            .filter(|_| state.selected_video_track.as_ref() == Some(&profile.video_track_name));
-        let audio = state
-            .last_audio
-            .as_ref()
-            .filter(|_| state.selected_audio_track.as_ref() == Some(&profile.audio_track_name));
-        let audio_codec = audio.map(|audio| audio.codec.clone());
-        let base_label = profile
+        let label = profile
             .name
             .clone()
-            .unwrap_or_else(|| profile.profile_token.clone());
-        let mut video = Track::new(&profile.video_track_name, KnownPackaging::Loc, true);
-        video.namespace = namespace_label.clone();
-        video.role = Some(KnownTrackRole::Video.into());
-        video.label = Some(base_label.clone());
-        video.codec = video_codec;
-        video.framerate = profile.framerate;
-        video.width = profile.resolution.map(|(width, _)| width);
-        video.height = profile.resolution.map(|(_, height)| height);
-        tracks.push(video);
-        let mut audio_track = Track::new(&profile.audio_track_name, KnownPackaging::Loc, true);
-        audio_track.namespace = namespace_label.clone();
-        audio_track.role = Some(KnownTrackRole::Audio.into());
-        audio_track.label = Some(format!("{base_label} audio"));
-        audio_track.mime_type = audio_codec
-            .as_deref()
-            .and_then(audio_mime_type)
-            .map(ToOwned::to_owned);
-        audio_track.codec = audio_codec;
-        audio_track.sample_rate = audio.and_then(|audio| audio.sample_rate);
-        audio_track.channel_config = audio
-            .and_then(|audio| audio.channels)
-            .map(channel_config_label);
-        tracks.push(audio_track);
+            .unwrap_or_else(|| profile.token.clone());
+        let tracks = profile_tracks(args, index + 1, &label);
+        log::info!(
+            "MoQ media tracks mapped: video_track={} audio_track={} profile_token={} name={} rtsp={}",
+            tracks.video,
+            tracks.audio,
+            profile.token,
+            label,
+            redact_rtsp_url(&rtsp_url)
+        );
+        sources.push(ProfileSource { tracks, rtsp_url });
     }
-    tracks
-}
-
-fn audio_mime_type(codec: &str) -> Option<&'static str> {
-    if codec.starts_with("mp4a") {
-        return Some("audio/aac");
+    if sources.is_empty() {
+        return Err(anyhow!("no usable video profiles"));
     }
-    if codec.eq_ignore_ascii_case("opus") {
-        return Some("audio/opus");
-    }
-    if codec.eq_ignore_ascii_case("pcma") {
-        return Some("audio/pcma");
-    }
-    None
-}
-
-fn channel_config_label(channels: u8) -> String {
-    match channels {
-        1 => "mono".to_string(),
-        2 => "stereo".to_string(),
-        value => format!("{value}ch"),
-    }
+    Ok(sources)
 }
 
 fn apply_rtsp_credentials(uri: &str, target: &app_config::Target) -> String {
@@ -1569,81 +281,6 @@ fn redact_rtsp_url(uri: &str) -> String {
     uri.to_string()
 }
 
-async fn connect_session(
-    url: &str,
-    client_config: &ClientConfig,
-) -> Result<std::sync::Arc<Session>> {
-    let endpoint = Endpoint::<WEBTRANSPORT>::create_client(client_config)?;
-    let connecting = endpoint
-        .connect(url)
-        .await
-        .context("connect moqt transport")?;
-    Ok(std::sync::Arc::new(
-        connecting.await.context("establish moqt session")?,
-    ))
-}
-
-struct CommandReceiver {
-    request_id: u64,
-    join_handle: tokio::task::JoinHandle<()>,
-}
-
-impl CommandReceiver {
-    fn run(
-        mut subscriber: moqt::Subscriber,
-        subscription: moqt::Subscription,
-        command_sender: std_mpsc::Sender<ptz_worker::Command>,
-    ) -> Self {
-        let request_id = subscription.request_id();
-        let join_handle = tokio::spawn(async move {
-            let receiver = match subscriber.accept_data_receiver(&subscription).await {
-                Ok(receiver) => receiver,
-                Err(err) => {
-                    log::warn!("command accept_data_receiver failed: {err}");
-                    return;
-                }
-            };
-            let DataReceiver::Stream(factory) = receiver else {
-                log::warn!("command track is not delivered on subgroup streams");
-                return;
-            };
-            let mut reader = TrackReader::new(factory);
-            loop {
-                match reader.next_object().await {
-                    Ok(Some(object)) => {
-                        if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
-                            log::warn!("command payload error: {err}");
-                        }
-                    }
-                    Ok(None) => {
-                        log::info!("command track ended; waiting for the next command publisher");
-                        return;
-                    }
-                    Err(err) => log::warn!("command subgroup receive failed: {err}"),
-                }
-            }
-        });
-        Self {
-            request_id,
-            join_handle,
-        }
-    }
-
-    fn is_running(&self) -> bool {
-        !self.join_handle.is_finished()
-    }
-}
-
-impl Drop for CommandReceiver {
-    fn drop(&mut self) {
-        self.join_handle.abort();
-    }
-}
-
-fn empty_extension_headers() -> ExtensionHeaders {
-    ExtensionHeaders::default()
-}
-
 fn parse_namespace(value: &str) -> Vec<String> {
     value
         .split('/')
@@ -1652,15 +289,9 @@ fn parse_namespace(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn now_millis() -> u64 {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    duration.as_millis() as u64
-}
-
 fn init_logger() {
-    let env = env_logger::Env::default().filter_or("RUST_LOG", "info");
+    // `tracing::span` carries a line per span the moqt session opens.
+    let env = env_logger::Env::default().filter_or("RUST_LOG", "info,tracing::span=warn");
     env_logger::Builder::from_env(env)
         .format(|buf, record| {
             writeln!(
@@ -1672,47 +303,4 @@ fn init_logger() {
             )
         })
         .init();
-}
-
-fn spawn_rtsp_error_logger(err_rx: std_mpsc::Receiver<String>) {
-    std::thread::spawn(move || {
-        for err in err_rx {
-            log::warn!("RTSP error: {err}");
-        }
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn send_failure(error: TransportSendError) -> Result<()> {
-        Err::<(), _>(error).context("send subgroup object")
-    }
-
-    #[test]
-    fn stopped_subgroup_stream_is_not_fatal() {
-        // Arrange
-        let sent = send_failure(TransportSendError::Stopped { code: 0 });
-
-        // Act / Assert
-        assert!(was_stopped_by_peer(sent, "video").unwrap());
-    }
-
-    #[test]
-    fn lost_connection_stays_fatal() {
-        // Arrange
-        let sent = send_failure(TransportSendError::ConnectionLost {
-            reason: "timeout".to_string(),
-        });
-
-        // Act / Assert
-        assert!(was_stopped_by_peer(sent, "video").is_err());
-    }
-
-    #[test]
-    fn delivered_object_was_not_stopped() {
-        // Act / Assert
-        assert!(!was_stopped_by_peer(Ok(()), "video").unwrap());
-    }
 }

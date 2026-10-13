@@ -32,6 +32,7 @@ make onvif
 ```
 
 `make onvif` publishes RTSP video/audio as profile-specific MoQT tracks and subscribes to ONVIF commands, one JSON object per subgroup stream.
+The tracks form one MSF broadcast built by [`crates/broadcast`](../broadcast/README.md). Every profile starts its RTSP stream when the first viewer subscribes to the catalog or to one of the profile tracks, and keeps running until that stream ends; the bridge exits once every profile has ended.
 
 When `MOQT_URL` points to `localhost` or `127.0.0.1` and the docker compose `relay-a`
 service is running, `make onvif` rewrites the relay URL to the Docker Desktop bridge
@@ -45,13 +46,13 @@ set `MOQT_DOCKER_RELAY_HOST`/`LOCAL_RELAY_HOST` to force a specific relay host.
 | Role                    | Namespace      | Track name        |
 | ----------------------- | -------------- | ----------------- |
 | Catalog                 | `anon/onvif/client` | `catalog`         |
-| Video (profile N)       | `anon/onvif/client` | `video/profile_N` |
-| Audio (profile N)       | `anon/onvif/client` | `audio/profile_N` |
+| Video (profile N)       | `anon/onvif/client` | `video/profile_N` (LOC), `video/profile_N_cmaf` (CMAF) |
+| Audio (profile N)       | `anon/onvif/client` | `audio/profile_N` (LOC; G.711 A-law, AAC or Opus), `audio/profile_N_cmaf` (CMAF, AAC only) |
 | PTZ command (subscribe) | `anon/onvif/viewer` | `command`         |
 
 Profile indices start at 1 and correspond to the ONVIF media profiles returned by the camera.
-Video objects start each group with a keyframe that carries SPS/PPS. With `--payload-format annexb` (the default) the payload is Annex-B and no LOC Video Config extension is attached; with `--payload-format avcc` the payload is length-prefixed and keyframes carry the avcC in the Video Config extension.
-All names are configurable via CLI flags (`--publish-namespace`, `--subscribe-namespace`, `--video-track`, `--audio-track`, `--catalog-track`, `--command-track`).
+Video objects are Annex-B, and each group starts with a keyframe that carries SPS/PPS. Audio groups start with the video keyframe groups.
+The names are configurable via CLI flags (`--publish-namespace`, `--subscribe-namespace`, `--video-track`, `--audio-track`, `--command-track`); the catalog track is always `catalog`.
 
 ## Direct CLI Options
 
@@ -63,7 +64,6 @@ cargo run -p onvif-ingest -- \
   --username admin \
   --password secret \
   --moqt-url https://127.0.0.1:4433 \
-  --payload-format annexb \
   --dump-keyframe \
   --insecure-skip-tls-verify
 ```
@@ -73,7 +73,7 @@ Common options:
 - `--ip`: camera IP address or hostname
 - `--username`, `--password`: ONVIF credentials
 - `--moqt-url`: MoQT relay URL
-- `--payload-format`: `annexb` or `avcc`
+- `--rtsp-url`: publish this RTSP stream as profile 1 instead of the camera's ONVIF profiles, e.g. a local test server (`--ip` and the credentials are still used for PTZ)
 - `--insecure-skip-tls-verify`: skip TLS certificate verification for local development
   only
-- `--dump-keyframe[=PATH]`: dump the first keyframe payload for ffprobe
+- `--dump-keyframe[=PATH]`: dump the first keyframe payload of profile 1 for ffprobe
