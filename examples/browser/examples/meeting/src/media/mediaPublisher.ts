@@ -6,11 +6,20 @@ import { sendVideoChunkViaMoqt, type VideoChunkSender } from '../../../../utils/
 import { sendAudioChunkViaMoqt } from '../../../../utils/media/audioTransport'
 import type { LocHeader } from '../../../../utils/media/loc'
 import { answerFetch, documentReplayTrack } from '../../../../utils/media/fetchReplay'
-import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
+import {
+  DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
+  DEFAULT_VIDEO_ENCODING_SETTINGS,
+  type VideoEncodingSettings
+} from '../types/videoEncoding'
 import { DEFAULT_AUDIO_ENCODING_SETTINGS, type AudioEncodingSettings } from '../types/audioEncoding'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import type { VideoSendTiming } from '../types/stats'
-import { buildMeetingCatalogJson, getDefaultMeetingCatalogTracks } from './meetingCatalog'
+import {
+  buildMeetingCatalogJson,
+  getDefaultMeetingCatalogTracks,
+  trackAudioEncoding,
+  trackVideoEncoding
+} from './meetingCatalog'
 import {
   DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS,
   DEFAULT_VIDEO_KEYFRAME_INTERVAL,
@@ -91,14 +100,7 @@ export class MediaPublisher {
   private audioStream: MediaStream | null = null
 
   private videoEncodingSettings: VideoEncodingSettings = DEFAULT_VIDEO_ENCODING_SETTINGS
-  private screenShareEncodingSettings: VideoEncodingSettings = {
-    codec: 'av01.0.08M.08',
-    width: 1920,
-    height: 1080,
-    bitrate: 1_000_000,
-    framerate: 30,
-    hardwareAcceleration: 'prefer-software'
-  }
+  private screenShareEncodingSettings: VideoEncodingSettings = DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS
   private audioEncodingSettings: AudioEncodingSettings = DEFAULT_AUDIO_ENCODING_SETTINGS
 
   private currentCameraDeviceId: string | null = null
@@ -143,7 +145,7 @@ export class MediaPublisher {
   }
 
   async setCatalogTracks(tracks: MeetingCatalogTrack[]): Promise<void> {
-    this.catalogTracks = this.normalizeCatalogTracks(tracks)
+    this.catalogTracks = tracks
     this.syncVideoTrackContexts('camera')
     this.syncVideoTrackContexts('screenshare')
     this.syncAudioTrackContexts()
@@ -382,8 +384,8 @@ export class MediaPublisher {
     }
     const source: VideoSource = isScreenShareTrackName(trackName) ? 'screenshare' : 'camera'
     const fallback = source === 'screenshare' ? this.screenShareEncodingSettings : this.videoEncodingSettings
-    const settings = this.buildVideoEncodingFromTrack(track, fallback)
-    const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
+    const settings = trackVideoEncoding(track, fallback)
+    const keyframeInterval = track.keyframeInterval ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
 
     const existing = this.videoTrackContexts.get(trackName)
     if (existing) {
@@ -411,7 +413,7 @@ export class MediaPublisher {
     if (!track) {
       return
     }
-    const settings = this.buildAudioEncodingFromTrack(track, this.audioEncodingSettings)
+    const settings = trackAudioEncoding(track, this.audioEncodingSettings)
     const streamUpdateSettings = this.resolveAudioStreamUpdateSettingsForTrack(track)
     const context = this.audioTrackContexts.get(trackName)
     if (context) {
@@ -468,8 +470,8 @@ export class MediaPublisher {
     const fallback = source === 'screenshare' ? this.screenShareEncodingSettings : this.videoEncodingSettings
 
     for (const track of desiredTracks) {
-      const config = this.buildVideoEncodingFromTrack(track, fallback)
-      const keyframeInterval = this.normalizeTrackKeyframeInterval(track.keyframeInterval)
+      const config = trackVideoEncoding(track, fallback)
+      const keyframeInterval = track.keyframeInterval ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
       const existing = this.videoTrackContexts.get(track.name)
       if (existing) {
         this.applyVideoTrackSettings(existing, config, keyframeInterval)
@@ -510,7 +512,7 @@ export class MediaPublisher {
     }
 
     for (const track of desiredTracks) {
-      const config = this.buildAudioEncodingFromTrack(track, this.audioEncodingSettings)
+      const config = trackAudioEncoding(track, this.audioEncodingSettings)
       const streamUpdateSettings = this.resolveAudioStreamUpdateSettingsForTrack(track)
       const existing = this.audioTrackContexts.get(track.name)
       if (existing) {
@@ -1043,32 +1045,6 @@ export class MediaPublisher {
     return stream?.getVideoTracks()[0] ?? null
   }
 
-  private buildVideoEncodingFromTrack(
-    track: MeetingCatalogTrack,
-    fallback: VideoEncodingSettings
-  ): VideoEncodingSettings {
-    return {
-      codec: this.normalizeNonEmptyString(track.codec) ?? fallback.codec,
-      width: this.normalizePositiveNumber(track.width) ?? fallback.width,
-      height: this.normalizePositiveNumber(track.height) ?? fallback.height,
-      bitrate: this.normalizePositiveNumber(track.bitrate) ?? fallback.bitrate,
-      framerate: this.normalizePositiveNumber(track.framerate) ?? fallback.framerate,
-      hardwareAcceleration:
-        this.normalizeHardwareAcceleration(track.hardwareAcceleration) ?? fallback.hardwareAcceleration
-    }
-  }
-
-  private buildAudioEncodingFromTrack(
-    track: MeetingCatalogTrack,
-    fallback: AudioEncodingSettings
-  ): AudioEncodingSettings {
-    return {
-      codec: this.normalizeNonEmptyString(track.codec) ?? fallback.codec,
-      bitrate: this.normalizePositiveNumber(track.bitrate) ?? fallback.bitrate,
-      channels: this.parseAudioChannels(track.channelConfig) ?? fallback.channels
-    }
-  }
-
   private buildAudioEncoderConfig(settings: AudioEncodingSettings): AudioEncoderConfig {
     return {
       codec: settings.codec,
@@ -1091,44 +1067,6 @@ export class MediaPublisher {
 
   private isSameAudioEncoding(left: AudioEncodingSettings, right: AudioEncodingSettings): boolean {
     return left.codec === right.codec && left.bitrate === right.bitrate && left.channels === right.channels
-  }
-
-  private parseAudioChannels(channelConfig: string | undefined): number | undefined {
-    const normalized = this.normalizeNonEmptyString(channelConfig)?.toLowerCase()
-    if (!normalized) {
-      return undefined
-    }
-    if (normalized.includes('mono')) {
-      return 1
-    }
-    if (normalized.includes('stereo')) {
-      return 2
-    }
-    const matched = normalized.match(/(\d+)/)
-    if (!matched) {
-      return undefined
-    }
-    const parsed = Number(matched[1])
-    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
-  }
-
-  private normalizePositiveNumber(value: number | undefined): number | undefined {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-      return undefined
-    }
-    return Math.floor(value)
-  }
-
-  private normalizeNonEmptyString(value: string | undefined): string | undefined {
-    if (typeof value !== 'string') {
-      return undefined
-    }
-    const trimmed = value.trim()
-    return trimmed.length > 0 ? trimmed : undefined
-  }
-
-  private normalizeHardwareAcceleration(value: HardwareAcceleration | undefined): HardwareAcceleration | undefined {
-    return value === 'prefer-hardware' || value === 'prefer-software' || value === 'no-preference' ? value : undefined
   }
 
   private reportVideoBitrate(source: VideoSource): void {
@@ -1159,22 +1097,17 @@ export class MediaPublisher {
 
   private getKeyframeIntervalForTrackName(trackName: string): number {
     const track = this.catalogTracks.find((entry) => entry.name === trackName && entry.role === 'video')
-    return this.normalizeTrackKeyframeInterval(track?.keyframeInterval)
-  }
-
-  private normalizeTrackKeyframeInterval(value: number | undefined): number {
-    return this.normalizePositiveNumber(value) ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
+    return track?.keyframeInterval ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
   }
 
   private resolveAudioStreamUpdateSettingsForTrack(track: MeetingCatalogTrack): {
     mode: 'single' | 'interval'
     intervalSeconds: number
   } {
-    const mode = track.audioStreamUpdateMode === 'single' ? 'single' : DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode
-    const intervalSeconds =
-      this.normalizePositiveNumber(track.audioStreamUpdateIntervalSeconds) ??
-      DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
-    return { mode, intervalSeconds }
+    return {
+      mode: track.audioStreamUpdateMode ?? DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode,
+      intervalSeconds: track.audioStreamUpdateIntervalSeconds ?? DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds
+    }
   }
 
   private applyAudioStreamUpdateSettingsToContext(
@@ -1264,30 +1197,6 @@ export class MediaPublisher {
         undefined
       )
     }
-  }
-
-  private normalizeCatalogTracks(tracks: MeetingCatalogTrack[]): MeetingCatalogTrack[] {
-    const normalized: MeetingCatalogTrack[] = []
-    for (const track of tracks) {
-      const name = track.name.trim()
-      if (!name) {
-        continue
-      }
-      const keyframeInterval =
-        track.role === 'video' ? this.normalizeTrackKeyframeInterval(track.keyframeInterval) : undefined
-      const audioStreamSettings =
-        track.role === 'audio' ? this.resolveAudioStreamUpdateSettingsForTrack(track) : undefined
-      normalized.push({
-        ...track,
-        name,
-        label: track.label.trim() || name,
-        keyframeInterval,
-        audioStreamUpdateMode: audioStreamSettings?.mode,
-        audioStreamUpdateIntervalSeconds: audioStreamSettings?.intervalSeconds,
-        isLive: track.isLive ?? true
-      })
-    }
-    return normalized
   }
 
   private async broadcastCatalog(): Promise<void> {

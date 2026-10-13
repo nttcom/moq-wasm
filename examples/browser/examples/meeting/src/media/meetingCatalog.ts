@@ -8,6 +8,9 @@ import {
   type CatalogTrackRole,
   type EditableMeetingCatalogTrack
 } from '../types/catalog'
+import type { VideoEncodingSettings } from '../types/videoEncoding'
+import type { AudioEncodingSettings } from '../types/audioEncoding'
+import { parseAudioChannelCount } from '../../../../utils/media/audioChannelConfig'
 
 type E2ECameraSettings = {
   width: number
@@ -62,7 +65,7 @@ function resolveE2ECameraSettings(): E2ECameraSettings | null {
 }
 
 const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
-const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
+export const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 
 const DEFAULT_CAMERA_PROFILES = [
   { id: 'base', label: 'Base', codec: 'avc1.42001F', maxEncodePixels: 1280 * 720 },
@@ -267,6 +270,32 @@ export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[
       }
     ]
   })
+}
+
+export function trackVideoEncoding(track: MeetingCatalogTrack, fallback: VideoEncodingSettings): VideoEncodingSettings {
+  return {
+    codec: track.codec ?? fallback.codec,
+    width: track.width ?? fallback.width,
+    height: track.height ?? fallback.height,
+    bitrate: track.bitrate ?? fallback.bitrate,
+    framerate: track.framerate ?? fallback.framerate,
+    hardwareAcceleration: track.hardwareAcceleration ?? fallback.hardwareAcceleration
+  }
+}
+
+export function trackAudioEncoding(track: MeetingCatalogTrack, fallback: AudioEncodingSettings): AudioEncodingSettings {
+  return {
+    codec: track.codec ?? fallback.codec,
+    bitrate: track.bitrate ?? fallback.bitrate,
+    channels: parseAudioChannelCount(track.channelConfig) ?? fallback.channels
+  }
+}
+
+export function pickVideoTrackByPriority<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
+  const tracksWithBitrate = tracks
+    .filter((track) => typeof track.bitrate === 'number')
+    .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
+  return tracksWithBitrate[0] ?? tracks[0]
 }
 
 export function toEditableCatalogTracks(tracks: MeetingCatalogTrack[]): EditableMeetingCatalogTrack[] {

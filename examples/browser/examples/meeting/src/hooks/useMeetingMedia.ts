@@ -3,6 +3,7 @@ import { LocalSession } from '../session/localSession'
 import type { RemotePictures } from '../media/mediaSubscriber'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import {
+  DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
   DEFAULT_VIDEO_ENCODING_SETTINGS,
   VIDEO_BITRATE_OPTIONS,
   VIDEO_CODEC_OPTIONS,
@@ -18,9 +19,10 @@ import {
   type AudioEncodingSettings
 } from '../types/audioEncoding'
 import type { CaptureSettingsState } from '../types/captureConstraints'
-import type { EditableMeetingCatalogTrack } from '../types/catalog'
+import type { EditableMeetingCatalogTrack, MeetingCatalogTrack } from '../types/catalog'
 import { isScreenShareTrackName } from '../utils/catalogTrackName'
 import {
+  E2E_CAMERA_SETTINGS,
   appendCatalogTracks,
   createCatalogTrackId,
   getAudioCatalogTrackNames,
@@ -29,9 +31,12 @@ import {
   getCameraCatalogTracks,
   getScreenShareCatalogTrackNames,
   getScreenShareCatalogTracks,
+  pickVideoTrackByPriority,
   removeCatalogTracksByNames,
   toCatalogTracks,
-  toEditableCatalogTracks
+  toEditableCatalogTracks,
+  trackAudioEncoding,
+  trackVideoEncoding
 } from '../media/meetingCatalog'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
 import type { VideoSendTiming } from '../types/stats'
@@ -86,51 +91,6 @@ interface UseMeetingMediaResult {
   removeCatalogTrack: (id: string) => void
 }
 
-const DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS: VideoEncodingSettings = {
-  codec: VIDEO_CODEC_OPTIONS.find((c) => c.id.startsWith('av1'))?.codec ?? VIDEO_CODEC_OPTIONS[3].codec,
-  width: 1920,
-  height: 1080,
-  bitrate: VIDEO_BITRATE_OPTIONS.find((b) => b.id === '1mbps')?.bitrate ?? VIDEO_BITRATE_OPTIONS[2].bitrate,
-  framerate: 30,
-  hardwareAcceleration: 'prefer-software'
-}
-
-type E2ECameraSettings = {
-  width: number
-  height: number
-  framerate: number
-  bitrate: number
-  codec: string | null
-}
-
-function readPositiveIntegerParam(params: URLSearchParams, name: string): number | null {
-  const raw = params.get(name)
-  const parsed = raw ? Number(raw) : NaN
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
-}
-
-function readNonEmptyStringParam(params: URLSearchParams, name: string): string | null {
-  const value = params.get(name)?.trim()
-  return value ? value : null
-}
-
-function resolveE2ECameraSettings(): E2ECameraSettings | null {
-  if (typeof window === 'undefined') {
-    return null
-  }
-  const params = new URLSearchParams(window.location.search)
-  const width = readPositiveIntegerParam(params, 'e2eVideoWidth')
-  const height = readPositiveIntegerParam(params, 'e2eVideoHeight')
-  const framerate = readPositiveIntegerParam(params, 'e2eVideoFramerate')
-  const bitrate = readPositiveIntegerParam(params, 'e2eVideoBitrate')
-  const codec = readNonEmptyStringParam(params, 'e2eVideoCodec')
-  if (!width || !height || !framerate || !bitrate) {
-    return null
-  }
-  return { width, height, framerate, bitrate, codec }
-}
-
-const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 const INITIAL_CAMERA_ENCODING_SETTINGS: VideoEncodingSettings = E2E_CAMERA_SETTINGS
   ? {
       ...DEFAULT_VIDEO_ENCODING_SETTINGS,
@@ -247,21 +207,16 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     }
 
     const controller = session.getMediaController()
-    const initialCatalogTracks = toEditableCatalogTracks(controller.getCatalogTracks())
+    const initialCatalogTracks = controller.getCatalogTracks()
     setSubscribedCatalogTracks(controller.getSubscribedCatalogTracks())
-    setCatalogTracks(initialCatalogTracks)
-    const initialVideoEncoding = deriveCameraEncodingFromCatalogTracks(
+    setCatalogTracks(toEditableCatalogTracks(initialCatalogTracks))
+    const initialVideoEncoding = deriveVideoEncoding(initialCatalogTracks, INITIAL_CAMERA_ENCODING_SETTINGS, 'camera')
+    const initialScreenShareEncoding = deriveVideoEncoding(
       initialCatalogTracks,
-      INITIAL_CAMERA_ENCODING_SETTINGS
+      DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
+      'screenshare'
     )
-    const initialScreenShareEncoding = deriveScreenShareEncodingFromCatalogTracks(
-      initialCatalogTracks,
-      DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS
-    )
-    const initialAudioEncoding = deriveAudioEncodingFromCatalogTracks(
-      initialCatalogTracks,
-      DEFAULT_AUDIO_ENCODING_SETTINGS
-    )
+    const initialAudioEncoding = deriveAudioEncoding(initialCatalogTracks, DEFAULT_AUDIO_ENCODING_SETTINGS)
     setSelectedVideoEncoding(initialVideoEncoding)
     setSelectedScreenShareEncoding(initialScreenShareEncoding)
     setSelectedAudioEncoding(initialAudioEncoding)
@@ -414,13 +369,11 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
         return
       }
       const controller = session.getMediaController()
-      await controller.setCatalogTracks(toCatalogTracks(nextTracks))
-      const nextVideoEncoding = deriveCameraEncodingFromCatalogTracks(nextTracks, selectedVideoEncoding)
-      const nextScreenShareEncoding = deriveScreenShareEncodingFromCatalogTracks(
-        nextTracks,
-        selectedScreenShareEncoding
-      )
-      const nextAudioEncoding = deriveAudioEncodingFromCatalogTracks(nextTracks, selectedAudioEncoding)
+      const nextCatalogTracks = toCatalogTracks(nextTracks)
+      await controller.setCatalogTracks(nextCatalogTracks)
+      const nextVideoEncoding = deriveVideoEncoding(nextCatalogTracks, selectedVideoEncoding, 'camera')
+      const nextScreenShareEncoding = deriveVideoEncoding(nextCatalogTracks, selectedScreenShareEncoding, 'screenshare')
+      const nextAudioEncoding = deriveAudioEncoding(nextCatalogTracks, selectedAudioEncoding)
       setSelectedVideoEncoding(nextVideoEncoding)
       setSelectedScreenShareEncoding(nextScreenShareEncoding)
       setSelectedAudioEncoding(nextAudioEncoding)
@@ -889,20 +842,6 @@ function isSameSubscribedCatalogTracks(left: SubscribedCatalogTrack[], right: Su
   return true
 }
 
-function deriveCameraEncodingFromCatalogTracks(
-  tracks: EditableMeetingCatalogTrack[],
-  fallback: VideoEncodingSettings
-): VideoEncodingSettings {
-  return deriveVideoEncodingFromCatalogTracks(tracks, fallback, 'camera')
-}
-
-function deriveScreenShareEncodingFromCatalogTracks(
-  tracks: EditableMeetingCatalogTrack[],
-  fallback: VideoEncodingSettings
-): VideoEncodingSettings {
-  return deriveVideoEncodingFromCatalogTracks(tracks, fallback, 'screenshare')
-}
-
 function hasCatalogTrackForSource(tracks: EditableMeetingCatalogTrack[], source: CatalogPresetSource): boolean {
   if (source === 'audio') {
     return tracks.some((track) => track.role === 'audio')
@@ -911,85 +850,20 @@ function hasCatalogTrackForSource(tracks: EditableMeetingCatalogTrack[], source:
   return tracks.some((track) => track.role === 'video' && isScreenShareTrackName(track.name) === isScreenshare)
 }
 
-function deriveVideoEncodingFromCatalogTracks(
-  tracks: EditableMeetingCatalogTrack[],
+function deriveVideoEncoding(
+  tracks: MeetingCatalogTrack[],
   fallback: VideoEncodingSettings,
   source: 'camera' | 'screenshare'
 ): VideoEncodingSettings {
-  const videoTracks = tracks.filter(
-    (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (source === 'screenshare')
+  const videoTrack = pickVideoTrackByPriority(
+    tracks.filter(
+      (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (source === 'screenshare')
+    )
   )
-  const videoTrack = pickVideoTrackByPriority(videoTracks)
-  if (!videoTrack) {
-    return fallback
-  }
-  return {
-    codec: normalizeNonEmptyString(videoTrack.codec) ?? fallback.codec,
-    width: normalizePositiveNumber(videoTrack.width) ?? fallback.width,
-    height: normalizePositiveNumber(videoTrack.height) ?? fallback.height,
-    bitrate: normalizePositiveNumber(videoTrack.bitrate) ?? fallback.bitrate,
-    framerate: normalizePositiveNumber(videoTrack.framerate) ?? fallback.framerate,
-    hardwareAcceleration:
-      normalizeHardwareAcceleration(videoTrack.hardwareAcceleration) ?? fallback.hardwareAcceleration
-  }
+  return videoTrack ? trackVideoEncoding(videoTrack, fallback) : fallback
 }
 
-function pickVideoTrackByPriority(tracks: EditableMeetingCatalogTrack[]): EditableMeetingCatalogTrack | undefined {
-  const tracksWithBitrate = tracks
-    .filter((track) => typeof track.bitrate === 'number')
-    .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))
-  return tracksWithBitrate[0] ?? tracks[0]
-}
-
-function deriveAudioEncodingFromCatalogTracks(
-  tracks: EditableMeetingCatalogTrack[],
-  fallback: AudioEncodingSettings
-): AudioEncodingSettings {
+function deriveAudioEncoding(tracks: MeetingCatalogTrack[], fallback: AudioEncodingSettings): AudioEncodingSettings {
   const audioTrack = tracks.find((track) => track.role === 'audio')
-  if (!audioTrack) {
-    return fallback
-  }
-  return {
-    codec: normalizeNonEmptyString(audioTrack.codec) ?? fallback.codec,
-    bitrate: normalizePositiveNumber(audioTrack.bitrate) ?? fallback.bitrate,
-    channels: parseAudioChannels(audioTrack.channelConfig) ?? fallback.channels
-  }
-}
-
-function normalizePositiveNumber(value: number | undefined): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return undefined
-  }
-  return Math.floor(value)
-}
-
-function normalizeNonEmptyString(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined
-  }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-
-function normalizeHardwareAcceleration(value: HardwareAcceleration | undefined): HardwareAcceleration | undefined {
-  return value === 'prefer-hardware' || value === 'prefer-software' || value === 'no-preference' ? value : undefined
-}
-
-function parseAudioChannels(channelConfig: string | undefined): number | undefined {
-  const normalized = normalizeNonEmptyString(channelConfig)?.toLowerCase()
-  if (!normalized) {
-    return undefined
-  }
-  if (normalized.includes('mono')) {
-    return 1
-  }
-  if (normalized.includes('stereo')) {
-    return 2
-  }
-  const matched = normalized.match(/(\d+)/)
-  if (!matched) {
-    return undefined
-  }
-  const parsed = Number(matched[1])
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
+  return audioTrack ? trackAudioEncoding(audioTrack, fallback) : fallback
 }
