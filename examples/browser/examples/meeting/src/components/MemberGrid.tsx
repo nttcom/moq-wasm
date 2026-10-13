@@ -30,6 +30,7 @@ import type {
   VideoEncodingSettings
 } from '../types/videoEncoding'
 import type { SubscribedCatalogTrack } from '../media/mediaPublisher'
+import { formatAudioChannelConfig, parseAudioChannelCount } from '../../../../utils/media/audioChannelConfig'
 
 type VideoEncodingOptionSet = {
   codecOptions: VideoCodecOption[]
@@ -772,7 +773,7 @@ function CatalogTrackEditor({
                   value={findAudioChannelOptionId(audioEncodingOptions, currentDraft.channelConfig)}
                   onChange={(option) =>
                     setCurrentDraft({
-                      channelConfig: channelConfigForChannels(option.channels),
+                      channelConfig: formatAudioChannelConfig(option.channels),
                       samplerate: currentDraft.samplerate ?? 48_000
                     })
                   }
@@ -1053,7 +1054,7 @@ function createAudioTrackDraft(options: AudioEncodingOptionSet): Omit<EditableMe
     hardwareAcceleration: undefined,
     keyframeInterval: undefined,
     samplerate: 48_000,
-    channelConfig: channelConfigForChannels(channels),
+    channelConfig: formatAudioChannelConfig(channels),
     audioStreamUpdateMode: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.mode,
     audioStreamUpdateIntervalSeconds: DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS.intervalSeconds,
     isLive: true
@@ -1130,24 +1131,8 @@ function findAudioBitrateOptionId(options: AudioEncodingOptionSet, bitrate: numb
 }
 
 function findAudioChannelOptionId(options: AudioEncodingOptionSet, channelConfig: string | undefined): string {
-  const normalized = channelConfig?.toLowerCase() ?? ''
-  if (normalized.includes('mono')) {
-    return options.channelOptions.find((entry) => entry.channels === 1)?.id ?? options.channelOptions[0]?.id ?? ''
-  }
-  if (normalized.includes('stereo')) {
-    return options.channelOptions.find((entry) => entry.channels === 2)?.id ?? options.channelOptions[0]?.id ?? ''
-  }
-  return options.channelOptions[0]?.id ?? ''
-}
-
-function channelConfigForChannels(channels: number): string {
-  if (channels <= 1) {
-    return 'mono'
-  }
-  if (channels === 2) {
-    return 'stereo'
-  }
-  return `${channels}ch`
+  const channels = parseAudioChannelCount(channelConfig)
+  return options.channelOptions.find((entry) => entry.channels === channels)?.id ?? options.channelOptions[0]?.id ?? ''
 }
 
 function normalizeTrackKeyframeInterval(track: Pick<MeetingCatalogTrack, 'keyframeInterval'>): number {
