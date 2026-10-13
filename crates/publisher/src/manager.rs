@@ -4,20 +4,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose};
 use bytes::Bytes;
 use mediapack::{
     aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, mp4::Fmp4TrackMuxer,
 };
 use moqt::{
-    ClientConfig, DUAL, Endpoint, Session, SessionEvent, TerminationErrorCode, TrackWriter,
-    TransportSendError, TransportStats,
-    fetch::{FetchHandler, FetchObject, FetchObjectField},
-    object::{ContentExists, ExtensionHeaders, GroupOrder},
-    publish::PublishOption,
+    ClientConfig, DUAL, Endpoint, Session, SessionEvent, TerminationErrorCode, TransportStats,
+    publish::{Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
-    wire::FetchParams,
 };
 use msf::{
     Catalog, Track,
@@ -26,10 +22,6 @@ use msf::{
 use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 
 use crate::stream_ledger::{StreamLedger, StreamRecord};
-use crate::{
-    object_cache::{CachedObject, FetchRange, ObjectCache},
-    object_numbering::{ObjectNumbering, Placement},
-};
 
 pub const VIDEO_TRACK_NAME: &str = "video";
 const AUDIO_TRACK_NAME: &str = "audio";
@@ -40,16 +32,9 @@ const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
 /// SUBSCRIBE_ERROR code, draft-ietf-moq-transport-14 §13.1.2.
 const SUBSCRIBE_TRACK_DOES_NOT_EXIST: u64 = 0x4;
-/// FETCH_ERROR codes, draft-ietf-moq-transport-14 §9.18.
-const FETCH_NOT_SUPPORTED: u64 = 0x3;
-const FETCH_TRACK_DOES_NOT_EXIST: u64 = 0x4;
-const FETCH_INVALID_RANGE: u64 = 0x5;
-const FETCH_NO_OBJECTS: u64 = 0x6;
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for an evicted or never-cached range can still be answered here.
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
-const FETCH_PUBLISHER_PRIORITY: u8 = 128;
-const FETCH_SUBGROUP_ID: u64 = 0;
 /// Half the relay's default RELAY_CACHE_TTL_SECS: draft-ietf-moq-msf-01 §5
 /// republishes the catalog before it can fall out of a relay cache, so a
 /// viewer arriving long after the last change still finds one.
@@ -79,72 +64,16 @@ type TrackKey = (String, String);
 #[derive(Default)]
 struct BackendState {
     announced_namespaces: HashSet<String>,
-    tracks: HashMap<TrackKey, TrackState>,
-    subscribed_tracks: HashMap<u64, TrackKey>,
-    fetches: HashMap<u64, JoinHandle<()>>,
     catalogs: HashMap<String, CatalogMetadata>,
     catalog_sent_at: HashMap<String, Instant>,
     disconnected: bool,
 }
 
 impl BackendState {
-    /// The catalog is kept for as long as the publisher runs, because a
-    /// viewer that joins a subscription the relay already holds can only
-    /// obtain it by FETCH, however long ago it was published.
-    fn track_mut(&mut self, key: &TrackKey) -> &mut TrackState {
-        self.tracks.entry(key.clone()).or_insert_with(|| {
-            let cache = if key.1 == CATALOG_TRACK_NAME {
-                ObjectCache::newest_only()
-            } else {
-                ObjectCache::new(FETCH_CACHE_RETENTION)
-            };
-            TrackState::new(now_unix().as_micros() as u64, cache)
-        })
-    }
-
     fn catalog_refresh_due(&self, namespace_path: &str) -> bool {
         self.catalog_sent_at
             .get(namespace_path)
             .is_some_and(|sent_at| sent_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Publication {
-    Unpublished,
-    Published,
-    Released,
-}
-
-/// Objects are numbered and cached from the first one the producer hands over,
-/// so the FETCH cache also covers the time before the track is published; the
-/// writer exists only while the publication does and is taken out of its slot
-/// for the duration of a write.
-struct TrackState {
-    numbering: ObjectNumbering,
-    cache: ObjectCache,
-    publication: Publication,
-    writer: Option<TrackWriter>,
-}
-
-impl TrackState {
-    fn new(first_group_id: u64, cache: ObjectCache) -> Self {
-        Self {
-            numbering: ObjectNumbering::new(first_group_id),
-            cache,
-            publication: Publication::Unpublished,
-            writer: None,
-        }
-    }
-
-    fn publish(&mut self, writer: TrackWriter) {
-        self.publication = Publication::Published;
-        self.writer = Some(writer);
-    }
-
-    fn release(&mut self) {
-        self.publication = Publication::Released;
-        self.writer = None;
     }
 }
 
@@ -183,37 +112,13 @@ struct CatalogMetadata {
     audio_config: Option<AudioSpecificConfig>,
 }
 
-pub struct OutgoingObject {
-    pub group: GroupBoundary,
-    pub extension_headers: ExtensionHeaders,
-    pub payload: Bytes,
-}
-
-impl OutgoingObject {
-    pub fn plain(group: GroupBoundary, payload: Bytes) -> Self {
-        Self {
-            group,
-            extension_headers: ExtensionHeaders::default(),
-            payload,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum GroupBoundary {
-    /// Only inside an open group; the object is dropped when there is none,
-    /// because a group must not start on it.
-    Within,
-    Next,
-    At(u64),
-}
-
 struct ConnectedPublisher {
     endpoint: Endpoint<DUAL>,
     session: Arc<Session>,
+    origin: Origin,
     state: Arc<Mutex<BackendState>>,
     ledger: StreamLedger,
-    event_task: tokio::task::JoinHandle<()>,
+    event_task: JoinHandle<()>,
 }
 
 impl MoqtManager {
@@ -336,12 +241,19 @@ impl ConnectedPublisher {
             .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
 
+        let origin = Origin::new(session.clone());
         let state = Arc::new(Mutex::new(BackendState::default()));
-        let event_task = Self::spawn_event_loop(session.clone(), state.clone(), ledger.clone());
+        let event_task = Self::spawn_event_loop(
+            session.clone(),
+            origin.clone(),
+            state.clone(),
+            ledger.clone(),
+        );
 
         Ok(Self {
             endpoint,
             session,
+            origin,
             state,
             ledger,
             event_task,
@@ -360,9 +272,10 @@ impl ConnectedPublisher {
 
     fn spawn_event_loop(
         session: Arc<Session>,
+        origin: Origin,
         state: Arc<Mutex<BackendState>>,
         ledger: StreamLedger,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 let event = match session.receive_event().await {
@@ -390,18 +303,14 @@ impl ConnectedPublisher {
                         }
                     }
                     SessionEvent::Subscribe(handler) => {
-                        Self::serve_subscribe(&session, &state, handler).await;
+                        Self::serve_subscribe(&origin, &state, handler).await;
                     }
                     SessionEvent::Unsubscribe(handler) => {
                         let request_id = handler.subscribe_id();
-                        let mut guard = state.lock().await;
-                        match guard.subscribed_tracks.remove(&request_id) {
-                            Some(key) => {
-                                if let Some(track) = guard.tracks.get_mut(&key) {
-                                    track.release();
-                                    ledger.finish(&key.1);
-                                }
-                                tracing::info!(request_id, namespace = %key.0, track_name = %key.1, "UNSUBSCRIBE received; track released");
+                        match origin.release(request_id).await {
+                            Some((namespace, track_name)) => {
+                                ledger.finish(&track_name);
+                                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
                             }
                             None => {
                                 tracing::warn!(request_id, "UNSUBSCRIBE for unknown request");
@@ -421,19 +330,17 @@ impl ConnectedPublisher {
                     }
                     SessionEvent::Fetch(handler) => {
                         let request_id = handler.request_id;
-                        let mut guard = state.lock().await;
-                        let task = tokio::spawn(Self::serve_fetch(
-                            session.clone(),
-                            state.clone(),
-                            handler,
-                        ));
-                        guard.fetches.insert(request_id, task);
+                        if let Err(err) = origin.serve_fetch(handler).await {
+                            tracing::warn!(request_id, ?err, "failed to answer FETCH");
+                        }
                     }
                     SessionEvent::FetchCancel(handler) => {
+                        origin.cancel_fetch(handler.request_id()).await;
+                    }
+                    SessionEvent::TrackStatus(handler) => {
                         let request_id = handler.request_id();
-                        if let Some(task) = state.lock().await.fetches.remove(&request_id) {
-                            task.abort();
-                            tracing::info!(request_id, "FETCH_CANCEL received; response aborted");
+                        if let Err(err) = origin.answer_track_status(handler).await {
+                            tracing::warn!(request_id, ?err, "failed to answer TRACK_STATUS");
                         }
                     }
                     event @ (SessionEvent::GoAway(_)
@@ -441,8 +348,7 @@ impl ConnectedPublisher {
                     | SessionEvent::RequestsBlocked(_)
                     | SessionEvent::PublishNamespaceCancel(_)
                     | SessionEvent::PublishDone(_)
-                    | SessionEvent::SubscribeUpdate(_)
-                    | SessionEvent::TrackStatus(_)) => {
+                    | SessionEvent::SubscribeUpdate(_)) => {
                         tracing::debug!(?event, "unhandled control message");
                     }
                 }
@@ -484,46 +390,32 @@ impl ConnectedPublisher {
         if self.state.lock().await.catalog_refresh_due(&key.0) {
             self.send_catalog(&key.0).await?;
         }
-        let (placement, writer) = {
-            let mut guard = self.state.lock().await;
-            if guard.disconnected {
-                bail!("MoQ publisher disconnected");
-            }
-            let track = guard.track_mut(&key);
-            let Some(placement) = track.numbering.place(object.group)? else {
-                return Ok(false);
-            };
-            track.cache.insert(CachedObject {
-                location: placement.location,
-                extension_headers: object.extension_headers.clone(),
-                payload: object.payload.clone(),
-            });
-            (placement, track.writer.take())
-        };
-        let Some(mut writer) = writer else {
-            return Ok(false);
-        };
-        let result = write_object(&mut writer, placement, object, &self.ledger, &key.1).await;
-        let mut guard = self.state.lock().await;
-        let Some(track) = guard.tracks.get_mut(&key) else {
-            return result;
-        };
-        let replaced_meanwhile = track.writer.is_some();
-        if !replaced_meanwhile && track.publication == Publication::Published {
-            track.writer = Some(writer);
+        if self.state.lock().await.disconnected {
+            bail!("MoQ publisher disconnected");
         }
-        match result {
-            Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
-                tracing::info!(namespace = %key.0, track_name = %key.1, "subscriber stopped a subgroup; the track resumes at the next group");
+        ensure_origin_track(&self.origin, &key).await;
+        let bytes = object.payload.len();
+        match self.origin.write(&key.0, &key.1, object).await? {
+            WriteOutcome::Sent(placement) => {
+                if placement.starts_group {
+                    self.ledger.open(&key.1, placement.location.group_id);
+                }
+                self.ledger.add_object(&key.1, bytes);
+                Ok(true)
+            }
+            WriteOutcome::Stopped(placement) => {
+                if placement.starts_group {
+                    self.ledger.open(&key.1, placement.location.group_id);
+                }
                 self.ledger.finish(&key.1);
                 Ok(false)
             }
-            result => result,
+            WriteOutcome::NotSent => Ok(false),
         }
     }
 
     async fn serve_subscribe(
-        session: &Session,
+        origin: &Origin,
         state: &Mutex<BackendState>,
         handler: SubscribeHandler,
     ) {
@@ -549,112 +441,10 @@ impl ConnectedPublisher {
             }
             return;
         }
-        let track_alias = match handler.ok(1_000_000, ContentExists::False).await {
-            Ok(track_alias) => track_alias,
-            Err(err) => {
-                tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
-                return;
-            }
-        };
-        let subscription = handler.into_subscription(track_alias);
-        let key = (namespace.clone(), track_name.clone());
-        let mut guard = state.lock().await;
-        let track = guard.track_mut(&key);
-        track.publish(TrackWriter::new(
-            session.publisher().create_stream(&subscription),
-            track.numbering.next_group_id(),
-        ));
-        guard.subscribed_tracks.insert(handler.request_id(), key);
-        tracing::info!(%namespace, %track_name, track_alias, "SUBSCRIBE accepted");
-    }
-
-    async fn serve_fetch(
-        session: Arc<Session>,
-        state: Arc<Mutex<BackendState>>,
-        handler: FetchHandler,
-    ) {
-        let request_id = handler.request_id;
-        if let Err(err) = Self::respond_to_fetch(&session, &state, &handler).await {
-            tracing::warn!(request_id, ?err, "failed to serve FETCH");
+        ensure_origin_track(origin, &(namespace.clone(), track_name.clone())).await;
+        if let Err(err) = origin.accept_subscribe(handler).await {
+            tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
         }
-        state.lock().await.fetches.remove(&request_id);
-    }
-
-    async fn respond_to_fetch(
-        session: &Session,
-        state: &Mutex<BackendState>,
-        handler: &FetchHandler,
-    ) -> Result<()> {
-        let FetchParams::Standalone {
-            track_namespace,
-            track_name,
-            start_location,
-            end_location,
-        } = &handler.fetch.fetch_params
-        else {
-            return Ok(handler
-                .error(
-                    FETCH_NOT_SUPPORTED,
-                    "only standalone FETCH is served".to_string(),
-                )
-                .await?);
-        };
-        let key = (track_namespace.join("/"), track_name.clone());
-        let range = state
-            .lock()
-            .await
-            .tracks
-            .get(&key)
-            .map(|track| track.cache.resolve(*start_location, *end_location));
-        let (objects, end_location) = match range {
-            None => {
-                return Ok(handler
-                    .error(
-                        FETCH_TRACK_DOES_NOT_EXIST,
-                        "track not published".to_string(),
-                    )
-                    .await?);
-            }
-            Some(FetchRange::InvalidRange) => {
-                return Ok(handler
-                    .error(FETCH_INVALID_RANGE, "invalid range".to_string())
-                    .await?);
-            }
-            Some(FetchRange::NoObjects) => {
-                return Ok(handler
-                    .error(FETCH_NO_OBJECTS, "no cached objects in range".to_string())
-                    .await?);
-            }
-            Some(FetchRange::Serve {
-                objects,
-                end_location,
-            }) => (objects, end_location),
-        };
-        tracing::info!(
-            request_id = handler.request_id,
-            namespace = %key.0,
-            track_name = %key.1,
-            objects = objects.len(),
-            "FETCH served from the publisher cache"
-        );
-        handler.ok(false, end_location).await?;
-        let sender = session
-            .publisher()
-            .create_fetch_stream(handler.request_id)
-            .await?;
-        for object in in_group_order(objects, handler.group_order) {
-            sender
-                .send(FetchObjectField::new(
-                    object.location.group_id,
-                    FETCH_SUBGROUP_ID,
-                    object.location.object_id,
-                    FETCH_PUBLISHER_PRIORITY,
-                    object.extension_headers,
-                    FetchObject::Payload(object.payload),
-                ))
-                .await?;
-        }
-        sender.close().await
     }
 
     async fn update_video_catalog(
@@ -706,16 +496,18 @@ impl ConnectedPublisher {
     /// tracks wait for that SUBSCRIBE, so the uplink carries them only while
     /// someone watches them.
     async fn send_catalog(&self, namespace_path: &str) -> Result<()> {
-        let mut guard = self.state.lock().await;
-        if guard.disconnected {
-            bail!("MoQ publisher disconnected");
-        }
-        let metadata = guard
-            .catalogs
-            .get(namespace_path)
-            .cloned()
-            .unwrap_or_default();
-        let catalog = build_catalog(namespace_path, &metadata)?;
+        let catalog = {
+            let guard = self.state.lock().await;
+            if guard.disconnected {
+                bail!("MoQ publisher disconnected");
+            }
+            let metadata = guard
+                .catalogs
+                .get(namespace_path)
+                .cloned()
+                .unwrap_or_default();
+            build_catalog(namespace_path, &metadata)?
+        };
         let published_tracks = catalog
             .tracks
             .iter()
@@ -723,71 +515,44 @@ impl ConnectedPublisher {
             .filter(|track| !is_cmaf(track))
             .map(|track| track.name.as_str());
         for track_name in published_tracks.chain([CATALOG_TRACK_NAME]) {
-            self.publish_track(
-                &mut guard,
-                (namespace_path.to_string(), track_name.to_string()),
-            )
-            .await?;
+            self.publish_track((namespace_path.to_string(), track_name.to_string()))
+                .await?;
         }
         let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
         tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
-        guard
+        self.state
+            .lock()
+            .await
             .catalog_sent_at
             .insert(namespace_path.to_string(), Instant::now());
-        let key = (namespace_path.to_string(), CATALOG_TRACK_NAME.to_string());
-        let track = guard.track_mut(&key);
-        let placement = track
-            .numbering
-            .place(GroupBoundary::Next)?
-            .context("a new group always places its first object")?;
-        track.cache.insert(CachedObject {
-            location: placement.location,
-            extension_headers: ExtensionHeaders::default(),
-            payload: payload.clone(),
-        });
-        let Some(writer) = track.writer.as_mut() else {
-            return Ok(());
-        };
-        ensure!(
-            writer.next_group_id() == placement.location.group_id,
-            "catalog writer is at group {} but the cache placed the catalog at {}",
-            writer.next_group_id(),
-            placement.location.group_id
-        );
-        self.ledger
-            .open(CATALOG_TRACK_NAME, placement.location.group_id);
-        self.ledger.add_object(CATALOG_TRACK_NAME, payload.len());
-        match writer.write_group(payload).await {
-            Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
+        let bytes = payload.len();
+        match self
+            .origin
+            .write_group(namespace_path, CATALOG_TRACK_NAME, payload)
+            .await
+            .context("send catalog group")?
+        {
+            WriteOutcome::Sent(placement) => {
+                self.ledger
+                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
+                self.ledger.add_object(CATALOG_TRACK_NAME, bytes);
+                self.ledger.finish(CATALOG_TRACK_NAME);
+                tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
+            }
+            WriteOutcome::Stopped(placement) => {
+                self.ledger
+                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
+                self.ledger.finish(CATALOG_TRACK_NAME);
                 tracing::info!(namespace = %namespace_path, "subscriber stopped the catalog group");
             }
-            result => result.context("send catalog group")?,
+            WriteOutcome::NotSent => {}
         }
-        self.ledger.finish(CATALOG_TRACK_NAME);
-        tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
         Ok(())
     }
 
-    async fn publish_track(&self, state: &mut BackendState, key: TrackKey) -> Result<()> {
-        if state.track_mut(&key).publication != Publication::Unpublished {
-            return Ok(());
-        }
-        let subscription = self
-            .session
-            .publisher()
-            .publish(key.0.clone(), key.1.clone(), PublishOption::default())
-            .await
-            .with_context(|| format!("publish {}/{}", key.0, key.1))?;
-        let track = state.track_mut(&key);
-        track.publish(TrackWriter::new(
-            self.session.publisher().create_stream(&subscription),
-            track.numbering.next_group_id(),
-        ));
-        tracing::info!(namespace = %key.0, track_name = %key.1, track_alias = subscription.track_alias(), "track published");
-        state
-            .subscribed_tracks
-            .insert(subscription.request_id(), key);
-        Ok(())
+    async fn publish_track(&self, key: TrackKey) -> Result<()> {
+        ensure_origin_track(&self.origin, &key).await;
+        self.origin.publish(&key.0, &key.1).await
     }
 }
 
@@ -797,43 +562,18 @@ impl Drop for ConnectedPublisher {
     }
 }
 
-/// A writer created while a group is open waits for the next group start, so
-/// the object ids it sends equal the ids the cache assigned.
-async fn write_object(
-    writer: &mut TrackWriter,
-    placement: Placement,
-    object: OutgoingObject,
-    ledger: &StreamLedger,
-    track_name: &str,
-) -> Result<bool> {
-    if placement.starts_group {
-        writer
-            .start_group_at(placement.location.group_id)
-            .await
-            .context("start group")?;
-        ledger.open(track_name, placement.location.group_id);
-    } else if writer.current_group_id() != Some(placement.location.group_id) {
-        return Ok(false);
-    }
-    let bytes = object.payload.len();
-    writer
-        .write_with_extension_headers(object.payload, object.extension_headers)
-        .await
-        .context("send subgroup object")?;
-    ledger.add_object(track_name, bytes);
-    Ok(true)
-}
-
-fn in_group_order(mut objects: Vec<CachedObject>, order: GroupOrder) -> Vec<CachedObject> {
-    if order == GroupOrder::Descending {
-        objects.sort_by(|a, b| {
-            b.location
-                .group_id
-                .cmp(&a.location.group_id)
-                .then(a.location.object_id.cmp(&b.location.object_id))
-        });
-    }
-    objects
+/// The catalog is kept for as long as the publisher runs, because a viewer
+/// that joins a subscription the relay already holds can only obtain it by
+/// FETCH, however long ago it was published.
+async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
+    let retention = if key.1 == CATALOG_TRACK_NAME {
+        Retention::NewestOnly
+    } else {
+        Retention::For(FETCH_CACHE_RETENTION)
+    };
+    origin
+        .ensure_track(&key.0, &key.1, now_unix().as_micros() as u64, retention)
+        .await;
 }
 
 fn is_cmaf(track: &Track) -> bool {

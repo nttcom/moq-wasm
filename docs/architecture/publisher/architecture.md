@@ -50,6 +50,15 @@ so a viewer can rewind a CMAF track into the part that predates the relay's
 first subscriber to it. A track published or subscribed while a group is open
 starts sending at the next group so the live and cached object ids agree.
 
+The mechanism is `moqt::Origin` (see the `moqt` architecture document): it
+numbers and caches the objects, writes them to the relay, and answers FETCH,
+TRACK_STATUS, UNSUBSCRIBE and FETCH_CANCEL for the tracks registered with it.
+This crate decides the policy: which tracks exist, the 60 second retention,
+that the catalog keeps only its newest object, which tracks are published
+eagerly and which wait for a SUBSCRIBE, and that a SUBSCRIBE for anything
+else is rejected. The stream ledger behind the live-ingest stats panel is
+updated from the write outcomes `Origin` reports.
+
 The catalog is the exception to the 60 seconds: its newest object is kept for
 as long as the publisher runs. It is sent when it changes and again every 30
 seconds, half the relay's default cache retention, so the relay always holds
