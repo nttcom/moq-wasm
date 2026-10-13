@@ -51,3 +51,6 @@ features = [
 [dev-dependencies]
 mockall = "0.15.0"
 rcgen = "0.14.8"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
