@@ -40,9 +40,8 @@ impl SessionContextFactory {
             ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode();
         send_stream
             .send(ControlMessageType::ClientSetup, payload)
-            .await
-            .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))?;
-        tracing::info!("Sent client setup.");
+            .await?;
+        tracing::debug!("Sent client setup.");
         Ok(())
     }
 
@@ -52,26 +51,21 @@ impl SessionContextFactory {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
             Ok(None) => {
-                tracing::error!("Stream ended before receiving server setup.");
                 anyhow::bail!("Stream ended before receiving server setup.")
             }
             Err(error) => {
-                tracing::error!(%error, "Stream failed before receiving server setup.");
                 anyhow::bail!("Stream failed before receiving server setup: {error}")
             }
         };
         match received_message {
             ReceivedMessage::ServerSetup(server_setup) => {
-                tracing::info!(
-                    "Received server setup. selected_version: {}",
-                    server_setup.selected_version
+                tracing::debug!(
+                    selected_version = server_setup.selected_version,
+                    "Received server setup"
                 );
                 Ok(server_setup)
             }
-            _ => {
-                tracing::error!("Protocol violation.");
-                anyhow::bail!("Protocol violation.")
-            }
+            _ => anyhow::bail!("Protocol violation: the first control message is not SERVER_SETUP"),
         }
     }
 
@@ -81,26 +75,21 @@ impl SessionContextFactory {
         let received_message = match receive_stream.receive().await {
             Ok(Some(b)) => b,
             Ok(None) => {
-                tracing::error!("Stream ended before receiving client setup.");
                 anyhow::bail!("Stream ended before receiving client setup.")
             }
             Err(error) => {
-                tracing::error!(%error, "Stream failed before receiving client setup.");
                 anyhow::bail!("Stream failed before receiving client setup: {error}")
             }
         };
         match received_message {
             ReceivedMessage::ClientSetup(client_setup) => {
-                tracing::info!(
-                    "Received client setup. supported_versions: {:?}",
-                    client_setup.supported_versions
+                tracing::debug!(
+                    supported_versions = ?client_setup.supported_versions,
+                    "Received client setup"
                 );
                 Ok(client_setup)
             }
-            _ => {
-                tracing::error!("Protocol violation.");
-                anyhow::bail!("Protocol violation.")
-            }
+            _ => anyhow::bail!("Protocol violation: the first control message is not CLIENT_SETUP"),
         }
     }
 
@@ -117,7 +106,6 @@ impl SessionContextFactory {
         Ok(send_stream
             .send(ControlMessageType::ServerSetup, payload)
             .await
-            .inspect_err(|e| tracing::error!("failed to send. :{}", e.to_string()))
             .inspect(|_| tracing::debug!("ServerSetup is sent."))?)
     }
 }

@@ -476,7 +476,7 @@ impl fmt::Debug for SessionContext {
 
 impl Drop for SessionContext {
     fn drop(&mut self) {
-        tracing::info!("SessionContext dropped.");
+        tracing::debug!("SessionContext dropped.");
         // send goaway
     }
 }

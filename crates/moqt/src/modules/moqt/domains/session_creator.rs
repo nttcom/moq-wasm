@@ -39,7 +39,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
             let context =
                 SessionContext::new(transport_conn, send_stream, AtomicU64::new(0), event_sender);
-            tracing::info!("Session is created.");
+            tracing::info!("Session established");
             Ok(Session::new(
                 receive_stream,
                 context,

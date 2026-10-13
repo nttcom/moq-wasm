@@ -33,7 +33,7 @@ impl Handshake {
             AtomicU64::new(1),
             event_sender,
         );
-        tracing::info!("Session is established.");
+        tracing::info!("Session established");
         Ok(Session::new(
             self.receive_stream,
             context,
