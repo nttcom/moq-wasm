@@ -195,7 +195,7 @@ name = "auth-token"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "serde_json",
 ]
@@ -2035,7 +2035,7 @@ name = "onvif-ingest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "clap",
  "env_logger",
@@ -2385,7 +2385,7 @@ name = "publisher"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "mediapack",
  "moqt",
@@ -3780,7 +3780,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auth-token",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "http-body-util",
  "hyper",
