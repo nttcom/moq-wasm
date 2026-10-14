@@ -2,7 +2,7 @@
 pub const MOQ_TRANSPORT_VERSION: u32 = 0xff00000e;
 
 /// Session termination error codes (draft-ietf-moq-transport-14 §13.1.1).
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TerminationErrorCode {
     NoError,
     InternalError,
