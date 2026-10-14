@@ -124,6 +124,6 @@ produce a location an earlier run already used.
 The `timeline` track (draft-ietf-moq-msf-01 §7) carries, at every video
 keyframe, the records `[presentation time, [group id, 0], encode wallclock]`
 accumulated so far as one object in a new group. Records older than the relay's
-cache retention are dropped. Viewers use it to place groups on a seek axis
-that survives rendition changes, since renditions number their groups
-independently.
+cache retention are dropped. Viewers use it to place groups on a seek axis;
+since every track of the switching set shares the source's group ids (see
+Group alignment), the same records hold across rendition changes.

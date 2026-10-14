@@ -558,8 +558,8 @@ the groups the relay still caches. The viewer finds it in the catalog by its
 `mediatimeline` packaging and subscribes to it alongside the media tracks.
 
 A capture timestamp resolves to a presentation time by offsetting from the
-newest record at or before it, so the reading survives a video quality change
-even though renditions number their groups independently. The label shows
+newest record at or before it. The renditions share the source's keyframe times
+and group ids, so the reading survives a video quality change. The label shows
 `--:-- / --:--` until the first timeline object arrives.
 
 ## Migration
