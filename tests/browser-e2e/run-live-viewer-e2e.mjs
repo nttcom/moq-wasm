@@ -16,6 +16,7 @@ import {
 } from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
+  buildLiveIngestFfmpegArgs,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
   getDefaultWebPort,
@@ -92,7 +93,7 @@ async function main() {
     const ffmpeg = spawnProcess(
       "ffmpeg",
       "ffmpeg",
-      buildFfmpegArgs(namespace),
+      buildLiveIngestFfmpegArgs(rtmpAddress, namespace),
       {
         cwd: repoRoot,
       },
@@ -121,46 +122,6 @@ async function main() {
   } finally {
     await cleanup();
   }
-}
-
-function buildFfmpegArgs(namespace) {
-  return [
-    "-hide_banner",
-    "-loglevel",
-    "warning",
-    "-re",
-    "-f",
-    "lavfi",
-    "-i",
-    "testsrc=size=1280x720:rate=30",
-    "-f",
-    "lavfi",
-    "-i",
-    "sine=frequency=1000:sample_rate=48000",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "veryfast",
-    "-profile:v",
-    "baseline",
-    "-pix_fmt",
-    "yuv420p",
-    "-g",
-    "60",
-    "-sc_threshold",
-    "0",
-    "-c:a",
-    "aac",
-    "-ar",
-    "48000",
-    "-ac",
-    "2",
-    "-t",
-    "300",
-    "-f",
-    "flv",
-    `rtmp://${rtmpAddress}/${namespace}/stream`,
-  ];
 }
 
 main().catch((error) => {
