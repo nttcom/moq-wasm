@@ -1,6 +1,7 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
 use std::net::{Ipv6Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use quinn::rustls::{
@@ -30,6 +31,7 @@ pub struct WtConnectionCreator {
     endpoint: WtEndpoint,
     quic_endpoint: quinn::Endpoint,
     protocols: ApplicationProtocols,
+    refusing: AtomicBool,
 }
 
 impl WtConnectionCreator {
@@ -46,6 +48,7 @@ impl WtConnectionCreator {
             endpoint: WtEndpoint::Client(client_config),
             quic_endpoint: endpoint,
             protocols,
+            refusing: AtomicBool::new(false),
         })
     }
 }
@@ -127,6 +130,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
             quic_endpoint: quinn::Endpoint::clone(&server),
             endpoint: WtEndpoint::Server(tokio::sync::Mutex::new(server)),
             protocols,
+            refusing: AtomicBool::new(false),
         })
     }
 
@@ -154,7 +158,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         Ok(Box::new(WtConnection::new(session)))
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
+    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
         let server = match &self.endpoint {
             WtEndpoint::Server(s) => s,
             WtEndpoint::Client(_) => {
@@ -162,14 +166,23 @@ impl TransportConnectionCreator for WtConnectionCreator {
             }
         };
 
-        // クライアントの接続を待つ
-        let Some(request) = server.lock().await.accept().await else {
-            anyhow::bail!("Server endpoint closed");
-        };
+        loop {
+            let Some(request) = server.lock().await.accept().await else {
+                anyhow::bail!("Server endpoint closed");
+            };
+            if self.refusing.load(Ordering::SeqCst) {
+                let _ = request
+                    .reject(web_transport_quinn::http::StatusCode::SERVICE_UNAVAILABLE)
+                    .await;
+                continue;
+            }
+            let session = accept_session(request, self.protocols).await?;
+            return Ok(Box::new(WtConnection::new(session)));
+        }
+    }
 
-        let session = accept_session(request, self.protocols).await?;
-
-        Ok(Box::new(WtConnection::new(session)))
+    fn refuse_new_connections(&self) {
+        self.refusing.store(true, Ordering::SeqCst);
     }
 
     async fn wait_idle(&self) {

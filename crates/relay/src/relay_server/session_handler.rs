@@ -96,7 +96,7 @@ impl SessionHandler {
         config: moqt::server::ServerConfig,
         intake: SessionIntake,
     ) -> Self {
-        let mut endpoint = Endpoint::<T>::create_server(&config)
+        let endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
         let (stop_sender, mut stop_receiver) = oneshot::channel();

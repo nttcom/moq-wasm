@@ -2,7 +2,10 @@ use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
 use std::{
     net::{Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -41,6 +44,7 @@ struct DualClient {
 pub struct DualProtocolCreator {
     endpoint: DualEndpoint,
     protocols: ApplicationProtocols,
+    refusing: AtomicBool,
 }
 
 impl DualProtocolCreator {
@@ -61,6 +65,7 @@ impl DualProtocolCreator {
                 web_transport_config,
             })),
             protocols,
+            refusing: AtomicBool::new(false),
         })
     }
 }
@@ -130,6 +135,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
         Ok(DualProtocolCreator {
             endpoint: DualEndpoint::Server(endpoint),
             protocols,
+            refusing: AtomicBool::new(false),
         })
     }
 
@@ -160,19 +166,24 @@ impl TransportConnectionCreator for DualProtocolCreator {
         }
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
+    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
         let endpoint = match &self.endpoint {
             DualEndpoint::Server(endpoint) => endpoint,
             DualEndpoint::Client(_) => {
                 anyhow::bail!("Cannot accept_new_transport on a client endpoint")
             }
         };
-        let incoming = endpoint
-            .accept()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
-
-        let connection = incoming.await?;
+        let connection = loop {
+            let incoming = endpoint
+                .accept()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
+            if self.refusing.load(Ordering::SeqCst) {
+                incoming.refuse();
+                continue;
+            }
+            break incoming.await?;
+        };
 
         let alpn = negotiated_alpn(&connection)
             .ok_or_else(|| anyhow::anyhow!("No ALPN protocol negotiated"))?;
@@ -186,6 +197,10 @@ impl TransportConnectionCreator for DualProtocolCreator {
         } else {
             anyhow::bail!("Unsupported ALPN: {alpn:?}")
         }
+    }
+
+    fn refuse_new_connections(&self) {
+        self.refusing.store(true, Ordering::SeqCst);
     }
 
     async fn wait_idle(&self) {
@@ -230,7 +245,7 @@ mod tests {
         client: ApplicationProtocols,
     ) -> (BoxedConnection, BoxedConnection) {
         let config = self_signed_server_config(name);
-        let mut server = DualProtocolCreator::server(
+        let server = DualProtocolCreator::server(
             &config.cert_path,
             &config.key_path,
             0,
