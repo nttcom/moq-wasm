@@ -18,8 +18,12 @@ class TrackTransportState {
     return Array.from(this.headerSentAliases.keys())
   }
 
-  advanceGroup(): void {
+  /// Moves to the next group id, or to `atLeast` when that is larger.
+  advanceGroup(atLeast?: bigint): void {
     this.groupId += 1n
+    if (atLeast !== undefined && atLeast > this.groupId) {
+      this.groupId = atLeast
+    }
     this.nextObjectId = 0n
     for (const aliases of this.headerSentAliases.values()) {
       aliases.clear()
