@@ -315,14 +315,14 @@ impl Subscriber {
             Err(error) => {
                 // Request-scoped failure (send error or timeout): drop the
                 // pending fetch state so nothing leaks. The session stays open.
-                self.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id).await;
                 return Err(error);
             }
         };
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id).await;
                 Err(RequestFailure::rejected(
                     RequestKind::Fetch,
                     request_id,
@@ -344,26 +344,13 @@ impl Subscriber {
     )]
     pub async fn fetch_cancel(&self, fetch: &FetchHandle) -> anyhow::Result<()> {
         let request_id = fetch.request_id;
-        self.remove_pending_fetch(request_id).await;
+        self.session.remove_pending_fetch(request_id).await;
         let fetch_cancel = FetchCancel::new(request_id);
         self.session
             .send_stream
             .send(ControlMessageType::FetchCancel, fetch_cancel.encode())
             .await?;
         Ok(())
-    }
-
-    async fn remove_pending_fetch(&self, request_id: u64) {
-        self.session
-            .fetch_notification_map
-            .lock()
-            .await
-            .remove(&request_id);
-        self.session
-            .fetch_receiver_map
-            .lock()
-            .await
-            .remove(&request_id);
     }
 
     #[tracing::instrument(
@@ -430,14 +417,14 @@ impl Subscriber {
             Err(error) => {
                 // Request-scoped failure (send error or timeout): drop the
                 // pending fetch state so nothing leaks. The session stays open.
-                self.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id).await;
                 return Err(error);
             }
         };
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id).await;
                 Err(RequestFailure::rejected(
                     RequestKind::Fetch,
                     request_id,
