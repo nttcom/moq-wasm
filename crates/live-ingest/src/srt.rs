@@ -5,7 +5,10 @@ use mediapack::mpegts;
 use srt_tokio::{ConnectionRequest, SrtListener, options::ByteCount};
 use tokio::task;
 
-use crate::ingest_publisher::{IngestOptions, IngestPublisher};
+use crate::{
+    ingest_publisher::{IngestOptions, IngestPublisher},
+    namespace::split_namespace,
+};
 
 const DEFAULT_NAMESPACE: &str = "anon/srt/live";
 /// A keyframe arrives as a burst of several hundred kilobytes in a few
@@ -109,11 +112,7 @@ fn namespace_from_stream_id(stream_id: Option<&str>) -> Vec<String> {
         Some(plain) => plain,
         None => DEFAULT_NAMESPACE,
     };
-    let parts: Vec<String> = resource
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .map(str::to_owned)
-        .collect();
+    let parts = split_namespace(resource);
     if parts.is_empty() {
         namespace_from_stream_id(Some(DEFAULT_NAMESPACE))
     } else {

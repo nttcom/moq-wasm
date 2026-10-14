@@ -1,9 +1,13 @@
 mod ingest;
 mod ingest_publisher;
+mod namespace;
 mod renditions;
 mod rtmp;
+mod rtp;
 mod srt;
 mod stats_panel;
+
+use std::path::PathBuf;
 
 use anyhow::Result;
 use broadcast::MoqtTarget;
@@ -19,7 +23,7 @@ use crate::{
 #[command(
     author,
     version,
-    about = "Listen RTMP/SRT and spawn handlers per stream"
+    about = "Listen RTMP/SRT/RTP and spawn handlers per stream"
 )]
 struct Args {
     /// RTMP listen address (e.g. 0.0.0.0:1935)
@@ -29,6 +33,14 @@ struct Args {
     /// SRT listen address (e.g. 0.0.0.0:9000)
     #[arg(long, default_value = "0.0.0.0:9000")]
     srt_addr: String,
+
+    /// SDP file describing the RTP session to receive; RTP input is off without it
+    #[arg(long)]
+    rtp_sdp: Option<PathBuf>,
+
+    /// MoQT namespace the RTP session is published under
+    #[arg(long, default_value = "anon/rtp/live")]
+    rtp_namespace: String,
 
     /// MoQ server URL (`moqt://` for QUIC, `https://` for WebTransport)
     #[arg(long)]
@@ -82,9 +94,16 @@ async fn main() -> Result<()> {
         transcode: args.transcode,
         stats: stats.as_ref().map(|(_, registry)| registry.clone()),
     };
+    let rtp_namespace = rtp::parse_namespace(&args.rtp_namespace)?;
     tokio::try_join!(
         rtmp::run_rtmp_listener(args.rtmp_addr, options.clone()),
-        srt::run_srt_listener(args.srt_addr, options),
+        srt::run_srt_listener(args.srt_addr, options.clone()),
+        async {
+            match args.rtp_sdp {
+                Some(sdp_path) => rtp::run_rtp_listener(sdp_path, rtp_namespace, options).await,
+                None => Ok(()),
+            }
+        },
     )?;
 
     Ok(())

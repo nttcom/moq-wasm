@@ -1705,6 +1705,7 @@ dependencies = [
  "mediapack",
  "moqt",
  "rml_rtmp",
+ "socket2 0.6.5",
  "srt-tokio",
  "tokio",
  "tracing",
