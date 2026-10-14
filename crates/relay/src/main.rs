@@ -5,11 +5,22 @@ use std::{
 };
 
 use rcgen::{CertifiedKey, generate_simple_self_signed};
+use tokio::signal::unix::{SignalKind, signal};
 
 const CERT_DIR: &str = "keys";
 /// Bound on waiting for the CONNECTION_CLOSE of the sessions closed with
 /// GOAWAY_TIMEOUT to leave the socket before the process exits.
 const CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// `docker stop` and Kubernetes stop the relay with SIGTERM, not SIGINT.
+async fn shutdown_signal() -> anyhow::Result<()> {
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result?,
+        _ = terminate.recv() => {}
+    }
+    Ok(())
+}
 
 fn cert_dir() -> PathBuf {
     std::env::var_os("RELAY_CERT_DIR")
@@ -73,12 +84,12 @@ async fn main() -> anyhow::Result<()> {
         inner_port = config.inner_port,
         "Relay server started with external QUIC + WebTransport and inner QUIC"
     );
-    tracing::info!("Ctrl+C to shutdown");
+    tracing::info!("Ctrl+C or SIGTERM to shutdown");
 
-    tokio::signal::ctrl_c().await?;
+    shutdown_signal().await?;
     tracing::info!(
         drain_timeout_secs = config.drain_timeout.as_secs(),
-        "Shutdown signal received; draining client sessions (Ctrl+C again to exit at once)"
+        "Shutdown signal received; draining client sessions (signal again to exit at once)"
     );
     client_handler.stop_accepting();
     tokio::select! {
@@ -86,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
             let _ = tokio::time::timeout(CLOSE_FLUSH_TIMEOUT, client_handler.wait_idle()).await;
             tracing::info!("Relay server gracefully shutdown.");
         }
-        _ = tokio::signal::ctrl_c() => {
+        _ = shutdown_signal() => {
             tracing::warn!("Second shutdown signal received; exiting without waiting for the clients");
         }
     }
