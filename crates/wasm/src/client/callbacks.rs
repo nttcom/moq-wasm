@@ -34,6 +34,7 @@ pub(crate) struct Callbacks {
     pub(crate) fetch_stream_end: Option<Function>,
     pub(crate) track_status: Option<Function>,
     pub(crate) track_status_response: Option<Function>,
+    pub(crate) go_away: Option<Function>,
     pub(crate) connection_closed: Option<Function>,
 }
 
