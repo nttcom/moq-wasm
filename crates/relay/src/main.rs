@@ -1,10 +1,6 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, time::Duration};
 
-use rcgen::{CertifiedKey, generate_simple_self_signed};
+use moqt::server::write_self_signed_cert;
 use tokio::signal::unix::{SignalKind, signal};
 
 const CERT_DIR: &str = "keys";
@@ -40,29 +36,12 @@ pub fn create_certs_for_test_if_needed() -> anyhow::Result<()> {
     unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
     let cert_dir = cert_dir();
     tracing::info!("relay cert dir: {}", cert_dir.to_string_lossy());
-    if !Path::new(&cert_dir).exists() {
-        fs::create_dir_all(&cert_dir)?;
-    }
-
     if get_cert_path().exists() && get_key_path().exists() {
         tracing::info!("Certificates already exist");
-        Ok(())
     } else {
-        let subject_alt_names = vec![
-            "localhost".to_string(),
-            "127.0.0.1".to_string(),
-            "relay-a".to_string(),
-            "relay-b".to_string(),
-        ];
-        let CertifiedKey { cert, signing_key } =
-            generate_simple_self_signed(subject_alt_names).unwrap();
-        let key_pem = signing_key.serialize_pem();
-        fs::write(get_key_path(), key_pem)?;
-        let cert_pem = cert.pem();
-        fs::write(get_cert_path(), cert_pem)?;
-
-        Ok(())
+        write_self_signed_cert(&cert_dir, &["localhost", "127.0.0.1", "relay-a", "relay-b"])?;
     }
+    Ok(())
 }
 
 #[tokio::main]

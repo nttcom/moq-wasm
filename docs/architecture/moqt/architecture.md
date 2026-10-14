@@ -174,6 +174,9 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 - `Endpoint::create_client(&ClientConfig)` / `create_server(&ServerConfig)`
   build a `SessionCreator` around the transport's `ConnectionCreator`.
+  `server::write_self_signed_cert` (feature `self-signed-cert`, off by
+  default so wasm builds do not pull in `rcgen`) writes the certificate pair
+  a local server or a test passes in `ServerConfig`.
 - `connect(url)` returns `Connecting`, whose future performs the transport
   handshake and runs the SETUP exchange through `version::connect` (draft-14
   opens the bidirectional control stream, sends CLIENT_SETUP and awaits
