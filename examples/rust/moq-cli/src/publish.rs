@@ -185,6 +185,10 @@ async fn publish_stdin(
     let mut capture_origin: Option<i64> = None;
     let mut pending_move: Option<JoinHandle<Result<Publishing>>> = None;
     let mut previous: Option<Publishing> = None;
+    // Keeps the listener registered while the loop body writes frames: tokio
+    // drops a SIGINT that arrives while none is registered.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
 
     loop {
         let session = publishing.connection.session.clone();
@@ -244,7 +248,7 @@ async fn publish_stdin(
                 continue;
             },
             close = session.closed() => anyhow::bail!("session closed by the relay: {close}"),
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut ctrl_c => {
                 info!("received ctrl-c, shutting down");
                 break;
             }
