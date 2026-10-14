@@ -41,7 +41,7 @@ use crate::{
     },
 };
 
-use message_stream::{MessageDecoder, MessageReceiver, MessageSender};
+use message_stream::{MessageReceiver, MessageSender};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -317,7 +317,7 @@ impl ControlChannel {
             Arc::downgrade(session),
             request_id,
             kind,
-            MessageReceiver::new(receive_stream, MessageDecoder),
+            MessageReceiver::new(receive_stream),
             response_sender,
             group_order.unwrap_or(GroupOrder::Ascending),
         );
@@ -619,7 +619,7 @@ mod tests {
 
     use super::{
         ControlChannel, codec,
-        message_stream::{MessageDecoder, MessageReceiver, MessageSender},
+        message_stream::{MessageReceiver, MessageSender},
         messages, parameters,
     };
 
@@ -965,7 +965,7 @@ mod tests {
         let session = client.publisher().session;
         let (send_stream, receive_stream) = session.transport_connection.open_bi().await.unwrap();
         let sender = MessageSender::new(send_stream);
-        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let mut receiver = MessageReceiver::new(receive_stream);
         let mut payload = BytesMut::new();
         codec::put_vi64(&mut payload, session.control.next_request_id());
         codec::put_track_namespace(&mut payload, &["live".to_string()]);
@@ -1095,6 +1095,32 @@ mod tests {
 
         // Assert: the control stream's FIN would be a PROTOCOL_VIOLATION (§3.3)
         assert_eq!(close.code, Some(0x0), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_lost_session_does_not_cancel_its_requests() {
+        // Arrange
+        let (client, server) = spawn_connected_draft18_sessions("draft18-lost", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+
+        // Act
+        drop((subscription, client));
+        let mut events = Vec::new();
+        while let Ok(Ok(event)) =
+            tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event()).await
+        {
+            let disconnected = matches!(event, SessionEvent::Disconnected());
+            events.push(event);
+            if disconnected {
+                break;
+            }
+        }
+
+        // Assert: the session's end is reported once, not as an UNSUBSCRIBE
+        assert!(
+            matches!(events.as_slice(), [SessionEvent::Disconnected()]),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]

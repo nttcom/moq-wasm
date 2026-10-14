@@ -14,7 +14,7 @@ use tracing::{Instrument, Span};
 
 use super::{
     ControlChannel, RequestStreamKind,
-    message_stream::{MessageDecoder, MessageReceiver, MessageSender},
+    message_stream::{MessageReceiveError, MessageReceiver, MessageSender},
     messages::{self, Message, RequestErrorMessage, has_mandatory_track_property},
     parameters::Parameter,
 };
@@ -111,12 +111,16 @@ async fn read_control_stream(mut control_stream: MessageReceiver, session: Weak<
                 close_on_violation(&session, "unexpected message on the control stream");
                 return;
             }
-            Ok(None) => {
+            Ok(None) | Err(MessageReceiveError::Reset) => {
                 close_on_violation(&session, "the control stream closed");
                 return;
             }
-            Err(error) => {
-                tracing::debug!(%error, "control stream ended");
+            Err(MessageReceiveError::Malformed(reason)) => {
+                close_on_violation(&session, &reason);
+                return;
+            }
+            Err(MessageReceiveError::SessionEnded) => {
+                tracing::debug!("control stream ended with the session");
                 return;
             }
         }
@@ -137,7 +141,7 @@ async fn accept_request_streams(session: Weak<SessionContext>) {
                 IncomingRequestTask::run(
                     session.clone(),
                     Arc::new(MessageSender::new(send_stream)),
-                    MessageReceiver::new(receive_stream, MessageDecoder),
+                    MessageReceiver::new(receive_stream),
                 );
             }
             Err(error) => {
@@ -169,9 +173,11 @@ impl IncomingRequestTask {
         };
         let message = match first {
             Ok(Some(message)) => message,
-            Ok(None) => return,
-            Err(error) => {
-                close_on_violation(&context, &format!("malformed request stream: {error}"));
+            Err(MessageReceiveError::Malformed(reason)) => {
+                close_on_violation(&context, &reason);
+                return;
+            }
+            Ok(None) | Err(MessageReceiveError::Reset | MessageReceiveError::SessionEnded) => {
                 return;
             }
         };
@@ -201,10 +207,15 @@ impl IncomingRequestTask {
                         return;
                     }
                 }
-                Ok(None) | Err(_) => {
+                Ok(None) | Err(MessageReceiveError::Reset) => {
                     Self::peer_ended(&context, request_id, kind);
                     return;
                 }
+                Err(MessageReceiveError::Malformed(reason)) => {
+                    close_on_violation(&context, &reason);
+                    return;
+                }
+                Err(MessageReceiveError::SessionEnded) => return,
             }
         }
     }
@@ -632,7 +643,12 @@ impl OutgoingRequestTask {
                     close_on_violation(&context, "unexpected message on a request stream");
                     return;
                 }
-                Ok(None) | Err(_) => {
+                Err(MessageReceiveError::Malformed(reason)) => {
+                    close_on_violation(&context, &reason);
+                    return;
+                }
+                Err(MessageReceiveError::SessionEnded) => return,
+                Ok(None) | Err(MessageReceiveError::Reset) => {
                     // §10.18: the end of the stream withdraws every namespace.
                     for namespace in namespaces {
                         Self::namespace_withdrawn(&context, namespace);

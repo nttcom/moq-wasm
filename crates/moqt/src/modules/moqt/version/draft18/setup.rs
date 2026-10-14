@@ -3,7 +3,7 @@
 
 use super::{
     ControlChannel,
-    message_stream::{MessageDecoder, MessageReceiver, MessageSender},
+    message_stream::{MessageReceiver, MessageSender},
     messages::{Message, SetupMessage, encode_setup},
 };
 use crate::modules::{
@@ -77,7 +77,7 @@ pub(crate) async fn connect(
     control
         .send(&encode_setup(&client_setup(target, authorization_token))?)
         .await?;
-    let mut peer = MessageReceiver::new(transport_connection.accept_uni().await?, MessageDecoder);
+    let mut peer = MessageReceiver::new(transport_connection.accept_uni().await?);
     let setup = receive_setup(&mut peer).await?;
     tracing::debug!(?setup.implementation, "Received SETUP");
     Ok((ControlChannel::new(control, 0), peer, server_setup(setup)))
@@ -87,7 +87,7 @@ pub(crate) async fn connect(
 pub(crate) async fn accept(
     transport_connection: &BoxedConnection,
 ) -> anyhow::Result<ServerHandshake> {
-    let mut peer = MessageReceiver::new(transport_connection.accept_uni().await?, MessageDecoder);
+    let mut peer = MessageReceiver::new(transport_connection.accept_uni().await?);
     let client_setup = receive_setup(&mut peer).await?;
     tracing::debug!(?client_setup.implementation, "Received SETUP");
     Ok(ServerHandshake { client_setup, peer })
