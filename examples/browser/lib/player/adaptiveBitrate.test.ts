@@ -151,3 +151,25 @@ test('a picture shown 500 pixels tall caps the ladder at the first rendition tha
   expect(capLadderToHeight(ladder, 2_000)).toEqual(ladder)
   expect(capLadderToHeight(ladder, undefined)).toEqual(ladder)
 })
+
+test('a raised ceiling jumps to the top rendition at once', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 5_000, 4_000, () => 100)
+
+  // Act / Assert
+  expect(abr.raiseTo(5_000, LADDER, 'video_360p')).toBe('video')
+})
+
+test('a raised ceiling waits while the path was congested recently', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  deliver(abr, SETTLE_MS, 5_000, 4_000, () => 100)
+  abr.decide(5_000, LADDER, 'video_480p', true)
+
+  // Act / Assert
+  expect(abr.raiseTo(6_000, LADDER, 'video_360p')).toBeUndefined()
+  expect(abr.raiseTo(15_000, LADDER, 'video_360p')).toBe('video')
+})

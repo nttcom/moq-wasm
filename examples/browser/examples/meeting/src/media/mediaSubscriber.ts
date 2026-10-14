@@ -43,6 +43,8 @@ type PictureAdaptation = {
   bitrate: AdaptiveBitrate
   resizeObserver: ResizeObserver
   heightPx?: number
+  /// The bitrate of the top rendition the shown height allowed at the last choice.
+  ceilingBitrate?: number
   nextChoiceAtMs: number
 }
 
@@ -252,9 +254,14 @@ export class MediaSubscriber {
       return
     }
     const ladder = capLadderToHeight(adaptation.ladder, picture.heightPx)
-    const choice = ladder.some((rung) => rung.name === current)
-      ? picture.bitrate.decide(arrivedAtMs, ladder, current, false)
-      : ladder.at(-1)?.name
+    const ceilingBitrate = ladder.at(-1)?.bitrate
+    const raised =
+      picture.ceilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > picture.ceilingBitrate
+    picture.ceilingBitrate = ceilingBitrate
+    const choice = !ladder.some((rung) => rung.name === current)
+      ? ladder.at(-1)?.name
+      : ((raised ? picture.bitrate.raiseTo(arrivedAtMs, ladder, current) : undefined) ??
+        picture.bitrate.decide(arrivedAtMs, ladder, current, false))
     if (choice && choice !== current) {
       picture.nextChoiceAtMs = arrivedAtMs + SWITCH_WAIT_MS
       adaptation.onPreferred(choice)
