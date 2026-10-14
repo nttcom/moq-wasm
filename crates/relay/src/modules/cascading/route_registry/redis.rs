@@ -9,6 +9,7 @@ use std::{
 
 use async_trait::async_trait;
 use redis::AsyncCommands;
+use tokio::sync::watch;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
 
@@ -35,6 +36,9 @@ pub(crate) struct RedisRelayRouteRegistry {
     /// relay; distinct from `relay.host:relay.port`, which other relays dial.
     public_host: String,
     draining: AtomicBool,
+    /// Published with the heartbeat so that other relays can pick the least
+    /// loaded migration target.
+    client_sessions: watch::Receiver<usize>,
     connection: redis::aio::ConnectionManager,
     owned_routes: tokio::sync::Mutex<HashMap<String, RouteKind>>,
 }
@@ -51,6 +55,7 @@ impl RedisRelayRouteRegistry {
         redis_url: &str,
         relay: RelayInfo,
         public_host: String,
+        client_sessions: watch::Receiver<usize>,
     ) -> anyhow::Result<Arc<Self>> {
         let client = redis::Client::open(redis_url)?;
         let connection = redis::aio::ConnectionManager::new(client).await?;
@@ -58,6 +63,7 @@ impl RedisRelayRouteRegistry {
             relay,
             public_host,
             draining: AtomicBool::new(false),
+            client_sessions,
             connection,
             owned_routes: tokio::sync::Mutex::new(HashMap::new()),
         });
@@ -99,6 +105,7 @@ impl RedisRelayRouteRegistry {
         let relay = &self.relay;
         let mut connection = self.connection.clone();
         let key = Self::relay_key(&relay.relay_id);
+        let client_sessions = self.client_sessions.borrow().to_string();
         let _: () = connection
             .hset_multiple(
                 &key,
@@ -107,6 +114,7 @@ impl RedisRelayRouteRegistry {
                     ("host", relay.host.as_str()),
                     ("port", &relay.port.to_string()),
                     ("public_host", self.public_host.as_str()),
+                    ("client_sessions", &client_sessions),
                     ("status", self.status()),
                     ("updated_at", &Self::now_millis().to_string()),
                 ],
@@ -223,8 +231,9 @@ impl RedisRelayRouteRegistry {
         format!("{}{relay_id}", Self::RELAY_KEY_PREFIX)
     }
 
-    /// The lowest relay id wins so that every session of this relay is sent
-    /// to the same place; `self` and relays that are not `active` are skipped.
+    /// The `active` relay other than `self` with the fewest client sessions,
+    /// the lowest relay id among equals; a relay that reports no count ranks
+    /// last.
     fn pick_migration_target(
         self_relay_id: &str,
         relays: &[(String, HashMap<String, String>)],
@@ -237,10 +246,14 @@ impl RedisRelayRouteRegistry {
             })
             .filter_map(|(relay_id, values)| {
                 let public_host = values.get("public_host")?;
-                (!public_host.is_empty()).then(|| (relay_id, public_host.clone()))
+                let client_sessions = values
+                    .get("client_sessions")
+                    .and_then(|count| count.parse::<usize>().ok())
+                    .unwrap_or(usize::MAX);
+                (!public_host.is_empty()).then(|| (client_sessions, relay_id, public_host.clone()))
             })
-            .min_by(|(a, _), (b, _)| a.cmp(b))
-            .map(|(_, public_host)| public_host)
+            .min_by(|(load_a, id_a, _), (load_b, id_b, _)| (load_a, id_a).cmp(&(load_b, id_b)))
+            .map(|(_, _, public_host)| public_host)
     }
 
     fn publisher_namespace_key(track_namespace: &str) -> String {
@@ -420,6 +433,28 @@ mod tests {
             ("status".to_string(), status.to_string()),
             ("public_host".to_string(), public_host.to_string()),
         ])
+    }
+
+    fn loaded_relay(public_host: &str, client_sessions: usize) -> HashMap<String, String> {
+        let mut values = relay("active", public_host);
+        values.insert("client_sessions".to_string(), client_sessions.to_string());
+        values
+    }
+
+    #[test]
+    fn migration_target_is_the_least_loaded_active_relay() {
+        // Arrange
+        let relays = [
+            ("relay-a".to_string(), loaded_relay("a.example:4433", 12)),
+            ("relay-b".to_string(), loaded_relay("b.example:4433", 3)),
+            ("relay-c".to_string(), relay("active", "c.example:4433")),
+        ];
+
+        // Act
+        let target = RedisRelayRouteRegistry::pick_migration_target("relay-self", &relays);
+
+        // Assert: relay-c reports no count and ranks last
+        assert_eq!(target.as_deref(), Some("b.example:4433"));
     }
 
     #[test]
