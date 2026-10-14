@@ -47,6 +47,7 @@ enum DiskCommand {
         payload: Bytes,
         retained_until: Instant,
     },
+    PurgeTrack(TrackKey),
 }
 
 /// Hands payloads to the `DiskCacheTask`, the only writer of the directory.
@@ -81,6 +82,15 @@ impl DiskSink {
         };
         if self.disk.command_sender.try_send(command).is_err() {
             self.disk.dropped_writes.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Deletes the track's segments. Missed when the queue is full, in which
+    /// case they go at their expiry instead.
+    pub(crate) fn purge(&self) {
+        let command = DiskCommand::PurgeTrack(self.track_key.clone());
+        if self.disk.command_sender.try_send(command).is_err() {
+            tracing::warn!(track_key = %self.track_key, "disk cache queue full; the track's segments wait for their expiry");
         }
     }
 }

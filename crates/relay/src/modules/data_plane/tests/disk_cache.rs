@@ -169,3 +169,49 @@ async fn a_persisted_object_leaves_the_cache_at_the_retention_limit() {
     // Assert
     assert!(track.harness.cache().is_empty());
 }
+
+// current_thread: `tokio::time::pause` needs it.
+#[tokio::test]
+async fn a_track_whose_publisher_left_loses_its_persisted_objects_after_the_grace_period() {
+    // Arrange
+    let track = disk_backed_track("publisher-left", u64::MAX, PERSIST);
+    ingest_group(&track.harness, 0, b"ended").await;
+    wait_until_stored(track.harness.cache(), location(0, 0)).await;
+    evict_past_memory_ttl(&track.harness).await;
+    track.harness.cache().publisher_left();
+    track.harness.cache().evict(Duration::from_secs(60));
+    let kept_during_grace = !track.harness.cache().is_empty();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(10)).await;
+
+    // Act
+    track.harness.cache().evict(Duration::from_secs(60));
+
+    // Assert
+    assert!(kept_during_grace);
+    assert!(track.harness.cache().is_empty());
+    tokio::time::resume();
+    track.dir.wait_until_no_segments().await;
+}
+
+// current_thread: `tokio::time::pause` needs it.
+#[tokio::test]
+async fn a_publisher_returning_within_the_grace_period_keeps_the_persisted_objects() {
+    // Arrange
+    let track = disk_backed_track("publisher-returned", u64::MAX, PERSIST);
+    ingest_group(&track.harness, 0, b"resumed").await;
+    wait_until_stored(track.harness.cache(), location(0, 0)).await;
+    track.harness.cache().publisher_left();
+    track.harness.cache().begin_live_ingest();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(10)).await;
+
+    // Act
+    track.harness.cache().evict(Duration::from_secs(60));
+
+    // Assert
+    assert_eq!(
+        track.harness.cache().largest_location(),
+        Some(location(0, 0))
+    );
+}

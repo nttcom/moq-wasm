@@ -44,6 +44,9 @@ pub(super) struct Ledger {
     reopened_run_first_object_ids: HashMap<SubgroupKey, Vec<u64>>,
     pub(super) known_ranges: KnownRanges,
     pub(super) next_open_epoch: u64,
+    /// When the track's last publisher left; cleared when an ingest begins or
+    /// eviction purges the track.
+    pub(super) publisher_left_at: Option<Instant>,
 }
 
 impl Ledger {

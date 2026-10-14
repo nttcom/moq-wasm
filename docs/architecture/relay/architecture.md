@@ -674,6 +674,14 @@ per-request authorization gate under "Event pipeline".
     total exceeds `RELAY_DISK_CACHE_BYTES`. A deleted segment is flagged
     before its file goes; a read already in flight fails, which resets the
     FETCH stream or makes a live read skip the object.
+  - End of a broadcast: a FETCH after it need not be served. Session cleanup
+    and an upstream PUBLISH_DONE call `TrackCacheStore::publisher_left` for
+    a track no publisher serves any more; once 10 s pass without an ingest
+    beginning again, eviction drops the track's persisted objects with their
+    knowledge and sends `PurgeTrack`, which deletes the track's segments. A
+    publisher that reconnects within that time keeps them. A
+    subscriber-driven upstream release is not a publisher leaving and purges
+    nothing.
   - Nothing survives a restart: the index lives in memory, and startup deletes
     the `*.seg` files in the directory.
 

@@ -22,6 +22,9 @@ use crate::modules::data_plane::cache::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
 
+/// How long a track's persisted objects outlive its publisher.
+const PUBLISHER_GONE_GRACE: Duration = Duration::from_secs(10);
+
 fn location(group_id: u64, object_id: u64) -> moqt::object::Location {
     moqt::object::Location {
         group_id,
@@ -249,8 +252,15 @@ impl TrackCache {
             let mut removed = Vec::new();
             let mut freed_payload_bytes = 0u64;
             let now = Instant::now();
+            let purge = self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0
+                && ledger
+                    .publisher_left_at
+                    .is_some_and(|left_at| now.duration_since(left_at) >= PUBLISHER_GONE_GRACE);
+            if purge {
+                ledger.publisher_left_at = None;
+            }
             ledger.objects.retain(|location, object| {
-                let keep = if object.is_expired(now) {
+                let keep = if object.is_expired(now) || (purge && object.persisted) {
                     false
                 } else if now.saturating_duration_since(object.received_at) <= ttl {
                     true
@@ -286,6 +296,9 @@ impl TrackCache {
                 ledger.known_ranges.remove_range(at, after(at));
             }
             ledger.forget_runs_of_vanished_groups();
+            if purge && let Some(disk) = &self.disk {
+                disk.purge();
+            }
             removed.len()
         };
         if removed_count > 0 {
@@ -317,6 +330,15 @@ impl TrackCache {
 
     pub(crate) fn begin_live_ingest(&self) {
         self.live_ingest_count.fetch_add(1, AtomicOrdering::Relaxed);
+        self.write().publisher_left_at = None;
+    }
+
+    /// A FETCH after the broadcast ended need not be served, so eviction
+    /// drops the persisted objects and their disk segments once no ingest
+    /// came back within `PUBLISHER_GONE_GRACE`; a publisher reconnecting in
+    /// that time keeps them.
+    pub(crate) fn publisher_left(&self) {
+        self.write().publisher_left_at = Some(Instant::now());
     }
 
     pub(crate) fn end_live_ingest(&self) {

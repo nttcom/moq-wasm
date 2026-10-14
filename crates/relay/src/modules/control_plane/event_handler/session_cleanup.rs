@@ -56,6 +56,9 @@ async fn cleanup_removed_session(
 
     for track_key in removed.upstream_track_keys {
         stop_ingress(&deps.ingress_sender, removed_session_id, &track_key).await;
+        if !table.has_track_publisher(&track_key) {
+            deps.cache_store.publisher_left(&track_key);
+        }
     }
 
     if was_client {

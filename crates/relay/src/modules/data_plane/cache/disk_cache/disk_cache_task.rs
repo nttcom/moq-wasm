@@ -58,6 +58,7 @@ impl DiskCacheTask {
                                 .write(track_key, cache, location, payload, retained_until, Instant::now())
                                 .await;
                         }
+                        Some(DiskCommand::PurgeTrack(track_key)) => state.purge(&track_key).await,
                         None => break,
                     },
                     _ = expiry.tick() => {
@@ -244,6 +245,12 @@ impl DiskState {
         }
     }
 
+    async fn purge(&mut self, track_key: &TrackKey) {
+        for segment in self.tracks.remove(track_key).unwrap_or_default() {
+            self.delete(segment).await;
+        }
+    }
+
     async fn delete(&mut self, segment: SegmentFile) {
         segment.segment.mark_deleted();
         self.stored_bytes.fetch_sub(segment.len, Ordering::Relaxed);
@@ -384,6 +391,30 @@ mod tests {
         assert!(stored.is_lost());
         assert_eq!(state.stored_bytes(), 0);
         assert!(state.tracks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn purge_deletes_only_the_segments_of_its_track() {
+        // Arrange
+        let dir = TempDir::new("disk-cache-purge");
+        let mut state = state(&dir, u64::MAX);
+        let now = Instant::now();
+        let purged = state
+            .append(track("a"), b"a", now + HOUR, now)
+            .await
+            .unwrap();
+        let kept = state
+            .append(track("b"), b"b", now + HOUR, now)
+            .await
+            .unwrap();
+
+        // Act
+        state.purge(&track("a")).await;
+
+        // Assert
+        assert!(purged.is_lost());
+        assert!(!kept.is_lost());
+        assert_eq!(state.stored_bytes(), 1);
     }
 
     #[tokio::test]
