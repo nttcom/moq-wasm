@@ -21,6 +21,9 @@ const RECENT_LAG_WINDOW_MS = 1_000
 const THROUGHPUT_SAFETY = 0.8
 const INITIAL_UP_HOLD_MS = 10_000
 const MAX_UP_HOLD_MS = 120_000
+/// Each spell this long without congestion halves a doubled calm spell, down to
+/// `INITIAL_UP_HOLD_MS`.
+const UP_HOLD_DECAY_MS = 60_000
 /// A step down this soon after a step up means the higher rendition did not fit.
 const FAILED_UP_MS = 20_000
 const RAISE_BLOCK_MS = 10_000
@@ -84,6 +87,7 @@ export class AdaptiveBitrate {
   private baselineLagMs: number | undefined
   private calmSinceMs = 0
   private upHoldMs = INITIAL_UP_HOLD_MS
+  private upHoldChangedAtMs = 0
   private lastUpAtMs: number | undefined
   private lastCongestedAtMs: number | undefined
 
@@ -120,6 +124,7 @@ export class AdaptiveBitrate {
       this.lastCongestedAtMs = nowMs
       return this.stepDown(nowMs, ladder, index)
     }
+    this.relaxUpHold(nowMs)
     if (index + 1 < ladder.length && nowMs - this.calmSinceMs >= this.upHoldMs) {
       this.lastUpAtMs = nowMs
       return ladder[index + 1].name
@@ -141,6 +146,14 @@ export class AdaptiveBitrate {
     return top.name
   }
 
+  private relaxUpHold(nowMs: number): void {
+    const calmFromMs = Math.max(this.lastCongestedAtMs ?? 0, this.upHoldChangedAtMs)
+    if (this.upHoldMs > INITIAL_UP_HOLD_MS && nowMs - calmFromMs >= UP_HOLD_DECAY_MS) {
+      this.upHoldMs = Math.max(INITIAL_UP_HOLD_MS, this.upHoldMs / 2)
+      this.upHoldChangedAtMs = nowMs
+    }
+  }
+
   private congested(nowMs: number): boolean {
     if (this.baselineLagMs === undefined) {
       return false
@@ -160,6 +173,7 @@ export class AdaptiveBitrate {
     }
     if (this.lastUpAtMs !== undefined && nowMs - this.lastUpAtMs < FAILED_UP_MS) {
       this.upHoldMs = Math.min(this.upHoldMs * 2, MAX_UP_HOLD_MS)
+      this.upHoldChangedAtMs = nowMs
     }
     this.lastUpAtMs = undefined
     const fits = THROUGHPUT_SAFETY * this.throughputBps(nowMs)
