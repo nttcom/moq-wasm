@@ -119,23 +119,24 @@ export async function enableMedia(model: MeetingClientPageModel): Promise<void> 
   await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
 }
 
+// Locate the header chip of a remote member, which carries its catalog and track states.
+function getMemberChip(page: Page, memberName: string): Locator {
+  return page.getByTestId(`member-chip-${memberName}`)
+}
+
 // Locate the member card for a remote member by name.
 export function getMemberCard(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-card-${memberName}`)
 }
 
-// Wait until a remote member's tile reports its catalog state (e.g. 'Subscribed').
+// Wait until a remote member's header chip reports its catalog state (e.g. 'Subscribed').
 export async function expectCatalogStatus(page: Page, memberName: string, status: string, timeout = 15_000) {
-  await expect(getMemberCard(page, memberName)).toHaveAttribute('data-catalog-status', status, { timeout })
+  await expect(getMemberChip(page, memberName)).toHaveAttribute('data-catalog-status', status, { timeout })
 }
 
 // Open the details of a remote member, where its tracks are selected and subscribed.
 export async function openMemberDetails(page: Page, memberName: string): Promise<void> {
   await page.getByTestId(`member-menu-${memberName}`).click()
-}
-
-export async function closeModal(page: Page): Promise<void> {
-  await page.getByTestId('modal-close-button').click()
 }
 
 export async function openChat(model: MeetingClientPageModel): Promise<void> {
@@ -154,22 +155,12 @@ export function getMemberStats(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-stats-${memberName}`)
 }
 
-// Locate the subscribe-video button for a remote member.
-export function getSubscribeVideoButton(page: Page, memberName: string): Locator {
-  return page.getByTestId(`subscribe-video-button-${memberName}`)
-}
-
-// Locate the subscribe-audio button for a remote member.
-export function getSubscribeAudioButton(page: Page, memberName: string): Locator {
-  return page.getByTestId(`subscribe-audio-button-${memberName}`)
-}
-
 // Locate a remote member's track select for a video role.
 export function getTrackSelect(page: Page, role: 'video' | 'screenshare', memberName: string): Locator {
   return page.getByTestId(`track-select-${role}-${memberName}`)
 }
 
-// Wait until a remote member's tile reports a per-role subscription state (e.g. 'Subscribed').
+// Wait until a remote member's header chip reports a per-role subscription state (e.g. 'Subscribed').
 export async function expectTrackStatus(
   page: Page,
   role: 'video' | 'audio' | 'chat' | 'screenshare',
@@ -177,7 +168,7 @@ export async function expectTrackStatus(
   status: string,
   timeout = 15_000
 ): Promise<void> {
-  await expect(getMemberCard(page, memberName)).toHaveAttribute(`data-${role}-status`, status, { timeout })
+  await expect(getMemberChip(page, memberName)).toHaveAttribute(`data-${role}-status`, status, { timeout })
 }
 
 // Send a chat message from this client.

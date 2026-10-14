@@ -12,8 +12,6 @@ interface ParticipantTileProps {
   label?: string
   speaking: boolean
   footer?: ReactNode
-  /// Track and catalog states as `data-*` attributes.
-  states?: Record<string, string>
   onOpenDetails: () => void
   menuTestId?: string
 }
@@ -26,7 +24,6 @@ export function ParticipantTile({
   label,
   speaking,
   footer,
-  states = {},
   onOpenDetails,
   menuTestId
 }: ParticipantTileProps) {
@@ -34,7 +31,6 @@ export function ParticipantTile({
   return (
     <div
       data-testid={testId}
-      {...states}
       className={`group relative h-full w-full overflow-hidden rounded-xl bg-slate-800 ring-2 transition ${
         speaking ? 'ring-emerald-400' : 'ring-white/5'
       }`}

@@ -2,7 +2,6 @@ import { LocalMember, RemoteMember } from '../types/member'
 import { ReactNode, useEffect, useState } from 'react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
-import { Minus, Plus } from 'lucide-react'
 import { ControlBar } from './ControlBar'
 import { ParticipantTile } from './ParticipantTile'
 import { LOCAL_MEMBER_ID, type StageArrangement, type StageTile, galleryTileWidth } from '../utils/stageLayout'
@@ -102,8 +101,6 @@ interface MemberGridProps {
   catalogSubscribedMemberIds: Set<string>
   catalogUnsubscribingTrackKeys: Set<string>
   onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
-  onUnsubscribeTrack: (memberId: string, role: CatalogSubscribeRole) => void
   statsHistory: Map<string, SidebarStatsSample[]>
   stage: StageArrangement
   speakingMemberIds: Set<string>
@@ -160,8 +157,6 @@ export function MemberGrid({
   catalogSubscribedMemberIds,
   catalogUnsubscribingTrackKeys,
   onSelectCatalogTrack,
-  onSubscribeTrack,
-  onUnsubscribeTrack,
   statsHistory,
   stage,
   speakingMemberIds,
@@ -218,12 +213,6 @@ export function MemberGrid({
         menuTestId={`member-menu-${member.name}`}
         picture={pictures?.camera ?? null}
         speaking={speakingMemberIds.has(member.id)}
-        states={memberStates(
-          member,
-          catalogLoadingMemberIds.has(member.id),
-          catalogSubscribedMemberIds.has(member.id),
-          catalogUnsubscribingTrackKeys
-        )}
         footer={
           <span data-testid={`member-stats-${member.name}`}>{stats ? formatLiveStats(stats) : 'Awaiting media'}</span>
         }
@@ -365,8 +354,6 @@ export function MemberGrid({
                 isCatalogSubscribed={catalogSubscribedMemberIds.has(detailsMember.id)}
                 unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
                 onSelectTrack={(role, trackName) => onSelectCatalogTrack(detailsMember.id, role, trackName)}
-                onSubscribe={(role) => onSubscribeTrack(detailsMember.id, role)}
-                onUnsubscribe={(role) => onUnsubscribeTrack(detailsMember.id, role)}
               />
               <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
                 <div className="text-sm font-semibold text-blue-100">Playout</div>
@@ -402,9 +389,9 @@ function useElementSize(): [(element: HTMLDivElement | null) => void, { width: n
   return [setElement, size]
 }
 
-/// The catalog and per-role subscription state of a remote member, read by the
-/// E2E tests from the member's tile.
-function memberStates(
+/// The catalog and per-role subscription state of a remote member as `data-*`
+/// attributes, which the E2E tests read.
+export function memberStates(
   member: RemoteMember,
   isCatalogLoading: boolean,
   isCatalogSubscribed: boolean,
@@ -1107,9 +1094,7 @@ function RemoteCatalogSubscribePanel({
   isCatalogSubscribed,
   unsubscribingTrackKeys,
   manualTrackKeys,
-  onSelectTrack,
-  onSubscribe,
-  onUnsubscribe
+  onSelectTrack
 }: {
   member: RemoteMember
   tracks: MeetingCatalogTrack[]
@@ -1119,8 +1104,6 @@ function RemoteCatalogSubscribePanel({
   unsubscribingTrackKeys: Set<string>
   manualTrackKeys: Set<string>
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
-  onSubscribe: (role: CatalogSubscribeRole) => void
-  onUnsubscribe: (role: CatalogSubscribeRole) => void
 }) {
   const memberName = member.name
   const trackRows = CATALOG_SUBSCRIBE_ROLES.map((role) => {
@@ -1149,8 +1132,6 @@ function RemoteCatalogSubscribePanel({
       </div>
       {visibleTrackRows.map((row) => {
         const busy = row.subscribing || row.unsubscribing
-        const canSubscribe = isCatalogSubscribed && Boolean(row.selectedTrack) && !row.subscribed && !busy
-        const canUnsubscribe = isCatalogSubscribed && row.subscribed && !busy
         return (
           <TrackSubscribeRow
             key={row.role}
@@ -1158,20 +1139,11 @@ function RemoteCatalogSubscribePanel({
             tracks={row.tracks}
             selected={row.selectedTrack}
             auto={row.auto}
-            disabled={!isCatalogSubscribed || busy || (row.subscribed && !isSwitchableRole(row.role))}
+            disabled={!isCatalogSubscribed || busy || row.role === 'chat'}
             statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
             statusTestId={`track-status-${row.role}-${memberName}`}
             selectTestId={`track-select-${row.role}-${memberName}`}
-            subscribeLabel={row.subscribing ? 'Subscribing...' : 'Subscribe'}
-            unsubscribeLabel={row.unsubscribing ? 'Unsubscribing...' : 'Unsubscribe'}
-            subscribeTestId={`subscribe-${row.role}-button-${memberName}`}
-            unsubscribeTestId={`unsubscribe-${row.role}-button-${memberName}`}
-            canSubscribe={canSubscribe}
-            canUnsubscribe={canUnsubscribe}
-            busy={busy}
             onChange={(trackName) => onSelectTrack(row.role, trackName)}
-            onSubscribe={() => onSubscribe(row.role)}
-            onUnsubscribe={() => onUnsubscribe(row.role)}
           />
         )
       })}
@@ -1190,16 +1162,7 @@ function TrackSubscribeRow({
   statusText,
   statusTestId,
   selectTestId,
-  subscribeLabel,
-  unsubscribeLabel,
-  subscribeTestId,
-  unsubscribeTestId,
-  canSubscribe,
-  canUnsubscribe,
-  busy,
-  onChange,
-  onSubscribe,
-  onUnsubscribe
+  onChange
 }: {
   title: string
   tracks: MeetingCatalogTrack[]
@@ -1209,16 +1172,7 @@ function TrackSubscribeRow({
   statusText: string
   statusTestId?: string
   selectTestId?: string
-  subscribeLabel: string
-  unsubscribeLabel: string
-  subscribeTestId?: string
-  unsubscribeTestId?: string
-  canSubscribe: boolean
-  canUnsubscribe: boolean
-  busy: boolean
   onChange: (trackName: string) => void
-  onSubscribe: () => void
-  onUnsubscribe: () => void
 }) {
   return (
     <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
@@ -1228,7 +1182,7 @@ function TrackSubscribeRow({
           {statusText}
         </span>
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+      <div>
         <select
           value={auto ? AUTO_TRACK_SELECTION : selected}
           disabled={disabled}
@@ -1255,34 +1209,6 @@ function TrackSubscribeRow({
             </>
           )}
         </select>
-        <button
-          type="button"
-          disabled={!canSubscribe}
-          onClick={onSubscribe}
-          aria-label={subscribeLabel}
-          title={subscribeLabel}
-          data-testid={subscribeTestId}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
-            canSubscribe ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-500/70'
-          } ${busy ? 'cursor-wait opacity-70' : ''} ${!canSubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
-        >
-          <Plus className="h-4 w-4" />
-          <span className="sr-only">{subscribeLabel}</span>
-        </button>
-        <button
-          type="button"
-          disabled={!canUnsubscribe}
-          onClick={onUnsubscribe}
-          aria-label={unsubscribeLabel}
-          title={unsubscribeLabel}
-          data-testid={unsubscribeTestId}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded text-white transition ${
-            canUnsubscribe ? 'bg-amber-600 hover:bg-amber-700' : 'bg-slate-500/70'
-          } ${busy ? 'cursor-wait opacity-70' : ''} ${!canUnsubscribe ? 'cursor-not-allowed opacity-70' : ''}`}
-        >
-          <Minus className="h-4 w-4" />
-          <span className="sr-only">{unsubscribeLabel}</span>
-        </button>
       </div>
     </div>
   )

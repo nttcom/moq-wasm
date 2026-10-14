@@ -231,7 +231,7 @@ export class LocalSession {
     return requestId
   }
 
-  /// Moves a subscribed video role to `trackName`. A track of the same codec
+  /// Moves a subscribed media role to `trackName`. A track of the same codec
   /// takes over the picture without a gap and the previous subscription ends
   /// once it has; any other track replaces it after an UNSUBSCRIBE.
   async switchTrack(

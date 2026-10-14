@@ -3,15 +3,12 @@ import {
   MEETING_JWT,
   arrangeMeetingClient,
   enableMedia,
-  closeModal,
   expectCatalogStatus,
   expectTrackStatus,
   getChatMessageByText,
   getMemberCard,
   getMemberStats,
   getMemberVideo,
-  getSubscribeAudioButton,
-  getSubscribeVideoButton,
   getTrackSelect,
   joinRoom,
   openChat,
@@ -57,15 +54,9 @@ async function expectCatalogSubscribed(viewer: import('@playwright/test').Page, 
   await expectCatalogStatus(viewer, memberName, 'Subscribed', 60_000)
 }
 
-// Click subscribe on a remote member's video+audio (no assertion).
-// Subscribing early — close to when publishers start — lets the subscriber catch a
-// fresh keyframe quickly; subscribing long after start would wait up to one keyframe
-// interval before the first frame can be decoded.
+// Wait until the viewer has subscribed a remote member's video+audio, which it does
+// on its own while the member's tile is on the stage.
 async function subscribeMedia(viewer: import('@playwright/test').Page, memberName: string): Promise<void> {
-  await openMemberDetails(viewer, memberName)
-  await getSubscribeVideoButton(viewer, memberName).click()
-  await getSubscribeAudioButton(viewer, memberName).click()
-  await closeModal(viewer)
   await expectTrackStatus(viewer, 'video', memberName, 'Subscribed', 60_000)
   await expectTrackStatus(viewer, 'audio', memberName, 'Subscribed', 60_000)
 }
@@ -313,6 +304,46 @@ test('a viewer switches a member camera between renditions on the same picture',
   } finally {
     await alice.context.close()
     await bob.context.close()
+  }
+})
+
+test('closing the filmstrip unsubscribes the video of the members it hid', async ({ browser }) => {
+  // Arrange: carol turns her microphone off, so alice's speaker view focuses bob
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  const carol = await arrangeMeetingClient(browser)
+
+  try {
+    const roomName = `e2e-filmstrip-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    await enableMedia(bob.page)
+    await joinRoom(carol.page, roomName, 'carol', 'a')
+    await enableMedia(carol.page)
+    await carol.page.toggleMicrophoneButton.click()
+    await subscribeMedia(alice.page.page, 'bob')
+    await expectTrackStatus(alice.page.page, 'video', 'carol', 'Subscribed', 60_000)
+    // Assert: the beeps of bob's fake microphone carry voice activity in their LOC Audio Level
+    await expect(alice.page.page.getByTestId('member-chip-bob')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    await alice.page.page.getByTestId('stage-view-button').click()
+
+    // Act
+    await alice.page.page.getByTestId('filmstrip-button').click()
+
+    // Assert: only the focused speaker's video is still received, and his audio with it
+    await expectTrackStatus(alice.page.page, 'video', 'carol', 'Not subscribed')
+    await expectTrackStatus(alice.page.page, 'video', 'bob', 'Subscribed')
+    await expectTrackStatus(alice.page.page, 'audio', 'bob', 'Subscribed')
+
+    // Act
+    await alice.page.page.getByTestId('filmstrip-button').click()
+
+    // Assert
+    await expectTrackStatus(alice.page.page, 'video', 'carol', 'Subscribed', 60_000)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
   }
 })
 

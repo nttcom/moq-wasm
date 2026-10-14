@@ -4,7 +4,7 @@ import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
 import { RemoteMember } from '../types/member'
 import { ChatSidebar } from './ChatSidebar'
-import { MemberGrid } from './MemberGrid'
+import { MemberGrid, memberStates } from './MemberGrid'
 import { RoomHeader } from './RoomHeader'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
@@ -23,7 +23,7 @@ import { checkCodecSupport } from '../utils/codecSupport'
 import type { RemotePlaybackStats, VideoAdaptation } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
-import { type StageView, arrangeStage } from '../utils/stageLayout'
+import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
 
 interface MeetingRoomProps {
   session: LocalSession
@@ -41,6 +41,7 @@ type StatsSnapshot = {
 
 const SIDEBAR_STATS_SAMPLE_INTERVAL_MS = 1000
 const SIDEBAR_STATS_HISTORY_LIMIT = 120
+const AUTO_SUBSCRIBED_ROLES = ['audio', 'video', 'screenshare'] as const
 
 export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const roomName = session.roomName
@@ -65,6 +66,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const { backoff: chatSubscribeBackoff, retryTick: chatSubscribeRetryTick } = useRetryBackoff('chat-auto-subscribe')
   const { backoff: catalogSubscribeBackoff, retryTick: catalogSubscribeRetryTick } =
     useRetryBackoff('catalog-auto-subscribe')
+  const { backoff: mediaSubscribeBackoff, retryTick: mediaSubscribeRetryTick } = useRetryBackoff('media-auto-subscribe')
   const {
     activeSpeakerId,
     speakingMemberIds,
@@ -354,7 +356,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       return next
     })
     const member = room.remoteMembers.get(memberId)
-    if (member && isSwitchableRole(role) && member.subscribedTracks[role].isSubscribed) {
+    if (member && role !== 'chat' && member.subscribedTracks[role].isSubscribed) {
       void switchCatalogTrack(member, role, trackName).catch((error) => {
         console.error(`Failed to switch ${role} track for ${memberId}:`, error)
       })
@@ -574,18 +576,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     }
   }
 
-  const handleSubscribeCatalogTrack = async (memberId: string, role: CatalogSubscribeRole) => {
-    const member = room.remoteMembers.get(memberId)
-    if (!member) {
-      return
-    }
-    try {
-      await subscribeCatalogTrack(member, role, remoteCatalogSelections.get(memberId)?.[role])
-    } catch (error) {
-      console.error(`Failed to subscribe ${role} track for ${memberId}:`, error)
-    }
-  }
-
   const remoteMemberIds = useMemo(() => Array.from(room.remoteMembers.keys()), [room.remoteMembers])
   const remoteSharingIds = useMemo(
     () =>
@@ -596,14 +586,59 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       ),
     [remoteCatalogTracks, remoteMemberIds]
   )
-  const stage = arrangeStage({
-    view: stageView,
-    filmstripOpen,
-    remoteMemberIds,
-    remoteSharingIds,
-    localSharing: screenShareEnabled,
-    activeSpeakerId
-  })
+  const stage = useMemo(
+    () =>
+      arrangeStage({
+        view: stageView,
+        filmstripOpen,
+        remoteMemberIds,
+        remoteSharingIds,
+        localSharing: screenShareEnabled,
+        activeSpeakerId
+      }),
+    [activeSpeakerId, filmstripOpen, remoteMemberIds, remoteSharingIds, screenShareEnabled, stageView]
+  )
+
+  /// Every member's audio stays subscribed; a video track only while its tile is on the stage.
+  /// Unsubscribing a hidden tile, such as one behind a closed filmstrip, lets the publisher stop encoding it.
+  useEffect(() => {
+    const trackKeys = new Map<string, true>()
+    for (const member of room.remoteMembers.values()) {
+      if (!catalogSubscribedMemberIds.has(member.id)) {
+        continue
+      }
+      const tracks = remoteCatalogTracks.get(member.id) ?? []
+      for (const role of AUTO_SUBSCRIBED_ROLES) {
+        const trackKey = buildTrackActionKey(member.id, role)
+        trackKeys.set(trackKey, true)
+        const state = member.subscribedTracks[role]
+        if (state.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
+          continue
+        }
+        const offered = catalogTracksForRole(tracks, role).length > 0
+        const wanted =
+          offered &&
+          (role === 'audio' || stage.visibleKeys.has(tileKey(member.id, role === 'video' ? 'camera' : 'screenshare')))
+        if (wanted && !state.isSubscribed) {
+          mediaSubscribeBackoff.run(trackKey, () =>
+            subscribeCatalogTrack(member, role, remoteCatalogSelections.get(member.id)?.[role])
+          )
+        } else if (!wanted && state.isSubscribed) {
+          void handleUnsubscribeCatalogTrack(member.id, role)
+        }
+      }
+    }
+    mediaSubscribeBackoff.retain(trackKeys)
+  }, [
+    catalogSubscribedMemberIds,
+    catalogUnsubscribingTrackKeys,
+    mediaSubscribeBackoff,
+    mediaSubscribeRetryTick,
+    remoteCatalogSelections,
+    remoteCatalogTracks,
+    room.remoteMembers,
+    stage.visibleKeys
+  ])
 
   useEffect(() => {
     chatSubscribeBackoff.retain(room.remoteMembers)
@@ -629,7 +664,20 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
 
   return (
     <div className="flex h-screen flex-col bg-slate-950 text-white">
-      <RoomHeader roomName={roomName} participantCount={room.remoteMembers.size + 1} />
+      <RoomHeader
+        roomName={roomName}
+        members={Array.from(room.remoteMembers.values()).map((member) => ({
+          id: member.id,
+          name: member.name,
+          speaking: speakingMemberIds.has(member.id),
+          states: memberStates(
+            member,
+            catalogLoadingMemberIds.has(member.id),
+            catalogSubscribedMemberIds.has(member.id),
+            catalogUnsubscribingTrackKeys
+          )
+        }))}
+      />
       <div className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1">
           <MemberGrid
@@ -685,8 +733,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
             onSelectCatalogTrack={handleSelectCatalogTrack}
-            onSubscribeTrack={handleSubscribeCatalogTrack}
-            onUnsubscribeTrack={handleUnsubscribeCatalogTrack}
             statsHistory={statsHistory}
             stage={stage}
             speakingMemberIds={speakingMemberIds}
