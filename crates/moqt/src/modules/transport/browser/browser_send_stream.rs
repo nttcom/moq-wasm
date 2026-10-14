@@ -1,12 +1,9 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
-use js_sys::Uint8Array;
-use wasm_bindgen::JsValue;
+use js_sys::{Array, Function, Object, Reflect, Uint8Array};
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{
-    WebTransportError, WebTransportErrorOptions, WebTransportSendStream,
-    WritableStreamDefaultWriter,
-};
+use web_sys::{WebTransportSendStream, WritableStreamDefaultWriter};
 
 use super::js_value::{is_session_error, js_error, stream_error_code};
 use crate::modules::transport::transport_send_stream::{TransportSendError, TransportSendStream};
@@ -43,15 +40,7 @@ impl TransportSendStream for BrowserSendStream {
     }
 
     async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError> {
-        let options = WebTransportErrorOptions::new();
-        js_sys::Reflect::set(
-            &options,
-            &JsValue::from_str("streamErrorCode"),
-            &JsValue::from_f64(error_code as f64),
-        )
-        .map_err(send_error)?;
-        let reason = WebTransportError::new_with_message_and_options("reset", &options)
-            .map_err(send_error)?;
+        let reason = reset_reason(error_code).map_err(send_error)?;
         JsFuture::from(self.writer.abort_with_reason(&reason))
             .await
             .map(|_| ())
@@ -69,6 +58,30 @@ impl TransportSendStream for BrowserSendStream {
         .map(|_| ())
         .map_err(send_error)
     }
+}
+
+/// Chromium still implements the earlier constructor, which takes a single
+/// `WebTransportErrorInit`, and rejects the current `(message, options)` form
+/// with a `TypeError`.
+fn reset_reason(error_code: u64) -> Result<JsValue, JsValue> {
+    let init = Object::new();
+    Reflect::set(
+        &init,
+        &JsValue::from_str("message"),
+        &JsValue::from_str("reset"),
+    )?;
+    Reflect::set(
+        &init,
+        &JsValue::from_str("streamErrorCode"),
+        &JsValue::from_f64(error_code as f64),
+    )?;
+    let constructor: Function =
+        Reflect::get(&js_sys::global(), &JsValue::from_str("WebTransportError"))?.dyn_into()?;
+    Reflect::construct(
+        &constructor,
+        &Array::of2(&JsValue::from_str("reset"), &init),
+    )
+    .or_else(|_| Reflect::construct(&constructor, &Array::of1(&init)))
 }
 
 fn send_error(error: JsValue) -> TransportSendError {
