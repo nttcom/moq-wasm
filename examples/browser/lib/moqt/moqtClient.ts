@@ -19,7 +19,11 @@ import type {
   SubscribeMessage,
   SubscribeOkMessage
 } from '../../pkg/moqt'
-import { SubscriptionStateManager, type SubgroupObjectHandler } from './subscriptionStateManager'
+import {
+  SubscriptionStateManager,
+  type SubgroupObjectHandler,
+  type SubgroupObjectMessageWithLoc
+} from './subscriptionStateManager'
 import { SubgroupWriter } from './subgroupWriter'
 
 type PendingResponse<T> = { resolve: (response: T) => void; reject: (error: Error) => void }
@@ -86,12 +90,24 @@ const emptyAliasMaps = (): AliasMaps => ({ appAliasByWireAlias: new Map(), wireA
  * the next one.
  */
 type Cutover = { group?: bigint; previousNewestGroup?: bigint; passed: boolean }
+/**
+ * The group the new relay was in when it accepted a carried live
+ * subscription. A joining FETCH supplies it up to the Largest Location, and
+ * the subscription's own objects on `client` are held until the FETCH ends.
+ */
+type GroupFill = { client: MOQTClient; held: Array<{ groupId: bigint; object: SubgroupObjectMessageWithLoc }> }
 /** A switchover from `previous` to `next`, kept until `previous` is closed. */
 type Switchover = {
   previous: MOQTClient
   next: MOQTClient
   /** Keyed by the application's track alias. */
   cutovers: Map<bigint, Cutover>
+  /**
+   * The application's aliases of the published tracks the previous relay
+   * still subscribes to; they are published on both sessions until it
+   * unsubscribes (draft-22 §7.6.1).
+   */
+  publishing: Set<bigint>
   swapped: boolean
 }
 
@@ -101,9 +117,12 @@ const MIGRATION_TIMEOUT_MS = 10_000
 /// A publisher moves at the same time as its subscribers, so a request the new
 /// relay rejects is repeated at this interval until the switchover times out.
 const MIGRATION_RETRY_INTERVAL_MS = 500
-/// How long the previous session stays open after the switch for groups that
-/// started there and have not ended.
+/// How long after the switch the carried subscriptions keep taking groups
+/// that started on the previous session.
 const PREVIOUS_SESSION_GRACE_MS = 5_000
+/// How long a carried subscription's objects wait for the joining FETCH that
+/// supplies the start of their group.
+const GROUP_FILL_TIMEOUT_MS = 2_000
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type PublishDoneHandler = (message: PublishDoneMessage) => void
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
@@ -257,11 +276,13 @@ export class MoqtClientWrapper {
   private readonly incomingSubscribeRequestIds = new Set<bigint>()
   /** A session missing here uses the application's aliases. */
   private readonly aliasesByClient = new WeakMap<MOQTClient, AliasMaps>()
-  /** The session each published track's open group started on, by application alias. */
-  private readonly openGroupClients = new Map<bigint, MOQTClient>()
+  /** The sessions each published track's open group started on, by application alias. */
+  private readonly openGroupClients = new Map<bigint, MOQTClient[]>()
   private readonly retiredClients = new WeakSet<MOQTClient>()
   /** The newest group delivered on each subscription, by application alias. */
   private readonly newestGroups = new Map<bigint, bigint>()
+  /** By application alias. */
+  private readonly groupFills = new Map<bigint, GroupFill>()
   private switchover: Switchover | null = null
   private migrating = false
   private pendingServerSetup: { resolve: () => void; reject: (error: Error) => void } | null = null
@@ -365,7 +386,13 @@ export class MoqtClientWrapper {
     try {
       next = await this.createRawClient(url)
       await next.start()
-      this.switchover = { previous, next, cutovers: new Map(), swapped: false }
+      this.switchover = {
+        previous,
+        next,
+        cutovers: new Map(),
+        publishing: new Set([...this.publishedTracks.values()].map(({ trackAlias }) => trackAlias)),
+        swapped: false
+      }
       for (const { trackAlias } of this.activeSubscriptions.values()) {
         this.switchover.cutovers.set(trackAlias, {
           passed: false,
@@ -382,7 +409,7 @@ export class MoqtClientWrapper {
       this.client = next
       this.connectUrl = url
       this.switchover.swapped = true
-      setTimeout(() => this.retirePrevious(previous), PREVIOUS_SESSION_GRACE_MS)
+      setTimeout(() => this.passCutovers(previous), PREVIOUS_SESSION_GRACE_MS)
       console.info('[moqt] moved to the relay named by GOAWAY', { url })
       // The subscriptions the old relay held on this publisher end with its
       // session; the new relay sends its own SUBSCRIBEs.
@@ -406,18 +433,25 @@ export class MoqtClientWrapper {
     }
   }
 
-  /// The previous session is closed once every carried subscription has
-  /// passed its cutover and no published group is still open there.
   private retireIfMoved(): void {
     const switchover = this.switchover
     if (!switchover?.swapped) {
       return
     }
     const subscriptionsMoved = [...switchover.cutovers.values()].every((cutover) => cutover.passed)
-    const groupsMoved = ![...this.openGroupClients.values()].includes(switchover.previous)
-    if (subscriptionsMoved && groupsMoved) {
+    if (subscriptionsMoved && switchover.publishing.size === 0) {
       this.retirePrevious(switchover.previous)
     }
+  }
+
+  private passCutovers(previous: MOQTClient): void {
+    if (this.switchover?.previous !== previous) {
+      return
+    }
+    for (const cutover of this.switchover.cutovers.values()) {
+      cutover.passed = true
+    }
+    this.retireIfMoved()
   }
 
   private retirePrevious(previous: MOQTClient): void {
@@ -426,12 +460,38 @@ export class MoqtClientWrapper {
     }
     this.switchover = null
     this.retiredClients.add(previous)
-    for (const [trackAlias, client] of this.openGroupClients) {
-      if (client === previous) {
-        this.openGroupClients.delete(trackAlias)
-      }
+    for (const [trackAlias, clients] of this.openGroupClients) {
+      this.openGroupClients.set(
+        trackAlias,
+        clients.filter((client) => client !== previous)
+      )
     }
     void previous.close().catch(() => undefined)
+  }
+
+  /// The sessions a new group starts on; `trackAlias` is the application's.
+  private publishingClients(trackAlias: bigint): MOQTClient[] {
+    const clients = [this.requireConnectedClient()]
+    const switchover = this.switchover
+    if (switchover?.swapped && switchover.publishing.has(trackAlias)) {
+      clients.push(switchover.previous)
+    }
+    return clients
+  }
+
+  /// Sends on the previous session without letting its end fail the
+  /// application's send; a failed previous session is retired.
+  private async sendOnPrevious(client: MOQTClient, send: () => Promise<void>): Promise<void> {
+    if (client !== this.switchover?.previous) {
+      await send()
+      return
+    }
+    try {
+      await send()
+    } catch (error) {
+      console.warn('[moqt] the previous relay session stopped taking objects', { error })
+      this.retirePrevious(client)
+    }
   }
 
   /// Whether an object of `trackAlias` (the application's) from `client`
@@ -487,15 +547,30 @@ export class MoqtClientWrapper {
       await response
     }
     for (const [requestId, subscription] of this.activeSubscriptions) {
+      // Largest Object, not Next Group Start: the latter would skip the group
+      // the publisher started on the new relay before this SUBSCRIBE.
+      const live = subscription.options.forward !== false && isLiveFilter(subscription.options.filterType)
+      const carried = live
+        ? { ...subscription, options: { ...subscription.options, filterType: FilterType.LargestObject } }
+        : subscription
       const subscribeOk = await retryUntil(deadline, async () => {
         const response = expectResponse(this.pendingSubscribe, requestId)
-        await this.sendSubscribeOn(next, requestId, subscription)
+        await this.sendSubscribeOn(next, requestId, carried)
         return response
       })
       aliases.appAliasByWireAlias.set(subscribeOk.trackAlias, subscription.trackAlias)
       this.subscriptionTrackAliases.set(requestId, subscription.trackAlias)
       if (subscription.options.forward === false) {
         await next.sendSubscribeForward(this.issueRequestId(), requestId, false)
+      }
+      const newest = this.switchover?.cutovers.get(subscription.trackAlias)?.previousNewestGroup
+      if (
+        live &&
+        subscribeOk.contentExists &&
+        subscribeOk.largestGroupId !== undefined &&
+        (newest === undefined || subscribeOk.largestGroupId > newest)
+      ) {
+        this.fillLargestGroup(next, requestId, subscription.trackAlias)
       }
     }
     for (const [requestId, track] of this.publishedTracks) {
@@ -525,6 +600,57 @@ export class MoqtClientWrapper {
         console.warn('[moqt] FETCH not carried over to the new relay', { requestId: requestId.toString(), error })
       }
     }
+  }
+
+  /// Fetches the new relay's current group from its start (Relative Joining
+  /// FETCH, Joining Start 0, draft-14 §9.16.2), then delivers the objects held
+  /// meanwhile so the group arrives in order.
+  private fillLargestGroup(client: MOQTClient, subscriptionRequestId: bigint, trackAlias: bigint): void {
+    const fill: GroupFill = { client, held: [] }
+    this.groupFills.set(trackAlias, fill)
+    const requestId = this.issueRequestId()
+    const finish = () => {
+      if (this.groupFills.get(trackAlias) !== fill) {
+        return
+      }
+      this.groupFills.delete(trackAlias)
+      this.fetchObjectHandlers.delete(requestId)
+      this.fetchStreamEndHandlers.delete(requestId)
+      for (const { groupId, object } of fill.held) {
+        this.deliverSubgroupObject(client, trackAlias, groupId, object)
+      }
+    }
+    this.watchFetch(
+      requestId,
+      (object) => this.deliverSubgroupObject(client, trackAlias, object.groupId, fetchedAsSubgroupObject(object)),
+      finish
+    )
+    const response = expectResponse(this.pendingFetch, requestId)
+    client
+      .sendRelativeJoiningFetch(requestId, subscriptionRequestId, 0n, GroupOrder.Ascending)
+      .then(() => response)
+      .catch((error) => {
+        console.warn('[moqt] the current group was not fetched from the new relay', { error })
+        finish()
+      })
+    setTimeout(finish, GROUP_FILL_TIMEOUT_MS)
+  }
+
+  private deliverSubgroupObject(
+    client: MOQTClient,
+    trackAlias: bigint,
+    groupId: bigint,
+    object: SubgroupObjectMessageWithLoc
+  ): void {
+    if (!this.acceptsObject(client, trackAlias, groupId)) {
+      return
+    }
+    const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
+    if (handler) {
+      handler(groupId, object)
+      return
+    }
+    this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, object)
   }
 
   private sendFetchOn(
@@ -919,17 +1045,21 @@ export class MoqtClientWrapper {
 
   /// The subgroup header and objects of a track this client publishes.
   /// `trackAlias` is the alias the application holds (from `publish()` or an
-  /// accepted incoming SUBSCRIBE); it is sent on the current session.
+  /// accepted incoming SUBSCRIBE); it is sent on the current session, and
+  /// after a switchover on the previous one too while its relay subscribes.
   async sendSubgroupHeader(
     trackAlias: bigint,
     groupId: bigint,
     subgroupId: bigint,
     publisherPriority: number
   ): Promise<void> {
-    const client = this.requireConnectedClient()
-    this.openGroupClients.set(trackAlias, client)
-    await client.sendSubgroupHeader(this.wireAlias(client, trackAlias), groupId, subgroupId, publisherPriority)
-    this.retireIfMoved()
+    const clients = this.publishingClients(trackAlias)
+    this.openGroupClients.set(trackAlias, clients)
+    for (const client of clients) {
+      await this.sendOnPrevious(client, () =>
+        client.sendSubgroupHeader(this.wireAlias(client, trackAlias), groupId, subgroupId, publisherPriority)
+      )
+    }
   }
 
   async sendSubgroupObject(
@@ -941,21 +1071,25 @@ export class MoqtClientWrapper {
     payload: Uint8Array,
     locHeader: unknown
   ): Promise<void> {
-    // An object belongs to the session its group started on; a group whose
+    // An object belongs to the sessions its group started on; a group whose
     // session was closed is not continued on another.
-    const client = this.openGroupClients.get(trackAlias) ?? this.requireConnectedClient()
-    if (this.retiredClients.has(client)) {
-      return
+    const clients = this.openGroupClients.get(trackAlias) ?? [this.requireConnectedClient()]
+    for (const client of clients) {
+      if (this.retiredClients.has(client)) {
+        continue
+      }
+      await this.sendOnPrevious(client, () =>
+        client.sendSubgroupObject(
+          this.wireAlias(client, trackAlias),
+          groupId,
+          subgroupId,
+          objectId,
+          objectStatus,
+          payload,
+          locHeader
+        )
+      )
     }
-    await client.sendSubgroupObject(
-      this.wireAlias(client, trackAlias),
-      groupId,
-      subgroupId,
-      objectId,
-      objectStatus,
-      payload,
-      locHeader
-    )
   }
 
   async sendSingleObjectGroup(trackAlias: bigint, groupId: bigint, payload: Uint8Array): Promise<void> {
@@ -1048,6 +1182,12 @@ export class MoqtClientWrapper {
     })
 
     client.onIncomingUnsubscribe((requestId: bigint) => {
+      const published = this.publishedTracks.get(requestId)
+      if (published && this.switchover?.previous === client) {
+        this.switchover.publishing.delete(published.trackAlias)
+        this.retireIfMoved()
+        return
+      }
       this.incomingSubscribeRequestIds.delete(requestId)
       this.incomingUnsubscribeHandler?.(requestId)
     })
@@ -1098,15 +1238,12 @@ export class MoqtClientWrapper {
     })
     client.onSubgroupObject((wireAlias: bigint, groupId: bigint, subgroupObject: SubgroupObjectMessage) => {
       const trackAlias = this.appAlias(client, wireAlias)
-      if (!this.acceptsObject(client, trackAlias, groupId)) {
+      const fill = this.groupFills.get(trackAlias)
+      if (fill?.client === client) {
+        fill.held.push({ groupId, object: subgroupObject })
         return
       }
-      const handler = this.subscriptionState.getSubgroupObjectHandler(trackAlias)
-      if (handler) {
-        handler(groupId, subgroupObject)
-        return
-      }
-      this.subscriptionState.bufferSubgroupObject(trackAlias, groupId, subgroupObject)
+      this.deliverSubgroupObject(client, trackAlias, groupId, subgroupObject)
     })
     client.onTrackStatus(async (trackStatus: SubscribeMessage) => {
       const handler = this.incomingTrackStatusHandler ?? defaultIncomingTrackStatusHandler
@@ -1194,6 +1331,8 @@ export class MoqtClientWrapper {
       // current session's close ends the wrapper.
       if (this.client === client) {
         this.handleConnectionClosed(info ?? {})
+      } else {
+        this.retirePrevious(client)
       }
     })
   }
@@ -1256,6 +1395,7 @@ export class MoqtClientWrapper {
     this.subscribedNamespaces.clear()
     this.openGroupClients.clear()
     this.newestGroups.clear()
+    this.groupFills.clear()
     this.switchover = null
     this.nextRequestId = 0n
     this.onPublishNamespaceHandler = null
@@ -1392,6 +1532,22 @@ async function retryUntil<T>(deadline: number, request: () => Promise<T>): Promi
       await new Promise<void>((resolve) => setTimeout(resolve, MIGRATION_RETRY_INTERVAL_MS))
     }
   }
+}
+
+function isLiveFilter(filterType: FilterType | undefined): boolean {
+  return filterType === undefined || filterType === FilterType.NextGroupStart || filterType === FilterType.LargestObject
+}
+
+/// FETCH objects carry no status here, so each becomes a normal object.
+function fetchedAsSubgroupObject(object: FetchObjectMessage): SubgroupObjectMessageWithLoc {
+  return {
+    subgroupId: 0n,
+    objectId: object.objectId,
+    objectStatus: undefined,
+    objectPayload: object.objectPayload,
+    objectPayloadLength: object.objectPayload.length,
+    locHeader: object.locHeader
+  } as unknown as SubgroupObjectMessageWithLoc
 }
 
 function isBefore(a: Location, b: Location): boolean {

@@ -68,8 +68,8 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 Session migration, draft-14 §3.5 (`relay_server/drain.rs`). On the first
 SIGINT (Ctrl+C) or SIGTERM (`docker stop`, Kubernetes) `main.rs` stops the
 client transport's accept loop (`SessionHandler::stop_accepting`, after which
-the endpoint refuses every
-connection attempt at the transport level so a client is turned away at once;
+the endpoint refuses every connection attempt at the transport level so a
+client is turned away at once;
 the inner endpoint keeps accepting) and calls
 `RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
 
@@ -84,10 +84,17 @@ the inner endpoint keeps accepting) and calls
    `https://host` for WebTransport, from `Session::url_scheme`), or with
    an empty URI when there is no target, which tells the client to reconnect
    to the same URI once the relay is back;
-4. waits on `SessionRepository::client_session_count` until no client
+4. from the GOAWAY on, releases the PUBLISH-initiated upstream
+   subscriptions like the SUBSCRIBE-initiated ones (draft-22 §6.6.1): each
+   client session's worker unsubscribes the tracks it published that nobody
+   watches (`ReleaseUnwatchedPublishes`), and the last downstream subscriber
+   leaving a track unsubscribes the rest. A publisher publishing on both
+   relays (draft-22 §7.6.1) takes that UNSUBSCRIBE as the sign that it can
+   stop sending here;
+5. waits on `SessionRepository::client_session_count` until no client
    session is left, which happens when every client closed its session after
    migrating;
-5. closes the client sessions still present at the timeout with
+6. closes the client sessions still present at the timeout with
    `GOAWAY_TIMEOUT` (§3.5 SHOULD).
 
 `main.rs` then waits up to 3 s for the client endpoint to go idle

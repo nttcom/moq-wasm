@@ -74,12 +74,21 @@ Rules:
   cutover group: the first group the new relay delivers, or the group after
   the newest one the old relay delivered. Earlier groups are taken from the
   old session only and later ones from the new session only, so a group is
-  neither duplicated nor cut short. On the sending side an object goes to the
-  session its group started on, and the next group starts on the new
-  session. The old session is closed once every subscription has passed its
-  cutover (or its relay sent PUBLISH_DONE, which the wrapper otherwise
-  ignores from a relay that sent GOAWAY) and no published group is open
-  there, or 5 s after the switch. A FETCH still in flight is re-issued for
+  neither duplicated nor cut short. A live subscription (Next Group Start or
+  Largest Object, forwarding) is re-sent with the Largest Object filter: the
+  publisher may have started a group on the new relay before the SUBSCRIBE
+  got there, and Next Group Start would skip it. When that Largest Location
+  is in a group the old session has not delivered, a joining FETCH of the
+  current group supplies it from its start, and the subscription's objects
+  are held until the FETCH ends (at most 2 s) so the group stays in order.
+  On the sending side a published track goes to both sessions
+  (draft-22 §7.6.1): a group starts on the new session and, while the old
+  relay still subscribes to the track, on the old one too, and its objects go
+  wherever it started. The old session is closed once every subscription has
+  passed its cutover (or its relay sent PUBLISH_DONE, which the wrapper
+  otherwise ignores from a relay that sent GOAWAY; subscriptions give up
+  after 5 s) and its relay has unsubscribed from every published track, or
+  when that session ends. A FETCH still in flight is re-issued for
   what it has not delivered yet and from then on taken from the new session
   only: an absolute range resumes after the last object received, a joining
   FETCH that delivered nothing yet is repeated against the re-issued
@@ -586,8 +595,8 @@ the groups the relay still caches. The viewer finds it in the catalog by its
 `mediatimeline` packaging and subscribes to it alongside the media tracks.
 
 A capture timestamp resolves to a presentation time by offsetting from the
-newest record at or before it, so the reading survives a video quality change
-even though renditions number their groups independently. The label shows
+newest record at or before it. The renditions share the source's keyframe times
+and group ids, so the reading survives a video quality change. The label shows
 `--:-- / --:--` until the first timeline object arrives.
 
 ## Migration

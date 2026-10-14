@@ -33,6 +33,7 @@ const FETCH_SUBGROUP_ID: u64 = 0;
 
 type TrackKey = (String, String);
 
+#[derive(Clone)]
 pub struct OutgoingObject {
     pub group: GroupBoundary,
     pub extension_headers: ExtensionHeaders,
@@ -307,6 +308,12 @@ impl Origin {
             "SUBSCRIBE accepted"
         );
         Ok(())
+    }
+
+    /// Whether the peer still takes objects of any track: a SUBSCRIBE it sent
+    /// or a PUBLISH it accepted that it has not unsubscribed from.
+    pub async fn is_serving(&self) -> bool {
+        !self.state.lock().await.subscriptions.is_empty()
     }
 
     /// Returns the released track's `(namespace, name)`; its numbering and

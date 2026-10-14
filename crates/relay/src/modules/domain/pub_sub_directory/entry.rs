@@ -113,8 +113,8 @@ pub(crate) struct ReleasedUpstreamSubscription {
     pub(crate) subscription: UpstreamSubscription,
 }
 
-/// `released_upstream_subscriptions` lists the SUBSCRIBE-initiated upstream
-/// subscriptions the removal left without the downstream subscriber they need.
+/// `released_upstream_subscriptions` lists the upstream subscriptions the
+/// removal left without the downstream subscriber they need.
 #[derive(Clone, Debug)]
 pub(crate) struct RemovedDownstreamSubscription {
     pub(crate) track_key: TrackKey,

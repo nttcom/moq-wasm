@@ -1,7 +1,7 @@
-use std::{pin::Pin, time::Duration};
+use std::{collections::VecDeque, pin::Pin, time::Duration};
 
 use anyhow::{Context, Result};
-use moqt::{SessionEvent, TrackReader};
+use moqt::{SessionEvent, TrackObject, TrackReader, object::ContentExists, subscribe::FilterType};
 use tokio::{io::AsyncWriteExt, task::JoinHandle, time::Sleep};
 use tracing::info;
 
@@ -9,8 +9,8 @@ use crate::catalog;
 use crate::cli::{RelayArgs, SubscribeArgs};
 use crate::track::FullTrackName;
 use crate::transport::{
-    MOVE_TIMEOUT, RelayConnection, connect_relay, follow_go_away, read_catalog, subscribe,
-    track_reader,
+    MOVE_TIMEOUT, RelayConnection, connect_relay, fetch_current_group, follow_go_away,
+    read_catalog, subscribe, track_reader,
 };
 
 const MOVE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
@@ -21,7 +21,7 @@ const PREVIOUS_SESSION_GRACE: Duration = Duration::from_secs(5);
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let mut relay = args.relay.clone();
-    let mut watching = watch(&relay, &args.track).await?;
+    let mut watching = watch(&relay, &args.track, FilterType::NextGroupStart).await?;
     // The move runs beside the current session, which keeps delivering
     // until the new relay has accepted the subscriptions (draft-14 §8.3.1).
     let mut pending_move: Option<JoinHandle<Result<Watching>>> = None;
@@ -36,7 +36,7 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
     loop {
         let session = watching.connection.session.clone();
         tokio::select! {
-            object = watching.media_reader.next_object() => match object {
+            object = watching.next_object() => match object {
                 Ok(Some(object)) => {
                     if previous.is_some() {
                         let first = *cutover.get_or_insert(match newest_written {
@@ -54,7 +54,7 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
                 Ok(None) => break,
                 Err(error) => tracing::warn!(%error, "group read error, advancing to next group"),
             },
-            object = async { previous.as_mut().expect("polled only while the previous session is open").media_reader.next_object().await },
+            object = async { previous.as_mut().expect("polled only while the previous session is open").next_object().await },
                 if previous.is_some() =>
             {
                 match object {
@@ -131,9 +131,19 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
 struct Watching {
     connection: RelayConnection,
     media_reader: TrackReader,
+    /// Objects of the current group fetched after a move, delivered before
+    /// the subscription's own.
+    fetched: VecDeque<TrackObject>,
 }
 
 impl Watching {
+    async fn next_object(&mut self) -> Result<Option<TrackObject>> {
+        match self.fetched.pop_front() {
+            Some(object) => Ok(Some(object)),
+            None => self.media_reader.next_object().await,
+        }
+    }
+
     /// Every other handle to the session must be dropped first.
     async fn close(self) {
         drop(self.media_reader);
@@ -143,9 +153,12 @@ impl Watching {
 
 /// The publisher moves at the same time as this subscriber, so the track may
 /// not exist on the new relay yet; the SUBSCRIBE is repeated until it does.
+/// The publisher may also have started a group there before the SUBSCRIBE
+/// arrives, so the subscription continues from the Largest Location and the
+/// group up to it is fetched.
 async fn watch_until_available(relay: &RelayArgs, track: &FullTrackName) -> Result<Watching> {
     loop {
-        match watch(relay, track).await {
+        match watch(relay, track, FilterType::LargestObject).await {
             Ok(watching) => return Ok(watching),
             Err(error) => {
                 tracing::info!(%error, "not subscribed on the new relay yet; retrying");
@@ -155,28 +168,62 @@ async fn watch_until_available(relay: &RelayArgs, track: &FullTrackName) -> Resu
     }
 }
 
-async fn watch(relay: &RelayArgs, track: &FullTrackName) -> Result<Watching> {
+async fn watch(
+    relay: &RelayArgs,
+    track: &FullTrackName,
+    media_filter: FilterType,
+) -> Result<Watching> {
     let connection = connect_relay(relay, track.app_id()).await?;
     let session = &connection.session;
 
     // Subscribe to both tracks before reading either so NextGroupStart
     // catches the first media group of a burst publisher.
-    let catalog_subscription =
-        subscribe(session, &track.namespace, msf::CATALOG_TRACK_NAME).await?;
+    let catalog_subscription = subscribe(
+        session,
+        &track.namespace,
+        msf::CATALOG_TRACK_NAME,
+        FilterType::NextGroupStart,
+    )
+    .await?;
     info!(
         namespace = track.namespace,
         track = track.name,
         "subscribing"
     );
-    let media_subscription = subscribe(session, &track.namespace, &track.name).await?;
+    let media_subscription =
+        subscribe(session, &track.namespace, &track.name, media_filter).await?;
     info!("subscribed");
 
     let catalog = read_catalog(session, &catalog_subscription).await?;
     describe_catalog(&catalog::parse(&catalog)?);
+    let fetched = if media_filter == FilterType::LargestObject
+        && matches!(
+            media_subscription.content_exists(),
+            ContentExists::True { .. }
+        ) {
+        fetch_current_group(session, &media_subscription)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "the current group was not fetched from the new relay");
+                Vec::new()
+            })
+            .into_iter()
+            .map(|object| TrackObject {
+                group_id: object.location.group_id,
+                subgroup_id: 0,
+                object_id: object.location.object_id,
+                extension_headers: object.extension_headers,
+                payload: object.payload,
+            })
+            .collect()
+    } else {
+        VecDeque::new()
+    };
     let media_reader = track_reader(session, &media_subscription).await?;
     Ok(Watching {
         connection,
         media_reader,
+        fetched,
     })
 }
 

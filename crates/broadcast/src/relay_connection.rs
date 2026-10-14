@@ -10,7 +10,7 @@ use moqt::{
     ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TerminationErrorCode,
     TransportStats,
     executor::{self, JoinHandle},
-    publish::{GroupBoundary, Origin, OutgoingObject, Retention, WriteOutcome},
+    publish::{Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
 };
 use msf::CATALOG_TRACK_NAME;
@@ -52,25 +52,13 @@ pub struct RelayConnection {
     ledger: StreamLedger,
 }
 
-/// How long a session a GOAWAY moved away from stays open for tracks whose
-/// group started there and has not ended.
-const PREVIOUS_SESSION_GRACE: Duration = Duration::from_secs(5);
-
 #[derive(Default)]
 struct ConnectionState {
     connected: Option<Arc<ConnectedRelay>>,
-    /// The session a GOAWAY moved away from (draft-14 §8.4.2): a track keeps
-    /// writing its open group there and starts its next group on `connected`.
-    previous: Option<PreviousRelay>,
+    /// The session a GOAWAY moved away from, still published on until its
+    /// relay no longer subscribes to any track (draft-22 §7.6.1).
+    previous: Option<Arc<ConnectedRelay>>,
     migrating: bool,
-}
-
-struct PreviousRelay {
-    relay: Arc<ConnectedRelay>,
-    /// Tracks whose open group is still written to `relay`.
-    open_tracks: HashSet<TrackKey>,
-    /// `executor::now()` after which `relay` is closed whatever is still open.
-    close_at: Duration,
 }
 
 type TrackKey = (String, String);
@@ -87,8 +75,6 @@ struct RelayState {
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
-    /// Tracks an object was written to on this session.
-    written_tracks: HashSet<TrackKey>,
     disconnected: bool,
     /// The New Session URI of a GOAWAY (draft-14 §9.4) not acted on yet;
     /// empty means the current URL.
@@ -166,7 +152,7 @@ impl RelayConnection {
             (guard.connected.clone(), guard.previous.take())
         };
         if let Some(previous) = previous {
-            previous.relay.close().await;
+            previous.close().await;
         }
         if let Some(connected) = connected {
             connected.close().await;
@@ -208,9 +194,9 @@ impl RelayConnection {
         Ok(Some(current))
     }
 
-    /// Writes to the session that carries the track's open group: after a
-    /// move, an object within a group the previous session started still
-    /// goes there, and the track's next group starts on the new session.
+    /// After a move, an object goes to both sessions (draft-22 §7.6.1): to
+    /// the new one from the first group the track starts there, and to the
+    /// previous one until its relay has unsubscribed from every track.
     pub(crate) async fn send_object(
         &self,
         namespace: &[String],
@@ -220,53 +206,40 @@ impl RelayConnection {
         let Some(current) = self.connected().await? else {
             return Ok(false);
         };
-        let key = (namespace.join("/"), track_name.to_string());
-        let Some(previous) = self.previous_for(&key, &object.group).await else {
+        let Some(previous) = self.serving_previous().await else {
             return current.send_object(namespace, track_name, object).await;
         };
-        match previous.send_object(namespace, track_name, object).await {
-            Ok(sent) => Ok(sent),
+        let sent_before = match previous
+            .send_object(namespace, track_name, object.clone())
+            .await
+        {
+            Ok(sent) => sent,
             Err(err) => {
-                tracing::debug!(
-                    ?err,
-                    "the previous relay session ended before the track moved"
-                );
+                tracing::debug!(?err, "the previous relay session ended");
                 self.retire_previous().await;
-                Ok(false)
+                false
             }
-        }
+        };
+        Ok(current.send_object(namespace, track_name, object).await? || sent_before)
     }
 
-    async fn previous_for(
-        &self,
-        key: &TrackKey,
-        group: &GroupBoundary,
-    ) -> Option<Arc<ConnectedRelay>> {
-        let mut guard = self.inner.lock().await;
-        let previous = guard.previous.as_mut()?;
-        let route = if matches!(group, GroupBoundary::Within)
-            && previous.open_tracks.contains(key)
-            && executor::now() < previous.close_at
-        {
-            Some(previous.relay.clone())
-        } else {
-            previous.open_tracks.remove(key);
-            None
-        };
-        if previous.open_tracks.is_empty() || executor::now() >= previous.close_at {
-            drop(guard);
-            self.retire_previous().await;
+    async fn serving_previous(&self) -> Option<Arc<ConnectedRelay>> {
+        let previous = self.inner.lock().await.previous.clone()?;
+        if previous.origin.is_serving().await {
+            return Some(previous);
         }
-        route
+        self.retire_previous().await;
+        None
     }
 
     async fn retire_previous(&self) {
         let Some(previous) = self.inner.lock().await.previous.take() else {
             return;
         };
-        let _ = executor::spawn("broadcast-relay-close", async move {
-            previous.relay.close().await
-        });
+        let _ = executor::spawn(
+            "broadcast-relay-close",
+            async move { previous.close().await },
+        );
     }
 
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
@@ -294,20 +267,12 @@ impl RelayConnection {
                     return;
                 }
             };
-            let open_tracks = current.state.lock().await.written_tracks.clone();
             if let Some(older) = guard.previous.take() {
                 let _ =
-                    executor::spawn(
-                        "broadcast-relay-close",
-                        async move { older.relay.close().await },
-                    );
+                    executor::spawn("broadcast-relay-close", async move { older.close().await });
             }
             guard.connected = Some(Arc::new(next));
-            guard.previous = Some(PreviousRelay {
-                relay: current,
-                open_tracks,
-                close_at: executor::now() + PREVIOUS_SESSION_GRACE,
-            });
+            guard.previous = Some(current);
             tracing::info!(%new_session_uri, "moved the broadcast to the relay named by GOAWAY");
         });
     }
@@ -563,7 +528,6 @@ impl ConnectedRelay {
             bail!("MoQ publisher disconnected");
         }
         ensure_origin_track(&self.origin, &key).await;
-        self.state.lock().await.written_tracks.insert(key.clone());
         let bytes = object.payload.len();
         match self.origin.write(&key.0, &key.1, object).await? {
             WriteOutcome::Sent(placement) => {
@@ -791,7 +755,10 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
 mod tests {
     use std::path::PathBuf;
 
-    use moqt::{DUAL, server::ServerConfig, subscribe::FilterType};
+    use moqt::{
+        DUAL, Subscription, TrackReader, object::DataReceiver, publish::GroupBoundary,
+        server::ServerConfig, subscribe::FilterType,
+    };
     use rcgen::{CertifiedKey, generate_simple_self_signed};
     use tokio::sync::{mpsc, oneshot};
 
@@ -820,11 +787,14 @@ mod tests {
     }
 
     /// A relay that accepts one publisher session, answers its
-    /// PUBLISH_NAMESPACE and PUBLISH, and reports every request it received.
+    /// PUBLISH_NAMESPACE and PUBLISH, and reports every request it received
+    /// and the group of every video object.
     struct FakeRelay {
         url: String,
         session: oneshot::Receiver<Arc<Session>>,
         requests: mpsc::UnboundedReceiver<String>,
+        published: mpsc::UnboundedReceiver<Subscription>,
+        video_groups: mpsc::UnboundedReceiver<u64>,
     }
 
     impl FakeRelay {
@@ -840,6 +810,8 @@ mod tests {
             let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
             let (session_sender, session) = oneshot::channel();
             let (request_sender, requests) = mpsc::unbounded_channel();
+            let (published_sender, published) = mpsc::unbounded_channel();
+            let (video_group_sender, video_groups) = mpsc::unbounded_channel();
             tokio::spawn(async move {
                 let mut gate = gate;
                 let handshake = endpoint.accept().await.unwrap().await.unwrap();
@@ -860,7 +832,31 @@ mod tests {
                                 "PUBLISH {}/{}",
                                 handler.track_namespace, handler.track_name
                             ));
-                            handler.ok(0, FilterType::LargestObject, 0).await.unwrap();
+                            let watch_video = handler.track_name == VIDEO_TRACK_NAME;
+                            if watch_video {
+                                handler.accept_data_receiver().await;
+                            }
+                            let subscription =
+                                handler.ok(0, FilterType::LargestObject, 0).await.unwrap();
+                            if watch_video {
+                                let (session, sender) =
+                                    (session.clone(), video_group_sender.clone());
+                                let subscription = subscription.clone();
+                                tokio::spawn(async move {
+                                    let Ok(DataReceiver::Stream(factory)) = session
+                                        .subscriber()
+                                        .accept_data_receiver(&subscription)
+                                        .await
+                                    else {
+                                        return;
+                                    };
+                                    let mut reader = TrackReader::new(factory);
+                                    while let Ok(Some(object)) = reader.next_object().await {
+                                        let _ = sender.send(object.group_id);
+                                    }
+                                });
+                            }
+                            let _ = published_sender.send(subscription);
                         }
                         SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                         _ => {}
@@ -871,7 +867,38 @@ mod tests {
                 url,
                 session,
                 requests,
+                published,
+                video_groups,
             }
+        }
+
+        /// Mimics a draining relay whose subscribers have left.
+        async fn unsubscribe_published(&mut self, session: &Session) {
+            while let Ok(subscription) = self.published.try_recv() {
+                session
+                    .subscriber()
+                    .unsubscribe(&subscription)
+                    .await
+                    .unwrap();
+            }
+        }
+
+        async fn wait_for_video_group(&mut self, group_id: u64) {
+            let mut seen = Vec::new();
+            let arrived = tokio::time::timeout(TEST_TIMEOUT, async {
+                while let Some(group) = self.video_groups.recv().await {
+                    seen.push(group);
+                    if group == group_id {
+                        return;
+                    }
+                }
+            })
+            .await;
+            assert!(
+                arrived.is_ok(),
+                "video group {group_id} must arrive at {}, saw {seen:?}",
+                self.url
+            );
         }
 
         async fn session(&mut self) -> Arc<Session> {
@@ -990,9 +1017,15 @@ mod tests {
             requests_b.contains(&format!("PUBLISH live/cam/{CATALOG_TRACK_NAME}")),
             "{requests_b:?}"
         );
+        relay_a.unsubscribe_published(&session_a).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        broadcast
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(100))
+            .await
+            .unwrap();
         let close = tokio::time::timeout(TEST_TIMEOUT, session_a.closed())
             .await
-            .expect("the old session must be closed after the move");
+            .expect("the old session must be closed once relay A unsubscribed");
         assert_eq!(close.code, Some(0x0));
     }
 
@@ -1129,10 +1162,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_open_group_ends_on_the_old_relay_and_the_next_one_starts_on_the_new() {
-        // Arrange: a group is open on relay A when the move completes
-        let mut relay_a = FakeRelay::spawn("goaway-group-a");
-        let relay_b = FakeRelay::spawn("goaway-group-b");
+    async fn objects_go_to_both_relays_until_the_old_one_unsubscribes() {
+        // Arrange
+        let mut relay_a = FakeRelay::spawn("goaway-both-a");
+        let mut relay_b = FakeRelay::spawn("goaway-both-b");
         let (connection, broadcast) = connected_broadcast(&relay_a).await;
         broadcast
             .send_object(VIDEO_TRACK_NAME, keyframe_object(1))
@@ -1147,26 +1180,30 @@ mod tests {
             .unwrap();
         wait_until_moved(&connection).await;
 
-        // Act: one more object of the open group, then the next group
-        let within = broadcast
-            .send_object(VIDEO_TRACK_NAME, delta_object())
-            .await
-            .unwrap();
+        // Act: two more groups, then relay A unsubscribes
+        for group_id in [2, 3] {
+            broadcast
+                .send_object(VIDEO_TRACK_NAME, keyframe_object(group_id))
+                .await
+                .unwrap();
+        }
         let old_still_open = tokio::time::timeout(Duration::from_millis(200), session_a.closed())
             .await
             .is_err();
+        relay_a.unsubscribe_published(&session_a).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         broadcast
-            .send_object(VIDEO_TRACK_NAME, keyframe_object(2))
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(4))
             .await
             .unwrap();
 
-        // Assert: the object within the group was sent on relay A, which
-        // stayed open until the track started its next group
-        assert!(within, "the object within the open group must be sent");
-        assert!(old_still_open, "relay A must stay open for the open group");
+        // Assert
+        relay_a.wait_for_video_group(3).await;
+        relay_b.wait_for_video_group(3).await;
+        assert!(old_still_open, "relay A must stay open while it subscribes");
         let close = tokio::time::timeout(TEST_TIMEOUT, session_a.closed())
             .await
-            .expect("relay A must be closed once the track moved");
+            .expect("relay A must be closed once it unsubscribed");
         assert_eq!(close.code, Some(0x0));
     }
 }
