@@ -33,3 +33,15 @@ pub(crate) fn upstream_subscription(request_id: u64) -> UpstreamSubscription {
         moqt::subscribe::FilterType::LargestObject,
     ))
 }
+
+pub(crate) fn upstream_subscription_with_max_cache_duration(
+    request_id: u64,
+    max_cache_duration: u64,
+) -> UpstreamSubscription {
+    let mut subscription =
+        subscriber_initiated(request_id, moqt::subscribe::FilterType::LargestObject);
+    if let moqt::Subscription::SubscriberInitiated(subscriber_initiated) = &mut subscription {
+        subscriber_initiated.max_cache_duration = Some(max_cache_duration);
+    }
+    UpstreamSubscription::from(subscription)
+}

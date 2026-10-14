@@ -583,6 +583,12 @@ per-request authorization gate under "Event pipeline".
   FETCH goes upstream. Eviction removes it at `expires_at` whether that is
   before or after the relay TTL, and the newest-object exception does not
   extend it. Objects received without the value keep the relay TTL.
+  Downstream, the relay sends the value it received unchanged:
+  `UpstreamTrack::max_cache_duration` (the newest publisher's) goes into the
+  SUBSCRIBE_OK, the forwarded PUBLISH and a FETCH_OK served from cache, and an
+  upstream FETCH_OK's value goes into the relayed FETCH_OK. Each relay counts
+  from its own receipt, so in a cascade an object can stay cached up to N ms
+  per hop.
 
 ### Egress (`modules/data_plane/egress`)
 `EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop

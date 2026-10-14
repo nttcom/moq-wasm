@@ -27,6 +27,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
+        max_cache_duration: Option<u64>,
     ) -> anyhow::Result<DownstreamSubscription>;
     async fn send_publish_done(
         &self,
@@ -63,9 +64,11 @@ impl Publisher for moqt::Publisher {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
+        max_cache_duration: Option<u64>,
     ) -> anyhow::Result<DownstreamSubscription> {
         let option = moqt::publish::PublishOption {
             content_exists,
+            max_cache_duration,
             ..Default::default()
         };
         let subscription = self.publish(track_namespace, track_name, option).await?;
