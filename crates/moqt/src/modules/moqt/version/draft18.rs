@@ -2,4 +2,5 @@
 
 pub(crate) mod codec;
 pub(crate) mod error_codes;
+pub(crate) mod messages;
 pub(crate) mod parameters;
