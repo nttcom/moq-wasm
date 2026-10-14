@@ -1,4 +1,4 @@
-import { SubgroupObjectMessage } from '../../pkg/moqt'
+import type { SubgroupObjectMessage } from '../../pkg/moqt'
 
 export type SubgroupObjectMessageWithLoc = SubgroupObjectMessage & { locHeader?: any }
 export type SubgroupObjectHandler = (groupId: bigint, message: SubgroupObjectMessageWithLoc) => void
@@ -8,6 +8,7 @@ export class SubscriptionStateManager {
   private static readonly MAX_BUFFERED_OBJECTS_PER_TRACK = 32
   private readonly subgroupObjectHandlers = new Map<bigint, SubgroupObjectHandler>()
   private readonly bufferedSubgroupObjects = new Map<bigint, BufferedSubgroupObject[]>()
+  private readonly endedTrackAliases = new Set<bigint>()
 
   setSubgroupObjectHandler(trackAlias: bigint, handler: SubgroupObjectHandler): void {
     this.subgroupObjectHandlers.set(trackAlias, handler)
@@ -26,6 +27,9 @@ export class SubscriptionStateManager {
   }
 
   bufferSubgroupObject(trackAlias: bigint, groupId: bigint, message: SubgroupObjectMessageWithLoc): void {
+    if (this.endedTrackAliases.has(trackAlias)) {
+      return
+    }
     const buffered = this.bufferedSubgroupObjects.get(trackAlias) ?? []
     if (buffered.length >= SubscriptionStateManager.MAX_BUFFERED_OBJECTS_PER_TRACK) {
       buffered.shift()
@@ -42,8 +46,16 @@ export class SubscriptionStateManager {
     this.bufferedSubgroupObjects.delete(trackAlias)
   }
 
+  /// The publisher ended the subscription, so objects that still arrive on
+  /// its alias without a handler are dropped instead of buffered.
+  endSubscription(trackAlias: bigint): void {
+    this.deleteSubgroupObjectHandler(trackAlias)
+    this.endedTrackAliases.add(trackAlias)
+  }
+
   clearHandlers(): void {
     this.subgroupObjectHandlers.clear()
     this.bufferedSubgroupObjects.clear()
+    this.endedTrackAliases.clear()
   }
 }
