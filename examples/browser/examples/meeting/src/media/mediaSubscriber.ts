@@ -4,7 +4,7 @@ import { createPictureCanvas, createPictureVideo } from '@player/pictureElements
 import { AdaptiveBitrate, type Rung, capLadderToHeight } from '@player/adaptiveBitrate'
 import { RenditionSplice } from '@player/renditionSplice'
 import { monotonicUnixMicros } from '../../../../utils/media/clock'
-import { readLocHeader } from '../../../../utils/media/loc'
+import { type AudioLevel, readLocHeader } from '../../../../utils/media/loc'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
 import type { MediaKind } from '@player/trackContext'
 import type { TrackMediaConfig } from '../types/catalog'
@@ -24,6 +24,7 @@ export type VideoAdaptation = { ladder: Rung[]; onPreferred: (trackName: string)
 export interface MediaSubscriberHandlers {
   onRemotePicture?: (userId: string, source: RemoteVideoSource, picture: HTMLElement) => void
   onRemotePictureClosed?: (userId: string, source: RemoteVideoSource) => void
+  onAudioLevel?: (userId: string, audioLevel: AudioLevel) => void
 }
 
 type TrackRegistration = {
@@ -182,7 +183,13 @@ export class MediaSubscriber {
       configurePipeline(pipeline, registration)
     }
     if (kind === 'audio') {
-      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => pipeline.push(kind, groupId, message))
+      this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) => {
+        pipeline.push(kind, groupId, message)
+        const audioLevel = readLocHeader(message.locHeader).audioLevel
+        if (audioLevel) {
+          this.handlers.onAudioLevel?.(userId, audioLevel)
+        }
+      })
       return
     }
     this.client.setOnSubgroupObjectHandler(trackAlias, (groupId, message) =>
