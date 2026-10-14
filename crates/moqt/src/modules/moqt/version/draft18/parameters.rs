@@ -204,7 +204,7 @@ const USE_VALUE: u64 = 0x3;
 
 /// A Token that cannot be decoded closes the session with
 /// KEY_VALUE_FORMATTING_ERROR (§10.2.2).
-fn decode_token(mut value: Bytes) -> Result<AuthorizationToken, DecodeError> {
+pub(crate) fn decode_token(mut value: Bytes) -> Result<AuthorizationToken, DecodeError> {
     let formatting = |error: DecodeError| match error {
         DecodeError::NeedMoreData => DecodeError::Violation {
             code: TerminationErrorCode::KeyValueFormattingError,
@@ -240,7 +240,7 @@ fn decode_token(mut value: Bytes) -> Result<AuthorizationToken, DecodeError> {
 }
 
 /// The model's DELETE has no alias, so it cannot be sent.
-fn encode_token(token: &AuthorizationToken) -> anyhow::Result<BytesMut> {
+pub(crate) fn encode_token(token: &AuthorizationToken) -> anyhow::Result<BytesMut> {
     let mut buf = BytesMut::new();
     match token {
         AuthorizationToken::Delete => anyhow::bail!("cannot send DELETE without its alias"),
