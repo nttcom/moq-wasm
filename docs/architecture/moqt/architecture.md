@@ -238,9 +238,12 @@ One struct owns all cross-task state:
 - `inflight_requests` — request/response correlation by request id.
   Registration returns a `RegisteredSender` drop-guard that marks the entry
   abandoned on drop, so a late response is withdrawn instead of closing the
-  session. When the control stream closes, every entry is failed and later
-  registrations fail at once: no response can arrive, so a caller never waits
-  out the response timeout for a gone peer.
+  session. Each request registers its withdrawal (`LateResponseAction`):
+  UNSUBSCRIBE, UNSUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE_DONE or PUBLISH_DONE
+  (INTERNAL_ERROR, Stream Count 0: no stream opens before PUBLISH_OK); FETCH
+  and TRACK_STATUS have none. When the control stream closes, every entry
+  is failed and later registrations fail at once: no response can arrive, so
+  a caller never waits out the response timeout for a gone peer.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
