@@ -101,6 +101,8 @@ session's SDP, which names the streams, their payload types and the out-of-band
 parameter sets; feed it one datagram at a time from any of the session's ports.
 The muxer tags each packet with its stream and writes the SDP once it has seen
 the `Streams` event and the configuration of every announced stream.
+`MuxerOptions` sets each stream's payload type and SSRC; the SDP names both
+SSRCs with one `cname`, which tells a receiver the streams belong together.
 
 ```rust
 use mediapack::rtp::{self, MediaKind};
@@ -111,7 +113,7 @@ for datagram in datagrams {
     let events = demuxer.push(&datagram)?;
 }
 
-let mut muxer = rtp::Muxer::new();
+let mut muxer = rtp::Muxer::default();
 for event in &events {
     for packet in muxer.push(event)? {
         match packet.kind {

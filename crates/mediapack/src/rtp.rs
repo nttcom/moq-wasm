@@ -7,5 +7,5 @@ mod reorder;
 pub mod sdp;
 
 pub use demuxer::Demuxer;
-pub use muxer::{Muxer, RtpPacket};
+pub use muxer::{Muxer, MuxerOptions, RtpPacket};
 pub use sdp::{Codec, MediaDescription, MediaKind, SessionDescription};

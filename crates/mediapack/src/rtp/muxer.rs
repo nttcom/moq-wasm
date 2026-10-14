@@ -13,7 +13,9 @@ use crate::{
         aac::{self, AuHeaderConfig},
         h264,
         packet::Header,
-        sdp::{Codec, MediaDescription, MediaKind, OPUS_CLOCK_RATE, SessionDescription},
+        sdp::{
+            Codec, MediaDescription, MediaKind, OPUS_CLOCK_RATE, SessionDescription, SsrcAttribute,
+        },
     },
     sample::{AudioConfig, MediaEvent, StreamSet},
 };
@@ -30,12 +32,34 @@ pub struct RtpPacket {
     pub data: Bytes,
 }
 
+/// The payload type and SSRC of each stream. An SSRC left `None` is drawn at
+/// random, as are the first sequence number and timestamp (RFC 3550 §5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MuxerOptions {
+    pub video_payload_type: u8,
+    pub audio_payload_type: u8,
+    pub video_ssrc: Option<u32>,
+    pub audio_ssrc: Option<u32>,
+}
+
+impl Default for MuxerOptions {
+    fn default() -> Self {
+        Self {
+            video_payload_type: VIDEO_PAYLOAD_TYPE,
+            audio_payload_type: AUDIO_PAYLOAD_TYPE,
+            video_ssrc: None,
+            audio_ssrc: None,
+        }
+    }
+}
+
 /// Packetizes media events into RTP packets without sending them. The video
 /// stream is H.264 at 90 kHz; the audio stream is AAC-hbr or A-law at its
-/// sample rate, or Opus at 48 kHz. SSRCs, sequence numbers and timestamps
-/// start at random values (RFC 3550 §5.1).
+/// sample rate, or Opus at 48 kHz.
 pub struct Muxer {
     streams: Option<StreamSet>,
+    /// One canonical name for both streams, so a receiver synchronizes them.
+    cname: String,
     video: StreamSender,
     audio: StreamSender,
     video_config: Option<AvcDecoderConfigurationRecord>,
@@ -53,16 +77,30 @@ struct StreamSender {
 
 impl Default for Muxer {
     fn default() -> Self {
-        Self::new()
+        Self::new(MuxerOptions::default())
     }
 }
 
 impl Muxer {
-    pub fn new() -> Self {
+    /// Panics when a payload type does not fit the 7 bits of the RTP header.
+    pub fn new(options: MuxerOptions) -> Self {
+        assert!(
+            options.video_payload_type <= 127 && options.audio_payload_type <= 127,
+            "RTP payload types are 7 bits"
+        );
         Self {
             streams: None,
-            video: StreamSender::new(MediaKind::Video, VIDEO_PAYLOAD_TYPE),
-            audio: StreamSender::new(MediaKind::Audio, AUDIO_PAYLOAD_TYPE),
+            cname: format!("{:016x}", random()),
+            video: StreamSender::new(
+                MediaKind::Video,
+                options.video_payload_type,
+                options.video_ssrc,
+            ),
+            audio: StreamSender::new(
+                MediaKind::Audio,
+                options.audio_payload_type,
+                options.audio_ssrc,
+            ),
             video_config: None,
             audio_config: None,
         }
@@ -157,6 +195,7 @@ impl Muxer {
                 codec: Codec::H264 {
                     parameter_sets: Some(record.clone()),
                 },
+                ssrc: Some(self.ssrc_attribute(&self.video)),
             });
         }
         if streams.has_audio {
@@ -180,6 +219,7 @@ impl Muxer {
                     },
                     AudioConfig::Mp3 { .. } => unreachable!("rejected at its AudioConfig"),
                 },
+                ssrc: Some(self.ssrc_attribute(&self.audio)),
             });
         }
         Some(SessionDescription {
@@ -187,14 +227,21 @@ impl Muxer {
             media,
         })
     }
+
+    fn ssrc_attribute(&self, stream: &StreamSender) -> SsrcAttribute {
+        SsrcAttribute {
+            ssrc: stream.ssrc,
+            cname: self.cname.clone(),
+        }
+    }
 }
 
 impl StreamSender {
-    fn new(kind: MediaKind, payload_type: u8) -> Self {
+    fn new(kind: MediaKind, payload_type: u8, ssrc: Option<u32>) -> Self {
         Self {
             kind,
             payload_type,
-            ssrc: random() as u32,
+            ssrc: ssrc.unwrap_or_else(|| random() as u32),
             sequence_number: random() as u16,
             timestamp_offset: random() as u32,
             started: false,
@@ -269,7 +316,7 @@ mod tests {
     #[test]
     fn sends_each_nal_unit_and_marks_the_end_of_the_access_unit() {
         // Arrange
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         let keyframe = MediaEvent::Video(VideoSample {
             data: keyframe_annexb(),
             is_keyframe: true,
@@ -310,7 +357,7 @@ mod tests {
     #[test]
     fn advances_timestamps_in_the_stream_clock() {
         // Arrange
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
             .unwrap();
@@ -329,6 +376,57 @@ mod tests {
         assert_eq!(second[0].timestamp.wrapping_sub(first[0].timestamp), 24_000);
         assert!(first[0].marker);
         assert_eq!(first[0].payload_type, AUDIO_PAYLOAD_TYPE);
+    }
+
+    #[test]
+    fn uses_the_given_payload_types_and_ssrcs() {
+        // Arrange
+        let mut muxer = Muxer::new(MuxerOptions {
+            video_payload_type: 102,
+            audio_payload_type: 111,
+            video_ssrc: Some(2_222),
+            audio_ssrc: None,
+        });
+        muxer
+            .push(&MediaEvent::Streams(StreamSet {
+                has_video: true,
+                has_audio: true,
+            }))
+            .unwrap();
+        muxer
+            .push(&MediaEvent::VideoConfig(fixture_record()))
+            .unwrap();
+        muxer
+            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
+            .unwrap();
+
+        // Act
+        let video = headers(
+            &muxer
+                .push(&MediaEvent::Video(VideoSample {
+                    data: keyframe_annexb(),
+                    is_keyframe: true,
+                    pts: Timestamp::ZERO,
+                    dts: Timestamp::ZERO,
+                }))
+                .unwrap(),
+        );
+        let description = muxer
+            .session_description(DESTINATION, 5_004, 5_006)
+            .unwrap();
+
+        // Assert: both streams share one cname so a receiver can align them
+        assert_eq!((video[0].payload_type, video[0].ssrc), (102, 2_222));
+        let [video_media, audio_media] = &description.media[..] else {
+            panic!("expected a video and an audio section");
+        };
+        assert_eq!(audio_media.payload_type, 111);
+        let (video_ssrc, audio_ssrc) = (
+            video_media.ssrc.as_ref().unwrap(),
+            audio_media.ssrc.as_ref().unwrap(),
+        );
+        assert_eq!(video_ssrc.ssrc, 2_222);
+        assert_eq!(video_ssrc.cname, audio_ssrc.cname);
     }
 
     #[test]
@@ -352,7 +450,7 @@ mod tests {
     #[test]
     fn splits_a_law_frames_at_sample_boundaries() {
         // Arrange: 2 400 bytes of stereo A-law, 1 200 samples per channel
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Pcma {
                 sample_rate: 8_000,
@@ -390,7 +488,7 @@ mod tests {
     #[test]
     fn sends_each_opus_packet_whole_on_the_48_khz_clock() {
         // Arrange: a 16 kHz Opus stream still counts RTP time at 48 kHz
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Opus {
                 sample_rate: 16_000,
@@ -422,7 +520,7 @@ mod tests {
     fn describes_a_law_and_opus_streams() {
         // Arrange
         let describe = |config: AudioConfig| {
-            let mut muxer = Muxer::new();
+            let mut muxer = Muxer::default();
             muxer
                 .push(&MediaEvent::Streams(StreamSet {
                     has_video: false,
@@ -456,7 +554,7 @@ mod tests {
     #[test]
     fn needs_the_audio_config_before_audio_samples() {
         // Arrange
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
 
         // Act / Assert
         assert!(
@@ -472,7 +570,7 @@ mod tests {
     #[test]
     fn describes_the_session_once_every_stream_is_configured() {
         // Arrange
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         muxer
             .push(&MediaEvent::Streams(StreamSet {
                 has_video: true,
@@ -504,7 +602,7 @@ mod tests {
     #[test]
     fn describes_a_video_only_session_without_audio_config() {
         // Arrange
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         muxer
             .push(&MediaEvent::Streams(StreamSet {
                 has_video: true,

@@ -1,5 +1,6 @@
 //! The subset of SDP (RFC 8866) that describes a plain RTP session: one
-//! `m=` section per stream with its `c=`, `a=rtpmap` and `a=fmtp` lines. The
+//! `m=` section per stream with its `c=`, `a=rtpmap`, `a=fmtp` and `a=ssrc`
+//! (RFC 5576) lines. The
 //! codec parameters follow RFC 6184 §8.1 (H.264), RFC 3640 §4.1 (AAC),
 //! RFC 3551 §4.5.14 (G.711 A-law) and RFC 7587 §7 (Opus).
 
@@ -41,6 +42,15 @@ pub struct MediaDescription {
     pub payload_type: u8,
     pub clock_rate: u32,
     pub codec: Codec,
+    pub ssrc: Option<SsrcAttribute>,
+}
+
+/// `a=ssrc:<ssrc> cname:<cname>`: the stream's SSRC and the RTCP canonical
+/// name that ties the streams of one source together for synchronization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsrcAttribute {
+    pub ssrc: u32,
+    pub cname: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,6 +233,7 @@ impl Section {
             payload_type: self.payload_type,
             clock_rate,
             codec,
+            ssrc: None,
         }
     }
 }
@@ -436,7 +447,11 @@ impl fmt::Display for MediaDescription {
             Codec::Unsupported(encoding) => {
                 writeln!(f, "a=rtpmap:{payload_type} {encoding}/{}", self.clock_rate)
             }
+        }?;
+        if let Some(SsrcAttribute { ssrc, cname }) = &self.ssrc {
+            writeln!(f, "a=ssrc:{ssrc} cname:{cname}")?;
         }
+        Ok(())
     }
 }
 
@@ -479,6 +494,7 @@ mod tests {
                     codec: Codec::H264 {
                         parameter_sets: Some(fixture_record())
                     },
+                    ssrc: None,
                 },
                 MediaDescription {
                     kind: MediaKind::Audio,
@@ -490,6 +506,7 @@ mod tests {
                         config: mono_48k(),
                         au_headers: AuHeaderConfig::AAC_HBR,
                     },
+                    ssrc: None,
                 },
             ]
         );
@@ -582,6 +599,32 @@ mod tests {
             ]
         );
         assert_eq!(reparsed, description);
+    }
+
+    #[test]
+    fn writes_the_cname_of_a_source() {
+        // Arrange
+        let media = MediaDescription {
+            kind: MediaKind::Audio,
+            port: 5_006,
+            destination: None,
+            payload_type: 8,
+            clock_rate: 8_000,
+            codec: Codec::Pcma { channels: 1 },
+            ssrc: Some(SsrcAttribute {
+                ssrc: 0xDEAD_BEEF,
+                cname: "egress@example".to_owned(),
+            }),
+        };
+
+        // Act
+        let text = media.to_string();
+
+        // Assert
+        assert!(
+            text.ends_with("a=rtpmap:8 PCMA/8000\na=ssrc:3735928559 cname:egress@example\n"),
+            "{text}"
+        );
     }
 
     #[test]

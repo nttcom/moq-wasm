@@ -355,7 +355,7 @@ mod tests {
     }
 
     fn mux(events: &[MediaEvent]) -> (Vec<RtpPacket>, SessionDescription) {
-        let mut muxer = Muxer::new();
+        let mut muxer = Muxer::default();
         let packets = events
             .iter()
             .flat_map(|event| muxer.push(event).unwrap())
