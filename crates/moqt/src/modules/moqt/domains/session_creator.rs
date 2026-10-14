@@ -64,7 +64,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         }
     }
 
-    pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Accepting> {
+    pub(crate) async fn accept_new_connection(&self) -> anyhow::Result<Accepting> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let handshake = async move {
             let setup = version::accept(&transport_conn).await?;

@@ -88,8 +88,18 @@ impl<T: TransportProtocol> Endpoint<T> {
         self.session_creator.create_new_connection(url).await
     }
 
-    pub async fn accept(&mut self) -> anyhow::Result<Accepting> {
+    pub async fn accept(&self) -> anyhow::Result<Accepting> {
         self.session_creator.accept_new_connection().await
+    }
+
+    /// Refuses every connection attempt at the transport level (QUIC
+    /// CONNECTION_REFUSED, HTTP 503 for WebTransport) while `accept` is polled.
+    /// A client learns at once that this endpoint is closing instead of waiting
+    /// for its handshake to time out. Established sessions are unaffected.
+    pub fn refuse_new_connections(&self) {
+        self.session_creator
+            .transport_creator
+            .refuse_new_connections();
     }
 
     /// Resolves once the transport of every session of this endpoint has
@@ -109,8 +119,12 @@ impl<T: TransportProtocol> Endpoint<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::test_support::{
-        HANDSHAKE_TIMEOUT, dual_client, receive_disconnected, spawn_dual_server,
+    use crate::{
+        DUAL, Endpoint,
+        modules::test_support::{
+            HANDSHAKE_TIMEOUT, dual_client, receive_disconnected, self_signed_server_config,
+            spawn_dual_server,
+        },
     };
 
     async fn run_client_that_drops_its_session_and_exits_after_wait_idle(url: String) {
@@ -128,6 +142,32 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refusing_server_turns_new_clients_away_at_once() {
+        // Arrange
+        let server_config = self_signed_server_config("refuse");
+        let server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+        let port = server.local_port().unwrap();
+        server.refuse_new_connections();
+        let accept = tokio::spawn(async move {
+            let _ = server.accept().await;
+        });
+
+        // Act
+        let connect = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            dual_client()
+                .connect(&format!("moqt://127.0.0.1:{port}"))
+                .await?
+                .await
+        })
+        .await;
+
+        // Assert
+        let result = connect.expect("the refusal must arrive before the handshake timeout");
+        assert!(result.is_err());
+        accept.abort();
     }
 
     #[tokio::test]

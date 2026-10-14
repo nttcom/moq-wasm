@@ -181,6 +181,11 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
   `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session` is
   created.
+- `refuse_new_connections()` makes every later connection attempt fail at
+  the transport level (QUIC CONNECTION_REFUSED, HTTP 503 for WebTransport)
+  while `accept()` keeps being polled; established sessions are unaffected.
+  A closing server uses it so that clients learn at once instead of waiting
+  for their handshake to time out.
 - `accept()` returns `Accepting`, whose future performs the transport
   handshake and `version::accept`, which for draft-14 accepts the control
   stream and stops after CLIENT_SETUP is received. It resolves to a

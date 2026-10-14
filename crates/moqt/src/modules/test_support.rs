@@ -80,7 +80,7 @@ pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
     let server_config = self_signed_server_config(name);
-    let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
+    let server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)

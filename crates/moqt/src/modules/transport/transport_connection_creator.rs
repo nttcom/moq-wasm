@@ -35,7 +35,11 @@ pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
         Self: Sized;
     async fn create_new_transport(&self, target: &ConnectTarget)
     -> anyhow::Result<BoxedConnection>;
-    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection>;
+    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection>;
+    /// From now on every connection attempt is refused at the transport
+    /// level while `accept_new_transport` is polled; established
+    /// connections are unaffected.
+    fn refuse_new_connections(&self);
     async fn wait_idle(&self);
     fn local_port(&self) -> anyhow::Result<u16>;
 }

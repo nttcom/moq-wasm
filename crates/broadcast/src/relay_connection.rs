@@ -835,7 +835,7 @@ mod tests {
         /// PUBLISH_NAMESPACE is answered only once `gate` fires, which holds
         /// a publisher moving here in the middle of the move.
         fn spawn_gated(name: &str, gate: Option<oneshot::Receiver<()>>) -> Self {
-            let mut endpoint =
+            let endpoint =
                 Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
             let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
             let (session_sender, session) = oneshot::channel();
