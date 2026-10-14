@@ -2,19 +2,24 @@
 //! streams (§10).
 
 use bytes::BytesMut;
-use tokio_util::codec::Decoder;
+use tokio_stream::StreamExt;
+use tokio_util::codec::{Decoder, FramedRead};
 
 use super::{
     codec::DecodeError,
     messages::{Message, decode_message, take_message},
 };
 use crate::modules::{
-    moqt::data_plane::stream::stream_receiver::StreamReceiver,
-    transport::{transport_connection::BoxedSendStream, transport_send_stream::TransportSendError},
+    moqt::data_plane::codec::tokio_reader::Reader,
+    transport::{
+        read_error::ReadError,
+        transport_connection::{BoxedReceiveStream, BoxedSendStream},
+        transport_send_stream::TransportSendError,
+    },
 };
 
 #[derive(Debug, Default)]
-pub(crate) struct MessageDecoder;
+struct MessageDecoder;
 
 impl Decoder for MessageDecoder {
     type Item = Message;
@@ -34,7 +39,52 @@ impl Decoder for MessageDecoder {
     }
 }
 
-pub(crate) type MessageReceiver = StreamReceiver<1024, MessageDecoder>;
+/// Why a stream stopped before its end.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum MessageReceiveError {
+    /// The transport session ended, which ends every stream with it.
+    #[error("the session ended")]
+    SessionEnded,
+    #[error("the stream was reset")]
+    Reset,
+    #[error("malformed message: {0}")]
+    Malformed(String),
+}
+
+/// The receiving half of a control or request stream.
+#[derive(Debug)]
+pub(crate) struct MessageReceiver {
+    framed_read: FramedRead<Reader, MessageDecoder>,
+}
+
+impl MessageReceiver {
+    pub(crate) fn new(receive_stream: BoxedReceiveStream) -> Self {
+        Self {
+            framed_read: FramedRead::with_capacity(
+                Reader::new(receive_stream),
+                MessageDecoder,
+                1024,
+            ),
+        }
+    }
+
+    /// `Ok(None)` once the peer has finished the stream.
+    pub(crate) async fn receive(&mut self) -> Result<Option<Message>, MessageReceiveError> {
+        let Some(received) = self.framed_read.next().await else {
+            return Ok(None);
+        };
+        received.map(Some).map_err(|error| {
+            match error
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<ReadError>())
+            {
+                Some(ReadError::ConnectionLost) => MessageReceiveError::SessionEnded,
+                Some(ReadError::Closed | ReadError::Reset) => MessageReceiveError::Reset,
+                None => MessageReceiveError::Malformed(error.to_string()),
+            }
+        })
+    }
+}
 
 /// The sending half of a control or request stream.
 #[derive(Debug)]
