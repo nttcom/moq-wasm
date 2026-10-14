@@ -107,7 +107,7 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
             disk_cache: None,
         },
     );
-    let handler = server.spawn_client_transport::<QUIC>(0);
+    let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
     RunningRelay {
         port: handler.local_port,
         server,

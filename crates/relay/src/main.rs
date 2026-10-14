@@ -75,8 +75,8 @@ async fn main() -> anyhow::Result<()> {
     let cert_path = get_cert_path().to_str().unwrap().to_string();
 
     let server = relay::RelayServer::new_with_config(&key_path, &cert_path, config.clone()).await?;
-    let mut client_handler = server.spawn_client_transport::<moqt::DUAL>(config.port);
-    let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port);
+    let mut client_handler = server.spawn_client_transport::<moqt::DUAL>(config.port)?;
+    let _inner_handler = server.spawn_inner_transport::<moqt::QUIC>(config.inner_port)?;
     let _stats_publisher = server.spawn_stats_publisher(config.relay_id.clone(), config.inner_port);
 
     tracing::info!(
