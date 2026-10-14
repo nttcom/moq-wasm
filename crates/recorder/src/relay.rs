@@ -3,9 +3,12 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, DUAL, Endpoint, Session, Subscription, TrackReader,
-    fetch::{Fetch, FetchOption},
-    object::{DataReceiver, GroupOrder},
+    ClientConfig, DUAL, Endpoint, Session, Subscription, TrackObject, TrackReader,
+    fetch::{Fetch, FetchDataReceiver, FetchOption},
+    object::{
+        ContentExists, DataReceiver, ForwardingPreference, GroupOrder, Location, Object,
+        ObjectStatus,
+    },
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -46,17 +49,19 @@ impl RelayConnection {
     }
 }
 
-/// Subscribes from the next group start, so a recording begins on a keyframe.
+/// `NextGroupStart` begins a live recording on a keyframe; `LargestObject`
+/// continues right after what `fetch_cached` returns.
 pub(crate) async fn subscribe(
     session: &Session,
     namespace: &str,
     name: &str,
+    filter_type: FilterType,
 ) -> Result<Subscription> {
     let option = SubscribeOption {
         subscriber_priority: SUBSCRIBER_PRIORITY,
         group_order: GroupOrder::Ascending,
         forward: true,
-        filter_type: FilterType::NextGroupStart,
+        filter_type,
     };
     session
         .subscriber()
@@ -101,4 +106,52 @@ pub(crate) async fn fetch_joining_group(
             Fetch::End => return Ok(latest),
         }
     }
+}
+
+/// A standalone FETCH from the track's first location through the largest
+/// object `subscription` reported (draft-14 §9.16.1: End Location is the last
+/// object plus one), so a `LargestObject` subscription continues where it
+/// ends. The relay serves what it caches and asks the publisher for the
+/// rest. `None` when the subscription reported no content.
+pub(crate) async fn fetch_cached(
+    session: &Session,
+    subscription: &Subscription,
+) -> Result<Option<FetchDataReceiver>> {
+    let ContentExists::True { location: largest } = subscription.content_exists() else {
+        return Ok(None);
+    };
+    let mut subscriber = session.subscriber();
+    let handle = subscriber
+        .fetch(
+            subscription.track_namespace().to_string(),
+            subscription.track_name().to_string(),
+            Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            Location {
+                group_id: largest.group_id,
+                object_id: largest.object_id + 1,
+            },
+            FetchOption::default(),
+        )
+        .await?;
+    Ok(Some(subscriber.accept_fetch_receiver(&handle).await?))
+}
+
+/// `None` for status objects, which carry no media.
+pub(crate) fn fetched_track_object(object: Object) -> Option<TrackObject> {
+    if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+        return None;
+    }
+    Some(TrackObject {
+        group_id: object.location.group_id,
+        subgroup_id: match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => 0,
+        },
+        object_id: object.location.object_id,
+        extension_headers: object.extension_headers,
+        payload: object.payload,
+    })
 }

@@ -4,7 +4,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use moqt::{Session, Subscription, TrackObject, TrackReader};
+use moqt::{
+    Session, Subscription, TrackObject, TrackReader,
+    fetch::{Fetch, FetchDataReceiver},
+    subscribe::FilterType,
+};
 
 use crate::{
     Args,
@@ -51,8 +55,13 @@ fn app_id(namespace: &str) -> &str {
 }
 
 async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
-    let catalog_subscription =
-        relay::subscribe(session, &args.namespace, msf::CATALOG_TRACK_NAME).await?;
+    let catalog_subscription = relay::subscribe(
+        session,
+        &args.namespace,
+        msf::CATALOG_TRACK_NAME,
+        FilterType::NextGroupStart,
+    )
+    .await?;
     let selection = wait_for_selection(session, &catalog_subscription, args).await?;
     tracing::info!(
         video = %selection.video,
@@ -60,9 +69,17 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         "catalog resolved"
     );
 
-    let video_subscription = relay::subscribe(session, &args.namespace, &selection.video).await?;
+    let filter_type = if args.from_cache {
+        FilterType::LargestObject
+    } else {
+        FilterType::NextGroupStart
+    };
+    let video_subscription =
+        relay::subscribe(session, &args.namespace, &selection.video, filter_type).await?;
     let audio_subscription = match &selection.audio {
-        Some(audio) => Some(relay::subscribe(session, &args.namespace, &audio.name).await?),
+        Some(audio) => {
+            Some(relay::subscribe(session, &args.namespace, &audio.name, filter_type).await?)
+        }
         None => None,
     };
     let mut video_reader = relay::track_reader(session, &video_subscription).await?;
@@ -78,6 +95,16 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
     let mut file = RecordingFile::create(path).await?;
     let mut pipeline = Pipeline::new(&selection, args.segment_seconds.map(Duration::from_secs))?;
     tracing::info!(path = %file.path().display(), "recording started");
+    if args.from_cache {
+        record_cached(
+            session,
+            &video_subscription,
+            audio_subscription.as_ref(),
+            &mut pipeline,
+            &mut file,
+        )
+        .await?;
+    }
 
     loop {
         let output = tokio::select! {
@@ -164,6 +191,76 @@ async fn wait_for_selection(
             track = %args.video_track,
             "waiting for the catalog to list the video track"
         );
+    }
+}
+
+/// Writes the cached part of both tracks, in arrival order, before the live
+/// subscriptions are read; they continue where it ends. A failed FETCH leaves
+/// a gap before the live part instead of ending the recording.
+async fn record_cached(
+    session: &Session,
+    video: &Subscription,
+    audio: Option<&Subscription>,
+    pipeline: &mut Pipeline,
+    file: &mut RecordingFile,
+) -> Result<()> {
+    let mut video_fetch = open_cached(session, video).await;
+    let mut audio_fetch = match audio {
+        Some(audio) => open_cached(session, audio).await,
+        None => None,
+    };
+    while video_fetch.is_some() || audio_fetch.is_some() {
+        tokio::select! {
+            fetched = next_fetched(video_fetch.as_mut()) => {
+                if let Some(object) = fetched_object(fetched, "video", &mut video_fetch) {
+                    write_output(file, pipeline.push_video(&object)?).await?;
+                }
+            }
+            fetched = next_fetched(audio_fetch.as_mut()) => {
+                if let Some(object) = fetched_object(fetched, "audio", &mut audio_fetch) {
+                    write_output(file, pipeline.push_audio(&object)?).await?;
+                }
+            }
+        }
+    }
+    tracing::info!("cached part recorded; continuing live");
+    Ok(())
+}
+
+/// Clears `fetch` once the FETCH ended or failed; status objects yield nothing.
+fn fetched_object(
+    fetched: Result<Fetch>,
+    track: &str,
+    fetch: &mut Option<FetchDataReceiver>,
+) -> Option<TrackObject> {
+    match fetched {
+        Ok(Fetch::Object(object)) => relay::fetched_track_object(object),
+        Ok(Fetch::End) => {
+            *fetch = None;
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%error, track, "FETCH of the cached part ended early");
+            *fetch = None;
+            None
+        }
+    }
+}
+
+async fn open_cached(session: &Session, subscription: &Subscription) -> Option<FetchDataReceiver> {
+    relay::fetch_cached(session, subscription)
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(track = subscription.track_name(), %error, "cannot FETCH the cached part")
+        })
+        .ok()
+        .flatten()
+}
+
+async fn next_fetched(receiver: Option<&mut FetchDataReceiver>) -> Result<Fetch> {
+    match receiver {
+        Some(receiver) => receiver.receive().await,
+        None => std::future::pending().await,
     }
 }
 
