@@ -318,6 +318,11 @@ impl SessionContext {
         self.receiver_map.lock().await.remove(&track_alias);
     }
 
+    pub(crate) async fn remove_pending_fetch(&self, request_id: RequestId) {
+        self.fetch_notification_map.lock().await.remove(&request_id);
+        self.fetch_receiver_map.lock().await.remove(&request_id);
+    }
+
     /// Awaits a response to a control message with a bounded timeout (§12.2).
     ///
     /// A timeout fails only this request instead of closing the session:
