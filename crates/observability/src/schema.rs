@@ -28,6 +28,8 @@ const TABLES: &[Table] = &[
             ("cache_objects", COUNTER),
             ("cache_payload_bytes", COUNTER),
             ("disk_cache_bytes", COUNTER),
+            ("client_sessions", COUNTER),
+            ("draining_since_ms", "Nullable(UInt64)"),
         ],
         order_by: &[],
     },

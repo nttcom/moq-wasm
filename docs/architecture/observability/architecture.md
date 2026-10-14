@@ -75,7 +75,7 @@ neither is reported.
 {
   "relay_id": "relay-a",
   "timestamp_ms": 1791262800000,
-  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890 },
+  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890, "client_sessions": 3, "draining_since_ms": null },
   "sessions": [
     {
       "session_id": 7, "peer": "client", "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
@@ -135,6 +135,10 @@ neither is reported.
   `#[serde(default)]` because stored `snapshots.payload` rows from before the
   field are decoded again for `?at=`. The relay and mesh views chart it as
   `disk_cache_mb`.
+- `client_sessions` is the count a drain waits for: client sessions only, no
+  relay peer and no stats session. `draining_since_ms` is when the relay began
+  draining (sent GOAWAY) and `null` while it serves; a relay older than these
+  fields reads as 0 and `null`.
 
 ## Relay side (`crates/relay`, `modules/observability/`)
 
