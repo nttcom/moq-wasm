@@ -20,6 +20,7 @@ pub(crate) struct StoreOccupancy {
     pub(crate) tracks: u64,
     pub(crate) objects: u64,
     pub(crate) payload_bytes: u64,
+    pub(crate) disk_payload_bytes: u64,
 }
 
 impl TrackCacheStore {
@@ -70,6 +71,7 @@ impl TrackCacheStore {
             .collect();
         let mut total = StoreOccupancy {
             tracks: caches.len() as u64,
+            disk_payload_bytes: self.disk.as_ref().map_or(0, DiskCache::stored_bytes),
             ..StoreOccupancy::default()
         };
         for cache in &caches {
@@ -165,6 +167,7 @@ mod tests {
                 tracks: 2,
                 objects: 3,
                 payload_bytes: 3 * b"payload".len() as u64,
+                disk_payload_bytes: 0,
             }
         );
     }

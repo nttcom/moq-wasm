@@ -72,6 +72,7 @@ function relayCharts(relayId: string): ChartSpec[] {
     chart('Egress loss (bitrate-weighted)', '%', [line('Loss', relay, 'egress_loss_percent')]),
     chart('Sessions', '', [line('Sessions', relay, 'sessions')]),
     chart('Cache objects', '', [line('Objects', process, 'cache_objects')]),
+    chart('Disk cache', 'MB', [line('Disk cache', process, 'disk_cache_mb')]),
     chart('Flow-control blocked', '/s', [
       line('Peers by relay window', relay, 'peers_blocked_per_s'),
       line('Relay by peer windows', relay, 'relay_blocked_per_s')
@@ -139,6 +140,7 @@ function meshCharts(topology: Topology): ChartSpec[] {
     { title: 'Sessions', unit: '', lines: perRelay(relay, 'sessions'), totalLabel: 'All relays' },
     { title: 'RSS', unit: 'MB', lines: perRelay(process, 'rss_mb') },
     { title: 'Cache payload', unit: 'MB', lines: perRelay(process, 'cache_mb'), totalLabel: 'All relays' },
+    { title: 'Disk cache', unit: 'MB', lines: perRelay(process, 'disk_cache_mb'), totalLabel: 'All relays' },
     { title: 'Congestion events', unit: '/s', lines: perRelay(relay, 'congestion_per_s'), totalLabel: 'All relays' }
   ]
 }

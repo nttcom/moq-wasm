@@ -275,6 +275,13 @@ const PROCESS_METRICS: &[(&str, Metric)] = &[
             scale: 1.0,
         },
     ),
+    (
+        "disk_cache_mb",
+        Metric::Max {
+            column: "disk_cache_bytes",
+            scale: 1.0 / MEBIBYTE,
+        },
+    ),
 ];
 
 struct Plan {

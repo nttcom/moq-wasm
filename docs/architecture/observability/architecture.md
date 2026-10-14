@@ -75,7 +75,7 @@ neither is reported.
 {
   "relay_id": "relay-a",
   "timestamp_ms": 1791262800000,
-  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432 },
+  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890 },
   "sessions": [
     {
       "session_id": 7, "peer": "client", "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
@@ -130,6 +130,11 @@ neither is reported.
 - `rss_bytes` is `VmRSS` from `/proc/self/status` on Linux and absent
   elsewhere. glibc keeps freed memory, so RSS alone overstates live memory;
   the cache figures tell whether growth is held by the cache.
+- `disk_cache_bytes` is the payload held in the relay's disk cache segments
+  (`RELAY_DISK_CACHE_DIR`), 0 when the relay has none. It is
+  `#[serde(default)]` because stored `snapshots.payload` rows from before the
+  field are decoded again for `?at=`. The relay and mesh views chart it as
+  `disk_cache_mb`.
 
 ## Relay side (`crates/relay`, `modules/observability/`)
 
@@ -229,8 +234,10 @@ the flush (`wait_for_async_insert = 0`), so charts trail the live view by up
 to ten seconds and a failed flush shows only in the ClickHouse log. Inserts
 also set `input_format_skip_unknown_fields`, so a
 field added to `relay-stats` is ignored until a column exists for it.
-Tables are created with `IF NOT EXISTS` and never altered: a new column needs
-an `ALTER TABLE` (or a fresh database) by hand.
+Tables are created with `IF NOT EXISTS`, and every startup also runs
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS` for each column, so a database
+created by an older build gains the columns added since. A removed or retyped
+column still needs a hand-written `ALTER TABLE` (or a fresh database).
 
 ClickHouse runs as a `docker-compose.yml` service next to the relays.
 

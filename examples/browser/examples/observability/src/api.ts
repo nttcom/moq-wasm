@@ -5,6 +5,8 @@ export interface ProcessStats {
   cache_tracks: number
   cache_objects: number
   cache_payload_bytes: number
+  /** Missing from relays built before the disk cache. */
+  disk_cache_bytes?: number
 }
 
 /** 64-bit ids arrive as strings: JavaScript numbers hold 53 bits. */

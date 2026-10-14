@@ -27,6 +27,7 @@ const TABLES: &[Table] = &[
             ("cache_tracks", COUNTER),
             ("cache_objects", COUNTER),
             ("cache_payload_bytes", COUNTER),
+            ("disk_cache_bytes", COUNTER),
         ],
         order_by: &[],
     },
@@ -83,9 +84,19 @@ const TABLES: &[Table] = &[
     },
 ];
 
+/// Idempotent: a table created by an older build gains the columns added
+/// since, so a query naming them does not fail.
 pub fn statements(database: &str) -> Vec<String> {
     std::iter::once(format!("CREATE DATABASE IF NOT EXISTS {database}"))
         .chain(TABLES.iter().map(|table| create_table(database, table)))
+        .chain(TABLES.iter().flat_map(|table| {
+            table.columns.iter().map(move |(name, column_type)| {
+                format!(
+                    "ALTER TABLE {database}.{table} ADD COLUMN IF NOT EXISTS {name} {column_type}",
+                    table = table.name
+                )
+            })
+        }))
         .collect()
 }
 
@@ -132,8 +143,10 @@ mod tests {
 
         // Assert
         assert_eq!(statements[0], "CREATE DATABASE IF NOT EXISTS obs");
-        assert_eq!(statements.len(), 6);
-        for statement in &statements[1..] {
+        for statement in statements
+            .iter()
+            .filter(|statement| statement.starts_with("CREATE TABLE"))
+        {
             assert!(
                 statement.contains("PARTITION BY toYYYYMMDD(ts)"),
                 "{statement}"
@@ -144,6 +157,20 @@ mod tests {
             );
             assert!(statement.contains("ttl_only_drop_parts = 1"), "{statement}");
         }
+    }
+
+    #[test]
+    fn a_table_from_an_older_build_gains_the_new_columns() {
+        // Act
+        let statements = statements("obs");
+
+        // Assert
+        assert!(
+            statements.contains(
+                &"ALTER TABLE obs.process_stats ADD COLUMN IF NOT EXISTS disk_cache_bytes UInt64"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
