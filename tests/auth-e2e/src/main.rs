@@ -401,6 +401,7 @@ async fn send_test_object(session: Arc<Session>, subscription: Subscription) -> 
         status: ObjectStatus::Normal,
         extension_headers: ExtensionHeaders::default(),
         payload: Bytes::from_static(TEST_PAYLOAD),
+        ends_group: false,
     };
     stream.send_object(&object).await?;
     stream.close().await?;

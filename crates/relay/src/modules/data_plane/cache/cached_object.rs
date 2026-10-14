@@ -33,6 +33,7 @@ impl CachedObject {
             status: ObjectStatus::EndOfGroup,
             extension_headers: ExtensionHeaders::default(),
             payload: Bytes::new(),
+            ends_group: false,
         })
     }
 

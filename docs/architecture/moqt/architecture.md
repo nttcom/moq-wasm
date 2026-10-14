@@ -348,9 +348,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   - `DatagramSender::send_object(&Object)` / `DatagramReceiver::receive()
     -> Object` do the same for datagrams (`ObjectDatagram::from_object` /
     `into_object`): an object id is always sent explicitly, a zero-length
-    object is sent as its status (§10.2.1.1), and a payload that ends its
-    group is an End of Group type, received back as status `EndOfGroup` with
-    its payload.
+    object is sent as its status (§10.2.1.1), and an object with a payload is
+    always `Normal`: an End of Group type sets `Object::ends_group` instead of
+    the status, and only a datagram with a payload sends it back. FETCH cannot
+    carry it, so a fetched copy of that object has `ends_group` false.
   - `FetchDataSender::send_object(&Object)` / `FetchDataReceiver::receive()
     -> Fetch::{Object(Object), End}` do the same for FETCH responses
     (`FetchObjectField::from_object` / `into_object`): a datagram object is

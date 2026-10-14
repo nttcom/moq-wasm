@@ -1165,6 +1165,7 @@ impl MOQTClient {
             status,
             extension_headers: crate::loc::parse_loc_header(loc_header)?,
             payload,
+            ends_group: false,
         };
         let sender = self.fetch_sender(request_id).await?;
         let sender = sender.lock().await;
@@ -1308,6 +1309,7 @@ impl MOQTClient {
             status,
             extension_headers: crate::loc::parse_loc_header(loc_header)?,
             payload,
+            ends_group: false,
         };
         let mut sender = sender.lock().await;
         sender.send_object(&object).await.map_err(anyhow_error)?;
@@ -1455,6 +1457,7 @@ impl MOQTClient {
             status,
             extension_headers: crate::loc::parse_loc_header(loc_header)?,
             payload,
+            ends_group: false,
         };
         session
             .publisher()

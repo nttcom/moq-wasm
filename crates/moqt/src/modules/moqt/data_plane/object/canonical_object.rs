@@ -15,8 +15,7 @@ pub enum ForwardingPreference {
 /// An object with the properties the data model gives it (draft-14 §2.1,
 /// §10.2.1), independent of how a draft lays it out on a subgroup stream, a
 /// datagram or a FETCH response. A zero-length object carries its meaning in
-/// `status`; an object with a payload is `Normal`, except a datagram that ends
-/// its group (`EndOfGroup`).
+/// `status`; an object with a payload is always `Normal` (draft-14 §10.2.1.1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Object {
     pub location: Location,
@@ -25,6 +24,11 @@ pub struct Object {
     pub status: ObjectStatus,
     pub extension_headers: ExtensionHeaders,
     pub payload: Bytes,
+    /// Set when a datagram with a payload has an End of Group type (draft-14
+    /// §10.3.1). Not a §10.2.1 property: FETCH and subgroup objects never carry
+    /// it, and a subgroup announces the end of its group on
+    /// `SubgroupStart::ends_group`.
+    pub ends_group: bool,
 }
 
 /// What the header of a subgroup stream announces (draft-14 §10.4.2).
