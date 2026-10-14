@@ -347,6 +347,84 @@ mod tests {
     }
 
     #[test]
+    fn records_opus_alaw_and_mp3_audio_beside_the_video() {
+        // Arrange: (config, frame, frame µs); the fMP4 muxer derives each duration from the frame bytes
+        let fixture = fixture();
+        let cases = [
+            (
+                AudioConfig::Opus {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                Bytes::from_static(&[0xFC, 0x01, 0x02, 0x03]),
+                20_000,
+            ),
+            (
+                AudioConfig::Pcma {
+                    sample_rate: 8_000,
+                    channels: 1,
+                },
+                Bytes::from(vec![0xD5; 160]),
+                20_000,
+            ),
+            (
+                AudioConfig::Mp3 {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                Bytes::from_static(&[0xFF, 0xFB, 0x94, 0x64, 0x00, 0x00]),
+                24_000,
+            ),
+        ];
+        let start = first_video_capture(&fixture.video[0]);
+        for (config, frame, frame_micros) in cases {
+            let mut pipeline = Pipeline::new(&selection(Some(config.clone()))).unwrap();
+            let mut file = BytesMut::new();
+
+            // Act
+            for object in &fixture.video {
+                file.extend_from_slice(&pipeline.push_video(object).unwrap().data);
+            }
+            for index in 0..10 {
+                let audio = track_object(
+                    1,
+                    index,
+                    LocObject {
+                        extensions: vec![loc::LocExtension::varint(
+                            loc::CAPTURE_TIMESTAMP_ID,
+                            start + index * frame_micros,
+                        )],
+                        payload: frame.clone(),
+                    },
+                );
+                file.extend_from_slice(&pipeline.push_audio(&audio).unwrap().data);
+            }
+            file.extend_from_slice(&pipeline.finish().unwrap());
+
+            // Assert
+            let recorded = demux(&file);
+            assert!(
+                recorded.contains(&MediaEvent::AudioConfig(config.clone())),
+                "{config:?}"
+            );
+            assert_eq!(
+                video_samples(&recorded).len(),
+                video_samples(&fixture.events).len()
+            );
+            let audio = audio_samples(&recorded);
+            assert_eq!(audio.len(), 10, "{config:?}");
+            for (index, sample) in audio.iter().enumerate() {
+                assert_eq!(sample.data, frame);
+                assert_eq!(
+                    sample.pts,
+                    Timestamp::from_micros(index as u64 * frame_micros),
+                    "{config:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_changed_video_configuration_ends_the_file_and_starts_the_next() {
         // Arrange: a keyframe whose SPS declares another level
         let fixture = fixture();
