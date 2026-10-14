@@ -13,6 +13,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
+        delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
@@ -30,7 +31,7 @@ pub(crate) struct RegisteredDownstreamSubscription {
     pub(crate) subscription: DownstreamSubscription,
     subscriber_peer: SessionPeer,
     runner_stop_sender: oneshot::Sender<PublishDoneReason>,
-    forward_sender: watch::Sender<bool>,
+    delivery_control_sender: watch::Sender<DeliveryControl>,
     delivery_stats: Arc<DeliveryStats>,
 }
 
@@ -49,7 +50,7 @@ pub(crate) struct RegisteredPublish {
 
 pub(crate) struct DownstreamRunnerSignals {
     pub(crate) stop_receiver: oneshot::Receiver<PublishDoneReason>,
-    pub(crate) forward_receiver: watch::Receiver<bool>,
+    pub(crate) delivery_control_receiver: watch::Receiver<DeliveryControl>,
     pub(crate) delivery_stats: Arc<DeliveryStats>,
 }
 
@@ -718,8 +719,7 @@ impl InMemoryLocalPubSubDirectory {
 
     /// Returns `None` when the upstream track is gone. The returned
     /// stop receiver resolves once the registration is removed, however that happens; the
-    /// subscription's egress runner lives exactly until then. The forward receiver
-    /// starts at `forward`.
+    /// subscription's egress runner lives exactly until then.
     pub(crate) fn register_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
@@ -727,7 +727,7 @@ impl InMemoryLocalPubSubDirectory {
         subscriber_peer: SessionPeer,
         track_key: TrackKey,
         start_location: Option<moqt::object::Location>,
-        forward: bool,
+        delivery_control: DeliveryControl,
     ) -> Option<DownstreamRunnerSignals> {
         // The track entry stays locked until the registration is inserted: a concurrent removal
         // of the track either finds it or makes this registration fail. Lock order is always
@@ -738,7 +738,7 @@ impl InMemoryLocalPubSubDirectory {
             upstream.client_downstream_subscriber_count += 1;
         }
         let (runner_stop_sender, stop_receiver) = oneshot::channel();
-        let (forward_sender, forward_receiver) = watch::channel(forward);
+        let (delivery_control_sender, delivery_control_receiver) = watch::channel(delivery_control);
         let delivery_stats = Arc::new(DeliveryStats::default());
         self.downstream_subscriptions.insert(
             (downstream_session_id, downstream_subscribe_id),
@@ -749,13 +749,13 @@ impl InMemoryLocalPubSubDirectory {
                 },
                 subscriber_peer,
                 runner_stop_sender,
-                forward_sender,
+                delivery_control_sender,
                 delivery_stats: delivery_stats.clone(),
             },
         );
         Some(DownstreamRunnerSignals {
             stop_receiver,
-            forward_receiver,
+            delivery_control_receiver,
             delivery_stats,
         })
     }
@@ -773,7 +773,9 @@ impl InMemoryLocalPubSubDirectory {
         else {
             return false;
         };
-        registered.forward_sender.send_replace(forward);
+        registered
+            .delivery_control_sender
+            .send_modify(|control| control.forward = forward);
         true
     }
 
@@ -880,6 +882,7 @@ impl InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, table_with_upstream,
     };
@@ -1183,7 +1186,7 @@ mod tests {
             SessionPeer::Client,
             track_key.clone(),
             Some(largest),
-            true,
+            delivery_control(true),
         );
 
         // Assert
@@ -1211,7 +1214,7 @@ mod tests {
             SessionPeer::Client,
             track_key.clone(),
             None,
-            true,
+            delivery_control(true),
         );
 
         // Assert
@@ -1228,11 +1231,18 @@ mod tests {
 
         // Act
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
 
         // Assert
-        assert!(*signals.forward_receiver.borrow());
+        assert!(signals.delivery_control_receiver.borrow().forward);
     }
 
     #[test]
@@ -1240,7 +1250,14 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
 
         // Act
@@ -1248,7 +1265,7 @@ mod tests {
 
         // Assert
         assert!(updated);
-        assert!(!*signals.forward_receiver.borrow());
+        assert!(!signals.delivery_control_receiver.borrow().forward);
     }
 
     #[test]
@@ -1262,7 +1279,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap();
         signals.delivery_stats.record_stream_reset();
@@ -1301,7 +1318,7 @@ mod tests {
             SessionPeer::Client,
             track_key,
             None,
-            true,
+            delivery_control(true),
         );
 
         // Act
@@ -1316,7 +1333,14 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let mut runner_stop_receiver = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap()
             .stop_receiver;
 
@@ -1370,7 +1394,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap()
             .stop_receiver;
@@ -1397,7 +1421,7 @@ mod tests {
             SessionPeer::Client,
             track_key,
             None,
-            true,
+            delivery_control(true),
         );
 
         // Assert
@@ -1426,7 +1450,7 @@ mod tests {
                             SessionPeer::Client,
                             track_key,
                             None,
-                            true,
+                            delivery_control(true),
                         )
                         .is_some()
                 }
@@ -1460,7 +1484,7 @@ mod tests {
                     SessionPeer::Client,
                     track_key.clone(),
                     None,
-                    true,
+                    delivery_control(true),
                 )
                 .unwrap();
             let table = Arc::new(table);
@@ -1480,7 +1504,7 @@ mod tests {
                             SessionPeer::Client,
                             track_key,
                             None,
-                            true,
+                            delivery_control(true),
                         )
                         .is_some()
                 }
@@ -1552,7 +1576,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap()
             .stop_receiver;
@@ -1584,7 +1608,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap()
             .stop_receiver;
@@ -1621,7 +1645,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap();
 
@@ -1671,7 +1695,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap();
         let mut relay_runner_stop_receiver = table
@@ -1681,7 +1705,7 @@ mod tests {
                 SessionPeer::Relay,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap()
             .stop_receiver;
@@ -1716,7 +1740,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap();
         let mut relay_runner_stop_receiver = table
@@ -1726,7 +1750,7 @@ mod tests {
                 SessionPeer::Relay,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap()
             .stop_receiver;
@@ -1764,7 +1788,7 @@ mod tests {
                     subscriber_peer,
                     track_key,
                     None,
-                    true,
+                    delivery_control(true),
                 )
                 .unwrap();
         }

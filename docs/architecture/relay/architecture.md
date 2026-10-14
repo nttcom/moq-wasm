@@ -409,9 +409,11 @@ answer the PUBLISH before the request timeout.
 
 ### SUBSCRIBE_UPDATE sequence
 Only the Forward State is applied. Every downstream registration owns a
-`watch::Sender<bool>` next to its runner stop sender. A SUBSCRIBE starts it at
+`watch::Sender<DeliveryControl>` (`domain/delivery_control.rs`: the Forward
+State and the Start Location resolved from the filter and the subscribe-time
+Largest Location) next to its runner stop sender. A SUBSCRIBE starts it at
 Forward 1 whatever the SUBSCRIBE asked for (clients that leave Forward at 0
-expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward. SUBSCRIBE_UPDATE sets it for the (session, Subscription Request ID)
+expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward. SUBSCRIBE_UPDATE sets Forward for the (session, Subscription Request ID)
 registration; an update for no registered subscription is logged and dropped.
 Start Location, End Group and Subscriber Priority are not applied, and the
 upstream subscription keeps Forward 1 so the cache keeps filling for FETCH.
@@ -709,8 +711,9 @@ finishes (including runners that end on their own, e.g. on a malformed track)
 and aborting the rest when it shuts down. `EgressRunner` splits into:
 
 - `EgressScheduler` — listens on the cache's subgroup-opened channel and the cache,
-  computes the delivery start per draft-14 filter type (`NextGroupStart`,
-  `LargestObject`, `AbsoluteStart`, `AbsoluteRange`; an absolute start at or
+  takes the delivery start from the registration's `DeliveryControl` (the
+  Start Location of the draft-14 filter type, `NextGroupStart`,
+  `LargestObject`, `AbsoluteStart` or `AbsoluteRange`; an absolute start at or
   below Largest is clamped to Largest+1), and emits one `GroupSendTask` per
   `SubgroupKey` and run generation: a reopened run is scheduled again from
   the later of the key's previous task start and the run's first object id,

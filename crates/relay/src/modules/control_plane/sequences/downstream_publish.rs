@@ -16,6 +16,7 @@ use crate::modules::{
         egress::coordinator::{EgressCommand, EgressStartRequest},
     },
     domain::{
+        delivery_control::DeliveryControl,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
         session_id::SessionId,
         track_key::TrackKey,
@@ -84,7 +85,11 @@ impl DownstreamPublish {
             subscriber_peer,
             track_key.clone(),
             largest_location,
-            forward,
+            DeliveryControl::new(
+                forward,
+                &downstream_subscription.filter_type(),
+                largest_location,
+            ),
         ) else {
             let track_ended = PublishDoneReason {
                 status_code: PublishDoneCode::TrackEnded,
@@ -253,10 +258,11 @@ mod tests {
 
         // Assert
         assert!(
-            !*take_egress_start(&mut ctx)
+            !take_egress_start(&mut ctx)
                 .runner_signals
-                .forward_receiver
+                .delivery_control_receiver
                 .borrow()
+                .forward
         );
     }
 

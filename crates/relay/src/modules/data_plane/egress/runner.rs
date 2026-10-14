@@ -5,6 +5,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::modules::{
     data_plane::cache::track_cache::TrackCache,
     domain::{
+        delivery_control::DeliveryControl,
         delivery_stats::DeliveryStats,
         pub_sub_directory::{DownstreamRunnerSignals, entry::PublishDoneReason},
         track_key::TrackKey,
@@ -26,7 +27,7 @@ struct Delivery {
     downstream_subscription: DownstreamSubscription,
     ready_sender: oneshot::Sender<anyhow::Result<()>>,
     largest_location: Option<moqt::object::Location>,
-    forward_receiver: watch::Receiver<bool>,
+    delivery_control_receiver: watch::Receiver<DeliveryControl>,
     delivery_stats: Arc<DeliveryStats>,
 }
 
@@ -42,7 +43,7 @@ impl EgressRunner {
     ) -> Self {
         let DownstreamRunnerSignals {
             stop_receiver,
-            forward_receiver,
+            delivery_control_receiver,
             delivery_stats,
         } = signals;
         Self {
@@ -54,7 +55,7 @@ impl EgressRunner {
                 downstream_subscription,
                 ready_sender,
                 largest_location,
-                forward_receiver,
+                delivery_control_receiver,
                 delivery_stats,
             },
         }
@@ -137,7 +138,7 @@ impl Delivery {
             downstream_subscription,
             ready_sender,
             largest_location,
-            forward_receiver,
+            delivery_control_receiver,
             delivery_stats,
         } = self;
 
@@ -147,15 +148,13 @@ impl Delivery {
         }
 
         let (sender, receiver) = mpsc::channel(64);
-        let filter_type = downstream_subscription.filter_type();
         let group_order = downstream_subscription.group_order();
         let scheduler = EgressScheduler::new(
             cache.clone(),
-            filter_type,
             group_order,
             sender,
             largest_location,
-            forward_receiver,
+            delivery_control_receiver,
         );
         let group_sender = GroupSender::new(
             track_key.clone(),

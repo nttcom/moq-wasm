@@ -22,6 +22,7 @@ use crate::modules::{
         },
     },
     domain::{
+        delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::{DownstreamRunnerSignals, entry::PublishDoneReason},
         session_id::SessionId,
@@ -62,7 +63,7 @@ pub(crate) struct EgressRunnerHandle {
     sent: mpsc::UnboundedReceiver<Sent>,
     priorities: mpsc::UnboundedReceiver<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
-    forward_sender: watch::Sender<bool>,
+    delivery_control_sender: watch::Sender<DeliveryControl>,
     stop_sender: Option<oneshot::Sender<PublishDoneReason>>,
     delivery_stats: Arc<DeliveryStats>,
     join_handle: tokio::task::JoinHandle<()>,
@@ -79,7 +80,8 @@ impl EgressRunnerHandle {
     }
 
     pub(crate) fn set_forward(&self, forward: bool) {
-        self.forward_sender.send_replace(forward);
+        self.delivery_control_sender
+            .send_modify(|control| control.forward = forward);
     }
 
     pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {
@@ -323,7 +325,8 @@ impl RelayHarness {
     ) -> EgressRunnerHandle {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
-        let (forward_sender, forward_receiver) = watch::channel(true);
+        let (delivery_control_sender, delivery_control_receiver) =
+            watch::channel(DeliveryControl::new(true, &filter_type, largest_location));
         let (stop_sender, stop_receiver) = oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
         let delivery_stats = Arc::new(DeliveryStats::default());
@@ -336,7 +339,7 @@ impl RelayHarness {
             largest_location,
             DownstreamRunnerSignals {
                 stop_receiver,
-                forward_receiver,
+                delivery_control_receiver,
                 delivery_stats: delivery_stats.clone(),
             },
         );
@@ -353,7 +356,7 @@ impl RelayHarness {
             sent: observers.sent,
             priorities: observers.priorities,
             publish_done: observers.publish_done,
-            forward_sender,
+            delivery_control_sender,
             stop_sender: Some(stop_sender),
             delivery_stats,
             join_handle,

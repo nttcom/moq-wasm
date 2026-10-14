@@ -65,6 +65,7 @@ impl Unsubscribe {
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use tokio::sync::oneshot;
 
     use super::*;
@@ -114,7 +115,7 @@ mod tests {
                         SessionPeer::Client,
                         track_key(),
                         None,
-                        true,
+                        delivery_control(true),
                     )
                     .unwrap()
                     .stop_receiver

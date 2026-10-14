@@ -35,6 +35,7 @@ impl SubscribeUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::directory_fixtures::table_with_upstream,
@@ -45,14 +46,21 @@ mod tests {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None, true)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                upstream_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
 
         // Act
         SubscribeUpdate.handle(2, &Span::none(), &table, 100, false);
 
         // Assert
-        assert!(!*signals.forward_receiver.borrow());
+        assert!(!signals.delivery_control_receiver.borrow().forward);
     }
 
     #[test]
@@ -60,13 +68,20 @@ mod tests {
         // Arrange
         let (table, upstream_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         let signals = table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, upstream_key, None, true)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                upstream_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
 
         // Act
         SubscribeUpdate.handle(3, &Span::none(), &table, 100, false);
 
         // Assert
-        assert!(*signals.forward_receiver.borrow());
+        assert!(signals.delivery_control_receiver.borrow().forward);
     }
 }

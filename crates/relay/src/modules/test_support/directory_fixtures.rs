@@ -19,6 +19,7 @@ use crate::modules::{
         ingress::ingress_coordinator::IngressCommand,
     },
     domain::{
+        delivery_control::DeliveryControl,
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
             entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin, UpstreamTrack},
@@ -41,6 +42,11 @@ pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
 
 pub(crate) fn track_key() -> TrackKey {
     TrackKey::new("ns", "track")
+}
+
+/// An open-ended subscription starting at {0, 0}.
+pub(crate) fn delivery_control(forward: bool) -> DeliveryControl {
+    DeliveryControl::new(forward, &moqt::subscribe::FilterType::LargestObject, None)
 }
 
 pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstreamSubscription {

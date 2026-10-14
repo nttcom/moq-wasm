@@ -187,6 +187,7 @@ mod tests {
 
     use super::*;
     use crate::modules::domain::pub_sub_directory::entry::PublishDoneReason;
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::relay_harness::{
         MockPublisherObservers, fixtures::subscription::make_subscription,
         session_repository_with_downstream_session,
@@ -244,7 +245,7 @@ mod tests {
                 ready_sender,
                 runner_signals: DownstreamRunnerSignals {
                     stop_receiver: runner_stop_receiver,
-                    forward_receiver: watch::channel(true).1,
+                    delivery_control_receiver: watch::channel(delivery_control(true)).1,
                     delivery_stats: Arc::default(),
                 },
                 subscribe_ok_receiver,

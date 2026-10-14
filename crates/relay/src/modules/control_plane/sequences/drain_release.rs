@@ -39,8 +39,8 @@ mod tests {
     use crate::modules::{
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
         test_support::directory_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
-            upstream_release_context,
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, delivery_control,
+            track_key, upstream_release_context,
         },
     };
 
@@ -81,7 +81,14 @@ mod tests {
         let mut ctx = upstream_release_context(UpstreamSubscriptionOrigin::Publish).await;
         let _registered = ctx
             .table
-            .register_downstream_subscription(100, 10, SessionPeer::Client, track_key(), None, true)
+            .register_downstream_subscription(
+                100,
+                10,
+                SessionPeer::Client,
+                track_key(),
+                None,
+                delivery_control(true),
+            )
             .unwrap();
 
         // Act

@@ -460,6 +460,7 @@ impl Fetch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         domain::{pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer},
@@ -951,7 +952,14 @@ mod tests {
     fn resolve_joining_target_no_objects_published() {
         // Arrange
         let (table, key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
-        table.register_downstream_subscription(2, 100, SessionPeer::Client, key, None, true);
+        table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            key,
+            None,
+            delivery_control(true),
+        );
 
         // Act
         let result = Fetch.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
@@ -974,7 +982,7 @@ mod tests {
             SessionPeer::Client,
             key,
             Some(largest),
-            true,
+            delivery_control(true),
         );
 
         // Act
@@ -1011,7 +1019,7 @@ mod tests {
                 group_id: 1,
                 object_id: 1,
             }),
-            true,
+            delivery_control(true),
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
 
@@ -1068,7 +1076,7 @@ mod tests {
                 group_id: 2,
                 object_id: 3,
             }),
-            true,
+            delivery_control(true),
         );
 
         // Act
@@ -1120,7 +1128,7 @@ mod tests {
                 group_id: 1,
                 object_id: 1,
             }),
-            true,
+            delivery_control(true),
         );
 
         // Act
@@ -1172,7 +1180,7 @@ mod tests {
                 group_id: 1,
                 object_id: 1,
             }),
-            true,
+            delivery_control(true),
         );
 
         // Act

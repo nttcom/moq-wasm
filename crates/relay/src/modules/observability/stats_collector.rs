@@ -229,6 +229,7 @@ fn subscription_stats(
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
     use std::{sync::Arc, time::Duration};
 
@@ -362,7 +363,14 @@ mod tests {
         );
         fixture
             .directory
-            .register_downstream_subscription(3, 0, SessionPeer::Relay, stats_track, None, true)
+            .register_downstream_subscription(
+                3,
+                0,
+                SessionPeer::Relay,
+                stats_track,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
 
         // Act
@@ -400,7 +408,14 @@ mod tests {
         let _ = open.insert(stream_object_with_payload(0, 1, Bytes::from_static(b"56")));
         let signals = fixture
             .directory
-            .register_downstream_subscription(9, 4, SessionPeer::Client, track_key, None, true)
+            .register_downstream_subscription(
+                9,
+                4,
+                SessionPeer::Client,
+                track_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
         signals
             .delivery_stats

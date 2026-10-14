@@ -1,20 +1,22 @@
 use std::{collections::HashMap, sync::Arc};
 
-use moqt::{object::GroupOrder, subscribe::FilterType};
+use moqt::object::GroupOrder;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::modules::data_plane::{
-    cache::subgroup_key::SubgroupKey,
-    cache::track_cache::{SubgroupRun, TrackCache},
+use crate::modules::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::track_cache::{SubgroupRun, TrackCache},
+    },
+    domain::delivery_control::DeliveryControl,
 };
 
 /// Subscriptions only deliver objects newer than the subscribe-time Largest
 /// Object (§9.7), so an absolute start at or below it is raised past it.
 fn resolve_start_location(
-    filter_type: &FilterType,
+    start: moqt::object::Location,
     largest: &Option<moqt::object::Location>,
 ) -> moqt::object::Location {
-    let start = filter_type.start_location(*largest);
     match largest {
         Some(largest) if start <= *largest => largest.next(),
         _ => start,
@@ -48,31 +50,28 @@ impl StartLocationProgress {
 
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
-    filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
     /// Largest Object at SUBSCRIBE processing time; `None` when no content
     /// has been delivered yet.
     largest_location: Option<moqt::object::Location>,
-    forward_receiver: watch::Receiver<bool>,
+    delivery_control_receiver: watch::Receiver<DeliveryControl>,
 }
 
 impl EgressScheduler {
     pub(crate) fn new(
         cache: Arc<TrackCache>,
-        filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
         largest_location: Option<moqt::object::Location>,
-        forward_receiver: watch::Receiver<bool>,
+        delivery_control_receiver: watch::Receiver<DeliveryControl>,
     ) -> Self {
         Self {
             cache,
-            filter_type,
             group_order,
             sender,
             largest_location,
-            forward_receiver,
+            delivery_control_receiver,
         }
     }
 
@@ -80,8 +79,9 @@ impl EgressScheduler {
         let mut receiver = self.cache.subscribe_subgroup_opened();
         let mut scheduled = HashMap::<SubgroupKey, GroupSendTask>::new();
 
-        let start = resolve_start_location(&self.filter_type, &self.largest_location);
-        if *self.forward_receiver.borrow() {
+        let control = *self.delivery_control_receiver.borrow();
+        let start = resolve_start_location(control.start, &self.largest_location);
+        if control.forward {
             self.schedule_cached_objects(&start, &mut scheduled).await;
         }
         let mut progress = StartLocationProgress {
@@ -92,7 +92,7 @@ impl EgressScheduler {
 
         loop {
             match receiver.recv().await {
-                Ok(_) if !*self.forward_receiver.borrow() => {}
+                Ok(_) if !self.delivery_control_receiver.borrow().forward => {}
                 Ok(run) => {
                     let group_id = run.key.group_id();
                     if let Some(object_id) = progress.accept(group_id)
@@ -190,6 +190,8 @@ impl EgressScheduler {
 
 #[cfg(test)]
 mod tests {
+    use moqt::subscribe::FilterType;
+
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::{
         cached_object::{insert_aborted_group, insert_closed_group, stream_key},
@@ -225,11 +227,15 @@ mod tests {
         let (ready_sender, ready_receiver) = oneshot::channel();
         let scheduler = EgressScheduler::new(
             cache,
-            filter_type,
             GroupOrder::Ascending,
             task_sender,
             largest_location,
-            watch::channel(forward).1,
+            watch::channel(DeliveryControl::new(
+                forward,
+                &filter_type,
+                largest_location,
+            ))
+            .1,
         );
         let handle = tokio::spawn(scheduler.run(ready_sender));
         ready_receiver
