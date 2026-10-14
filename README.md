@@ -1,5 +1,9 @@
 # moq-wasm
 
+[![Lint](https://github.com/nttcom/moq-wasm/actions/workflows/lint.yml/badge.svg?branch=master)](https://github.com/nttcom/moq-wasm/actions/workflows/lint.yml?query=branch%3Amaster)
+[![codecov](https://codecov.io/gh/nttcom/moq-wasm/branch/master/graph/badge.svg)](https://codecov.io/gh/nttcom/moq-wasm)
+[![License](https://img.shields.io/github/license/nttcom/moq-wasm)](LICENSE)
+
 ## What is moq-wasm?
 
 Real-time communication of any data for web browsers, native apps, IP
