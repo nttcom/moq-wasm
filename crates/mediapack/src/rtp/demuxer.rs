@@ -10,7 +10,7 @@ use crate::{
         aac, h264,
         packet::{Header, extend_wrapping},
         reorder::{Ordered, ReorderBuffer},
-        sdp::{Codec, SessionDescription},
+        sdp::{Codec, OPUS_CLOCK_RATE, SessionDescription},
     },
     sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
 };
@@ -36,6 +36,9 @@ struct Stream {
 enum StreamCodec {
     H264(VideoStream),
     Aac(AudioStream),
+    /// A-law and Opus: every packet carries whole frames (RFC 3551 §4.5.14,
+    /// RFC 7587 §4.2), so a loss costs only the packets lost.
+    WholeFrames,
 }
 
 struct VideoStream {
@@ -67,8 +70,8 @@ struct StreamClock {
 }
 
 impl Demuxer {
-    /// Fails when the description has no H.264 or AAC stream, or gives two
-    /// streams the same payload type.
+    /// Fails when the description has no H.264, AAC, A-law or Opus stream, or
+    /// gives two streams the same payload type.
     pub fn new(description: &SessionDescription) -> Result<Self> {
         let mut streams = BTreeMap::new();
         let mut set = StreamSet::default();
@@ -86,6 +89,22 @@ impl Demuxer {
                     set.has_audio = true;
                     announcement.push(MediaEvent::AudioConfig(AudioConfig::Aac(config.clone())));
                     StreamCodec::Aac(AudioStream::new(config, *au_headers))
+                }
+                Codec::Pcma { channels } => {
+                    set.has_audio = true;
+                    announcement.push(MediaEvent::AudioConfig(AudioConfig::Pcma {
+                        sample_rate: media.clock_rate,
+                        channels: *channels,
+                    }));
+                    StreamCodec::WholeFrames
+                }
+                Codec::Opus { channels } => {
+                    set.has_audio = true;
+                    announcement.push(MediaEvent::AudioConfig(AudioConfig::Opus {
+                        sample_rate: OPUS_CLOCK_RATE,
+                        channels: *channels,
+                    }));
+                    StreamCodec::WholeFrames
                 }
                 Codec::Unsupported(_) => continue,
             };
@@ -106,7 +125,7 @@ impl Demuxer {
         }
         ensure!(
             !streams.is_empty(),
-            "session description has no H.264 or AAC stream"
+            "session description has no H.264, AAC, A-law or Opus stream"
         );
         announcement.insert(0, MediaEvent::Streams(set));
         Ok(Self {
@@ -161,6 +180,7 @@ impl Stream {
                         video.corrupt = true;
                     }
                     StreamCodec::Aac(audio) => audio.depacketizer.reset(),
+                    StreamCodec::WholeFrames => {}
                 }
                 Ok(1)
             }
@@ -170,6 +190,9 @@ impl Stream {
                 match &mut self.codec {
                     StreamCodec::H264(video) => video.packet(&header, &payload, pts, events)?,
                     StreamCodec::Aac(audio) => audio.packet(&header, &payload, pts, events)?,
+                    StreamCodec::WholeFrames => {
+                        events.push(MediaEvent::Audio(AudioSample { data: payload, pts }))
+                    }
                 }
                 Ok(0)
             }
@@ -470,11 +493,68 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_a_law_and_opus_frames() {
+        // Arrange
+        let round_trip = |config: AudioConfig| {
+            let source = [
+                MediaEvent::Streams(StreamSet {
+                    has_video: false,
+                    has_audio: true,
+                }),
+                MediaEvent::AudioConfig(config),
+                MediaEvent::Audio(AudioSample {
+                    data: Bytes::from_static(&[0xD5; 160]),
+                    pts: Timestamp::from_millis(500),
+                }),
+                MediaEvent::Audio(AudioSample {
+                    data: Bytes::from_static(&[0x55; 160]),
+                    pts: Timestamp::from_millis(520),
+                }),
+            ];
+            let (packets, description) = mux(&source);
+            demux(&packets, &description).0
+        };
+
+        // Act
+        let pcma = round_trip(AudioConfig::Pcma {
+            sample_rate: 8_000,
+            channels: 1,
+        });
+        let opus = round_trip(AudioConfig::Opus {
+            sample_rate: 48_000,
+            channels: 2,
+        });
+
+        // Assert: the 20 ms between the frames survives on both clocks
+        for (events, config) in [
+            (
+                &pcma,
+                AudioConfig::Pcma {
+                    sample_rate: 8_000,
+                    channels: 1,
+                },
+            ),
+            (
+                &opus,
+                AudioConfig::Opus {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+            ),
+        ] {
+            assert_eq!(events[1], MediaEvent::AudioConfig(config));
+            let audio = audio_samples(events);
+            assert_eq!(audio.len(), 2);
+            assert_eq!(audio[1].data.as_ref(), [0x55; 160]);
+            assert_eq!(audio[1].pts, Timestamp::from_millis(20));
+        }
+    }
+
+    #[test]
     fn rejects_descriptions_without_a_supported_stream() {
         // Arrange
         let description =
-            SessionDescription::parse("m=audio 5006 RTP/AVP 111\na=rtpmap:111 opus/48000/2\n")
-                .unwrap();
+            SessionDescription::parse("m=audio 5006 RTP/AVP 9\na=rtpmap:9 G722/8000\n").unwrap();
         let (_, mut duplicated) = mux(&source_events());
         duplicated.media[1].payload_type = duplicated.media[0].payload_type;
 
