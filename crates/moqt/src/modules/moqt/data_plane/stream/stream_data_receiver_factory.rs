@@ -29,9 +29,7 @@ impl StreamDataReceiverFactory {
             return Ok(first);
         }
         match self.rest.recv().await {
-            Some(IncomingObject::StreamHeader { stream, header }) => {
-                Ok(StreamDataReceiver::new(stream, header))
-            }
+            Some(IncomingObject::Subgroup(receiver)) => Ok(receiver),
             Some(IncomingObject::Datagram(_)) => Err(MalformedTrackError.into()),
             None => anyhow::bail!("Stream channel closed"),
         }

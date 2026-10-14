@@ -2,6 +2,7 @@
 //! stream and pairs a response with its request by Request ID (§9.1).
 
 pub(crate) mod control_message_receive_task;
+pub(crate) mod objects;
 pub(crate) mod setup;
 
 use std::{

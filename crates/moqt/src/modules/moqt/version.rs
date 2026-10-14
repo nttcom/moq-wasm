@@ -12,6 +12,8 @@ pub(crate) mod draft14;
 
 use std::sync::Weak;
 
+use bytes::BytesMut;
+
 use tracing::Span;
 
 use crate::{
@@ -36,15 +38,139 @@ use crate::{
                 enums::{RequestId, ResponseMessage},
                 error_codes::RequestKind,
             },
-            data_plane::stream::stream_receiver::BiStreamReceiver,
+            data_plane::{
+                object::canonical_object::{Object, SubgroupStart},
+                stream::{
+                    fetch_data_receiver::FetchDataReceiver,
+                    stream_data_receiver::StreamDataReceiver,
+                    stream_receiver::{BiStreamReceiver, StreamReceiveError},
+                },
+            },
             domains::session_context::SessionContext,
             version::draft14::control_message_receive_task::ControlMessageReceiveTask,
         },
         transport::{
-            transport_connection::BoxedConnection, transport_send_stream::TransportSendError,
+            transport_connection::{BoxedConnection, BoxedReceiveStream},
+            transport_send_stream::TransportSendError,
         },
     },
 };
+
+/// The MoQT draft a session speaks, chosen when it is established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Version {
+    /// draft-ietf-moq-transport-14.
+    Draft14,
+}
+
+impl Version {
+    pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
+        match self {
+            Self::Draft14 => draft14::objects::encode_fetch_header(request_id),
+        }
+    }
+
+    pub(crate) fn encode_fetch_object(self, object: &Object) -> BytesMut {
+        match self {
+            Self::Draft14 => draft14::objects::encode_fetch_object(object),
+        }
+    }
+
+    pub(crate) fn encode_datagram(
+        self,
+        track_alias: u64,
+        object: &Object,
+    ) -> anyhow::Result<BytesMut> {
+        match self {
+            Self::Draft14 => draft14::objects::encode_datagram(track_alias, object),
+        }
+    }
+
+    /// Returns `(track alias, object)`.
+    pub(crate) fn decode_datagram(self, data: &mut BytesMut) -> anyhow::Result<(u64, Object)> {
+        match self {
+            Self::Draft14 => draft14::objects::decode_datagram(data),
+        }
+    }
+
+    /// Reads the header of a unidirectional stream the peer opened.
+    /// `Ok(None)` means the stream finished before its header.
+    pub(crate) async fn accept_uni_stream(
+        self,
+        stream: BoxedReceiveStream,
+    ) -> Result<Option<IncomingStream>, StreamReceiveError> {
+        match self {
+            Self::Draft14 => draft14::objects::accept_uni_stream(stream).await,
+        }
+    }
+}
+
+/// A unidirectional stream the peer opened, told apart by its header.
+pub(crate) enum IncomingStream {
+    Subgroup(StreamDataReceiver),
+    Fetch(FetchDataReceiver),
+}
+
+#[derive(Debug)]
+pub(crate) enum SubgroupReader {
+    Draft14(draft14::objects::SubgroupReader),
+}
+
+impl SubgroupReader {
+    /// `None` until the first object arrives, for header types that take the
+    /// subgroup id from it.
+    pub(crate) fn start(&self) -> Option<SubgroupStart> {
+        match self {
+            Self::Draft14(reader) => reader.start(),
+        }
+    }
+
+    /// `Ok(None)` means the peer finished the stream (FIN).
+    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+        match self {
+            Self::Draft14(reader) => reader.next_object().await,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum FetchReader {
+    Draft14(draft14::objects::FetchReader),
+}
+
+impl FetchReader {
+    /// `Ok(None)` means the peer finished the stream (FIN).
+    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+        match self {
+            Self::Draft14(reader) => reader.next_object().await,
+        }
+    }
+}
+
+pub(crate) enum SubgroupEncoder {
+    Draft14(draft14::objects::SubgroupEncoder),
+}
+
+impl SubgroupEncoder {
+    pub(crate) fn new(version: Version, track_alias: u64) -> Self {
+        match version {
+            Version::Draft14 => Self::Draft14(draft14::objects::SubgroupEncoder::new(track_alias)),
+        }
+    }
+
+    pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
+        match self {
+            Self::Draft14(encoder) => encoder.header(start),
+        }
+    }
+
+    /// Fails when the object id is not greater than the previous object's.
+    pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
+        match self {
+            Self::Draft14(encoder) => encoder.object(object),
+        }
+    }
+}
 
 pub(crate) enum OutgoingRequest {
     Subscribe(Subscribe),
@@ -85,6 +211,12 @@ pub(crate) enum ControlChannel {
 }
 
 impl ControlChannel {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+        }
+    }
+
     pub(crate) fn next_request_id(&self) -> RequestId {
         match self {
             Self::Draft14(channel) => channel.next_request_id(),

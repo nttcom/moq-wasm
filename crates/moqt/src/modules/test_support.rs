@@ -22,7 +22,7 @@ use crate::{
         domains::session_context::{IncomingObjectNotification, SessionContext},
         runtime::dispatch::incoming_object::IncomingObject,
     },
-    object::{DataReceiver, ExtensionHeaders, StreamDataSenderFactory, SubgroupObjectSender},
+    object::{DataReceiver, StreamDataSenderFactory, SubgroupObjectSender},
     publish::PublishOption,
     server::Handshake,
     server::ServerConfig,
@@ -183,19 +183,20 @@ pub(crate) async fn open_subgroup(
     group_id: u64,
     subgroup_id: SubgroupId,
 ) -> SubgroupObjectSender {
-    let uninitialized = factory.next().await.unwrap();
-    let header =
-        uninitialized.create_header(group_id, subgroup_id, PUBLISHER_PRIORITY, false, false);
-    uninitialized.send_header(header).await.unwrap()
+    factory
+        .next()
+        .await
+        .unwrap()
+        .start_raw(group_id, subgroup_id, PUBLISHER_PRIORITY)
+        .await
+        .unwrap()
 }
 
 pub(crate) async fn send_payload(sender: &mut SubgroupObjectSender, payload: &'static [u8]) {
-    let field = sender.create_object_field(
-        0,
-        ExtensionHeaders::default(),
-        SubgroupObject::new_payload(Bytes::from_static(payload)),
-    );
-    sender.send(field).await.unwrap();
+    sender
+        .send_raw(0, SubgroupObject::new_payload(Bytes::from_static(payload)))
+        .await
+        .unwrap();
 }
 
 /// The first subgroup stream of `subscription`; resolves once a header has
@@ -268,10 +269,7 @@ pub(crate) async fn notify_datagram(
     track_alias: u64,
 ) -> IncomingObjectNotification {
     context
-        .notify_incoming_object(
-            track_alias,
-            IncomingObject::Datagram(object_datagram(track_alias)),
-        )
+        .notify_incoming_object(track_alias, IncomingObject::Datagram(datagram_object()))
         .await
 }
 

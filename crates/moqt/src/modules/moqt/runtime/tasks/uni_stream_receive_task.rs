@@ -5,23 +5,15 @@ use tracing::{Instrument, Span};
 use crate::{
     modules::executor::{self, JoinHandle},
     modules::moqt::{
-        data_plane::{
-            codec::{
-                fetch_decoder::FetchFrame,
-                subgroup_decoder::SubgroupFrame,
-                uni_stream_decoder::{UniStreamData, UniStreamDecoder},
-            },
-            stream::{
-                fetch_data_receiver::FetchDataReceiver,
-                stream_receiver::{StreamReceiveError, UniStreamReceiver},
-            },
-        },
+        data_plane::stream::stream_receiver::StreamReceiveError,
         domains::session_context::SessionContext,
         runtime::dispatch::{
             fetch_notifier::FetchNotifier, incoming_object::IncomingObject,
             subscription_notifier::SubscriptionNotifier,
         },
+        version::IncomingStream,
     },
+    modules::transport::transport_connection::BoxedReceiveStream,
 };
 
 pub(crate) struct UniStreamReceiveTask;
@@ -36,7 +28,6 @@ impl UniStreamReceiveTask {
                     match context.transport_connection.accept_uni().await {
                         Ok(stream) => {
                             tracing::debug!("accepted incoming uni stream");
-                            let stream = UniStreamReceiver::new(stream, UniStreamDecoder::new());
                             Self::on_stream_received(&context, stream).await;
                         }
                         Err(error) => {
@@ -51,12 +42,9 @@ impl UniStreamReceiveTask {
     }
 
     #[tracing::instrument(level = "debug", name = "on_stream_received", skip_all)]
-    async fn on_stream_received(
-        context: &Arc<SessionContext>,
-        mut stream: UniStreamReceiver,
-    ) -> bool {
-        let stream_data = match stream.receive().await {
-            Ok(Some(stream_data)) => stream_data,
+    async fn on_stream_received(context: &Arc<SessionContext>, stream: BoxedReceiveStream) -> bool {
+        let incoming = match context.control.version().accept_uni_stream(stream).await {
+            Ok(Some(incoming)) => incoming,
             Ok(None) => {
                 tracing::debug!("Stream finished before its header");
                 return false;
@@ -73,31 +61,21 @@ impl UniStreamReceiveTask {
             }
         };
 
-        match stream_data {
-            UniStreamData::Subgroup(SubgroupFrame::Header(header)) => {
+        match incoming {
+            IncomingStream::Subgroup(receiver) => {
                 tracing::debug!(
-                    track_alias = header.track_alias,
-                    group_id = header.group_id,
+                    track_alias = receiver.track_alias,
                     "received subgroup header"
                 );
                 SubscriptionNotifier::notify(
                     context,
-                    header.track_alias,
-                    IncomingObject::StreamHeader { stream, header },
+                    receiver.track_alias,
+                    IncomingObject::Subgroup(receiver),
                 )
                 .await;
             }
-            UniStreamData::Fetch(FetchFrame::Header(header)) => {
-                FetchNotifier::notify(
-                    context,
-                    header.request_id,
-                    FetchDataReceiver::new(stream, header),
-                )
-                .await;
-            }
-            _ => {
-                tracing::error!("First message in stream is not a header");
-                return false;
+            IncomingStream::Fetch(receiver) => {
+                FetchNotifier::notify(context, receiver.request_id, receiver).await;
             }
         }
         true
