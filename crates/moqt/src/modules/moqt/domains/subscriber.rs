@@ -267,7 +267,7 @@ impl Subscriber {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let request_id = self.session.get_request_id();
 
-        self.session.register_pending_fetch(request_id);
+        let pending_fetch = self.session.register_pending_fetch(request_id);
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -288,34 +288,19 @@ impl Subscriber {
             },
             authorization_tokens: vec![],
         };
-        let result = async {
-            self.session
-                .send_stream
-                .send(ControlMessageType::Fetch, fetch.encode())
-                .await?;
-            self.session.await_response(fetch_message_rx).await
-        }
-        .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(error) => {
-                // Request-scoped failure (send error or timeout): drop the
-                // pending fetch state so nothing leaks. The session stays open.
-                self.session.remove_pending_fetch(request_id);
-                return Err(error);
-            }
-        };
+        self.session
+            .send_stream
+            .send(ControlMessageType::Fetch, fetch.encode())
+            .await?;
+        let response = self.session.await_response(fetch_message_rx).await?;
         match response {
-            ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
-            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.session.remove_pending_fetch(request_id);
-                Err(RequestFailure::rejected(
-                    RequestKind::Fetch,
-                    request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+            ResponseMessage::FetchOk(fetch_ok) => {
+                pending_fetch.keep();
+                Ok(FetchHandle::new(fetch_ok))
             }
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => Err(
+                RequestFailure::rejected(RequestKind::Fetch, request_id, error_code, reason_phrase),
+            ),
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
             )),
@@ -357,7 +342,7 @@ impl Subscriber {
         let joining_request_id = subscription.request_id();
         let request_id = self.session.get_request_id();
 
-        self.session.register_pending_fetch(request_id);
+        let pending_fetch = self.session.register_pending_fetch(request_id);
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -376,34 +361,19 @@ impl Subscriber {
             },
             authorization_tokens: vec![],
         };
-        let result = async {
-            self.session
-                .send_stream
-                .send(ControlMessageType::Fetch, fetch.encode())
-                .await?;
-            self.session.await_response(fetch_message_rx).await
-        }
-        .await;
-        let response = match result {
-            Ok(response) => response,
-            Err(error) => {
-                // Request-scoped failure (send error or timeout): drop the
-                // pending fetch state so nothing leaks. The session stays open.
-                self.session.remove_pending_fetch(request_id);
-                return Err(error);
-            }
-        };
+        self.session
+            .send_stream
+            .send(ControlMessageType::Fetch, fetch.encode())
+            .await?;
+        let response = self.session.await_response(fetch_message_rx).await?;
         match response {
-            ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
-            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.session.remove_pending_fetch(request_id);
-                Err(RequestFailure::rejected(
-                    RequestKind::Fetch,
-                    request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+            ResponseMessage::FetchOk(fetch_ok) => {
+                pending_fetch.keep();
+                Ok(FetchHandle::new(fetch_ok))
             }
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => Err(
+                RequestFailure::rejected(RequestKind::Fetch, request_id, error_code, reason_phrase),
+            ),
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
             )),
@@ -599,13 +569,12 @@ impl Subscriber {
 mod tests {
     use bytes::Bytes;
 
+    use tokio::task::JoinHandle;
+
     use crate::{
-        SessionEvent,
-        fetch::{Fetch, FetchOption},
-        modules::test_support::{
-            DISCONNECT_TIMEOUT, connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
-            subscription,
-        },
+        RequestErrorCode, RequestFailure, Session, SessionEvent,
+        fetch::{Fetch, FetchHandle, FetchHandler, FetchOption},
+        modules::test_support::{DISCONNECT_TIMEOUT, spawn_connected_dual_sessions, subscription},
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
@@ -633,13 +602,13 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
-        // Arrange
-        let (port, accept) = spawn_dual_server("subscriber-fetch-sender");
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
+    async fn start_fetch(
+        client: &Session,
+        server: &Session,
+    ) -> (
+        JoinHandle<Result<FetchHandle, RequestFailure>>,
+        FetchHandler,
+    ) {
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
@@ -655,6 +624,28 @@ mod tests {
         let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
             panic!("expected FETCH from the client");
         };
+        (request, handler)
+    }
+
+    fn has_pending_fetch(client: &Session, request_id: u64) -> bool {
+        let session = client.subscriber().session;
+        session
+            .fetch_notification_map
+            .lock()
+            .unwrap()
+            .contains_key(&request_id)
+            || session
+                .fetch_receiver_map
+                .lock()
+                .unwrap()
+                .contains_key(&request_id)
+    }
+
+    #[tokio::test]
+    async fn accepted_fetch_releases_its_stream_sender_and_keeps_delivering_objects() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-sender").await;
+        let (request, handler) = start_fetch(&client, &server).await;
         handler.ok(false, END).await.unwrap();
         let fetch_sender = server
             .publisher()
@@ -686,6 +677,38 @@ mod tests {
             matches!(&object, Fetch::Object(received) if *received == fetch_object()),
             "{object:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn rejected_fetch_releases_its_pending_state() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-rejected").await;
+        let (request, handler) = start_fetch(&client, &server).await;
+
+        // Act
+        handler
+            .error(RequestErrorCode::InternalError, "rejected".to_string())
+            .await
+            .unwrap();
+        let result = request.await.unwrap();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(!has_pending_fetch(&client, handler.request_id));
+    }
+
+    #[tokio::test]
+    async fn abandoned_fetch_releases_its_pending_state() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-abandoned").await;
+        let (request, handler) = start_fetch(&client, &server).await;
+
+        // Act
+        request.abort();
+        let _ = request.await;
+
+        // Assert
+        assert!(!has_pending_fetch(&client, handler.request_id));
     }
 
     #[tokio::test]

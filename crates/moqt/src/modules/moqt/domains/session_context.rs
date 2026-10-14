@@ -148,6 +148,28 @@ impl Drop for RegisteredSender {
     }
 }
 
+#[must_use = "dropping this removes the pending fetch; bind it for the lifetime of the request"]
+pub(crate) struct PendingFetch {
+    session: Arc<SessionContext>,
+    request_id: RequestId,
+    kept: bool,
+}
+
+impl PendingFetch {
+    /// FETCH_OK arrived: the channel stays for `accept_fetch_receiver`.
+    pub(crate) fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for PendingFetch {
+    fn drop(&mut self) {
+        if !self.kept {
+            self.session.remove_pending_fetch(self.request_id);
+        }
+    }
+}
+
 impl SessionContext {
     pub(crate) fn new(
         transport_connection: BoxedConnection,
@@ -321,7 +343,7 @@ impl SessionContext {
     }
 
     /// Call before sending the FETCH: its data stream can arrive before FETCH_OK.
-    pub(crate) fn register_pending_fetch(&self, request_id: RequestId) {
+    pub(crate) fn register_pending_fetch(self: &Arc<Self>, request_id: RequestId) -> PendingFetch {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
         self.fetch_notification_map
             .lock()
@@ -331,6 +353,11 @@ impl SessionContext {
             .lock()
             .expect("fetch_receiver_map poisoned")
             .insert(request_id, receiver);
+        PendingFetch {
+            session: self.clone(),
+            request_id,
+            kept: false,
+        }
     }
 
     pub(crate) fn remove_pending_fetch(&self, request_id: RequestId) {
@@ -449,7 +476,6 @@ impl SessionContext {
                         request_id,
                         "FETCH_OK arrived after the request was abandoned; sending FETCH_CANCEL"
                     );
-                    self.remove_pending_fetch(request_id);
                     self.send_stream
                         .send(
                             ControlMessageType::FetchCancel,
@@ -773,35 +799,20 @@ mod tests {
 
     #[tokio::test]
     async fn late_fetch_ok_is_withdrawn_with_fetch_cancel() {
-        // Arrange: the fetch future was dropped, so its maps were never cleaned up
+        // Arrange
         let (client, server) = spawn_connected_dual_sessions("late-fetch-ok").await;
         let context = server.subscriber().session;
-        context.register_pending_fetch(REQUEST_ID);
 
         // Act
         context
             .handle_late_response(REQUEST_ID, LateResponseAction::FetchCancel, late_fetch_ok())
             .await;
 
-        // Assert: FETCH_CANCEL is sent and the pending fetch state is dropped
+        // Assert
         let SessionEvent::FetchCancel(fetch_cancel) = client.receive_event().await.unwrap() else {
             panic!("expected FETCH_CANCEL");
         };
         assert_eq!(fetch_cancel.request_id(), REQUEST_ID);
-        assert!(
-            !context
-                .fetch_notification_map
-                .lock()
-                .unwrap()
-                .contains_key(&REQUEST_ID)
-        );
-        assert!(
-            !context
-                .fetch_receiver_map
-                .lock()
-                .unwrap()
-                .contains_key(&REQUEST_ID)
-        );
     }
 
     #[tokio::test]

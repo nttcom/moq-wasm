@@ -247,14 +247,16 @@ One struct owns all cross-task state:
     UNSUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE_DONE.
   - PUBLISH → PUBLISH_DONE (INTERNAL_ERROR, Stream Count 0: no stream opens
     before PUBLISH_OK).
-  - FETCH → FETCH_CANCEL; the request's fetch maps are dropped too.
+  - FETCH → FETCH_CANCEL.
   - TRACK_STATUS → nothing; it creates no state.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
   for FETCH data streams. A FETCH is answered on a single stream (draft-14
   §9.16.3), so `FetchNotifier` removes the sender when that stream arrives;
-  the receiver keeps it until `accept_fetch_receiver`.
+  the receiver keeps it until `accept_fetch_receiver`. Registration returns
+  a `PendingFetch` drop-guard that removes both entries unless FETCH_OK
+  arrived.
 
 ## Control plane (`modules/moqt/control_plane`)
 
