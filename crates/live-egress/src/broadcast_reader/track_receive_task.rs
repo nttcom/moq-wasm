@@ -9,7 +9,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 pub(super) enum TrackKind {
     Video,
-    Audio(mediapack::aac::AudioSpecificConfig),
+    Audio(AudioConfig),
 }
 
 /// Reads one LOC track into the broadcast's media channel. The task ends
@@ -46,9 +46,7 @@ impl TrackReceiveTask {
                         .get_or_init(|| object.capture_timestamp().unwrap_or(Timestamp::ZERO));
                     match &kind {
                         TrackKind::Video => loc::Demuxer::video(),
-                        TrackKind::Audio(config) => {
-                            loc::Demuxer::audio(AudioConfig::Aac(config.clone()))
-                        }
+                        TrackKind::Audio(config) => loc::Demuxer::audio(config.clone()),
                     }
                     .with_capture_origin(origin)
                 });
