@@ -35,6 +35,15 @@ enum DualEndpoint {
     Client(Box<DualClient>),
 }
 
+impl DualEndpoint {
+    fn quinn_endpoint(&self) -> &quinn::Endpoint {
+        match self {
+            Self::Server(endpoint) => endpoint,
+            Self::Client(client) => &client.endpoint,
+        }
+    }
+}
+
 struct DualClient {
     endpoint: quinn::Endpoint,
     quic_config: quinn::ClientConfig,
@@ -204,19 +213,11 @@ impl TransportConnectionCreator for DualProtocolCreator {
     }
 
     async fn wait_idle(&self) {
-        let endpoint = match &self.endpoint {
-            DualEndpoint::Server(endpoint) => endpoint,
-            DualEndpoint::Client(client) => &client.endpoint,
-        };
-        endpoint.wait_idle().await;
+        self.endpoint.quinn_endpoint().wait_idle().await;
     }
 
     fn local_port(&self) -> anyhow::Result<u16> {
-        let endpoint = match &self.endpoint {
-            DualEndpoint::Server(endpoint) => endpoint,
-            DualEndpoint::Client(client) => &client.endpoint,
-        };
-        Ok(endpoint.local_addr()?.port())
+        Ok(self.endpoint.quinn_endpoint().local_addr()?.port())
     }
 }
 
