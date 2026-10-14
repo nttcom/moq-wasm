@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use moqt::{SessionEvent, TrackReader};
 use tokio::{io::AsyncWriteExt, task::JoinHandle};
@@ -10,6 +12,8 @@ use crate::transport::{
     MOVE_TIMEOUT, RelayConnection, connect_relay, follow_go_away, read_catalog, subscribe,
     track_reader,
 };
+
+const MOVE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let mut relay = args.relay.clone();
@@ -37,7 +41,7 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
                     info!(relay = %relay.url, "GOAWAY received; subscribing on the relay it names");
                     let (relay, track) = (relay.clone(), args.track.clone());
                     pending_move = Some(tokio::spawn(async move {
-                        tokio::time::timeout(MOVE_TIMEOUT, watch(&relay, &track))
+                        tokio::time::timeout(MOVE_TIMEOUT, watch_until_available(&relay, &track))
                             .await
                             .context("timed out subscribing on the relay named by GOAWAY")?
                     }));
@@ -49,7 +53,9 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
                 pending_move = None;
                 match moved? {
                     Ok(next) => {
-                        std::mem::replace(&mut watching, next).close().await;
+                        let previous = std::mem::replace(&mut watching, next);
+                        drop(session);
+                        previous.close().await;
                         info!(relay = %relay.url, "moved to the relay named by GOAWAY");
                     }
                     Err(error) => {
@@ -77,6 +83,20 @@ impl Watching {
     async fn close(self) {
         drop(self.media_reader);
         self.connection.close().await;
+    }
+}
+
+/// The publisher moves at the same time as this subscriber, so the track may
+/// not exist on the new relay yet; the SUBSCRIBE is repeated until it does.
+async fn watch_until_available(relay: &RelayArgs, track: &FullTrackName) -> Result<Watching> {
+    loop {
+        match watch(relay, track).await {
+            Ok(watching) => return Ok(watching),
+            Err(error) => {
+                tracing::info!(%error, "not subscribed on the new relay yet; retrying");
+                tokio::time::sleep(MOVE_RETRY_INTERVAL).await;
+            }
+        }
     }
 }
 
