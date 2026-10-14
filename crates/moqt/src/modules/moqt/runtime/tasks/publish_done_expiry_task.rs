@@ -64,10 +64,12 @@ mod tests {
         Session, SessionEvent,
         modules::{
             moqt::{
-                control_plane::control_messages::messages::publish_done::status_code,
+                control_plane::error_codes::PublishDoneCode,
                 runtime::dispatch::incoming_object::IncomingObject,
             },
-            test_support::{register_and_take_data_receiver, spawn_connected_dual_sessions},
+            test_support::{
+                register_and_take_data_receiver, spawn_connected_dual_sessions, subscription,
+            },
         },
     };
 
@@ -89,7 +91,12 @@ mod tests {
                 .await;
         client
             .publisher()
-            .publish_done(REQUEST_ID, status_code::TRACK_ENDED, 0, String::new())
+            .publish_done(
+                &subscription(REQUEST_ID, TRACK_ALIAS),
+                PublishDoneCode::TrackEnded,
+                0,
+                String::new(),
+            )
             .await
             .unwrap();
         let SessionEvent::PublishDone(_) = server.receive_event().await.unwrap() else {
