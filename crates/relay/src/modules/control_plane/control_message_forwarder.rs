@@ -101,13 +101,19 @@ impl ControlMessageForwarder {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
+        max_cache_duration: Option<u64>,
     ) -> anyhow::Result<DownstreamSubscription> {
         let publisher = self
             .publisher(session_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("No publisher"))?;
         publisher
-            .send_publish(track_namespace, track_name, content_exists)
+            .send_publish(
+                track_namespace,
+                track_name,
+                content_exists,
+                max_cache_duration,
+            )
             .await
     }
 

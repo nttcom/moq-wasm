@@ -25,6 +25,7 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
         track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
+        max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError>;
     async fn error(
         &self,
@@ -75,9 +76,14 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
         track_alias: u64,
         expires: u64,
         content_exists: ContentExists,
+        max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError> {
+        // moqt sends the handler's `max_cache_duration` field; the clone shares
+        // the original's response guard.
+        let mut handler = self.clone();
+        handler.max_cache_duration = max_cache_duration;
         moqt::subscribe::SubscribeHandler::ok_with_track_alias(
-            self,
+            &handler,
             track_alias,
             expires,
             content_exists,

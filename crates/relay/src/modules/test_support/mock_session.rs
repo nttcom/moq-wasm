@@ -44,6 +44,7 @@ pub(crate) struct SentPublish {
     pub(crate) track_namespace: String,
     pub(crate) track_name: String,
     pub(crate) content_exists: ContentExists,
+    pub(crate) max_cache_duration: Option<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -341,11 +342,13 @@ impl Publisher for MockUpstreamPublisher {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
+        max_cache_duration: Option<u64>,
     ) -> anyhow::Result<DownstreamSubscription> {
         self.recorded.publishes.lock().unwrap().push(SentPublish {
             track_namespace: track_namespace.clone(),
             track_name: track_name.clone(),
             content_exists,
+            max_cache_duration,
         });
         let Some(answer_publish) = &self.answer_publish else {
             return std::future::pending().await;
@@ -566,6 +569,7 @@ impl SubscribeHandler for MockSubscribeHandler {
         _track_alias: u64,
         _expires: u64,
         _content_exists: ContentExists,
+        _max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError> {
         *self.subscribe_ok_count.lock().unwrap() += 1;
         Ok(())
@@ -616,6 +620,7 @@ impl FetchHandler for MockFetchHandler {
         &self,
         _end_of_track: bool,
         _end_location: moqt::object::Location,
+        _max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }

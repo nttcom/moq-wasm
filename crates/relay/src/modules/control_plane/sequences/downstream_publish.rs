@@ -69,6 +69,7 @@ impl DownstreamPublish {
                 track_key.track_namespace.clone(),
                 track_key.track_name.clone(),
                 content_exists,
+                upstream_track.max_cache_duration(),
             )
             .await?;
         let request_id = downstream_subscription.request_id();
@@ -124,14 +125,20 @@ impl DownstreamPublish {
 mod tests {
     use super::*;
     use crate::modules::{
-        domain::pub_sub_directory::entry::UpstreamSubscriptionOrigin,
+        domain::{
+            pub_sub_directory::entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
+            session_peer::SessionPeer,
+        },
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
-                downstream_publish_context, table_with_upstream, track_key,
+                UPSTREAM_REQUEST_ID, downstream_publish_context, table_with_upstream, track_key,
             },
             mock_session::{PUBLISH_REQUEST_ID, SentPublish},
-            relay_harness::fixtures::{cached_object::insert_closed_group, location},
+            relay_harness::fixtures::{
+                cached_object::insert_closed_group, location,
+                subscription::upstream_subscription_with_max_cache_duration,
+            },
         },
     };
 
@@ -154,6 +161,35 @@ mod tests {
             Ok(EgressCommand::StartReader(request)) => *request,
             _ => panic!("expected the forwarded PUBLISH to start an egress reader"),
         }
+    }
+
+    #[tokio::test]
+    async fn forwarded_publish_carries_the_upstream_max_cache_duration() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            ActiveUpstreamSubscription {
+                subscription: upstream_subscription_with_max_cache_duration(
+                    UPSTREAM_REQUEST_ID,
+                    2_000,
+                ),
+                expires: None,
+                content_exists: ContentExists::False,
+                origin: UpstreamSubscriptionOrigin::Subscribe,
+                publisher_peer: SessionPeer::Client,
+            },
+        );
+        let ctx = downstream_publish_context(Arc::new(table), || Ok(true)).await;
+
+        // Act
+        send_publish(&ctx).await.unwrap();
+
+        // Assert
+        let publishes = ctx.subscriber.publishes();
+        assert_eq!(publishes.len(), 1);
+        assert_eq!(publishes[0].max_cache_duration, Some(2_000));
     }
 
     #[tokio::test]
@@ -198,6 +234,7 @@ mod tests {
                 content_exists: ContentExists::True {
                     location: location(4, 1)
                 },
+                max_cache_duration: None,
             }]
         );
         assert_eq!(

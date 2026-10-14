@@ -63,7 +63,11 @@ impl UpstreamFetchTask {
 
         if let Err(e) = start
             .handler
-            .ok(prepared.handle.end_of_track, prepared.handle.end_location)
+            .ok(
+                prepared.handle.end_of_track,
+                prepared.handle.end_location,
+                prepared.handle.max_cache_duration,
+            )
             .await
         {
             tracing::error!(?e, "Failed to send FETCH_OK to downstream");

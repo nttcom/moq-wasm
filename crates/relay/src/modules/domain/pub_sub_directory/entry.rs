@@ -55,6 +55,15 @@ impl UpstreamTrack {
             .next_back()
             .and_then(|subscription| subscription.expires)
     }
+
+    /// The newest publisher's MAX_CACHE_DURATION in milliseconds, which the
+    /// relay passes downstream unchanged.
+    pub(crate) fn max_cache_duration(&self) -> Option<u64> {
+        self.subscriptions
+            .values()
+            .next_back()
+            .and_then(|subscription| subscription.subscription.as_moqt().max_cache_duration())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

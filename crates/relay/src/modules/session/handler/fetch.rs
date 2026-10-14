@@ -10,6 +10,7 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
         &self,
         end_of_track: bool,
         end_location: moqt::object::Location,
+        max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError>;
     async fn error(
         &self,
@@ -36,8 +37,13 @@ impl FetchHandler for moqt::fetch::FetchHandler {
         &self,
         end_of_track: bool,
         end_location: moqt::object::Location,
+        max_cache_duration: Option<u64>,
     ) -> Result<(), moqt::TransportSendError> {
-        self.ok(end_of_track, end_location).await
+        // moqt sends the handler's `max_cache_duration` field; the clone shares
+        // the original's response guard.
+        let mut handler = self.clone();
+        handler.max_cache_duration = max_cache_duration;
+        moqt::fetch::FetchHandler::ok(&handler, end_of_track, end_location).await
     }
 
     async fn error(
