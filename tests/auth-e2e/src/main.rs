@@ -20,12 +20,11 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session, SessionEvent,
-    Subscription,
+    AuthorizationToken, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
+    SessionEvent, Subscription,
     object::{DataReceiver, ExtensionHeaders, GroupOrder, Subgroup, SubgroupId, SubgroupObject},
     publish::PublishOption,
     subscribe::{FilterType, SubscribeOption},
-    wire::AuthorizationToken,
 };
 
 const DEFAULT_RELAY_A_URL: &str = "moqt://127.0.0.1:4433";

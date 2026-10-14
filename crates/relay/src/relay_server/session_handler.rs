@@ -37,7 +37,7 @@ impl SessionIntake {
         };
         let verified_token = match self
             .authenticator
-            .authenticate(handshake.client_setup(), &self.accepted_peer)
+            .authenticate(handshake.authorization_tokens(), &self.accepted_peer)
             .await
         {
             Ok(verified_token) => verified_token,

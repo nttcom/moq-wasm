@@ -2,9 +2,9 @@ use moqt::RequestErrorCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
+use moqt::fetch::FetchParams;
 use moqt::wire::{
-    ContentExists, Fetch, FetchOk, FetchParams, GroupOrder, Location, Subscribe, TrackStatus,
-    TrackStatusOk,
+    ContentExists, Fetch, FetchOk, GroupOrder, Location, Subscribe, TrackStatus, TrackStatusOk,
 };
 
 use crate::{

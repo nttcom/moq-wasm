@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use moqt::{Session, wire::AuthorizationToken};
+use moqt::{AuthorizationToken, Session};
 use tracing::{info, warn};
 
 use super::auth_token_file::read_auth_token;

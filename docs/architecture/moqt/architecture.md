@@ -51,8 +51,11 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   API; it also uses the message codecs for the JavaScript message types.
 - `wire.rs` re-exports raw control-message structs, framing helpers
   (`encode_control_message` / `take_control_message`), and data-plane object
-  types for consumers that need direct wire access (the relay uses
-  `moqt::wire::FetchType`, the wasm bindings use the codecs).
+  types for consumers that need direct wire access (the wasm bindings use
+  the codecs for the JavaScript message types). Types the other crates
+  reason about (`AuthorizationToken`, `fetch::FetchParams`, the typed codes)
+  are exported from the operation modules instead, so a consumer that does
+  not import `wire` depends on no draft-14 message layout.
 
 ## Transport layer (`modules/transport`)
 
@@ -115,8 +118,9 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 - `accept()` returns `Accepting`, whose future performs the transport
   handshake, accepts the control stream, and stops after CLIENT_SETUP is
   received (`SessionContextFactory::receive_client_setup`). It resolves to a
-  `Handshake` that exposes the received `ClientSetup` so the application can
-  decide before SERVER_SETUP is sent:
+  `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
+  (`authorization_tokens()`) so the application can decide before
+  SERVER_SETUP is sent:
   - `Handshake::accept()` sends SERVER_SETUP
     (`SessionContextFactory::send_server_setup`) and creates the `Session`.
   - `Handshake::reject(code, reason)` closes the transport with the given

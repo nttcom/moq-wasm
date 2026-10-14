@@ -1,5 +1,5 @@
+use moqt::AuthorizationToken;
 use moqt::RequestErrorCode;
-use moqt::wire::AuthorizationToken;
 
 use crate::modules::auth::{
     token_parameter::{TokenParameterError, extract_token},
@@ -72,8 +72,8 @@ pub(crate) async fn refresh_token(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use moqt::AuthorizationToken;
     use moqt::RequestErrorCode;
-    use moqt::wire::AuthorizationToken;
 
     use super::{RefreshRejected, refresh_token};
     use crate::modules::auth::{

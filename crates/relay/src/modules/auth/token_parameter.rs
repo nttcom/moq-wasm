@@ -1,4 +1,4 @@
-use moqt::wire::AuthorizationToken;
+use moqt::AuthorizationToken;
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum TokenParameterError {
@@ -35,7 +35,7 @@ pub(crate) fn extract_token(
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use moqt::wire::AuthorizationToken;
+    use moqt::AuthorizationToken;
 
     use super::{TokenParameterError, extract_token};
 

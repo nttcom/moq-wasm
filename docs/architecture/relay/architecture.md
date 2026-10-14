@@ -69,8 +69,8 @@ transport connection to a per-connection task owned by `SessionIntake`:
 
 1. await the `moqt::server::Accepting` future → `Handshake` (CLIENT_SETUP received,
    SERVER_SETUP not yet sent);
-2. `SessionAuthenticator::authenticate(client_setup, accepted_peer)` extracts
-   the JWT, calls the `TokenVerifier`, and checks that `is_relay` matches the
+2. `SessionAuthenticator::authenticate(authorization_tokens, accepted_peer)`
+   extracts the JWT from the CLIENT_SETUP tokens (`Handshake::authorization_tokens()`), calls the `TokenVerifier`, and checks that `is_relay` matches the
    endpoint (client port ⇔ `false`, inner port ⇔ `true`). A client that presents no token on the client endpoint is
    accepted with `VerifiedToken::anonymous()` (scope `anon/**`); a missing
    token on the inter-relay endpoint is rejected. Other failures call

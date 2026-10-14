@@ -1,3 +1,4 @@
+pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchParams;
 pub use crate::modules::moqt::control_plane::handler::fetch_cancel_handler::FetchCancelHandler;
 pub use crate::modules::moqt::control_plane::handler::fetch_handler::FetchHandler;
 pub use crate::modules::moqt::control_plane::options::FetchOption;

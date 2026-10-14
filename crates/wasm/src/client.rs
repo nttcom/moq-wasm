@@ -10,8 +10,8 @@ use std::{
 
 use bytes::Bytes;
 use moqt::{
-    BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, Subscription,
-    TerminationErrorCode, TransportSendError,
+    AuthorizationToken, BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session,
+    Subscription, TerminationErrorCode, TransportSendError,
     fetch::{FetchDataSender, FetchHandle, FetchHandler, FetchOption},
     namespace::PublishNamespaceHandler,
     object::DataStreamResetCode,
@@ -24,9 +24,8 @@ use moqt::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
-        AuthorizationToken, DatagramField, FetchObject, FetchObjectField, FetchOk, NamespaceOk,
-        ObjectDatagram, ObjectDatagramPayload, PublishOk, RequestError, RequestKind, SubscribeOk,
-        TrackStatusOk,
+        DatagramField, FetchObject, FetchObjectField, FetchOk, NamespaceOk, ObjectDatagram,
+        ObjectDatagramPayload, PublishOk, RequestError, RequestKind, SubscribeOk, TrackStatusOk,
     },
 };
 use tokio::sync::Mutex;

@@ -5,7 +5,7 @@ use moqt::RequestErrorCode;
 pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
     fn group_order(&self) -> moqt::object::GroupOrder;
-    fn fetch_params(&self) -> moqt::wire::FetchParams;
+    fn fetch_params(&self) -> moqt::fetch::FetchParams;
     async fn ok(
         &self,
         end_of_track: bool,
@@ -28,7 +28,7 @@ impl FetchHandler for moqt::fetch::FetchHandler {
         self.fetch.group_order
     }
 
-    fn fetch_params(&self) -> moqt::wire::FetchParams {
+    fn fetch_params(&self) -> moqt::fetch::FetchParams {
         self.fetch.fetch_params.clone()
     }
 

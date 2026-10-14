@@ -9,11 +9,11 @@ use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 use crate::{
     Session, TrackWriter, TransportSendError,
     fetch::FetchHandler,
+    fetch::FetchParams,
     modules::executor,
     object::{ContentExists, ExtensionHeaders, Location},
     publish::PublishOption,
     subscribe::{SubscribeHandler, TrackStatusHandler},
-    wire::FetchParams,
 };
 
 mod fetch_serve_task;

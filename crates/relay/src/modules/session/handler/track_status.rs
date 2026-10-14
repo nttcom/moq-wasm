@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use moqt::RequestErrorCode;
-use moqt::{object::ContentExists, wire::AuthorizationToken};
+use moqt::{AuthorizationToken, object::ContentExists};
 
 #[async_trait]
 pub(crate) trait TrackStatusHandler: 'static + Send + Sync {

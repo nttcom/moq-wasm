@@ -584,8 +584,8 @@ impl FetchHandler for MockFetchHandler {
         GroupOrder::Ascending
     }
 
-    fn fetch_params(&self) -> moqt::wire::FetchParams {
-        moqt::wire::FetchParams::Standalone {
+    fn fetch_params(&self) -> moqt::fetch::FetchParams {
+        moqt::fetch::FetchParams::Standalone {
             track_namespace: vec!["ns".to_string()],
             track_name: "track".to_string(),
             start_location: moqt::object::Location {
