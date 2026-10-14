@@ -382,6 +382,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closing_with_a_non_violation_code_reports_disconnected_locally() {
+        // Arrange
+        let (_client, server) = spawn_connected_dual_sessions("session-local-close").await;
+
+        // Act
+        server.close_with_error(TerminationErrorCode::GoawayTimeout, "drain timed out");
+
+        // Assert
+        let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(event, SessionEvent::Disconnected()), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn closing_for_a_protocol_violation_reports_it_locally() {
+        // Arrange
+        let (_client, server) = spawn_connected_dual_sessions("session-local-violation").await;
+
+        // Act
+        server.close_with_error(TerminationErrorCode::ProtocolViolation, "bad peer");
+
+        // Assert
+        let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(event, SessionEvent::ProtocolViolation()),
+            "{event:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn go_away_reaches_the_peer_with_its_uri() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("session-go-away").await;

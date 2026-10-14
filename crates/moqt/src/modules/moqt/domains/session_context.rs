@@ -249,8 +249,14 @@ impl SessionContext {
             .remove(&request_id);
     }
 
+    /// A close for a protocol violation is reported at once as
+    /// `SessionEvent::ProtocolViolation`; any other close is reported as
+    /// `SessionEvent::Disconnected` once the transport has closed, like a
+    /// close by the peer.
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
-        if let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation()) {
+        if code == TerminationErrorCode::ProtocolViolation
+            && let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation())
+        {
             tracing::error!(?error, "failed to send protocol violation event");
         }
         self.transport_connection
