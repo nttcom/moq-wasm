@@ -349,6 +349,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     object is sent as its status (§10.2.1.1), and a payload that ends its
     group is an End of Group type, received back as status `EndOfGroup` with
     its payload.
+  - `FetchDataSender::send_object(&Object)` / `FetchDataReceiver::receive()
+    -> Fetch::{Object(Object), End}` do the same for FETCH responses
+    (`FetchObjectField::from_object` / `into_object`): a datagram object is
+    sent with its Object ID as the Subgroup ID (§10.4.4) and a zero-length
+    object as its status. The FETCH_HEADER is consumed by moqt and not
+    returned.
   - `StreamDataSender::set_priority(StreamPriority)` (`Uninitialized` only)
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:

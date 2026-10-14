@@ -5,6 +5,10 @@ use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
 use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 use crate::modules::moqt::data_plane::object::object_status::ObjectStatus;
+use crate::modules::moqt::{
+    control_plane::control_messages::messages::parameters::location::Location,
+    data_plane::object::canonical_object::{ForwardingPreference, Object},
+};
 
 // FETCH_HEADER {
 //   Type (i) = 0x5,
@@ -72,6 +76,49 @@ pub struct FetchObjectField {
 }
 
 impl FetchObjectField {
+    /// A FETCH object has no forwarding preference: a datagram object is sent
+    /// with its Object ID as the Subgroup ID (draft-14 §10.4.4), and a
+    /// zero-length object as its status.
+    pub(crate) fn from_object(object: &Object) -> Self {
+        let subgroup_id = match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => object.location.object_id,
+        };
+        let fetch_object = if object.payload.is_empty() {
+            FetchObject::Status(object.status)
+        } else {
+            FetchObject::Payload(object.payload.clone())
+        };
+        Self::new(
+            object.location.group_id,
+            subgroup_id,
+            object.location.object_id,
+            object.publisher_priority,
+            object.extension_headers.clone(),
+            fetch_object,
+        )
+    }
+
+    pub(crate) fn into_object(self) -> Object {
+        let (status, payload) = match self.fetch_object {
+            FetchObject::Payload(payload) => (ObjectStatus::Normal, payload),
+            FetchObject::Status(status) => (status, Bytes::new()),
+        };
+        Object {
+            location: Location {
+                group_id: self.group_id,
+                object_id: self.object_id,
+            },
+            forwarding: ForwardingPreference::Subgroup {
+                subgroup_id: self.subgroup_id,
+            },
+            publisher_priority: self.publisher_priority,
+            status,
+            extension_headers: self.extension_headers,
+            payload,
+        }
+    }
+
     pub fn new(
         group_id: u64,
         subgroup_id: u64,
@@ -259,5 +306,70 @@ mod tests {
             let result = FetchHeader::decode(&mut cursor);
             assert!(matches!(result, Err(DecodeError::Fatal(_))));
         }
+    }
+}
+
+#[cfg(test)]
+mod conversion_tests {
+    use bytes::Bytes;
+
+    use super::{FetchObject, FetchObjectField};
+    use crate::modules::moqt::{
+        control_plane::control_messages::messages::parameters::location::Location,
+        data_plane::object::{
+            canonical_object::{ForwardingPreference, Object},
+            extension_headers::ExtensionHeaders,
+            object_status::ObjectStatus,
+        },
+    };
+
+    fn object(forwarding: ForwardingPreference, payload: &'static [u8]) -> Object {
+        Object {
+            location: Location {
+                group_id: 3,
+                object_id: 7,
+            },
+            forwarding,
+            publisher_priority: 200,
+            status: ObjectStatus::Normal,
+            extension_headers: ExtensionHeaders::default(),
+            payload: Bytes::from_static(payload),
+        }
+    }
+
+    #[test]
+    fn a_subgroup_object_round_trips() {
+        // Arrange
+        let sent = object(ForwardingPreference::Subgroup { subgroup_id: 1 }, b"p");
+
+        // Act
+        let received = FetchObjectField::from_object(&sent).into_object();
+
+        // Assert
+        assert_eq!(received, sent);
+    }
+
+    #[test]
+    fn a_datagram_object_takes_its_object_id_as_subgroup_id() {
+        // Act
+        let field = FetchObjectField::from_object(&object(ForwardingPreference::Datagram, b"p"));
+
+        // Assert: §10.4.4
+        assert_eq!(field.subgroup_id, 7);
+    }
+
+    #[test]
+    fn a_zero_length_object_is_sent_as_its_status() {
+        // Act
+        let field = FetchObjectField::from_object(&object(
+            ForwardingPreference::Subgroup { subgroup_id: 0 },
+            b"",
+        ));
+
+        // Assert
+        assert_eq!(
+            field.fetch_object,
+            FetchObject::Status(ObjectStatus::Normal)
+        );
     }
 }

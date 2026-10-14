@@ -98,11 +98,11 @@ pub(crate) async fn fetch_all(
     start: moqt::object::Location,
     end: moqt::object::Location,
     group_order: moqt::object::GroupOrder,
-) -> Result<Vec<moqt::fetch::FetchObjectField>, FetchInterrupted> {
+) -> Result<Vec<moqt::object::Object>, FetchInterrupted> {
     let mut cursor = FetchCursor::new(cache, start, end, group_order);
     let mut objects = Vec::new();
     while let Some(object) = cursor.next().await? {
-        objects.push(object.to_fetch_object_field());
+        objects.push(object.to_object());
     }
     Ok(objects)
 }

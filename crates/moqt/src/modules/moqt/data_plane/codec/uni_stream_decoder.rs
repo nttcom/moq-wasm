@@ -5,17 +5,16 @@ use crate::modules::extensions::buf_get_ext::BufGetExt;
 
 use crate::modules::moqt::data_plane::{
     codec::{
-        fetch_decoder::FetchDecoder,
+        fetch_decoder::{FetchDecoder, FetchFrame},
         subgroup_decoder::{SubgroupDecoder, SubgroupFrame},
     },
     object::fetch::FetchHeader,
-    stream::fetch_data_receiver::Fetch,
 };
 
 #[derive(Debug)]
 pub enum UniStreamData {
     Subgroup(SubgroupFrame),
-    Fetch(Fetch),
+    Fetch(FetchFrame),
 }
 
 #[derive(Debug)]

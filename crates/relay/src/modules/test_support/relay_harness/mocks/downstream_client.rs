@@ -168,7 +168,7 @@ impl Publisher for MockPublisher {
 
 #[derive(Debug)]
 pub(crate) enum FetchSent {
-    Object(moqt::fetch::FetchObjectField),
+    Object(moqt::object::Object),
     Closed,
     Reset(DataStreamResetCode),
 }
@@ -186,7 +186,7 @@ impl MockFetchSender {
 
 #[async_trait::async_trait]
 impl FetchSender for MockFetchSender {
-    async fn send(&self, object: moqt::fetch::FetchObjectField) -> anyhow::Result<()> {
+    async fn send(&self, object: moqt::object::Object) -> anyhow::Result<()> {
         self.sent
             .send(FetchSent::Object(object))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))

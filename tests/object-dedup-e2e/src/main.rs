@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moqt::{
     ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
-    fetch::{Fetch, FetchDataReceiver, FetchObject, FetchOption},
+    fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
         ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         StreamDataSenderFactory, SubgroupStart,
@@ -144,14 +144,19 @@ async fn run_fetch(
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
-            Ok(Fetch::Header(_)) => {}
             Ok(Fetch::Object(obj)) => {
-                let payload = match &obj.fetch_object {
-                    FetchObject::Payload(b) => String::from_utf8_lossy(b).to_string(),
-                    FetchObject::Status(s) => format!("{:?}", s),
+                let payload = if obj.payload.is_empty() {
+                    format!("{:?}", obj.status)
+                } else {
+                    String::from_utf8_lossy(&obj.payload).to_string()
                 };
-                tracing::info!("[bob] g{}:o{} = {}", obj.group_id, obj.object_id, payload);
-                received.push((obj.group_id, obj.object_id, payload));
+                tracing::info!(
+                    "[bob] g{}:o{} = {}",
+                    obj.location.group_id,
+                    obj.location.object_id,
+                    payload
+                );
+                received.push((obj.location.group_id, obj.location.object_id, payload));
             }
             Ok(Fetch::End) => break,
             Err(e) => return Err(anyhow::anyhow!("[bob] fetch failed: {}", e)),

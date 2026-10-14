@@ -493,7 +493,7 @@ per-request authorization gate under "Event pipeline".
   inserts an EndOfGroup status object at `last_id + 1`, so the signal
   survives header regeneration as data. A protocol violation moqt reports on
   the stream (an unknown Object Status) terminates the publisher session.
-- `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_fetch_object`
+- `FetchIngest` inserts each FETCH object one-to-one (`CachedObject::from_object`
   via `TrackCache::insert`, which registers no knowledge); no header synthesis and
   no per-subgroup delta state.
 - The cache's sticky §2.5 malformed latch is set by an ingest reader: by the
@@ -511,10 +511,11 @@ per-request authorization gate under "Event pipeline".
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
   location, forwarding preference (subgroup id or datagram), publisher
   priority, status, extension headers, payload, and its own `received_at`.
-  Egress hands subgroup and datagram objects to moqt as `to_object()` (moqt
-  picks the header and datagram types and computes the deltas); the FETCH
-  wire form is still derived here (`to_fetch_object_field` with subgroup id = object id
-  for datagram objects per §10.4.4). `conflicts_with` implements §8.1:
+  Ingress builds it from the `moqt::object::Object` moqt returns
+  (`from_object`), and egress hands every object back as `to_object()`: moqt
+  picks the header, datagram and FETCH encodings, computes the deltas, and
+  gives a fetched datagram object its Object ID as Subgroup ID (§10.4.4).
+  `conflicts_with` implements §8.1:
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;
   extension changes and Does Not Exist transitions are tolerated duplicates.

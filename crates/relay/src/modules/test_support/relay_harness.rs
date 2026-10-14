@@ -134,7 +134,7 @@ impl FetchDeliveryHandle {
         for &(group_id, object_id) in expected {
             match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
                 Ok(Some(FetchSent::Object(object))) => assert_eq!(
-                    (object.group_id, object.object_id),
+                    (object.location.group_id, object.location.object_id),
                     (group_id, object_id),
                     "fetch objects must arrive in range order"
                 ),

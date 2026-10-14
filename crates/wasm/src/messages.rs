@@ -4,9 +4,9 @@ use mediapack::loc::{LocExtension, from_extension_headers};
 use moqt::{
     object::{ForwardingPreference, Object},
     wire::{
-        ContentExists, FetchObject, FetchObjectField, FetchOk, FilterType, NamespaceOk,
-        ObjectStatus, Publish, PublishNamespace, PublishNamespaceDone, PublishOk, RequestError,
-        ServerSetup, Subscribe, SubscribeNamespace, SubscribeOk,
+        ContentExists, FetchOk, FilterType, NamespaceOk, ObjectStatus, Publish, PublishNamespace,
+        PublishNamespaceDone, PublishOk, RequestError, ServerSetup, Subscribe, SubscribeNamespace,
+        SubscribeOk,
     },
 };
 pub use subgroup_state::SubgroupState;
@@ -907,17 +907,13 @@ impl FetchObjectMessage {
 }
 
 impl FetchObjectMessage {
-    pub(crate) fn new(request_id: u64, field: &FetchObjectField) -> Self {
-        let payload = match &field.fetch_object {
-            FetchObject::Payload(data) => data.to_vec(),
-            FetchObject::Status(_) => Vec::new(),
-        };
+    pub(crate) fn new(request_id: u64, object: &Object) -> Self {
         Self {
             request_id,
-            group_id: field.group_id,
-            object_id: field.object_id,
-            object_payload: payload,
-            loc_header: from_extension_headers(&field.extension_headers),
+            group_id: object.location.group_id,
+            object_id: object.location.object_id,
+            object_payload: object.payload.to_vec(),
+            loc_header: from_extension_headers(&object.extension_headers),
         }
     }
 }

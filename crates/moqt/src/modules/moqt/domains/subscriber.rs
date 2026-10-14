@@ -642,12 +642,14 @@ mod tests {
 
     use crate::{
         SessionEvent,
-        fetch::{Fetch, FetchObject, FetchObjectField, FetchOption},
+        fetch::{Fetch, FetchOption},
         modules::test_support::{
             DISCONNECT_TIMEOUT, connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
             subscription,
         },
-        object::{ContentExists, ExtensionHeaders, Location},
+        object::{
+            ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
+        },
         subscribe::{SubscribeOption, SubscribeUpdateOption},
     };
 
@@ -660,15 +662,15 @@ mod tests {
         object_id: 0,
     };
 
-    fn fetch_object() -> FetchObjectField {
-        FetchObjectField::new(
-            0,
-            0,
-            0,
-            128,
-            ExtensionHeaders::default(),
-            FetchObject::Payload(Bytes::from_static(b"object")),
-        )
+    fn fetch_object() -> Object {
+        Object {
+            location: START,
+            forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+            publisher_priority: 128,
+            status: ObjectStatus::Normal,
+            extension_headers: ExtensionHeaders::default(),
+            payload: Bytes::from_static(b"object"),
+        }
     }
 
     #[tokio::test]
@@ -707,8 +709,7 @@ mod tests {
             .accept_fetch_receiver(&fetch_handle)
             .await
             .unwrap();
-        fetch_sender.send(fetch_object()).await.unwrap();
-        let header = fetch_receiver.receive().await.unwrap();
+        fetch_sender.send_object(&fetch_object()).await.unwrap();
         let object = fetch_receiver.receive().await.unwrap();
 
         // Assert
@@ -721,9 +722,8 @@ mod tests {
                 .await
                 .contains_key(&fetch_handle.request_id)
         );
-        assert!(matches!(header, Fetch::Header(_)), "{header:?}");
         assert!(
-            matches!(&object, Fetch::Object(field) if *field == fetch_object()),
+            matches!(&object, Fetch::Object(received) if *received == fetch_object()),
             "{object:?}"
         );
     }

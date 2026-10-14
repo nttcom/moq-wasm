@@ -5,7 +5,13 @@ use crate::modules::moqt::data_plane::object::{
     decode_error::DecodeError,
     fetch::{FetchHeader, FetchObjectField},
 };
-use crate::modules::moqt::data_plane::stream::fetch_data_receiver::Fetch;
+
+/// One frame of a FETCH stream as draft-14 encodes it.
+#[derive(Debug)]
+pub(crate) enum FetchFrame {
+    Header(FetchHeader),
+    Object(FetchObjectField),
+}
 
 #[derive(Debug)]
 pub(crate) struct FetchDecoder {
@@ -13,7 +19,7 @@ pub(crate) struct FetchDecoder {
 }
 
 impl Decoder for FetchDecoder {
-    type Item = Fetch;
+    type Item = FetchFrame;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -32,14 +38,14 @@ impl FetchDecoder {
         }
     }
 
-    fn decode_header(&mut self, src: &mut BytesMut) -> Result<Option<Fetch>, std::io::Error> {
+    fn decode_header(&mut self, src: &mut BytesMut) -> Result<Option<FetchFrame>, std::io::Error> {
         let mut cursor = std::io::Cursor::new(&src[..]);
         match FetchHeader::decode(&mut cursor) {
             Ok(header) => {
                 let pos = cursor.position() as usize;
                 let _ = src.split_to(pos);
                 self.header_received = true;
-                Ok(Some(Fetch::Header(header)))
+                Ok(Some(FetchFrame::Header(header)))
             }
             Err(DecodeError::NeedMoreData) => Ok(None),
             Err(e) => Err(std::io::Error::new(
@@ -49,12 +55,12 @@ impl FetchDecoder {
         }
     }
 
-    fn decode_object(&self, src: &mut BytesMut) -> Result<Option<Fetch>, std::io::Error> {
+    fn decode_object(&self, src: &mut BytesMut) -> Result<Option<FetchFrame>, std::io::Error> {
         if src.is_empty() {
             return Ok(None);
         }
         match FetchObjectField::decode(src) {
-            Ok(fields) => Ok(Some(Fetch::Object(fields))),
+            Ok(fields) => Ok(Some(FetchFrame::Object(fields))),
             Err(DecodeError::NeedMoreData) => Ok(None),
             Err(e) => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

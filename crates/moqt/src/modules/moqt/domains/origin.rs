@@ -486,12 +486,12 @@ mod tests {
     use super::*;
     use crate::{
         RequestFailure, SessionEvent, Subscription, TrackObject,
-        fetch::{FetchHandle, FetchObjectField, FetchOption},
+        fetch::{FetchHandle, FetchOption},
         modules::test_support::{
             HANDSHAKE_TIMEOUT, accept_publish, read_fetch_objects, rejection,
             spawn_connected_dual_sessions, subscribed_track_reader,
         },
-        object::GroupOrder,
+        object::{GroupOrder, Object},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -544,10 +544,10 @@ mod tests {
         })
     }
 
-    fn ids(objects: &[FetchObjectField]) -> Vec<(u64, u64)> {
+    fn ids(objects: &[Object]) -> Vec<(u64, u64)> {
         objects
             .iter()
-            .map(|object| (object.group_id, object.object_id))
+            .map(|object| (object.location.group_id, object.location.object_id))
             .collect()
     }
 
@@ -609,7 +609,7 @@ mod tests {
         start: Location,
         end: Location,
         group_order: GroupOrder,
-    ) -> Result<(FetchHandle, Vec<FetchObjectField>)> {
+    ) -> Result<(FetchHandle, Vec<Object>)> {
         let mut subscriber = peers.server.subscriber();
         let option = FetchOption {
             group_order,

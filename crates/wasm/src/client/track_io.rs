@@ -77,9 +77,8 @@ pub(crate) async fn read_fetch(
     {
         Ok(mut receiver) => loop {
             match receiver.receive().await {
-                Ok(FetchData::Header(_)) => continue,
-                Ok(FetchData::Object(field)) => {
-                    emit_fetch_object(&shared.callbacks, request_id, &field);
+                Ok(FetchData::Object(object)) => {
+                    emit_fetch_object(&shared.callbacks, request_id, &object);
                 }
                 Ok(FetchData::End) => break FetchStreamEndMessage::finished(request_id),
                 Err(_) => break FetchStreamEndMessage::reset(request_id, 0),
