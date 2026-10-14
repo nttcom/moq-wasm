@@ -89,6 +89,8 @@ impl SessionIntake {
 pub struct SessionHandler {
     join_handle: tokio::task::JoinHandle<()>,
     stop_sender: Option<oneshot::Sender<()>>,
+    #[cfg(test)]
+    pub(crate) local_port: u16,
 }
 
 impl SessionHandler {
@@ -99,6 +101,10 @@ impl SessionHandler {
         let endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
+        #[cfg(test)]
+        let local_port = endpoint
+            .local_port()
+            .expect("a server endpoint is bound to a UDP socket");
         let (stop_sender, mut stop_receiver) = oneshot::channel();
         let join_handle = tokio::task::Builder::new()
             .spawn(async move {
@@ -158,6 +164,8 @@ impl SessionHandler {
         Self {
             join_handle,
             stop_sender: Some(stop_sender),
+            #[cfg(test)]
+            local_port,
         }
     }
 
