@@ -4,10 +4,6 @@ use msf::MediaTimelineRecord;
 /// The relay drops cached objects older than `RELAY_CACHE_TTL_SECS` (60 s by
 /// default), so a record past that window names a location a subscriber can no
 /// longer FETCH.
-///
-/// Locations name groups of the primary video track only: every track gets its
-/// own writer, seeded when it is published, so renditions number their groups
-/// independently.
 const RETENTION_US: u64 = 60_000_000;
 const MICROS_PER_MILLI: u64 = 1_000;
 
