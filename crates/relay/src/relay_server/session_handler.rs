@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use moqt::{AcceptError, Endpoint, TransportProtocol, server::Accepting};
 use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
@@ -97,14 +98,15 @@ impl SessionHandler {
     pub(crate) fn run<T: TransportProtocol>(
         config: moqt::server::ServerConfig,
         intake: SessionIntake,
-    ) -> Self {
-        let endpoint = Endpoint::<T>::create_server(&config)
-            .inspect_err(|e| tracing::error!("failed to create server: {}", e))
-            .unwrap();
+    ) -> anyhow::Result<Self> {
+        let endpoint = Endpoint::<T>::create_server(&config).with_context(|| {
+            format!(
+                "failed to open the transport endpoint on port {}",
+                config.port
+            )
+        })?;
         #[cfg(test)]
-        let local_port = endpoint
-            .local_port()
-            .expect("a server endpoint is bound to a UDP socket");
+        let local_port = endpoint.local_port()?;
         let (stop_sender, mut stop_receiver) = oneshot::channel();
         let join_handle = tokio::task::Builder::new()
             .spawn(async move {
@@ -159,14 +161,13 @@ impl SessionHandler {
                     } => {}
                     _ = endpoint.wait_idle() => {}
                 }
-            })
-            .unwrap();
-        Self {
+            })?;
+        Ok(Self {
             join_handle,
             stop_sender: Some(stop_sender),
             #[cfg(test)]
             local_port,
-        }
+        })
     }
 
     /// Ends the accept loop and refuses every later connection attempt at the
@@ -197,12 +198,26 @@ impl Drop for SessionHandler {
 mod tests {
     use std::time::Duration;
 
+    use moqt::QUIC;
+
     use crate::modules::auth::{
         test_support::{
             client_endpoint, spawn_relay_and_connect_client, spawn_relay_with_verifier,
         },
         verified_token::VerifiedToken,
     };
+
+    #[tokio::test]
+    async fn spawning_on_a_port_in_use_returns_an_error() {
+        // Arrange
+        let relay = spawn_relay_with_verifier(VerifiedToken::anonymous()).await;
+
+        // Act
+        let result = relay.server.spawn_client_transport::<QUIC>(relay.port);
+
+        // Assert
+        assert!(result.is_err());
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn slow_client_setup_does_not_block_new_connections() {

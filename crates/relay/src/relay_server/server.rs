@@ -117,7 +117,7 @@ impl RelayServer {
         &self,
         port: u16,
         accepted_peer: SessionPeer,
-    ) -> SessionHandler {
+    ) -> anyhow::Result<SessionHandler> {
         tracing::info!(port = port, peer = ?accepted_peer, "Spawning transport handler");
         let server_config = ServerConfig {
             port,
@@ -137,11 +137,19 @@ impl RelayServer {
         )
     }
 
-    pub fn spawn_client_transport<T: moqt::TransportProtocol>(&self, port: u16) -> SessionHandler {
+    /// Fails when the endpoint cannot bind `port` or load the certificate.
+    pub fn spawn_client_transport<T: moqt::TransportProtocol>(
+        &self,
+        port: u16,
+    ) -> anyhow::Result<SessionHandler> {
         self.spawn_transport::<T>(port, SessionPeer::Client)
     }
 
-    pub fn spawn_inner_transport<T: moqt::TransportProtocol>(&self, port: u16) -> SessionHandler {
+    /// Fails when the endpoint cannot bind `port` or load the certificate.
+    pub fn spawn_inner_transport<T: moqt::TransportProtocol>(
+        &self,
+        port: u16,
+    ) -> anyhow::Result<SessionHandler> {
         self.spawn_transport::<T>(port, SessionPeer::Relay)
     }
 
