@@ -1,4 +1,5 @@
 use std::{
+    ops::ControlFlow,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -9,6 +10,7 @@ use moqt::{
     fetch::{Fetch, FetchDataReceiver},
     subscribe::FilterType,
 };
+use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::{
     Args,
@@ -82,8 +84,8 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         }
         None => None,
     };
-    let mut video_reader = relay::track_reader(session, &video_subscription).await?;
-    let mut audio_reader = match &audio_subscription {
+    let video_reader = relay::track_reader(session, &video_subscription).await?;
+    let audio_reader = match &audio_subscription {
         Some(subscription) => Some(relay::track_reader(session, subscription).await?),
         None => None,
     };
@@ -92,55 +94,35 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         .output
         .clone()
         .unwrap_or_else(|| default_output_path(&args.namespace, SystemTime::now()));
+    // One listener for the whole recording: tokio drops a SIGINT that arrives
+    // while no listener is registered, such as between two `select!` polls.
+    let mut interrupt = signal(SignalKind::interrupt())?;
     let mut file = RecordingFile::create(path).await?;
     let mut pipeline = Pipeline::new(&selection, args.segment_seconds.map(Duration::from_secs))?;
     tracing::info!(path = %file.path().display(), "recording started");
-    if args.from_cache {
+    let cached = if args.from_cache {
         record_cached(
             session,
             &video_subscription,
             audio_subscription.as_ref(),
             &mut pipeline,
             &mut file,
+            &mut interrupt,
+        )
+        .await?
+    } else {
+        ControlFlow::Continue(())
+    };
+    if cached.is_continue() {
+        record_live(
+            session,
+            video_reader,
+            audio_reader,
+            &mut pipeline,
+            &mut file,
+            &mut interrupt,
         )
         .await?;
-    }
-
-    loop {
-        let output = tokio::select! {
-            biased;
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("stopping on Ctrl-C");
-                break;
-            }
-            close = session.closed() => {
-                tracing::warn!(%close, "session closed");
-                break;
-            }
-            object = video_reader.next_object() => match object {
-                Ok(Some(object)) => pipeline.push_video(&object)?,
-                Ok(None) => {
-                    tracing::info!("video track ended");
-                    break;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "video read error; continuing with the next group");
-                    continue;
-                }
-            },
-            object = next_audio_object(audio_reader.as_mut()) => match object {
-                Ok(Some(object)) => pipeline.push_audio(&object)?,
-                Ok(None) => {
-                    tracing::info!("audio track ended");
-                    break;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "audio read error; continuing with the next group");
-                    continue;
-                }
-            },
-        };
-        write_output(&mut file, output).await?;
     }
 
     let tail = pipeline.finish()?;
@@ -203,7 +185,8 @@ async fn record_cached(
     audio: Option<&Subscription>,
     pipeline: &mut Pipeline,
     file: &mut RecordingFile,
-) -> Result<()> {
+    interrupt: &mut Signal,
+) -> Result<ControlFlow<()>> {
     let mut video_fetch = open_cached(session, video).await;
     let mut audio_fetch = match audio {
         Some(audio) => open_cached(session, audio).await,
@@ -211,6 +194,11 @@ async fn record_cached(
     };
     while video_fetch.is_some() || audio_fetch.is_some() {
         tokio::select! {
+            biased;
+            _ = interrupt.recv() => {
+                tracing::info!("stopping on Ctrl-C");
+                return Ok(ControlFlow::Break(()));
+            }
             fetched = next_fetched(video_fetch.as_mut()) => {
                 if let Some(object) = fetched_object(fetched, "video", &mut video_fetch) {
                     write_output(file, pipeline.push_video(&object)?).await?;
@@ -224,7 +212,53 @@ async fn record_cached(
         }
     }
     tracing::info!("cached part recorded; continuing live");
-    Ok(())
+    Ok(ControlFlow::Continue(()))
+}
+
+async fn record_live(
+    session: &Session,
+    mut video_reader: TrackReader,
+    mut audio_reader: Option<TrackReader>,
+    pipeline: &mut Pipeline,
+    file: &mut RecordingFile,
+    interrupt: &mut Signal,
+) -> Result<()> {
+    loop {
+        let output = tokio::select! {
+            biased;
+            _ = interrupt.recv() => {
+                tracing::info!("stopping on Ctrl-C");
+                return Ok(());
+            }
+            close = session.closed() => {
+                tracing::warn!(%close, "session closed");
+                return Ok(());
+            }
+            object = video_reader.next_object() => match object {
+                Ok(Some(object)) => pipeline.push_video(&object)?,
+                Ok(None) => {
+                    tracing::info!("video track ended");
+                    return Ok(());
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "video read error; continuing with the next group");
+                    continue;
+                }
+            },
+            object = next_audio_object(audio_reader.as_mut()) => match object {
+                Ok(Some(object)) => pipeline.push_audio(&object)?,
+                Ok(None) => {
+                    tracing::info!("audio track ended");
+                    return Ok(());
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "audio read error; continuing with the next group");
+                    continue;
+                }
+            },
+        };
+        write_output(file, output).await?;
+    }
 }
 
 /// Clears `fetch` once the FETCH ended or failed; status objects yield nothing.
@@ -304,5 +338,23 @@ mod tests {
 
         // Assert
         assert_eq!(path, PathBuf::from("anon_live_test-1700000000.mp4"));
+    }
+
+    #[tokio::test]
+    async fn interrupt_raised_while_not_awaited_is_received_later() {
+        // Arrange
+        let mut interrupt = signal(SignalKind::interrupt()).unwrap();
+
+        // Act: the runtime handles the SIGINT during the sleep, as it does while `write_output` awaits
+        let status = std::process::Command::new("kill")
+            .args(["-INT", &std::process::id().to_string()])
+            .status()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let received = tokio::time::timeout(Duration::from_secs(2), interrupt.recv()).await;
+
+        // Assert
+        assert!(status.success());
+        assert!(received.is_ok(), "the SIGINT was lost");
     }
 }
