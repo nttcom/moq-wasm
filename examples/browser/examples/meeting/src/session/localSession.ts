@@ -170,14 +170,22 @@ export class LocalSession {
     await this.client.subscribeNamespace(trackNamespacePrefix, AUTH_INFO)
   }
 
+  /// `onEnded` is called when the publisher ends the track with PUBLISH_DONE;
+  /// its pipeline is closed by then.
   async subscribe(
     trackNamespace: string[],
     trackName: string,
     role: CatalogSubscribeRole,
-    config?: TrackMediaConfig
+    config: TrackMediaConfig | undefined,
+    onEnded: (requestId: bigint) => void
   ): Promise<bigint> {
     this.assertReady('subscribe')
-    const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO)
+    const { requestId, subscribeOk } = await this.client.subscribe(trackNamespace, trackName, AUTH_INFO, {
+      onPublishDone: ({ requestId }) => {
+        this.forgetSubscription(requestId)
+        onEnded(requestId)
+      }
+    })
     const trackAlias = subscribeOk.trackAlias
     this.subscribeTrackAliases.set(requestId, trackAlias)
     const remoteUser = parseTrackNamespace(trackNamespace)?.userName ?? `alias-${trackAlias.toString()}`
@@ -212,9 +220,11 @@ export class LocalSession {
     return requestId
   }
 
+  /// `onEnded` is called when the publisher ends the catalog with PUBLISH_DONE.
   async subscribeCatalog(
     trackNamespace: string[],
-    onTracksUpdated: (tracks: MeetingCatalogTrack[]) => void
+    onTracksUpdated: (tracks: MeetingCatalogTrack[]) => void,
+    onEnded: () => void
   ): Promise<MeetingCatalogTrack[]> {
     this.assertReady('subscribe catalog')
     const {
@@ -241,6 +251,12 @@ export class LocalSession {
             console.error('Failed to parse catalog payload:', error)
             rejectFirst(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
           }
+        },
+        {
+          onPublishDone: ({ requestId }) => {
+            this.forgetSubscription(requestId)
+            onEnded()
+          }
         }
       )
       this.subscribeTrackAliases.set(requestId, subscribeOk.trackAlias)
@@ -262,14 +278,16 @@ export class LocalSession {
 
   async unsubscribe(subscribeId: bigint): Promise<void> {
     this.assertReady('unsubscribe')
+    this.forgetSubscription(subscribeId)
+    await this.client.unsubscribe(subscribeId)
+  }
 
+  private forgetSubscription(subscribeId: bigint): void {
     const trackAlias = this.subscribeTrackAliases.get(subscribeId)
     this.subscribeTrackAliases.delete(subscribeId)
     if (trackAlias !== undefined) {
       this.mediaController.subscriber.unregisterTrack(trackAlias)
     }
-
-    await this.client.unsubscribe(subscribeId)
   }
 
   private async unsubscribeAllActiveSubscriptions(): Promise<void> {

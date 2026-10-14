@@ -328,12 +328,23 @@ impl TrackCache {
         if self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0 {
             return false;
         }
-        (start.group_id..=end.group_id).all(|group_id| {
-            ledger
+        // Object 0 of every group from start to end must lie in a known range.
+        // Group ids are wall-clock seeded and sparse, so skip to each range's
+        // end instead of testing every id.
+        let mut group_id = start.group_id;
+        while group_id <= end.group_id {
+            let Some(range_end) = ledger
                 .known_ranges
                 .end_of_range_containing(location(group_id, 0))
-                .is_some()
-        })
+            else {
+                return false;
+            };
+            if range_end > location(end.group_id, 0) {
+                return true;
+            }
+            group_id = range_end.group_id + u64::from(range_end.object_id != 0);
+        }
+        true
     }
 
     fn explicit_end_before_or_equal_start(
@@ -1003,6 +1014,24 @@ mod fetch_tests {
                 end_location: location(1, 2)
             }
         );
+    }
+
+    #[test]
+    fn resolve_fetch_range_steps_over_a_known_range_without_visiting_each_group_id() {
+        // Arrange: a FETCH fill covers {0, 0} through a wall-clock group id; the
+        // live group starts 2,000,000 ids later
+        const FILLED_TO: u64 = 1_791_962_098_067_012;
+        const LIVE_GROUP: u64 = FILLED_TO + 2_000_000;
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        cache.insert_fetch_known_range(location(0, 0), location(FILLED_TO, 0));
+        let _live = open_group(&cache, LIVE_GROUP, &[0, 1]);
+
+        // Act
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(LIVE_GROUP, 2));
+
+        // Assert: the group ids between the fill and the live group are unknown, so the FETCH goes upstream
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
     }
 
     #[test]

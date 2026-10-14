@@ -15,7 +15,8 @@ export class CatalogFollower {
   constructor(
     private readonly context: TrackContext,
     private readonly textTracks: TextTracks,
-    private readonly onCatalog: (text: string) => void
+    private readonly onCatalog: (text: string) => void,
+    private readonly onEnded: () => void
   ) {}
 
   async follow(): Promise<void> {
@@ -26,7 +27,7 @@ export class CatalogFollower {
       this.newestGroupId = groupId
       this.onCatalog(text)
     }
-    const subscribeOk = await this.textTracks.subscribe(CATALOG_TRACK_NAME, onText)
+    const subscribeOk = await this.textTracks.subscribe(CATALOG_TRACK_NAME, onText, this.onEnded)
     await fetchLatestText(this.context, CATALOG_TRACK_NAME, subscribeOk, onText)
   }
 

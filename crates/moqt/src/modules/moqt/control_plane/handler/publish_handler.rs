@@ -1,15 +1,12 @@
+use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
     PublisherInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{
-                    parameters::content_exists::ContentExists, publish::Publish,
-                    publish_ok::PublishOk,
-                },
+            control_messages::messages::{
+                parameters::content_exists::ContentExists, publish::Publish, publish_ok::PublishOk,
             },
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
@@ -76,8 +73,8 @@ impl PublishHandler {
             delivery_timeout: self.delivery_timeout,
         };
         self.session_context
-            .send_stream
-            .send(ControlMessageType::PublishOk, publish_ok.encode())
+            .control
+            .respond(OutgoingResponse::PublishOk(publish_ok))
             .await?;
 
         let _ = expires;

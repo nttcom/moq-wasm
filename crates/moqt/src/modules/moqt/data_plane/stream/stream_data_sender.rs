@@ -2,14 +2,13 @@ use crate::modules::moqt::control_plane::error_codes::DataStreamResetCode;
 use crate::modules::transport::transport_connection::BoxedSendStream;
 use std::marker::PhantomData;
 
-use crate::modules::moqt::data_plane::{
-    object::{
-        canonical_object::{Object, SubgroupStart},
-        extension_headers::ExtensionHeaders,
-        subgroup::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
+use crate::modules::moqt::{
+    data_plane::{
+        object::canonical_object::{Object, SubgroupStart},
+        stream::stream_sender::StreamSender,
+        stream_priority::StreamPriority,
     },
-    stream::stream_sender::StreamSender,
-    stream_priority::StreamPriority,
+    version::{SubgroupEncoder, Version},
 };
 
 /// Typestate: header not yet sent.
@@ -22,49 +21,25 @@ pub type SubgroupObjectSender = StreamDataSender<HeaderSent>;
 
 /// Handles sending data on a subgroup stream.
 ///
-/// In the `S = Uninitialized` state a header can be created and sent.
-/// Calling `send_header` consumes the sender and transitions it to `S = HeaderSent`.
-/// Objects can only be sent in the `HeaderSent` state, so the invariant that
-/// the header is always sent first is enforced at compile time.
+/// In the `S = Uninitialized` state the header can be sent; `start` consumes
+/// the sender and returns it in the `S = HeaderSent` state. Objects can only
+/// be sent in the `HeaderSent` state, so the invariant that the header is
+/// always sent first is enforced at compile time.
 pub struct StreamDataSender<S = Uninitialized> {
     stream_sender: StreamSender,
-    track_alias: u64,
-    subgroup_header: Option<SubgroupHeader>,
-    prev_object_id: Option<u64>,
+    encoder: SubgroupEncoder,
     _state: PhantomData<S>,
 }
 
 // ─── Uninitialized State ───────────────────────────────────────────────────────
 
 impl StreamDataSender<Uninitialized> {
-    pub(crate) fn new(track_alias: u64, send_stream: BoxedSendStream) -> Self {
-        let stream_sender = StreamSender::new(send_stream);
+    pub(crate) fn new(version: Version, track_alias: u64, send_stream: BoxedSendStream) -> Self {
         Self {
-            stream_sender,
-            track_alias,
-            subgroup_header: None,
-            prev_object_id: None,
+            stream_sender: StreamSender::new(send_stream),
+            encoder: SubgroupEncoder::new(version, track_alias),
             _state: PhantomData,
         }
-    }
-
-    /// Creates a subgroup header associated with this stream.
-    pub(crate) fn create_header(
-        &self,
-        group_id: u64,
-        subgroup_id: SubgroupId,
-        publisher_priority: u8,
-        end_of_group: bool,
-        has_extensions: bool,
-    ) -> SubgroupHeader {
-        SubgroupHeader::new(
-            self.track_alias,
-            group_id,
-            subgroup_id,
-            publisher_priority,
-            has_extensions,
-            end_of_group,
-        )
     }
 
     pub async fn set_priority(&self, priority: StreamPriority) -> anyhow::Result<()> {
@@ -74,41 +49,37 @@ impl StreamDataSender<Uninitialized> {
     }
 
     /// Sends the header of the subgroup `start` describes and returns the
-    /// sender for its objects. Extensions are declared present, so every
-    /// object may carry them.
-    pub async fn start(self, start: SubgroupStart) -> anyhow::Result<StreamDataSender<HeaderSent>> {
-        let header = SubgroupHeader::new(
-            self.track_alias,
-            start.group_id,
-            SubgroupId::Value(start.subgroup_id),
-            start.publisher_priority,
-            true,
-            start.ends_group,
-        );
-        self.send_header(header).await
+    /// sender for its objects.
+    pub async fn start(
+        mut self,
+        start: SubgroupStart,
+    ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
+        tracing::debug!(?start, "Sending new subgroup header");
+        let header = self.encoder.header(start);
+        self.stream_sender.send(&header).await?;
+        Ok(self.into_header_sent())
     }
 
-    pub(crate) async fn send_header(
-        self,
-        header: SubgroupHeader,
+    /// Sends a draft-14 header without extensions.
+    #[cfg(test)]
+    pub(crate) async fn start_raw(
+        mut self,
+        group_id: u64,
+        subgroup_id: crate::wire::SubgroupId,
+        publisher_priority: u8,
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
-        if header.track_alias != self.track_alias {
-            anyhow::bail!(
-                "track_alias mismatch: expected {}, got {}",
-                self.track_alias,
-                header.track_alias
-            );
-        }
-        tracing::debug!("Sending new subgroup header: {:?}", header);
-        let encoded_header = header.encode();
-        self.stream_sender.send(&encoded_header).await?;
-        Ok(StreamDataSender {
+        let SubgroupEncoder::Draft14(encoder) = &mut self.encoder;
+        let bytes = encoder.raw_header(group_id, subgroup_id, publisher_priority);
+        self.stream_sender.send(&bytes).await?;
+        Ok(self.into_header_sent())
+    }
+
+    fn into_header_sent(self) -> StreamDataSender<HeaderSent> {
+        StreamDataSender {
             stream_sender: self.stream_sender,
-            track_alias: self.track_alias,
-            subgroup_header: Some(header),
-            prev_object_id: None,
+            encoder: self.encoder,
             _state: PhantomData,
-        })
+        }
     }
 
     pub async fn close(&mut self) -> anyhow::Result<()> {
@@ -116,7 +87,8 @@ impl StreamDataSender<Uninitialized> {
     }
 
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        self.stream_sender.reset(code.into()).await
+        let code = self.encoder.version().data_stream_reset_code(code);
+        self.stream_sender.reset(code).await
     }
 }
 
@@ -127,52 +99,19 @@ impl StreamDataSender<HeaderSent> {
     /// priority. Fails when its object id is not greater than the previous
     /// object's. An object without payload is sent as its status.
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<()> {
-        let object_id = object.location.object_id;
-        let object_id_delta = match self.prev_object_id {
-            None => Some(object_id),
-            Some(prev) => prev
-                .checked_add(1)
-                .and_then(|next| object_id.checked_sub(next)),
-        }
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "object {object_id} does not follow object {:?} in its subgroup",
-                self.prev_object_id
-            )
-        })?;
-        let subgroup_object = if object.payload.is_empty() {
-            SubgroupObject::new_status(u8::from(object.status) as u64)
-        } else {
-            SubgroupObject::new_payload(object.payload.clone())
-        };
-        let field = self.create_object_field(
-            object_id_delta,
-            object.extension_headers.clone(),
-            subgroup_object,
-        );
-        self.send(field).await?;
-        self.prev_object_id = Some(object_id);
-        Ok(())
+        let bytes = self.encoder.object(object)?;
+        self.stream_sender.send(&bytes).await
     }
 
-    pub(crate) fn create_object_field(
-        &self,
+    /// Sends a draft-14 object field without extensions.
+    #[cfg(test)]
+    pub(crate) async fn send_raw(
+        &mut self,
         object_id_delta: u64,
-        extension_headers: ExtensionHeaders,
-        subgroup_object: SubgroupObject,
-    ) -> SubgroupObjectField {
-        let header = self.subgroup_header.as_ref().unwrap();
-        SubgroupObjectField {
-            message_type: header.message_type,
-            object_id_delta,
-            extension_headers,
-            subgroup_object,
-        }
-    }
-
-    /// Sends an object on the stream.
-    pub(crate) async fn send(&mut self, data: SubgroupObjectField) -> anyhow::Result<()> {
-        let bytes = data.encode();
+        subgroup_object: crate::wire::SubgroupObject,
+    ) -> anyhow::Result<()> {
+        let SubgroupEncoder::Draft14(encoder) = &self.encoder;
+        let bytes = encoder.raw_object_field(object_id_delta, subgroup_object);
         self.stream_sender.send(&bytes).await
     }
 
@@ -181,7 +120,8 @@ impl StreamDataSender<HeaderSent> {
     }
 
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        self.stream_sender.reset(code.into()).await
+        let code = self.encoder.version().data_stream_reset_code(code);
+        self.stream_sender.reset(code).await
     }
 }
 

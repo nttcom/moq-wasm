@@ -1,8 +1,7 @@
 use anyhow::bail;
 
 use crate::modules::moqt::data_plane::{
-    malformed_track_error::MalformedTrackError,
-    object::{canonical_object::Object, object_datagram::ObjectDatagram},
+    malformed_track_error::MalformedTrackError, object::canonical_object::Object,
 };
 use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
 
@@ -10,18 +9,18 @@ use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
 pub struct DatagramReceiver {
     pub track_alias: u64,
     receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
-    first_object_datagram: Option<ObjectDatagram>,
+    first_object: Option<Object>,
 }
 
 impl DatagramReceiver {
-    pub(crate) async fn new(
-        first_object_datagram: ObjectDatagram,
+    pub(crate) fn new(
+        track_alias: u64,
+        first_object: Object,
         receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
     ) -> Self {
-        let track_alias = first_object_datagram.track_alias;
         Self {
             track_alias,
-            first_object_datagram: Some(first_object_datagram),
+            first_object: Some(first_object),
             receiver,
         }
     }
@@ -29,16 +28,16 @@ impl DatagramReceiver {
     /// Returns the next object of the track. A subgroup stream on the track
     /// is a `MalformedTrackError` (draft-14 §2.5).
     pub async fn receive(&mut self) -> anyhow::Result<Object> {
-        if let Some(object_datagram) = self.first_object_datagram.take() {
-            return Ok(object_datagram.into_object());
+        if let Some(object) = self.first_object.take() {
+            return Ok(object);
         }
         let result = match self.receiver.recv().await {
             Some(object) => object,
             None => bail!("Sender dropped."),
         };
         match result {
-            IncomingObject::Datagram(datagram) => Ok(datagram.into_object()),
-            IncomingObject::StreamHeader { .. } => Err(MalformedTrackError.into()),
+            IncomingObject::Datagram(object) => Ok(object),
+            IncomingObject::Subgroup(_) => Err(MalformedTrackError.into()),
         }
     }
 }

@@ -1,17 +1,12 @@
 use crate::modules::executor;
-use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
-use crate::modules::moqt::data_plane::codec::control_message_decoder::ControlMessageDecoder;
-use crate::modules::moqt::data_plane::stream::bi_stream_sender::BiStreamSender;
-use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session::Session;
 use crate::modules::moqt::domains::session_context::SessionContext;
-use crate::modules::moqt::domains::session_context_factory::SessionContextFactory;
 use crate::modules::moqt::protocol::TransportProtocol;
+use crate::modules::moqt::version;
 use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use crate::modules::transport::transport_connection::TransportClose;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use crate::{Connecting, server::Accepting, server::Handshake};
@@ -29,19 +24,18 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let transport_conn = self.transport_creator.create_new_transport(&target).await?;
         let authorization_token = self.authorization_token.clone();
         let handshake = async move {
-            let (send_stream, receive_stream, server_setup) =
-                match Self::exchange_setup(&transport_conn, authorization_token.as_deref()).await {
+            let (control, control_receiver, server_setup) =
+                match version::connect(&transport_conn, authorization_token.as_deref()).await {
                     Ok(established) => established,
                     Err(error) => {
                         return Err(Self::explain_rejected_setup(&transport_conn, error).await);
                     }
                 };
             let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let context =
-                SessionContext::new(transport_conn, send_stream, AtomicU64::new(0), event_sender);
+            let context = SessionContext::new(transport_conn, control, event_sender);
             tracing::info!("Session established");
             Ok(Session::new(
-                receive_stream,
+                control_receiver,
                 context,
                 event_receiver,
                 Some(server_setup),
@@ -50,18 +44,6 @@ impl<T: TransportProtocol> SessionCreator<T> {
         Ok(Connecting {
             inner: Box::pin(handshake),
         })
-    }
-
-    async fn exchange_setup(
-        transport_conn: &BoxedConnection,
-        authorization_token: Option<&str>,
-    ) -> anyhow::Result<(BiStreamSender, BiStreamReceiver, ServerSetup)> {
-        let (send_stream, receive_stream) = transport_conn.open_bi().await?;
-        let mut send_stream = BiStreamSender::new(send_stream);
-        let mut receive_stream = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
-        SessionContextFactory::send_client_setup(&mut send_stream, authorization_token).await?;
-        let server_setup = SessionContextFactory::receive_server_setup(&mut receive_stream).await?;
-        Ok((send_stream, receive_stream, server_setup))
     }
 
     /// A peer that rejects CLIENT_SETUP closes the transport with a termination
@@ -85,15 +67,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
     pub(crate) async fn accept_new_connection(&mut self) -> anyhow::Result<Accepting> {
         let transport_conn = self.transport_creator.accept_new_transport().await?;
         let handshake = async move {
-            let (send_stream, receive_stream) = transport_conn.accept_bi().await?;
-            let mut receive_stream = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
-            let client_setup =
-                SessionContextFactory::receive_client_setup(&mut receive_stream).await?;
+            let setup = version::accept(&transport_conn).await?;
             Ok(Handshake {
-                client_setup,
                 transport_connection: transport_conn,
-                send_stream: BiStreamSender::new(send_stream),
-                receive_stream,
+                setup,
             })
         };
         Ok(Accepting {
@@ -139,11 +116,8 @@ mod tests {
 
         // Assert
         assert_eq!(
-            handshake
-                .client_setup()
-                .setup_parameters
-                .authorization_token,
-            vec![AuthorizationToken::use_value_utf8("jwt")]
+            handshake.authorization_tokens(),
+            [AuthorizationToken::use_value_utf8("jwt")]
         );
         client.abort();
     }
@@ -162,13 +136,7 @@ mod tests {
             .unwrap();
 
         // Assert
-        assert!(
-            handshake
-                .client_setup()
-                .setup_parameters
-                .authorization_token
-                .is_empty()
-        );
+        assert!(handshake.authorization_tokens().is_empty());
         client.abort();
     }
 
@@ -181,12 +149,12 @@ mod tests {
 
         // Act
         let client_ids = [
-            client_context.get_request_id(),
-            client_context.get_request_id(),
+            client_context.control.next_request_id(),
+            client_context.control.next_request_id(),
         ];
         let server_ids = [
-            server_context.get_request_id(),
-            server_context.get_request_id(),
+            server_context.control.next_request_id(),
+            server_context.control.next_request_id(),
         ];
 
         // Assert

@@ -65,8 +65,9 @@ both tracks into one init segment and one fragment stream.
 - **One timeline for both tracks.** Each `loc::Demuxer` would otherwise count
   presentation time from its own first capture timestamp, and the two
   subscriptions start at different objects. The pipeline takes the first
-  capture timestamp either track delivers and gives it to both demuxers with
-  `set_capture_origin`, so the file keeps the publisher's audio/video offset.
+  capture timestamp either track delivers and creates each track's demuxer
+  at its first object with `with_capture_origin` set to it, so the file keeps
+  the publisher's audio/video offset.
 - **An init segment never changes.** `Fmp4Muxer` rejects a configuration
   change after the init segment is out. The pipeline compares each
   `VideoConfig` / `AudioConfig` event with the one the current muxer was built

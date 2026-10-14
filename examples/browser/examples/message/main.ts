@@ -421,7 +421,11 @@ function setupSessionButtons(): void {
           startGroup,
           startObject,
           endGroup,
-          forward
+          forward,
+          onPublishDone: (message) => {
+            unregisterTrackAliasByRequestId(requestId)
+            setSendStatus(`Received PUBLISH_DONE for ${requestId} (status ${message.statusCode})`)
+          }
         })
       ).subscribeOk.trackAlias
 
