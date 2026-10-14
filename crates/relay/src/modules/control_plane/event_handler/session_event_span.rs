@@ -121,7 +121,7 @@ pub(super) fn session_event_span(
             session_id = %session_id,
             event = "PublishNamespaceCancel",
             track_namespace = %handler.track_namespace(),
-            error_code = handler.error_code(),
+            error_code = ?handler.error_code(),
             error_reason = %handler.error_reason(),
         ),
         MoqtSessionEvent::PublishDone(handler) => tracing::info_span!(

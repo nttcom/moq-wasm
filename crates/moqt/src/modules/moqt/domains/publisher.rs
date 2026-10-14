@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestKind};
+use crate::modules::moqt::control_plane::error_codes::{
+    PublishDoneCode, RequestErrorCode, RequestKind,
+};
 
 use crate::{
     RequestFailure,
@@ -92,16 +94,20 @@ impl Publisher {
     }
 
     /// Tells the peer this side no longer serves `namespace` (draft-14
-    /// §9.6). Fire-and-forget: the draft defines no response.
+    /// §9.27). Fire-and-forget: the draft defines no response.
     pub async fn publish_namespace_cancel(
         &self,
         namespace: String,
-        error_code: u64,
+        code: RequestErrorCode,
         error_reason: String,
     ) -> anyhow::Result<()> {
         let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        let publish_namespace_cancel =
-            PublishNamespaceCancel::new(vec_namespace, error_code, error_reason);
+        // draft-14 §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
+        let publish_namespace_cancel = PublishNamespaceCancel::new(
+            vec_namespace,
+            code.wire_value(RequestKind::PublishNamespace),
+            error_reason,
+        );
         self.session
             .send_stream
             .send(
@@ -220,6 +226,8 @@ impl Publisher {
 mod tests {
     use std::time::Duration;
 
+    use crate::RequestErrorCode;
+
     use crate::{
         SessionEvent, modules::test_support::spawn_connected_dual_sessions, publish::PublishOption,
     };
@@ -289,7 +297,11 @@ mod tests {
         // Act
         client
             .publisher()
-            .publish_namespace_cancel("live/room".to_string(), 0x5, "moved".to_string())
+            .publish_namespace_cancel(
+                "live/room".to_string(),
+                RequestErrorCode::Uninterested,
+                "moved".to_string(),
+            )
             .await
             .unwrap();
 
@@ -299,7 +311,7 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE_CANCEL from the client");
         };
         assert_eq!(cancel.track_namespace(), "live/room");
-        assert_eq!(cancel.error_code(), 0x5);
+        assert_eq!(cancel.error_code(), RequestErrorCode::Uninterested);
         assert_eq!(cancel.error_reason(), "moved");
     }
 }

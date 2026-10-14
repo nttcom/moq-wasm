@@ -996,7 +996,11 @@ impl MOQTClient {
     ) -> Result<(), JsValue> {
         self.session()?
             .publisher()
-            .publish_namespace_cancel(track_namespace.join("/"), error_code, error_reason)
+            .publish_namespace_cancel(
+                track_namespace.join("/"),
+                RequestErrorCode::from_wire(error_code, RequestKind::PublishNamespace),
+                error_reason,
+            )
             .await
             .map_err(anyhow_error)
     }
