@@ -7,19 +7,17 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::executor::JoinHandle;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
-use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
 use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
 use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
-use crate::modules::moqt::data_plane::stream::stream_receiver::BiStreamReceiver;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::runtime::tasks::{
-    control_message_receive_task::ControlMessageReceiveTask,
     datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
     uni_stream_receive_task::UniStreamReceiveTask,
 };
+use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
     transport_addresses::TransportAddresses, transport_connection::TransportClose,
     transport_stats::TransportStats,
@@ -41,7 +39,7 @@ impl Session {
     // the native build, where the tasks run on a multi-threaded executor.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) fn new(
-        receive_stream: BiStreamReceiver,
+        control_receiver: ControlReceiver,
         inner: SessionContext,
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         server_setup: Option<ServerSetup>,
@@ -60,11 +58,8 @@ impl Session {
         let transport_close_watcher_span =
             tracing::info_span!(parent: &session_span, "moqt.transport.close_watcher");
 
-        let control_message_receive_task = ControlMessageReceiveTask::run(
-            receive_stream,
-            Arc::downgrade(&inner),
-            control_plane_receiver_span,
-        );
+        let control_message_receive_task =
+            control_receiver.spawn(Arc::downgrade(&inner), control_plane_receiver_span);
         let datagram_receive_task = DatagramReceiveTask::run(inner.clone(), datagram_receiver_span);
         let uni_stream_receive_task =
             UniStreamReceiveTask::run(inner.clone(), uni_stream_receiver_span);
@@ -132,11 +127,8 @@ impl Session {
     /// session. Fire-and-forget: the draft defines no response.
     pub async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
         self.inner
-            .send_stream
-            .send(
-                ControlMessageType::GoAway,
-                GoAway::new(new_session_uri).encode(),
-            )
+            .control
+            .notify(Notification::GoAway(GoAway::new(new_session_uri)))
             .await?;
         Ok(())
     }
@@ -145,11 +137,10 @@ impl Session {
     /// §9.2). Fire-and-forget.
     pub async fn raise_max_request_id(&self, max_request_id: u64) -> anyhow::Result<()> {
         self.inner
-            .send_stream
-            .send(
-                ControlMessageType::MaxRequestId,
-                MaxRequestId::new(max_request_id).encode(),
-            )
+            .control
+            .notify(Notification::MaxRequestId(MaxRequestId::new(
+                max_request_id,
+            )))
             .await?;
         Ok(())
     }
@@ -158,11 +149,10 @@ impl Session {
     /// `maximum_request_id` (draft-14 §9.3). Fire-and-forget.
     pub async fn requests_blocked(&self, maximum_request_id: u64) -> anyhow::Result<()> {
         self.inner
-            .send_stream
-            .send(
-                ControlMessageType::RequestsBlocked,
-                RequestsBlocked::new(maximum_request_id).encode(),
-            )
+            .control
+            .notify(Notification::RequestsBlocked(RequestsBlocked::new(
+                maximum_request_id,
+            )))
             .await?;
         Ok(())
     }
@@ -276,8 +266,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Assert
-        assert_eq!(close.code, Some(TerminationErrorCode::GoawayTimeout as u32));
+        // Assert: draft-14 numbers GOAWAY_TIMEOUT 0x10
+        assert_eq!(close.code, Some(0x10));
         assert_eq!(close.reason, "bye");
         receive_disconnected(&client).await.unwrap();
     }

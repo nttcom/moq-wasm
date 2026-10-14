@@ -19,12 +19,13 @@ use moqt::{
         ContentExists, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
         SubgroupObjectSender, SubgroupStart,
     },
-    publish::{PublishDoneCode, PublishHandler, PublishOption},
+    publish::{PublishHandler, PublishOption},
     subscribe::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
         FetchOk, NamespaceOk, PublishOk, RequestError, RequestKind, SubscribeOk, TrackStatusOk,
+        publish_done_code_from_wire, request_error_code_from_wire, request_error_code_to_wire,
     },
 };
 use tokio::sync::Mutex;
@@ -381,7 +382,7 @@ impl MOQTClient {
             .ok_or_else(|| js_error(format!("unknown publish namespace request: {request_id}")))?;
         handler
             .error(
-                RequestErrorCode::from_wire(error_code, RequestKind::PublishNamespace),
+                request_error_code_from_wire(error_code, RequestKind::PublishNamespace),
                 reason_phrase,
             )
             .await
@@ -549,7 +550,7 @@ impl MOQTClient {
             .ok_or_else(|| js_error(format!("unknown publish request: {request_id}")))?;
         handler
             .error(
-                RequestErrorCode::from_wire(error_code, RequestKind::Publish),
+                request_error_code_from_wire(error_code, RequestKind::Publish),
                 reason_phrase,
             )
             .await
@@ -820,7 +821,7 @@ impl MOQTClient {
             .remove_incoming_subscribe(request_id);
         handler
             .error(
-                RequestErrorCode::from_wire(error_code, RequestKind::Subscribe),
+                request_error_code_from_wire(error_code, RequestKind::Subscribe),
                 reason_phrase,
             )
             .await
@@ -945,8 +946,8 @@ impl MOQTClient {
         error_reason: String,
     ) -> Result<(), JsValue> {
         let session = self.session()?;
-        let status_code = PublishDoneCode::try_from(status_code)
-            .map_err(|_| js_error(format!("unknown PUBLISH_DONE status code: {status_code}")))?;
+        let status_code = publish_done_code_from_wire(status_code)
+            .ok_or_else(|| js_error(format!("unknown PUBLISH_DONE status code: {status_code}")))?;
         let subscription = self
             .shared
             .track_subscriptions
@@ -995,7 +996,7 @@ impl MOQTClient {
             .publisher()
             .publish_namespace_cancel(
                 track_namespace.join("/"),
-                RequestErrorCode::from_wire(error_code, RequestKind::PublishNamespace),
+                request_error_code_from_wire(error_code, RequestKind::PublishNamespace),
                 error_reason,
             )
             .await
@@ -1079,7 +1080,7 @@ impl MOQTClient {
             .map_err(anyhow_error)?;
         handler
             .error(
-                RequestErrorCode::from_wire(error_code, RequestKind::TrackStatus),
+                request_error_code_from_wire(error_code, RequestKind::TrackStatus),
                 reason_phrase,
             )
             .await
@@ -1129,7 +1130,7 @@ impl MOQTClient {
         match handler {
             Some(handler) => handler
                 .error(
-                    RequestErrorCode::from_wire(error_code, RequestKind::Fetch),
+                    request_error_code_from_wire(error_code, RequestKind::Fetch),
                     reason_phrase,
                 )
                 .await
@@ -1492,7 +1493,7 @@ fn request_error_message(
         RequestFailure::Timeout => (RequestErrorCode::Timeout, error.to_string()),
         _ => (RequestErrorCode::InternalError, error.to_string()),
     };
-    let error_code = code.wire_value(kind);
+    let error_code = request_error_code_to_wire(code, kind);
     RequestErrorMessage::from(&RequestError {
         request_id,
         error_code,

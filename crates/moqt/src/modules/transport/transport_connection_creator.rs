@@ -1,16 +1,27 @@
 use crate::modules::{
     executor::{MaybeSend, MaybeSync},
-    transport::{connect_target::ConnectTarget, transport_connection::BoxedConnection},
+    transport::{
+        application_protocol::ApplicationProtocols, connect_target::ConnectTarget,
+        transport_connection::BoxedConnection,
+    },
 };
 use async_trait::async_trait;
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
-    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self>
+    fn client(
+        port_num: u16,
+        verify_certificate: bool,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self>
     where
         Self: Sized;
-    fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self>
+    fn client_with_custom_cert(
+        port_num: u16,
+        custom_cert_path: &str,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self>
     where
         Self: Sized;
     fn server(
@@ -18,6 +29,7 @@ pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
         key_path: &str,
         port_num: u16,
         keep_alive_sec: u64,
+        protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self>
     where
         Self: Sized;

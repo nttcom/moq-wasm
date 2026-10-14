@@ -6,7 +6,6 @@ use tracing::{Instrument, Span};
 use crate::{
     modules::executor::{self, JoinHandle},
     modules::moqt::{
-        data_plane::object::object_datagram::ObjectDatagram,
         domains::session_context::SessionContext,
         runtime::dispatch::{
             incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
@@ -41,20 +40,15 @@ impl DatagramReceiveTask {
     #[tracing::instrument(level = "trace", name = "on_datagram_received", skip_all)]
     async fn on_datagram_received(context: &Arc<SessionContext>, data: &mut BytesMut) -> bool {
         tracing::trace!(?data, "Received datagram");
-        let datagram_object = match ObjectDatagram::decode(data) {
-            Ok(object) => object,
+        let (track_alias, object) = match context.control.version().decode_datagram(data) {
+            Ok(decoded) => decoded,
             Err(error) => {
                 tracing::error!(error = %format!("{error:#}"), "Failed to decode a datagram object");
                 return false;
             }
         };
 
-        SubscriptionNotifier::notify(
-            context,
-            datagram_object.track_alias,
-            IncomingObject::Datagram(datagram_object),
-        )
-        .await;
+        SubscriptionNotifier::notify(context, track_alias, IncomingObject::Datagram(object)).await;
         true
     }
 }
