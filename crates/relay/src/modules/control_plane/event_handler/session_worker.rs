@@ -338,6 +338,7 @@ impl SessionWorker {
                         },
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.ingress_sender,
+                        &deps.cache_store,
                     )
                     .instrument(event_span)
                     .await;

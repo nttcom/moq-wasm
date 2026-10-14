@@ -568,6 +568,15 @@ impl InMemoryLocalPubSubDirectory {
             .collect()
     }
 
+    /// Some publisher still serves the track: an upstream subscription, a
+    /// client publishing its namespace, or a pending PUBLISH of it.
+    pub(crate) fn has_track_publisher(&self, track_key: &TrackKey) -> bool {
+        self.upstream_tracks.contains_key(track_key)
+            || !self
+                .find_upstream_publishers(&track_key.track_namespace, &track_key.track_name)
+                .is_empty()
+    }
+
     pub(crate) fn get_upstream_track(&self, track_key: &TrackKey) -> Option<UpstreamTrack> {
         self.upstream_tracks
             .get(track_key)
@@ -876,6 +885,31 @@ mod tests {
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
+
+    #[test]
+    fn a_track_keeps_a_publisher_while_another_session_publishes_its_namespace() {
+        // Arrange: session 1 serves the track, session 2 publishes the namespace
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+        table.register_publish_namespace(2, "ns".to_string(), SessionPeer::Client);
+
+        // Act
+        table.remove_session(PUBLISHER_SESSION);
+
+        // Assert
+        assert!(table.has_track_publisher(&track_key));
+    }
+
+    #[test]
+    fn a_track_has_no_publisher_once_its_only_publisher_left() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
+
+        // Act
+        table.remove_session(PUBLISHER_SESSION);
+
+        // Assert
+        assert!(!table.has_track_publisher(&track_key));
+    }
 
     #[test]
     fn remove_session_cleans_up_all_session_scoped_entries() {

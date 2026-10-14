@@ -55,6 +55,13 @@ impl TrackCacheStore {
             .clone()
     }
 
+    /// The track's last publisher left; see `TrackCache::publisher_left`.
+    pub(crate) fn publisher_left(&self, track_key: &TrackKey) {
+        if let Some(cache) = self.get(track_key) {
+            cache.publisher_left();
+        }
+    }
+
     pub(crate) fn occupancy(&self) -> StoreOccupancy {
         let caches: Vec<Arc<TrackCache>> = self
             .caches

@@ -1,5 +1,5 @@
 use crate::modules::{
-    data_plane::ingress::ingress_coordinator::IngressCommand,
+    data_plane::{cache::store::TrackCacheStore, ingress::ingress_coordinator::IngressCommand},
     domain::{
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::PublishDoneReason},
         session_id::SessionId,
@@ -21,6 +21,7 @@ impl UpstreamPublishDone {
             status_code = ?end.status_code,
         )
     )]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle(
         &self,
         publisher_session_id: SessionId,
@@ -29,6 +30,7 @@ impl UpstreamPublishDone {
         end: PublishDoneReason,
         table: &InMemoryLocalPubSubDirectory,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
+        cache_store: &TrackCacheStore,
     ) {
         let Some(track_key) =
             table.end_upstream_subscription(publisher_session_id, upstream_request_id, end)
@@ -37,6 +39,9 @@ impl UpstreamPublishDone {
             return;
         };
         super::stop_ingress(ingress_sender, publisher_session_id, &track_key).await;
+        if !table.has_track_publisher(&track_key) {
+            cache_store.publisher_left(&track_key);
+        }
     }
 }
 
@@ -66,6 +71,7 @@ mod tests {
                 PublishDoneReason::publisher_session_closed(),
                 &ctx.table,
                 &ctx.ingress_sender,
+                &TrackCacheStore::new(),
             )
             .await;
     }
