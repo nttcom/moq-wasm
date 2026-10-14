@@ -23,7 +23,7 @@ the corresponding container bytes or objects.
 | --- | --- |
 | `Streams` | Which tracks the container announces (MPEG-TS PMT, FLV header flags) |
 | `VideoConfig` | `AvcDecoderConfigurationRecord` (SPS/PPS, codec string) |
-| `AudioConfig` | AAC `AudioSpecificConfig`, or the sample rate and channels of G.711 A-law, Opus or MP3; the FLV and MPEG-TS muxers take AAC only, the fMP4 muxers AAC, A-law and Opus |
+| `AudioConfig` | AAC `AudioSpecificConfig`, or the sample rate and channels of G.711 A-law, Opus or MP3; the FLV and MPEG-TS muxers take AAC only, the fMP4 muxers all four |
 | `Video` | One H.264 access unit in Annex-B form; keyframes carry SPS/PPS in-band |
 | `Audio` | One encoded audio frame (a raw AAC access unit without ADTS header, A-law bytes, an Opus packet or an MP3 frame) |
 

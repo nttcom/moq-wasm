@@ -18,8 +18,8 @@ const ALAW_SAMPLE_ENTRY: &[u8] = b"alaw";
 const DEFAULT_TIMESCALE: u32 = 90_000;
 const AAC_LC_OBJECT_TYPE: u8 = 2;
 /// ISO/IEC 14496-1 Table 5: objectTypeIndication of MPEG-2 and MPEG-1 audio.
-const MPEG2_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x69;
-const MPEG1_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x6B;
+pub(super) const MPEG2_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x69;
+pub(super) const MPEG1_AUDIO_OBJECT_TYPE_INDICATION: u8 = 0x6B;
 
 pub(super) enum Media {
     Video(AvcDecoderConfigurationRecord),

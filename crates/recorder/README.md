@@ -16,7 +16,7 @@ cargo run -p recorder -- \
 | `--relay` (`MOQT_URL`) | — | `moqt://` for QUIC, `https://` for WebTransport |
 | `--namespace` | — | Namespace of the broadcast |
 | `--video-track` | `video` | LOC video track to record (`video_720p`, `video/profile_1`, ...) |
-| `--audio-track` | `audio` | LOC audio track to record; AAC, Opus and G.711 A-law |
+| `--audio-track` | `audio` | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**` |
 | `--insecure-skip-tls-verify` | off | Accept the local relay's development certificate |

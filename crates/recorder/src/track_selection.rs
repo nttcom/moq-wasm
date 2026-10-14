@@ -63,7 +63,8 @@ fn loc_track<'a>(catalog: &'a Catalog, name: &str) -> Option<&'a Track> {
 }
 
 /// `Ok(None)` for an AAC track without a resolvable `initRef` and for codecs
-/// the fMP4 muxer does not take; `Err` for an entry that is present but broken.
+/// other than AAC, Opus, G.711 A-law and MP3; `Err` for an entry that is
+/// present but broken.
 fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>> {
     let codec = track.codec.as_deref().unwrap_or_default();
     if codec.starts_with("mp4a.40.") {
@@ -75,7 +76,7 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>>
             .context("audio initDataList entry is not Base64")?;
         return Ok(Some(AudioConfig::Aac(AudioSpecificConfig::parse(&bytes)?)));
     }
-    if !matches!(codec, "opus" | "pcma") {
+    if !matches!(codec, "opus" | "pcma" | "mp3") {
         return Ok(None);
     }
     let sample_rate = track
@@ -87,7 +88,11 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>>
             sample_rate,
             channels,
         },
-        _ => AudioConfig::Pcma {
+        "pcma" => AudioConfig::Pcma {
+            sample_rate,
+            channels,
+        },
+        _ => AudioConfig::Mp3 {
             sample_rate,
             channels,
         },
@@ -187,17 +192,22 @@ mod tests {
     }
 
     #[test]
-    fn reads_opus_and_alaw_from_the_sample_rate_and_channel_config() {
+    fn reads_opus_alaw_and_mp3_from_the_sample_rate_and_channel_config() {
         // Arrange
         let mut alaw = audio_track("pcma");
         alaw.name = "audio/profile_1".to_string();
         alaw.sample_rate = Some(8_000);
         alaw.channel_config = Some("mono".to_string());
-        let catalog = catalog(vec![video_track(), audio_track("opus"), alaw]);
+        let mut mp3 = audio_track("mp3");
+        mp3.name = "audio_mp3".to_string();
+        let catalog = catalog(vec![video_track(), audio_track("opus"), alaw, mp3]);
 
         // Act
         let opus = select_tracks(&catalog, "video", "audio").unwrap().unwrap();
         let pcma = select_tracks(&catalog, "video", "audio/profile_1")
+            .unwrap()
+            .unwrap();
+        let mp3 = select_tracks(&catalog, "video", "audio_mp3")
             .unwrap()
             .unwrap();
 
@@ -214,6 +224,13 @@ mod tests {
             AudioConfig::Pcma {
                 sample_rate: 8_000,
                 channels: 1
+            }
+        );
+        assert_eq!(
+            mp3.audio.unwrap().config,
+            AudioConfig::Mp3 {
+                sample_rate: 48_000,
+                channels: 2
             }
         );
     }

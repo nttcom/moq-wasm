@@ -427,8 +427,9 @@ mod tests {
         assert_eq!(audio_samples(&actual).len(), audio_samples(&expected).len());
     }
     #[test]
-    fn round_trips_opus_and_alaw_audio_the_muxer_wrote() {
-        // Arrange: each frame lasts 20 ms (Opus TOC 0xFC, 160 A-law bytes at 8 kHz)
+    fn round_trips_opus_alaw_and_mp3_audio_the_muxer_wrote() {
+        // Arrange: (config, frame, frame ms): Opus TOC 0xFC and 160 A-law bytes at
+        // 8 kHz are 20 ms; 1152 MP3 samples at 48 kHz are 24 ms
         let cases = [
             (
                 AudioConfig::Opus {
@@ -436,6 +437,7 @@ mod tests {
                     channels: 2,
                 },
                 Bytes::from_static(&[0xFC, 0x01, 0x02, 0x03]),
+                20,
             ),
             (
                 AudioConfig::Pcma {
@@ -443,9 +445,18 @@ mod tests {
                     channels: 1,
                 },
                 Bytes::from(vec![0xD5; 160]),
+                20,
+            ),
+            (
+                AudioConfig::Mp3 {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                Bytes::from_static(&[0xFF, 0xFB, 0x94, 0x64, 0x00, 0x00]),
+                24,
             ),
         ];
-        for (config, frame) in cases {
+        for (config, frame, frame_millis) in cases {
             let mut muxer = Fmp4Muxer::new();
             let mut stream = BytesMut::new();
             muxer
@@ -460,7 +471,7 @@ mod tests {
             for index in 0..3 {
                 let sample = AudioSample {
                     data: frame.clone(),
-                    pts: Timestamp::from_millis(20 * index),
+                    pts: Timestamp::from_millis(frame_millis * index),
                 };
                 stream.extend_from_slice(&muxer.push(&MediaEvent::Audio(sample)).unwrap());
             }
@@ -474,7 +485,10 @@ mod tests {
             assert_eq!(samples.len(), 3, "{config:?}");
             for (index, sample) in samples.iter().enumerate() {
                 assert_eq!(sample.data, frame);
-                assert_eq!(sample.pts, Timestamp::from_millis(20 * index as u64));
+                assert_eq!(
+                    sample.pts,
+                    Timestamp::from_millis(frame_millis * index as u64)
+                );
             }
         }
     }

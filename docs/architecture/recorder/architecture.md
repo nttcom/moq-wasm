@@ -78,5 +78,5 @@ both tracks into one init segment and one fragment stream.
 ## Limits
 - The authorization token is sent once and not refreshed.
 - Recording starts live; there is no FETCH of the past yet.
-- Audio outside AAC, Opus and G.711 A-law, or an AAC track whose
+- Audio outside AAC, Opus, G.711 A-law and MP3, or an AAC track whose
   configuration is not in the catalog yet, is skipped with a warning.
