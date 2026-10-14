@@ -14,6 +14,9 @@ class FakeRawClient {
 
   /** SUBSCRIBEs the relay rejects with TRACK_DOES_NOT_EXIST before accepting. */
   rejectSubscribes = 0
+  /** The Largest Location the relay reports in SUBSCRIBE_OK, as [group, object]. */
+  largest?: [bigint, bigint]
+  readonly subscribeFilters: number[] = []
 
   constructor(
     readonly url: string,
@@ -82,8 +85,16 @@ class FakeRawClient {
     this.emit('subscribeNamespaceResponse', { requestId })
   }
 
-  async sendSubscribe(requestId: bigint, trackNamespace: string[], trackName: string): Promise<void> {
+  async sendSubscribe(
+    requestId: bigint,
+    trackNamespace: string[],
+    trackName: string,
+    _subscriberPriority: number,
+    _groupOrder: number,
+    filterType: number
+  ): Promise<void> {
     this.sent.push(`SUBSCRIBE ${requestId} ${trackNamespace.join('/')}/${trackName}`)
+    this.subscribeFilters.push(filterType)
     if (this.rejectSubscribes > 0) {
       this.rejectSubscribes -= 1
       this.emit('subscribeResponse', { requestId, errorCode: 4n, reasonPhrase: 'track does not exist yet' })
@@ -93,7 +104,13 @@ class FakeRawClient {
     if (trackAlias === undefined) {
       throw new Error('fake relay ran out of aliases')
     }
-    this.emit('subscribeResponse', { requestId, trackAlias, contentExists: false })
+    this.emit('subscribeResponse', {
+      requestId,
+      trackAlias,
+      contentExists: this.largest !== undefined,
+      largestGroupId: this.largest?.[0],
+      largestObjectId: this.largest?.[1]
+    })
   }
 
   async sendUnsubscribe(requestId: bigint): Promise<void> {
@@ -182,7 +199,7 @@ async function settled(): Promise<void> {
   }
 }
 
-function fakeRelays(options: { relayBRejectsSubscribes?: number } = {}): {
+function fakeRelays(options: { relayBRejectsSubscribes?: number; relayBLargest?: [bigint, bigint] } = {}): {
   clients: FakeRawClient[]
   wrapper: MoqtClientWrapper
 } {
@@ -191,6 +208,7 @@ function fakeRelays(options: { relayBRejectsSubscribes?: number } = {}): {
     const client = new FakeRawClient(url, url.includes('relay-b') ? [40n, 41n] : [7n, 8n])
     if (url.includes('relay-b')) {
       client.rejectSubscribes = options.relayBRejectsSubscribes ?? 0
+      client.largest = options.relayBLargest
     }
     clients.push(client)
     return client as unknown as MOQTClient
@@ -534,4 +552,35 @@ test('a published group open on the old relay ends there and the next group star
   expect(closedWithGroupOpen).toBe(false)
   expect(relayB.sent).toContain('SUBGROUP_HEADER alias=40 group=4')
   expect(relayA.closed).toBe(true)
+})
+
+test('a group the new relay started before the subscription moved is fetched from its start', async () => {
+  // Arrange: relay A delivered group 4; relay B already has group 5 up to object 1
+  const { clients, wrapper } = fakeRelays({ relayBLargest: [5n, 1n] })
+  await wrapper.connect('https://relay-a.example:4433')
+  const { requestId, subscribeOk } = await wrapper.subscribe(['room', 'them'], 'video', '', { forward: true })
+  const received: string[] = []
+  wrapper.setOnSubgroupObjectHandler(subscribeOk.trackAlias, (groupId, object) =>
+    received.push(`${groupId}:${object.objectId}`)
+  )
+  const [relayA] = clients
+  relayA.receiveSubgroupObject(7n, 4n, 0n)
+  await settled()
+
+  // Act: the subscription moves; relay B's objects after its Largest Location race the FETCH
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const relayB = clients[1]
+  const fetchLine = relayB.sent.find((line) => line.startsWith('JOINING_FETCH '))
+  const fetchRequestId = BigInt(fetchLine?.split(' ')[1] ?? '-1')
+  relayB.receiveSubgroupObject(40n, 5n, 2n)
+  relayB.receiveFetchObject(fetchRequestId, 5n, 0n)
+  relayB.receiveFetchObject(fetchRequestId, 5n, 1n)
+  relayB.receiveFetchEnd(fetchRequestId)
+  await settled()
+
+  // Assert: relay B was asked from its Largest Location on, and group 5 arrives in order
+  expect(relayB.subscribeFilters).toEqual([0x2])
+  expect(fetchLine).toBe(`JOINING_FETCH ${fetchRequestId} ${requestId} 0`)
+  expect(received).toEqual(['4:0', '5:0', '5:1', '5:2'])
 })
