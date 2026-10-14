@@ -77,9 +77,9 @@ cargo run -p live-ingest -- \
 ```
 
 `--rtp-sdp` enables RTP input: the file names the ports, payload types and
-codecs of the session, as FFmpeg writes it with `-sdp_file`. H.264 and AAC
-(`MPEG4-GENERIC`, AAC-hbr) streams are bridged; other `m=` sections are logged
-and ignored.
+codecs of the session, as FFmpeg writes it with `-sdp_file`. H.264, AAC
+(`MPEG4-GENERIC`, AAC-hbr), Opus and G.711 A-law streams are bridged; other
+`m=` sections are logged and ignored.
 
 `--insecure-skip-tls-verify` skips TLS certificate verification of the relay;
 use it only for a local relay with a self-signed certificate.
