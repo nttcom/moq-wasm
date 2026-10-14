@@ -71,6 +71,12 @@ export function setUpCatalogPicker(
     )
   }
 
+  const reset = () => {
+    pick.video.tracks = []
+    pick.audio.tracks = []
+    render()
+  }
+
   for (const kind of KINDS) {
     const select = selects[kind]
     select?.addEventListener('change', () => choose(kind, select.value))
@@ -85,7 +91,11 @@ export function setUpCatalogPicker(
     }
     const { trackAlias } = (
       await moqtClient.subscribe(trackNamespace, catalogTrackName, 'secret', {
-        requestId: BigInt(form['catalog-subscribe-id'].value)
+        requestId: BigInt(form['catalog-subscribe-id'].value),
+        onPublishDone: () => {
+          reset()
+          setStatusText(STATUS_ID, 'Publisher ended the catalog track')
+        }
       })
     ).subscribeOk
     form['catalog-track-alias'].value = trackAlias.toString()
@@ -107,12 +117,5 @@ export function setUpCatalogPicker(
   })
 
   render()
-  return {
-    pick,
-    reset: () => {
-      pick.video.tracks = []
-      pick.audio.tracks = []
-      render()
-    }
-  }
+  return { pick, reset }
 }

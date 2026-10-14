@@ -82,7 +82,7 @@ const PUBLISH_DONE: [(PublishDoneCode, u64); 8] = [
     (PublishDoneCode::MalformedTrack, 0x7),
 ];
 
-pub(crate) fn publish_done_code_to_wire(code: PublishDoneCode) -> u64 {
+pub fn publish_done_code_to_wire(code: PublishDoneCode) -> u64 {
     PUBLISH_DONE
         .iter()
         .find(|(defined, _)| *defined == code)

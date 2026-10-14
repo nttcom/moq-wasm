@@ -8,7 +8,7 @@ use crate::{
     modules::moqt::{
         control_plane::{
             constants::TerminationErrorCode,
-            enums::ResponseMessage,
+            enums::{RequestId, ResponseMessage},
             error_codes::{PublishDoneCode, RequestKind},
             handler::{
                 fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
@@ -45,6 +45,7 @@ impl ControlMessageReceiveTask {
     pub(crate) fn run(
         mut receive_stream: BiStreamReceiver,
         session_context: Weak<SessionContext>,
+        publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
         receiver_span: Span,
     ) -> JoinHandle {
         executor::spawn(
@@ -66,6 +67,9 @@ impl ControlMessageReceiveTask {
 
                             match Self::resolve_message(session.clone(), received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
+                                    if let SessionEvent::PublishDone(handler) = &event {
+                                        let _ = publish_done_sender.send(handler.request_id());
+                                    }
                                     if let Err(error) = session.event_sender.send(event) {
                                         tracing::error!("failed to send message: {:?}", error);
                                     }

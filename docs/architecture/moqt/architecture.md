@@ -194,7 +194,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 ### `Session` and its background tasks
 
-`Session::new` spawns four tasks (all named, all aborted in `Drop`):
+`Session::new` spawns five tasks (all named, all aborted in `Drop`):
 
 | Task | Role |
 | --- | --- |
@@ -202,6 +202,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 | `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. |
 | `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
+| `PublishDoneExpiryTask` | receives the Request ID of every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription 10 s later (see *Key invariants*). Holds only a `Weak<SessionContext>`. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
 `Subscriber` facades sharing the same `Arc<SessionContext>`. Operations on an
@@ -470,6 +471,13 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   instead of being buffered as an unknown alias until the session ends. The
   `Cancelled` marker stays until a new subscription reuses the alias; it is
   not released on PUBLISH_DONE because late streams may follow it (§9.12).
+- **PUBLISH_DONE ends the subscription after a grace period** (draft-14
+  §9.12): the event still reaches the application, and 10 s later
+  `PublishDoneExpiryTask` cancels the subscription as an unsubscribe would,
+  without sending UNSUBSCRIBE. Streams that arrive within the 10 s are
+  delivered; afterwards the data receiver ends, and `TrackReader` returns
+  `Ok(None)` once the streams it already accepted are drained. Stream Count is
+  not used to end it earlier, and no STOP_SENDING is sent.
 - **Duplicate track alias**: if SUBSCRIBE_OK carries a track alias that already
   has a registered receiver, the subscriber closes the session with
   `DuplicateTrackAlias` (draft-14 §9.8). A cancelled subscription's alias does

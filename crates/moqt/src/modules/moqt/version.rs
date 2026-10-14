@@ -14,6 +14,7 @@ use std::sync::Weak;
 
 use bytes::BytesMut;
 
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
 
 use crate::{
@@ -314,11 +315,17 @@ pub(crate) enum ControlReceiver {
 
 impl ControlReceiver {
     /// Spawns the task that reads the peer's control messages into session
-    /// events and responses.
-    pub(crate) fn spawn(self, session: Weak<SessionContext>, span: Span) -> JoinHandle {
+    /// events and responses; the Request ID of every PUBLISH_DONE also goes to
+    /// `publish_done_sender`.
+    pub(crate) fn spawn(
+        self,
+        session: Weak<SessionContext>,
+        publish_done_sender: UnboundedSender<RequestId>,
+        span: Span,
+    ) -> JoinHandle {
         match self {
             Self::Draft14(receive_stream) => {
-                ControlMessageReceiveTask::run(receive_stream, session, span)
+                ControlMessageReceiveTask::run(receive_stream, session, publish_done_sender, span)
             }
         }
     }

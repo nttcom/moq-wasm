@@ -24,9 +24,8 @@ cargo run -p recorder -- \
 ## Behaviour
 
 - Recording starts at the next group, i.e. the next keyframe, and ends on
-  Ctrl-C or when the relay closes the session. When the publisher leaves, the
-  relay sends PUBLISH_DONE, but `moqt` does not end a `TrackReader` on it, so
-  the recorder keeps waiting until it is stopped.
+  Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
+  a recorded track (PUBLISH_DONE), the time `moqt` waits for late streams.
 - The file is fragmented MP4, so it plays even if the recorder is killed; the
   file is flushed to disk whenever a video group completes.
 - Audio and video keep the offset of their capture timestamps, so the two

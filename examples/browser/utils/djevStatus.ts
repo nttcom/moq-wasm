@@ -15,10 +15,16 @@ export class DjevStatusView {
   }
 
   async follow(session: MoqtClientWrapper, botNamespace: string[]): Promise<void> {
-    await session.subscribeLatest(botNamespace, STATUS_TRACK, AUTH_INFO, (payload) => {
-      const { djev, since }: { djev: DjevState; since: number } = JSON.parse(new TextDecoder().decode(payload))
-      this.show(djev, since)
-    })
+    await session.subscribeLatest(
+      botNamespace,
+      STATUS_TRACK,
+      AUTH_INFO,
+      (payload) => {
+        const { djev, since }: { djev: DjevState; since: number } = JSON.parse(new TextDecoder().decode(payload))
+        this.show(djev, since)
+      },
+      { onPublishDone: () => this.reset() }
+    )
   }
 
   reset(): void {

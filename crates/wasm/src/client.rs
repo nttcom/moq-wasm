@@ -103,6 +103,18 @@ impl ClientShared {
         self.fetch_senders.borrow_mut().clear();
     }
 
+    /// Forgets the outgoing subscription with the wire `request_id` and
+    /// returns the id JavaScript chose for it.
+    fn take_subscription(&self, request_id: u64) -> Option<u64> {
+        let mut subscriptions = self.subscriptions.borrow_mut();
+        let js_request_id = subscriptions
+            .iter()
+            .find(|(_, subscription)| subscription.request_id() == request_id)
+            .map(|(js_request_id, _)| *js_request_id)?;
+        subscriptions.remove(&js_request_id);
+        Some(js_request_id)
+    }
+
     fn reset_fetch_sender(&self, request_id: u64) {
         let Some(sender) = self.fetch_senders.borrow_mut().remove(&request_id) else {
             return;
@@ -191,6 +203,13 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = onIncomingUnsubscribe)]
     pub fn set_incoming_unsubscribe_callback(&mut self, callback: js_sys::Function) {
         self.shared.callbacks.borrow_mut().incoming_unsubscribe = Some(callback);
+    }
+
+    /// Called when the peer ends a subscription sent with `sendSubscribe`;
+    /// `isSubscribed` is false from then on.
+    #[wasm_bindgen(js_name = onPublishDone)]
+    pub fn set_publish_done_callback(&mut self, callback: js_sys::Function) {
+        self.shared.callbacks.borrow_mut().publish_done = Some(callback);
     }
 
     #[wasm_bindgen(js_name = onObjectDatagram)]

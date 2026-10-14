@@ -1,5 +1,6 @@
 import { type MediaKind, type TrackContext, observedObjectHandler } from './trackContext'
 import type { SubgroupObjectHandler } from '@moqt/subscriptionStateManager'
+import type { PublishDoneMessage } from '../../pkg/moqt'
 import { getErrorMessage } from '../../utils/page'
 import type { MediaCatalogTrack } from '../msf/catalog'
 
@@ -17,7 +18,10 @@ export class TrackSubscriptions {
   private forwardPaused = false
   private forwardUpdate = Promise.resolve()
 
-  constructor(private readonly context: TrackContext) {}
+  constructor(
+    private readonly context: TrackContext,
+    private readonly onPublishDone: (kind: MediaKind, message: PublishDoneMessage) => void
+  ) {}
 
   get(kind: MediaKind): TrackSubscription | undefined {
     return this.subscriptions.get(kind)
@@ -38,7 +42,10 @@ export class TrackSubscriptions {
     handler: SubgroupObjectHandler
   ): Promise<void> {
     const { client, namespace, authInfo } = this.context
-    const { requestId, subscribeOk } = await client.subscribe(namespace, wireName, authInfo, { forward: true })
+    const { requestId, subscribeOk } = await client.subscribe(namespace, wireName, authInfo, {
+      forward: true,
+      onPublishDone: (message) => this.end(kind, message)
+    })
     this.subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wireName, track })
     if (this.forwardPaused) {
       await client.setSubscriptionForward(requestId, false)
@@ -64,6 +71,17 @@ export class TrackSubscriptions {
       await client.unsubscribe(subscription.requestId)
     }
     this.context.log('info', `unsubscribed ${subscription.name}`)
+  }
+
+  private end(kind: MediaKind, message: PublishDoneMessage): void {
+    const subscription = this.subscriptions.get(kind)
+    if (subscription?.requestId !== message.requestId) {
+      return
+    }
+    this.subscriptions.delete(kind)
+    this.context.observer.forget(subscription.trackAlias)
+    this.context.log('info', `${subscription.name} ended by the publisher (status ${message.statusCode})`)
+    this.onPublishDone(kind, message)
   }
 
   pauseForward(): void {

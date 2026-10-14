@@ -5,9 +5,12 @@ use moqt::{
     Session, SessionEvent,
     fetch::FetchHandler,
     namespace::PublishNamespaceHandler,
-    publish::PublishHandler,
+    publish::{PublishDoneHandler, PublishHandler},
     subscribe::{SubscribeHandler, TrackStatusHandler},
-    wire::{Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus},
+    wire::{
+        Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus,
+        publish_done_code_to_wire,
+    },
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
@@ -19,8 +22,8 @@ use super::{
 };
 use crate::{
     messages::{
-        FetchMessage, PublishMessage, PublishNamespaceDoneMessage, PublishNamespaceMessage,
-        SubscribeMessage,
+        FetchMessage, PublishDoneMessage, PublishMessage, PublishNamespaceDoneMessage,
+        PublishNamespaceMessage, SubscribeMessage,
     },
     request_rejection::rejection_reason,
 };
@@ -46,6 +49,7 @@ pub(crate) async fn run_session_events(shared: Rc<ClientShared>, session: Rc<Ses
                 );
             }
             SessionEvent::Publish(handler) => on_publish(&shared, handler),
+            SessionEvent::PublishDone(handler) => on_publish_done(&shared, handler),
             SessionEvent::Subscribe(handler) => on_subscribe(&shared, handler),
             SessionEvent::Unsubscribe(handler) => {
                 let request_id = handler.subscribe_id();
@@ -108,6 +112,21 @@ fn on_publish(shared: &ClientShared, handler: PublishHandler) {
         .insert(publish.request_id, handler);
     let message = PublishMessage::from(&publish);
     emit(&shared.callbacks, |c| &c.publish, &[message.into()]);
+}
+
+/// draft-14 §9.12: moqt keeps delivering the subscription's late streams for
+/// a grace period, but JavaScript learns now that it ended. A PUBLISH_DONE for
+/// a subscription JavaScript did not send, or already unsubscribed, is ignored.
+fn on_publish_done(shared: &ClientShared, handler: PublishDoneHandler) {
+    let Some(request_id) = shared.take_subscription(handler.request_id()) else {
+        return;
+    };
+    let message = PublishDoneMessage::new(
+        request_id,
+        publish_done_code_to_wire(handler.status_code()),
+        handler.error_reason().to_string(),
+    );
+    emit(&shared.callbacks, |c| &c.publish_done, &[message.into()]);
 }
 
 fn on_subscribe(shared: &ClientShared, handler: SubscribeHandler) {

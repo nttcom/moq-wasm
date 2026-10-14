@@ -271,8 +271,15 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     })
 
     try {
-      const tracks = await session.subscribeCatalog(trackNamespace, (updatedTracks) =>
-        applyRemoteCatalogTracks(memberId, updatedTracks)
+      const tracks = await session.subscribeCatalog(
+        trackNamespace,
+        (updatedTracks) => applyRemoteCatalogTracks(memberId, updatedTracks),
+        () =>
+          setCatalogSubscribedMemberIds((prev) => {
+            const next = new Set(prev)
+            next.delete(memberId)
+            return next
+          })
       )
       applyRemoteCatalogTracks(memberId, tracks)
       setCatalogSubscribedMemberIds((prev) => {
@@ -367,7 +374,15 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     )
 
     try {
-      const requestId = await session.subscribe(member.trackNamespace, trackName, role, trackMediaConfig)
+      const requestId = await session.subscribe(member.trackNamespace, trackName, role, trackMediaConfig, (endedId) =>
+        setRoom((currentRoom) =>
+          updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) =>
+            track.subscribeId === endedId
+              ? { ...track, subscribeId: undefined, isSubscribing: false, isSubscribed: false }
+              : track
+          )
+        )
+      )
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,

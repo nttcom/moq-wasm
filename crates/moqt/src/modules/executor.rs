@@ -8,11 +8,11 @@ mod native;
 #[cfg(target_arch = "wasm32")]
 pub use browser::{JoinHandle, now, spawn, system_time};
 #[cfg(target_arch = "wasm32")]
-pub(crate) use browser::{timeout, try_spawn, yield_now};
+pub(crate) use browser::{sleep, timeout, try_spawn, yield_now};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{JoinHandle, now, spawn, system_time};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use native::{timeout, try_spawn, yield_now};
+pub(crate) use native::{sleep, timeout, try_spawn, yield_now};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) trait MaybeSend: Send {}

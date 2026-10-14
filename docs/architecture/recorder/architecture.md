@@ -48,6 +48,10 @@ both tracks into one init segment and one fragment stream.
    configurations before writing the init segment.
 5. `file_writer::RecordingFile` appends the bytes and flushes whenever the
    video moved to a new group, which is a complete GoP on disk.
+6. The recording ends when either `TrackReader` returns `Ok(None)`. When the
+   publisher leaves, the relay sends PUBLISH_DONE on both subscriptions and
+   `moqt` ends them 10 s later, after any late streams, so the recorder needs
+   no session-event handling of its own.
 
 ## Key invariants
 - **One timeline for both tracks.** Each `loc::Demuxer` would otherwise count
@@ -72,11 +76,6 @@ both tracks into one init segment and one fragment stream.
   instead of the relay waiting for the idle timeout.
 
 ## Limits
-- The recording does not end when the publisher does. The relay answers the
-  publisher's departure with PUBLISH_DONE on every subscription, which `moqt`
-  hands out as a `SessionEvent` without ending the subscription's
-  `TrackReader`; ending the reader there belongs in `moqt`, so the recorder
-  does not watch session events for it.
 - The authorization token is sent once and not refreshed.
 - Recording starts live; there is no FETCH of the past yet.
 - Audio outside AAC, Opus and G.711 A-law, or an AAC track whose

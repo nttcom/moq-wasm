@@ -15,7 +15,7 @@ use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::runtime::tasks::{
     datagram_receive_task::DatagramReceiveTask, disconnect_watch_task::DisconnectWatchTask,
-    uni_stream_receive_task::UniStreamReceiveTask,
+    publish_done_expiry_task::PublishDoneExpiryTask, uni_stream_receive_task::UniStreamReceiveTask,
 };
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
@@ -31,6 +31,7 @@ pub struct Session {
     datagram_receive_task: JoinHandle,
     uni_stream_receive_task: JoinHandle,
     disconnect_watch_task: JoinHandle,
+    publish_done_expiry_task: JoinHandle,
     server_setup: Option<ServerSetup>,
 }
 
@@ -57,14 +58,25 @@ impl Session {
             tracing::info_span!(parent: &session_span, "data_plane.uni_stream_receiver");
         let transport_close_watcher_span =
             tracing::info_span!(parent: &session_span, "moqt.transport.close_watcher");
+        let publish_done_expiry_span =
+            tracing::info_span!(parent: &session_span, "moqt.publish_done_expiry");
 
-        let control_message_receive_task =
-            control_receiver.spawn(Arc::downgrade(&inner), control_plane_receiver_span);
+        let (publish_done_sender, publish_done_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let control_message_receive_task = control_receiver.spawn(
+            Arc::downgrade(&inner),
+            publish_done_sender,
+            control_plane_receiver_span,
+        );
         let datagram_receive_task = DatagramReceiveTask::run(inner.clone(), datagram_receiver_span);
         let uni_stream_receive_task =
             UniStreamReceiveTask::run(inner.clone(), uni_stream_receiver_span);
         let disconnect_watch_task =
             DisconnectWatchTask::run(inner.clone(), transport_close_watcher_span);
+        let publish_done_expiry_task = PublishDoneExpiryTask::run(
+            publish_done_receiver,
+            Arc::downgrade(&inner),
+            publish_done_expiry_span,
+        );
 
         Self {
             inner,
@@ -74,6 +86,7 @@ impl Session {
             datagram_receive_task,
             uni_stream_receive_task,
             disconnect_watch_task,
+            publish_done_expiry_task,
             server_setup,
         }
     }
@@ -172,6 +185,7 @@ impl Drop for Session {
         self.datagram_receive_task.abort();
         self.uni_stream_receive_task.abort();
         self.disconnect_watch_task.abort();
+        self.publish_done_expiry_task.abort();
     }
 }
 
