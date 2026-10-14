@@ -38,7 +38,11 @@ decodable, as the ONVIF bridge found cameras require.
 
 A stream starts with the first datagram and, since RTP carries no end
 signal, ends after 5 seconds without one; the next datagram opens a new
-`Broadcast` under the same namespace. The demuxer reorders packets per
+`Broadcast` under the same namespace. A sender that restarts within those
+5 seconds comes back with a new SSRC and new random sequence numbers and
+timestamps, which cannot be ordered against the old ones, so the first
+datagram from another SSRC than its stream began with also ends the stream
+and opens the next `Broadcast` itself. The demuxer reorders packets per
 stream and reports a gap once 200 ms of later packets have arrived behind
 it; the frames the gap cuts are dropped until the next keyframe, as for
 MPEG-TS, and each loss is logged as a warning.
