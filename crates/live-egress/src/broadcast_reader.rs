@@ -1,6 +1,6 @@
 mod track_receive_task;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -10,7 +10,7 @@ use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use tokio::sync::mpsc;
 
 use crate::{
-    broadcast_reader::track_receive_task::{TrackKind, TrackReceiveTask},
+    broadcast_reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask},
     relay_session::{read_catalog, subscribe, track_reader},
 };
 
@@ -23,7 +23,7 @@ const OPUS_CODEC: &str = "opus";
 /// from one shared capture origin so the two stay aligned.
 pub struct BroadcastReader {
     media_receiver: mpsc::Receiver<MediaEvent>,
-    capture_origin: Arc<OnceLock<Timestamp>>,
+    start: Arc<StartPoint>,
     _tasks: Vec<TrackReceiveTask>,
 }
 
@@ -54,7 +54,7 @@ impl BroadcastReader {
             }))
             .await
             .expect("the receiver is held by this reader");
-        let capture_origin = Arc::new(OnceLock::new());
+        let start = Arc::new(StartPoint::new(tracks.video.is_some()));
         let mut kinds = Vec::new();
         if let Some(name) = tracks.video {
             kinds.push((name, TrackKind::Video));
@@ -77,13 +77,13 @@ impl BroadcastReader {
                 name,
                 reader,
                 kind,
-                capture_origin.clone(),
+                start.clone(),
                 media_sender.clone(),
             ));
         }
         Ok(Self {
             media_receiver,
-            capture_origin,
+            start,
             _tasks: tasks,
         })
     }
@@ -93,10 +93,11 @@ impl BroadcastReader {
         self.media_receiver.recv().await
     }
 
-    /// The LOC capture timestamp, a wall-clock time, that a presentation
-    /// time of zero stands for on every track; `None` before the first object.
+    /// The LOC capture timestamp that presentation time zero stands for on
+    /// every track, or `Timestamp::ZERO` when the first admitted object
+    /// carried none; `None` until a track admits an object.
     pub fn capture_origin(&self) -> Option<Timestamp> {
-        self.capture_origin.get().copied()
+        self.start.capture_origin()
     }
 }
 
@@ -265,7 +266,7 @@ mod tests {
             audio_catalog("opus", Some(48_000), None),
         ];
 
-        // Assert: the draft's numeric channelConfig is read; samplerate and channelConfig are required (§5.2.28, §5.2.29)
+        // Assert: a numeric channelConfig is read; a missing samplerate or channelConfig (§5.2.28, §5.2.29), `5.1` and `0` are rejected
         assert_eq!(
             pcma.audio.unwrap().1,
             AudioConfig::Pcma {

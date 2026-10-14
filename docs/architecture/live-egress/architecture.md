@@ -39,8 +39,13 @@ asks of a late joiner, so the reader does not wait for the next catalog.
 Media tracks are subscribed from the next group start rather than fetched:
 FETCH would deliver past groups as a burst, which a real-time output like RTP
 would send on as a burst. Every media track is subscribed before any is read,
-so they start at the same group; `broadcast` starts audio groups at the video
-keyframes with the same ids.
+which keeps their starts within one group of each other, but each still
+starts at its own next group: when a SUBSCRIBE lands after a video keyframe
+and before the first audio object of that group, the audio track starts one
+group earlier. `broadcast` gives the audio groups the ids of the video groups
+they start with, so the reader holds the audio to the group id the video
+starts at and drops audio that arrives before the first video object, as
+`broadcast` drops the audio before its first keyframe.
 
 ## Timing
 Each track is demuxed by its own `loc::Demuxer`, measuring presentation time
