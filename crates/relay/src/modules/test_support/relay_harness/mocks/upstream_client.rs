@@ -96,7 +96,7 @@ impl UpstreamSubgroupStream {
 
     pub(crate) fn reset(&self) {
         self.push(Err(moqt::object::StreamReceiveError::Closed(
-            "stream reset by peer".to_string(),
+            moqt::object::ReadError::Reset,
         )));
     }
 
