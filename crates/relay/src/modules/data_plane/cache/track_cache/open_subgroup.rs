@@ -1,5 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
+use tokio::time::Instant;
+
 use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
     cache::{
@@ -235,7 +237,7 @@ impl TrackCache {
         self.wait_until(|ledger| {
             let run_end = ledger.superseded_run_end(key, generation);
             let next_object = ledger
-                .next_subgroup_object(key, from_object_id)
+                .next_subgroup_object(key, from_object_id, Instant::now())
                 .filter(|object| run_end.is_none_or(|end| object.object.location.object_id < end));
             match next_object {
                 Some(object) => Some(NextObject::Object(object)),

@@ -3,6 +3,8 @@ use std::{
     sync::Arc,
 };
 
+use tokio::time::Instant;
+
 use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
     cache::{cached_object::CachedObject, known_ranges::KnownRanges},
@@ -150,13 +152,15 @@ impl Ledger {
             .map(|(_, object)| object)
     }
 
+    /// Skips objects past their MAX_CACHE_DURATION at `now`.
     pub(super) fn next_subgroup_object(
         &self,
         key: SubgroupKey,
         from_object_id: u64,
+        now: Instant,
     ) -> Option<Arc<CachedObject>> {
         self.group_objects(key.group_id(), from_object_id)
-            .find(|object| object.subgroup_key() == key)
+            .find(|object| object.subgroup_key() == key && !object.is_expired(now))
             .cloned()
     }
 
@@ -204,7 +208,28 @@ impl Ledger {
         start: moqt::object::Location,
         end: moqt::object::Location,
     ) -> bool {
+        self.objects_in(start, end).next().is_some()
+    }
+
+    pub(super) fn has_expired_object_in(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+        now: Instant,
+    ) -> bool {
+        self.objects_in(start, end)
+            .any(|object| object.is_expired(now))
+    }
+
+    fn objects_in(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> impl Iterator<Item = &Arc<CachedObject>> {
         let end = KnownRanges::exclusive_end(end);
-        start < end && self.objects.range(start..end).next().is_some()
+        (start < end)
+            .then(|| self.objects.range(start..end).map(|(_, object)| object))
+            .into_iter()
+            .flatten()
     }
 }

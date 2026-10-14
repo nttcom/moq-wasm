@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio::time::Instant;
+
 use crate::modules::data_plane::cache::{cached_object::CachedObject, track_cache::NextObject};
 
 use super::{FetchInterrupted, TrackCache, location};
@@ -85,6 +87,11 @@ impl<'a> FetchCursor<'a> {
                     .await?
             };
             match found {
+                // draft-14 §9.2.1.3: an expired object must not start to be
+                // forwarded, so the FETCH cannot be completed from cache.
+                NextObject::Object(object) if object.is_expired(Instant::now()) => {
+                    return Err(FetchInterrupted::Incomplete);
+                }
                 NextObject::Object(object) => {
                     let object_id = object.object.location.object_id;
                     group.next_object_id = object_id.saturating_add(1);

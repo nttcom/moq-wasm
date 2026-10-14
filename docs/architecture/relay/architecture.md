@@ -513,7 +513,8 @@ per-request authorization gate under "Event pipeline".
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
   the `moqt::object::Object` moqt returned (location, forwarding preference,
   publisher priority, status, extension headers, payload) plus its own
-  `received_at`. Egress hands the `Object` back to moqt, which picks the
+  `received_at`, and `expires_at` when the subscription or fetch it arrived on
+  carried MAX_CACHE_DURATION. Egress hands the `Object` back to moqt, which picks the
   header, datagram and FETCH encodings, computes the deltas, and gives a
   fetched datagram object its Object ID as Subgroup ID (§10.4.4).
   `conflicts_with` implements §8.1:
@@ -573,6 +574,15 @@ per-request authorization gate under "Event pipeline".
   object, so a sparse track such as a catalog stays joinable; a `TrackCache` entry is removed
   from the store only when it is empty and `Arc::strong_count == 1`, i.e. no
   ingress/egress holds it — avoiding races with new joiners.
+- MAX_CACHE_DURATION (draft-14 §9.2.1.3): ingress stamps every object with
+  `expires_at` = this relay's receipt time + the value its upstream
+  SUBSCRIBE_OK, PUBLISH or FETCH_OK carried. From that instant
+  the object is never handed out: a live read skips it, a FETCH served from
+  cache ends with `FetchInterrupted::Incomplete` (the stream is reset), and
+  `resolve_fetch_range` answers `NotCovered` for a range that holds one, so the
+  FETCH goes upstream. Eviction removes it at `expires_at` whether that is
+  before or after the relay TTL, and the newest-object exception does not
+  extend it. Objects received without the value keep the relay TTL.
 
 ### Egress (`modules/data_plane/egress`)
 `EgressCoordinator` consumes `StartReader` / `StartFetch`. There is no stop
