@@ -19,6 +19,7 @@ cargo run -p recorder -- \
 | `--audio-track` | `audio` | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**` |
+| `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
 | `--insecure-skip-tls-verify` | off | Accept the local relay's development certificate |
 
 ## Behaviour
@@ -36,8 +37,9 @@ cargo run -p recorder -- \
 - An audio track the catalog lists without its configuration (a `broadcast`
   publisher that has not seen an audio frame yet, or a codec without an fMP4
   mapping) is left out with a warning and the video is recorded alone.
-- The token is not refreshed; a recording longer than the token's lifetime
-  ends when the relay closes the session.
+- A token given with `--auth-token` is never refreshed, so the relay ends a
+  recording that outlives it. With `--auth-token-file`, rewrite the file
+  before the token expires and the recorder sends the new token in-session.
 
 The reasoning behind these choices is in the
 [architecture document](../../docs/architecture/recorder/architecture.md).

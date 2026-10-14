@@ -11,19 +11,43 @@ use crate::{
     file_writer::RecordingFile,
     pipeline::{Output, Pipeline},
     relay::{self, RelayConnection},
+    token_refresh_task::{TokenRefreshTask, read_token_file},
     track_selection::{Selection, select_tracks},
 };
 
 pub(crate) async fn record(args: Args) -> Result<()> {
+    let auth_token = match &args.auth_token_file {
+        Some(path) => Some(read_token_file(path).await?),
+        None => args.auth_token.clone(),
+    };
     let connection = RelayConnection::connect(
         &args.relay,
         !args.insecure_skip_tls_verify,
-        args.auth_token.clone(),
+        auth_token.clone(),
     )
     .await?;
+    let token_refresh = args
+        .auth_token_file
+        .clone()
+        .zip(auth_token)
+        .map(|(path, token)| {
+            TokenRefreshTask::run(
+                connection.session.clone(),
+                path,
+                app_id(&args.namespace).to_string(),
+                token,
+            )
+        });
     let result = record_broadcast(&connection.session, &args).await;
+    drop(token_refresh);
     connection.close().await;
     result
+}
+
+/// An app's namespaces start with its app id, which the relay's token
+/// refresh convention names as the TRACK_STATUS namespace.
+fn app_id(namespace: &str) -> &str {
+    namespace.split('/').next().unwrap_or(namespace)
 }
 
 async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
