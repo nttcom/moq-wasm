@@ -105,7 +105,9 @@ Client-side helpers shared by the three creators:
   `quinn::Endpoint`.
 
 The three creators bind server endpoints to `[::]:port` through
-`bind_dual_stack` (`dual_stack_bind.rs`).
+`bind_dual_stack` (`dual_stack_bind.rs`). On Apple targets it holds
+`0.0.0.0:port` during the bind, because XNU lets `[::]:port` bind while
+another socket holds `0.0.0.0:port`.
 
 The creators do not know MoQT versions. Each takes an
 `ApplicationProtocols` (`application_protocol.rs`): the ALPNs a raw QUIC
