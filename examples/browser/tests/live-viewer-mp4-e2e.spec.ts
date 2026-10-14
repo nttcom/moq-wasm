@@ -12,6 +12,7 @@ import {
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
 import { type MessagePageModel, openMessagePage } from './message-e2e-arrange'
+import { probeRecording, recordFromCache } from './recorder-e2e-arrange'
 
 const resolution = `${MP4_FIXTURE.width}x${MP4_FIXTURE.height}`
 /// Well under the 10 s the relay waits for a FETCH response the browser publisher never sends.
@@ -25,6 +26,11 @@ const LARGEST_VARINT = '4611686018427387903'
 /// The MP3 test closes its page without stopping the publish, so the relay keeps that publisher's
 /// upstream subscriptions on the shared namespace until the QUIC idle timeout.
 const FETCH_NAMESPACE = `${liveViewerE2EConfig.mp4Namespace}-fetch`
+/// Unique per run: --from-cache would also record what an earlier run left in the relay cache.
+const RECORDER_NAMESPACE = `${liveViewerE2EConfig.mp4Namespace}-recorder-${Date.now()}`
+/// The recorder joins after this much has been published, all of it still in the relay cache.
+const RECORDER_CACHED_SECONDS = 4
+const RECORDER_LIVE_SECONDS = 6
 
 test('live viewer publishes an uploaded MP4 from the browser and plays it back', async ({ browser }) => {
   // Arrange
@@ -137,6 +143,37 @@ test('live viewer publishes the MP3 audio of an uploaded MP4 as it is', async ({
     await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio')
     await expectVideoDecoded(viewer.video)
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
+  } finally {
+    await closeLiveViewerE2ESession(session)
+  }
+})
+
+test('the recorder writes the cached and the live part of a browser MP3 broadcast into one MP4', async ({
+  browser
+}) => {
+  // Arrange
+  const fixturePath = ensureMp4Fixture('mp3')
+  const session = await arrangeLiveViewerE2ESession(browser, RECORDER_NAMESPACE)
+  const { viewer } = session
+
+  try {
+    await viewer.mp4FileInput.setInputFiles(fixturePath)
+    await viewer.publishButton.click()
+    await expect(viewer.publishStatus).toHaveText(
+      publishingStatus(mp4FixtureFileName('mp3'), RECORDER_NAMESPACE, 'mp3')
+    )
+    await new Promise((resolve) => setTimeout(resolve, RECORDER_CACHED_SECONDS * 1_000))
+
+    // Act
+    const recording = await recordFromCache(RECORDER_NAMESPACE, RECORDER_LIVE_SECONDS)
+
+    // Assert: the cached part precedes the live part without a gap, and every frame decodes
+    const probe = probeRecording(recording)
+    expect(probe.codecs).toEqual(['h264', 'mp3'])
+    expect(probe.durationSeconds).toBeGreaterThan(RECORDER_CACHED_SECONDS + RECORDER_LIVE_SECONDS - 1.5)
+    expect(probe.largestGapSeconds.video).toBeLessThan(0.2)
+    expect(probe.largestGapSeconds.audio).toBeLessThan(0.2)
+    expect(probe.decodeErrors).toBe('')
   } finally {
     await closeLiveViewerE2ESession(session)
   }
