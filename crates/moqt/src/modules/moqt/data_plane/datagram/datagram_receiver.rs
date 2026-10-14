@@ -1,7 +1,8 @@
 use anyhow::bail;
 
 use crate::modules::moqt::data_plane::{
-    malformed_track_error::MalformedTrackError, object::object_datagram::ObjectDatagram,
+    malformed_track_error::MalformedTrackError,
+    object::{canonical_object::Object, object_datagram::ObjectDatagram},
 };
 use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
 
@@ -25,16 +26,18 @@ impl DatagramReceiver {
         }
     }
 
-    pub async fn receive(&mut self) -> anyhow::Result<ObjectDatagram> {
+    /// Returns the next object of the track. A subgroup stream on the track
+    /// is a `MalformedTrackError` (draft-14 §2.5).
+    pub async fn receive(&mut self) -> anyhow::Result<Object> {
         if let Some(object_datagram) = self.first_object_datagram.take() {
-            return Ok(object_datagram);
+            return Ok(object_datagram.into_object());
         }
         let result = match self.receiver.recv().await {
             Some(object) => object,
             None => bail!("Sender dropped."),
         };
         match result {
-            IncomingObject::Datagram(datagram) => Ok(datagram),
+            IncomingObject::Datagram(datagram) => Ok(datagram.into_object()),
             IncomingObject::StreamHeader { .. } => Err(MalformedTrackError.into()),
         }
     }
@@ -44,7 +47,7 @@ impl DatagramReceiver {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track,
+            HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track,
         },
         object::{DataReceiver, MalformedTrackError, SubgroupId},
     };
@@ -56,7 +59,7 @@ mod tests {
         let publisher = track.client.publisher();
         publisher
             .create_datagram(&track.published)
-            .send(object_datagram(track.published.track_alias()))
+            .send_object(&datagram_object())
             .await
             .unwrap();
         let DataReceiver::Datagram(mut receiver) = track

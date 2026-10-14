@@ -42,7 +42,7 @@ impl StreamDataReceiverFactory {
 mod tests {
     use crate::{
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, object_datagram, open_subgroup, published_track,
+            HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track,
         },
         object::{DataReceiver, MalformedTrackError, SubgroupId},
     };
@@ -70,7 +70,7 @@ mod tests {
         factory.next().await.unwrap();
         publisher
             .create_datagram(&track.published)
-            .send(object_datagram(track.published.track_alias()))
+            .send_object(&datagram_object())
             .await
             .unwrap();
 

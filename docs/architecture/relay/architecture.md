@@ -511,9 +511,9 @@ per-request authorization gate under "Event pipeline".
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
   location, forwarding preference (subgroup id or datagram), publisher
   priority, status, extension headers, payload, and its own `received_at`.
-  Egress hands subgroup objects to moqt as `to_object()` (moqt computes the
-  deltas); the other wire forms are still derived here (`to_object_datagram` normalised
-  to explicit-id types, `to_fetch_object_field` with subgroup id = object id
+  Egress hands subgroup and datagram objects to moqt as `to_object()` (moqt
+  picks the header and datagram types and computes the deltas); the FETCH
+  wire form is still derived here (`to_fetch_object_field` with subgroup id = object id
   for datagram objects per §10.4.4). `conflicts_with` implements §8.1:
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;

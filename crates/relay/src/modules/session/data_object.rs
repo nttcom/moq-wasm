@@ -2,5 +2,5 @@
 pub(crate) enum DataObject {
     SubgroupHeader(moqt::object::SubgroupStart),
     SubgroupObject(moqt::object::Object),
-    ObjectDatagram(moqt::object::ObjectDatagram),
+    Datagram(moqt::object::Object),
 }

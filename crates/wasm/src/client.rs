@@ -24,8 +24,8 @@ use moqt::{
         FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption, TrackStatusHandler,
     },
     wire::{
-        DatagramField, FetchObject, FetchObjectField, FetchOk, NamespaceOk, ObjectDatagram,
-        ObjectDatagramPayload, PublishOk, RequestError, RequestKind, SubscribeOk, TrackStatusOk,
+        FetchObject, FetchObjectField, FetchOk, NamespaceOk, PublishOk, RequestError, RequestKind,
+        SubscribeOk, TrackStatusOk,
     },
 };
 use tokio::sync::Mutex;
@@ -1192,14 +1192,16 @@ impl MOQTClient {
         object_payload: Vec<u8>,
         loc_header: JsValue,
     ) -> Result<(), JsValue> {
-        let payload = ObjectDatagramPayload::Payload(Bytes::from(object_payload));
-        self.send_datagram_field(
+        self.send_datagram_object(
             track_alias,
-            group_id,
-            object_id,
+            Location {
+                group_id,
+                object_id,
+            },
             publisher_priority,
             loc_header,
-            payload,
+            ObjectStatus::Normal,
+            Bytes::from(object_payload),
         )
         .await
     }
@@ -1214,14 +1216,16 @@ impl MOQTClient {
         object_status: u8,
         loc_header: JsValue,
     ) -> Result<(), JsValue> {
-        let payload = ObjectDatagramPayload::Status(object_status_from(object_status)?);
-        self.send_datagram_field(
+        self.send_datagram_object(
             track_alias,
-            group_id,
-            object_id,
+            Location {
+                group_id,
+                object_id,
+            },
             publisher_priority,
             loc_header,
-            payload,
+            object_status_from(object_status)?,
+            Bytes::new(),
         )
         .await
     }
@@ -1430,39 +1434,36 @@ impl MOQTClient {
         Ok(sender)
     }
 
-    async fn send_datagram_field(
+    #[allow(clippy::too_many_arguments)]
+    async fn send_datagram_object(
         &self,
         track_alias: u64,
-        group_id: u64,
-        object_id: u64,
+        location: Location,
         publisher_priority: u8,
         loc_header: JsValue,
-        payload: ObjectDatagramPayload,
+        status: ObjectStatus,
+        payload: Bytes,
     ) -> Result<(), JsValue> {
         let session = self.session()?;
         let subscription = self.track_subscription(track_alias)?;
-        let extension_headers = crate::loc::parse_loc_header(loc_header)?;
-        let field = DatagramField {
-            object_id: Some(object_id),
+        let object = Object {
+            location,
+            forwarding: ForwardingPreference::Datagram,
             publisher_priority,
-            extension_headers: (!extension_headers.key_value_pairs.is_empty())
-                .then_some(extension_headers),
-            end_of_group: false,
+            status,
+            extension_headers: crate::loc::parse_loc_header(loc_header)?,
             payload,
         };
         session
             .publisher()
             .create_datagram(&subscription)
-            .send(ObjectDatagram::new(track_alias, group_id, field))
+            .send_object(&object)
             .await
             .map_err(anyhow_error)?;
-        self.shared.state.borrow_mut().record_published_object(
-            track_alias,
-            Location {
-                group_id,
-                object_id,
-            },
-        );
+        self.shared
+            .state
+            .borrow_mut()
+            .record_published_object(track_alias, location);
         Ok(())
     }
 }

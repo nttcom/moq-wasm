@@ -4,7 +4,7 @@ use js_sys::Function;
 use mediapack::loc::from_extension_headers;
 use moqt::{
     object::{Object, SubgroupStart},
-    wire::{FetchObjectField, ObjectDatagram, ObjectDatagramPayload},
+    wire::FetchObjectField,
 };
 use wasm_bindgen::JsValue;
 
@@ -55,36 +55,33 @@ pub(crate) fn has_callback(callbacks: &RefCell<Callbacks>, select: CallbackSelec
     select(&callbacks.borrow()).is_some()
 }
 
-pub(crate) fn emit_object_datagram(callbacks: &RefCell<Callbacks>, datagram: ObjectDatagram) {
-    let field = datagram.field;
-    let loc_header = field
-        .extension_headers
-        .as_ref()
-        .map(from_extension_headers)
-        .unwrap_or_default();
-    match field.payload {
-        ObjectDatagramPayload::Payload(payload) => {
-            let message = ObjectDatagramMessage::new(
-                datagram.track_alias,
-                datagram.group_id,
-                field.object_id,
-                field.publisher_priority,
-                payload.to_vec(),
-                loc_header,
-            );
-            emit(callbacks, |c| &c.object_datagram, &[message.into()]);
-        }
-        ObjectDatagramPayload::Status(status) => {
-            let message = ObjectDatagramStatusMessage::new(
-                datagram.track_alias,
-                datagram.group_id,
-                field.object_id,
-                field.publisher_priority,
-                status,
-                loc_header,
-            );
-            emit(callbacks, |c| &c.object_datagram_status, &[message.into()]);
-        }
+pub(crate) fn emit_object_datagram(
+    callbacks: &RefCell<Callbacks>,
+    track_alias: u64,
+    object: Object,
+) {
+    let loc_header = from_extension_headers(&object.extension_headers);
+    let object_id = Some(object.location.object_id);
+    if object.payload.is_empty() {
+        let message = ObjectDatagramStatusMessage::new(
+            track_alias,
+            object.location.group_id,
+            object_id,
+            object.publisher_priority,
+            object.status,
+            loc_header,
+        );
+        emit(callbacks, |c| &c.object_datagram_status, &[message.into()]);
+    } else {
+        let message = ObjectDatagramMessage::new(
+            track_alias,
+            object.location.group_id,
+            object_id,
+            object.publisher_priority,
+            object.payload.to_vec(),
+            loc_header,
+        );
+        emit(callbacks, |c| &c.object_datagram, &[message.into()]);
     }
 }
 

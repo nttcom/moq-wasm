@@ -38,8 +38,9 @@ pub(crate) async fn read_track(
             }
         }
         DataReceiver::Datagram(mut receiver) => {
-            while let Ok(datagram) = receiver.receive().await {
-                emit_object_datagram(&shared.callbacks, datagram);
+            let track_alias = receiver.track_alias;
+            while let Ok(object) = receiver.receive().await {
+                emit_object_datagram(&shared.callbacks, track_alias, object);
             }
         }
     }

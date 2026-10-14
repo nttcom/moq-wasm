@@ -12,7 +12,7 @@ use moqt::{
     ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectDatagramPayload, ObjectStatus, Subgroup, SubgroupStart,
+        ObjectStatus, Subgroup, SubgroupStart,
     },
     subscribe::{FilterType, SubscribeOption},
 };
@@ -991,12 +991,12 @@ where
         }
         moqt::object::DataReceiver::Datagram(mut datagram) => loop {
             let object = datagram.receive().await?;
-            if let ObjectDatagramPayload::Payload(payload) = object.field.payload {
+            if !object.payload.is_empty() {
                 tracing::info!(
-                    payload_len = payload.len(),
+                    payload_len = object.payload.len(),
                     "subscriber received datagram object"
                 );
-                return Ok(payload.to_vec());
+                return Ok(object.payload.to_vec());
             }
         },
     }
