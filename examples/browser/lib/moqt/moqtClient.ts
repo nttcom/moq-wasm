@@ -1007,6 +1007,14 @@ export class MoqtClientWrapper {
     }
   }
 
+  /// Narrows the subscription to the groups before `groupId`; the publisher
+  /// ends it with PUBLISH_DONE once it has sent them. `forward` repeats the
+  /// subscription's current Forward State.
+  async endSubscriptionBeforeGroup(subscriptionRequestId: bigint, groupId: bigint, forward: boolean): Promise<void> {
+    const client = this.requireConnectedClient()
+    await client.sendSubscribeEndBeforeGroup(subscriptionRequestId, groupId, forward)
+  }
+
   /// A LargestObject SUBSCRIBE delivers only what follows the current largest
   /// object, so a joining FETCH supplies that one. The two race, so the newest
   /// group wins whichever arrives first.

@@ -12,13 +12,14 @@ import { CmafReview } from './cmafReview'
 import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
+import { RenditionSplice, type SpliceStart } from './renditionSplice'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
 import type { SubgroupObjectMessageWithLoc } from '@moqt/subscriptionStateManager'
-import { TrackSubscriptions } from './trackSubscriptions'
+import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../../utils/page'
 import {
   type MediaCatalogTrack,
@@ -85,6 +86,15 @@ export type LivePlayerState = {
 
 export type LivePlayerStats = LiveStats & { videoObjects: number }
 
+/// A live LOC video rendition change in progress: `next` is subscribed next
+/// to `outgoing` until the splice has handed playback over to it.
+type VideoSwitch = {
+  splice: RenditionSplice
+  outgoing: TrackSubscription
+  next?: TrackSubscription
+  previousName: string
+}
+
 export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
@@ -115,6 +125,8 @@ export class LivePlayer {
   private volume = 1
   private playbackRate = 1
   private videoObjectCount = 0
+  private newestVideoGroup: bigint | undefined
+  private videoSwitch: VideoSwitch | undefined
   private catalogStatus: PlayerStatus = { text: 'Catalog not loaded yet', state: 'idle' }
   private playbackStatus: PlayerStatus = { text: 'Playback idle', state: 'idle' }
   private rewindStatus: PlayerStatus = { text: 'Live', state: 'ok' }
@@ -305,9 +317,12 @@ export class LivePlayer {
     this.locLive.reset()
     this.stallWatch.clear()
     this.stage.show(this.locLive.picture.element)
+    this.abandonVideoSwitch()
     for (const [kind] of this.subscriptions.entries()) {
       await this.subscriptions.unsubscribe(kind)
     }
+    await this.subscriptions.retireAll()
+    this.newestVideoGroup = undefined
     await this.textTracks.unsubscribeAll()
     this.catalog.reset()
     this.tracks = { video: [], audio: [] }
@@ -329,6 +344,12 @@ export class LivePlayer {
 
   private selectTrack(kind: MediaKind, name: string): Promise<void> {
     return this.queueTrackChange(async () => {
+      if (kind === 'video') {
+        this.abandonVideoSwitch()
+        if (await this.spliceVideo(name)) {
+          return
+        }
+      }
       this.selected[kind] = name
       await this.resubscribe(kind)
       await this.openLiveMse()
@@ -395,6 +416,7 @@ export class LivePlayer {
     }
 
     this.review?.end()
+    this.abandonVideoSwitch()
     const session = new ReviewSession(
       this.context,
       this.timeline,
@@ -584,6 +606,8 @@ export class LivePlayer {
     }
 
     if (kind === 'video') {
+      this.abandonVideoSwitch()
+      this.newestVideoGroup = undefined
       this.timeline.resetGroups()
       this.goLive()
     } else {
@@ -606,6 +630,126 @@ export class LivePlayer {
     )
   }
 
+  /// Switches live LOC video to another rendition of its switching set
+  /// without a gap: the rendition subscribed so far plays on until the new one
+  /// takes over at a group boundary (see `RenditionSplice`). Returns false when
+  /// the change needs the regular resubscription.
+  private async spliceVideo(name: string): Promise<boolean> {
+    const outgoing = this.subscriptions.get('video')
+    const track = this.tracks.video.find((candidate) => candidate.name === name)
+    if (
+      this.packaging !== 'loc' ||
+      this.review ||
+      !outgoing ||
+      !track ||
+      outgoing.name === name ||
+      outgoing.track.altGroup === undefined ||
+      outgoing.track.altGroup !== track.altGroup
+    ) {
+      return false
+    }
+    const pending: VideoSwitch = {
+      splice: new RenditionSplice(this.newestVideoGroup),
+      outgoing,
+      previousName: this.selected.video
+    }
+    this.videoSwitch = pending
+    this.selected.video = name
+    this.changed()
+    let next: TrackSubscription
+    try {
+      next = await this.subscriptions.open('video', name, track, (groupId, object) =>
+        this.handleIncomingVideo(pending, name, groupId, object)
+      )
+    } catch (error) {
+      this.abandonVideoSwitch()
+      this.changed()
+      throw error
+    }
+    if (this.videoSwitch !== pending) {
+      await this.subscriptions.close(next)
+      return true
+    }
+    pending.next = next
+    return true
+  }
+
+  /// Objects that arrive before the subscription is known to the switch are
+  /// dropped, so the splice is decided by a group start seen afterwards.
+  private handleIncomingVideo(
+    pending: VideoSwitch,
+    trackName: string,
+    groupId: bigint,
+    object: SubgroupObjectMessageWithLoc
+  ): void {
+    const next = pending.next
+    if (!next) {
+      return
+    }
+    if (this.videoSwitch !== pending) {
+      if (this.subscriptions.get('video') === next) {
+        this.handleLocObject('video', trackName, groupId, object)
+      }
+      return
+    }
+    const verdict = pending.splice.acceptIncoming(groupId, object.objectId)
+    if (verdict.start) {
+      this.startIncomingVideo(pending, next, verdict.start)
+    }
+    if (verdict.retireOutgoing) {
+      this.retireOutgoingVideo(pending)
+    }
+    if (verdict.play) {
+      this.handleLocObject('video', trackName, groupId, object)
+    }
+  }
+
+  /// An aligned splice keeps the seek timeline, since both renditions number
+  /// their groups alike, and asks the publisher to end the outgoing rendition
+  /// before the start group; one that is not aligned starts the timeline over.
+  private startIncomingVideo(pending: VideoSwitch, next: TrackSubscription, start: SpliceStart): void {
+    this.subscriptions.handOver('video', next)
+    this.locLive.configureTrack('video', next.track)
+    if (!start.aligned) {
+      this.timeline.resetGroups()
+      return
+    }
+    this.subscriptions.endBeforeGroup(pending.outgoing, start.groupId).catch((error) => {
+      this.context.log('warn', `end ${pending.outgoing.name} before group ${start.groupId}: ${getErrorMessage(error)}`)
+    })
+  }
+
+  private retireOutgoingVideo(pending: VideoSwitch): void {
+    if (this.videoSwitch !== pending) {
+      return
+    }
+    this.videoSwitch = undefined
+    this.subscriptions.retire(pending.outgoing).catch((error) => {
+      this.context.log('error', `unsubscribe ${pending.outgoing.name}: ${getErrorMessage(error)}`)
+    })
+  }
+
+  /// Settles a switch in progress: one that has handed over keeps the new
+  /// rendition and drops the outgoing one, one that has not keeps playing the
+  /// outgoing rendition.
+  private abandonVideoSwitch(): void {
+    const pending = this.videoSwitch
+    if (!pending) {
+      return
+    }
+    if (pending.splice.start !== undefined) {
+      this.retireOutgoingVideo(pending)
+      return
+    }
+    this.videoSwitch = undefined
+    this.selected.video = pending.previousName
+    if (pending.next) {
+      this.subscriptions.close(pending.next).catch((error) => {
+        this.context.log('error', `unsubscribe ${pending.next?.name}: ${getErrorMessage(error)}`)
+      })
+    }
+  }
+
   private handleLocObject(
     kind: MediaKind,
     trackName: string,
@@ -613,6 +757,14 @@ export class LivePlayer {
     object: SubgroupObjectMessageWithLoc
   ): void {
     if (kind === 'video') {
+      const pending = this.videoSwitch
+      if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'retire') {
+        this.retireOutgoingVideo(pending)
+        return
+      }
+      if (this.newestVideoGroup === undefined || groupId > this.newestVideoGroup) {
+        this.newestVideoGroup = groupId
+      }
       this.videoObjectCount += 1
       this.timeline.groups.record(groupId, object.locHeader)
       this.notePlaying(trackName)

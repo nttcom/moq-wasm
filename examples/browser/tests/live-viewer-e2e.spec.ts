@@ -166,9 +166,11 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     expect(renditions.length).toBeGreaterThan(1)
     await viewer.videoTrackSelect.selectOption({ index: 1 })
 
-    // Assert: 元の track を解除して rendition を購読し直す
-    await expect(viewer.logPanel).toContainText('unsubscribed video')
+    // Assert: the rendition is subscribed first and the source track ends at the group boundary
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p/)
+    await expect(viewer.logPanel).toContainText(/unsubscribed video(?!_)|video ended by the publisher/)
+    // Assert: the renditions number their groups alike, so the splice keeps the seek timeline
+    expect(await rewindableSeconds(viewer)).toBeGreaterThan(10)
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect
       .poll(async () => viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth), {
