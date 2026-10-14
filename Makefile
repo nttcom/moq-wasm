@@ -8,6 +8,8 @@ LOCAL_MOQT_URL ?= $(RESOLVED_MOQT_URL)
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 LIVE_EGRESS_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
+RECORDER_MOQT_URL ?= $(LOCAL_MOQT_URL)
+RECORDER_NAMESPACE ?= anon/live/test
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # Only a local relay serves the self-signed development certificate; any other relay is verified.
 # A loopback MOQT_URL may resolve to the Docker bridge host, which is local as well.
@@ -16,6 +18,7 @@ LOCAL_RELAY_URLS = $(LOOPBACK_RELAY_URLS) $(if $(filter $(LOOPBACK_RELAY_URLS),$
 LIVE_INGEST_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_INGEST_MOQT_URL)),--insecure-skip-tls-verify)
 LIVE_EGRESS_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_EGRESS_MOQT_URL)),--insecure-skip-tls-verify)
 ONVIF_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
+RECORDER_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(RECORDER_MOQT_URL)),--insecure-skip-tls-verify)
 GST_TLS_PROPERTIES = $(if $(filter $(LOCAL_RELAY_URLS),$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
 LIVE_INGEST_RTP_SDP ?= assets/rtp.sdp
@@ -29,7 +32,7 @@ LIVE_EGRESS_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= crates/vts/apps.example.json
@@ -176,6 +179,14 @@ onvif:
 		--dump-keyframe \
 		$(ONVIF_TLS_FLAGS)
 
+
+# Recording
+recorder:
+	@echo "Using MoQT relay URL: $(RECORDER_MOQT_URL)"
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p recorder -- \
+		--relay $(RECORDER_MOQT_URL) \
+		--namespace $(RECORDER_NAMESPACE) \
+		$(RECORDER_TLS_FLAGS)
 
 # Maintenance
 test:
