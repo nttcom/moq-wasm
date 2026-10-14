@@ -629,8 +629,8 @@ mod tests {
         modules::{
             moqt::version::Version,
             test_support::{
-                HANDSHAKE_TIMEOUT, datagram_object, published_track_between, read_fetch_objects,
-                spawn_connected_draft18_sessions, subscribed_track_reader,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, datagram_object, published_track_between,
+                read_fetch_objects, spawn_connected_draft18_sessions, subscribed_track_reader,
             },
         },
         object::{
@@ -1077,6 +1077,24 @@ mod tests {
                 object_id: 0,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn dropping_a_session_closes_it_before_its_streams_finish() {
+        // Arrange: a data stream outlives the session and keeps the connection referenced
+        let (client, server) = spawn_connected_draft18_sessions("draft18-drop", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let _stream = factory.next().await.unwrap();
+
+        // Act
+        drop((factory, track.published, track.client));
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, track.server.closed())
+            .await
+            .unwrap();
+
+        // Assert: the control stream's FIN would be a PROTOCOL_VIOLATION (§3.3)
+        assert_eq!(close.code, Some(0x0), "{close:?}");
     }
 
     #[tokio::test]

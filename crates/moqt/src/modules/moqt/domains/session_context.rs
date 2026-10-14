@@ -280,6 +280,15 @@ impl fmt::Debug for SessionContext {
 impl Drop for SessionContext {
     fn drop(&mut self) {
         tracing::debug!("SessionContext dropped.");
+        // Streams the application still holds keep the connection open after
+        // the control stream finishes, which draft-18 treats as a
+        // PROTOCOL_VIOLATION (§3.3); the session ends here instead.
+        self.transport_connection.close(
+            self.control
+                .version()
+                .termination_code(TerminationErrorCode::NoError),
+            "",
+        );
         // send goaway
     }
 }
