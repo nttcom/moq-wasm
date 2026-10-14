@@ -28,7 +28,8 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 const CHANNEL_CAPACITY: usize = 1_024;
 
 /// Receives the RTP session described by `sdp_path` and publishes it under
-/// `namespace`, one broadcast per run of datagrams. Fails when the SDP cannot
+/// `namespace`, one broadcast per run of datagrams from one sender: a gap of
+/// `IDLE_TIMEOUT` or a new SSRC starts the next. Fails when the SDP cannot
 /// be read, lists no stream `mediapack::rtp` carries, or a port cannot be bound.
 pub async fn run_rtp_listener(
     sdp_path: PathBuf,
@@ -54,23 +55,35 @@ pub async fn run_rtp_listener(
     }
     drop(packet_sender);
     let label = namespace.join("/");
-    while let Some(first) = packet_receiver.recv().await {
+    let mut carried = None;
+    loop {
+        let (first, demuxer) = match carried.take() {
+            Some(restart) => restart,
+            None => match packet_receiver.recv().await {
+                Some(datagram) => (datagram, rtp::Demuxer::new(&description)?),
+                None => break,
+            },
+        };
         tracing::info!(namespace = %label, "RTP stream started");
         match publish(
             first,
+            demuxer,
             &mut packet_receiver,
-            &description,
             &options,
             namespace.clone(),
         )
         .await
         {
-            Ok(summary) => tracing::info!(
-                namespace = %label,
-                packets = summary.packets,
-                discontinuities = summary.discontinuities,
-                "RTP stream ended"
-            ),
+            Ok(summary) => {
+                tracing::info!(
+                    namespace = %label,
+                    packets = summary.packets,
+                    discontinuities = summary.discontinuities,
+                    sender_restarted = summary.restarted_sender.is_some(),
+                    "RTP stream ended"
+                );
+                carried = summary.restarted_sender;
+            }
             Err(err) => tracing::warn!(namespace = %label, ?err, "RTP stream failed"),
         }
     }
@@ -86,16 +99,18 @@ pub fn parse_namespace(text: &str) -> Result<Vec<String>> {
 struct StreamSummary {
     packets: u64,
     discontinuities: u64,
+    /// Set when a restarted sender ended this stream: its first datagram and
+    /// the demuxer that starts the next stream with it.
+    restarted_sender: Option<(Bytes, rtp::Demuxer)>,
 }
 
 async fn publish(
     first: Bytes,
+    mut demuxer: rtp::Demuxer,
     packet_receiver: &mut mpsc::Receiver<Bytes>,
-    description: &SessionDescription,
     options: &IngestOptions,
     namespace: Vec<String>,
 ) -> Result<StreamSummary> {
-    let mut demuxer = rtp::Demuxer::new(description)?;
     let connection = RelayConnection::new(options.moqt.clone());
     let _registration = options
         .stats
@@ -105,8 +120,14 @@ async fn publish(
         IngestPublisher::new(Broadcast::new(connection, namespace), options.transcode);
     let mut packets = 0_u64;
     let mut discontinuities = 0_u64;
+    let mut restarted_sender = None;
     let mut next = Some(first);
     while let Some(datagram) = next {
+        if demuxer.is_new_source(&datagram) {
+            tracing::warn!("RTP sender restarted with a new SSRC; starting a new broadcast");
+            restarted_sender = Some((datagram, demuxer.for_next_source()));
+            break;
+        }
         packets += 1;
         for event in demuxer.push(&datagram)? {
             publisher.push(event)?;
@@ -129,6 +150,7 @@ async fn publish(
     Ok(StreamSummary {
         packets,
         discontinuities,
+        restarted_sender,
     })
 }
 

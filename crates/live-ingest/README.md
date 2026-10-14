@@ -51,7 +51,8 @@ SRT and RTP are read with a 4 MiB UDP receive buffer. When MPEG-TS or RTP
 packets are lost anyway, the frame they cut and the frames predicted from it
 are dropped until the next keyframe; each loss is logged as a warning and the
 SRT statistics are logged when a stream ends. An RTP stream ends after 5
-seconds without a datagram. Why:
+seconds without a datagram, or when its sender restarts with a new SSRC,
+which starts the next one at once. Why:
 [architecture](../../docs/architecture/live-ingest/architecture.md).
 
 ## Delivery log
