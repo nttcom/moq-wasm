@@ -29,6 +29,12 @@ pub enum RequestErrorCode {
     Uninterested,
     NamespacePrefixUnknown,
     NamespacePrefixOverlap,
+    GoingAway,
+    ExcessiveLoad,
+    DuplicateSubscription,
+    NamespaceTooLarge,
+    UnsupportedExtension,
+    Redirect,
 }
 
 /// PUBLISH_DONE status codes (draft-ietf-moq-transport-14 §13.1.3).
@@ -42,6 +48,8 @@ pub enum PublishDoneCode {
     Expired,
     TooFarBehind,
     MalformedTrack,
+    UpdateFailed,
+    ExcessiveLoad,
 }
 
 /// Data stream reset codes (draft-ietf-moq-transport-14 §13.1.8).
@@ -52,4 +60,9 @@ pub enum DataStreamResetCode {
     DeliveryTimeout,
     SessionClosed,
     MalformedTrack,
+    GoingAway,
+    TooFarBehind,
+    UnknownObjectStatus,
+    ExpiredAuthToken,
+    ExcessiveLoad,
 }
