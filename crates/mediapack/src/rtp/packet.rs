@@ -81,6 +81,27 @@ impl Header {
     }
 }
 
+/// Extends a `bits`-wide sequence number or timestamp past its wrap to the
+/// value nearest `highest`, the largest extended value seen so far, and
+/// updates `highest`. The first value starts one cycle in so a value from
+/// before it still extends to a positive number.
+pub(crate) fn extend_wrapping(highest: &mut Option<u64>, value: u64, bits: u32) -> u64 {
+    let cycle = 1_u64 << bits;
+    let extended = match *highest {
+        None => value + cycle,
+        Some(highest) => {
+            let forward = value.wrapping_sub(highest) & (cycle - 1);
+            if forward < cycle / 2 {
+                highest + forward
+            } else {
+                highest - (cycle - forward)
+            }
+        }
+    };
+    *highest = Some(highest.map_or(extended, |highest| highest.max(extended)));
+    extended
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +151,22 @@ mod tests {
         assert!(!header.marker);
         assert_eq!(header.payload_type, 96);
         assert_eq!(payload, [0x41, 0x9A]);
+    }
+
+    #[test]
+    fn extends_values_across_the_wrap_in_both_directions() {
+        // Arrange
+        let mut highest = None;
+
+        // Act
+        let first = extend_wrapping(&mut highest, u32::MAX as u64, 32);
+        let wrapped = extend_wrapping(&mut highest, 5, 32);
+        let late = extend_wrapping(&mut highest, u32::MAX as u64 - 1, 32);
+
+        // Assert: a late value behind the wrap does not move highest back
+        assert_eq!(wrapped - first, 6);
+        assert_eq!(first - late, 1);
+        assert_eq!(highest, Some(wrapped));
     }
 
     #[test]
