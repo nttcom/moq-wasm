@@ -856,6 +856,14 @@ pub(crate) fn encode_subscribe_namespace(message: &SubscribeNamespace) -> anyhow
     )
 }
 
+/// NAMESPACE or NAMESPACE_DONE, which carry the namespace without the
+/// subscription's prefix (§10.16, §10.17).
+pub(crate) fn encode_namespace(message_type: u64, suffix: &[String]) -> anyhow::Result<BytesMut> {
+    let mut payload = BytesMut::new();
+    put_track_namespace(&mut payload, suffix);
+    frame(message_type, &payload)
+}
+
 pub(crate) fn encode_subscribe_ok(subscribe_ok: &SubscribeOk) -> anyhow::Result<BytesMut> {
     let mut parameters = Vec::new();
     if subscribe_ok.expires != 0 {

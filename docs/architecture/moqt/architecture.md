@@ -187,10 +187,16 @@ that offer it (`version::DRAFT18_PROTOCOLS`).
     encoded against the previous one, so `FetchDataSender` keeps a
     `FetchEncoder` and `accept_fetch_receiver` hands the FETCH's group order
     to the reader.
-  - Not mapped yet: NAMESPACE / NAMESPACE_DONE on a SUBSCRIBE_NAMESPACE
-    stream (logged), SUBSCRIBE_TRACKS (rejected with NOT_SUPPORTED) and
-    per-request GOAWAY; a REQUEST_UPDATE becomes a `SubscribeUpdate` whose
-    absent fields take their defaults.
+  - Messages draft-14 lacks map onto its events. A `publish_namespace`
+    that matches the peer's SUBSCRIBE_NAMESPACE is sent as NAMESPACE on
+    that stream and accepted at once; NAMESPACE / NAMESPACE_DONE received
+    on our SUBSCRIBE_NAMESPACE raise `PublishNamespace` (under a synthetic
+    Request ID counting down from `u64::MAX`, whose responses send nothing)
+    and `PublishNamespaceDone`. SUBSCRIBE_TRACKS raises `SubscribeNameSpace`
+    and gets no NAMESPACE. A per-request GOAWAY ends the request as if the
+    peer had cancelled it with GOING_AWAY, and a REQUEST_UPDATE is applied
+    as a delta to the request's current state (§10.9) before it becomes a
+    `SubscribeUpdate`.
 - Error codes cross the seam as the typed enums of `error_codes.rs` and
   `constants.rs`. `draft14::error_codes` and `draft18::error_codes` hold each
   draft's values: the drafts use them to encode and decode messages, and

@@ -333,7 +333,7 @@ pub(crate) enum Notification {
 /// How a session's control messages reach the peer.
 pub(crate) enum ControlChannel {
     Draft14(draft14::ControlChannel),
-    Draft18(draft18::ControlChannel),
+    Draft18(Box<draft18::ControlChannel>),
 }
 
 impl ControlChannel {
@@ -445,7 +445,7 @@ pub(crate) async fn connect(
             let (channel, receiver, server_setup) =
                 draft18::setup::connect(transport_connection, authorization_token, target).await?;
             Ok((
-                ControlChannel::Draft18(channel),
+                ControlChannel::Draft18(Box::new(channel)),
                 ControlReceiver::Draft18(receiver),
                 server_setup,
             ))
@@ -506,7 +506,7 @@ impl ServerHandshake {
             Self::Draft18(handshake) => {
                 let (channel, receiver) = handshake.accept(transport_connection).await?;
                 Ok((
-                    ControlChannel::Draft18(channel),
+                    ControlChannel::Draft18(Box::new(channel)),
                     ControlReceiver::Draft18(receiver),
                 ))
             }

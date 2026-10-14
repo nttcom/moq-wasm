@@ -55,6 +55,24 @@ pub(crate) enum RequestStreamKind {
     Publish,
     PublishNamespace(Vec<String>),
     SubscribeNamespace(Vec<String>),
+    /// Only incoming: the draft-14 model has no SUBSCRIBE_TRACKS of its own,
+    /// so it reaches the application as SUBSCRIBE_NAMESPACE, whose draft-14
+    /// meaning includes the PUBLISH fan-out (draft-14 §9.28).
+    SubscribeTracks(Vec<String>),
+}
+
+impl RequestStreamKind {
+    /// The prefix of a namespace subscription, when `namespace` falls under it.
+    fn namespace_prefix_of(&self, namespace: &[String]) -> Option<&[String]> {
+        match self {
+            Self::SubscribeNamespace(prefix) | Self::SubscribeTracks(prefix)
+                if namespace.starts_with(prefix) =>
+            {
+                Some(prefix)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -70,11 +88,22 @@ struct Requests {
     /// Streams of requests the peer sent.
     incoming: HashMap<RequestId, RequestStream>,
     peer_request_ids: HashSet<RequestId>,
+    /// Namespaces sent as NAMESPACE, with the SUBSCRIBE_NAMESPACE stream
+    /// that carried them.
+    advertised: HashMap<Vec<String>, RequestId>,
+    /// Request IDs this side made up for events that need no response
+    /// (a NAMESPACE raised as PUBLISH_NAMESPACE).
+    synthetic_request_ids: HashSet<RequestId>,
 }
+
+/// Synthetic Request IDs count down from here, far above any the peer
+/// would use, so they cannot collide with real ones.
+const FIRST_SYNTHETIC_REQUEST_ID: RequestId = u64::MAX;
 
 pub(crate) struct ControlChannel {
     control: MessageSender,
     request_id: AtomicU64,
+    synthetic_request_id: AtomicU64,
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
     requests: std::sync::Mutex<Requests>,
@@ -91,6 +120,7 @@ impl ControlChannel {
         Self {
             control,
             request_id: AtomicU64::new(first_request_id),
+            synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
         }
@@ -139,6 +169,56 @@ impl ControlChannel {
             .insert(request_id, RequestStream { kind, sender });
     }
 
+    fn synthetic_request_id(&self) -> RequestId {
+        let request_id = self.synthetic_request_id.fetch_sub(1, Ordering::SeqCst);
+        self.requests().synthetic_request_ids.insert(request_id);
+        request_id
+    }
+
+    /// Drops what a peer's namespace subscription was sent once it ends.
+    fn forget_advertised(&self, subscription_request_id: RequestId) {
+        self.requests()
+            .advertised
+            .retain(|_, request_id| *request_id != subscription_request_id);
+    }
+
+    /// The peer's namespace subscription `namespace` falls under.
+    fn namespace_subscription(&self, namespace: &[String]) -> Option<(RequestId, RequestStream)> {
+        self.requests()
+            .incoming
+            .iter()
+            .find(|(_, stream)| stream.kind.namespace_prefix_of(namespace).is_some())
+            .map(|(request_id, stream)| (*request_id, stream.clone()))
+    }
+
+    /// draft-14 announces a namespace to a namespace subscriber with
+    /// PUBLISH_NAMESPACE; draft-18 sends NAMESPACE on the subscription's
+    /// stream instead (§6.1), and nothing on a SUBSCRIBE_TRACKS stream. The
+    /// announcement is accepted at once, as no response follows.
+    async fn advertise_namespace(
+        &self,
+        request_id: RequestId,
+        namespace: &[String],
+    ) -> Result<Option<PendingResponse>, RequestFailure> {
+        let Some((subscription_request_id, stream)) = self.namespace_subscription(namespace) else {
+            return Ok(None);
+        };
+        if let RequestStreamKind::SubscribeNamespace(prefix) = &stream.kind {
+            let message =
+                messages::encode_namespace(messages::NAMESPACE, &namespace[prefix.len()..])
+                    .map_err(|_| {
+                        RequestFailure::ProtocolViolation("namespace could not be encoded")
+                    })?;
+            stream.sender.send(&message).await?;
+            self.requests()
+                .advertised
+                .insert(namespace.to_vec(), subscription_request_id);
+        }
+        Ok(Some(PendingResponse::resolved(
+            ResponseMessage::PublishNamespaceOk(request_id),
+        )))
+    }
+
     fn take_incoming(&self, request_id: RequestId) -> Option<RequestStream> {
         self.requests().incoming.remove(&request_id)
     }
@@ -167,6 +247,16 @@ impl ControlChannel {
             tracing::error!(%error, "a request could not be encoded for draft-18");
             RequestFailure::ProtocolViolation("request could not be encoded")
         };
+        if let OutgoingRequest::PublishNamespace(publish_namespace) = &request
+            && let Some(accepted) = self
+                .advertise_namespace(
+                    publish_namespace.request_id,
+                    &publish_namespace.track_namespace,
+                )
+                .await?
+        {
+            return Ok(accepted);
+        }
         let (request_id, kind, message, group_order) = match request {
             OutgoingRequest::Subscribe(subscribe) => (
                 subscribe.request_id,
@@ -267,6 +357,19 @@ impl ControlChannel {
         &self,
         response: OutgoingResponse,
     ) -> Result<(), TransportSendError> {
+        let request_id = match &response {
+            OutgoingResponse::SubscribeOk(ok) | OutgoingResponse::TrackStatusOk(ok) => {
+                ok.request_id
+            }
+            OutgoingResponse::PublishOk(ok) => ok.request_id,
+            OutgoingResponse::FetchOk(ok) => ok.request_id,
+            OutgoingResponse::PublishNamespaceOk(ok)
+            | OutgoingResponse::SubscribeNamespaceOk(ok) => ok.request_id,
+            OutgoingResponse::Error { request_id, .. } => *request_id,
+        };
+        if self.requests().synthetic_request_ids.remove(&request_id) {
+            return Ok(());
+        }
         let encoded = |result: anyhow::Result<BytesMut>| {
             result.map_err(|error| TransportSendError::SessionError {
                 reason: error.to_string(),
@@ -371,6 +474,29 @@ impl ControlChannel {
                 Ok(())
             }
             Notification::PublishNamespaceDone(done) => {
+                let advertised = self.requests().advertised.remove(&done.track_namespace);
+                if let Some(subscription_request_id) = advertised {
+                    let stream = self
+                        .requests()
+                        .incoming
+                        .get(&subscription_request_id)
+                        .cloned();
+                    if let Some(stream) = stream
+                        && let Some(prefix) = stream.kind.namespace_prefix_of(&done.track_namespace)
+                    {
+                        let message = messages::encode_namespace(
+                            messages::NAMESPACE_DONE,
+                            &done.track_namespace[prefix.len()..],
+                        )
+                        .map_err(|error| {
+                            TransportSendError::SessionError {
+                                reason: error.to_string(),
+                            }
+                        })?;
+                        stream.sender.send(&message).await?;
+                    }
+                    return Ok(());
+                }
                 let kind = RequestStreamKind::PublishNamespace(done.track_namespace);
                 let stream = Self::take_by_kind(&mut self.requests().outgoing, &kind);
                 if let Some(stream) = stream {
@@ -445,6 +571,22 @@ pub(crate) struct PendingResponse {
     cancel: CancelOnDrop,
 }
 
+impl PendingResponse {
+    /// A response known without asking the peer.
+    fn resolved(response: ResponseMessage) -> Self {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let _ = sender.send(response);
+        Self {
+            receiver,
+            cancel: CancelOnDrop {
+                session: Weak::new(),
+                request_id: 0,
+                armed: false,
+            },
+        }
+    }
+}
+
 fn is_success(response: &ResponseMessage) -> bool {
     !matches!(
         response,
@@ -473,7 +615,13 @@ impl PendingResponse {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
+    use bytes::{Bytes, BytesMut};
+
+    use super::{
+        ControlChannel, codec,
+        message_stream::{MessageDecoder, MessageReceiver, MessageSender},
+        messages, parameters,
+    };
 
     use crate::{
         RequestErrorCode, RequestFailure, SessionEvent, TrackWriter,
@@ -489,7 +637,7 @@ mod tests {
             ContentExists, DataReceiver, ForwardingPreference, Location, Object, ObjectStatus,
         },
         publish::PublishDoneCode,
-        subscribe::SubscribeOption,
+        subscribe::{FilterType, SubscribeOption},
     };
 
     const SCHEMES: [&str; 2] = ["moqt", "https"];
@@ -750,6 +898,185 @@ mod tests {
         // Assert
         assert_eq!(received, objects);
         assert!(matches!(receiver.receive().await.unwrap(), Fetch::End));
+    }
+
+    /// A subscription from client to server, answered with SUBSCRIBE_OK.
+    async fn subscribed(
+        client: &crate::Session,
+        server: &crate::Session,
+        option: SubscribeOption,
+    ) -> crate::Subscription {
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe("ns".into(), "track".into(), option)
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = next_event(server).await else {
+            panic!("expected SUBSCRIBE");
+        };
+        handler.ok(0, ContentExists::False).await.unwrap();
+        request.await.unwrap().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_namespace_subscriber_hears_namespaces_as_publish_namespace() {
+        // Arrange
+        let (client, server) = spawn_connected_draft18_sessions("draft18-namespaces", "moqt").await;
+        let subscriber = client.subscriber();
+        let request =
+            tokio::spawn(async move { subscriber.subscribe_namespace("live".into()).await });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+
+        // Act
+        server
+            .publisher()
+            .publish_namespace("live/room".into())
+            .await
+            .unwrap();
+        let announced = next_event(&client).await;
+        server
+            .publisher()
+            .publish_namespace_done("live/room".into())
+            .await
+            .unwrap();
+        let withdrawn = next_event(&client).await;
+
+        // Assert: NAMESPACE / NAMESPACE_DONE arrive as draft-14's events
+        let SessionEvent::PublishNamespace(announced) = announced else {
+            panic!("expected PUBLISH_NAMESPACE, got {announced:?}");
+        };
+        assert_eq!(announced.track_namespace, "live/room");
+        announced.ok().await.unwrap();
+        let SessionEvent::PublishNamespaceDone(withdrawn) = withdrawn else {
+            panic!("expected PUBLISH_NAMESPACE_DONE, got {withdrawn:?}");
+        };
+        assert_eq!(withdrawn.track_namespace(), "live/room");
+    }
+
+    #[tokio::test]
+    async fn subscribe_tracks_reaches_the_publisher_as_subscribe_namespace() {
+        // Arrange
+        let (client, server) = spawn_connected_draft18_sessions("draft18-tracks", "moqt").await;
+        let session = client.publisher().session;
+        let (send_stream, receive_stream) = session.transport_connection.open_bi().await.unwrap();
+        let sender = MessageSender::new(send_stream);
+        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, session.control.next_request_id());
+        codec::put_track_namespace(&mut payload, &["live".to_string()]);
+        codec::put_vi64(&mut payload, 0);
+
+        // Act
+        sender
+            .send(&messages::frame(messages::SUBSCRIBE_TRACKS, &payload).unwrap())
+            .await
+            .unwrap();
+        let event = next_event(&server).await;
+        let SessionEvent::SubscribeNameSpace(handler) = event else {
+            panic!("expected SUBSCRIBE_NAMESPACE, got {event:?}");
+        };
+        handler.ok().await.unwrap();
+        let response = receiver.receive().await.unwrap();
+        let announced = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            server.publisher().publish_namespace("live/room".into()),
+        )
+        .await;
+
+        // Assert: no NAMESPACE goes to a SUBSCRIBE_TRACKS stream
+        assert_eq!(handler.track_namespace_prefix, "live");
+        assert!(
+            matches!(response, Some(messages::Message::RequestOk(_))),
+            "{response:?}"
+        );
+        assert!(matches!(announced, Ok(Ok(()))), "{announced:?}");
+    }
+
+    #[tokio::test]
+    async fn a_goaway_on_a_subscription_ends_it_with_going_away() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-request-goaway", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let server_session = server.publisher().session;
+        let stream = ControlChannel::of(&server_session)
+            .requests()
+            .incoming
+            .get(&subscription.request_id())
+            .cloned()
+            .unwrap();
+        let go_away = messages::encode_go_away(&messages::GoAwayMessage {
+            new_session_uri: String::new(),
+            timeout: 0,
+            request_id: None,
+        })
+        .unwrap();
+
+        // Act
+        stream.sender.send(&go_away).await.unwrap();
+        let event = next_event(&client).await;
+
+        // Assert
+        let SessionEvent::PublishDone(done) = event else {
+            panic!("expected PUBLISH_DONE, got {event:?}");
+        };
+        assert_eq!(done.request_id(), subscription.request_id());
+        assert_eq!(done.status_code(), PublishDoneCode::GoingAway);
+    }
+
+    #[tokio::test]
+    async fn a_request_update_keeps_what_it_does_not_change() {
+        // Arrange
+        let (client, server) = spawn_connected_draft18_sessions("draft18-update", "moqt").await;
+        let option = SubscribeOption {
+            subscriber_priority: 7,
+            filter_type: FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 5,
+                    object_id: 0,
+                },
+            },
+            ..SubscribeOption::default()
+        };
+        let subscription = subscribed(&client, &server, option).await;
+        let client_session = client.publisher().session;
+        let stream = ControlChannel::of(&client_session)
+            .requests()
+            .outgoing
+            .get(&subscription.request_id())
+            .cloned()
+            .unwrap();
+        let mut payload = BytesMut::new();
+        codec::put_vi64(&mut payload, client_session.control.next_request_id());
+        parameters::put_parameters(&mut payload, &[parameters::Parameter::Forward(false)]).unwrap();
+
+        // Act: an update that changes only FORWARD
+        stream
+            .sender
+            .send(&messages::frame(messages::REQUEST_UPDATE, &payload).unwrap())
+            .await
+            .unwrap();
+        let event = next_event(&server).await;
+
+        // Assert
+        let SessionEvent::SubscribeUpdate(update) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        assert_eq!(update.subscription_request_id(), subscription.request_id());
+        assert!(!update.forward());
+        assert_eq!(update.subscriber_priority(), 7);
+        assert_eq!(
+            update.start_location(),
+            Location {
+                group_id: 5,
+                object_id: 0,
+            }
+        );
     }
 
     #[tokio::test]
