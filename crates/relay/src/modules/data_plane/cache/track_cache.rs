@@ -7,7 +7,10 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::{Notify, broadcast};
+use tokio::{
+    sync::{Notify, broadcast},
+    time::Instant,
+};
 
 use moqt::object::ForwardingPreference;
 
@@ -206,9 +209,18 @@ impl TrackCache {
                 .flatten();
             let mut removed = Vec::new();
             let mut removed_payload_bytes = 0u64;
+            let now = Instant::now();
             ledger.objects.retain(|location, object| {
-                let keep =
-                    Some(*location) == newest_of_live_track || object.received_at.elapsed() <= ttl;
+                // A publisher's MAX_CACHE_DURATION replaces the relay TTL,
+                // longer or shorter, and the newest-object exception does
+                // not apply to it (draft-14 §9.2.1.3).
+                let keep = match object.expires_at {
+                    Some(expires_at) => now < expires_at,
+                    None => {
+                        Some(*location) == newest_of_live_track
+                            || object.received_at.elapsed() <= ttl
+                    }
+                };
                 if !keep {
                     removed.push(*location);
                     removed_payload_bytes += object.object.payload.len() as u64;
@@ -303,6 +315,11 @@ impl TrackCache {
         }
 
         let end_location = Self::resolve_fetch_end_location(&ledger, end, largest);
+        // draft-14 §9.2.1.3: an expired object's status is unknown again, so
+        // a range holding one is re-requested upstream.
+        if ledger.has_expired_object_in(start, end_location, Instant::now()) {
+            return FetchRangeResolution::NotCovered;
+        }
         if ledger.known_ranges.contains_range(start, end_location) {
             if !ledger.has_object_in(start, end_location) {
                 return FetchRangeResolution::NoObjects;
@@ -479,7 +496,12 @@ mod tests {
         // Assert: no conflict, and datagram egress now finds the object
         assert!(!cache.is_malformed());
         let key = SubgroupKey::Datagram { group_id: 0 };
-        assert!(cache.read().next_subgroup_object(key, 0).is_some());
+        assert!(
+            cache
+                .read()
+                .next_subgroup_object(key, 0, Instant::now())
+                .is_some()
+        );
     }
 
     #[test]
@@ -1325,5 +1347,130 @@ mod fetch_tests {
             .expect("fetch must end once the subgroup aborts")
             .unwrap();
         assert_eq!(result, Err(FetchInterrupted::Incomplete));
+    }
+}
+
+#[cfg(test)]
+mod max_cache_duration_tests {
+    use super::*;
+    use crate::modules::test_support::relay_harness::fixtures::cached_object::{
+        fetch_all, stream_key, stream_object,
+    };
+
+    const MAX_CACHE_DURATION: Duration = Duration::from_secs(2);
+    const RELAY_TTL: Duration = Duration::from_secs(10);
+
+    /// Group 0 closed with objects 0 and 1, both expiring `after` their receipt.
+    fn closed_expiring_group(cache: &TrackCache, after: Duration) {
+        let open = cache.open_subgroup(stream_key(0));
+        let _ = open.insert(stream_object(0, 0).expiring_after(Some(after)));
+        let _ = open.insert(stream_object(0, 1).expiring_after(Some(after)));
+        open.finish();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn live_read_skips_an_object_past_its_max_cache_duration() {
+        // Arrange: object 0 expires, object 1 was received without a limit
+        let cache = TrackCache::new();
+        let open = cache.open_subgroup(stream_key(0));
+        let _ = open.insert(stream_object(0, 0).expiring_after(Some(MAX_CACHE_DURATION)));
+        let _ = open.insert(stream_object(0, 1));
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let next = cache
+            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .await
+            .unwrap();
+
+        // Assert
+        let NextObject::Object(object) = next else {
+            panic!("expected an object");
+        };
+        assert_eq!(object.object.location, location(0, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_from_cache_stops_at_an_object_past_its_max_cache_duration() {
+        // Arrange
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, MAX_CACHE_DURATION);
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let result = fetch_all(
+            &cache,
+            location(0, 0),
+            location(1, 0),
+            moqt::object::GroupOrder::Ascending,
+        )
+        .await;
+
+        // Assert
+        assert!(matches!(result, Err(FetchInterrupted::Incomplete)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fetch_range_holding_an_expired_object_goes_upstream() {
+        // Arrange: the range is fully known, so only the expiry stops serving it
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, MAX_CACHE_DURATION);
+        let before_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2));
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let after_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2));
+
+        // Assert
+        assert_eq!(
+            before_expiry,
+            FetchRangeResolution::Serve {
+                end_location: location(0, 2)
+            }
+        );
+        assert_eq!(after_expiry, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_whole_group_fetch_holding_an_expired_object_goes_upstream() {
+        // Arrange: end {0, 0} asks for all of group 0
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, MAX_CACHE_DURATION);
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 0));
+
+        // Assert
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_an_object_past_the_relay_ttl_until_its_max_cache_duration() {
+        // Arrange
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, RELAY_TTL * 3);
+        tokio::time::advance(RELAY_TTL * 2).await;
+
+        // Act
+        cache.evict(RELAY_TTL);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_drops_the_newest_object_of_a_live_track_at_its_max_cache_duration() {
+        // Arrange: well within the relay TTL, and the newest object of a live track
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0).expiring_after(Some(MAX_CACHE_DURATION)));
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        cache.evict(RELAY_TTL);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 0);
     }
 }

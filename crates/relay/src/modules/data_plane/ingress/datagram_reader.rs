@@ -17,6 +17,7 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
         cache,
         session_event_sender,
         mut stop_receiver,
+        max_cache_duration,
     } = ingest;
     let mut current_group: Option<(u64, OpenSubgroupGuard<'_>)> = None;
     loop {
@@ -42,7 +43,8 @@ pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn Da
                         open
                     }
                 };
-                if open.insert(CachedObject::from_object(object)).is_err() {
+                let object = CachedObject::from_object(object).expiring_after(max_cache_duration);
+                if open.insert(object).is_err() {
                     report_malformed_track(&session_event_sender, publisher_session_id, &track_key);
                     break;
                 }

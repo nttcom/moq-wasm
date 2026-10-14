@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use moqt::{
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
@@ -40,6 +42,10 @@ impl UpstreamSubscription {
 
     pub(crate) fn content_exists(&self) -> ContentExists {
         self.inner.content_exists()
+    }
+
+    pub(crate) fn max_cache_duration(&self) -> Option<Duration> {
+        self.inner.max_cache_duration().map(Duration::from_millis)
     }
 
     pub(crate) fn publish_accept_options(&self) -> Option<(u8, FilterType)> {

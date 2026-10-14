@@ -167,6 +167,10 @@ impl Drop for FetchDeliveryHandle {
 
 impl RelayHarness {
     pub(crate) fn new() -> Self {
+        Self::with_max_cache_duration(None)
+    }
+
+    pub(crate) fn with_max_cache_duration(max_cache_duration: Option<Duration>) -> Self {
         let (session_event_sender, session_event_receiver) = mpsc::unbounded_channel();
         let (stop_sender, stop_receiver) = watch::channel(false);
         Self {
@@ -176,6 +180,7 @@ impl RelayHarness {
                 cache: Arc::new(TrackCache::new()),
                 session_event_sender,
                 stop_receiver,
+                max_cache_duration,
             },
             session_event_receiver,
             stop_sender,
@@ -184,6 +189,10 @@ impl RelayHarness {
 
     pub(crate) fn track_key(&self) -> &TrackKey {
         &self.ingest.track_key
+    }
+
+    pub(crate) fn cache(&self) -> &TrackCache {
+        &self.ingest.cache
     }
 
     pub(crate) async fn expect_session_event(&mut self) -> SessionEvent {

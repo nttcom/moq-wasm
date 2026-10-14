@@ -79,6 +79,7 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
         cache,
         session_event_sender,
         mut stop_receiver,
+        max_cache_duration,
     } = ingest;
     let span = Span::current();
     let mut header: Option<ReceivedHeader> = None;
@@ -114,7 +115,8 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     ObjectStatus::EndOfTrack => Some("end_of_track"),
                     _ => None,
                 };
-                if current.insert(CachedObject::from_object(object)).is_err() {
+                let object = CachedObject::from_object(object).expiring_after(max_cache_duration);
+                if current.insert(object).is_err() {
                     report_malformed_track(
                         &span,
                         &session_event_sender,
@@ -142,10 +144,9 @@ pub(crate) async fn read_stream(ingest: TrackIngest, mut receiver: Box<dyn Strea
                     && header.start.ends_group
                 {
                     let end_of_group_id = header.prev_object_id.map_or(0, |id| id + 1);
-                    if ingest
-                        .insert(CachedObject::end_of_group(&header.start, end_of_group_id))
-                        .is_err()
-                    {
+                    let end_of_group = CachedObject::end_of_group(&header.start, end_of_group_id)
+                        .expiring_after(max_cache_duration);
+                    if ingest.insert(end_of_group).is_err() {
                         report_malformed_track(
                             &span,
                             &session_event_sender,
@@ -212,12 +213,14 @@ fn open_subgroup<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bytes::Bytes;
     use moqt::object::ObjectStatus;
 
     use super::*;
     use crate::modules::{
-        data_plane::cache::track_cache::NextObject,
+        data_plane::cache::track_cache::{FetchRangeResolution, NextObject},
         session::session_event::EventKind,
         test_support::relay_harness::{
             FailingUpstream, PUBLISHER_SESSION_ID, RelayHarness, UpstreamSubgroupStream,
@@ -240,6 +243,32 @@ mod tests {
         for object in objects {
             upstream_stream.send(object);
         }
+    }
+
+    #[tokio::test]
+    async fn objects_expire_after_the_upstream_max_cache_duration() {
+        // Arrange
+        let max_cache_duration = Duration::from_millis(50);
+        let harness = RelayHarness::with_max_cache_duration(Some(max_cache_duration));
+        let mut upstream_stream = harness.open_upstream_stream();
+        send_all(
+            &upstream_stream,
+            vec![
+                make_header(0),
+                payload(0),
+                make_status_object(0, 1, ObjectStatus::EndOfGroup),
+            ],
+        );
+        upstream_stream.wait_reader_end().await;
+        tokio::time::sleep(max_cache_duration).await;
+
+        // Act
+        let resolution = harness
+            .cache()
+            .resolve_fetch_range(location(0, 0), location(0, 2));
+
+        // Assert: both objects, the End of Group included, expired
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
     }
 
     #[tokio::test]

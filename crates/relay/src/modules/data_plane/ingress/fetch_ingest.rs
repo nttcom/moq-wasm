@@ -1,5 +1,5 @@
 use moqt::object::DataStreamResetCode;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -110,6 +110,10 @@ impl FetchIngest {
             .await?;
         let cache = start.egress_start.cache.clone();
         let start_eviction_generation = cache.eviction_generation();
+        let max_cache_duration = start
+            .fetch_handle
+            .max_cache_duration
+            .map(Duration::from_millis);
 
         loop {
             let received = tokio::select! {
@@ -120,7 +124,7 @@ impl FetchIngest {
             };
             match received {
                 moqt::fetch::Fetch::Object(object) => {
-                    Self::append_fetch_object(&cache, object)?;
+                    Self::append_fetch_object(&cache, object, max_cache_duration)?;
                 }
                 moqt::fetch::Fetch::End => {
                     if cache.eviction_generation() != start_eviction_generation {
@@ -143,10 +147,14 @@ impl FetchIngest {
         }
     }
 
-    fn append_fetch_object(cache: &TrackCache, object: moqt::object::Object) -> anyhow::Result<()> {
+    fn append_fetch_object(
+        cache: &TrackCache,
+        object: moqt::object::Object,
+        max_cache_duration: Option<Duration>,
+    ) -> anyhow::Result<()> {
         let (group_id, object_id) = (object.location.group_id, object.location.object_id);
         cache
-            .insert(CachedObject::from_object(object))
+            .insert(CachedObject::from_object(object).expiring_after(max_cache_duration))
             .map_err(|_| {
                 anyhow::anyhow!(
                     "malformed track detected during fetch fill (group {group_id}, object {object_id})"
@@ -222,10 +230,9 @@ mod tests {
     };
     use bytes::Bytes;
     use moqt::object::ObjectStatus;
-    use std::time::Duration;
 
     fn fill(cache: &TrackCache, object: CachedObject) -> anyhow::Result<()> {
-        FetchIngest::append_fetch_object(cache, object.object.clone())
+        FetchIngest::append_fetch_object(cache, object.object.clone(), None)
     }
 
     #[tokio::test]

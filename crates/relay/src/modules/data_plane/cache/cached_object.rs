@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus, SubgroupStart};
 use tokio::time::Instant;
@@ -9,6 +11,10 @@ use crate::modules::data_plane::cache::subgroup_key::SubgroupKey;
 pub(crate) struct CachedObject {
     pub(crate) object: Object,
     pub(crate) received_at: Instant,
+    /// draft-14 §9.2.1.3: from this instant on, the object must not start to
+    /// be forwarded. Set when the subscription or fetch it arrived on carried
+    /// MAX_CACHE_DURATION.
+    pub(crate) expires_at: Option<Instant>,
 }
 
 impl CachedObject {
@@ -16,7 +22,17 @@ impl CachedObject {
         Self {
             object,
             received_at: Instant::now(),
+            expires_at: None,
         }
+    }
+
+    pub(crate) fn expiring_after(mut self, max_cache_duration: Option<Duration>) -> Self {
+        self.expires_at = max_cache_duration.map(|duration| self.received_at + duration);
+        self
+    }
+
+    pub(crate) fn is_expired(&self, now: Instant) -> bool {
+        self.expires_at.is_some_and(|expires_at| now >= expires_at)
     }
 
     /// The End of Group status object a FIN implies for `start`'s subgroup.

@@ -155,6 +155,7 @@ impl IngressCoordinator {
                                     track_key: track_key.clone(),
                                     publisher_session_id: command.publisher_session_id,
                                     source,
+                                    max_cache_duration: subscription.max_cache_duration(),
                                 }))
                                 .await
                                 .is_ok()
