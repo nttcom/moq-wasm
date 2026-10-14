@@ -29,7 +29,7 @@ const CHANNEL_CAPACITY: usize = 1_024;
 
 /// Receives the RTP session described by `sdp_path` and publishes it under
 /// `namespace`, one broadcast per run of datagrams. Fails when the SDP cannot
-/// be read, lists no H.264 or AAC stream, or a port cannot be bound.
+/// be read, lists no stream `mediapack::rtp` carries, or a port cannot be bound.
 pub async fn run_rtp_listener(
     sdp_path: PathBuf,
     namespace: Vec<String>,

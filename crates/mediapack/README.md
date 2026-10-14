@@ -40,7 +40,7 @@ Timestamps are `Timestamp` values in microseconds with conversions to and from
 | `mp4::Demuxer` / `mp4::Fmp4Muxer` | Fragmented MP4; muxing writes an init segment plus one fragment per sample |
 | `mp4::Fmp4TrackMuxer` | One track per muxer with the init segment returned apart from the fragments, the shape draft-ietf-moq-cmsf-01 §3.1/§3.3 gives a MoQT track |
 | `loc` | `Muxer`, `Demuxer`, and transport-independent `LocObject` with typed extensions |
-| `rtp` | `Demuxer` / `Muxer` over RTP datagrams, `packet::Header` (RFC 3550), the H.264 (RFC 6184) and AAC `MPEG4-GENERIC` (RFC 3640) payload formats, and the `sdp::SessionDescription` subset that describes a plain RTP session |
+| `rtp` | `Demuxer` / `Muxer` over RTP datagrams, `packet::Header` (RFC 3550), the H.264 (RFC 6184), AAC `MPEG4-GENERIC` (RFC 3640), G.711 A-law (RFC 3551) and Opus (RFC 7587) payload formats, and the `sdp::SessionDescription` subset that describes a plain RTP session |
 | `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions) |
 | `aac` | AudioSpecificConfig and ADTS parsing |
 | `transmux` | `Transmuxer` (push API) and `transmux()` (Read/Write API) |
@@ -101,9 +101,11 @@ session's SDP, which names the streams, their payload types and the out-of-band
 parameter sets; feed it one datagram at a time from any of the session's ports.
 The muxer tags each packet with its stream and writes the SDP once it has seen
 the `Streams` event and the configuration of every announced stream.
+`MuxerOptions` sets each stream's payload type and SSRC; the SDP names both
+SSRCs with one `cname`, which tells a receiver the streams belong together.
 
 ```rust
-use mediapack::rtp::{self, MediaKind};
+use mediapack::rtp;
 
 let description = rtp::SessionDescription::parse(&sdp_text)?;
 let mut demuxer = rtp::Demuxer::new(&description)?;
@@ -111,23 +113,31 @@ for datagram in datagrams {
     let events = demuxer.push(&datagram)?;
 }
 
-let mut muxer = rtp::Muxer::new();
+let destination = rtp::Destination { address, video_port: 5004, audio_port: 5006, rtcp_mux: false };
+let mut muxer = rtp::Muxer::default();
 for event in &events {
     for packet in muxer.push(event)? {
-        match packet.kind {
-            MediaKind::Video => video_socket.send(&packet.data)?,
-            MediaKind::Audio => audio_socket.send(&packet.data)?,
-        }
+        socket.send_to(&packet.data, destination.rtp(packet.kind))?;
     }
 }
-let sdp_text = muxer.session_description(destination, 5004, 5006).unwrap().to_string();
+for report in muxer.sender_reports(capture_origin, now) {
+    socket.send_to(&report.data, destination.rtcp(report.kind))?;
+}
+let sdp_text = muxer.session_description(&destination).unwrap().to_string();
 ```
+
+`sender_reports` writes one RTCP sender report per stream, with the SDES
+CNAME, for the send time `now`: each extrapolates its stream's RTP time to
+`now` from the latest sample, whose wall-clock time is `capture_origin` plus
+its presentation time. With `capture_origin` the wall-clock time the
+presentation times of every stream count from, a receiver aligns video and
+audio by the reports.
 
 Packets are put back in sequence order per stream; a gap that stays open while
 200 ms of later packets arrive is reported through `discontinuities()`, and the
 frames it cuts are dropped until the next keyframe. Timestamps restart at the
-first packet of each stream, so the two streams are not aligned to each other
-without RTCP, which this API does not carry.
+first packet of each stream: the demuxer does not read RTCP sender reports, so
+it does not align the streams to each other.
 
 The fMP4 demuxer reads H.264/AAC initialization segments and fragments with
 explicit `trun` data offsets relative to `moof`, followed by `mdat`. This includes

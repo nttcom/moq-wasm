@@ -1,6 +1,8 @@
 //! The subset of SDP (RFC 8866) that describes a plain RTP session: one
-//! `m=` section per stream with its `c=`, `a=rtpmap` and `a=fmtp` lines. The
-//! codec parameters follow RFC 6184 §8.1 (H.264) and RFC 3640 §4.1 (AAC).
+//! `m=` section per stream with its `c=`, `a=rtpmap` and `a=fmtp` lines, plus
+//! the `a=ssrc` (RFC 5576) and `a=rtcp-mux` (RFC 5761) lines it writes but
+//! does not read. The codec parameters follow RFC 6184 §8.1 (H.264), RFC 3640
+//! §4.1 (AAC), RFC 3551 §6 (G.711 A-law) and RFC 7587 §7 (Opus).
 
 use std::{fmt, net::IpAddr};
 
@@ -15,6 +17,14 @@ use crate::{
 const H264_ENCODING: &str = "H264";
 const AAC_ENCODING: &str = "MPEG4-GENERIC";
 const AAC_HBR_MODE: &str = "AAC-hbr";
+const PCMA_ENCODING: &str = "PCMA";
+const OPUS_ENCODING: &str = "opus";
+/// RFC 3551 §6 assigns G.711 A-law the static payload type 8 at 8 kHz.
+const PCMA_STATIC_PAYLOAD_TYPE: u8 = 8;
+const PCMA_STATIC_CLOCK_RATE: u32 = 8_000;
+/// RFC 7587 §7 fixes the Opus clock at 48 kHz and its rtpmap at two channels,
+/// whatever the encoder sends.
+pub const OPUS_CLOCK_RATE: u32 = 48_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDescription {
@@ -32,6 +42,17 @@ pub struct MediaDescription {
     pub payload_type: u8,
     pub clock_rate: u32,
     pub codec: Codec,
+    pub ssrc: Option<SsrcAttribute>,
+    /// `a=rtcp-mux`: RTCP shares the RTP port. Parsing leaves it `false`.
+    pub rtcp_mux: bool,
+}
+
+/// `a=ssrc:<ssrc> cname:<cname>` (RFC 5576). Parsing leaves
+/// `MediaDescription::ssrc` `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsrcAttribute {
+    pub ssrc: u32,
+    pub cname: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +71,13 @@ pub enum Codec {
     Aac {
         config: AudioSpecificConfig,
         au_headers: AuHeaderConfig,
+    },
+    Pcma {
+        channels: u8,
+    },
+    /// `channels` is 2 when `sprop-stereo=1` announces stereo, 1 otherwise.
+    Opus {
+        channels: u8,
     },
     /// A format this crate does not carry, named by its encoding, or
     /// `static payload type <n>` when the section has no `a=rtpmap`.
@@ -162,11 +190,16 @@ impl Section {
             return Ok(None);
         };
         let Some(rtpmap) = &self.rtpmap else {
-            return Ok(Some(self.media(
-                kind,
-                0,
-                Codec::Unsupported(format!("static payload type {}", self.payload_type)),
-            )));
+            let (clock_rate, codec) = match self.payload_type {
+                PCMA_STATIC_PAYLOAD_TYPE if kind == MediaKind::Audio => {
+                    (PCMA_STATIC_CLOCK_RATE, Codec::Pcma { channels: 1 })
+                }
+                other => (
+                    0,
+                    Codec::Unsupported(format!("static payload type {other}")),
+                ),
+            };
+            return Ok(Some(self.media(kind, clock_rate, codec)));
         };
         let mut fields = rtpmap.split('/');
         let encoding = fields.next().unwrap_or_default().to_owned();
@@ -174,10 +207,21 @@ impl Section {
             .next()
             .and_then(|rate| rate.parse().ok())
             .with_context(|| format!("rtpmap without a clock rate: {rtpmap:?}"))?;
+        let channels = fields
+            .next()
+            .and_then(|count| count.parse().ok())
+            .unwrap_or(1);
         let parameters = self.fmtp.as_deref().map(parse_fmtp).unwrap_or_default();
         let codec = match encoding.to_ascii_uppercase().as_str() {
             H264_ENCODING if kind == MediaKind::Video => h264_codec(&parameters)?,
             AAC_ENCODING if kind == MediaKind::Audio => aac_codec(&parameters)?,
+            PCMA_ENCODING if kind == MediaKind::Audio => Codec::Pcma { channels },
+            "OPUS" if kind == MediaKind::Audio => {
+                let stereo = parameter(&parameters, "sprop-stereo") == Some("1");
+                Codec::Opus {
+                    channels: if stereo { 2 } else { 1 },
+                }
+            }
             _ => Codec::Unsupported(encoding),
         };
         Ok(Some(self.media(kind, clock_rate, codec)))
@@ -191,6 +235,8 @@ impl Section {
             payload_type: self.payload_type,
             clock_rate,
             codec,
+            ssrc: None,
+            rtcp_mux: false,
         }
     }
 }
@@ -380,10 +426,38 @@ impl fmt::Display for MediaDescription {
                     encode_hex(&config.to_bytes())
                 )
             }
+            Codec::Pcma { channels } => {
+                write!(
+                    f,
+                    "a=rtpmap:{payload_type} {PCMA_ENCODING}/{}",
+                    self.clock_rate
+                )?;
+                if *channels != 1 {
+                    write!(f, "/{channels}")?;
+                }
+                writeln!(f)
+            }
+            Codec::Opus { channels } => {
+                writeln!(
+                    f,
+                    "a=rtpmap:{payload_type} {OPUS_ENCODING}/{OPUS_CLOCK_RATE}/2"
+                )?;
+                if *channels == 2 {
+                    writeln!(f, "a=fmtp:{payload_type} sprop-stereo=1")?;
+                }
+                Ok(())
+            }
             Codec::Unsupported(encoding) => {
                 writeln!(f, "a=rtpmap:{payload_type} {encoding}/{}", self.clock_rate)
             }
+        }?;
+        if self.rtcp_mux {
+            writeln!(f, "a=rtcp-mux")?;
         }
+        if let Some(SsrcAttribute { ssrc, cname }) = &self.ssrc {
+            writeln!(f, "a=ssrc:{ssrc} cname:{cname}")?;
+        }
+        Ok(())
     }
 }
 
@@ -426,6 +500,8 @@ mod tests {
                     codec: Codec::H264 {
                         parameter_sets: Some(fixture_record())
                     },
+                    ssrc: None,
+                    rtcp_mux: false,
                 },
                 MediaDescription {
                     kind: MediaKind::Audio,
@@ -437,6 +513,8 @@ mod tests {
                         config: mono_48k(),
                         au_headers: AuHeaderConfig::AAC_HBR,
                     },
+                    ssrc: None,
+                    rtcp_mux: false,
                 },
             ]
         );
@@ -466,8 +544,8 @@ mod tests {
             c=IN IP4 239.0.0.1/127\n\
             a=rtpmap:96 H264/90000\n\
             m=audio 5006 RTP/AVP 0\n\
-            m=audio 5008 RTP/AVP 111\n\
-            a=rtpmap:111 opus/48000/2\n\
+            m=audio 5008 RTP/AVP 9\n\
+            a=rtpmap:9 G722/8000\n\
             m=application 5010 RTP/AVP 98\n\
             a=rtpmap:98 metadata/90000\n";
 
@@ -492,7 +570,71 @@ mod tests {
         );
         assert_eq!(
             description.media[2].codec,
-            Codec::Unsupported("opus".to_owned())
+            Codec::Unsupported("G722".to_owned())
+        );
+    }
+
+    #[test]
+    fn reads_a_law_and_opus_sections() {
+        // Arrange: A-law by static payload type and by rtpmap, Opus with and without sprop-stereo
+        let text = "v=0\n\
+            m=audio 5006 RTP/AVP 8\n\
+            m=audio 5008 RTP/AVP 111\n\
+            a=rtpmap:111 opus/48000/2\n\
+            a=fmtp:111 minptime=10;sprop-stereo=1\n\
+            m=audio 5010 RTP/AVP 112\n\
+            a=rtpmap:112 opus/48000/2\n\
+            m=audio 5012 RTP/AVP 113\n\
+            a=rtpmap:113 PCMA/16000/2\n";
+
+        // Act
+        let description = SessionDescription::parse(text).unwrap();
+        let reparsed = SessionDescription::parse(&description.to_string()).unwrap();
+
+        // Assert
+        let codecs: Vec<(&Codec, u32)> = description
+            .media
+            .iter()
+            .map(|media| (&media.codec, media.clock_rate))
+            .collect();
+        assert_eq!(
+            codecs,
+            [
+                (&Codec::Pcma { channels: 1 }, 8_000),
+                (&Codec::Opus { channels: 2 }, 48_000),
+                (&Codec::Opus { channels: 1 }, 48_000),
+                (&Codec::Pcma { channels: 2 }, 16_000),
+            ]
+        );
+        assert_eq!(reparsed, description);
+    }
+
+    #[test]
+    fn writes_the_source_and_rtcp_attributes() {
+        // Arrange
+        let media = MediaDescription {
+            kind: MediaKind::Audio,
+            port: 5_006,
+            destination: None,
+            payload_type: 8,
+            clock_rate: 8_000,
+            codec: Codec::Pcma { channels: 1 },
+            ssrc: Some(SsrcAttribute {
+                ssrc: 0xDEAD_BEEF,
+                cname: "egress@example".to_owned(),
+            }),
+            rtcp_mux: true,
+        };
+
+        // Act
+        let text = media.to_string();
+
+        // Assert
+        assert!(
+            text.ends_with(
+                "a=rtpmap:8 PCMA/8000\na=rtcp-mux\na=ssrc:3735928559 cname:egress@example\n"
+            ),
+            "{text}"
         );
     }
 

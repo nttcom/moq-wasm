@@ -5,8 +5,8 @@ Living document. Update this file in the same change whenever the ingest flow
 or the loss handling described here changes.
 
 ## Scope
-`crates/live-ingest` accepts RTMP (FLV), SRT (MPEG-TS) and plain RTP (H.264
-and AAC described by an SDP file), demuxes the input with `mediapack`,
+`crates/live-ingest` accepts RTMP (FLV), SRT (MPEG-TS) and plain RTP (H.264,
+AAC, Opus and G.711 A-law described by an SDP file), demuxes the input with `mediapack`,
 optionally re-encodes it with `crates/transcode`, and hands the resulting
 media events to `crates/broadcast`, which owns the track layout (see
 [its architecture document](../broadcast/architecture.md)).
