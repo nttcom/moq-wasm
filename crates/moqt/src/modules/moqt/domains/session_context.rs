@@ -485,8 +485,10 @@ impl SessionContext {
                 }
                 _ => self.close_on_mismatched_late_response(request_id, &response),
             },
-            // A TRACK_STATUS_OK for a request of another kind is discarded
-            // here instead of closing the session as a mismatch.
+            ResponseMessage::TrackStatusOk(_) => match &action {
+                LateResponseAction::Discard => Self::discard_late_response(request_id, &response),
+                _ => self.close_on_mismatched_late_response(request_id, &response),
+            },
             _ => Self::discard_late_response(request_id, &response),
         };
         if let Err(error) = send_result {
@@ -576,8 +578,8 @@ mod tests {
                 runtime::dispatch::incoming_object::IncomingObject,
             },
             test_support::{
-                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
-                subscription,
+                HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
+                spawn_connected_dual_sessions, subscription,
             },
         },
         object::{GroupOrder, Location},
@@ -588,8 +590,8 @@ mod tests {
     const OTHER_REQUEST_ID: u64 = 3;
     const TRACK_ALIAS: u64 = 5;
 
-    fn late_subscribe_ok() -> ResponseMessage {
-        ResponseMessage::SubscribeOk(SubscribeOk {
+    fn subscribe_ok() -> SubscribeOk {
+        SubscribeOk {
             request_id: REQUEST_ID,
             track_alias: TRACK_ALIAS,
             expires: 0,
@@ -597,7 +599,15 @@ mod tests {
             content_exists: ContentExists::False,
             delivery_timeout: None,
             max_duration: None,
-        })
+        }
+    }
+
+    fn late_subscribe_ok() -> ResponseMessage {
+        ResponseMessage::SubscribeOk(subscribe_ok())
+    }
+
+    fn late_track_status_ok() -> ResponseMessage {
+        ResponseMessage::TrackStatusOk(subscribe_ok())
     }
 
     fn late_publish_ok() -> ResponseMessage {
@@ -813,6 +823,32 @@ mod tests {
             panic!("expected FETCH_CANCEL");
         };
         assert_eq!(fetch_cancel.request_id(), REQUEST_ID);
+    }
+
+    #[tokio::test]
+    async fn late_track_status_ok_for_another_request_kind_closes_the_session() {
+        // Arrange
+        let (_client, server) = spawn_connected_dual_sessions("late-track-status-ok").await;
+        let context = server.subscriber().session;
+
+        // Act
+        context
+            .handle_late_response(
+                REQUEST_ID,
+                LateResponseAction::Unsubscribe,
+                late_track_status_ok(),
+            )
+            .await;
+
+        // Assert
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.receive_event())
+            .await
+            .expect("no session event")
+            .unwrap();
+        assert!(
+            matches!(event, SessionEvent::ProtocolViolation()),
+            "{event:?}"
+        );
     }
 
     #[tokio::test]
