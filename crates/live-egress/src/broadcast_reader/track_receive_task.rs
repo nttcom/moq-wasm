@@ -1,7 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use mediapack::{
-    MediaEvent, Timestamp,
+    AudioConfig, MediaEvent, Timestamp,
     loc::{self, LocObject, from_extension_headers},
 };
 use moqt::{TrackObject, TrackReader};
@@ -46,7 +46,9 @@ impl TrackReceiveTask {
                         .get_or_init(|| object.capture_timestamp().unwrap_or(Timestamp::ZERO));
                     match &kind {
                         TrackKind::Video => loc::Demuxer::video(),
-                        TrackKind::Audio(config) => loc::Demuxer::audio(config.clone()),
+                        TrackKind::Audio(config) => {
+                            loc::Demuxer::audio(AudioConfig::Aac(config.clone()))
+                        }
                     }
                     .with_capture_origin(origin)
                 });
