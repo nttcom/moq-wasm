@@ -9,8 +9,8 @@
 //! abstraction waits for its second concrete use.
 
 pub(crate) mod draft14;
-// Built up ahead of `Version::Draft18`; nothing outside its tests uses it
-// until `APPLICATION_PROTOCOLS` offers `moqt-18`.
+// Until `APPLICATION_PROTOCOLS` offers `moqt-18`, parts of the draft-18
+// adapter are used only by its tests.
 #[allow(dead_code)]
 pub(crate) mod draft18;
 
@@ -26,6 +26,7 @@ use crate::{
     modules::{
         executor::JoinHandle,
         moqt::{
+            control_plane::control_messages::messages::parameters::group_order::GroupOrder,
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
@@ -78,18 +79,22 @@ pub(crate) const APPLICATION_PROTOCOLS: ApplicationProtocols = ApplicationProtoc
 pub(crate) enum Version {
     /// draft-ietf-moq-transport-14.
     Draft14,
+    /// draft-ietf-moq-transport-18.
+    Draft18,
 }
 
 impl Version {
     pub(crate) fn termination_code(self, code: TerminationErrorCode) -> u32 {
         match self {
             Self::Draft14 => draft14::error_codes::termination_code_to_wire(code),
+            Self::Draft18 => draft18::error_codes::termination_code_to_wire(code),
         }
     }
 
     pub(crate) fn data_stream_reset_code(self, code: DataStreamResetCode) -> u64 {
         match self {
             Self::Draft14 => draft14::error_codes::data_stream_reset_code_to_wire(code),
+            Self::Draft18 => draft18::error_codes::stream_reset_code_to_wire(code),
         }
     }
 
@@ -104,12 +109,7 @@ impl Version {
     pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
         match self {
             Self::Draft14 => draft14::objects::encode_fetch_header(request_id),
-        }
-    }
-
-    pub(crate) fn encode_fetch_object(self, object: &Object) -> BytesMut {
-        match self {
-            Self::Draft14 => draft14::objects::encode_fetch_object(object),
+            Self::Draft18 => draft18::objects::encode_fetch_header(request_id),
         }
     }
 
@@ -120,13 +120,19 @@ impl Version {
     ) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14 => draft14::objects::encode_datagram(track_alias, object),
+            Self::Draft18 => draft18::objects::encode_datagram(track_alias, object),
         }
     }
 
-    /// Returns `(track alias, object)`.
-    pub(crate) fn decode_datagram(self, data: &mut BytesMut) -> anyhow::Result<(u64, Object)> {
+    /// Returns `(track alias, object)`, or `None` for a datagram that carries
+    /// no object (draft-18 padding).
+    pub(crate) fn decode_datagram(
+        self,
+        data: &mut BytesMut,
+    ) -> anyhow::Result<Option<(u64, Object)>> {
         match self {
-            Self::Draft14 => draft14::objects::decode_datagram(data),
+            Self::Draft14 => draft14::objects::decode_datagram(data).map(Some),
+            Self::Draft18 => Ok(draft18::objects::decode_datagram(data)?),
         }
     }
 
@@ -138,6 +144,7 @@ impl Version {
     ) -> Result<Option<IncomingStream>, StreamReceiveError> {
         match self {
             Self::Draft14 => draft14::objects::accept_uni_stream(stream).await,
+            Self::Draft18 => draft18::objects::accept_uni_stream(stream).await,
         }
     }
 }
@@ -151,6 +158,7 @@ pub(crate) enum IncomingStream {
 #[derive(Debug)]
 pub(crate) enum SubgroupReader {
     Draft14(draft14::objects::SubgroupReader),
+    Draft18(draft18::objects::SubgroupReader),
 }
 
 impl SubgroupReader {
@@ -159,6 +167,7 @@ impl SubgroupReader {
     pub(crate) fn start(&self) -> Option<SubgroupStart> {
         match self {
             Self::Draft14(reader) => reader.start(),
+            Self::Draft18(reader) => reader.start(),
         }
     }
 
@@ -166,6 +175,7 @@ impl SubgroupReader {
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self {
             Self::Draft14(reader) => reader.next_object().await,
+            Self::Draft18(reader) => reader.next_object().await,
         }
     }
 }
@@ -173,37 +183,51 @@ impl SubgroupReader {
 #[derive(Debug)]
 pub(crate) enum FetchReader {
     Draft14(draft14::objects::FetchReader),
+    Draft18(draft18::objects::FetchReader),
 }
 
 impl FetchReader {
+    /// draft-18 encodes Group IDs as deltas in the FETCH's group order.
+    pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
+        match self {
+            Self::Draft14(_) => {}
+            Self::Draft18(reader) => reader.set_group_order(group_order),
+        }
+    }
+
     /// `Ok(None)` means the peer finished the stream (FIN).
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self {
             Self::Draft14(reader) => reader.next_object().await,
+            Self::Draft18(reader) => reader.next_object().await,
         }
     }
 }
 
 pub(crate) enum SubgroupEncoder {
     Draft14(draft14::objects::SubgroupEncoder),
+    Draft18(draft18::objects::SubgroupEncoder),
 }
 
 impl SubgroupEncoder {
     pub(crate) fn new(version: Version, track_alias: u64) -> Self {
         match version {
             Version::Draft14 => Self::Draft14(draft14::objects::SubgroupEncoder::new(track_alias)),
+            Version::Draft18 => Self::Draft18(draft18::objects::SubgroupEncoder::new(track_alias)),
         }
     }
 
     pub(crate) fn version(&self) -> Version {
         match self {
             Self::Draft14(_) => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
         }
     }
 
     pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
         match self {
             Self::Draft14(encoder) => encoder.header(start),
+            Self::Draft18(encoder) => encoder.header(start),
         }
     }
 
@@ -211,6 +235,37 @@ impl SubgroupEncoder {
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object(object),
+            Self::Draft18(encoder) => encoder.object(object),
+        }
+    }
+}
+
+/// Encodes the objects of one FETCH response in the session's draft.
+pub(crate) enum FetchEncoder {
+    Draft14,
+    Draft18(draft18::objects::FetchEncoder),
+}
+
+impl FetchEncoder {
+    pub(crate) fn new(version: Version) -> Self {
+        match version {
+            Version::Draft14 => Self::Draft14,
+            Version::Draft18 => Self::Draft18(draft18::objects::FetchEncoder::default()),
+        }
+    }
+
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14 => Version::Draft14,
+            Self::Draft18(_) => Version::Draft18,
+        }
+    }
+
+    /// `Ok(None)` for an object the draft cannot carry in a FETCH response.
+    pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
+        match self {
+            Self::Draft14 => Ok(Some(draft14::objects::encode_fetch_object(object))),
+            Self::Draft18(encoder) => encoder.object(object),
         }
     }
 }
@@ -357,6 +412,7 @@ pub(crate) async fn connect(
                 server_setup,
             ))
         }
+        Version::Draft18 => unreachable!("`Version::negotiated` never selects draft-18 yet"),
     }
 }
 
@@ -369,6 +425,7 @@ pub(crate) async fn accept(
         Version::Draft14 => Ok(ServerHandshake::Draft14(
             draft14::setup::accept(transport_connection).await?,
         )),
+        Version::Draft18 => unreachable!("`Version::negotiated` never selects draft-18 yet"),
     }
 }
 

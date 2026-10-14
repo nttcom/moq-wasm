@@ -68,7 +68,9 @@ impl StreamDataSender<Uninitialized> {
         subgroup_id: crate::wire::SubgroupId,
         publisher_priority: u8,
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
-        let SubgroupEncoder::Draft14(encoder) = &mut self.encoder;
+        let SubgroupEncoder::Draft14(encoder) = &mut self.encoder else {
+            panic!("raw draft-14 fields need a draft-14 session");
+        };
         let bytes = encoder.raw_header(group_id, subgroup_id, publisher_priority);
         self.stream_sender.send(&bytes).await?;
         Ok(self.into_header_sent())
@@ -110,7 +112,9 @@ impl StreamDataSender<HeaderSent> {
         object_id_delta: u64,
         subgroup_object: crate::wire::SubgroupObject,
     ) -> anyhow::Result<()> {
-        let SubgroupEncoder::Draft14(encoder) = &self.encoder;
+        let SubgroupEncoder::Draft14(encoder) = &self.encoder else {
+            panic!("raw draft-14 fields need a draft-14 session");
+        };
         let bytes = encoder.raw_object_field(object_id_delta, subgroup_object);
         self.stream_sender.send(&bytes).await
     }

@@ -1,4 +1,5 @@
 use crate::modules::moqt::{
+    control_plane::control_messages::messages::parameters::group_order::GroupOrder,
     data_plane::{object::canonical_object::Object, stream::stream_receiver::StreamReceiveError},
     version::FetchReader,
 };
@@ -20,6 +21,10 @@ pub struct FetchDataReceiver {
 impl FetchDataReceiver {
     pub(crate) fn new(request_id: u64, reader: FetchReader) -> Self {
         Self { request_id, reader }
+    }
+
+    pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
+        self.reader.set_group_order(group_order);
     }
 
     pub async fn receive(&mut self) -> anyhow::Result<Fetch> {

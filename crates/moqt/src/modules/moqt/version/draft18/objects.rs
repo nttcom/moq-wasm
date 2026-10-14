@@ -17,12 +17,21 @@ use crate::modules::moqt::{
             messages::parameters::{group_order::GroupOrder, location::Location},
         },
     },
-    data_plane::object::{
-        canonical_object::{ForwardingPreference, Object, SubgroupStart},
-        extension_headers::ExtensionHeaders,
-        object_status::ObjectStatus,
+    data_plane::{
+        object::{
+            canonical_object::{ForwardingPreference, Object, SubgroupStart},
+            extension_headers::ExtensionHeaders,
+            object_status::ObjectStatus,
+        },
+        stream::{
+            fetch_data_receiver::FetchDataReceiver,
+            stream_data_receiver::StreamDataReceiver,
+            stream_receiver::{StreamReceiveError, StreamReceiver},
+        },
     },
+    version::{self, IncomingStream},
 };
+use crate::modules::transport::transport_connection::BoxedReceiveStream;
 
 const FETCH_HEADER: u64 = 0x05;
 const PADDING_STREAM: u64 = 0x132B_3E28;
@@ -591,6 +600,94 @@ impl FetchState {
                     payload,
                     ends_group: false,
                 }))
+            }
+        }
+    }
+}
+
+type UniStreamReceiver = StreamReceiver<{ 64 * 1024 }, StreamDecoder>;
+
+fn violation(error: DecodeError) -> StreamReceiveError {
+    StreamReceiveError::ProtocolViolation(error.to_string())
+}
+
+/// Reads the header that tells a subgroup stream from a FETCH response
+/// (§3.4). `Ok(None)` means the stream finished before its header or is
+/// padding, which is cancelled by dropping it (§11.5.1).
+pub(crate) async fn accept_uni_stream(
+    stream: BoxedReceiveStream,
+) -> Result<Option<IncomingStream>, StreamReceiveError> {
+    let mut stream = UniStreamReceiver::new(stream, StreamDecoder::default());
+    match stream.receive().await? {
+        None => Ok(None),
+        Some(StreamFrame::SubgroupHeader(header)) => {
+            Ok(Some(IncomingStream::Subgroup(StreamDataReceiver::new(
+                header.track_alias,
+                version::SubgroupReader::Draft18(SubgroupReader {
+                    stream,
+                    state: SubgroupState::new(header),
+                }),
+            ))))
+        }
+        Some(StreamFrame::FetchHeader { request_id }) => {
+            Ok(Some(IncomingStream::Fetch(FetchDataReceiver::new(
+                request_id,
+                version::FetchReader::Draft18(FetchReader {
+                    stream,
+                    state: FetchState::new(),
+                }),
+            ))))
+        }
+        Some(StreamFrame::SubgroupObject(_) | StreamFrame::FetchField(_)) => {
+            unreachable!("the decoder yields a header first")
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SubgroupReader {
+    stream: UniStreamReceiver,
+    state: SubgroupState,
+}
+
+impl SubgroupReader {
+    pub(crate) fn start(&self) -> Option<SubgroupStart> {
+        self.state.start()
+    }
+
+    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+        match self.stream.receive().await? {
+            Some(StreamFrame::SubgroupObject(field)) => {
+                Ok(Some(self.state.object(field).map_err(violation)?))
+            }
+            Some(_) => unreachable!("a subgroup stream has one header"),
+            None => Ok(None),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct FetchReader {
+    stream: UniStreamReceiver,
+    state: FetchState,
+}
+
+impl FetchReader {
+    pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
+        self.state.set_group_order(group_order);
+    }
+
+    /// Skips End of Range markers.
+    pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
+        loop {
+            match self.stream.receive().await? {
+                Some(StreamFrame::FetchField(field)) => {
+                    if let Some(object) = self.state.object(field).map_err(violation)? {
+                        return Ok(Some(object));
+                    }
+                }
+                Some(_) => unreachable!("a FETCH stream has one header"),
+                None => return Ok(None),
             }
         }
     }

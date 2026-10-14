@@ -41,7 +41,8 @@ impl DatagramReceiveTask {
     async fn on_datagram_received(context: &Arc<SessionContext>, data: &mut BytesMut) -> bool {
         tracing::trace!(?data, "Received datagram");
         let (track_alias, object) = match context.control.version().decode_datagram(data) {
-            Ok(decoded) => decoded,
+            Ok(Some(decoded)) => decoded,
+            Ok(None) => return false,
             Err(error) => {
                 tracing::error!(error = %format!("{error:#}"), "Failed to decode a datagram object");
                 return false;

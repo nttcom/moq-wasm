@@ -468,10 +468,12 @@ impl Subscriber {
                     request_id
                 )
             })?;
-        fetch_stream_rx
+        let mut receiver = fetch_stream_rx
             .recv()
             .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))
+            .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
+        receiver.set_group_order(fetch_handle.group_order);
+        Ok(receiver)
     }
 
     #[tracing::instrument(
