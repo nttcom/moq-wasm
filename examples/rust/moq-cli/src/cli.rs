@@ -27,7 +27,7 @@ pub enum Container {
     Cmaf,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Clone, Debug)]
 pub struct RelayArgs {
     #[arg(long = "relay")]
     pub url: Url,
