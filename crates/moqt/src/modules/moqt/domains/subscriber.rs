@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use tracing::Instrument;
 
-use crate::modules::moqt::control_plane::error_codes::RequestKind;
-
 use crate::{
     RequestFailure, SubscriberInitiatedSubscription, Subscription,
     fetch::FetchOption,
@@ -72,12 +70,11 @@ impl Subscriber {
             }
             ResponseMessage::SubscribeNameSpaceError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe namespace error");
-                Err(RequestFailure::rejected(
-                    RequestKind::SubscribeNamespace,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -160,12 +157,11 @@ impl Subscriber {
             }
             ResponseMessage::SubscribeError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Subscribe error");
-                Err(RequestFailure::rejected(
-                    RequestKind::Subscribe,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -217,12 +213,11 @@ impl Subscriber {
             }
             ResponseMessage::TrackStatusError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Track status error");
-                Err(RequestFailure::rejected(
-                    RequestKind::TrackStatus,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
@@ -273,9 +268,13 @@ impl Subscriber {
                 pending_fetch.keep();
                 Ok(FetchHandle::new(fetch_ok))
             }
-            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => Err(
-                RequestFailure::rejected(RequestKind::Fetch, request_id, error_code, reason_phrase),
-            ),
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
+                Err(RequestFailure::Rejected {
+                    request_id,
+                    code: error_code,
+                    reason: reason_phrase,
+                })
+            }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
             )),
@@ -340,9 +339,13 @@ impl Subscriber {
                 pending_fetch.keep();
                 Ok(FetchHandle::new(fetch_ok))
             }
-            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => Err(
-                RequestFailure::rejected(RequestKind::Fetch, request_id, error_code, reason_phrase),
-            ),
+            ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
+                Err(RequestFailure::Rejected {
+                    request_id,
+                    code: error_code,
+                    reason: reason_phrase,
+                })
+            }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",
             )),

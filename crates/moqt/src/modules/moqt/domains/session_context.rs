@@ -236,7 +236,8 @@ impl SessionContext {
         if let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation()) {
             tracing::error!(?error, "failed to send protocol violation event");
         }
-        self.transport_connection.close(code as u32, reason);
+        self.transport_connection
+            .close(self.control.version().termination_code(code), reason);
     }
 }
 

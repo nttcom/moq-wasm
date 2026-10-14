@@ -6,10 +6,7 @@ use std::sync::{
 use crate::modules::{
     executor,
     moqt::{
-        control_plane::{
-            control_messages::messages::request_error::RequestError,
-            error_codes::{RequestErrorCode, RequestKind},
-        },
+        control_plane::error_codes::{RequestErrorCode, RequestKind},
         domains::session_context::SessionContext,
         version::OutgoingResponse,
     },
@@ -70,14 +67,14 @@ async fn send_request_error(
     code: RequestErrorCode,
     reason_phrase: String,
 ) -> Result<(), TransportSendError> {
-    let err = RequestError {
-        request_id,
-        error_code: code.wire_value(kind),
-        reason_phrase,
-    };
     session_context
         .control
-        .respond(OutgoingResponse::Error(kind, err))
+        .respond(OutgoingResponse::Error {
+            kind,
+            request_id,
+            code,
+            reason_phrase,
+        })
         .await
 }
 

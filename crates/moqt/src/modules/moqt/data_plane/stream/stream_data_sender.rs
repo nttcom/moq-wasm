@@ -87,7 +87,8 @@ impl StreamDataSender<Uninitialized> {
     }
 
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        self.stream_sender.reset(code.into()).await
+        let code = self.encoder.version().data_stream_reset_code(code);
+        self.stream_sender.reset(code).await
     }
 }
 
@@ -119,7 +120,8 @@ impl StreamDataSender<HeaderSent> {
     }
 
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        self.stream_sender.reset(code.into()).await
+        let code = self.encoder.version().data_stream_reset_code(code);
+        self.stream_sender.reset(code).await
     }
 }
 

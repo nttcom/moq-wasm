@@ -1,16 +1,13 @@
 use std::sync::Arc;
 
-use crate::modules::moqt::control_plane::error_codes::{
-    PublishDoneCode, RequestErrorCode, RequestKind,
-};
+use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
 use crate::{
     RequestFailure,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
-                publish::Publish, publish_done::PublishDone, publish_namespace::PublishNamespace,
-                publish_namespace_cancel::PublishNamespaceCancel,
+                publish::Publish, publish_namespace::PublishNamespace,
                 publish_namespace_done::PublishNamespaceDone,
             },
             enums::ResponseMessage,
@@ -83,18 +80,13 @@ impl Publisher {
         code: RequestErrorCode,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let vec_namespace = namespace.split('/').map(|s| s.to_string()).collect();
-        // draft-14 §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
-        let publish_namespace_cancel = PublishNamespaceCancel::new(
-            vec_namespace,
-            code.wire_value(RequestKind::PublishNamespace),
-            error_reason,
-        );
         self.session
             .control
-            .notify(Notification::PublishNamespaceCancel(
-                publish_namespace_cancel,
-            ))
+            .notify(Notification::PublishNamespaceCancel {
+                namespace: namespace.split('/').map(|s| s.to_string()).collect(),
+                code,
+                reason: error_reason,
+            })
             .await?;
         Ok(())
     }
@@ -107,15 +99,14 @@ impl Publisher {
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let publish_done = PublishDone::new(
-            subscription.request_id(),
-            status_code.into(),
-            stream_count,
-            error_reason,
-        );
         self.session
             .control
-            .notify(Notification::PublishDone(publish_done))
+            .notify(Notification::PublishDone {
+                request_id: subscription.request_id(),
+                code: status_code,
+                stream_count,
+                reason: error_reason,
+            })
             .await?;
         Ok(())
     }
@@ -172,12 +163,11 @@ impl Publisher {
             }
             ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Publish error");
-                Err(RequestFailure::rejected(
-                    RequestKind::Publish,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",

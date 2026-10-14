@@ -40,7 +40,8 @@ impl Handshake {
     }
 
     pub async fn reject(self, code: TerminationErrorCode, reason: &str) {
-        self.transport_connection.close(code as u32, reason);
+        self.transport_connection
+            .close(self.setup.version().termination_code(code), reason);
         // Wait for the WebTransport CLOSE_SESSION capsule (carrying the code and
         // reason) to be delivered before this connection is dropped; otherwise
         // the QUIC connection is torn down first and the browser only sees a

@@ -161,7 +161,10 @@ coding-style rule that an abstraction waits for its second concrete use.
   `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
   (draft-14 defines none, §3.1.1) are draft-14; anything else fails the
   session.
-- Not behind the adapter yet: the error code tables in `error_codes.rs`.
+- Error codes cross the seam as the typed enums of `error_codes.rs` and
+  `constants.rs`. `draft14::error_codes` holds their draft-14 values: `draft14`
+  uses them to encode and decode messages, and `Version::termination_code` /
+  `data_stream_reset_code` return them for transport closes and stream resets.
 
 ## Session establishment (`modules/moqt/domains`)
 
@@ -321,7 +324,8 @@ One struct owns all cross-task state:
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
   §13.1.1).
-- `error_codes.rs` — typed codes the public API uses instead of integers:
+- `error_codes.rs` — typed codes the public API uses instead of integers. They
+  carry no values; the version adapter maps them (`draft14::error_codes`):
   - `RequestErrorCode` (handler `error()`, `RequestFailure::Rejected`) is one
     semantic enum; draft-14 numbers codes per `*_ERROR` message, so the wire
     value is looked up per `RequestKind`.
@@ -331,8 +335,11 @@ One struct owns all cross-task state:
   - A code the message does not define is sent as INTERNAL_ERROR; an unknown
     received value (request error or PUBLISH_DONE status) reads as
     INTERNAL_ERROR.
-  - Integers remain only in the `moqt::wire` structs; `RequestKind` is
-    exported there for bindings that convert numbers themselves.
+  - Integers remain only in the `moqt::wire` structs. `moqt::wire` also
+    exports `RequestKind` and the draft-14 conversions
+    (`request_error_code_to_wire` / `request_error_code_from_wire`,
+    `publish_done_code_from_wire`) for the wasm bindings, whose JavaScript
+    API carries draft-14 numbers.
   - `ResponseGuard` is the one place that encodes and sends a `*_ERROR`, for
     both the handlers' `error()` and the drop-time NOT_SUPPORTED reply.
 
