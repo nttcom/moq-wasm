@@ -282,6 +282,13 @@ const PROCESS_METRICS: &[(&str, Metric)] = &[
             scale: 1.0 / MEBIBYTE,
         },
     ),
+    (
+        "client_sessions",
+        Metric::Max {
+            column: "client_sessions",
+            scale: 1.0,
+        },
+    ),
 ];
 
 struct Plan {

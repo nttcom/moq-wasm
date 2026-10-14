@@ -71,6 +71,7 @@ function relayCharts(relayId: string): ChartSpec[] {
     chart('Throughput', 'Mbps', [line('Ingress', relay, 'ingress_mbps'), line('Egress', relay, 'egress_mbps')]),
     chart('Egress loss (bitrate-weighted)', '%', [line('Loss', relay, 'egress_loss_percent')]),
     chart('Sessions', '', [line('Sessions', relay, 'sessions')]),
+    chart('Client sessions', '', [line('Clients', process, 'client_sessions')]),
     chart('Cache objects', '', [line('Objects', process, 'cache_objects')]),
     chart('Disk cache', 'MB', [line('Disk cache', process, 'disk_cache_mb')]),
     chart('Flow-control blocked', '/s', [

@@ -7,6 +7,10 @@ export interface ProcessStats {
   cache_payload_bytes: number
   /** Missing from relays built before the disk cache. */
   disk_cache_bytes?: number
+  /** The client sessions a drain waits for. */
+  client_sessions: number
+  /** Unix milliseconds of the start of the drain; null while the relay serves. */
+  draining_since_ms: number | null
 }
 
 /** 64-bit ids arrive as strings: JavaScript numbers hold 53 bits. */

@@ -196,6 +196,12 @@ class RelayIndex {
   }
 }
 
+/** Seconds the relay had been draining at the time of its snapshot; null while it serves. */
+export function drainingSeconds(snapshot: RelaySnapshot): number | null {
+  const since = snapshot.process.draining_since_ms
+  return since === null ? null : Math.max(0, Math.round((snapshot.timestamp_ms - since) / 1000))
+}
+
 export function isStatsSession(session: SessionStats): boolean {
   return session.peer === 'stats_publisher' || session.peer === 'stats_subscriber'
 }

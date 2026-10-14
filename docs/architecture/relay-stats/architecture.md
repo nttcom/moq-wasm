@@ -21,5 +21,8 @@ what each direction of a session can observe.
 - Counters are cumulative since the session, track cache or subscription
   started; consumers derive rates from consecutive snapshots and treat a
   decrease as a restart. Fields named `…_since_last_snapshot_…` and `lag_…`
-  are gauges.
+  are gauges, as are `ProcessStats::client_sessions` and
+  `ProcessStats::draining_since_ms`.
+- A field added to the snapshot has `#[serde(default)]`, so a consumer reads
+  the snapshots of relays that predate it.
 - Durations are microseconds, sizes bytes, timestamps Unix milliseconds.

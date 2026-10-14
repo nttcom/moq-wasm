@@ -2,10 +2,7 @@ pub(crate) mod entry;
 
 use std::{
     collections::{BTreeSet, HashSet},
-    sync::{
-        Arc, PoisonError, RwLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, OnceLock, PoisonError, RwLock},
 };
 
 use dashmap::{DashMap, DashSet, Entry};
@@ -111,7 +108,8 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) upstream_tracks: DashMap<TrackKey, UpstreamTrack>,
     pub(crate) downstream_subscriptions:
         DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
-    draining: AtomicBool,
+    /// Unix milliseconds of the start of the drain.
+    draining_since_ms: OnceLock<u64>,
 }
 
 impl InMemoryLocalPubSubDirectory {
@@ -122,7 +120,7 @@ impl InMemoryLocalPubSubDirectory {
             published_handlers: RwLock::new(Vec::new()),
             upstream_tracks: DashMap::new(),
             downstream_subscriptions: DashMap::new(),
-            draining: AtomicBool::new(false),
+            draining_since_ms: OnceLock::new(),
         }
     }
 
@@ -130,8 +128,12 @@ impl InMemoryLocalPubSubDirectory {
     /// the downstream subscribers it sent GOAWAY to have left, which tells a
     /// publisher publishing on both relays that it can stop on this one
     /// (draft-22 §7.6.1).
-    pub(crate) fn begin_draining(&self) {
-        self.draining.store(true, Ordering::SeqCst);
+    pub(crate) fn begin_draining(&self, now_ms: u64) {
+        let _ = self.draining_since_ms.set(now_ms);
+    }
+
+    pub(crate) fn draining_since_ms(&self) -> Option<u64> {
+        self.draining_since_ms.get().copied()
     }
 
     pub(crate) fn release_unwatched_published_subscriptions(
@@ -806,7 +808,7 @@ impl InMemoryLocalPubSubDirectory {
         }
         let downstream_remains = track.downstream_subscriber_count > 0;
         let client_remains = track.client_downstream_subscriber_count > 0;
-        let draining = self.draining.load(Ordering::SeqCst);
+        let draining = self.draining_since_ms.get().is_some();
         let mut released_upstream_subscriptions = Vec::new();
         let mut released_published = Vec::new();
         if !client_remains {
