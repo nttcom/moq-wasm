@@ -25,7 +25,10 @@ use crate::{
             ingress::ingress_coordinator::IngressCoordinator,
         },
         domain::pub_sub_directory::InMemoryLocalPubSubDirectory,
-        observability::stats_collector::{StatsCollector, StatsSources},
+        observability::{
+            stats_collector::{StatsCollector, StatsSources},
+            stats_publish_task::unix_millis_now,
+        },
         session::{session_event::SessionEvent, session_repository::SessionRepository},
     },
 };
@@ -110,7 +113,8 @@ impl RelayRuntime {
     }
 
     pub(crate) fn begin_draining(&self) {
-        self.local_pub_sub_directory.begin_draining();
+        self.local_pub_sub_directory
+            .begin_draining(unix_millis_now());
     }
 
     pub(crate) fn stats_collector(&self, relay_id: String) -> StatsCollector {
