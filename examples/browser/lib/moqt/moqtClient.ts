@@ -556,7 +556,8 @@ export class MoqtClientWrapper {
     trackNamespace: string[],
     trackName: string,
     authInfo: string,
-    onLatest: (payload: Uint8Array, groupId: bigint) => void
+    onLatest: (payload: Uint8Array, groupId: bigint) => void,
+    options: Pick<SubscribeOptions, 'onPublishDone'> = {}
   ): Promise<SubscribeResult> {
     let newestGroupId: bigint | undefined
     const deliver = (groupId: bigint, payload: Uint8Array) => {
@@ -568,7 +569,8 @@ export class MoqtClientWrapper {
     }
     const result = await this.subscribe(trackNamespace, trackName, authInfo, {
       filterType: FilterType.LargestObject,
-      forward: true
+      forward: true,
+      onPublishDone: options.onPublishDone
     })
     this.setOnSubgroupObjectHandler(result.subscribeOk.trackAlias, (groupId, object) => {
       if (object.objectStatus === undefined) {
