@@ -77,21 +77,20 @@ async fn follow_commands(
     command_sender: Sender<Command>,
 ) -> Result<()> {
     let mut command_receiver: Option<CommandReceiver> = None;
+    let mut handover = ViewerHandover::default();
     loop {
         match session.receive_event().await? {
             SessionEvent::PublishNamespace(handler) => {
                 let announced_namespace = handler.track_namespace.clone();
                 handler.ok().await?;
                 log::info!("Command namespace announced: {announced_namespace}");
-                if announced_namespace != command_track.namespace
-                    || command_receiver
-                        .as_ref()
-                        .is_some_and(CommandReceiver::is_running)
-                {
-                    continue;
+                let following = command_receiver
+                    .as_ref()
+                    .is_some_and(CommandReceiver::is_running);
+                if announced_namespace == command_track.namespace && handover.announced(following) {
+                    command_receiver =
+                        subscribe_command_track(&session, &command_track, &command_sender).await?;
                 }
-                command_receiver =
-                    subscribe_command_track(&session, &command_track, &command_sender).await?;
             }
             SessionEvent::Publish(handler) => {
                 if let Some(receiver) = accept_command_publish(
@@ -115,6 +114,11 @@ async fn follow_commands(
                         "command publisher finished; waiting for the next command publisher"
                     );
                     command_receiver = None;
+                    if handover.followed_viewer_left() {
+                        command_receiver =
+                            subscribe_command_track(&session, &command_track, &command_sender)
+                                .await?;
+                    }
                 }
             }
             SessionEvent::Subscribe(handler) => {
@@ -129,6 +133,29 @@ async fn follow_commands(
             SessionEvent::ProtocolViolation() => bail!("command session protocol violation"),
             event => log::debug!("Unhandled command session message: {event:?}"),
         }
+    }
+}
+
+/// Decides when an announced command namespace is subscribed. A viewer that
+/// announces while another one is followed takes over once the followed one's
+/// PUBLISH_DONE arrives: the relay may still hold a viewer that has gone, and
+/// its PUBLISH_DONE then comes after the new viewer's PUBLISH_NAMESPACE.
+#[derive(Default)]
+struct ViewerHandover {
+    announced_while_following: bool,
+}
+
+impl ViewerHandover {
+    /// Returns whether to subscribe now.
+    fn announced(&mut self, following: bool) -> bool {
+        self.announced_while_following = following;
+        !following
+    }
+
+    /// Returns whether to subscribe now, for a viewer that announced while
+    /// the one that left was followed.
+    fn followed_viewer_left(&mut self) -> bool {
+        std::mem::take(&mut self.announced_while_following)
     }
 }
 
@@ -307,4 +334,42 @@ fn handle_command_payload(payload: &[u8], command_sender: &Sender<Command>) -> R
     log::info!("PTZ command received: {command:?}");
     let _ = command_sender.send(command);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ViewerHandover;
+
+    #[test]
+    fn a_viewer_announcing_while_none_is_followed_is_subscribed_at_once() {
+        // Arrange
+        let mut handover = ViewerHandover::default();
+
+        // Act / Assert
+        assert!(handover.announced(false));
+    }
+
+    #[test]
+    fn a_viewer_announcing_while_another_is_followed_takes_over_when_that_one_leaves() {
+        // Arrange
+        let mut handover = ViewerHandover::default();
+
+        // Act
+        let subscribed_at_announce = handover.announced(true);
+        let subscribed_at_leave = handover.followed_viewer_left();
+
+        // Assert
+        assert!(!subscribed_at_announce);
+        assert!(subscribed_at_leave);
+    }
+
+    #[test]
+    fn the_followed_viewer_leaving_without_a_waiting_viewer_subscribes_nothing() {
+        // Arrange
+        let mut handover = ViewerHandover::default();
+        handover.announced(false);
+
+        // Act / Assert
+        assert!(!handover.followed_viewer_left());
+    }
 }
