@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, DUAL, Endpoint, Session, Subscription, TrackReader,
-    fetch::{Fetch, FetchObject, FetchObjectField, FetchOption},
+    fetch::{Fetch, FetchOption},
     object::{DataReceiver, GroupOrder},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -90,17 +90,13 @@ pub(crate) async fn fetch_joining_group(
 ) -> Result<Option<Bytes>> {
     let mut subscriber = session.subscriber();
     let handle = subscriber
-        .fetch_relative_joining(subscription.request_id(), 0, FetchOption::default())
+        .fetch_relative_joining(subscription, 0, FetchOption::default())
         .await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut latest = None;
     loop {
         match receiver.receive().await? {
-            Fetch::Header(_) => {}
-            Fetch::Object(FetchObjectField {
-                fetch_object: FetchObject::Payload(payload),
-                ..
-            }) => latest = Some(payload),
+            Fetch::Object(object) if !object.payload.is_empty() => latest = Some(object.payload),
             Fetch::Object(_) => {}
             Fetch::End => return Ok(latest),
         }
