@@ -1,4 +1,4 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
+import { type MoqtClientWrapper, RequestError, RequestErrorCode } from '@moqt/moqtClient'
 import { type PublishDoneMessage, parse_msf_catalog_json } from '../../pkg/moqt'
 import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
 import type { MseTrackSource } from '../../utils/media/mseSink'
@@ -30,6 +30,7 @@ import {
 
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
+const PUBLISHER_RETRY_MS = 2_000
 
 export type { Packaging } from './trackContext'
 
@@ -105,6 +106,10 @@ export class LivePlayer {
   private packaging: Packaging = 'loc'
   private review: ReviewSession | undefined
   private started = false
+  private givenTracks: LiveTracks | undefined
+  /// Incremented by every start and stop; a publisher wait from an earlier
+  /// start sees the change and returns.
+  private watchGeneration = 0
   private trackChanges: Promise<void> = Promise.resolve()
   private paused = false
   private volume = 1
@@ -128,7 +133,8 @@ export class LivePlayer {
     this.catalog = new CatalogFollower(
       this.context,
       this.textTracks,
-      (text) => void this.queueTrackChange(() => this.applyCatalog(text))
+      (text) => void this.queueTrackChange(() => this.applyCatalog(text)),
+      () => void this.publisherLeft()
     )
     this.subscriptions = new TrackSubscriptions(this.context, (kind, message) => this.publisherEnded(kind, message))
     this.stallWatch = new StallWatch(() => this.changed())
@@ -216,26 +222,83 @@ export class LivePlayer {
 
   /// Tracks given by the page replace the catalog: nothing is subscribed for
   /// them but the tracks themselves, and they never change.
+  /// Resolves once the tracks are subscribed or, when nobody publishes the
+  /// namespace yet, once the player has started waiting for the publisher.
   async start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void> {
     await this.queueTrackChange(async () => {
       this.context.namespace = namespace
       this.context.authInfo = authInfo
+      this.givenTracks = tracks
       this.started = true
+      this.watchGeneration += 1
       this.changed()
     })
-    if (tracks) {
-      await this.queueTrackChange(() => this.applyGivenTracks(tracks))
-      return
+    if (!(await this.followPublisher())) {
+      void this.waitForPublisher(this.watchGeneration)
     }
-    await this.catalog.follow()
   }
 
   stop(): Promise<void> {
     return this.queueTrackChange(() => this.stopWatching())
   }
 
+  /// Returns false when nobody publishes the namespace: the relay answers the
+  /// SUBSCRIBE with TRACK_DOES_NOT_EXIST.
+  private async followPublisher(): Promise<boolean> {
+    const tracks = this.givenTracks
+    try {
+      if (tracks) {
+        await this.queueTrackChange(() => this.applyGivenTracks(tracks))
+      } else {
+        await this.catalog.follow()
+      }
+      return true
+    } catch (error) {
+      if (!(error instanceof RequestError && error.errorCode === RequestErrorCode.TrackDoesNotExist)) {
+        throw error
+      }
+      await this.queueTrackChange(() => this.forgetPublisher('Waiting for the publisher', 'Playback idle'))
+      return false
+    }
+  }
+
+  private async waitForPublisher(generation: number): Promise<void> {
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, PUBLISHER_RETRY_MS))
+      if (generation !== this.watchGeneration) {
+        return
+      }
+      try {
+        if (await this.followPublisher()) {
+          return
+        }
+      } catch (error) {
+        this.context.log('error', `waiting for the publisher: ${getErrorMessage(error)}`)
+        return
+      }
+    }
+  }
+
+  /// Called when the catalog, or the video track when the page gave the
+  /// tracks, ends with PUBLISH_DONE.
+  private async publisherLeft(): Promise<void> {
+    const generation = this.watchGeneration
+    await this.queueTrackChange(async () => {
+      if (generation === this.watchGeneration) {
+        await this.forgetPublisher('Waiting for the publisher to return', this.playbackStatus.text)
+      }
+    })
+    void this.waitForPublisher(generation)
+  }
+
   private async stopWatching(): Promise<void> {
     this.started = false
+    this.watchGeneration += 1
+    await this.forgetPublisher('Catalog not loaded yet', 'Playback idle')
+  }
+
+  /// Also resets the catalog, so the next catalog subscribes its tracks anew.
+  private async forgetPublisher(catalogText: string, playbackText: string): Promise<void> {
     this.timeline.reset()
     this.goLive()
     this.cmafLive.close()
@@ -251,8 +314,8 @@ export class LivePlayer {
     this.cmafTracks = []
     this.selected = { video: '', audio: '' }
     this.videoObjectCount = 0
-    this.catalogStatus = { text: 'Catalog not loaded yet', state: 'idle' }
-    this.playbackStatus = { text: 'Playback idle', state: 'idle' }
+    this.catalogStatus = { text: catalogText, state: 'idle' }
+    this.playbackStatus = { text: playbackText, state: 'idle' }
     this.changed()
   }
 
@@ -587,6 +650,9 @@ export class LivePlayer {
     const reason = message.errorReason ? `: ${message.errorReason}` : ''
     this.playbackStatus = { text: `Publisher ended the ${kind} track${reason}`, state: 'idle' }
     this.changed()
+    if (kind === 'video' && this.givenTracks) {
+      void this.publisherLeft()
+    }
   }
 
   private notePlaying(trackName: string): void {
