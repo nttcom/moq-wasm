@@ -96,7 +96,7 @@ impl SessionHandler {
         config: moqt::server::ServerConfig,
         intake: SessionIntake,
     ) -> Self {
-        let mut endpoint = Endpoint::<T>::create_server(&config)
+        let endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
         let (stop_sender, mut stop_receiver) = oneshot::channel();
@@ -126,7 +126,8 @@ impl SessionHandler {
                     let connecting = tokio::select! {
                         biased;
                         _ = &mut stop_receiver => {
-                            tracing::info!(peer = session_peer, "stopped accepting sessions");
+                            tracing::info!(peer = session_peer, "stopped accepting sessions; refusing new connections");
+                            endpoint.refuse_new_connections();
                             break;
                         }
                         connecting = accept => connecting,
@@ -149,7 +150,14 @@ impl SessionHandler {
                             .await;
                     });
                 }
-                endpoint.wait_idle().await;
+                // Arrivals are refused at the transport until the sessions
+                // already accepted have all closed.
+                tokio::select! {
+                    _ = async {
+                        while endpoint.accept().await.is_ok() {}
+                    } => {}
+                    _ = endpoint.wait_idle() => {}
+                }
             })
             .unwrap();
         Self {
@@ -158,7 +166,8 @@ impl SessionHandler {
         }
     }
 
-    /// Ends the accept loop; the sessions already accepted keep running.
+    /// Ends the accept loop and refuses every later connection attempt at the
+    /// transport; the sessions already accepted keep running.
     pub fn stop_accepting(&mut self) {
         if let Some(stop_sender) = self.stop_sender.take() {
             let _ = stop_sender.send(());
@@ -195,7 +204,9 @@ mod tests {
 
     use super::SessionHandler;
     use crate::modules::auth::{
-        test_support::{client_endpoint, spawn_relay_with_verifier},
+        test_support::{
+            client_endpoint, spawn_relay_and_connect_client, spawn_relay_with_verifier,
+        },
         verified_token::VerifiedToken,
     };
 
@@ -219,6 +230,26 @@ mod tests {
             session.is_ok_and(|result| result.is_ok()),
             "a stalled CLIENT_SETUP blocked the accept loop"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stopped_handler_refuses_new_connections_at_once() {
+        // Arrange: one session keeps the endpoint alive while accepting stops
+        let (mut relay, _established) =
+            spawn_relay_and_connect_client(VerifiedToken::anonymous()).await;
+        let url = format!("moqt://127.0.0.1:{}", relay.port);
+        relay.handler.stop_accepting();
+
+        // Act
+        let endpoint = client_endpoint(None);
+        let connect = tokio::time::timeout(Duration::from_secs(2), async {
+            endpoint.connect(&url).await?.await
+        })
+        .await;
+
+        // Assert
+        let result = connect.expect("the refusal must arrive within the timeout");
+        assert!(result.is_err());
     }
 
     #[test]

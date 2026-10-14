@@ -2,6 +2,7 @@ use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
 use anyhow::Ok;
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     net::{Ipv6Addr, SocketAddr},
     sync::Arc,
@@ -26,6 +27,7 @@ use crate::modules::transport::{
 
 pub struct QUICConnectionCreator {
     endpoint: quinn::Endpoint,
+    refusing: AtomicBool,
 }
 
 impl QUICConnectionCreator {
@@ -69,7 +71,10 @@ impl QUICConnectionCreator {
         let mut endpoint = client_endpoint(port_num)?;
         endpoint.set_default_client_config(quic_client_config(crypto, protocols.quic_alpn_list())?);
         tracing::debug!(local_addr = ?endpoint.local_addr()?, "QUIC client endpoint ready");
-        Ok(QUICConnectionCreator { endpoint })
+        Ok(QUICConnectionCreator {
+            endpoint,
+            refusing: AtomicBool::new(false),
+        })
     }
 }
 
@@ -106,7 +111,10 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC: {:?}", address);
-        Ok(QUICConnectionCreator { endpoint })
+        Ok(QUICConnectionCreator {
+            endpoint,
+            refusing: AtomicBool::new(false),
+        })
     }
 
     async fn create_new_transport(
@@ -125,15 +133,24 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         Ok(Box::new(QUICConnection::new(connection)))
     }
 
-    async fn accept_new_transport(&mut self) -> anyhow::Result<BoxedConnection> {
-        let incoming = self
-            .endpoint
-            .accept()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
-        let connection = incoming.await?;
+    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
+        loop {
+            let incoming = self
+                .endpoint
+                .accept()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
+            if self.refusing.load(Ordering::SeqCst) {
+                incoming.refuse();
+                continue;
+            }
+            let connection = incoming.await?;
+            return Ok(Box::new(QUICConnection::new(connection)));
+        }
+    }
 
-        Ok(Box::new(QUICConnection::new(connection)))
+    fn refuse_new_connections(&self) {
+        self.refusing.store(true, Ordering::SeqCst);
     }
 
     async fn wait_idle(&self) {
