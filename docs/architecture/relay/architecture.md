@@ -67,7 +67,8 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 Session migration, draft-14 §3.5 (`relay_server/drain.rs`). On the first
 SIGINT (Ctrl+C) or SIGTERM (`docker stop`, Kubernetes) `main.rs` stops the
-client transport's accept loop (`SessionHandler::stop_accepting`, after which the endpoint refuses every
+client transport's accept loop (`SessionHandler::stop_accepting`, after which
+the endpoint refuses every
 connection attempt at the transport level so a client is turned away at once;
 the inner endpoint keeps accepting) and calls
 `RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
