@@ -24,6 +24,7 @@ async fn shutdown_signal() -> anyhow::Result<()> {
 
 fn cert_dir() -> PathBuf {
     std::env::var_os("RELAY_CERT_DIR")
+        .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(CERT_DIR))
 }

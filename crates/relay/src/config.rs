@@ -32,6 +32,15 @@ fn seconds(value: Option<String>, name: &str, default: Duration) -> anyhow::Resu
     non_negative_integer(value, name, default.as_secs()).map(Duration::from_secs)
 }
 
+fn port_number(value: Option<String>, name: &str) -> anyhow::Result<Option<u16>> {
+    value
+        .map(|text| {
+            text.parse::<u16>()
+                .map_err(|_| anyhow::anyhow!("{name} must be a port number, got {text:?}"))
+        })
+        .transpose()
+}
+
 impl AuthConfig {
     fn from_env_values(env: AuthEnv) -> anyhow::Result<Self> {
         let (Some(verify_url), Some(relay_token)) = (env.vts_url, env.relay_token) else {
@@ -109,28 +118,33 @@ pub struct RelayConfig {
     pub disk_cache: Option<DiskCacheConfig>,
 }
 
-fn non_empty_env(name: &str) -> Option<String> {
+/// `KEY=` in an env file and compose `${KEY:-}` set the variable to an empty
+/// string.
+pub(crate) fn non_empty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// Shared by `init_logging`, which runs before `RelayConfig::from_env`, so logs
+/// and config carry the same id.
+pub(crate) fn relay_id() -> String {
+    non_empty_env("RELAY_ID").unwrap_or_else(|| "relay-local".to_string())
 }
 
 impl RelayConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let relay_id = std::env::var("RELAY_ID").unwrap_or_else(|_| "relay-local".to_string());
+        let relay_id = relay_id();
         let advertise_host =
-            std::env::var("RELAY_ADVERTISE_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = std::env::var("RELAY_PORT")
-            .ok()
-            .map(|value| value.parse::<u16>())
-            .transpose()?
-            .unwrap_or(4433);
-        let inner_port = std::env::var("RELAY_INNER_PORT")
-            .ok()
-            .map(|value| value.parse::<u16>())
-            .transpose()?
-            .unwrap_or(port + 1);
+            non_empty_env("RELAY_ADVERTISE_HOST").unwrap_or_else(|| "localhost".to_string());
+        let port = port_number(non_empty_env("RELAY_PORT"), "RELAY_PORT")?.unwrap_or(4433);
+        let inner_port = match port_number(non_empty_env("RELAY_INNER_PORT"), "RELAY_INNER_PORT")? {
+            Some(inner_port) => inner_port,
+            None => port.checked_add(1).ok_or_else(|| {
+                anyhow::anyhow!("RELAY_INNER_PORT is required when RELAY_PORT is 65535")
+            })?,
+        };
         let public_host =
             non_empty_env("RELAY_PUBLIC_HOST").unwrap_or_else(|| format!("localhost:{port}"));
-        let redis_url = std::env::var("REDIS_URL").ok();
+        let redis_url = non_empty_env("REDIS_URL");
         let drain_timeout = seconds(
             non_empty_env("RELAY_DRAIN_TIMEOUT_SECS"),
             "RELAY_DRAIN_TIMEOUT_SECS",
@@ -165,7 +179,7 @@ impl RelayConfig {
 mod tests {
     use std::time::Duration;
 
-    use super::{AuthConfig, AuthEnv, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig};
+    use super::{AuthConfig, AuthEnv, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig, port_number};
     use crate::modules::auth::token_claims::ClaimPolicy;
 
     fn vts_env() -> AuthEnv {
@@ -281,5 +295,17 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn port_that_is_not_a_number_names_the_variable() {
+        // Act
+        let error = port_number(Some("4433x".to_string()), "RELAY_INNER_PORT").unwrap_err();
+
+        // Assert
+        assert_eq!(
+            error.to_string(),
+            "RELAY_INNER_PORT must be a port number, got \"4433x\""
+        );
     }
 }

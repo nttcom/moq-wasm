@@ -11,6 +11,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
+use crate::config::{non_empty_env, relay_id};
+
 #[derive(Clone, Copy)]
 enum OtlpProtocol {
     Grpc,
@@ -50,7 +52,7 @@ fn otel_is_enabled() -> bool {
 
 fn otel_protocol() -> Result<OtlpProtocol> {
     let protocol =
-        std::env::var("OTEL_EXPORTER_OTLP_PROTOCOL").unwrap_or_else(|_| "grpc".to_string());
+        non_empty_env("OTEL_EXPORTER_OTLP_PROTOCOL").unwrap_or_else(|| "grpc".to_string());
 
     match protocol.to_ascii_lowercase().as_str() {
         "grpc" => Ok(OtlpProtocol::Grpc),
@@ -69,17 +71,13 @@ fn otel_protocol_name(protocol: OtlpProtocol) -> &'static str {
 }
 
 fn otel_service_name(default_service_name: &str) -> String {
-    std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| default_service_name.to_string())
+    non_empty_env("OTEL_SERVICE_NAME").unwrap_or_else(|| default_service_name.to_string())
 }
 
 pub(crate) fn relay_hostname() -> String {
-    std::env::var("RELAY_HOSTNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
-}
-
-fn relay_id() -> String {
-    std::env::var("RELAY_ID").unwrap_or_else(|_| "relay-local".to_string())
+    non_empty_env("RELAY_HOSTNAME")
+        .or_else(|| non_empty_env("HOSTNAME"))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn otel_resource(service_name: &str) -> Resource {
@@ -112,8 +110,8 @@ fn append_directive_if_missing(filter: &mut String, directive: &str) {
 }
 
 fn tracing_filter(filter_env: &str, default_directives: &[&str]) -> EnvFilter {
-    let mut filter = std::env::var(filter_env)
-        .or_else(|_| std::env::var("RUST_LOG"))
+    let mut filter = non_empty_env(filter_env)
+        .or_else(|| non_empty_env("RUST_LOG"))
         .unwrap_or_default();
 
     for directive in default_directives {
