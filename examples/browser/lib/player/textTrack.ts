@@ -11,7 +11,10 @@ export class TextTracks {
 
   async subscribe(name: string, onText: TextTrackHandler): Promise<SubscribeOkMessage> {
     const { client, namespace, authInfo } = this.context
-    const { requestId, subscribeOk } = await client.subscribe(namespace, name, authInfo, { forward: true })
+    const { requestId, subscribeOk } = await client.subscribe(namespace, name, authInfo, {
+      forward: true,
+      onPublishDone: (message) => this.end(name, message.requestId)
+    })
     this.subscribed.push({ requestId, trackAlias: subscribeOk.trackAlias })
     client.setOnSubgroupObjectHandler(
       subscribeOk.trackAlias,
@@ -21,6 +24,15 @@ export class TextTracks {
     )
     this.context.log('info', `subscribed ${namespace.join('/')}/${name}`)
     return subscribeOk
+  }
+
+  private end(name: string, requestId: bigint): void {
+    const index = this.subscribed.findIndex((subscription) => subscription.requestId === requestId)
+    if (index < 0) {
+      return
+    }
+    this.subscribed.splice(index, 1)
+    this.context.log('info', `${name} ended by the publisher`)
   }
 
   async unsubscribeAll(): Promise<void> {
