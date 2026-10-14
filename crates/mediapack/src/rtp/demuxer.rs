@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, mem};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    mem,
+};
 
 use anyhow::{Result, ensure};
 use bytes::Bytes;
@@ -17,16 +20,26 @@ use crate::{
 
 /// Turns the RTP datagrams of a session into media events. The session
 /// description names the streams; a datagram whose payload type it does not
-/// list, such as RTCP on a shared port, is ignored.
+/// list, such as RTCP on a shared port, is ignored. Each stream keeps the SSRC
+/// of its first packet. A sender that restarts picks a new SSRC, sequence
+/// numbers and timestamps, which cannot be ordered against the old ones, so
+/// `push` drops its packets. Check each datagram with
+/// [`Demuxer::is_new_source`] before `push`, and give a new sender's packets
+/// to the demuxer [`Demuxer::for_next_source`] returns.
 pub struct Demuxer {
+    description: SessionDescription,
     streams: BTreeMap<u8, Stream>,
     /// Emitted with the first datagram, as the other demuxers announce the
     /// streams when they first see them.
     announcement: Vec<MediaEvent>,
     discontinuities: u64,
+    /// SSRCs of the senders before the current one. `push` drops their late
+    /// packets so they cannot claim a stream of the current sender.
+    retired: BTreeSet<u32>,
 }
 
 struct Stream {
+    ssrc: Option<u32>,
     clock_rate: u32,
     reorder: ReorderBuffer,
     clock: StreamClock,
@@ -117,6 +130,7 @@ impl Demuxer {
             streams.insert(
                 media.payload_type,
                 Stream {
+                    ssrc: None,
                     clock_rate: media.clock_rate,
                     reorder: ReorderBuffer::new(media.clock_rate),
                     clock: StreamClock::default(),
@@ -130,10 +144,25 @@ impl Demuxer {
         );
         announcement.insert(0, MediaEvent::Streams(set));
         Ok(Self {
+            description: description.clone(),
             streams,
             announcement,
             discontinuities: 0,
+            retired: BTreeSet::new(),
         })
+    }
+
+    /// Returns a new demuxer for the sender that restarted. It drops packets
+    /// from every SSRC whose packets reached this demuxer or its predecessors,
+    /// because packets of the old sender still queued on another port would
+    /// otherwise claim a stream before the new sender's packets reach it.
+    pub fn for_next_source(&self) -> Self {
+        let mut next =
+            Self::new(&self.description).expect("the description already built this demuxer");
+        next.retired = self.retired.clone();
+        next.retired
+            .extend(self.streams.values().filter_map(|stream| stream.ssrc));
+        next
     }
 
     /// Fails when `datagram` is not a well-formed RTP packet or its payload
@@ -144,10 +173,31 @@ impl Demuxer {
         let Some(stream) = self.streams.get_mut(&header.payload_type) else {
             return Ok(events);
         };
+        if self.retired.contains(&header.ssrc)
+            || *stream.ssrc.get_or_insert(header.ssrc) != header.ssrc
+        {
+            return Ok(events);
+        }
         for item in stream.reorder.push(header, Bytes::copy_from_slice(payload)) {
             self.discontinuities += stream.handle(item, &mut events)?;
         }
         Ok(events)
+    }
+
+    /// Whether `datagram` has another SSRC than the first packet of its
+    /// stream. False for a datagram that does not parse, has an unlisted
+    /// payload type, comes before its stream's first packet, or carries an
+    /// SSRC that [`Demuxer::for_next_source`] retired.
+    pub fn is_new_source(&self, datagram: &[u8]) -> bool {
+        let Ok((header, _)) = Header::parse(datagram) else {
+            return false;
+        };
+        !self.retired.contains(&header.ssrc)
+            && self
+                .streams
+                .get(&header.payload_type)
+                .and_then(|stream| stream.ssrc)
+                .is_some_and(|ssrc| ssrc != header.ssrc)
     }
 
     /// How many times packets were found missing.
@@ -309,7 +359,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        rtp::muxer::{Destination, Muxer, RtpPacket},
+        rtp::{
+            muxer::{Destination, Muxer, MuxerOptions, RtpPacket},
+            sdp::MediaKind,
+        },
         test_support::{
             FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_record,
             keyframe_annexb, mono_48k, video_samples,
@@ -477,6 +530,50 @@ mod tests {
             1
         );
         assert_eq!(video_samples(&events)[0].data, keyframe_annexb());
+    }
+
+    #[test]
+    fn leaves_a_restarted_sender_to_a_new_demuxer() {
+        // Arrange: a second muxer plays the restarted sender, with SSRC 7 and its own random sequence numbers
+        let (first_run, description) = mux(&source_events());
+        let mut restarted = Muxer::new(MuxerOptions {
+            video_ssrc: Some(7),
+            ..MuxerOptions::default()
+        });
+        let second_run: Vec<RtpPacket> = source_events()
+            .iter()
+            .flat_map(|event| restarted.push(event).unwrap())
+            .collect();
+        let mut demuxer = Demuxer::new(&description).unwrap();
+        for packet in &first_run {
+            demuxer.push(&packet.data).unwrap();
+        }
+
+        let straggler = first_run
+            .iter()
+            .find(|packet| packet.kind == MediaKind::Audio)
+            .unwrap();
+
+        // Act: an audio packet of the old sender reaches the next demuxer first
+        let detected = demuxer.is_new_source(&second_run[0].data);
+        let mixed_in = demuxer.push(&second_run[0].data).unwrap();
+        let mut next = demuxer.for_next_source();
+        next.push(&straggler.data).unwrap();
+        let mut events = Vec::new();
+        let mut flagged_as_new = 0;
+        for packet in &second_run {
+            flagged_as_new += next.is_new_source(&packet.data) as usize;
+            events.extend(next.push(&packet.data).unwrap());
+        }
+
+        // Assert: the straggler neither claims the audio stream nor reads as a new source
+        assert!(!demuxer.is_new_source(&first_run[0].data));
+        assert!(detected);
+        assert!(mixed_in.is_empty());
+        assert!(!next.is_new_source(&straggler.data));
+        assert_eq!(flagged_as_new, 0);
+        assert_eq!(video_samples(&events).len(), 3);
+        assert_eq!(audio_samples(&events).len(), 2);
     }
 
     #[test]
