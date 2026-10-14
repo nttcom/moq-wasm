@@ -258,8 +258,8 @@ impl RelayHarness {
             .await
             .unwrap()
         {
-            objects.push((object.location.object_id, object.status));
-            cursor = object.location.object_id + 1;
+            objects.push((object.object.location.object_id, object.object.status));
+            cursor = object.object.location.object_id + 1;
         }
         objects
     }

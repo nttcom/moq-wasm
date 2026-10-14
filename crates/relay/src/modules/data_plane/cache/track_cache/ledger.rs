@@ -77,7 +77,9 @@ impl Ledger {
             .group_objects(key.group_id(), 0)
             .rev()
             .find(|object| object.subgroup_key() == key)
-            .map_or(0, |object| object.location.object_id.saturating_add(1));
+            .map_or(0, |object| {
+                object.object.location.object_id.saturating_add(1)
+            });
         let first_object_id = after_cached_objects.max(self.latest_run(key).first_object_id);
         self.reopened_run_first_object_ids
             .entry(key)

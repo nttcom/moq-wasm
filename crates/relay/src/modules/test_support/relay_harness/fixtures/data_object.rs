@@ -31,7 +31,11 @@ pub(crate) fn make_header_with(group_id: u64, subgroup_id: u64, ends_group: bool
 
 /// An object of subgroup 0 of `group_id`.
 pub(crate) fn make_payload_object(group_id: u64, object_id: u64, payload: Bytes) -> DataObject {
-    DataObject::SubgroupObject(stream_object_with_payload(group_id, object_id, payload).to_object())
+    DataObject::SubgroupObject(
+        stream_object_with_payload(group_id, object_id, payload)
+            .object
+            .clone(),
+    )
 }
 
 pub(crate) fn make_object_in_subgroup(
@@ -40,7 +44,9 @@ pub(crate) fn make_object_in_subgroup(
     object_id: u64,
 ) -> DataObject {
     DataObject::SubgroupObject(
-        stream_object_in_subgroup(group_id, subgroup_id, object_id).to_object(),
+        stream_object_in_subgroup(group_id, subgroup_id, object_id)
+            .object
+            .clone(),
     )
 }
 
@@ -49,5 +55,5 @@ pub(crate) fn make_status_object(
     object_id: u64,
     status: ObjectStatus,
 ) -> DataObject {
-    DataObject::SubgroupObject(status_object(group_id, object_id, status).to_object())
+    DataObject::SubgroupObject(status_object(group_id, object_id, status).object.clone())
 }

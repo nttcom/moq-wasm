@@ -509,12 +509,11 @@ per-request authorization gate under "Event pipeline".
 
 ### Cache (`modules/data_plane/cache`)
 - `CachedObject` (`cached_object.rs`) is the draft-14 §10.2.1 canonical object:
-  location, forwarding preference (subgroup id or datagram), publisher
-  priority, status, extension headers, payload, and its own `received_at`.
-  Ingress builds it from the `moqt::object::Object` moqt returns
-  (`from_object`), and egress hands every object back as `to_object()`: moqt
-  picks the header, datagram and FETCH encodings, computes the deltas, and
-  gives a fetched datagram object its Object ID as Subgroup ID (§10.4.4).
+  the `moqt::object::Object` moqt returned (location, forwarding preference,
+  publisher priority, status, extension headers, payload) plus its own
+  `received_at`. Egress hands the `Object` back to moqt, which picks the
+  header, datagram and FETCH encodings, computes the deltas, and gives a
+  fetched datagram object its Object ID as Subgroup ID (§10.4.4).
   `conflicts_with` implements §8.1:
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;

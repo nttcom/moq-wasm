@@ -86,7 +86,7 @@ impl<'a> FetchCursor<'a> {
             };
             match found {
                 NextObject::Object(object) => {
-                    let object_id = object.location.object_id;
+                    let object_id = object.object.location.object_id;
                     group.next_object_id = object_id.saturating_add(1);
                     if group.reached_end(object_id) {
                         self.current = None;
