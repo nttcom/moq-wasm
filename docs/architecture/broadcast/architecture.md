@@ -102,18 +102,23 @@ completes that FETCH from here when its own cache has dropped it.
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
 an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).
-`RelayConnection` performs the publisher switchover of §8.4.2: the event loop
-records the URI, and the next `connected()` call connects a second session to
-it, announces every namespace this connection holds, publishes the catalog
+`RelayConnection` performs the publisher switchover of §8.4.2. The event loop
+records the URI, and the next `connected()` call starts the move in a
+background task while every send keeps using the current session: the task
+connects a second session, announces every namespace, publishes the catalog
 again (which re-sends PUBLISH for the LOC tracks and the catalog track) and
-only then makes the new session the one objects are sent on; the old session
-is closed with NO_ERROR in the background. Objects thus keep flowing to the
-old relay until the new one holds the namespace and the tracks. The new
-session gets a fresh `Origin`: media groups keep the ids `GroupAlignment`
-assigns, so nothing is renumbered, but the FETCH cache before the switch is
-not carried over and the LOC tracks resume at the next keyframe. If the named
-relay cannot be reached, the connection keeps publishing to the old session
-until that relay closes it.
+moves the subscriber watches, then takes over catalog changes made in the
+meantime and makes the new session current.
+
+The previous session is kept as `PreviousRelay`. An object within a group
+that a track opened there is still written there, and the track's next group
+starts on the new session, so a viewer of either relay sees whole groups.
+The previous session is closed with NO_ERROR once every track it carried has
+started a group on the new session, or 5 s after the move. The new session
+gets a fresh `Origin`, so the FETCH cache before the move is not carried
+over. If the named relay cannot be reached, the connection keeps publishing
+to the old session until that relay closes it; the connect itself has no
+timeout of its own.
 
 ## Group alignment
 The source video track and its transcoded renditions form a CMSF switching set

@@ -10,7 +10,7 @@ use moqt::{
     ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TerminationErrorCode,
     TransportStats,
     executor::{self, JoinHandle},
-    publish::{Origin, OutgoingObject, Retention, WriteOutcome},
+    publish::{GroupBoundary, Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
 };
 use msf::CATALOG_TRACK_NAME;
@@ -52,9 +52,25 @@ pub struct RelayConnection {
     ledger: StreamLedger,
 }
 
+/// How long a session a GOAWAY moved away from stays open for tracks whose
+/// group started there and has not ended.
+const PREVIOUS_SESSION_GRACE: Duration = Duration::from_secs(5);
+
 #[derive(Default)]
 struct ConnectionState {
     connected: Option<Arc<ConnectedRelay>>,
+    /// The session a GOAWAY moved away from (draft-14 §8.4.2): a track keeps
+    /// writing its open group there and starts its next group on `connected`.
+    previous: Option<PreviousRelay>,
+    migrating: bool,
+}
+
+struct PreviousRelay {
+    relay: Arc<ConnectedRelay>,
+    /// Tracks whose open group is still written to `relay`.
+    open_tracks: HashSet<TrackKey>,
+    /// `executor::now()` after which `relay` is closed whatever is still open.
+    close_at: Duration,
 }
 
 type TrackKey = (String, String);
@@ -71,6 +87,8 @@ struct RelayState {
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
+    /// Tracks an object was written to on this session.
+    written_tracks: HashSet<TrackKey>,
     disconnected: bool,
     /// The New Session URI of a GOAWAY (draft-14 §9.4) not acted on yet;
     /// empty means the current URL.
@@ -143,7 +161,13 @@ impl RelayConnection {
     /// Returns once the CONNECTION_CLOSE has been sent; exiting before that
     /// leaves the relay to end the session only after its idle timeout.
     pub async fn close(&self) {
-        let connected = self.inner.lock().await.connected.clone();
+        let (connected, previous) = {
+            let mut guard = self.inner.lock().await;
+            (guard.connected.clone(), guard.previous.take())
+        };
+        if let Some(previous) = previous {
+            previous.relay.close().await;
+        }
         if let Some(connected) = connected {
             connected.close().await;
         }
@@ -156,44 +180,136 @@ impl RelayConnection {
         Some(connected.session.transport_stats())
     }
 
-    /// The relay session to send on, connected on first use. After a GOAWAY the
-    /// next call moves to the relay it names (draft-14 §8.4.2); the previous
-    /// session is closed once the new one holds the state. When the new relay
-    /// cannot be reached, the current session is kept until the relay closes it.
+    /// The relay session to send on, connected on first use. After a GOAWAY
+    /// the move to the relay it names (draft-14 §8.4.2) runs in the
+    /// background while this keeps returning the current session; when the
+    /// new relay cannot be reached, the current session is kept until the
+    /// relay closes it.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) async fn connected(&self) -> Result<Option<Arc<ConnectedRelay>>> {
         let Some(target) = &self.target else {
             return Ok(None);
         };
         let mut guard = self.inner.lock().await;
-        match &guard.connected {
+        let current = match &guard.connected {
+            Some(current) => current.clone(),
             None => {
-                guard.connected = Some(Arc::new(
-                    ConnectedRelay::connect(target, self.ledger.clone()).await?,
-                ));
+                let relay = Arc::new(ConnectedRelay::connect(target, self.ledger.clone()).await?);
+                guard.connected = Some(relay.clone());
+                relay
             }
-            Some(current) => {
-                if let Some(new_session_uri) = current.take_go_away().await {
-                    match current
-                        .migrate(target, &new_session_uri, self.ledger.clone())
-                        .await
-                    {
-                        Ok(next) => {
-                            tracing::info!(%new_session_uri, "moved the broadcast to the relay named by GOAWAY");
-                            if let Some(previous) = guard.connected.replace(Arc::new(next)) {
-                                let _ = executor::spawn("broadcast-relay-close", async move {
-                                    previous.close().await
-                                });
-                            }
-                        }
-                        Err(err) => {
-                            tracing::warn!(?err, %new_session_uri, "failed to move to the relay named by GOAWAY; staying on the current session");
-                        }
-                    }
-                }
+        };
+        if !guard.migrating
+            && let Some(new_session_uri) = current.take_go_away().await
+        {
+            guard.migrating = true;
+            self.spawn_migration(target.clone(), current.clone(), new_session_uri);
+        }
+        Ok(Some(current))
+    }
+
+    /// Writes to the session that carries the track's open group: after a
+    /// move, an object within a group the previous session started still
+    /// goes there, and the track's next group starts on the new session.
+    pub(crate) async fn send_object(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        object: OutgoingObject,
+    ) -> Result<bool> {
+        let Some(current) = self.connected().await? else {
+            return Ok(false);
+        };
+        let key = (namespace.join("/"), track_name.to_string());
+        let Some(previous) = self.previous_for(&key, &object.group).await else {
+            return current.send_object(namespace, track_name, object).await;
+        };
+        match previous.send_object(namespace, track_name, object).await {
+            Ok(sent) => Ok(sent),
+            Err(err) => {
+                tracing::debug!(
+                    ?err,
+                    "the previous relay session ended before the track moved"
+                );
+                self.retire_previous().await;
+                Ok(false)
             }
         }
-        Ok(guard.connected.clone())
+    }
+
+    async fn previous_for(
+        &self,
+        key: &TrackKey,
+        group: &GroupBoundary,
+    ) -> Option<Arc<ConnectedRelay>> {
+        let mut guard = self.inner.lock().await;
+        let previous = guard.previous.as_mut()?;
+        let route = if matches!(group, GroupBoundary::Within)
+            && previous.open_tracks.contains(key)
+            && executor::now() < previous.close_at
+        {
+            Some(previous.relay.clone())
+        } else {
+            previous.open_tracks.remove(key);
+            None
+        };
+        if previous.open_tracks.is_empty() || executor::now() >= previous.close_at {
+            drop(guard);
+            self.retire_previous().await;
+        }
+        route
+    }
+
+    async fn retire_previous(&self) {
+        let Some(previous) = self.inner.lock().await.previous.take() else {
+            return;
+        };
+        let _ = executor::spawn("broadcast-relay-close", async move {
+            previous.relay.close().await
+        });
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn spawn_migration(
+        &self,
+        target: MoqtTarget,
+        current: Arc<ConnectedRelay>,
+        new_session_uri: String,
+    ) {
+        let inner = self.inner.clone();
+        let ledger = self.ledger.clone();
+        let _ = executor::spawn("broadcast-relay-migration", async move {
+            let next = current.migrate(&target, &new_session_uri, ledger).await;
+            let mut guard = inner.lock().await;
+            guard.migrating = false;
+            // Catalog changes made on the current session while connecting.
+            let next = match next {
+                Ok(next) => next.adopt_state(&current).await.map(|()| next),
+                Err(err) => Err(err),
+            };
+            let next = match next {
+                Ok(next) => next,
+                Err(err) => {
+                    tracing::warn!(?err, %new_session_uri, "failed to move to the relay named by GOAWAY; staying on the current session");
+                    return;
+                }
+            };
+            let open_tracks = current.state.lock().await.written_tracks.clone();
+            if let Some(older) = guard.previous.take() {
+                let _ =
+                    executor::spawn(
+                        "broadcast-relay-close",
+                        async move { older.relay.close().await },
+                    );
+            }
+            guard.connected = Some(Arc::new(next));
+            guard.previous = Some(PreviousRelay {
+                relay: current,
+                open_tracks,
+                close_at: executor::now() + PREVIOUS_SESSION_GRACE,
+            });
+            tracing::info!(%new_session_uri, "moved the broadcast to the relay named by GOAWAY");
+        });
     }
 }
 
@@ -242,10 +358,8 @@ impl ConnectedRelay {
 
     /// Connects to the relay a GOAWAY named and gives it what this session
     /// holds: the announced namespaces, the published tracks and the
-    /// catalogs. Objects keep going to this session until the caller swaps
-    /// to the returned one, so a viewer misses only the objects between the
-    /// swap and the next keyframe. The FETCH cache starts empty on the new
-    /// session.
+    /// catalogs. The new session's `Origin` starts empty, so the FETCH cache
+    /// is not carried over and each track starts at its next group.
     async fn migrate(
         &self,
         target: &MoqtTarget,
@@ -265,11 +379,18 @@ impl ConnectedRelay {
             ledger,
         )
         .await?;
-        // The subscriber watches move with the state, so a source waiting for
-        // its first subscriber keeps waiting and is woken by the new relay's
-        // SUBSCRIBE instead of failing when the old session closes.
+        next.adopt_state(self).await?;
+        Ok(next)
+    }
+
+    /// Takes over what `from` announced and published; a catalog is sent
+    /// again only when it differs from what this session already sent. The
+    /// subscriber watches move as well, so a source waiting for its first
+    /// subscriber is woken by the new relay's SUBSCRIBE instead of failing
+    /// when the old session closes.
+    async fn adopt_state(&self, from: &ConnectedRelay) -> Result<()> {
         let (catalogs, sent_namespaces, declared_tracks, subscribed) = {
-            let mut guard = self.state.lock().await;
+            let mut guard = from.state.lock().await;
             (
                 guard.catalogs.clone(),
                 guard
@@ -282,23 +403,31 @@ impl ConnectedRelay {
             )
         };
         {
-            let mut next_state = next.state.lock().await;
-            next_state.declared_tracks = declared_tracks;
-            next_state.subscribed = subscribed;
+            let mut state = self.state.lock().await;
+            for (namespace_path, tracks) in declared_tracks {
+                state
+                    .declared_tracks
+                    .entry(namespace_path)
+                    .or_default()
+                    .extend(tracks);
+            }
+            state.subscribed.extend(subscribed);
         }
         for (namespace_path, metadata) in catalogs {
             let namespace: Vec<String> = namespace_path.split('/').map(str::to_string).collect();
-            next.announce(&namespace).await?;
-            next.state
-                .lock()
-                .await
-                .catalogs
-                .insert(namespace_path.clone(), metadata);
-            if sent_namespaces.contains(&namespace_path) {
-                next.send_catalog(&namespace_path).await?;
+            self.announce(&namespace).await?;
+            let send = {
+                let mut state = self.state.lock().await;
+                let changed = state.catalogs.get(&namespace_path) != Some(&metadata);
+                let never_sent = !state.catalog_sent_at.contains_key(&namespace_path);
+                state.catalogs.insert(namespace_path.clone(), metadata);
+                sent_namespaces.contains(&namespace_path) && (changed || never_sent)
+            };
+            if send {
+                self.send_catalog(&namespace_path).await?;
             }
         }
-        Ok(next)
+        Ok(())
     }
 
     fn spawn_event_loop(
@@ -434,6 +563,7 @@ impl ConnectedRelay {
             bail!("MoQ publisher disconnected");
         }
         ensure_origin_track(&self.origin, &key).await;
+        self.state.lock().await.written_tracks.insert(key.clone());
         let bytes = object.payload.len();
         match self.origin.write(&key.0, &key.1, object).await? {
             WriteOutcome::Sent(placement) => {
@@ -699,12 +829,19 @@ mod tests {
 
     impl FakeRelay {
         fn spawn(name: &str) -> Self {
+            Self::spawn_gated(name, None)
+        }
+
+        /// PUBLISH_NAMESPACE is answered only once `gate` fires, which holds
+        /// a publisher moving here in the middle of the move.
+        fn spawn_gated(name: &str, gate: Option<oneshot::Receiver<()>>) -> Self {
             let mut endpoint =
                 Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
             let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
             let (session_sender, session) = oneshot::channel();
             let (request_sender, requests) = mpsc::unbounded_channel();
             tokio::spawn(async move {
+                let mut gate = gate;
                 let handshake = endpoint.accept().await.unwrap().await.unwrap();
                 let session = Arc::new(handshake.accept().await.unwrap());
                 let _ = session_sender.send(session.clone());
@@ -713,6 +850,9 @@ mod tests {
                         SessionEvent::PublishNamespace(handler) => {
                             let _ = request_sender
                                 .send(format!("PUBLISH_NAMESPACE {}", handler.track_namespace));
+                            if let Some(gate) = gate.take() {
+                                let _ = gate.await;
+                            }
                             handler.ok().await.unwrap();
                         }
                         SessionEvent::Publish(handler) => {
@@ -761,10 +901,38 @@ mod tests {
     }
 
     fn keyframe_object(group_id: u64) -> OutgoingObject {
-        OutgoingObject::plain(
-            moqt::publish::GroupBoundary::At(group_id),
-            Bytes::from_static(b"keyframe"),
-        )
+        OutgoingObject::plain(GroupBoundary::At(group_id), Bytes::from_static(b"keyframe"))
+    }
+
+    fn delta_object() -> OutgoingObject {
+        OutgoingObject::plain(GroupBoundary::Within, Bytes::from_static(b"delta"))
+    }
+
+    async fn connected_broadcast(relay: &FakeRelay) -> (RelayConnection, Broadcast) {
+        let connection = RelayConnection::new(Some(MoqtTarget {
+            url: relay.url.clone(),
+            auth_token: None,
+            verify_certificate: false,
+        }));
+        let broadcast = Broadcast::new(
+            connection.clone(),
+            vec!["live".to_string(), "cam".to_string()],
+        );
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        (connection, broadcast)
+    }
+
+    async fn wait_until_moved(connection: &RelayConnection) {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            while connection.inner.lock().await.previous.is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the broadcast must move to relay B");
     }
 
     #[tokio::test]
@@ -929,5 +1097,76 @@ mod tests {
         // Assert
         assert!(subscribed.wait_for(|subscribed| *subscribed).await.is_ok());
         assert!(abandoned.wait_for(|subscribed| *subscribed).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn sends_keep_going_to_the_old_relay_while_the_new_one_is_slow() {
+        // Arrange: relay B holds its PUBLISH_NAMESPACE answer
+        let mut relay_a = FakeRelay::spawn("goaway-slow-a");
+        let (release_b, gate) = oneshot::channel();
+        let relay_b = FakeRelay::spawn_gated("goaway-slow-b", Some(gate));
+        let (connection, broadcast) = connected_broadcast(&relay_a).await;
+        broadcast
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(1))
+            .await
+            .unwrap();
+        let session_a = relay_a.session().await;
+        session_a.go_away(relay_b.url.clone()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Act
+        let sent = tokio::time::timeout(
+            Duration::from_secs(1),
+            broadcast.send_object(VIDEO_TRACK_NAME, delta_object()),
+        )
+        .await;
+
+        // Assert: the send did not wait for relay B, and nothing moved yet
+        assert!(sent.is_ok(), "a send must not wait for the move");
+        assert!(connection.inner.lock().await.previous.is_none());
+        let _ = release_b.send(());
+        wait_until_moved(&connection).await;
+    }
+
+    #[tokio::test]
+    async fn the_open_group_ends_on_the_old_relay_and_the_next_one_starts_on_the_new() {
+        // Arrange: a group is open on relay A when the move completes
+        let mut relay_a = FakeRelay::spawn("goaway-group-a");
+        let relay_b = FakeRelay::spawn("goaway-group-b");
+        let (connection, broadcast) = connected_broadcast(&relay_a).await;
+        broadcast
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(1))
+            .await
+            .unwrap();
+        let session_a = relay_a.session().await;
+        session_a.go_away(relay_b.url.clone()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        broadcast
+            .send_object(VIDEO_TRACK_NAME, delta_object())
+            .await
+            .unwrap();
+        wait_until_moved(&connection).await;
+
+        // Act: one more object of the open group, then the next group
+        let within = broadcast
+            .send_object(VIDEO_TRACK_NAME, delta_object())
+            .await
+            .unwrap();
+        let old_still_open = tokio::time::timeout(Duration::from_millis(200), session_a.closed())
+            .await
+            .is_err();
+        broadcast
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(2))
+            .await
+            .unwrap();
+
+        // Assert: the object within the group was sent on relay A, which
+        // stayed open until the track started its next group
+        assert!(within, "the object within the open group must be sent");
+        assert!(old_still_open, "relay A must stay open for the open group");
+        let close = tokio::time::timeout(TEST_TIMEOUT, session_a.closed())
+            .await
+            .expect("relay A must be closed once the track moved");
+        assert_eq!(close.code, Some(0x0));
     }
 }
