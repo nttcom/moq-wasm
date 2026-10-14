@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -76,7 +76,7 @@ async fn record_broadcast(session: &Session, args: &Args) -> Result<()> {
         .clone()
         .unwrap_or_else(|| default_output_path(&args.namespace, SystemTime::now()));
     let mut file = RecordingFile::create(path).await?;
-    let mut pipeline = Pipeline::new(&selection)?;
+    let mut pipeline = Pipeline::new(&selection, args.segment_seconds.map(Duration::from_secs))?;
     tracing::info!(path = %file.path().display(), "recording started");
 
     loop {
@@ -177,7 +177,7 @@ async fn next_audio_object(reader: Option<&mut TrackReader>) -> Result<Option<Tr
 async fn write_output(file: &mut RecordingFile, output: Output) -> Result<()> {
     if let Some(tail) = output.previous_file_tail {
         file.rotate(&tail).await?;
-        tracing::info!(path = %file.path().display(), "configuration changed; recording into a new file");
+        tracing::info!(path = %file.path().display(), "recording into a new file");
     }
     file.write(&output.data).await?;
     if output.group_complete {

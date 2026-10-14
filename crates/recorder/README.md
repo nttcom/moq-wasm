@@ -18,6 +18,7 @@ cargo run -p recorder -- \
 | `--video-track` | `video` | LOC video track to record (`video_720p`, `video/profile_1`, ...) |
 | `--audio-track` | `audio` | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
+| `--segment-seconds` | — | Start the next numbered file at the first keyframe after this many seconds |
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**` |
 | `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
 | `--insecure-skip-tls-verify` | off | Accept the local relay's development certificate |
@@ -32,8 +33,10 @@ cargo run -p recorder -- \
 - Audio and video keep the offset of their capture timestamps, so the two
   tracks stay in sync however the subscriptions started.
 - When the video or audio configuration changes (resolution, codec profile),
-  the current file is closed and recording continues in `<stem>-2.mp4`,
-  `<stem>-3.mp4`, ...
+  or with `--segment-seconds` when a segment reached its length, the current
+  file is closed and recording continues in `<stem>-2.mp4`, `<stem>-3.mp4`,
+  ... Every file starts with its own init segment and a keyframe, and keeps
+  the recording's timeline, so the second file of 60 s segments starts at 60 s.
 - An audio track the catalog lists without its configuration (a `broadcast`
   publisher that has not seen an audio frame yet, or a codec without an fMP4
   mapping) is left out with a warning and the video is recorded alone.
