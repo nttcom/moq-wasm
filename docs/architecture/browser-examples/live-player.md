@@ -136,6 +136,7 @@ class LivePlayer {
   start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
+  setAdaptiveVideo(enabled: boolean): void
   selectAudioTrack(name: string): Promise<void>
   setPackaging(packaging: Packaging): Promise<void>
   seek(captureMicros: number): void
@@ -189,7 +190,8 @@ One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
 
 `LivePlayerState` carries what the controls and the diagnostics render: the
-catalog tracks and the selection, whether CMAF is available, the packaging,
+catalog tracks and the selection, whether the video rendition is chosen
+automatically, whether CMAF is available, the packaging,
 `mode: 'live' | 'review'`, paused, stalled, the playback rate and whether it
 is adjustable,
 the catalog / playback / rewind status, the seek range (broadcast start,
@@ -208,6 +210,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `deliveryObserver` | What the player reports of every object, FETCH and playhead |
 | `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order, the hand-over of a kind to another subscription and the retiring one it replaces |
+| `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
@@ -392,6 +395,29 @@ set, a change in CMAF mode and a change during a review resubscribe as before:
 unsubscribe, clear the timeline, subscribe. A seek, `stop`, a packaging change
 or another track change settles a switch in progress: one that has handed over
 keeps the new rendition, one that has not keeps the outgoing rendition.
+
+### Automatic quality
+
+The player chooses the live LOC video rendition itself until a track is picked
+by hand; `setAdaptiveVideo(true)` (the quality menu's `Auto`) gives the choice
+back. The choice runs only over a ladder: the tracks of the playing track's
+`altGroup` with a catalog `bitrate`, the source track estimated from its pixel
+count and the largest rendition with a known bitrate. A publisher without
+renditions or without any bitrate, such as the ONVIF bridge, has no ladder and
+plays what is selected.
+
+Objects are pushed at the rate the rendition is encoded at, so the throughput a
+viewer measures while the path keeps up is the rendition's own bitrate and says
+nothing about the headroom. `AdaptiveBitrate` therefore steps down on what
+shows a rendition does not fit: the least capture-to-arrival lag of the last
+second standing more than 400 ms above the least lag since the rendition
+started, or a stall. It then picks the highest rendition at or below 80 % of the
+throughput of the last 2 s, which while the path is the bottleneck is what the
+path carries. A step up is a trial of the next rendition after a calm spell of
+10 s; a trial that has to step down within 20 s doubles the spell, up to 120 s.
+The first 3 s after a switch are left out, since the lag of the two renditions
+differs by the transcoding delay. Every change goes through the rendition
+switch above, so a step costs no picture gap; CMAF mode and review do not adapt.
 
 ### Review audio
 

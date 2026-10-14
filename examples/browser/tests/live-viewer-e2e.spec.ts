@@ -162,13 +162,14 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Act: 歯車から下位画質へ切り替える
     await viewer.qualityButton.click()
     await expect(viewer.qualityMenu).toBeVisible()
-    const renditions = await viewer.videoTrackSelect.locator('option').allInnerTexts()
-    expect(renditions.length).toBeGreaterThan(1)
-    await viewer.videoTrackSelect.selectOption({ index: 1 })
+    await expect(viewer.videoTrackSelect).toHaveValue('@auto')
+    const playing = (await viewer.playbackStatus.innerText()).replace('Playing ', '')
+    const rendition = await renditionOption(viewer, playing)
+    await viewer.videoTrackSelect.selectOption(rendition)
 
-    // Assert: the rendition is subscribed first and the source track ends at the group boundary
-    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p/)
-    await expect(viewer.logPanel).toContainText(/unsubscribed video(?!_)|video ended by the publisher/)
+    // Assert: the rendition is subscribed first and the relay ends the playing track at the group boundary (SUBSCRIPTION_ENDED)
+    await expect(viewer.logPanel).toContainText(new RegExp(`subscribed \\S*/${rendition}`))
+    await expect(viewer.logPanel).toContainText(`${playing} ended by the publisher (status 3)`)
     // Assert: the renditions number their groups alike, so the splice keeps the seek timeline
     expect(await rewindableSeconds(viewer)).toBeGreaterThan(10)
     await expect(viewer.seekPosition).toHaveText('LIVE')
@@ -217,7 +218,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'volume')).toBeCloseTo(0.3, 5)
 
     // Act: a quality change re-opens the MediaSource with the rendition's init segment
-    await viewer.videoTrackSelect.selectOption({ index: 1 })
+    await viewer.videoTrackSelect.selectOption(await renditionOption(viewer, 'video'))
 
     // Assert
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p_cmaf/)
@@ -331,4 +332,14 @@ async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {
 
 async function playedWidth(viewer: LiveViewerPageModel): Promise<number> {
   return viewer.seekReviewProgress.evaluate((element) => Number.parseFloat((element as HTMLElement).style.width))
+}
+
+/// The first transcoded rendition of the quality menu other than `except`.
+async function renditionOption(viewer: LiveViewerPageModel, except: string): Promise<string> {
+  const values = await viewer.videoTrackSelect
+    .locator('option')
+    .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value))
+  const rendition = values.find((value) => /^video_\d+p$/.test(value) && value !== except)
+  expect(rendition).toBeDefined()
+  return rendition ?? ''
 }

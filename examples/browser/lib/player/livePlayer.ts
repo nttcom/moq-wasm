@@ -1,6 +1,9 @@
 import { type MoqtClientWrapper, RequestError, RequestErrorCode } from '@moqt/moqtClient'
 import { type PublishDoneMessage, parse_msf_catalog_json } from '../../pkg/moqt'
 import { parseAudioChannelCount } from '../../utils/media/audioChannelConfig'
+import { monotonicUnixMicros } from '../../utils/media/clock'
+import { readLocHeader } from '../../utils/media/loc'
+import { AdaptiveBitrate, bitrateLadder } from './adaptiveBitrate'
 import type { MseTrackSource } from '../../utils/media/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
@@ -32,6 +35,7 @@ import {
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
 const PUBLISHER_RETRY_MS = 2_000
+const ADAPT_INTERVAL_MS = 500
 
 export type { Packaging } from './trackContext'
 
@@ -65,6 +69,7 @@ export type LivePlayerState = {
   audioTracks: MediaCatalogTrack[]
   selectedVideoTrack: string
   selectedAudioTrack: string
+  adaptiveVideo: boolean
   cmafAvailable: boolean
   packaging: Packaging
   mode: 'live' | 'review'
@@ -127,6 +132,9 @@ export class LivePlayer {
   private videoObjectCount = 0
   private newestVideoGroup: bigint | undefined
   private videoSwitch: VideoSwitch | undefined
+  private readonly adaptiveBitrate = new AdaptiveBitrate()
+  private adaptiveVideo = true
+  private nextAdaptAtMs = 0
   private catalogStatus: PlayerStatus = { text: 'Catalog not loaded yet', state: 'idle' }
   private playbackStatus: PlayerStatus = { text: 'Playback idle', state: 'idle' }
   private rewindStatus: PlayerStatus = { text: 'Live', state: 'ok' }
@@ -149,7 +157,10 @@ export class LivePlayer {
       () => void this.publisherLeft()
     )
     this.subscriptions = new TrackSubscriptions(this.context, (kind, message) => this.publisherEnded(kind, message))
-    this.stallWatch = new StallWatch(() => this.changed())
+    this.stallWatch = new StallWatch(() => {
+      this.changed()
+      this.adaptVideo()
+    })
     this.stage = new PictureStage(options.container)
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
       onPresented: (picture) => this.notePresentedFrame(picture),
@@ -200,6 +211,7 @@ export class LivePlayer {
       audioTracks: this.tracks.audio,
       selectedVideoTrack: this.selected.video,
       selectedAudioTrack: this.selected.audio,
+      adaptiveVideo: this.adaptiveVideo,
       cmafAvailable: this.cmafTracks.length > 0,
       packaging: this.packaging,
       mode: review ? 'review' : 'live',
@@ -334,8 +346,17 @@ export class LivePlayer {
     this.changed()
   }
 
+  /// A track picked by hand ends the automatic choice of the rendition.
   selectVideoTrack(name: string): Promise<void> {
+    this.adaptiveVideo = false
     return this.selectTrack('video', name)
+  }
+
+  /// See *Automatic quality* in docs/architecture/browser-examples/live-player.md.
+  setAdaptiveVideo(enabled: boolean): void {
+    this.adaptiveVideo = enabled
+    this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+    this.changed()
   }
 
   selectAudioTrack(name: string): Promise<void> {
@@ -608,6 +629,7 @@ export class LivePlayer {
     if (kind === 'video') {
       this.abandonVideoSwitch()
       this.newestVideoGroup = undefined
+      this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
       this.timeline.resetGroups()
       this.goLive()
     } else {
@@ -709,6 +731,7 @@ export class LivePlayer {
   /// before the start group; one that is not aligned starts the timeline over.
   private startIncomingVideo(pending: VideoSwitch, next: TrackSubscription, start: SpliceStart): void {
     this.subscriptions.handOver('video', next)
+    this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
     this.locLive.configureTrack('video', next.track)
     if (!start.aligned) {
       this.timeline.resetGroups()
@@ -765,6 +788,7 @@ export class LivePlayer {
       if (this.newestVideoGroup === undefined || groupId > this.newestVideoGroup) {
         this.newestVideoGroup = groupId
       }
+      this.observeVideoDelivery(object)
       this.videoObjectCount += 1
       this.timeline.groups.record(groupId, object.locHeader)
       this.notePlaying(trackName)
@@ -793,6 +817,41 @@ export class LivePlayer {
       this.timeline.audio.record(groupId, undefined)
     }
     this.cmafLive.append(kind, object)
+  }
+
+  private observeVideoDelivery(object: SubgroupObjectMessageWithLoc): void {
+    const arrivedAtMs = monotonicUnixMicros() / 1_000
+    const captureMicros = readLocHeader(object.locHeader).captureTimestampMicros
+    this.adaptiveBitrate.observe({
+      arrivedAtMs,
+      bytes: object.objectPayloadLength,
+      lagMs: captureMicros === undefined ? undefined : arrivedAtMs - captureMicros / 1_000
+    })
+    this.adaptVideo()
+  }
+
+  private adaptVideo(): void {
+    const nowMs = monotonicUnixMicros() / 1_000
+    const current = this.subscriptions.get('video')
+    if (
+      !this.adaptiveVideo ||
+      this.packaging !== 'loc' ||
+      this.review ||
+      this.videoSwitch ||
+      !current ||
+      nowMs < this.nextAdaptAtMs
+    ) {
+      return
+    }
+    this.nextAdaptAtMs = nowMs + ADAPT_INTERVAL_MS
+    const ladder = bitrateLadder(this.tracks.video, current.track)
+    const choice = this.adaptiveBitrate.decide(nowMs, ladder, current.name, this.stallWatch.stalled)
+    if (choice) {
+      this.context.log('info', `adaptive quality: ${current.name} -> ${choice}`)
+      this.selectTrack('video', choice).catch((error) => {
+        this.context.log('error', `adaptive quality: ${getErrorMessage(error)}`)
+      })
+    }
   }
 
   private publisherEnded(kind: MediaKind, message: PublishDoneMessage): void {
@@ -886,9 +945,12 @@ export class LivePlayer {
     this.stallWatch.framePresented()
   }
 
+  /// Delivery resumes at the next group, and the picture standing still until
+  /// then is no sign of congestion, so the rendition choice starts over.
   private resumeLiveForward(): void {
     if (this.subscriptions.resumeForward()) {
       this.cmafLive.sink?.resumeAtNewestRange()
+      this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
     }
   }
 
