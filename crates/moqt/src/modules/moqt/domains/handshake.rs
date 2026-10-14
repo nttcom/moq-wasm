@@ -1,48 +1,38 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
-use std::sync::atomic::AtomicU64;
+
+#[cfg(test)]
+use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
 
 use crate::{
     AuthorizationToken, Session, TerminationErrorCode,
-    modules::moqt::{
-        control_plane::control_messages::messages::client_setup::ClientSetup,
-        data_plane::stream::{bi_stream_sender::BiStreamSender, stream_receiver::BiStreamReceiver},
-        domains::{
-            session_context::SessionContext, session_context_factory::SessionContextFactory,
-        },
-    },
+    modules::moqt::{domains::session_context::SessionContext, version::ServerHandshake},
 };
 
 pub struct Handshake {
-    pub(crate) client_setup: ClientSetup,
     pub(crate) transport_connection: BoxedConnection,
-    pub(crate) send_stream: BiStreamSender,
-    pub(crate) receive_stream: BiStreamReceiver,
+    pub(crate) setup: ServerHandshake,
 }
 
 impl Handshake {
     /// The AUTHORIZATION TOKEN parameters of the CLIENT_SETUP, for the
     /// application to decide between `accept` and `reject`.
     pub fn authorization_tokens(&self) -> &[AuthorizationToken] {
-        &self.client_setup.setup_parameters.authorization_token
+        self.setup.authorization_tokens()
     }
 
     #[cfg(test)]
     pub(crate) fn client_setup(&self) -> &ClientSetup {
-        &self.client_setup
+        let ServerHandshake::Draft14(handshake) = &self.setup;
+        &handshake.client_setup
     }
 
-    pub async fn accept(mut self) -> anyhow::Result<Session> {
-        SessionContextFactory::send_server_setup(&mut self.send_stream).await?;
+    pub async fn accept(self) -> anyhow::Result<Session> {
+        let (control, control_receiver) = self.setup.accept().await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-        let context = SessionContext::new(
-            self.transport_connection,
-            self.send_stream,
-            AtomicU64::new(1),
-            event_sender,
-        );
+        let context = SessionContext::new(self.transport_connection, control, event_sender);
         tracing::info!("Session established");
         Ok(Session::new(
-            self.receive_stream,
+            control_receiver,
             context,
             event_receiver,
             None,

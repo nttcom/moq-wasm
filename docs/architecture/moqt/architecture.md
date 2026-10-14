@@ -20,6 +20,7 @@ namespace.rs, object.rs, server.rs (public re-exports)
 modules/moqt/domains      ← public API objects (Endpoint, Session, Publisher, …)
 modules/moqt/runtime      ← background tasks + incoming-object dispatch
 modules/moqt/control_plane← control messages, handlers, session events
+modules/moqt/version      ← per-draft adapter: control channel, SETUP, control receive loop
 modules/moqt/data_plane   ← object formats, stream/datagram send/receive, codecs
 modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL markers
         │
@@ -103,6 +104,40 @@ Client-side helpers shared by the three creators:
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.
 
+## Version adapter (`modules/moqt/version`)
+
+Everything above the adapter states what to send and receive; the adapter
+decides how a draft carries it. Only draft-14 is implemented: the adapter
+exists ahead of draft-18 support, as a deliberate exception to the
+coding-style rule that an abstraction waits for its second concrete use.
+
+- `ControlChannel` is an enum with one variant per draft, matched in place
+  instead of a trait object: the set of drafts is closed, the match is
+  checked for exhaustiveness when a draft is added, and async methods need no
+  object safety or `Send` bounds that wasm32 cannot meet. It offers
+  `next_request_id`, `send_request(OutgoingRequest) -> PendingResponse`,
+  `respond(OutgoingResponse)` and `notify(Notification)`. The draft-14
+  control message structs serve as the shared model; `draft14::ControlChannel`
+  encodes them.
+- `ControlReceiver` spawns the loop that turns the peer's control messages
+  into `SessionEvent`s and responses; `connect` / `accept` /
+  `ServerHandshake` run the draft's SETUP exchange.
+- `draft14` carries everything on one bidirectional control stream: request
+  ids from 0 (client) or 1 (server) in steps of two, `inflight_requests`
+  pairing responses by request id, a `LateResponseAction` per request
+  (how a late success is withdrawn), the 10 s response timeout,
+  `ControlMessageReceiveTask` and the CLIENT_SETUP / SERVER_SETUP exchange
+  (`draft14::setup`). The withdrawals:
+  - SUBSCRIBE / SUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE → UNSUBSCRIBE /
+    UNSUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE_DONE.
+  - PUBLISH → PUBLISH_DONE (INTERNAL_ERROR, Stream Count 0: no stream opens
+    before PUBLISH_OK).
+  - FETCH → FETCH_CANCEL.
+  - TRACK_STATUS → nothing; it creates no state.
+- Not behind the adapter yet: the data-plane codecs (subgroup, datagram and
+  FETCH formats), the ALPN `moq-00` in `modules/transport`, and the error code
+  tables in `error_codes.rs`.
+
 ## Session establishment (`modules/moqt/domains`)
 
 Client flow: `Endpoint` → `Connecting` (a boxed `Future`) → `Session`.
@@ -111,20 +146,20 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 - `Endpoint::create_client(&ClientConfig)` / `create_server(&ServerConfig)`
   build a `SessionCreator` around the transport's `ConnectionCreator`.
 - `connect(url)` returns `Connecting`, whose future performs the transport
-  handshake, opens the bidirectional control stream, and runs the whole SETUP
-  exchange in `SessionContextFactory` (sends CLIENT_SETUP, awaits SERVER_SETUP,
-  version `0xff00000e` = draft-14). `ClientConfig.authorization_token`, when
+  handshake and runs the SETUP exchange through `version::connect` (draft-14
+  opens the bidirectional control stream, sends CLIENT_SETUP and awaits
+  SERVER_SETUP, version `0xff00000e`). `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
   `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session` is
   created.
 - `accept()` returns `Accepting`, whose future performs the transport
-  handshake, accepts the control stream, and stops after CLIENT_SETUP is
-  received (`SessionContextFactory::receive_client_setup`). It resolves to a
+  handshake and `version::accept`, which for draft-14 accepts the control
+  stream and stops after CLIENT_SETUP is received. It resolves to a
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:
-  - `Handshake::accept()` sends SERVER_SETUP
-    (`SessionContextFactory::send_server_setup`) and creates the `Session`.
+  - `Handshake::accept()` answers the setup (SERVER_SETUP for draft-14) and
+    creates the `Session`.
   - `Handshake::reject(code, reason)` closes the transport with the given
     termination code without sending SERVER_SETUP.
 
@@ -134,7 +169,7 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 | Task | Role |
 | --- | --- |
-| `ControlMessageReceiveTask` | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
+| control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
 | `UniStreamReceiveTask` | accepts incoming unidirectional streams; the first frame must be a subgroup header (→ `SubscriptionNotifier`) or fetch header (→ `FetchNotifier`). |
 | `DatagramReceiveTask` | receives datagrams, decodes `ObjectDatagram`, dispatches via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
@@ -232,23 +267,10 @@ through the raw stream senders.
 
 One struct owns all cross-task state:
 
-- `request_id: AtomicU64` — starts at 1, incremented by 2 per request.
+- `control: ControlChannel` — the version adapter above; for draft-14 it
+  holds the request id counter and `inflight_requests`.
 - `track_alias: AtomicU64` — per-session track alias allocation, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
-- `inflight_requests` — request/response correlation by request id.
-  Registration returns a `RegisteredSender` drop-guard that marks the entry
-  abandoned on drop, so a late response is withdrawn instead of closing the
-  session. When the control stream closes, every entry is failed and later
-  registrations fail at once: no response can arrive, so a caller never waits
-  out the response timeout for a gone peer.
-  Each request kind registers how a late success is withdrawn
-  (`LateResponseAction`):
-  - SUBSCRIBE / SUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE → UNSUBSCRIBE /
-    UNSUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE_DONE.
-  - PUBLISH → PUBLISH_DONE (INTERNAL_ERROR, Stream Count 0: no stream opens
-    before PUBLISH_OK).
-  - FETCH → FETCH_CANCEL.
-  - TRACK_STATUS → nothing; it creates no state.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
@@ -289,13 +311,17 @@ One struct owns all cross-task state:
   - `ResponseGuard` is the one place that encodes and sends a `*_ERROR`, for
     both the handlers' `error()` and the drop-time NOT_SUPPORTED reply.
 
-`ControlMessageReceiveTask` splits every decoded message into one of three
-paths:
+The draft-14 `ControlMessageReceiveTask` splits every decoded message into
+one of three paths:
 
 1. **Requests** (SUBSCRIBE, PUBLISH, FETCH, namespace messages, …) become
    `SessionEvent` variants delivered to `Session::receive_event()`.
 2. **Responses** (`*_OK` / `*_ERROR`) are matched against `inflight_requests` by
-   request id and complete the pending `oneshot`.
+   request id and complete the pending `oneshot`. The waiting side holds a
+   `PendingResponse` whose drop marks the entry abandoned, so a late response
+   runs its `LateResponseAction` instead of closing the session. When the
+   control stream closes, every entry is failed and later registrations fail
+   at once.
 3. **Protocol violations** (a malformed payload, a SETUP after the handshake,
    a response to a request kind this crate never sends) close the session and
    stop the task.
@@ -416,7 +442,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Unknown response request id**: a response that matches no `inflight_requests`
   entry is a protocol violation; the session is closed with
   `ProtocolViolation`.
-- **Control response timeout**: `SessionContext::await_response` bounds every
+- **Control response timeout**: `PendingResponse::response` bounds every
   request/response wait to 10 s; a timeout fails only that request with
   `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
   Every request that waits for a response returns `RequestFailure`, so
