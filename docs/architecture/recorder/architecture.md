@@ -75,8 +75,16 @@ both tracks into one init segment and one fragment stream.
   `Endpoint::wait_idle` awaited before exit, so the CONNECTION_CLOSE is sent
   instead of the relay waiting for the idle timeout.
 
+## Token refresh
+With `--auth-token-file` a `TokenRefreshTask` re-reads the file every 10 s and
+sends a changed token with the relay's in-session refresh convention: a
+TRACK_STATUS for namespace `[app id]` and track `update_auth_token` carrying
+the token as its AUTHORIZATION TOKEN (see the relay architecture document,
+"Token refresh"). The app id is the namespace's first element. moq-cli does
+the same; neither shares the code because draft-14 has no refresh message and
+the convention is the relay's.
+
 ## Limits
-- The authorization token is sent once and not refreshed.
 - Recording starts live; there is no FETCH of the past yet.
 - Audio outside AAC, Opus, G.711 A-law and MP3, or an AAC track whose
   configuration is not in the catalog yet, is skipped with a warning.

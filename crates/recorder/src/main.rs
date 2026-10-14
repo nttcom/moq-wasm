@@ -2,6 +2,7 @@ mod file_writer;
 mod pipeline;
 mod recorder;
 mod relay;
+mod token_refresh_task;
 mod track_selection;
 
 use std::path::PathBuf;
@@ -38,8 +39,13 @@ pub(crate) struct Args {
     pub(crate) output: Option<PathBuf>,
 
     /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
-    #[arg(long, env = "MOQT_AUTH_TOKEN")]
+    #[arg(long, env = "MOQT_AUTH_TOKEN", conflicts_with = "auth_token_file")]
     pub(crate) auth_token: Option<String>,
+
+    /// File holding the authorization token; re-read while recording so a
+    /// rewritten token is sent to the relay before the current one expires
+    #[arg(long, env = "MOQT_AUTH_TOKEN_FILE")]
+    pub(crate) auth_token_file: Option<PathBuf>,
 
     /// Skip TLS certificate verification (INSECURE, local development only)
     #[arg(long)]
