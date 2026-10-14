@@ -140,7 +140,14 @@ impl RelayServer {
     /// Stop the client transport's accept loop first, so that no session
     /// arrives after the GOAWAYs were sent.
     pub async fn drain(&self, timeout: Duration) {
-        drain_client_sessions(&self.repo, self.route_registry.as_ref(), timeout).await;
+        self.runtime.begin_draining();
+        drain_client_sessions(
+            &self.repo,
+            self.route_registry.as_ref(),
+            &self.sender,
+            timeout,
+        )
+        .await;
     }
 
     pub fn spawn_stats_publisher(&self, relay_id: String, inner_port: u16) -> StatsPublishTask {

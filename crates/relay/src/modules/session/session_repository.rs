@@ -140,11 +140,14 @@ impl SessionRepository {
         );
     }
 
-    pub(crate) fn sessions_with_peer(&self, peer: SessionPeer) -> Vec<Arc<dyn Session>> {
+    pub(crate) fn sessions_with_peer(
+        &self,
+        peer: SessionPeer,
+    ) -> Vec<(SessionId, Arc<dyn Session>)> {
         self.sessions
-            .values()
-            .filter(|entry| entry.peer == peer)
-            .map(|entry| entry.session.clone())
+            .iter()
+            .filter(|(_, entry)| entry.peer == peer)
+            .map(|(session_id, entry)| (*session_id, entry.session.clone()))
             .collect()
     }
 

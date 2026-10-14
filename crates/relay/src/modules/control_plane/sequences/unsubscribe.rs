@@ -199,6 +199,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publish_origin_is_released_by_its_last_subscriber_on_a_draining_relay() {
+        // Arrange
+        let mut ctx = setup(UpstreamSubscriptionOrigin::Publish, &[(100, 10)]).await;
+        ctx.upstream.table.begin_draining();
+
+        // Act
+        run_unsubscribe(&ctx, 100, 10).await;
+
+        // Assert
+        assert_eq!(
+            ctx.upstream.recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID]
+        );
+        assert!(matches!(
+            ctx.upstream.ingress_receiver.try_recv(),
+            Ok(IngressCommand::StopTrack { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn unknown_subscription_stops_no_runner_and_forwards_nothing() {
         // Arrange
         let mut ctx = setup(UpstreamSubscriptionOrigin::Subscribe, &[(101, 11)]).await;

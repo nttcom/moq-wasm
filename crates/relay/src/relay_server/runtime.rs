@@ -97,6 +97,10 @@ impl RelayRuntime {
         )
     }
 
+    pub(crate) fn begin_draining(&self) {
+        self.local_pub_sub_directory.begin_draining();
+    }
+
     pub(crate) fn stats_collector(&self, relay_id: String) -> StatsCollector {
         StatsCollector::new(
             relay_id,
