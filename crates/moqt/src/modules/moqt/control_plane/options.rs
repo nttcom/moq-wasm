@@ -8,6 +8,9 @@ pub struct PublishOption {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
+    /// Sent as MAX_CACHE_DURATION (milliseconds, draft-14 §9.2.1.3) in the
+    /// PUBLISH.
+    pub max_cache_duration: Option<u64>,
 }
 
 impl Default for PublishOption {
@@ -16,6 +19,7 @@ impl Default for PublishOption {
             group_order: GroupOrder::Ascending,
             content_exists: ContentExists::False,
             forward: true,
+            max_cache_duration: None,
         }
     }
 }

@@ -644,6 +644,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_ok_hands_its_max_cache_duration_to_the_fetch_handle() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("subscriber-fetch-max-cache-duration").await;
+        let (request, mut handler) = start_fetch(&client, &server).await;
+        handler.max_cache_duration = Some(2_000);
+
+        // Act
+        handler.ok(false, END).await.unwrap();
+
+        // Assert
+        let fetch_handle = request.await.unwrap().unwrap();
+        assert_eq!(fetch_handle.max_cache_duration, Some(2_000));
+    }
+
+    #[tokio::test]
     async fn rejected_fetch_releases_its_pending_state() {
         // Arrange
         let (client, server) = spawn_connected_dual_sessions("subscriber-fetch-rejected").await;

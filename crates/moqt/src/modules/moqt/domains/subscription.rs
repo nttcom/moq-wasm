@@ -69,6 +69,13 @@ impl Subscription {
         }
     }
 
+    pub fn max_cache_duration(&self) -> Option<u64> {
+        match self {
+            Self::PublisherInitiated(subscription) => subscription.max_cache_duration,
+            Self::SubscriberInitiated(subscription) => subscription.max_cache_duration,
+        }
+    }
+
     pub fn subscriber_priority(&self) -> u8 {
         match self {
             Self::PublisherInitiated(subscription) => subscription.subscriber_priority,
@@ -89,6 +96,9 @@ pub struct SubscriberInitiatedSubscription {
     pub subscriber_priority: u8,
     pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
+    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the SUBSCRIBE_OK
+    /// carried.
+    pub max_cache_duration: Option<u64>,
 }
 
 impl SubscriberInitiatedSubscription {
@@ -110,6 +120,7 @@ impl SubscriberInitiatedSubscription {
             subscriber_priority,
             filter_type,
             delivery_timeout: None,
+            max_cache_duration: subscribe_ok.max_duration,
         }
     }
 
@@ -125,6 +136,7 @@ impl SubscriberInitiatedSubscription {
             subscriber_priority: handler.subscriber_priority,
             filter_type: handler.filter_type,
             delivery_timeout: handler.delivery_timeout,
+            max_cache_duration: handler.max_cache_duration,
         }
     }
 }
@@ -141,6 +153,9 @@ pub struct PublisherInitiatedSubscription {
     pub forward: bool,
     pub filter_type: FilterType,
     pub delivery_timeout: Option<u64>,
+    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the PUBLISH
+    /// carried.
+    pub max_cache_duration: Option<u64>,
 }
 
 impl PublisherInitiatedSubscription {
@@ -149,6 +164,7 @@ impl PublisherInitiatedSubscription {
         track_name: String,
         track_alias: u64,
         publish_ok: PublishOk,
+        max_cache_duration: Option<u64>,
     ) -> Self {
         Self {
             track_namespace,
@@ -161,6 +177,7 @@ impl PublisherInitiatedSubscription {
             forward: publish_ok.forward,
             filter_type: publish_ok.filter_type,
             delivery_timeout: None,
+            max_cache_duration,
         }
     }
 

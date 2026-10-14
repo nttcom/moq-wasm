@@ -363,6 +363,7 @@ impl Publisher for MockUpstreamPublisher {
                 forward,
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
+                max_cache_duration: None,
             }),
         ))
     }
@@ -432,6 +433,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 content_exists: answer_subscribe(),
                 filter_type: FilterType::LargestObject,
                 delivery_timeout: None,
+                max_cache_duration: None,
             }),
         ))
     }
@@ -476,6 +478,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 group_order: GroupOrder::Ascending,
                 end_of_track: false,
                 end_location,
+                max_cache_duration: None,
             }),
         }
     }
@@ -699,6 +702,7 @@ impl PublishHandler for MockPublishHandler {
             forward: true,
             filter_type,
             delivery_timeout: None,
+            max_cache_duration: None,
         })
     }
 

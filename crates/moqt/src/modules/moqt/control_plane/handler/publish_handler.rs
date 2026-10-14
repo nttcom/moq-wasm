@@ -29,6 +29,8 @@ pub struct PublishHandler {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub forward: bool,
+    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the PUBLISH
+    /// carried.
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
     guard: ResponseGuard,
@@ -52,7 +54,7 @@ impl PublishHandler {
             group_order: publish_message.group_order,
             content_exists: publish_message.content_exists,
             forward: publish_message.forward,
-            max_cache_duration: None,
+            max_cache_duration: publish_message.max_duration,
             delivery_timeout: None,
         }
     }
@@ -90,6 +92,7 @@ impl PublishHandler {
                 forward: self.forward,
                 filter_type,
                 delivery_timeout: self.delivery_timeout,
+                max_cache_duration: self.max_cache_duration,
             },
         ))
     }
@@ -134,6 +137,7 @@ mod tests {
 
     use crate::RequestErrorCode;
     use crate::publish::PublishOption;
+    use crate::subscribe::FilterType;
     use crate::{
         SessionEvent,
         modules::{
@@ -145,6 +149,38 @@ mod tests {
     };
 
     const OTHER_REQUEST_ID: u64 = 99;
+
+    #[tokio::test]
+    async fn publish_hands_its_max_cache_duration_to_both_subscriptions() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_dual_sessions("publish-handler-max-cache-duration").await;
+        let request = tokio::spawn(async move {
+            client
+                .publisher()
+                .publish(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    PublishOption {
+                        max_cache_duration: Some(2_000),
+                        ..PublishOption::default()
+                    },
+                )
+                .await
+        });
+        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH from the client");
+        };
+
+        // Act
+        let accepted = handler.ok(128, FilterType::LargestObject, 0).await.unwrap();
+
+        // Assert
+        assert_eq!(handler.max_cache_duration, Some(2_000));
+        assert_eq!(accepted.max_cache_duration(), Some(2_000));
+        let published = request.await.unwrap().unwrap();
+        assert_eq!(published.max_cache_duration(), Some(2_000));
+    }
 
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
