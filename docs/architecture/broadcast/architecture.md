@@ -102,7 +102,8 @@ completes that FETCH from here when its own cache has dropped it.
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
 an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).
-`RelayConnection` performs the publisher switchover of §8.4.2. The event loop
+`RelayConnection` performs the publisher switchover of §8.4.2, publishing
+on both relays until the old one lets go as draft-22 §7.6.1 does. The event loop
 records the URI, and the next `connected()` call starts the move in a
 background task while every send keeps using the current session: the task
 connects a second session, announces every namespace, publishes the catalog
@@ -110,13 +111,15 @@ again (which re-sends PUBLISH for the LOC tracks and the catalog track) and
 moves the subscriber watches, then takes over catalog changes made in the
 meantime and makes the new session current.
 
-The previous session is kept as `PreviousRelay`. An object within a group
-that a track opened there is still written there, and the track's next group
-starts on the new session, so a viewer of either relay sees whole groups.
-The previous session is closed with NO_ERROR once every track it carried has
-started a group on the new session, or 5 s after the move. The new session
-gets a fresh `Origin`, so the FETCH cache before the move is not carried
-over. If the named relay cannot be reached, the connection keeps publishing
+After the move every object is written to both sessions, as
+draft-ietf-moq-transport-22 §7.6.1 describes: viewers still on the old relay
+keep receiving the track, and the new session starts each track at its next
+group (an object within a group is dropped where no group is open). The
+previous session is closed with NO_ERROR once its relay no longer subscribes
+to any track (`Origin::is_serving`), which a draining relay of this repository
+signals by unsubscribing when the subscribers it sent GOAWAY to have left, or
+when that relay closes it. The new session gets a fresh `Origin`, so the FETCH
+cache before the move is not carried over. If the named relay cannot be reached, the connection keeps publishing
 to the old session until that relay closes it; the connect itself has no
 timeout of its own.
 
