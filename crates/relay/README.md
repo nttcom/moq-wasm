@@ -17,6 +17,8 @@ on `https://127.0.0.1:4433`. A self-signed certificate is generated under
 
 ## Configuration
 
+An empty value counts as unset and selects the default.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RELAY_PORT` | `4433` | QUIC and WebTransport listen port |
