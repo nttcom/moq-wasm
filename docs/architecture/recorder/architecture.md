@@ -65,6 +65,11 @@ both tracks into one init segment and one fragment stream.
   from; a different one ends the file (the pending video sample is flushed
   with `finish`) and starts a fresh muxer, and the writer continues in the
   next numbered file.
+- **Segments start on a keyframe.** With `--segment-seconds` the same rotation
+  runs at the first keyframe whose presentation time is at least the segment
+  length past the file's first video sample, so every file decodes on its
+  own. Presentation times are not rebased per file: the files keep one
+  timeline and can be concatenated.
 - **The file is valid at every flush.** Fragmented MP4 needs no trailing
   index, so a recorder killed mid-way leaves a playable file; only the last
   video sample, whose duration is unknown until the next one, is lost.

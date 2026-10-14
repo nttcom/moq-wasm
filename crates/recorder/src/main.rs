@@ -38,6 +38,10 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) output: Option<PathBuf>,
 
+    /// Start a new numbered file at the first keyframe after this many seconds
+    #[arg(long, value_name = "SECONDS")]
+    pub(crate) segment_seconds: Option<u64>,
+
     /// Authorization token (JWT) presented to the relay in CLIENT_SETUP
     #[arg(long, env = "MOQT_AUTH_TOKEN", conflicts_with = "auth_token_file")]
     pub(crate) auth_token: Option<String>,
