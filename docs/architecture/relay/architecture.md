@@ -67,8 +67,10 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 
 Session migration, draft-14 §3.5 (`relay_server/drain.rs`). On the first
 Ctrl+C `main.rs` stops the client transport's accept loop
-(`SessionHandler::stop_accepting`; the inner endpoint keeps accepting) and
-calls `RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
+(`SessionHandler::stop_accepting`, after which the endpoint refuses every
+connection attempt at the transport level so a client is turned away at once;
+the inner endpoint keeps accepting) and calls
+`RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
 
 1. marks the relay `draining` in the route registry, so other relays stop
    routing new cascaded subscriptions to it and no longer pick it as a
@@ -94,8 +96,8 @@ during the drain exits at once. Relay-peer sessions receive a GOAWAY with an
 empty URI and are not waited for: the remote relay answers it by subscribing
 the other publishers of the tracks this relay feeds it (see "GOAWAY
 sequence"), so those tracks survive the close. A client whose handshake
-completes between the accept loop stopping and the GOAWAYs being sent is
-closed at the timeout like a client that ignored its GOAWAY.
+completed just before the accept loop stopped is closed at the timeout like a
+client that ignored its GOAWAY.
 
 ## Control plane
 
