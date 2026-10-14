@@ -112,15 +112,20 @@ impl Publisher {
         Ok(())
     }
 
+    /// Ends a subscription this endpoint publishes on (draft-14 §9.12).
     pub async fn publish_done(
         &self,
-        request_id: u64,
+        subscription: &Subscription,
         status_code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let publish_done =
-            PublishDone::new(request_id, status_code.into(), stream_count, error_reason);
+        let publish_done = PublishDone::new(
+            subscription.request_id(),
+            status_code.into(),
+            stream_count,
+            error_reason,
+        );
         self.session
             .send_stream
             .send(ControlMessageType::PublishDone, publish_done.encode())

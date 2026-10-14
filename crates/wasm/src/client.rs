@@ -72,12 +72,13 @@ pub(crate) struct ClientShared {
     pub(crate) incoming: RefCell<IncomingRequests>,
     /// Outgoing subscriptions keyed by the request id JavaScript chose.
     subscriptions: RefCell<HashMap<u64, Subscription>>,
-    /// Request ids on the wire of every SUBSCRIBE JavaScript ever issued,
-    /// keyed by the id JavaScript chose; kept after UNSUBSCRIBE so a late
-    /// SUBSCRIBE_UPDATE still names a request id the peer has seen.
-    subscription_wire_ids: RefCell<HashMap<u64, u64>>,
-    /// Outgoing FETCH request ids on the wire keyed by the id JavaScript chose.
-    pub(crate) fetch_requests: RefCell<HashMap<u64, u64>>,
+    /// Every SUBSCRIBE JavaScript ever issued, keyed by the id JavaScript
+    /// chose; kept after UNSUBSCRIBE so a late SUBSCRIBE_UPDATE still names a
+    /// request the peer has seen.
+    issued_subscriptions: RefCell<HashMap<u64, Subscription>>,
+    /// Outgoing FETCHes answered with FETCH_OK, keyed by the id JavaScript
+    /// chose.
+    pub(crate) fetch_requests: RefCell<HashMap<u64, FetchHandle>>,
     /// Subscriptions this client sends objects on, keyed by track alias.
     track_subscriptions: RefCell<HashMap<u64, Subscription>>,
     stream_senders: RefCell<HashMap<WriterKey, Rc<Mutex<SubgroupObjectSender>>>>,
@@ -96,7 +97,7 @@ impl ClientShared {
         self.session.borrow_mut().take();
         *self.incoming.borrow_mut() = IncomingRequests::default();
         self.subscriptions.borrow_mut().clear();
-        self.subscription_wire_ids.borrow_mut().clear();
+        self.issued_subscriptions.borrow_mut().clear();
         self.fetch_requests.borrow_mut().clear();
         self.track_subscriptions.borrow_mut().clear();
         self.stream_senders.borrow_mut().clear();
@@ -603,9 +604,9 @@ impl MOQTClient {
                     max_duration: None,
                 };
                 self.shared
-                    .subscription_wire_ids
+                    .issued_subscriptions
                     .borrow_mut()
-                    .insert(request_id, subscription.request_id());
+                    .insert(request_id, subscription.clone());
                 self.shared
                     .subscriptions
                     .borrow_mut()
@@ -708,11 +709,11 @@ impl MOQTClient {
             .subscriptions
             .borrow()
             .get(&joining_request_id)
-            .map(Subscription::request_id)
+            .cloned()
             .ok_or_else(|| js_error(format!("no active subscription: {joining_request_id}")))?;
         let result = session
             .subscriber()
-            .fetch_relative_joining(joined, joining_start, option)
+            .fetch_relative_joining(&joined, joining_start, option)
             .await;
         self.finish_fetch_request(session, request_id, result);
         Ok(())
@@ -838,7 +839,7 @@ impl MOQTClient {
         };
         session
             .subscriber()
-            .unsubscribe(subscription.request_id())
+            .unsubscribe(&subscription)
             .await
             .map_err(anyhow_error)
     }
@@ -908,17 +909,22 @@ impl MOQTClient {
         forward: bool,
     ) -> Result<(), JsValue> {
         let session = self.session()?;
-        let wire_request_id = self
+        let Some(subscription) = self
             .shared
-            .subscription_wire_ids
+            .issued_subscriptions
             .borrow()
             .get(&subscription_request_id)
-            .copied()
-            .unwrap_or(subscription_request_id);
+            .cloned()
+        else {
+            console_log(&format!(
+                "SUBSCRIBE_UPDATE not sent: no SUBSCRIBE {subscription_request_id} was issued"
+            ));
+            return Ok(());
+        };
         session
             .subscriber()
             .subscribe_update(
-                wire_request_id,
+                &subscription,
                 SubscribeUpdateOption {
                     start_location: Location {
                         group_id: start_group,
@@ -944,9 +950,22 @@ impl MOQTClient {
         let session = self.session()?;
         let status_code = PublishDoneCode::try_from(status_code)
             .map_err(|_| js_error(format!("unknown PUBLISH_DONE status code: {status_code}")))?;
+        let subscription = self
+            .shared
+            .track_subscriptions
+            .borrow()
+            .values()
+            .find(|subscription| subscription.request_id() == request_id)
+            .cloned();
+        let Some(subscription) = subscription else {
+            console_log(&format!(
+                "PUBLISH_DONE not sent: no subscription {request_id} is served"
+            ));
+            return Ok(());
+        };
         session
             .publisher()
-            .publish_done(request_id, status_code, stream_count, error_reason)
+            .publish_done(&subscription, status_code, stream_count, error_reason)
             .await
             .map_err(anyhow_error)
     }
@@ -954,15 +973,16 @@ impl MOQTClient {
     #[wasm_bindgen(js_name = sendFetchCancel)]
     pub async fn send_fetch_cancel(&self, request_id: u64) -> Result<(), JsValue> {
         let session = self.session()?;
-        let wire_request_id = self
-            .shared
-            .fetch_requests
-            .borrow_mut()
-            .remove(&request_id)
-            .unwrap_or(request_id);
+        let fetch = self.shared.fetch_requests.borrow_mut().remove(&request_id);
+        let Some(fetch) = fetch else {
+            console_log(&format!(
+                "FETCH_CANCEL not sent: FETCH {request_id} has no FETCH_OK"
+            ));
+            return Ok(());
+        };
         session
             .subscriber()
-            .fetch_cancel(wire_request_id)
+            .fetch_cancel(&fetch)
             .await
             .map_err(anyhow_error)
     }
@@ -1370,7 +1390,7 @@ impl MOQTClient {
                 self.shared
                     .fetch_requests
                     .borrow_mut()
-                    .insert(request_id, fetch_handle.request_id);
+                    .insert(request_id, fetch_handle.clone());
                 let message = FetchOkMessage::from(&fetch_ok);
                 emit(
                     &self.shared.callbacks,

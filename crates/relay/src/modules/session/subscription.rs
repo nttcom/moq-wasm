@@ -3,12 +3,12 @@ use moqt::{
     subscribe::FilterType,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct UpstreamSubscription {
     inner: moqt::Subscription,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DownstreamSubscription {
     inner: moqt::Subscription,
 }

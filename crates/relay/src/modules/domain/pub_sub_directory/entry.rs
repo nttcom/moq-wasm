@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 
 use moqt::{object::ContentExists, publish::PublishDoneCode};
 
-use crate::modules::domain::{
-    session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
+use crate::modules::{
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+    session::subscription::UpstreamSubscription,
 };
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveUpstreamSubscription {
-    pub(crate) upstream_request_id: u64,
+    pub(crate) subscription: UpstreamSubscription,
     pub(crate) expires: Option<u64>,
     pub(crate) content_exists: ContentExists,
     pub(crate) origin: UpstreamSubscriptionOrigin,
@@ -97,10 +98,10 @@ pub(crate) struct DownstreamSubscription {
     pub(crate) start_location: Option<moqt::object::Location>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct ReleasedUpstreamSubscription {
     pub(crate) publisher_session_id: SessionId,
-    pub(crate) upstream_request_id: u64,
+    pub(crate) subscription: UpstreamSubscription,
 }
 
 /// `released_upstream_subscriptions` lists the SUBSCRIBE-initiated upstream

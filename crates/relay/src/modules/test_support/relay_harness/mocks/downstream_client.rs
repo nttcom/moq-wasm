@@ -130,14 +130,14 @@ impl Publisher for MockPublisher {
 
     async fn send_publish_done(
         &self,
-        request_id: u64,
+        subscription: &DownstreamSubscription,
         status_code: PublishDoneCode,
         stream_count: u64,
         _error_reason: String,
     ) -> anyhow::Result<()> {
         self.publish_done
             .send(SentPublishDone {
-                request_id,
+                request_id: subscription.request_id(),
                 status_code,
                 stream_count,
             })

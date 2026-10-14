@@ -55,7 +55,7 @@ impl Unsubscribe {
                 forwarder,
                 ingress_sender,
                 released.publisher_session_id,
-                released.upstream_request_id,
+                &released.subscription,
                 &removed.track_key,
             )
             .await;

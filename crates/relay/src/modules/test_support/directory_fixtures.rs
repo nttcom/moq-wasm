@@ -32,6 +32,7 @@ use crate::modules::{
         RecordedControlMessages, mock_session_answering_publish, session_repository_with_session,
         session_repository_with_upstream_session,
     },
+    test_support::relay_harness::fixtures::subscription::upstream_subscription,
 };
 
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
@@ -44,7 +45,7 @@ pub(crate) fn track_key() -> TrackKey {
 
 pub(crate) fn active_upstream(origin: UpstreamSubscriptionOrigin) -> ActiveUpstreamSubscription {
     ActiveUpstreamSubscription {
-        upstream_request_id: UPSTREAM_REQUEST_ID,
+        subscription: upstream_subscription(UPSTREAM_REQUEST_ID),
         expires: None,
         content_exists: ContentExists::False,
         origin,

@@ -340,9 +340,10 @@ impl Subscriber {
         level = "info",
         name = "moqt.subscriber.fetch_cancel",
         skip_all,
-        fields(request_id = %request_id)
+        fields(request_id = %fetch.request_id)
     )]
-    pub async fn fetch_cancel(&self, request_id: u64) -> anyhow::Result<()> {
+    pub async fn fetch_cancel(&self, fetch: &FetchHandle) -> anyhow::Result<()> {
+        let request_id = fetch.request_id;
         self.remove_pending_fetch(request_id).await;
         let fetch_cancel = FetchCancel::new(request_id);
         self.session
@@ -369,14 +370,18 @@ impl Subscriber {
         level = "info",
         name = "moqt.subscriber.fetch_relative_joining",
         skip_all,
-        fields(joining_request_id = %joining_request_id, joining_start = %joining_start)
+        fields(joining_request_id = %subscription.request_id(), joining_start = %joining_start)
     )]
+    /// Sends a Relative Joining FETCH for `subscription` (draft-14 §9.16.2):
+    /// the range starts at object 0 of the group `joining_start` groups
+    /// before the subscription's Largest Location.
     pub async fn fetch_relative_joining(
         &mut self,
-        joining_request_id: u64,
+        subscription: &Subscription,
         joining_start: u64,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
+        let joining_request_id = subscription.request_id();
         let request_id = self.session.get_request_id();
 
         let (fetch_stream_tx, fetch_stream_rx) =
@@ -453,13 +458,14 @@ impl Subscriber {
         level = "info",
         name = "moqt.subscriber.subscribe_update",
         skip_all,
-        fields(subscription_request_id = subscription_request_id, forward = option.forward)
+        fields(subscription_request_id = subscription.request_id(), forward = option.forward)
     )]
     pub async fn subscribe_update(
         &self,
-        subscription_request_id: u64,
+        subscription: &Subscription,
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
+        let subscription_request_id = subscription.request_id();
         let subscribe_update = SubscribeUpdate {
             request_id: self.session.get_request_id(),
             subscription_request_id,
@@ -497,7 +503,7 @@ impl Subscriber {
             _ => 0,
         };
         self.subscribe_update(
-            subscription.request_id(),
+            subscription,
             SubscribeUpdateOption {
                 start_location: subscription.filter_type().start_location(largest),
                 end_group,
@@ -512,13 +518,12 @@ impl Subscriber {
         level = "info",
         name = "moqt.subscriber.unsubscribe",
         skip_all,
-        fields(subscribe_id = %subscribe_id)
+        fields(request_id = %subscription.request_id())
     )]
-    pub async fn unsubscribe(&self, subscribe_id: u64) -> anyhow::Result<()> {
-        self.session.cancel_subscription(subscribe_id).await;
-        let unsubscribe = Unsubscribe {
-            request_id: subscribe_id,
-        };
+    pub async fn unsubscribe(&self, subscription: &Subscription) -> anyhow::Result<()> {
+        let request_id = subscription.request_id();
+        self.session.cancel_subscription(request_id).await;
+        let unsubscribe = Unsubscribe { request_id };
         self.session
             .send_stream
             .send(ControlMessageType::UnSubscribe, unsubscribe.encode())
@@ -640,6 +645,7 @@ mod tests {
         fetch::{Fetch, FetchObject, FetchObjectField, FetchOption},
         modules::test_support::{
             DISCONNECT_TIMEOUT, connect_sessions, spawn_connected_dual_sessions, spawn_dual_server,
+            subscription,
         },
         object::{ContentExists, ExtensionHeaders, Location},
         subscribe::{SubscribeOption, SubscribeUpdateOption},
@@ -790,7 +796,7 @@ mod tests {
         // Act
         client
             .subscriber()
-            .subscribe_update(6, option)
+            .subscribe_update(&subscription(6, 0), option)
             .await
             .unwrap();
 

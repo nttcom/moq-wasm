@@ -228,6 +228,7 @@ fn subscription_stats(
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
     use std::{sync::Arc, time::Duration};
 
     use bytes::Bytes;
@@ -323,7 +324,7 @@ mod tests {
                 track_key.clone(),
                 publisher_session_id,
                 ActiveUpstreamSubscription {
-                    upstream_request_id: 0,
+                    subscription: upstream_subscription(0),
                     expires: None,
                     content_exists: ContentExists::False,
                     origin: UpstreamSubscriptionOrigin::Publish,

@@ -30,7 +30,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
     ) -> anyhow::Result<DownstreamSubscription>;
     async fn send_publish_done(
         &self,
-        request_id: u64,
+        subscription: &DownstreamSubscription,
         status_code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
@@ -74,13 +74,18 @@ impl Publisher for moqt::Publisher {
 
     async fn send_publish_done(
         &self,
-        request_id: u64,
+        subscription: &DownstreamSubscription,
         status_code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        self.publish_done(request_id, status_code, stream_count, error_reason)
-            .await
+        self.publish_done(
+            subscription.as_moqt(),
+            status_code,
+            stream_count,
+            error_reason,
+        )
+        .await
     }
 
     fn new_stream_factory(

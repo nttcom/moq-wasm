@@ -29,12 +29,12 @@ impl MalformedTrackCleanup {
         let released = table.remove_upstream_track(track_key);
         // draft-14 §2.5: the cache latch makes the whole track malformed, so
         // every publisher's subscription is ended, not only the reporting one.
-        for (publisher_session_id, subscription) in released {
+        for (publisher_session_id, active) in released {
             super::release_upstream(
                 forwarder,
                 ingress_sender,
                 publisher_session_id,
-                subscription.upstream_request_id,
+                &active.subscription,
                 track_key,
             )
             .await;

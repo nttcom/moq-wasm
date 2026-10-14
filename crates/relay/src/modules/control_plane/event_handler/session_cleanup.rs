@@ -34,13 +34,13 @@ async fn cleanup_removed_session(
         for released in removed_downstream.released_upstream_subscriptions {
             if released.publisher_session_id != removed_session_id
                 && let Err(err) = forwarder
-                    .unsubscribe(released.publisher_session_id, released.upstream_request_id)
+                    .unsubscribe(released.publisher_session_id, &released.subscription)
                     .await
             {
                 tracing::debug!(
                     ?err,
                     upstream_session_id = released.publisher_session_id,
-                    request_id = released.upstream_request_id,
+                    request_id = released.subscription.request_id(),
                     "failed to forward upstream unsubscribe during session cleanup"
                 );
             }

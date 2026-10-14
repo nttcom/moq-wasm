@@ -65,7 +65,7 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
 /// MSF §5 requires beside the SUBSCRIBE. Falls back to the subscription's
 /// next group when the FETCH fails, e.g. before the first catalog was sent.
 pub async fn read_catalog(session: &Session, subscription: &Subscription) -> Result<Bytes> {
-    match fetch_joining_group(session, subscription.request_id()).await {
+    match fetch_joining_group(session, subscription).await {
         Ok(Some(latest)) => return Ok(latest),
         Ok(None) => {}
         Err(error) => tracing::warn!(%error, "joining FETCH of the catalog failed"),
@@ -104,11 +104,16 @@ pub async fn track_reader(session: &Session, subscription: &Subscription) -> Res
     Ok(TrackReader::new(factory))
 }
 
-/// The last object of the group the subscription `request_id` joined at.
-async fn fetch_joining_group(session: &Session, request_id: u64) -> Result<Option<Bytes>> {
+/// The payload of the last non-empty object in the group of the
+/// subscription's Largest Location, read by a Relative Joining FETCH with
+/// Joining Start 0.
+async fn fetch_joining_group(
+    session: &Session,
+    subscription: &Subscription,
+) -> Result<Option<Bytes>> {
     let mut subscriber = session.subscriber();
     let handle = subscriber
-        .fetch_relative_joining(request_id, 0, FetchOption::default())
+        .fetch_relative_joining(subscription, 0, FetchOption::default())
         .await?;
     let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
     let mut latest = None;

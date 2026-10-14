@@ -187,7 +187,7 @@ impl Publish {
     ) -> anyhow::Result<()> {
         let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
         let active_upstream = ActiveUpstreamSubscription {
-            upstream_request_id: subscription.request_id(),
+            subscription: subscription.clone(),
             expires: None,
             content_exists: subscription.content_exists(),
             origin: UpstreamSubscriptionOrigin::Publish,

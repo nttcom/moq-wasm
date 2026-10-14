@@ -488,6 +488,7 @@ mod tests {
             },
             test_support::{
                 notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+                subscription,
             },
         },
         object::GroupOrder,
@@ -566,7 +567,11 @@ mod tests {
             .unwrap();
 
         // Act
-        server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
+        server
+            .subscriber()
+            .unsubscribe(&subscription(REQUEST_ID, TRACK_ALIAS))
+            .await
+            .unwrap();
         let notification = notify_datagram(&context, TRACK_ALIAS).await;
 
         // Assert
@@ -585,7 +590,11 @@ mod tests {
         let mut receiver = register_and_take_data_receiver(&context, REQUEST_ID, TRACK_ALIAS).await;
 
         // Act
-        server.subscriber().unsubscribe(REQUEST_ID).await.unwrap();
+        server
+            .subscriber()
+            .unsubscribe(&subscription(REQUEST_ID, TRACK_ALIAS))
+            .await
+            .unwrap();
 
         // Assert
         assert!(receiver.recv().await.is_none());

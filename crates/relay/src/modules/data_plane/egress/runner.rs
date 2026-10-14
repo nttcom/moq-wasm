@@ -70,7 +70,7 @@ impl EgressRunner {
         } = self;
         let track_key = delivery.track_key.clone();
         let publisher = delivery.publisher.clone();
-        let request_id = delivery.downstream_subscription.request_id();
+        let downstream_subscription = delivery.downstream_subscription.clone();
         let delivery_stats = delivery.delivery_stats.clone();
 
         let reason = tokio::select! {
@@ -89,7 +89,7 @@ impl EgressRunner {
             Self::send_publish_done(
                 publisher.as_ref(),
                 &track_key,
-                request_id,
+                &downstream_subscription,
                 reason,
                 delivery_stats.streams_opened(),
             )
@@ -105,13 +105,13 @@ impl EgressRunner {
     async fn send_publish_done(
         publisher: &dyn Publisher,
         track_key: &TrackKey,
-        request_id: u64,
+        subscription: &DownstreamSubscription,
         reason: PublishDoneReason,
         stream_count: u64,
     ) {
         if let Err(error) = publisher
             .send_publish_done(
-                request_id,
+                subscription,
                 reason.status_code,
                 stream_count,
                 reason.error_reason,
@@ -121,7 +121,7 @@ impl EgressRunner {
             tracing::error!(
                 ?error,
                 %track_key,
-                request_id,
+                request_id = subscription.request_id(),
                 "failed to send PUBLISH_DONE"
             );
         }
