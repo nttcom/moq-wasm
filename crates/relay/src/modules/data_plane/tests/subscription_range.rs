@@ -19,7 +19,7 @@ fn end_group_update(end_group: u64) -> DeliveryControl {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn absolute_range_delivers_its_end_group_and_nothing_after_it() {
-    // Arrange
+    // Arrange: group 1 is downstream before group 2 opens; upstream streams are read concurrently, so group 2 could otherwise enter the cache first
     let harness = RelayHarness::new();
     let filter_type = FilterType::AbsoluteRange {
         location: location(1, 0),
@@ -27,18 +27,19 @@ async fn absolute_range_delivers_its_end_group_and_nothing_after_it() {
     };
     let mut egress = harness.start_egress_with_filter(filter_type, None).await;
 
-    // Act
     let last_group = harness.open_upstream_stream();
     last_group.header(1);
     last_group.object(0);
     last_group.fin();
+    let objects = receive_objects_until_close(&mut egress).await;
+
+    // Act
     let past_end = harness.open_upstream_stream();
     past_end.header(2);
     past_end.object(0);
     past_end.fin();
 
     // Assert
-    let objects = receive_objects_until_close(&mut egress).await;
     assert!(matches!(
         objects.first(),
         Some(DataObject::SubgroupHeader(header)) if header.group_id == 1
