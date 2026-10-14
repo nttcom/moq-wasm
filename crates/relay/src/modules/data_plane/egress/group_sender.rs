@@ -202,18 +202,24 @@ impl GroupSender {
         let mut next = NextObject::Object(first);
         while let NextObject::Object(object) = next {
             let object_id = object.object.location.object_id;
-            tracing::debug!(object_id, "egress sending subgroup object");
-            if sender
-                .send_object(DataObject::SubgroupObject(object.object.clone()))
-                .await
-                .is_err()
-            {
-                tracing::error!(object_id, "failed to send subgroup object");
-                return (object_count, "send_object_failed");
+            match object.load().await {
+                Ok(loaded) => {
+                    tracing::debug!(object_id, "egress sending subgroup object");
+                    if sender
+                        .send_object(DataObject::SubgroupObject(loaded))
+                        .await
+                        .is_err()
+                    {
+                        tracing::error!(object_id, "failed to send subgroup object");
+                        return (object_count, "send_object_failed");
+                    }
+                    task.delivery_stats
+                        .record_object_sent(object.payload_len(), object.received_at);
+                    object_count += 1;
+                }
+                // Its payload could not be read: skipped, as an expired object is.
+                Err(error) => tracing::debug!(object_id, ?error, "skipping unloadable object"),
             }
-            task.delivery_stats
-                .record_object_sent(object.object.payload.len(), object.received_at);
-            object_count += 1;
             next = match task
                 .cache
                 .next_subgroup_object_or_wait(
@@ -258,6 +264,14 @@ impl GroupSender {
             .await
         {
             let object_id = object.object.location.object_id;
+            cursor = object_id.saturating_add(1);
+            let loaded = match object.load().await {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    tracing::debug!(object_id, ?error, "skipping unloadable object");
+                    continue;
+                }
+            };
             tracing::debug!(
                 track_alias,
                 group_id = task.key.group_id(),
@@ -265,14 +279,13 @@ impl GroupSender {
                 "egress sending datagram object"
             );
             if sender
-                .send_object(DataObject::Datagram(object.object.clone()))
+                .send_object(DataObject::Datagram(loaded))
                 .await
                 .is_err()
             {
                 return;
             }
-            delivery_stats.record_object_sent(object.object.payload.len(), object.received_at);
-            cursor = object_id.saturating_add(1);
+            delivery_stats.record_object_sent(object.payload_len(), object.received_at);
         }
     }
 }

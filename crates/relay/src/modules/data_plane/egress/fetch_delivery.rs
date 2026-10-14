@@ -17,7 +17,21 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
     loop {
         match objects.next().await {
             Ok(Some(object)) => {
-                if let Err(e) = sender.send(object.object.clone()).await {
+                let object = match object.load().await {
+                    Ok(object) => object,
+                    Err(error) => {
+                        tracing::warn!(
+                            request_id = request.request_id,
+                            ?error,
+                            "cached object cannot be loaded; resetting fetch stream"
+                        );
+                        if let Err(e) = sender.reset(DataStreamResetCode::InternalError).await {
+                            tracing::error!(?e, "failed to reset fetch stream");
+                        }
+                        return;
+                    }
+                };
+                if let Err(e) = sender.send(object).await {
                     tracing::error!(?e, "failed to send fetch object");
                     return;
                 }
