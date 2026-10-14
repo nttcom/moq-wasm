@@ -31,6 +31,7 @@ Application and integration components (draft reference is normally not required
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `crates/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
+| `crates/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
 | `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `crates/auth-token` | Claims of the client JWT, shared by `relay` (reads them from the VTS) and `vts` (signs them) |
 | `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
@@ -91,7 +92,7 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
 - Commit messages must be written in English.
 - Follow Conventional Commits: `type(scope): description`
   - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`
-  - Scope: use the component name (`moqt`, `relay`, `wasm`, `broadcast`, `live-ingest`, `onvif`, `msf`, `mediapack`)
+  - Scope: use the component name (`moqt`, `relay`, `wasm`, `broadcast`, `live-ingest`, `live-egress`, `onvif`, `msf`, `mediapack`)
 - One commit per logical change. If the description requires "and", split into multiple commits.
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
