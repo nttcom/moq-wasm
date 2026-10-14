@@ -160,10 +160,20 @@ impl TransportConnection for BrowserConnection {
         TransportAddresses::default()
     }
 
-    /// The browser creator offers no subprotocol, so the session has none.
     fn negotiated_protocol(&self) -> NegotiatedProtocol {
-        NegotiatedProtocol::WebTransport { protocol: None }
+        NegotiatedProtocol::WebTransport {
+            protocol: selected_protocol(&self.transport),
+        }
     }
+}
+
+/// Reads `WebTransport.protocol`, which web-sys does not expose. `None` when
+/// the server selected no subprotocol (`""`) or the browser lacks the attribute.
+fn selected_protocol(transport: &WebTransport) -> Option<String> {
+    js_sys::Reflect::get(transport, &JsValue::from_str("protocol"))
+        .ok()?
+        .as_string()
+        .filter(|protocol| !protocol.is_empty())
 }
 
 /// The WebTransport spec replaced `datagrams.writable` with

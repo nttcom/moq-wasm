@@ -111,8 +111,9 @@ lists in WT-Available-Protocols. A WebTransport server answers with the first
 of its own subprotocols the client also offered (WT-Protocol), or with none.
 Every connection reports what its handshake settled on through
 `TransportConnection::negotiated_protocol()`.
-`BROWSER` offers no subprotocol: web-sys exposes neither
-`WebTransportOptions.protocols` nor `WebTransport.protocol`.
+`BROWSER` sets `WebTransportOptions.protocols` and reads `WebTransport.protocol`
+through `js_sys::Reflect`, since web-sys exposes neither; a browser without
+subprotocol support reports none.
 
 ## Version adapter (`modules/moqt/version`)
 
