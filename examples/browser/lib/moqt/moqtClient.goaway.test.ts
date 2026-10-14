@@ -12,6 +12,9 @@ class FakeRawClient {
   private connected = false
   private readonly callbacks = new Map<string, Callback>()
 
+  /** SUBSCRIBEs the relay rejects with TRACK_DOES_NOT_EXIST before accepting. */
+  rejectSubscribes = 0
+
   constructor(
     readonly url: string,
     private readonly nextAliases: bigint[]
@@ -81,6 +84,11 @@ class FakeRawClient {
 
   async sendSubscribe(requestId: bigint, trackNamespace: string[], trackName: string): Promise<void> {
     this.sent.push(`SUBSCRIBE ${requestId} ${trackNamespace.join('/')}/${trackName}`)
+    if (this.rejectSubscribes > 0) {
+      this.rejectSubscribes -= 1
+      this.emit('subscribeResponse', { requestId, errorCode: 4n, reasonPhrase: 'track does not exist yet' })
+      return
+    }
     const trackAlias = this.nextAliases.shift()
     if (trackAlias === undefined) {
       throw new Error('fake relay ran out of aliases')
@@ -174,10 +182,16 @@ async function settled(): Promise<void> {
   }
 }
 
-function fakeRelays(): { clients: FakeRawClient[]; wrapper: MoqtClientWrapper } {
+function fakeRelays(options: { relayBRejectsSubscribes?: number } = {}): {
+  clients: FakeRawClient[]
+  wrapper: MoqtClientWrapper
+} {
   const clients: FakeRawClient[] = []
   const wrapper = new MoqtClientWrapper(async (url) => {
     const client = new FakeRawClient(url, url.includes('relay-b') ? [40n, 41n] : [7n, 8n])
+    if (url.includes('relay-b')) {
+      client.rejectSubscribes = options.relayBRejectsSubscribes ?? 0
+    }
     clients.push(client)
     return client as unknown as MOQTClient
   })
@@ -390,6 +404,23 @@ test('a descending FETCH resumes on the new relay without repeating the objects 
   // Assert: the range was cut after group 3 and group 3's repeated object was dropped
   expect(relayB.sent).toContain(`FETCH ${requestId} room/them/video 1:0-4:0`)
   expect(delivered).toEqual(['4:0', '4:1', '3:0', '3:1', '2:0'])
+})
+
+test('a SUBSCRIBE the new relay rejects is repeated until the publisher has arrived there', async () => {
+  // Arrange: relay B knows the track only after the publisher moved as well
+  const { clients, wrapper } = fakeRelays({ relayBRejectsSubscribes: 1 })
+  await wrapper.connect('https://relay-a.example:4433')
+  const { requestId } = await wrapper.subscribe(['room', 'them'], 'video', '')
+
+  // Act
+  clients[0].receiveGoAway('https://relay-b.example:4433')
+  await new Promise<void>((resolve) => setTimeout(resolve, 700))
+  await settled()
+
+  // Assert
+  const subscribes = clients[1].sent.filter((line) => line === `SUBSCRIBE ${requestId} room/them/video`)
+  expect(subscribes).toHaveLength(2)
+  expect(clients[0].closed).toBe(true)
 })
 
 test('a PUBLISH_DONE from the relay that sent GOAWAY does not end the subscription carried over', async () => {
