@@ -267,18 +267,7 @@ impl Subscriber {
         let vec_namespace = track_namespace.split('/').map(|s| s.to_string()).collect();
         let request_id = self.session.get_request_id();
 
-        let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
-        self.session
-            .fetch_notification_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_tx);
-        self.session
-            .fetch_receiver_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_rx);
+        self.session.register_pending_fetch(request_id);
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -312,14 +301,14 @@ impl Subscriber {
             Err(error) => {
                 // Request-scoped failure (send error or timeout): drop the
                 // pending fetch state so nothing leaks. The session stays open.
-                self.session.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id);
                 return Err(error);
             }
         };
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.session.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id);
                 Err(RequestFailure::rejected(
                     RequestKind::Fetch,
                     request_id,
@@ -341,7 +330,7 @@ impl Subscriber {
     )]
     pub async fn fetch_cancel(&self, fetch: &FetchHandle) -> anyhow::Result<()> {
         let request_id = fetch.request_id;
-        self.session.remove_pending_fetch(request_id).await;
+        self.session.remove_pending_fetch(request_id);
         let fetch_cancel = FetchCancel::new(request_id);
         self.session
             .send_stream
@@ -368,18 +357,7 @@ impl Subscriber {
         let joining_request_id = subscription.request_id();
         let request_id = self.session.get_request_id();
 
-        let (fetch_stream_tx, fetch_stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
-        self.session
-            .fetch_notification_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_tx);
-        self.session
-            .fetch_receiver_map
-            .lock()
-            .await
-            .insert(request_id, fetch_stream_rx);
+        self.session.register_pending_fetch(request_id);
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
@@ -411,14 +389,14 @@ impl Subscriber {
             Err(error) => {
                 // Request-scoped failure (send error or timeout): drop the
                 // pending fetch state so nothing leaks. The session stays open.
-                self.session.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id);
                 return Err(error);
             }
         };
         match response {
             ResponseMessage::FetchOk(fetch_ok) => Ok(FetchHandle::new(fetch_ok)),
             ResponseMessage::FetchError(request_id, error_code, reason_phrase) => {
-                self.session.remove_pending_fetch(request_id).await;
+                self.session.remove_pending_fetch(request_id);
                 Err(RequestFailure::rejected(
                     RequestKind::Fetch,
                     request_id,
@@ -546,7 +524,7 @@ impl Subscriber {
             .session
             .fetch_receiver_map
             .lock()
-            .await
+            .expect("fetch_receiver_map poisoned")
             .remove(&request_id)
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -701,7 +679,7 @@ mod tests {
                 .session
                 .fetch_notification_map
                 .lock()
-                .await
+                .unwrap()
                 .contains_key(&fetch_handle.request_id)
         );
         assert!(
