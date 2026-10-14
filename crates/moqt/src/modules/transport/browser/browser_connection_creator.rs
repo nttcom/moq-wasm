@@ -1,7 +1,8 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
 use async_trait::async_trait;
+use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::WebTransport;
+use web_sys::{WebTransport, WebTransportOptions};
 
 use super::{browser_connection::BrowserConnection, js_value::js_error};
 use crate::modules::transport::{
@@ -10,7 +11,9 @@ use crate::modules::transport::{
     transport_connection_creator::TransportConnectionCreator,
 };
 
-pub struct BrowserConnectionCreator;
+pub struct BrowserConnectionCreator {
+    protocols: ApplicationProtocols,
+}
 
 #[async_trait(?Send)]
 impl TransportConnectionCreator for BrowserConnectionCreator {
@@ -23,13 +26,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
             verify_certificate,
             "the browser always verifies the server certificate"
         );
-        // web-sys exposes neither `WebTransportOptions.protocols` nor
-        // `WebTransport.protocol`.
-        anyhow::ensure!(
-            protocols.web_transport.is_empty(),
-            "the browser endpoint cannot offer WebTransport subprotocols"
-        );
-        Ok(Self)
+        Ok(Self { protocols })
     }
 
     fn client_with_custom_cert(
@@ -62,7 +59,9 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
                 target.url
             );
         }
-        let transport = WebTransport::new(target.url.as_str()).map_err(js_error)?;
+        let options = web_transport_options(self.protocols.web_transport)?;
+        let transport =
+            WebTransport::new_with_options(target.url.as_str(), &options).map_err(js_error)?;
         JsFuture::from(transport.ready()).await.map_err(js_error)?;
         Ok(Box::new(BrowserConnection::new(transport)?))
     }
@@ -76,4 +75,17 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
     fn local_port(&self) -> anyhow::Result<u16> {
         anyhow::bail!("a browser endpoint has no local socket")
     }
+}
+
+/// Sets `WebTransportOptions.protocols`, which web-sys does not expose; the
+/// browser sends it as WT-Available-Protocols.
+fn web_transport_options(protocols: &[&str]) -> anyhow::Result<WebTransportOptions> {
+    let options = WebTransportOptions::new();
+    let protocols: js_sys::Array = protocols
+        .iter()
+        .map(|protocol| JsValue::from_str(protocol))
+        .collect();
+    js_sys::Reflect::set(&options, &JsValue::from_str("protocols"), &protocols)
+        .map_err(js_error)?;
+    Ok(options)
 }
