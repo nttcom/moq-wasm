@@ -79,6 +79,13 @@ impl EgressRunnerHandle {
         let _ = stop_sender.send(end);
     }
 
+    /// Applies a SUBSCRIBE_UPDATE the way the directory registration does.
+    pub(crate) fn apply_subscribe_update(&self, update: DeliveryControl) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(update);
+        });
+    }
+
     pub(crate) fn set_forward(&self, forward: bool) {
         self.delivery_control_sender
             .send_modify(|control| control.forward = forward);

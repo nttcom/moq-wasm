@@ -154,7 +154,7 @@ impl Delivery {
             group_order,
             sender,
             largest_location,
-            delivery_control_receiver,
+            delivery_control_receiver.clone(),
         );
         let group_sender = GroupSender::new(
             track_key.clone(),
@@ -163,6 +163,7 @@ impl Delivery {
             downstream_subscription,
             receiver,
             delivery_stats,
+            delivery_control_receiver,
         );
 
         tokio::select! {

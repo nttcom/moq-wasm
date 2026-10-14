@@ -408,15 +408,23 @@ handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise never
 answer the PUBLISH before the request timeout.
 
 ### SUBSCRIBE_UPDATE sequence
-Only the Forward State is applied. Every downstream registration owns a
-`watch::Sender<DeliveryControl>` (`domain/delivery_control.rs`: the Forward
-State and the Start Location resolved from the filter and the subscribe-time
-Largest Location) next to its runner stop sender. A SUBSCRIBE starts it at
-Forward 1 whatever the SUBSCRIBE asked for (clients that leave Forward at 0
-expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward. SUBSCRIBE_UPDATE sets Forward for the (session, Subscription Request ID)
-registration; an update for no registered subscription is logged and dropped.
-Start Location, End Group and Subscriber Priority are not applied, and the
-upstream subscription keeps Forward 1 so the cache keeps filling for FETCH.
+Forward State, Start Location and End Group are applied; Subscriber Priority
+is not. Every downstream registration owns a `watch::Sender<DeliveryControl>`
+(`domain/delivery_control.rs`: the Forward State, the Start Location resolved
+from the filter and the subscribe-time Largest Location, and the End Group)
+next to its runner stop sender. The End Group is kept as the first group past
+the range, `None` when open-ended: an AbsoluteRange End Group is the last group
+included (§9.7) and is stored plus 1, while the SUBSCRIBE_UPDATE field already
+is the end group plus 1 with 0 meaning open-ended (§9.10). A SUBSCRIBE starts
+it at Forward 1 whatever the SUBSCRIBE asked for (clients that leave Forward at 0
+expect delivery); a forwarded PUBLISH starts it at its PUBLISH_OK's Forward.
+SUBSCRIBE_UPDATE applies to the (session, Subscription Request ID)
+registration: Forward is taken as sent, the range only narrows (the later
+Start Location, the smaller End Group). An update that widens the range is
+not closed with the PROTOCOL_VIOLATION §9.10 allows: its widening part is
+logged and ignored. An update for no registered subscription is logged and
+dropped. The upstream subscription keeps Forward 1 and its own range, so the
+cache keeps filling for FETCH.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Relative
@@ -726,15 +734,24 @@ and aborting the rest when it shuts down. `EgressRunner` splits into:
   after Forward returns to 1 delivery resumes with the next subgroup opened. The start is a
   lower bound in both paths: group ids may begin anywhere and skip values
   (§2.3.1), so the first delivered group is the first one at or above the
-  start, not the start group itself.
+  start, not the start group itself. Groups at or past the End Group are never
+  scheduled, and an open event reads the current `DeliveryControl`, so a
+  SUBSCRIBE_UPDATE's later Start Location or smaller End Group applies to every
+  subgroup opened after it.
 - `GroupSender` — one task per subgroup: waits for the first object to send,
   only then opens the downstream uni stream (a subgroup that closes empty
   opens nothing), regenerates the SUBGROUP_HEADER from that object's canonical
   properties (explicit subgroup id, priority; extensions always declared
   present so no object can lose its extension headers), and streams objects
   until `next_subgroup_object_or_wait` reports the subgroup finished (FIN
-  downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Datagram groups are
-  re-emitted with the downstream track alias.
+  downstream) or aborted (RESET_STREAM downstream, INTERNAL_ERROR). Each task
+  also watches the registration's `DeliveryControl`: when a SUBSCRIBE_UPDATE
+  moves the range past its group (End Group at or below it, Start Location
+  beyond it), the open stream is reset with CANCELLED (draft-14 §10.4.3) and a
+  task that has not opened its stream yet ends without one. Groups still in
+  the range are delivered to their end. Datagram groups are
+  re-emitted with the downstream track alias, and stop at the same range
+  change.
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscription's subscriber priority, the first object's publisher
   priority, the subscription's group order with a per-subscription

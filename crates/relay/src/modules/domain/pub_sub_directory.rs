@@ -13,7 +13,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     domain::{
-        delivery_control::DeliveryControl,
+        delivery_control::{DeliveryControl, UpdateOutcome},
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::entry::{
             ActiveUpstreamSubscription, DownstreamSubscription, MatchingPublication,
@@ -760,23 +760,27 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
-    /// Returns false when no such downstream subscription is registered.
-    pub(crate) fn update_downstream_forward(
+    /// Applies a SUBSCRIBE_UPDATE to the registration's delivery control (see
+    /// `DeliveryControl::apply_update`). Returns `None` when no such downstream
+    /// subscription is registered.
+    pub(crate) fn update_downstream_delivery(
         &self,
         downstream_session_id: SessionId,
         downstream_subscribe_id: u64,
-        forward: bool,
-    ) -> bool {
-        let Some(registered) = self
+        update: DeliveryControl,
+    ) -> Option<UpdateOutcome> {
+        let registered = self
             .downstream_subscriptions
-            .get(&(downstream_session_id, downstream_subscribe_id))
-        else {
-            return false;
-        };
+            .get(&(downstream_session_id, downstream_subscribe_id))?;
+        let mut outcome = UpdateOutcome::Applied;
         registered
             .delivery_control_sender
-            .send_modify(|control| control.forward = forward);
-        true
+            .send_if_modified(|control| {
+                let previous = *control;
+                outcome = control.apply_update(update);
+                *control != previous
+            });
+        Some(outcome)
     }
 
     /// The last downstream subscriber leaving releases the track's
@@ -1261,10 +1265,10 @@ mod tests {
             .unwrap();
 
         // Act
-        let updated = table.update_downstream_forward(2, 100, false);
+        let outcome = table.update_downstream_delivery(2, 100, delivery_control(false));
 
         // Assert
-        assert!(updated);
+        assert_eq!(outcome, Some(UpdateOutcome::Applied));
         assert!(!signals.delivery_control_receiver.borrow().forward);
     }
 
@@ -1322,10 +1326,10 @@ mod tests {
         );
 
         // Act
-        let updated = table.update_downstream_forward(2, 101, false);
+        let outcome = table.update_downstream_delivery(2, 101, delivery_control(false));
 
         // Assert
-        assert!(!updated);
+        assert_eq!(outcome, None);
     }
 
     #[test]
