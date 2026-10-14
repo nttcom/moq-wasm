@@ -130,7 +130,7 @@ pub(super) fn session_event_span(
             session_id = %session_id,
             event = "PublishDone",
             request_id = handler.request_id(),
-            status_code = handler.status_code(),
+            status_code = ?handler.status_code(),
             stream_count = handler.stream_count(),
             error_reason = %handler.error_reason(),
         ),

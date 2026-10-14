@@ -4,6 +4,8 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use tokio::sync::Mutex;
 
+use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+
 use crate::{
     Session, TrackWriter, TransportSendError,
     fetch::FetchHandler,
@@ -25,14 +27,6 @@ use fetch_serve_task::FetchServeTask;
 use object_cache::{CachedObject, FetchRange, ObjectCache};
 use object_numbering::ObjectNumbering;
 
-/// SUBSCRIBE_ERROR code, draft-ietf-moq-transport-14 §13.1.2; TRACK_STATUS_ERROR
-/// uses the same codes (§9.22).
-const SUBSCRIBE_TRACK_DOES_NOT_EXIST: u64 = 0x4;
-// FETCH_ERROR codes, draft-ietf-moq-transport-14 §13.1.5.
-const FETCH_NOT_SUPPORTED: u64 = 0x3;
-const FETCH_TRACK_DOES_NOT_EXIST: u64 = 0x4;
-const FETCH_INVALID_RANGE: u64 = 0x5;
-const FETCH_NO_OBJECTS: u64 = 0x6;
 const SUBSCRIBE_EXPIRES_MS: u64 = 1_000_000;
 const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
@@ -336,7 +330,7 @@ impl Origin {
         else {
             handler
                 .error(
-                    FETCH_NOT_SUPPORTED,
+                    RequestErrorCode::NotSupported,
                     "only standalone FETCH is served".to_string(),
                 )
                 .await?;
@@ -349,9 +343,11 @@ impl Origin {
             .get(&key)
             .map(|track| track.cache.resolve(*start_location, *end_location));
         let (code, reason) = match range {
-            None => (FETCH_TRACK_DOES_NOT_EXIST, "track not published"),
-            Some(FetchRange::InvalidRange) => (FETCH_INVALID_RANGE, "invalid range"),
-            Some(FetchRange::NoObjects) => (FETCH_NO_OBJECTS, "no cached objects in range"),
+            None => (RequestErrorCode::TrackDoesNotExist, "track not published"),
+            Some(FetchRange::InvalidRange) => (RequestErrorCode::InvalidRange, "invalid range"),
+            Some(FetchRange::NoObjects) => {
+                (RequestErrorCode::NoObjects, "no cached objects in range")
+            }
             Some(FetchRange::Serve {
                 objects,
                 end_location,
@@ -410,7 +406,7 @@ impl Origin {
             None => {
                 handler
                     .error(
-                        SUBSCRIBE_TRACK_DOES_NOT_EXIST,
+                        RequestErrorCode::TrackDoesNotExist,
                         format!("{} is not a track of this origin", key.1),
                     )
                     .await?
@@ -759,10 +755,7 @@ mod tests {
                 location: location(FIRST_GROUP_ID + 1, 0)
             }
         );
-        assert_eq!(
-            rejection(unknown).error_code,
-            SUBSCRIBE_TRACK_DOES_NOT_EXIST
-        );
+        assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
     }
 
     #[tokio::test]
@@ -839,9 +832,9 @@ mod tests {
             [(9, 0), (8, 0), (8, 1), (8, 2), (7, 0), (7, 1)]
         );
         assert_eq!(descending.end_location, location(9, 1));
-        assert_eq!(rejection(unknown).error_code, FETCH_TRACK_DOES_NOT_EXIST);
-        assert_eq!(rejection(empty).error_code, FETCH_NO_OBJECTS);
-        assert_eq!(rejection(invalid).error_code, FETCH_INVALID_RANGE);
+        assert_eq!(rejection(unknown).code, RequestErrorCode::TrackDoesNotExist);
+        assert_eq!(rejection(empty).code, RequestErrorCode::NoObjects);
+        assert_eq!(rejection(invalid).code, RequestErrorCode::InvalidRange);
     }
 
     #[tokio::test]
@@ -978,7 +971,7 @@ mod tests {
 
         // Assert
         assert!(origin.state.lock().await.fetches.is_empty());
-        assert_eq!(rejection(result).error_code, FETCH_NOT_SUPPORTED);
+        assert_eq!(rejection(result).code, RequestErrorCode::NotSupported);
     }
 
     #[test]

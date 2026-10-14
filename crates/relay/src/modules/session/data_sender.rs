@@ -4,6 +4,7 @@ pub(crate) mod stream_sender;
 pub(crate) mod stream_sender_factory;
 
 use crate::modules::session::data_object::DataObject;
+use moqt::object::DataStreamResetCode;
 
 #[async_trait::async_trait]
 pub(crate) trait DataSender: 'static + Send + Sync {
@@ -13,7 +14,7 @@ pub(crate) trait DataSender: 'static + Send + Sync {
         Ok(())
     }
 
-    async fn reset(&mut self, _error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, _error_code: DataStreamResetCode) -> anyhow::Result<()> {
         Ok(())
     }
 }

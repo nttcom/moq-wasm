@@ -6,26 +6,24 @@ use std::sync::{
 use crate::modules::{
     executor,
     moqt::{
-        control_plane::control_messages::{
-            control_message_type::ControlMessageType, messages::request_error::RequestError,
+        control_plane::{
+            control_messages::messages::request_error::RequestError,
+            error_codes::{RequestErrorCode, RequestKind},
         },
         domains::session_context::SessionContext,
     },
+    transport::transport_send_stream::TransportSendError,
 };
 
-/// NOT_SUPPORTED shares the code 0x3 across every *_ERROR message
-/// (draft-14 §13.1).
-const ERROR_NOT_SUPPORTED: u64 = 0x3;
-
-/// Auto-answers a request with `error_type` NOT_SUPPORTED when the last
-/// handler clone is dropped without responding. An application that ignores
-/// the session event would otherwise leave the requester waiting for its
-/// control timeout.
+/// Sends the `*_ERROR` reply of one request, and auto-answers NOT_SUPPORTED
+/// when the last handler clone is dropped without responding. An application
+/// that ignores the session event would otherwise leave the requester waiting
+/// for its control timeout.
 #[derive(Debug, Clone)]
 pub(crate) struct ResponseGuard {
     session_context: Arc<SessionContext>,
     request_id: u64,
-    error_type: ControlMessageType,
+    kind: RequestKind,
     responded: Arc<AtomicBool>,
 }
 
@@ -33,12 +31,12 @@ impl ResponseGuard {
     pub(crate) fn new(
         session_context: Arc<SessionContext>,
         request_id: u64,
-        error_type: ControlMessageType,
+        kind: RequestKind,
     ) -> Self {
         Self {
             session_context,
             request_id,
-            error_type,
+            kind,
             responded: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -46,6 +44,40 @@ impl ResponseGuard {
     pub(crate) fn mark_responded(&self) {
         self.responded.store(true, Ordering::Relaxed);
     }
+
+    pub(crate) async fn reject(
+        &self,
+        code: RequestErrorCode,
+        reason_phrase: String,
+    ) -> Result<(), TransportSendError> {
+        self.mark_responded();
+        send_request_error(
+            &self.session_context,
+            self.request_id,
+            self.kind,
+            code,
+            reason_phrase,
+        )
+        .await
+    }
+}
+
+async fn send_request_error(
+    session_context: &SessionContext,
+    request_id: u64,
+    kind: RequestKind,
+    code: RequestErrorCode,
+    reason_phrase: String,
+) -> Result<(), TransportSendError> {
+    let err = RequestError {
+        request_id,
+        error_code: code.wire_value(kind),
+        reason_phrase,
+    };
+    session_context
+        .send_stream
+        .send(kind.error_message_type(), err.encode())
+        .await
 }
 
 impl Drop for ResponseGuard {
@@ -57,22 +89,21 @@ impl Drop for ResponseGuard {
         }
         let session_context = self.session_context.clone();
         let request_id = self.request_id;
-        let error_type = self.error_type;
+        let kind = self.kind;
         executor::try_spawn("Unhandled Request Rejecter", async move {
-            let err = RequestError {
+            if let Err(error) = send_request_error(
+                &session_context,
                 request_id,
-                error_code: ERROR_NOT_SUPPORTED,
-                reason_phrase: "request not handled by application".to_string(),
-            };
-            if let Err(error) = session_context
-                .send_stream
-                .send(error_type, err.encode())
-                .await
+                kind,
+                RequestErrorCode::NotSupported,
+                "request not handled by application".to_string(),
+            )
+            .await
             {
                 tracing::warn!(
                     ?error,
                     request_id,
-                    ?error_type,
+                    ?kind,
                     "failed to auto-reject unhandled request"
                 );
             }

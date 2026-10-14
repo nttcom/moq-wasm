@@ -18,7 +18,7 @@ impl UpstreamPublishDone {
         fields(
             publisher_session_id = %publisher_session_id,
             request_id = upstream_request_id,
-            status_code = end.status_code,
+            status_code = ?end.status_code,
         )
     )]
     pub(crate) async fn handle(

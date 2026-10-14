@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestKind};
+
 use crate::{
     RequestFailure,
     modules::moqt::{
@@ -30,7 +32,6 @@ use crate::{
         },
     },
     object::DatagramSender,
-    wire::RequestError,
 };
 
 pub struct Publisher {
@@ -114,11 +115,12 @@ impl Publisher {
     pub async fn publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        status_code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {
-        let publish_done = PublishDone::new(request_id, status_code, stream_count, error_reason);
+        let publish_done =
+            PublishDone::new(request_id, status_code.into(), stream_count, error_reason);
         self.session
             .send_stream
             .send(ControlMessageType::PublishDone, publish_done.encode())
@@ -182,12 +184,12 @@ impl Publisher {
             }
             ResponseMessage::PublishError(request_id, error_code, reason_phrase) => {
                 tracing::info!("Publish error");
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::Publish,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",

@@ -1,3 +1,4 @@
+use moqt::object::DataStreamResetCode;
 use std::time::Duration;
 
 use crate::modules::session::data_object::DataObject;
@@ -233,7 +234,7 @@ async fn upstream_reset_is_relayed_as_a_downstream_reset() {
         "objects received before the reset are still forwarded"
     );
     assert!(
-        matches!(end, Sent::Reset(0)),
+        matches!(end, Sent::Reset(DataStreamResetCode::InternalError)),
         "a partial subgroup must be reset downstream with INTERNAL_ERROR, got {end:?}"
     );
 }
@@ -340,7 +341,10 @@ async fn upstream_reopen_after_a_reset_is_relayed_on_a_new_downstream_stream() {
     // Assert
     let reopened_objects = receive_objects_until_close(&mut egress).await;
     assert_eq!(resolve_downstream_object_ids(&reset_objects), vec![0, 1, 2]);
-    assert!(matches!(reset_end, Sent::Reset(0)), "got {reset_end:?}");
+    assert!(
+        matches!(reset_end, Sent::Reset(DataStreamResetCode::InternalError)),
+        "got {reset_end:?}"
+    );
     assert!(matches!(
         reopened_objects.first(),
         Some(DataObject::SubgroupHeader(_))
@@ -388,7 +392,13 @@ async fn upstream_reopen_racing_the_reset_relays_each_object_once_on_two_streams
         assert!(
             matches!(
                 (&first_end, &second_end),
-                (Sent::Reset(0), Sent::Closed) | (Sent::Closed, Sent::Reset(0))
+                (
+                    Sent::Reset(DataStreamResetCode::InternalError),
+                    Sent::Closed
+                ) | (
+                    Sent::Closed,
+                    Sent::Reset(DataStreamResetCode::InternalError)
+                )
             ),
             "the reset stream is reset and the reopened one finished, got {first_end:?} and {second_end:?}"
         );

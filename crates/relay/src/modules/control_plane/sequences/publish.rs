@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::sync::Arc;
 
 use crate::modules::{
@@ -16,7 +17,6 @@ use crate::modules::{
     },
     data_plane::ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     domain::{
-        error_code::PublishErrorCode,
         pub_sub_directory::{
             InMemoryLocalPubSubDirectory,
             entry::{ActiveUpstreamSubscription, UpstreamSubscriptionOrigin},
@@ -85,7 +85,7 @@ impl Publish {
             );
             if handler
                 .error(
-                    PublishErrorCode::InternalError as u64,
+                    RequestErrorCode::InternalError,
                     "Failed to start ingress for published track".to_string(),
                 )
                 .await

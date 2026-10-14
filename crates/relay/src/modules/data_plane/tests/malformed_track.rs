@@ -1,4 +1,4 @@
-use moqt::wire::publish_done_status_code;
+use moqt::publish::PublishDoneCode;
 
 use crate::modules::{
     session::session_event::EventKind,
@@ -19,10 +19,7 @@ async fn duplicate_object_with_different_payload_terminates_subscription() {
 
     // Assert
     let publish_done = egress.expect_publish_done().await;
-    assert_eq!(
-        publish_done.status_code,
-        publish_done_status_code::MALFORMED_TRACK
-    );
+    assert_eq!(publish_done.status_code, PublishDoneCode::MalformedTrack);
     assert_eq!(publish_done.request_id, 0);
 }
 
@@ -65,10 +62,7 @@ async fn subscription_started_after_detection_is_terminated_immediately() {
     let publish_done = egress.expect_publish_done().await;
 
     // Assert: the runner terminates right away, with Stream Count 0
-    assert_eq!(
-        publish_done.status_code,
-        publish_done_status_code::MALFORMED_TRACK
-    );
+    assert_eq!(publish_done.status_code, PublishDoneCode::MalformedTrack);
     assert_eq!(publish_done.stream_count, 0);
 }
 

@@ -5,11 +5,9 @@ use crate::{
         control_plane::{
             control_messages::{
                 control_message_type::ControlMessageType,
-                messages::{
-                    namespace_ok::NamespaceOk, request_error::RequestError,
-                    subscribe_namespace::SubscribeNamespace,
-                },
+                messages::{namespace_ok::NamespaceOk, subscribe_namespace::SubscribeNamespace},
             },
+            error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
@@ -34,7 +32,7 @@ impl SubscribeNamespaceHandler {
         let guard = ResponseGuard::new(
             session_context.clone(),
             subscribe_namespace.request_id,
-            ControlMessageType::SubscribeNamespaceError,
+            RequestKind::SubscribeNamespace,
         );
         Self {
             session_context,
@@ -62,20 +60,10 @@ impl SubscribeNamespaceHandler {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::SubscribeNamespaceError, err.encode())
-            .await?;
-        Ok(())
+        self.guard.reject(code, reason_phrase).await
     }
 }
 

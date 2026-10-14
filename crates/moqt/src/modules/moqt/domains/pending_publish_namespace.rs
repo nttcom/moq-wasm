@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use crate::modules::moqt::control_plane::error_codes::RequestKind;
+
 use crate::{
     RequestFailure,
     modules::moqt::{
         control_plane::enums::{RequestId, ResponseMessage},
         domains::session_context::{RegisteredSender, SessionContext},
     },
-    wire::RequestError,
 };
 
 #[must_use = "dropping this abandons the PUBLISH_NAMESPACE; a late PUBLISH_NAMESPACE_OK is then withdrawn with PUBLISH_NAMESPACE_DONE"]
@@ -24,12 +25,12 @@ impl PendingPublishNamespace {
                 Ok(())
             }
             ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase) => {
-                Err(RequestError {
+                Err(RequestFailure::rejected(
+                    RequestKind::PublishNamespace,
                     request_id,
                     error_code,
                     reason_phrase,
-                }
-                .into())
+                ))
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",

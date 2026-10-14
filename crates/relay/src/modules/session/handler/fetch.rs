@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use moqt::RequestErrorCode;
 
 #[async_trait]
 pub(crate) trait FetchHandler: 'static + Send + Sync {
@@ -10,7 +11,11 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
         end_of_track: bool,
         end_location: moqt::object::Location,
     ) -> Result<(), moqt::TransportSendError>;
-    async fn error(&self, code: u64, reason: String) -> Result<(), moqt::TransportSendError>;
+    async fn error(
+        &self,
+        code: RequestErrorCode,
+        reason: String,
+    ) -> Result<(), moqt::TransportSendError>;
 }
 
 #[async_trait]
@@ -35,7 +40,11 @@ impl FetchHandler for moqt::fetch::FetchHandler {
         self.ok(end_of_track, end_location).await
     }
 
-    async fn error(&self, code: u64, reason: String) -> Result<(), moqt::TransportSendError> {
+    async fn error(
+        &self,
+        code: RequestErrorCode,
+        reason: String,
+    ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason).await
     }
 }

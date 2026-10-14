@@ -1,3 +1,4 @@
+use moqt::RequestErrorCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
@@ -9,7 +10,6 @@ use moqt::wire::{
 use crate::{
     incoming_fetch::{FetchRange, FetchTarget, IncomingFetchRequest},
     messages::SubgroupState,
-    request_rejection::RequestRejection,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -214,9 +214,9 @@ impl ClientState {
     pub(crate) fn accept_incoming_track_status(
         &mut self,
         message: &TrackStatus,
-    ) -> Result<(), RequestRejection> {
+    ) -> Result<(), RequestErrorCode> {
         if !self.contains_published_namespace(&message.track_namespace) {
-            return Err(RequestRejection::TrackDoesNotExist);
+            return Err(RequestErrorCode::TrackDoesNotExist);
         }
         self.incoming_track_statuses.insert(
             message.request_id,
@@ -260,10 +260,10 @@ impl ClientState {
     pub(crate) fn accept_incoming_fetch(
         &mut self,
         fetch: &Fetch,
-    ) -> Result<IncomingFetchRequest, RequestRejection> {
+    ) -> Result<IncomingFetchRequest, RequestErrorCode> {
         let target = self.fetch_target(&fetch.fetch_params)?;
         if !self.contains_published_namespace(&target.track_key.namespace) {
-            return Err(RequestRejection::TrackDoesNotExist);
+            return Err(RequestErrorCode::TrackDoesNotExist);
         }
         let range = FetchRange::resolve(
             target.start,
@@ -282,7 +282,7 @@ impl ClientState {
         Ok(request)
     }
 
-    fn fetch_target(&self, fetch_params: &FetchParams) -> Result<FetchTarget, RequestRejection> {
+    fn fetch_target(&self, fetch_params: &FetchParams) -> Result<FetchTarget, RequestErrorCode> {
         match fetch_params {
             FetchParams::Standalone {
                 track_namespace,
@@ -313,15 +313,15 @@ impl ClientState {
         &self,
         joining_request_id: u64,
         start_group: impl FnOnce(Location) -> u64,
-    ) -> Result<FetchTarget, RequestRejection> {
+    ) -> Result<FetchTarget, RequestErrorCode> {
         let subscription = self
             .incoming_subscriptions
             .get(&joining_request_id)
             .filter(|subscription| subscription.track_alias.is_some())
-            .ok_or(RequestRejection::InvalidJoiningRequestId)?;
+            .ok_or(RequestErrorCode::InvalidJoiningRequestId)?;
         let largest = subscription
             .largest_location
-            .ok_or(RequestRejection::InvalidRange)?;
+            .ok_or(RequestErrorCode::InvalidRange)?;
         Ok(FetchTarget {
             track_key: subscription.track_key.clone(),
             start: Location {
@@ -569,7 +569,7 @@ mod tests {
         let accepted = state.accept_incoming_track_status(&subscribe(4, GroupOrder::Ascending));
 
         // Assert
-        assert_eq!(accepted, Err(RequestRejection::TrackDoesNotExist));
+        assert_eq!(accepted, Err(RequestErrorCode::TrackDoesNotExist));
     }
 
     #[test]
@@ -627,7 +627,7 @@ mod tests {
             state.accept_incoming_fetch(&standalone_fetch(6, location(0, 0), location(1, 0)));
 
         // Assert
-        assert_eq!(accepted.unwrap_err(), RequestRejection::TrackDoesNotExist);
+        assert_eq!(accepted.unwrap_err(), RequestErrorCode::TrackDoesNotExist);
     }
 
     #[test]
@@ -659,7 +659,7 @@ mod tests {
         // Assert
         assert_eq!(
             accepted.unwrap_err(),
-            RequestRejection::InvalidJoiningRequestId
+            RequestErrorCode::InvalidJoiningRequestId
         );
     }
 
@@ -675,7 +675,7 @@ mod tests {
         // Assert
         assert_eq!(
             accepted.unwrap_err(),
-            RequestRejection::InvalidJoiningRequestId
+            RequestErrorCode::InvalidJoiningRequestId
         );
     }
 
@@ -688,6 +688,6 @@ mod tests {
         let accepted = state.accept_incoming_fetch(&relative_joining_fetch(6, 2, 1));
 
         // Assert
-        assert_eq!(accepted.unwrap_err(), RequestRejection::InvalidRange);
+        assert_eq!(accepted.unwrap_err(), RequestErrorCode::InvalidRange);
     }
 }

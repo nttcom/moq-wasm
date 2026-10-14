@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use moqt::RequestErrorCode;
 use moqt::{
     object::{ContentExists, GroupOrder},
     subscribe::FilterType,
@@ -25,8 +26,11 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), moqt::TransportSendError>;
-    async fn error(&self, code: u64, reason_phrase: String)
-    -> Result<(), moqt::TransportSendError>;
+    async fn error(
+        &self,
+        code: RequestErrorCode,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError>;
     fn to_downstream_subscription(&self, track_alias: u64) -> DownstreamSubscription;
 }
 
@@ -83,7 +87,7 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
 
     async fn error(
         &self,
-        code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason_phrase).await

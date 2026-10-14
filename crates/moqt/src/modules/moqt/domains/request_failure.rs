@@ -1,15 +1,18 @@
 use thiserror::Error;
 
-use crate::{modules::transport::transport_send_stream::TransportSendError, wire::RequestError};
+use crate::modules::{
+    moqt::control_plane::error_codes::{RequestErrorCode, RequestKind},
+    transport::transport_send_stream::TransportSendError,
+};
 
 /// The session stays open after `Rejected` and `Timeout` (draft-14 §12.2).
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RequestFailure {
-    #[error("peer rejected request {request_id} with code {code:#x}: {reason}")]
+    #[error("peer rejected request {request_id} with {code:?}: {reason}")]
     Rejected {
         request_id: u64,
-        code: u64,
+        code: RequestErrorCode,
         reason: String,
     },
     #[error("no response within the request timeout")]
@@ -22,12 +25,12 @@ pub enum RequestFailure {
     ProtocolViolation(&'static str),
 }
 
-impl From<RequestError> for RequestFailure {
-    fn from(error: RequestError) -> Self {
+impl RequestFailure {
+    pub(crate) fn rejected(kind: RequestKind, request_id: u64, code: u64, reason: String) -> Self {
         Self::Rejected {
-            request_id: error.request_id,
-            code: error.error_code,
-            reason: error.reason_phrase,
+            request_id,
+            code: RequestErrorCode::from_wire(code, kind),
+            reason,
         }
     }
 }

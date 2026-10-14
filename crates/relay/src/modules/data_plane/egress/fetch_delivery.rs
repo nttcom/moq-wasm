@@ -3,9 +3,9 @@ use crate::modules::{
         cache::track_cache::{FetchCursor, FetchInterrupted},
         egress::coordinator::EgressFetchRequest,
     },
-    domain::error_code::FetchErrorCode,
     session::data_sender::fetch_sender::FetchSender,
 };
+use moqt::object::DataStreamResetCode;
 
 pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn FetchSender) {
     let mut objects = FetchCursor::new(
@@ -25,8 +25,8 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
             Ok(None) => break,
             Err(interrupted) => {
                 let error_code = match interrupted {
-                    FetchInterrupted::Malformed => FetchErrorCode::MalformedTrack as u64,
-                    FetchInterrupted::Incomplete => FetchErrorCode::InternalError as u64,
+                    FetchInterrupted::Malformed => DataStreamResetCode::MalformedTrack,
+                    FetchInterrupted::Incomplete => DataStreamResetCode::InternalError,
                 };
                 tracing::warn!(
                     request_id = request.request_id,
@@ -41,7 +41,7 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
         }
     }
     if request.cache.is_malformed() {
-        if let Err(e) = sender.reset(FetchErrorCode::MalformedTrack as u64).await {
+        if let Err(e) = sender.reset(DataStreamResetCode::MalformedTrack).await {
             tracing::error!(?e, "failed to reset fetch stream");
         }
         return;

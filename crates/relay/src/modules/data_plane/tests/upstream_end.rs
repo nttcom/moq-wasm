@@ -1,4 +1,4 @@
-use moqt::wire::publish_done_status_code;
+use moqt::publish::PublishDoneCode;
 
 use crate::modules::{
     domain::pub_sub_directory::entry::PublishDoneReason, test_support::relay_harness::RelayHarness,
@@ -20,10 +20,7 @@ async fn upstream_end_is_relayed_as_publish_done_counting_the_opened_streams() {
 
     // Assert
     let publish_done = egress.expect_publish_done().await;
-    assert_eq!(
-        publish_done.status_code,
-        publish_done_status_code::TRACK_ENDED
-    );
+    assert_eq!(publish_done.status_code, PublishDoneCode::TrackEnded);
     assert_eq!(publish_done.request_id, 0);
     assert_eq!(publish_done.stream_count, 1);
 }

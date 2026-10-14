@@ -1,12 +1,16 @@
 use async_trait::async_trait;
+use moqt::RequestErrorCode;
 
 #[async_trait]
 pub(crate) trait SubscribeNamespaceHandler: 'static + Send + Sync {
     fn track_namespace_prefix(&self) -> &str;
     fn track_namespace_prefix_tuple(&self) -> &[String];
     async fn ok(&self) -> Result<(), moqt::TransportSendError>;
-    async fn error(&self, code: u64, reason_phrase: String)
-    -> Result<(), moqt::TransportSendError>;
+    async fn error(
+        &self,
+        code: RequestErrorCode,
+        reason_phrase: String,
+    ) -> Result<(), moqt::TransportSendError>;
 }
 
 #[async_trait]
@@ -25,7 +29,7 @@ impl SubscribeNamespaceHandler for moqt::namespace::SubscribeNamespaceHandler {
 
     async fn error(
         &self,
-        code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.error(code, reason_phrase).await

@@ -1,3 +1,4 @@
+use moqt::object::DataStreamResetCode;
 use std::sync::Arc;
 
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -9,7 +10,7 @@ use crate::modules::{
         },
         egress::coordinator::{EgressCommand, EgressFetchRequest},
     },
-    domain::{error_code::FetchErrorCode, session_id::SessionId, track_key::TrackKey},
+    domain::{session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
@@ -58,9 +59,9 @@ impl FetchIngest {
                         upstream_request_id,
                     )
                     .await;
-                    FetchErrorCode::MalformedTrack as u64
+                    DataStreamResetCode::MalformedTrack
                 } else {
-                    FetchErrorCode::InternalError as u64
+                    DataStreamResetCode::InternalError
                 };
                 Self::reset_downstream_fetch(
                     session_repo,
@@ -184,7 +185,7 @@ impl FetchIngest {
         session_repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         downstream_subscriber_session_id: SessionId,
         request_id: u64,
-        error_code: u64,
+        error_code: DataStreamResetCode,
     ) {
         let publisher = {
             let session_repo = session_repo.lock().await;

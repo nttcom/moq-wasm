@@ -1,4 +1,5 @@
 use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
+use moqt::object::DataStreamResetCode;
 
 enum SenderInner {
     Uninitialized(moqt::object::SubgroupHeaderSender),
@@ -55,7 +56,7 @@ impl DataSender for StreamSender {
         }
     }
 
-    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, error_code: DataStreamResetCode) -> anyhow::Result<()> {
         match self.inner.as_mut() {
             Some(SenderInner::Uninitialized(sender)) => sender.reset(error_code).await,
             Some(SenderInner::HeaderSent(sender)) => sender.reset(error_code).await,

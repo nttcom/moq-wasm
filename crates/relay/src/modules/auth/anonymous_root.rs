@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use moqt::RequestErrorCode;
 
 use crate::modules::{
     auth::verified_token::{ANONYMOUS_APP_ID, VerifiedToken},
@@ -65,7 +66,7 @@ impl SubscribeNamespaceHandler for AnonymousRootSubscribeNamespace {
 
     async fn error(
         &self,
-        code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), moqt::TransportSendError> {
         self.inner.error(code, reason_phrase).await
@@ -75,6 +76,7 @@ impl SubscribeNamespaceHandler for AnonymousRootSubscribeNamespace {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
+    use moqt::RequestErrorCode;
 
     use super::{scope_anonymous_root_prefix, scope_anonymous_root_subscription};
     use crate::modules::{
@@ -117,7 +119,7 @@ mod tests {
 
         async fn error(
             &self,
-            _code: u64,
+            _code: RequestErrorCode,
             _reason_phrase: String,
         ) -> Result<(), moqt::TransportSendError> {
             Ok(())

@@ -1,3 +1,4 @@
+use moqt::object::DataStreamResetCode;
 use std::sync::Arc;
 
 use tokio::{
@@ -23,9 +24,6 @@ use crate::modules::{
 use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};
 
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
-
-/// draft-14 §10.4.3 RESET_STREAM error code INTERNAL_ERROR.
-const DATA_STREAM_INTERNAL_ERROR: u64 = 0x0;
 
 pub(crate) struct GroupSender {
     track_key: TrackKey,
@@ -246,7 +244,7 @@ impl GroupSender {
             // draft-14 §10.4.3: a subgroup that ended upstream without a FIN
             // may be missing objects, so the downstream stream is reset.
             task.delivery_stats.record_stream_reset();
-            if let Err(error) = sender.reset(DATA_STREAM_INTERNAL_ERROR).await {
+            if let Err(error) = sender.reset(DataStreamResetCode::InternalError).await {
                 tracing::warn!(?error, "failed to reset egress stream sender");
             }
             (object_count, "upstream_aborted")

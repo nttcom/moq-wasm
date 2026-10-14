@@ -9,11 +9,11 @@ use crate::{
                     parameters::{
                         authorization_token::AuthorizationToken, content_exists::ContentExists,
                     },
-                    request_error::RequestError,
                     subscribe::Subscribe,
                     subscribe_ok::SubscribeOk,
                 },
             },
+            error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
@@ -43,7 +43,7 @@ impl TrackStatusHandler {
         let guard = ResponseGuard::new(
             session_context.clone(),
             track_status.request_id,
-            ControlMessageType::TrackStatusError,
+            RequestKind::TrackStatus,
         );
         Self {
             session_context,
@@ -84,19 +84,10 @@ impl TrackStatusHandler {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
-        let err = RequestError {
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::TrackStatusError, err.encode())
-            .await
+        self.guard.reject(code, reason_phrase).await
     }
 
     pub fn authorization_tokens(&self) -> &[AuthorizationToken] {
@@ -138,6 +129,7 @@ impl TrackStatusHandler {
 
 #[cfg(test)]
 mod tests {
+    use crate::RequestErrorCode;
     use crate::{
         RequestFailure, Session, SessionEvent,
         modules::{
@@ -247,14 +239,14 @@ mod tests {
         // Act
         exchange
             .handler
-            .error(0x1, "unauthorized".to_string())
+            .error(RequestErrorCode::Unauthorized, "unauthorized".to_string())
             .await
             .unwrap();
 
         // Assert
         let error = rejection(exchange.request.await.unwrap());
-        assert_eq!(error.error_code, 0x1);
-        assert_eq!(error.reason_phrase, "unauthorized");
+        assert_eq!(error.code, RequestErrorCode::Unauthorized);
+        assert_eq!(error.reason, "unauthorized");
     }
 
     #[tokio::test]
@@ -267,6 +259,6 @@ mod tests {
 
         // Assert
         let error = rejection(exchange.request.await.unwrap());
-        assert_eq!(error.error_code, 0x3);
+        assert_eq!(error.code, RequestErrorCode::NotSupported);
     }
 }

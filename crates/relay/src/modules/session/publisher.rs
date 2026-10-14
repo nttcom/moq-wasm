@@ -1,3 +1,4 @@
+use moqt::publish::PublishDoneCode;
 use std::{future::Future, pin::Pin};
 
 use async_trait::async_trait;
@@ -30,7 +31,7 @@ pub(crate) trait Publisher: 'static + Send + Sync {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        status_code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()>;
@@ -74,7 +75,7 @@ impl Publisher for moqt::Publisher {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        status_code: PublishDoneCode,
         stream_count: u64,
         error_reason: String,
     ) -> anyhow::Result<()> {

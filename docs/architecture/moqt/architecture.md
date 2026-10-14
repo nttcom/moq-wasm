@@ -253,6 +253,20 @@ One struct owns all cross-task state:
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
   §13.1.1).
+- `error_codes.rs` — typed codes the public API uses instead of integers:
+  - `RequestErrorCode` (handler `error()`, `RequestFailure::Rejected`) is one
+    semantic enum; draft-14 numbers codes per `*_ERROR` message, so the wire
+    value is looked up per `RequestKind`.
+  - `PublishDoneCode` (`Publisher::publish_done`,
+    `PublishDoneHandler::status_code`) and `DataStreamResetCode` (the data
+    stream senders' `reset()`).
+  - A code the message does not define is sent as INTERNAL_ERROR; an unknown
+    received value (request error or PUBLISH_DONE status) reads as
+    INTERNAL_ERROR.
+  - Integers remain only in the `moqt::wire` structs; `RequestKind` is
+    exported there for bindings that convert numbers themselves.
+  - `ResponseGuard` is the one place that encodes and sends a `*_ERROR`, for
+    both the handlers' `error()` and the drop-time NOT_SUPPORTED reply.
 
 `ControlMessageReceiveTask` splits every decoded message into one of three
 paths:

@@ -8,9 +8,10 @@ use crate::{
                 control_message_type::ControlMessageType,
                 messages::{
                     parameters::content_exists::ContentExists, publish::Publish,
-                    publish_ok::PublishOk, request_error::RequestError,
+                    publish_ok::PublishOk,
                 },
             },
+            error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
         },
         domains::session_context::SessionContext,
@@ -41,7 +42,7 @@ impl PublishHandler {
         let guard = ResponseGuard::new(
             session_context.clone(),
             publish_message.request_id,
-            ControlMessageType::PublishError,
+            RequestKind::Publish,
         );
         Self {
             session_context,
@@ -120,24 +121,13 @@ impl PublishHandler {
 
     pub async fn error(
         &self,
-        error_code: u64,
+        code: RequestErrorCode,
         reason_phrase: String,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         self.session_context
             .cancel_unclaimed_track_alias(self.track_alias)
             .await;
-        let err = RequestError {
-            // TODO: assign correct request id.
-            request_id: self.request_id,
-            error_code,
-            reason_phrase,
-        };
-        self.session_context
-            .send_stream
-            .send(ControlMessageType::PublishError, err.encode())
-            .await?;
-        Ok(())
+        self.guard.reject(code, reason_phrase).await
     }
 }
 
@@ -145,6 +135,7 @@ impl PublishHandler {
 mod tests {
     use tokio::sync::mpsc::error::TryRecvError;
 
+    use crate::RequestErrorCode;
     use crate::publish::PublishOption;
     use crate::{
         SessionEvent,
@@ -206,7 +197,7 @@ mod tests {
 
         // Act
         handler
-            .error(0x0, "uninterested".to_string())
+            .error(RequestErrorCode::InternalError, "uninterested".to_string())
             .await
             .unwrap();
         let notification = notify_datagram(&context, handler.track_alias).await;

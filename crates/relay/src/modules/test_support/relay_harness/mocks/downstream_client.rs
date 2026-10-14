@@ -1,3 +1,5 @@
+use moqt::object::DataStreamResetCode;
+use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
 
 use crate::modules::session::{
@@ -16,7 +18,7 @@ use crate::modules::session::{
 pub(crate) enum Sent {
     Object(DataObject),
     Closed,
-    Reset(u64),
+    Reset(DataStreamResetCode),
 }
 
 struct MockDataSender {
@@ -37,7 +39,7 @@ impl DataSender for MockDataSender {
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 
-    async fn reset(&mut self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&mut self, error_code: DataStreamResetCode) -> anyhow::Result<()> {
         self.sent
             .send(Sent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
@@ -67,7 +69,7 @@ impl StreamSenderFactory for MockStreamSenderFactory {
 #[derive(Debug)]
 pub(crate) struct SentPublishDone {
     pub(crate) request_id: u64,
-    pub(crate) status_code: u64,
+    pub(crate) status_code: PublishDoneCode,
     pub(crate) stream_count: u64,
 }
 
@@ -129,7 +131,7 @@ impl Publisher for MockPublisher {
     async fn send_publish_done(
         &self,
         request_id: u64,
-        status_code: u64,
+        status_code: PublishDoneCode,
         stream_count: u64,
         _error_reason: String,
     ) -> anyhow::Result<()> {
@@ -168,7 +170,7 @@ impl Publisher for MockPublisher {
 pub(crate) enum FetchSent {
     Object(moqt::fetch::FetchObjectField),
     Closed,
-    Reset(u64),
+    Reset(DataStreamResetCode),
 }
 
 pub(crate) struct MockFetchSender {
@@ -196,7 +198,7 @@ impl FetchSender for MockFetchSender {
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 
-    async fn reset(&self, error_code: u64) -> anyhow::Result<()> {
+    async fn reset(&self, error_code: DataStreamResetCode) -> anyhow::Result<()> {
         self.sent
             .send(FetchSent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
