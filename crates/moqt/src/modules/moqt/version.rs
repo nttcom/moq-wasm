@@ -9,6 +9,10 @@
 //! abstraction waits for its second concrete use.
 
 pub(crate) mod draft14;
+// Built up ahead of `Version::Draft18`; nothing outside its tests uses it
+// until `APPLICATION_PROTOCOLS` offers `moqt-18`.
+#[allow(dead_code)]
+pub(crate) mod draft18;
 
 use std::sync::Weak;
 
