@@ -1,3 +1,5 @@
+import { louderAudioLevel, measureAudioLevel } from '../audioLevel'
+import type { AudioLevel } from '../loc'
 import { createBitrateLogger } from '../bitrate'
 import { CaptureTimestamps } from './captureTimestamps'
 
@@ -9,6 +11,9 @@ let encoderConfig: AudioEncoderConfig = {
   bitrate: 64_000
 }
 const captureTimestamps = new CaptureTimestamps()
+/// An output frame spans several inputs, whose timestamps it does not keep, so
+/// it carries the loudest level measured since the previous output.
+let pendingAudioLevel: AudioLevel | undefined
 
 const audioBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', media: 'audio', kbps })
@@ -18,7 +23,9 @@ function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioC
   audioBitrateLogger.addBytes(chunk.byteLength)
 
   const { init, captureTimestampMicros } = captureTimestamps.restamp(chunk)
-  self.postMessage({ type: 'chunk', chunk: new EncodedAudioChunk(init), metadata, captureTimestampMicros })
+  const audioLevel = pendingAudioLevel
+  pendingAudioLevel = undefined
+  self.postMessage({ type: 'chunk', chunk: new EncodedAudioChunk(init), metadata, captureTimestampMicros, audioLevel })
 }
 
 async function initializeAudioEncoder() {
@@ -59,6 +66,7 @@ async function startAudioEncode(audioReadableStream: ReadableStream<AudioData>) 
     if (audioResult.done) break
     const audio = audioResult.value
     captureTimestamps.recordCapture(audio.timestamp)
+    pendingAudioLevel = louderAudioLevel(pendingAudioLevel, measureAudioLevel(audio))
     audioEncoder.encode(audio)
     audio.close()
   }
