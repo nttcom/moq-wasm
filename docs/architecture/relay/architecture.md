@@ -66,8 +66,8 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 ## Shutdown
 
 Session migration, draft-14 §3.5 (`relay_server/drain.rs`). On the first
-Ctrl+C `main.rs` stops the client transport's accept loop
-(`SessionHandler::stop_accepting`, after which the endpoint refuses every
+SIGINT (Ctrl+C) or SIGTERM (`docker stop`, Kubernetes) `main.rs` stops the
+client transport's accept loop (`SessionHandler::stop_accepting`, after which the endpoint refuses every
 connection attempt at the transport level so a client is turned away at once;
 the inner endpoint keeps accepting) and calls
 `RelayServer::drain(RELAY_DRAIN_TIMEOUT_SECS)`, which
@@ -91,7 +91,7 @@ the inner endpoint keeps accepting) and calls
 
 `main.rs` then waits up to 3 s for the client endpoint to go idle
 (`SessionHandler::wait_idle`), so the CONNECTION_CLOSE of a session closed at
-the timeout leaves the socket before the process exits. A second Ctrl+C
+the timeout leaves the socket before the process exits. A second signal
 during the drain exits at once. Relay-peer sessions receive a GOAWAY with an
 empty URI and are not waited for: the remote relay answers it by subscribing
 the other publishers of the tracks this relay feeds it (see "GOAWAY
