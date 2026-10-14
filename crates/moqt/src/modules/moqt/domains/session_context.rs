@@ -19,11 +19,13 @@ use crate::{
                 control_messages::{
                     control_message_type::ControlMessageType,
                     messages::{
+                        fetch_cancel::FetchCancel, publish_done::PublishDone,
                         publish_namespace_done::PublishNamespaceDone, unsubscribe::Unsubscribe,
                         unsubscribe_namespace::UnsubscribeNamespace,
                     },
                 },
                 enums::{RequestId, ResponseMessage},
+                error_codes::PublishDoneCode,
             },
             data_plane::stream::{
                 bi_stream_sender::BiStreamSender, fetch_data_receiver::FetchDataReceiver,
@@ -41,11 +43,7 @@ const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// a withdrawal and are always discarded.
 #[derive(Debug)]
 pub(crate) enum LateResponseAction {
-    /// Discard the late response without a withdrawal message.
-    ///
-    /// FIXME: PUBLISH and FETCH should withdraw with PUBLISH_DONE /
-    /// FETCH_CANCEL, but decoding those messages is still `todo!()`, so
-    /// sending them would crash a peer running this crate.
+    /// For TRACK_STATUS, which leaves no state at the peer.
     Discard,
     /// A late SUBSCRIBE_OK established a subscription nobody consumes.
     Unsubscribe,
@@ -53,6 +51,10 @@ pub(crate) enum LateResponseAction {
     UnsubscribeNamespace { namespace: Vec<String> },
     /// A late PUBLISH_NAMESPACE_OK accepted an announcement we gave up on.
     PublishNamespaceDone { namespace: Vec<String> },
+    /// A late PUBLISH_OK accepted a publication nobody publishes on.
+    PublishDone,
+    /// A late FETCH_OK started a fetch nobody reads.
+    FetchCancel,
 }
 
 /// A request awaiting its response on this session. Kept in
@@ -402,11 +404,44 @@ impl SessionContext {
                 }
                 _ => self.close_on_mismatched_late_response(request_id, &response),
             },
-            // Late error responses, and late FETCH_OK / PUBLISH_OK /
-            // TRACK_STATUS_OK for requests registered with `Discard`. A
-            // success response of those kinds for a request of another kind is
-            // not detected here: `Discard` does not record which request kind
-            // it was registered for.
+            ResponseMessage::PublishOk(_) => match &action {
+                LateResponseAction::PublishDone => {
+                    tracing::warn!(
+                        request_id,
+                        "PUBLISH_OK arrived after the request was abandoned; sending PUBLISH_DONE"
+                    );
+                    // Stream Count 0 (§9.12): `publish()` returns no
+                    // Subscription before PUBLISH_OK, so no stream was opened.
+                    let publish_done = PublishDone::new(
+                        request_id,
+                        PublishDoneCode::InternalError.into(),
+                        0,
+                        "publish request abandoned".to_string(),
+                    );
+                    self.send_stream
+                        .send(ControlMessageType::PublishDone, publish_done.encode())
+                        .await
+                }
+                _ => self.close_on_mismatched_late_response(request_id, &response),
+            },
+            ResponseMessage::FetchOk(_) => match &action {
+                LateResponseAction::FetchCancel => {
+                    tracing::warn!(
+                        request_id,
+                        "FETCH_OK arrived after the request was abandoned; sending FETCH_CANCEL"
+                    );
+                    self.remove_pending_fetch(request_id).await;
+                    self.send_stream
+                        .send(
+                            ControlMessageType::FetchCancel,
+                            FetchCancel::new(request_id).encode(),
+                        )
+                        .await
+                }
+                _ => self.close_on_mismatched_late_response(request_id, &response),
+            },
+            // A TRACK_STATUS_OK for a request of another kind is discarded
+            // here instead of closing the session as a mismatch.
             _ => Self::discard_late_response(request_id, &response),
         };
         if let Err(error) = send_result {
@@ -481,14 +516,19 @@ mod tests {
 
     use super::{IncomingObjectNotification, LateResponseAction};
     use crate::{
+        SessionEvent,
         modules::{
             moqt::{
                 control_plane::{
                     control_messages::messages::{
-                        parameters::content_exists::ContentExists, subscribe_ok::SubscribeOk,
+                        fetch_ok::FetchOk,
+                        parameters::{content_exists::ContentExists, filter_type::FilterType},
+                        publish_ok::PublishOk,
+                        subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
                 },
+                data_plane::stream::fetch_data_receiver::FetchDataReceiver,
                 runtime::dispatch::incoming_object::IncomingObject,
             },
             test_support::{
@@ -496,7 +536,8 @@ mod tests {
                 subscription,
             },
         },
-        object::GroupOrder,
+        object::{GroupOrder, Location},
+        publish::PublishDoneCode,
     };
 
     const REQUEST_ID: u64 = 1;
@@ -512,6 +553,30 @@ mod tests {
             content_exists: ContentExists::False,
             delivery_timeout: None,
             max_duration: None,
+        })
+    }
+
+    fn late_publish_ok() -> ResponseMessage {
+        ResponseMessage::PublishOk(PublishOk {
+            request_id: REQUEST_ID,
+            forward: true,
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            filter_type: FilterType::LargestObject,
+            delivery_timeout: None,
+        })
+    }
+
+    fn late_fetch_ok() -> ResponseMessage {
+        ResponseMessage::FetchOk(FetchOk {
+            request_id: REQUEST_ID,
+            group_order: GroupOrder::Ascending,
+            end_of_track: false,
+            end_location: Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            max_cache_duration: None,
         })
     }
 
@@ -661,6 +726,74 @@ mod tests {
         assert!(
             matches!(notification, IncomingObjectNotification::Notified),
             "{notification:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn late_publish_ok_is_withdrawn_with_publish_done() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("late-publish-ok").await;
+        let context = server.publisher().session;
+
+        // Act
+        context
+            .handle_late_response(
+                REQUEST_ID,
+                LateResponseAction::PublishDone,
+                late_publish_ok(),
+            )
+            .await;
+
+        // Assert
+        let SessionEvent::PublishDone(publish_done) = client.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_DONE");
+        };
+        assert_eq!(publish_done.request_id(), REQUEST_ID);
+        assert_eq!(publish_done.status_code(), PublishDoneCode::InternalError);
+        assert_eq!(publish_done.stream_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn late_fetch_ok_is_withdrawn_with_fetch_cancel() {
+        // Arrange: the fetch future was dropped, so its maps were never cleaned up
+        let (client, server) = spawn_connected_dual_sessions("late-fetch-ok").await;
+        let context = server.subscriber().session;
+        let (fetch_stream_sender, fetch_stream_receiver) =
+            tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
+        context
+            .fetch_notification_map
+            .lock()
+            .await
+            .insert(REQUEST_ID, fetch_stream_sender);
+        context
+            .fetch_receiver_map
+            .lock()
+            .await
+            .insert(REQUEST_ID, fetch_stream_receiver);
+
+        // Act
+        context
+            .handle_late_response(REQUEST_ID, LateResponseAction::FetchCancel, late_fetch_ok())
+            .await;
+
+        // Assert: FETCH_CANCEL is sent and the pending fetch state is dropped
+        let SessionEvent::FetchCancel(fetch_cancel) = client.receive_event().await.unwrap() else {
+            panic!("expected FETCH_CANCEL");
+        };
+        assert_eq!(fetch_cancel.request_id(), REQUEST_ID);
+        assert!(
+            !context
+                .fetch_notification_map
+                .lock()
+                .await
+                .contains_key(&REQUEST_ID)
+        );
+        assert!(
+            !context
+                .fetch_receiver_map
+                .lock()
+                .await
+                .contains_key(&REQUEST_ID)
         );
     }
 

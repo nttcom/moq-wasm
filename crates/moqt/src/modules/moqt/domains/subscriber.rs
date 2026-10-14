@@ -282,13 +282,10 @@ impl Subscriber {
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
-        // A late FETCH_OK is discarded (its data stream is dropped by
-        // FetchNotifier); see LateResponseAction::Discard for why no
-        // FETCH_CANCEL is sent yet.
         let _registered_sender = self.session.register_response_sender(
             request_id,
             fetch_message_tx,
-            LateResponseAction::Discard,
+            LateResponseAction::FetchCancel,
         );
         let fetch = Fetch {
             request_id,
@@ -386,13 +383,10 @@ impl Subscriber {
 
         let (fetch_message_tx, fetch_message_rx) =
             tokio::sync::oneshot::channel::<ResponseMessage>();
-        // A late FETCH_OK is discarded (its data stream is dropped by
-        // FetchNotifier); see LateResponseAction::Discard for why no
-        // FETCH_CANCEL is sent yet.
         let _registered_sender = self.session.register_response_sender(
             request_id,
             fetch_message_tx,
-            LateResponseAction::Discard,
+            LateResponseAction::FetchCancel,
         );
         let fetch = Fetch {
             request_id,
