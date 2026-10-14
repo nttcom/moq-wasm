@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
-    config::DiskCacheConfig,
+    config::{CacheConfig, DiskCacheConfig},
     modules::{
         auth::token_verifier::TokenVerifier,
         cascading::{
@@ -33,6 +33,13 @@ use crate::{
     },
 };
 
+pub(crate) struct DataPlaneConfig {
+    pub(crate) cache: CacheConfig,
+    /// `config.dir` must have gone through `prepare_directory`.
+    pub(crate) disk_cache: Option<DiskCacheConfig>,
+    pub(crate) fetch_fill_timeout: Duration,
+}
+
 pub(crate) struct RelayRuntime {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
@@ -52,10 +59,10 @@ impl RelayRuntime {
         route_registry: Arc<dyn RelayRouteRegistry>,
         relay_token: String,
         token_verifier: Arc<dyn TokenVerifier>,
-        disk_cache: Option<DiskCacheConfig>,
+        data_plane: DataPlaneConfig,
     ) -> (UnboundedSender<SessionEvent>, Self) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
-        let disk_cache = disk_cache.map(DiskCacheTask::run);
+        let disk_cache = data_plane.disk_cache.map(DiskCacheTask::run);
         let cache_store = Arc::new(TrackCacheStore::with_disk(
             disk_cache.as_ref().map(DiskCacheTask::handle),
         ));
@@ -92,9 +99,10 @@ impl RelayRuntime {
                 cache_store: cache_store.clone(),
                 upstream_serializer: UpstreamCreationSerializer::default(),
                 token_verifier,
+                fetch_fill_timeout: data_plane.fetch_fill_timeout,
             },
         );
-        let evict_job = spawn_cache_eviction_job(cache_store.clone());
+        let evict_job = spawn_cache_eviction_job(cache_store.clone(), data_plane.cache);
         (
             sender,
             Self {

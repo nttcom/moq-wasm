@@ -1,6 +1,6 @@
 mod config;
 mod logging;
-pub use config::{AuthConfig, DiskCacheConfig, RelayConfig};
+pub use config::{AuthConfig, CacheConfig, DiskCacheConfig, RelayConfig};
 pub use logging::{LoggingGuards, init_logging};
 pub use modules::auth::token_claims::ClaimPolicy;
 pub mod modules;

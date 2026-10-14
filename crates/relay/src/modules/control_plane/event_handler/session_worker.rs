@@ -306,20 +306,22 @@ impl SessionWorker {
                     .await;
             }
             MoqtSessionEvent::Fetch(handler) => {
-                Fetch {}
-                    .handle(
-                        session_id,
-                        &session_span,
-                        &deps.local_pub_sub_directory,
-                        &deps.cache_store,
-                        &deps.egress_sender,
-                        &deps.relay_event_sender,
-                        &deps.control_message_forwarder,
-                        &deps.upstream_publisher_resolver,
-                        handler,
-                    )
-                    .instrument(event_span)
-                    .await;
+                Fetch {
+                    fill_timeout: deps.fetch_fill_timeout,
+                }
+                .handle(
+                    session_id,
+                    &session_span,
+                    &deps.local_pub_sub_directory,
+                    &deps.cache_store,
+                    &deps.egress_sender,
+                    &deps.relay_event_sender,
+                    &deps.control_message_forwarder,
+                    &deps.upstream_publisher_resolver,
+                    handler,
+                )
+                .instrument(event_span)
+                .await;
             }
             MoqtSessionEvent::TrackStatus(handler) if handler.authorization_tokens().is_empty() => {
                 TrackStatus {}

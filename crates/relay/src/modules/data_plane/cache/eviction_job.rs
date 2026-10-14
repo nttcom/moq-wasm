@@ -2,20 +2,18 @@ use std::sync::Arc;
 
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
-use crate::modules::data_plane::cache::{duration::duration_from_env, store::TrackCacheStore};
+use crate::{config::CacheConfig, modules::data_plane::cache::store::TrackCacheStore};
 
-const DEFAULT_TTL_SECS: u64 = 60;
-const DEFAULT_INTERVAL_SECS: u64 = 5;
-
-pub(crate) fn spawn_cache_eviction_job(cache_store: Arc<TrackCacheStore>) -> JoinHandle<()> {
-    let ttl = duration_from_env("RELAY_CACHE_TTL_SECS", DEFAULT_TTL_SECS);
-    let interval = duration_from_env("RELAY_CACHE_EVICT_INTERVAL_SECS", DEFAULT_INTERVAL_SECS);
+pub(crate) fn spawn_cache_eviction_job(
+    cache_store: Arc<TrackCacheStore>,
+    config: CacheConfig,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
+        let mut ticker = tokio::time::interval(config.evict_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
-            cache_store.evict(ttl);
+            cache_store.evict(config.ttl);
         }
     })
 }
