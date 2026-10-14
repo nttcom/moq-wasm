@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::RandomState,
     hash::{BuildHasher, Hasher},
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
 };
 
 use anyhow::{Context, Result, bail};
@@ -13,11 +13,12 @@ use crate::{
         aac::{self, AuHeaderConfig},
         h264,
         packet::Header,
+        rtcp::SenderReport,
         sdp::{
             Codec, MediaDescription, MediaKind, OPUS_CLOCK_RATE, SessionDescription, SsrcAttribute,
         },
     },
-    sample::{AudioConfig, MediaEvent, StreamSet},
+    sample::{AudioConfig, MediaEvent, StreamSet, Timestamp},
 };
 
 pub const VIDEO_PAYLOAD_TYPE: u8 = 96;
@@ -32,8 +33,51 @@ pub struct RtpPacket {
     pub data: Bytes,
 }
 
-/// The payload type and SSRC of each stream. An SSRC left `None` is drawn at
-/// random, as are the first sequence number and timestamp (RFC 3550 §5.1).
+/// An RTCP compound packet for the stream `kind`; it goes to that stream's
+/// RTCP port, see [`Destination::rtcp`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtcpPacket {
+    pub kind: MediaKind,
+    pub data: Bytes,
+}
+
+/// Where the streams go. Each stream takes its own port, and RTCP either the
+/// same port (`rtcp_mux`, RFC 5761) or the one above it (RFC 3550 §11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Destination {
+    pub address: IpAddr,
+    pub video_port: u16,
+    pub audio_port: u16,
+    pub rtcp_mux: bool,
+}
+
+impl Destination {
+    pub fn rtp(&self, kind: MediaKind) -> SocketAddr {
+        SocketAddr::new(self.address, self.port(kind))
+    }
+
+    pub fn rtcp(&self, kind: MediaKind) -> SocketAddr {
+        let port = self.port(kind);
+        SocketAddr::new(
+            self.address,
+            if self.rtcp_mux {
+                port
+            } else {
+                port.wrapping_add(1)
+            },
+        )
+    }
+
+    fn port(&self, kind: MediaKind) -> u16 {
+        match kind {
+            MediaKind::Video => self.video_port,
+            MediaKind::Audio => self.audio_port,
+        }
+    }
+}
+
+/// An SSRC left `None` is drawn at random, as are each stream's first
+/// sequence number and timestamp (RFC 3550 §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MuxerOptions {
     pub video_payload_type: u8,
@@ -72,7 +116,17 @@ struct StreamSender {
     ssrc: u32,
     sequence_number: u16,
     timestamp_offset: u32,
-    started: bool,
+    packet_count: u32,
+    octet_count: u32,
+    latest_sample: Option<LatestSample>,
+}
+
+/// What a sender report extrapolates the stream's RTP time from.
+#[derive(Clone, Copy)]
+struct LatestSample {
+    rtp_timestamp: u32,
+    pts: Timestamp,
+    clock_rate: u32,
 }
 
 impl Default for Muxer {
@@ -106,9 +160,9 @@ impl Muxer {
         }
     }
 
-    /// Fails on an MP3 `AudioConfig`, which has no RTP payload format here, on
-    /// A-law with no channels, and on an audio sample pushed before its
-    /// `AudioConfig`. Configuration events produce no packets.
+    /// Fails on an MP3 `AudioConfig`, which this muxer has no RTP payload
+    /// format for, on A-law with no channels, and on an audio sample pushed
+    /// before its `AudioConfig`. Configuration events produce no packets.
     pub fn push(&mut self, event: &MediaEvent) -> Result<Vec<RtpPacket>> {
         match event {
             MediaEvent::Streams(streams) => {
@@ -132,16 +186,18 @@ impl Muxer {
                 let payloads: Vec<Bytes> = nal_units(&sample.data)
                     .flat_map(|nal| h264::packetize(nal, MAX_PAYLOAD))
                     .collect();
-                Ok(self
-                    .video
-                    .send_access_unit(payloads, sample.pts.ticks(VIDEO_CLOCK_RATE)))
+                let ticks = sample.pts.ticks(VIDEO_CLOCK_RATE);
+                self.video.note_sample(ticks, sample.pts, VIDEO_CLOCK_RATE);
+                Ok(self.video.send_access_unit(payloads, ticks))
             }
             MediaEvent::Audio(sample) => {
                 let config = self
                     .audio_config
                     .as_ref()
                     .context("audio sample before its AudioConfig")?;
-                let ticks = sample.pts.ticks(audio_clock_rate(config));
+                let clock_rate = audio_clock_rate(config);
+                let ticks = sample.pts.ticks(clock_rate);
+                self.audio.note_sample(ticks, sample.pts, clock_rate);
                 match config {
                     AudioConfig::Aac(_) => {
                         let payloads =
@@ -176,19 +232,14 @@ impl Muxer {
     /// The description a receiver needs for these packets. `None` until the
     /// `Streams` event and the configuration of every announced stream have
     /// been pushed.
-    pub fn session_description(
-        &self,
-        destination: IpAddr,
-        video_port: u16,
-        audio_port: u16,
-    ) -> Option<SessionDescription> {
+    pub fn session_description(&self, destination: &Destination) -> Option<SessionDescription> {
         let streams = self.streams?;
         let mut media = Vec::new();
         if streams.has_video {
             let record = self.video_config.as_ref()?;
             media.push(MediaDescription {
                 kind: MediaKind::Video,
-                port: video_port,
+                port: destination.video_port,
                 destination: None,
                 payload_type: self.video.payload_type,
                 clock_rate: VIDEO_CLOCK_RATE,
@@ -196,13 +247,14 @@ impl Muxer {
                     parameter_sets: Some(record.clone()),
                 },
                 ssrc: Some(self.ssrc_attribute(&self.video)),
+                rtcp_mux: destination.rtcp_mux,
             });
         }
         if streams.has_audio {
             let config = self.audio_config.as_ref()?;
             media.push(MediaDescription {
                 kind: MediaKind::Audio,
-                port: audio_port,
+                port: destination.audio_port,
                 destination: None,
                 payload_type: self.audio.payload_type,
                 clock_rate: audio_clock_rate(config),
@@ -220,12 +272,46 @@ impl Muxer {
                     AudioConfig::Mp3 { .. } => unreachable!("rejected at its AudioConfig"),
                 },
                 ssrc: Some(self.ssrc_attribute(&self.audio)),
+                rtcp_mux: destination.rtcp_mux,
             });
         }
         Some(SessionDescription {
-            destination: Some(destination),
+            destination: Some(destination.address),
             media,
         })
+    }
+
+    /// One RTCP sender report per stream that has sent a sample, to be sent
+    /// at `now`. RFC 3550 §6.4.1 pairs the send time with the RTP timestamp
+    /// of that same instant, so each report extrapolates the stream's latest
+    /// RTP timestamp from the sample's wall-clock time `capture_origin + pts`
+    /// to `now`. Both are microseconds since the Unix epoch, and
+    /// `capture_origin` must be the time presentation time zero stands for on
+    /// every stream, which is what keeps the streams aligned.
+    pub fn sender_reports(&self, capture_origin: Timestamp, now: Timestamp) -> Vec<RtcpPacket> {
+        [&self.video, &self.audio]
+            .into_iter()
+            .filter_map(|stream| {
+                let sample = stream.latest_sample?;
+                let captured = capture_origin.saturating_add(sample.pts);
+                let elapsed_micros = now.micros() as i128 - captured.micros() as i128;
+                let elapsed_ticks = elapsed_micros * sample.clock_rate as i128 / 1_000_000;
+                let report = SenderReport {
+                    ssrc: stream.ssrc,
+                    wallclock: now,
+                    // The RTP clock wraps, so a negative elapsed time (a sender
+                    // clock behind the publisher's) wraps back as well.
+                    rtp_timestamp: sample.rtp_timestamp.wrapping_add(elapsed_ticks as u32),
+                    packet_count: stream.packet_count,
+                    octet_count: stream.octet_count,
+                    cname: &self.cname,
+                };
+                Some(RtcpPacket {
+                    kind: stream.kind,
+                    data: report.encode(),
+                })
+            })
+            .collect()
     }
 
     fn ssrc_attribute(&self, stream: &StreamSender) -> SsrcAttribute {
@@ -244,8 +330,22 @@ impl StreamSender {
             ssrc: ssrc.unwrap_or_else(|| random() as u32),
             sequence_number: random() as u16,
             timestamp_offset: random() as u32,
-            started: false,
+            packet_count: 0,
+            octet_count: 0,
+            latest_sample: None,
         }
+    }
+
+    fn note_sample(&mut self, ticks: u64, pts: Timestamp, clock_rate: u32) {
+        self.latest_sample = Some(LatestSample {
+            rtp_timestamp: self.rtp_timestamp(ticks),
+            pts,
+            clock_rate,
+        });
+    }
+
+    fn rtp_timestamp(&self, ticks: u64) -> u32 {
+        self.timestamp_offset.wrapping_add(ticks as u32)
     }
 
     /// Wraps the payloads of one H.264 or AAC access unit in RTP headers; the
@@ -259,10 +359,11 @@ impl StreamSender {
             .collect()
     }
 
-    /// Sends one A-law or Opus packet. The marker bit starts a talkspurt
-    /// (RFC 3551 §4.1), which only the stream's first packet does here.
+    /// Wraps one A-law or Opus payload in an RTP header. The marker bit flags
+    /// the first packet of a talkspurt (RFC 3551 §4.1); without silence
+    /// suppression only the stream's first packet is one.
     fn send_frame(&mut self, payload: Bytes, ticks: u64) -> RtpPacket {
-        let marker = !self.started;
+        let marker = self.packet_count == 0;
         self.packet(&payload, ticks, marker)
     }
 
@@ -271,11 +372,14 @@ impl StreamSender {
             marker,
             payload_type: self.payload_type,
             sequence_number: self.sequence_number,
-            timestamp: self.timestamp_offset.wrapping_add(ticks as u32),
+            timestamp: self.rtp_timestamp(ticks),
             ssrc: self.ssrc,
         };
         self.sequence_number = self.sequence_number.wrapping_add(1);
-        self.started = true;
+        // RFC 3550 §6.4.1 counts payload octets only, without header or
+        // padding; both 32-bit counts wrap.
+        self.packet_count = self.packet_count.wrapping_add(1);
+        self.octet_count = self.octet_count.wrapping_add(payload.len() as u32);
         RtpPacket {
             kind: self.kind,
             data: header.encode(payload),
@@ -304,7 +408,12 @@ mod tests {
         test_support::{fixture_record, keyframe_annexb, mono_48k},
     };
 
-    const DESTINATION: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    const DESTINATION: Destination = Destination {
+        address: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        video_port: 5_004,
+        audio_port: 5_006,
+        rtcp_mux: false,
+    };
 
     fn headers(packets: &[RtpPacket]) -> Vec<Header> {
         packets
@@ -411,11 +520,9 @@ mod tests {
                 }))
                 .unwrap(),
         );
-        let description = muxer
-            .session_description(DESTINATION, 5_004, 5_006)
-            .unwrap();
+        let description = muxer.session_description(&DESTINATION).unwrap();
 
-        // Assert: both streams share one cname so a receiver can align them
+        // Assert: both streams share one cname
         assert_eq!((video[0].payload_type, video[0].ssrc), (102, 2_222));
         let [video_media, audio_media] = &description.media[..] else {
             panic!("expected a video and an audio section");
@@ -427,6 +534,85 @@ mod tests {
         );
         assert_eq!(video_ssrc.ssrc, 2_222);
         assert_eq!(video_ssrc.cname, audio_ssrc.cname);
+    }
+
+    #[test]
+    fn reports_each_stream_at_the_send_time() {
+        // Arrange: video at 1.0 s and 1.5 s, audio at 1.0 s, captured from 10 000 s
+        let mut muxer = Muxer::new(MuxerOptions {
+            video_ssrc: Some(1),
+            audio_ssrc: Some(2),
+            ..MuxerOptions::default()
+        });
+        muxer
+            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
+            .unwrap();
+        let video = |millis| {
+            MediaEvent::Video(VideoSample {
+                data: keyframe_annexb(),
+                is_keyframe: true,
+                pts: Timestamp::from_millis(millis),
+                dts: Timestamp::from_millis(millis),
+            })
+        };
+        let first_video = headers(&muxer.push(&video(1_000)).unwrap());
+        let last_video = headers(&muxer.push(&video(1_500)).unwrap());
+        let audio = headers(
+            &muxer
+                .push(&MediaEvent::Audio(AudioSample {
+                    data: Bytes::from_static(&[0x21, 0x10]),
+                    pts: Timestamp::from_millis(1_000),
+                }))
+                .unwrap(),
+        );
+
+        // Act
+        let reports = muxer.sender_reports(
+            Timestamp::from_micros(10_000_000_000),
+            Timestamp::from_micros(10_002_000_000),
+        );
+
+        // Assert: both report 10 002 s after the Unix epoch, the RTP times 0.5 s and 1.0 s past their latest samples; the packet count covers every video packet
+        let field = |report: &RtcpPacket, at: usize| {
+            u32::from_be_bytes(report.data[at..at + 4].try_into().unwrap())
+        };
+        let ntp_seconds = |report: &RtcpPacket| field(report, 8) as u64 - 2_208_988_800;
+        assert_eq!(reports.len(), 2);
+        assert_eq!(
+            (reports[0].kind, field(&reports[0], 4)),
+            (MediaKind::Video, 1)
+        );
+        assert_eq!(ntp_seconds(&reports[0]), 10_002);
+        assert_eq!(field(&reports[0], 12), 0);
+        assert_eq!(
+            field(&reports[0], 16),
+            last_video[0].timestamp.wrapping_add(45_000)
+        );
+        assert_eq!(field(&reports[0], 20), (first_video.len() * 2) as u32);
+        assert_eq!(
+            (reports[1].kind, field(&reports[1], 4)),
+            (MediaKind::Audio, 2)
+        );
+        assert_eq!(ntp_seconds(&reports[1]), 10_002);
+        assert_eq!(
+            field(&reports[1], 16),
+            audio[0].timestamp.wrapping_add(48_000)
+        );
+    }
+
+    #[test]
+    fn sends_rtcp_to_the_port_above_or_the_rtp_port_when_muxed() {
+        // Arrange
+        let muxed = Destination {
+            rtcp_mux: true,
+            ..DESTINATION
+        };
+
+        // Act / Assert
+        assert_eq!(DESTINATION.rtcp(MediaKind::Video).port(), 5_005);
+        assert_eq!(DESTINATION.rtcp(MediaKind::Audio).port(), 5_007);
+        assert_eq!(muxed.rtcp(MediaKind::Audio).port(), 5_006);
+        assert_eq!(muxed.rtp(MediaKind::Video).port(), 5_004);
     }
 
     #[test]
@@ -529,7 +715,7 @@ mod tests {
                 .unwrap();
             muxer.push(&MediaEvent::AudioConfig(config)).unwrap();
             let media = muxer
-                .session_description(DESTINATION, 5_004, 5_006)
+                .session_description(&DESTINATION)
                 .unwrap()
                 .media
                 .remove(0);
@@ -582,17 +768,15 @@ mod tests {
             .unwrap();
 
         // Act
-        let without_audio = muxer.session_description(DESTINATION, 5_004, 5_006);
+        let without_audio = muxer.session_description(&DESTINATION);
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
             .unwrap();
-        let description = muxer
-            .session_description(DESTINATION, 5_004, 5_006)
-            .unwrap();
+        let description = muxer.session_description(&DESTINATION).unwrap();
 
         // Assert
         assert!(without_audio.is_none());
-        assert_eq!(description.destination, Some(DESTINATION));
+        assert_eq!(description.destination, Some(DESTINATION.address));
         assert_eq!(description.media.len(), 2);
         assert_eq!(description.media[0].port, 5_004);
         assert_eq!(description.media[1].port, 5_006);
@@ -614,9 +798,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let description = muxer
-            .session_description(DESTINATION, 5_004, 5_006)
-            .unwrap();
+        let description = muxer.session_description(&DESTINATION).unwrap();
 
         // Assert
         assert_eq!(description.media.len(), 1);

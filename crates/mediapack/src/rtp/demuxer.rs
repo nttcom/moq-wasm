@@ -36,8 +36,9 @@ struct Stream {
 enum StreamCodec {
     H264(VideoStream),
     Aac(AudioStream),
-    /// A-law and Opus: every packet carries whole frames (RFC 3551 §4.5.14,
-    /// RFC 7587 §4.2), so a loss costs only the packets lost.
+    /// A-law and Opus: every packet decodes on its own (A-law is sample-based,
+    /// RFC 3551 §4.5.14; one Opus packet per RTP packet, RFC 7587 §4.2), so a
+    /// loss costs only the packets lost.
     WholeFrames,
 }
 
@@ -308,14 +309,19 @@ mod tests {
 
     use super::*;
     use crate::{
-        rtp::muxer::{Muxer, RtpPacket},
+        rtp::muxer::{Destination, Muxer, RtpPacket},
         test_support::{
             FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_record,
             keyframe_annexb, mono_48k, video_samples,
         },
     };
 
-    const DESTINATION: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    const DESTINATION: Destination = Destination {
+        address: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        video_port: 5_004,
+        audio_port: 5_006,
+        rtcp_mux: false,
+    };
 
     fn source_events() -> Vec<MediaEvent> {
         vec![
@@ -360,9 +366,7 @@ mod tests {
             .iter()
             .flat_map(|event| muxer.push(event).unwrap())
             .collect();
-        let description = muxer
-            .session_description(DESTINATION, 5_004, 5_006)
-            .unwrap();
+        let description = muxer.session_description(&DESTINATION).unwrap();
         (packets, description)
     }
 

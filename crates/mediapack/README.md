@@ -105,7 +105,7 @@ the `Streams` event and the configuration of every announced stream.
 SSRCs with one `cname`, which tells a receiver the streams belong together.
 
 ```rust
-use mediapack::rtp::{self, MediaKind};
+use mediapack::rtp;
 
 let description = rtp::SessionDescription::parse(&sdp_text)?;
 let mut demuxer = rtp::Demuxer::new(&description)?;
@@ -113,23 +113,31 @@ for datagram in datagrams {
     let events = demuxer.push(&datagram)?;
 }
 
+let destination = rtp::Destination { address, video_port: 5004, audio_port: 5006, rtcp_mux: false };
 let mut muxer = rtp::Muxer::default();
 for event in &events {
     for packet in muxer.push(event)? {
-        match packet.kind {
-            MediaKind::Video => video_socket.send(&packet.data)?,
-            MediaKind::Audio => audio_socket.send(&packet.data)?,
-        }
+        socket.send_to(&packet.data, destination.rtp(packet.kind))?;
     }
 }
-let sdp_text = muxer.session_description(destination, 5004, 5006).unwrap().to_string();
+for report in muxer.sender_reports(capture_origin, now) {
+    socket.send_to(&report.data, destination.rtcp(report.kind))?;
+}
+let sdp_text = muxer.session_description(&destination).unwrap().to_string();
 ```
+
+`sender_reports` writes one RTCP sender report per stream, with the SDES
+CNAME, for the send time `now`: each extrapolates its stream's RTP time to
+`now` from the latest sample, whose wall-clock time is `capture_origin` plus
+its presentation time. With `capture_origin` the wall-clock time the
+presentation times of every stream count from, a receiver aligns video and
+audio by the reports.
 
 Packets are put back in sequence order per stream; a gap that stays open while
 200 ms of later packets arrive is reported through `discontinuities()`, and the
 frames it cuts are dropped until the next keyframe. Timestamps restart at the
-first packet of each stream, so the two streams are not aligned to each other
-without RTCP, which this API does not carry.
+first packet of each stream: the demuxer does not read RTCP sender reports, so
+it does not align the streams to each other.
 
 The fMP4 demuxer reads H.264/AAC initialization segments and fragments with
 explicit `trun` data offsets relative to `moof`, followed by `mdat`. This includes

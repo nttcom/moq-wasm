@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use mediapack::rtp::{MediaKind, Muxer};
+use mediapack::rtp::{Destination, MediaKind, Muxer};
 use tokio::net::UdpSocket;
 
 use crate::broadcast_reader::BroadcastReader;
@@ -45,8 +45,12 @@ pub async fn run_rtp_output(reader: &mut BroadcastReader, output: &RtpOutput) ->
                 .with_context(|| format!("send RTP to {target}"))?;
         }
         if !sdp_written
-            && let Some(description) =
-                muxer.session_description(output.destination, output.video_port, output.audio_port)
+            && let Some(description) = muxer.session_description(&Destination {
+                address: output.destination,
+                video_port: output.video_port,
+                audio_port: output.audio_port,
+                rtcp_mux: false,
+            })
         {
             tokio::fs::write(&output.sdp_path, description.to_string())
                 .await

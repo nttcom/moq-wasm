@@ -1,8 +1,8 @@
 //! The subset of SDP (RFC 8866) that describes a plain RTP session: one
-//! `m=` section per stream with its `c=`, `a=rtpmap`, `a=fmtp` and `a=ssrc`
-//! (RFC 5576) lines. The
-//! codec parameters follow RFC 6184 §8.1 (H.264), RFC 3640 §4.1 (AAC),
-//! RFC 3551 §4.5.14 (G.711 A-law) and RFC 7587 §7 (Opus).
+//! `m=` section per stream with its `c=`, `a=rtpmap` and `a=fmtp` lines, plus
+//! the `a=ssrc` (RFC 5576) and `a=rtcp-mux` (RFC 5761) lines it writes but
+//! does not read. The codec parameters follow RFC 6184 §8.1 (H.264), RFC 3640
+//! §4.1 (AAC), RFC 3551 §6 (G.711 A-law) and RFC 7587 §7 (Opus).
 
 use std::{fmt, net::IpAddr};
 
@@ -43,10 +43,12 @@ pub struct MediaDescription {
     pub clock_rate: u32,
     pub codec: Codec,
     pub ssrc: Option<SsrcAttribute>,
+    /// `a=rtcp-mux`: RTCP shares the RTP port. Parsing leaves it `false`.
+    pub rtcp_mux: bool,
 }
 
-/// `a=ssrc:<ssrc> cname:<cname>`: the stream's SSRC and the RTCP canonical
-/// name that ties the streams of one source together for synchronization.
+/// `a=ssrc:<ssrc> cname:<cname>` (RFC 5576). Parsing leaves
+/// `MediaDescription::ssrc` `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsrcAttribute {
     pub ssrc: u32,
@@ -73,7 +75,7 @@ pub enum Codec {
     Pcma {
         channels: u8,
     },
-    /// `channels` is 2 when `sprop-stereo=1` says the sender sends stereo.
+    /// `channels` is 2 when `sprop-stereo=1` announces stereo, 1 otherwise.
     Opus {
         channels: u8,
     },
@@ -234,6 +236,7 @@ impl Section {
             clock_rate,
             codec,
             ssrc: None,
+            rtcp_mux: false,
         }
     }
 }
@@ -448,6 +451,9 @@ impl fmt::Display for MediaDescription {
                 writeln!(f, "a=rtpmap:{payload_type} {encoding}/{}", self.clock_rate)
             }
         }?;
+        if self.rtcp_mux {
+            writeln!(f, "a=rtcp-mux")?;
+        }
         if let Some(SsrcAttribute { ssrc, cname }) = &self.ssrc {
             writeln!(f, "a=ssrc:{ssrc} cname:{cname}")?;
         }
@@ -495,6 +501,7 @@ mod tests {
                         parameter_sets: Some(fixture_record())
                     },
                     ssrc: None,
+                    rtcp_mux: false,
                 },
                 MediaDescription {
                     kind: MediaKind::Audio,
@@ -507,6 +514,7 @@ mod tests {
                         au_headers: AuHeaderConfig::AAC_HBR,
                     },
                     ssrc: None,
+                    rtcp_mux: false,
                 },
             ]
         );
@@ -568,7 +576,7 @@ mod tests {
 
     #[test]
     fn reads_a_law_and_opus_sections() {
-        // Arrange: A-law by its static payload type, Opus with stereo signalled
+        // Arrange: A-law by static payload type and by rtpmap, Opus with and without sprop-stereo
         let text = "v=0\n\
             m=audio 5006 RTP/AVP 8\n\
             m=audio 5008 RTP/AVP 111\n\
@@ -602,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_the_cname_of_a_source() {
+    fn writes_the_source_and_rtcp_attributes() {
         // Arrange
         let media = MediaDescription {
             kind: MediaKind::Audio,
@@ -615,6 +623,7 @@ mod tests {
                 ssrc: 0xDEAD_BEEF,
                 cname: "egress@example".to_owned(),
             }),
+            rtcp_mux: true,
         };
 
         // Act
@@ -622,7 +631,9 @@ mod tests {
 
         // Assert
         assert!(
-            text.ends_with("a=rtpmap:8 PCMA/8000\na=ssrc:3735928559 cname:egress@example\n"),
+            text.ends_with(
+                "a=rtpmap:8 PCMA/8000\na=rtcp-mux\na=ssrc:3735928559 cname:egress@example\n"
+            ),
             "{text}"
         );
     }
