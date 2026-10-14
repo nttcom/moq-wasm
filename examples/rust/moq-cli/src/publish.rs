@@ -81,12 +81,13 @@ impl Publishing {
         })
     }
 
-    /// Ends both tracks and closes the session once the relay has drained them.
+    /// Ends both tracks and closes the session once the relay has drained
+    /// them. Every other handle to the session must be dropped first.
     async fn finish(self) -> Result<()> {
         let groups = self.media.groups();
         self.media.finish().await?;
         self.catalog.finish().await?;
-        info!(groups, "publish done");
+        info!(groups, "tracks finished");
         // Let the relay drain in-flight stream data before the QUIC session is
         // closed; otherwise trailing objects are truncated.
         tokio::time::sleep(DRAIN_BEFORE_CLOSE).await;
@@ -145,6 +146,7 @@ async fn publish_stdin(
                     Ok(next) => {
                         let previous = std::mem::replace(&mut publishing, next);
                         awaiting_keyframe = true;
+                        drop(session);
                         if let Err(error) = previous.finish().await {
                             tracing::warn!(%error, "failed to withdraw the tracks from the old relay");
                         }
