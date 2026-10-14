@@ -8,8 +8,11 @@ use quinn::rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
 
+use web_transport_quinn::proto::{ConnectRequest, ConnectResponse};
+
 use super::wt_connection::WtConnection;
 use crate::modules::transport::{
+    application_protocol::ApplicationProtocols,
     client_crypto::{
         client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
@@ -26,28 +29,72 @@ enum WtEndpoint {
 pub struct WtConnectionCreator {
     endpoint: WtEndpoint,
     quic_endpoint: quinn::Endpoint,
+    protocols: ApplicationProtocols,
 }
 
 impl WtConnectionCreator {
-    fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
+    fn create_client(
+        port_num: u16,
+        crypto: rustls::ClientConfig,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         let endpoint = client_endpoint(port_num)?;
-        let client_config = quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
+        let client_config =
+            quic_client_config(crypto, vec![web_transport_quinn::ALPN.as_bytes().to_vec()])?;
         tracing::debug!(local_addr = ?endpoint.local_addr()?, "WebTransport client endpoint ready");
         Ok(WtConnectionCreator {
             endpoint: WtEndpoint::Client(client_config),
             quic_endpoint: endpoint,
+            protocols,
         })
     }
 }
 
+pub(crate) async fn connect_session(
+    connection: quinn::Connection,
+    target: &ConnectTarget,
+    protocols: ApplicationProtocols,
+) -> anyhow::Result<web_transport_quinn::Session> {
+    let request = ConnectRequest::new(target.url.clone()).with_protocols(
+        protocols
+            .web_transport
+            .iter()
+            .map(|protocol| protocol.to_string()),
+    );
+    Ok(web_transport_quinn::Session::connect(connection, request).await?)
+}
+
+pub(crate) async fn accept_session(
+    request: web_transport_quinn::Request,
+    protocols: ApplicationProtocols,
+) -> anyhow::Result<web_transport_quinn::Session> {
+    let mut response = ConnectResponse::OK;
+    response.protocol = protocols
+        .select_web_transport(&request.protocols)
+        .map(str::to_owned);
+    Ok(request.respond(response).await?)
+}
+
 #[async_trait]
 impl TransportConnectionCreator for WtConnectionCreator {
-    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?)
+    fn client(
+        port_num: u16,
+        verify_certificate: bool,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
     }
 
-    fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto_with_custom_cert(custom_cert_path)?)
+    fn client_with_custom_cert(
+        port_num: u16,
+        custom_cert_path: &str,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        Self::create_client(
+            port_num,
+            client_crypto_with_custom_cert(custom_cert_path)?,
+            protocols,
+        )
     }
 
     fn server(
@@ -55,6 +102,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         key_path: &str,
         port_num: u16,
         _keep_alive_sec: u64,
+        protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
         install_default_crypto_provider();
 
@@ -78,6 +126,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         Ok(WtConnectionCreator {
             quic_endpoint: quinn::Endpoint::clone(&server),
             endpoint: WtEndpoint::Server(tokio::sync::Mutex::new(server)),
+            protocols,
         })
     }
 
@@ -100,7 +149,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let connection = target
             .connect_quic(&self.quic_endpoint, client_config.clone())
             .await?;
-        let session = web_transport_quinn::Session::connect(connection, target.url.clone()).await?;
+        let session = connect_session(connection, target, self.protocols).await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }
@@ -118,8 +167,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
             anyhow::bail!("Server endpoint closed");
         };
 
-        // リクエストを受け入れてセッションを確立する
-        let session = request.ok().await?;
+        let session = accept_session(request, self.protocols).await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }

@@ -68,12 +68,18 @@ fn write_self_signed_cert(dir: &Path) -> ServerConfig {
     }
 }
 
+/// A server config on a free port with a fresh self-signed certificate for
+/// `localhost` and `127.0.0.1`.
+pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
+    init_test_tracing();
+    write_self_signed_cert(&unique_cert_dir(name))
+}
+
 /// Starts a DUAL server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    init_test_tracing();
-    let server_config = write_self_signed_cert(&unique_cert_dir(name));
+    let server_config = self_signed_server_config(name);
     let mut server = Endpoint::<DUAL>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });

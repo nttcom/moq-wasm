@@ -3,6 +3,7 @@ use async_trait::async_trait;
 
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
+use crate::modules::transport::application_protocol::NegotiatedProtocol;
 use crate::modules::transport::transport_addresses::TransportAddresses;
 use crate::modules::transport::transport_connection::{TransportClose, TransportConnection};
 use crate::modules::transport::transport_stats::TransportStats;
@@ -83,5 +84,11 @@ impl TransportConnection for WtConnection {
 
     fn addresses(&self) -> TransportAddresses {
         TransportAddresses::from(&*self.session)
+    }
+
+    fn negotiated_protocol(&self) -> NegotiatedProtocol {
+        NegotiatedProtocol::WebTransport {
+            protocol: self.session.protocol().map(str::to_owned),
+        }
     }
 }
