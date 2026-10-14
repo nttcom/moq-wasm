@@ -53,6 +53,8 @@ impl CachedObject {
     /// Priority or Payload differ, or whose Status moves between Normal,
     /// End of Group and End of Track, makes the track Malformed. Extension
     /// header changes and transitions involving Does Not Exist are allowed.
+    /// A datagram's `ends_group` is not a §10.2.1 property and FETCH cannot
+    /// carry it, so it is never compared.
     pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
         if self.forwarding_conflicts_with(other)
             || self.object.publisher_priority != other.object.publisher_priority

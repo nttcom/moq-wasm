@@ -518,6 +518,9 @@ per-request authorization gate under "Event pipeline".
   differing forwarding preference, subgroup, priority or payload, or a status
   move between Normal/EndOfGroup/EndOfTrack, is a Malformed conflict;
   extension changes and Does Not Exist transitions are tolerated duplicates.
+  A datagram's `ends_group` is not compared. When a live datagram meets a
+  fetched copy that arrived first, the cache takes the forwarding preference
+  and `ends_group` from the datagram.
 - `TrackCache` (`track_cache.rs` + `track_cache/{ledger,open_subgroup}.rs`) is one
   track-level ledger behind a `std::sync::RwLock` that is never held across an
   await: `objects: BTreeMap<Location, Arc<CachedObject>>` (stream and datagram
