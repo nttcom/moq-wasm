@@ -2,7 +2,10 @@ use crate::modules::transport::transport_connection::BoxedConnection;
 use std::{
     collections::{HashMap, VecDeque, hash_map::Entry},
     fmt,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{
@@ -26,9 +29,9 @@ pub(crate) struct SessionContext {
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
+        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
     pub(crate) fetch_receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
+        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
 }
 
 enum ObjectSink {
@@ -61,6 +64,28 @@ pub(crate) enum IncomingObjectNotification {
     Discarded,
 }
 
+#[must_use = "dropping this removes the pending fetch; bind it for the lifetime of the request"]
+pub(crate) struct PendingFetch {
+    session: Arc<SessionContext>,
+    request_id: RequestId,
+    kept: bool,
+}
+
+impl PendingFetch {
+    /// FETCH_OK arrived: the channel stays for `accept_fetch_receiver`.
+    pub(crate) fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for PendingFetch {
+    fn drop(&mut self) {
+        if !self.kept {
+            self.session.remove_pending_fetch(self.request_id);
+        }
+    }
+}
+
 impl SessionContext {
     pub(crate) fn new(
         transport_connection: BoxedConnection,
@@ -74,8 +99,8 @@ impl SessionContext {
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_notification_map: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_receiver_map: tokio::sync::Mutex::new(HashMap::new()),
+            fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
+            fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -176,6 +201,35 @@ impl SessionContext {
     async fn cancel_track_alias(&self, sinks: &mut HashMap<u64, ObjectSink>, track_alias: u64) {
         sinks.insert(track_alias, ObjectSink::Cancelled);
         self.receiver_map.lock().await.remove(&track_alias);
+    }
+
+    /// Call before sending the FETCH: its data stream can arrive before FETCH_OK.
+    pub(crate) fn register_pending_fetch(self: &Arc<Self>, request_id: RequestId) -> PendingFetch {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .insert(request_id, sender);
+        self.fetch_receiver_map
+            .lock()
+            .expect("fetch_receiver_map poisoned")
+            .insert(request_id, receiver);
+        PendingFetch {
+            session: self.clone(),
+            request_id,
+            kept: false,
+        }
+    }
+
+    pub(crate) fn remove_pending_fetch(&self, request_id: RequestId) {
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .remove(&request_id);
+        self.fetch_receiver_map
+            .lock()
+            .expect("fetch_receiver_map poisoned")
+            .remove(&request_id);
     }
 
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {

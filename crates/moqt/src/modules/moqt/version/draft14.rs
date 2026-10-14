@@ -23,12 +23,13 @@ use crate::{
                 control_messages::{
                     control_message_type::ControlMessageType,
                     messages::{
+                        fetch_cancel::FetchCancel, publish_done::PublishDone,
                         publish_namespace_done::PublishNamespaceDone, unsubscribe::Unsubscribe,
                         unsubscribe_namespace::UnsubscribeNamespace,
                     },
                 },
                 enums::{RequestId, ResponseMessage},
-                error_codes::RequestKind,
+                error_codes::{PublishDoneCode, RequestKind},
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
             domains::session_context::SessionContext,
@@ -45,7 +46,7 @@ const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 /// a withdrawal and are always discarded.
 #[derive(Debug)]
 enum LateResponseAction {
-    /// Discard the late response without a withdrawal message.
+    /// For TRACK_STATUS, which leaves no state at the peer.
     Discard,
     /// A late SUBSCRIBE_OK established a subscription nobody consumes.
     Unsubscribe,
@@ -53,6 +54,10 @@ enum LateResponseAction {
     UnsubscribeNamespace { namespace: Vec<String> },
     /// A late PUBLISH_NAMESPACE_OK accepted an announcement we gave up on.
     PublishNamespaceDone { namespace: Vec<String> },
+    /// A late PUBLISH_OK accepted a publication nobody publishes on.
+    PublishDone,
+    /// A late FETCH_OK started a fetch nobody reads.
+    FetchCancel,
 }
 
 /// A request awaiting its response on this session. Kept in
@@ -121,13 +126,13 @@ impl ControlChannel {
                 fetch.request_id,
                 ControlMessageType::Fetch,
                 fetch.encode(),
-                LateResponseAction::Discard,
+                LateResponseAction::FetchCancel,
             ),
             OutgoingRequest::Publish(publish) => (
                 publish.request_id,
                 ControlMessageType::Publish,
                 publish.encode(),
-                LateResponseAction::Discard,
+                LateResponseAction::PublishDone,
             ),
             OutgoingRequest::PublishNamespace(publish_namespace) => (
                 publish_namespace.request_id,
@@ -355,11 +360,41 @@ async fn handle_late_response(
             }
             _ => close_on_mismatched_late_response(session, request_id, &response),
         },
-        // Late error responses, and late FETCH_OK / PUBLISH_OK /
-        // TRACK_STATUS_OK for requests registered with `Discard`. A success
-        // response of those kinds for a request of another kind is not
-        // detected here: `Discard` does not record which request kind it was
-        // registered for.
+        ResponseMessage::PublishOk(_) => match &action {
+            LateResponseAction::PublishDone => {
+                tracing::warn!(
+                    request_id,
+                    "PUBLISH_OK arrived after the request was abandoned; sending PUBLISH_DONE"
+                );
+                // Stream Count 0 (§9.12): `publish()` returns no
+                // Subscription before PUBLISH_OK, so no stream was opened.
+                channel
+                    .notify(Notification::PublishDone(PublishDone::new(
+                        request_id,
+                        PublishDoneCode::InternalError.into(),
+                        0,
+                        "publish request abandoned".to_string(),
+                    )))
+                    .await
+            }
+            _ => close_on_mismatched_late_response(session, request_id, &response),
+        },
+        ResponseMessage::FetchOk(_) => match &action {
+            LateResponseAction::FetchCancel => {
+                tracing::warn!(
+                    request_id,
+                    "FETCH_OK arrived after the request was abandoned; sending FETCH_CANCEL"
+                );
+                channel
+                    .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
+                    .await
+            }
+            _ => close_on_mismatched_late_response(session, request_id, &response),
+        },
+        ResponseMessage::TrackStatusOk(_) => match &action {
+            LateResponseAction::Discard => discard_late_response(request_id, &response),
+            _ => close_on_mismatched_late_response(session, request_id, &response),
+        },
         _ => discard_late_response(request_id, &response),
     };
     if let Err(error) = send_result {
@@ -411,29 +446,35 @@ mod tests {
 
     use super::{LateResponseAction, handle_late_response};
     use crate::{
+        SessionEvent,
         modules::{
             moqt::{
                 control_plane::{
                     control_messages::messages::{
-                        parameters::content_exists::ContentExists, subscribe_ok::SubscribeOk,
+                        fetch_ok::FetchOk,
+                        parameters::{content_exists::ContentExists, filter_type::FilterType},
+                        publish_ok::PublishOk,
+                        subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
                 },
                 domains::session_context::IncomingObjectNotification,
             },
             test_support::{
-                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+                HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
+                spawn_connected_dual_sessions,
             },
         },
-        object::GroupOrder,
+        object::{GroupOrder, Location},
+        publish::PublishDoneCode,
     };
 
     const REQUEST_ID: u64 = 1;
     const OTHER_REQUEST_ID: u64 = 3;
     const TRACK_ALIAS: u64 = 5;
 
-    fn late_subscribe_ok() -> ResponseMessage {
-        ResponseMessage::SubscribeOk(SubscribeOk {
+    fn subscribe_ok() -> SubscribeOk {
+        SubscribeOk {
             request_id: REQUEST_ID,
             track_alias: TRACK_ALIAS,
             expires: 0,
@@ -441,6 +482,38 @@ mod tests {
             content_exists: ContentExists::False,
             delivery_timeout: None,
             max_duration: None,
+        }
+    }
+
+    fn late_subscribe_ok() -> ResponseMessage {
+        ResponseMessage::SubscribeOk(subscribe_ok())
+    }
+
+    fn late_track_status_ok() -> ResponseMessage {
+        ResponseMessage::TrackStatusOk(subscribe_ok())
+    }
+
+    fn late_publish_ok() -> ResponseMessage {
+        ResponseMessage::PublishOk(PublishOk {
+            request_id: REQUEST_ID,
+            forward: true,
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            filter_type: FilterType::LargestObject,
+            delivery_timeout: None,
+        })
+    }
+
+    fn late_fetch_ok() -> ResponseMessage {
+        ResponseMessage::FetchOk(FetchOk {
+            request_id: REQUEST_ID,
+            group_order: GroupOrder::Ascending,
+            end_of_track: false,
+            end_location: Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            max_cache_duration: None,
         })
     }
 
@@ -500,6 +573,78 @@ mod tests {
         assert!(
             matches!(notification, IncomingObjectNotification::Notified),
             "{notification:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn late_publish_ok_is_withdrawn_with_publish_done() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("late-publish-ok").await;
+        let context = server.publisher().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            REQUEST_ID,
+            LateResponseAction::PublishDone,
+            late_publish_ok(),
+        )
+        .await;
+
+        // Assert
+        let SessionEvent::PublishDone(publish_done) = client.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_DONE");
+        };
+        assert_eq!(publish_done.request_id(), REQUEST_ID);
+        assert_eq!(publish_done.status_code(), PublishDoneCode::InternalError);
+        assert_eq!(publish_done.stream_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn late_fetch_ok_is_withdrawn_with_fetch_cancel() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("late-fetch-ok").await;
+        let context = server.subscriber().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            REQUEST_ID,
+            LateResponseAction::FetchCancel,
+            late_fetch_ok(),
+        )
+        .await;
+
+        // Assert
+        let SessionEvent::FetchCancel(fetch_cancel) = client.receive_event().await.unwrap() else {
+            panic!("expected FETCH_CANCEL");
+        };
+        assert_eq!(fetch_cancel.request_id(), REQUEST_ID);
+    }
+
+    #[tokio::test]
+    async fn late_track_status_ok_for_another_request_kind_closes_the_session() {
+        // Arrange
+        let (_client, server) = spawn_connected_dual_sessions("late-track-status-ok").await;
+        let context = server.subscriber().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            REQUEST_ID,
+            LateResponseAction::Unsubscribe,
+            late_track_status_ok(),
+        )
+        .await;
+
+        // Assert
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.receive_event())
+            .await
+            .expect("no session event")
+            .unwrap();
+        assert!(
+            matches!(event, SessionEvent::ProtocolViolation()),
+            "{event:?}"
         );
     }
 }
