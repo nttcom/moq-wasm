@@ -30,8 +30,10 @@ blocking feeder thread can own the input while an async task drains `next()`.
 below the source height with matching bitrates. Call `finish()` to flush the encoders;
 `next()` returns `None` once every rendition has ended.
 
-Each encoder uses `x264enc tune=zerolatency` with a fixed 60-frame keyframe interval
-and a baseline profile, so keyframes are not aligned with the source GOP yet.
+Each encoder uses `x264enc tune=zerolatency` with a baseline profile. Its own keyframe
+interval is pushed out of reach (`key-int-max=i32::MAX`) and a keyframe is forced on the
+frame carrying each source keyframe's presentation time, so rendition keyframes land
+exactly where the source's do (draft-ietf-moq-cmsf-01 §3.2).
 
 ## Requirements
 
