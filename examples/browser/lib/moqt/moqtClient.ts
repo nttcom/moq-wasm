@@ -82,6 +82,9 @@ const emptyAliasMaps = (): AliasMaps => ({ appAliasByWireAlias: new Map(), wireA
 /// Grace for the relay named by GOAWAY to accept the session and the
 /// subscriptions before the switchover is given up.
 const MIGRATION_TIMEOUT_MS = 10_000
+/// A publisher moves at the same time as its subscribers, so a request the new
+/// relay rejects is repeated at this interval until the switchover times out.
+const MIGRATION_RETRY_INTERVAL_MS = 500
 type IncomingUnsubscribeHandler = ((requestId: bigint) => void) | null
 type PublishDoneHandler = (message: PublishDoneMessage) => void
 type ObjectDatagramHandler = ((message: ObjectDatagramMessage) => void) | null
@@ -342,7 +345,8 @@ export class MoqtClientWrapper {
       this.migratingTo = next
       await next.start()
       this.setupCallbacks(next)
-      const migrated = this.migrateState(next)
+      const deadline = Date.now() + MIGRATION_TIMEOUT_MS
+      const migrated = this.migrateState(next, deadline)
       const timedOut = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('relay switchover timed out')), MIGRATION_TIMEOUT_MS)
       })
@@ -368,7 +372,7 @@ export class MoqtClientWrapper {
     }
   }
 
-  private async migrateState(next: MOQTClient): Promise<AliasMaps> {
+  private async migrateState(next: MOQTClient, deadline: number): Promise<AliasMaps> {
     await this.sendSetup(next, this.connectOptions)
     for (const { trackNamespace, authInfo } of this.announcedNamespaces.values()) {
       const requestId = this.issueRequestId()
@@ -384,9 +388,11 @@ export class MoqtClientWrapper {
     }
     const aliases = emptyAliasMaps()
     for (const [requestId, subscription] of this.activeSubscriptions) {
-      const response = expectResponse(this.pendingSubscribe, requestId)
-      await this.sendSubscribeOn(next, requestId, subscription)
-      const subscribeOk = await response
+      const subscribeOk = await retryUntil(deadline, async () => {
+        const response = expectResponse(this.pendingSubscribe, requestId)
+        await this.sendSubscribeOn(next, requestId, subscription)
+        return response
+      })
       aliases.appAliasByWireAlias.set(subscribeOk.trackAlias, subscription.trackAlias)
       this.subscriptionTrackAliases.set(requestId, subscription.trackAlias)
       if (subscription.options.forward === false) {
@@ -404,10 +410,12 @@ export class MoqtClientWrapper {
       if (!remainder) {
         continue
       }
-      const response = expectResponse(this.pendingFetch, requestId)
       try {
-        await this.sendFetchOn(next, requestId, remainder.request, fetch.groupOrder)
-        await response
+        await retryUntil(deadline, async () => {
+          const response = expectResponse(this.pendingFetch, requestId)
+          await this.sendFetchOn(next, requestId, remainder.request, fetch.groupOrder)
+          return response
+        })
         fetch.skipThrough = remainder.skipThrough
         this.carriedFetches.add(requestId)
       } catch (error) {
@@ -1258,6 +1266,21 @@ function remainingFetch(
   }
   const start = { groupId: lastDelivered.groupId, objectId: lastDelivered.objectId + 1n }
   return isBefore(start, range.end) ? { request: { kind: 'absolute', ...range, start } } : undefined
+}
+
+/// Repeats a request the relay rejected until `deadline`; any other failure
+/// is reported at once.
+async function retryUntil<T>(deadline: number, request: () => Promise<T>): Promise<T> {
+  for (;;) {
+    try {
+      return await request()
+    } catch (error) {
+      if (!(error instanceof RequestError) || Date.now() + MIGRATION_RETRY_INTERVAL_MS > deadline) {
+        throw error
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, MIGRATION_RETRY_INTERVAL_MS))
+    }
+  }
 }
 
 function isBefore(a: Location, b: Location): boolean {
