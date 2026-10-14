@@ -22,9 +22,12 @@ pub(crate) struct Output {
 
 /// Both demuxers count presentation time from the first capture timestamp
 /// either track delivers, so the file keeps the offset between the tracks.
+/// Each demuxer is created at its track's first object, once that origin is
+/// known.
 pub(crate) struct Pipeline {
-    video: loc::Demuxer,
+    video: Option<loc::Demuxer>,
     audio: Option<loc::Demuxer>,
+    audio_track: Option<AudioConfig>,
     streams: StreamSet,
     muxer: Fmp4Muxer,
     capture_origin: Option<Timestamp>,
@@ -42,8 +45,9 @@ impl Pipeline {
         };
         let audio_config = selection.audio.as_ref().map(|audio| audio.config.clone());
         Ok(Self {
-            video: loc::Demuxer::video(),
-            audio: audio_config.clone().map(loc::Demuxer::audio),
+            video: None,
+            audio: None,
+            audio_track: audio_config.clone(),
             streams,
             muxer: new_muxer(streams, None, audio_config.as_ref())?,
             capture_origin: None,
@@ -60,21 +64,22 @@ impl Pipeline {
             .replace(object.group_id)
             .is_some_and(|previous| previous != object.group_id);
         let loc_object = to_loc_object(object);
-        self.share_capture_origin(&loc_object);
-        let events = self.video.push(&loc_object)?;
+        let origin = self.capture_origin(&loc_object);
+        let events = demuxer(&mut self.video, origin, loc::Demuxer::video).push(&loc_object)?;
         let mut output = self.mux(events)?;
         output.group_complete = group_complete;
         Ok(output)
     }
 
     pub(crate) fn push_audio(&mut self, object: &TrackObject) -> Result<Output> {
+        let config = self
+            .audio_track
+            .clone()
+            .context("audio object without an audio track")?;
         let loc_object = to_loc_object(object);
-        self.share_capture_origin(&loc_object);
-        let events = self
-            .audio
-            .as_mut()
-            .context("audio object without an audio track")?
-            .push(&loc_object)?;
+        let origin = self.capture_origin(&loc_object);
+        let events =
+            demuxer(&mut self.audio, origin, || loc::Demuxer::audio(config)).push(&loc_object)?;
         self.mux(events)
     }
 
@@ -84,15 +89,11 @@ impl Pipeline {
         self.muxer.finish()
     }
 
-    fn share_capture_origin(&mut self, object: &LocObject) {
-        let Some(capture) = object.capture_timestamp() else {
-            return;
-        };
-        let origin = *self.capture_origin.get_or_insert(capture);
-        self.video.set_capture_origin(origin);
-        if let Some(audio) = &mut self.audio {
-            audio.set_capture_origin(origin);
+    fn capture_origin(&mut self, object: &LocObject) -> Option<Timestamp> {
+        if let Some(capture) = object.capture_timestamp() {
+            self.capture_origin.get_or_insert(capture);
         }
+        self.capture_origin
     }
 
     /// The demuxers' own `Streams` events are dropped: each announces its one
@@ -142,6 +143,17 @@ impl Pipeline {
         self.file_started = false;
         Ok(tail.freeze())
     }
+}
+
+fn demuxer(
+    slot: &mut Option<loc::Demuxer>,
+    origin: Option<Timestamp>,
+    create: impl FnOnce() -> loc::Demuxer,
+) -> &mut loc::Demuxer {
+    slot.get_or_insert_with(|| match origin {
+        Some(origin) => create().with_capture_origin(origin),
+        None => create(),
+    })
 }
 
 fn new_muxer(

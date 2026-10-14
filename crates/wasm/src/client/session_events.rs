@@ -7,7 +7,10 @@ use moqt::{
     namespace::PublishNamespaceHandler,
     publish::{PublishDoneHandler, PublishHandler},
     subscribe::{SubscribeHandler, TrackStatusHandler},
-    wire::{Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus},
+    wire::{
+        Publish, PublishNamespace, PublishNamespaceDone, Subscribe, TrackStatus,
+        publish_done_code_to_wire,
+    },
 };
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
@@ -120,7 +123,7 @@ fn on_publish_done(shared: &ClientShared, handler: PublishDoneHandler) {
     };
     let message = PublishDoneMessage::new(
         request_id,
-        handler.status_code().into(),
+        publish_done_code_to_wire(handler.status_code()),
         handler.error_reason().to_string(),
     );
     emit(&shared.callbacks, |c| &c.publish_done, &[message.into()]);

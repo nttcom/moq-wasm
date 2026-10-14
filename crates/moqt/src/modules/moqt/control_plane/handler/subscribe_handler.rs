@@ -1,15 +1,13 @@
+use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
     SubscriberInitiatedSubscription, Subscription,
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{
-                    parameters::content_exists::ContentExists, subscribe::Subscribe,
-                    subscribe_ok::SubscribeOk,
-                },
+            control_messages::messages::{
+                parameters::content_exists::ContentExists, subscribe::Subscribe,
+                subscribe_ok::SubscribeOk,
             },
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
@@ -88,8 +86,8 @@ impl SubscribeHandler {
             max_duration: self.max_cache_duration,
         };
         self.session_context
-            .send_stream
-            .send(ControlMessageType::SubscribeOk, subscribe_ok.encode())
+            .control
+            .respond(OutgoingResponse::SubscribeOk(subscribe_ok))
             .await?;
         Ok(())
     }

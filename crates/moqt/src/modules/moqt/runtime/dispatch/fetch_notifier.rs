@@ -23,7 +23,7 @@ impl FetchNotifier {
         let sender = context
             .fetch_notification_map
             .lock()
-            .await
+            .expect("fetch_notification_map poisoned")
             .remove(&request_id);
         if let Some(sender) = sender {
             if let Err(e) = sender.send(fetch_data_receiver) {
