@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use mediapack::{MediaEvent, StreamSet, aac::AudioSpecificConfig};
+use mediapack::{MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
 use moqt::Session;
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track, TrackRole};
 use tokio::sync::mpsc;
@@ -21,6 +21,7 @@ const MEDIA_CHANNEL_CAPACITY: usize = 256;
 /// from one shared capture origin so the two stay aligned.
 pub struct BroadcastReader {
     media_receiver: mpsc::Receiver<MediaEvent>,
+    capture_origin: Arc<OnceLock<Timestamp>>,
     _tasks: Vec<TrackReceiveTask>,
 }
 
@@ -80,6 +81,7 @@ impl BroadcastReader {
         }
         Ok(Self {
             media_receiver,
+            capture_origin,
             _tasks: tasks,
         })
     }
@@ -87,6 +89,12 @@ impl BroadcastReader {
     /// `None` once every track has ended.
     pub async fn next_event(&mut self) -> Option<MediaEvent> {
         self.media_receiver.recv().await
+    }
+
+    /// The LOC capture timestamp, a wall-clock time, that a presentation
+    /// time of zero stands for on every track; `None` before the first object.
+    pub fn capture_origin(&self) -> Option<Timestamp> {
+        self.capture_origin.get().copied()
     }
 }
 

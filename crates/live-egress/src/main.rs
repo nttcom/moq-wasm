@@ -66,6 +66,10 @@ struct Args {
     #[arg(long)]
     audio_ssrc: Option<u32>,
 
+    /// Send RTCP on each stream's RTP port instead of the port above it
+    #[arg(long)]
+    rtcp_mux: bool,
+
     /// Where the SDP describing the output is written for the receiver
     #[arg(long, default_value = "egress.sdp")]
     sdp_out: PathBuf,
@@ -105,7 +109,7 @@ impl Args {
                 address: self.destination,
                 video_port: self.video_port,
                 audio_port: self.audio_port,
-                rtcp_mux: false,
+                rtcp_mux: self.rtcp_mux,
             },
             muxer: MuxerOptions {
                 video_payload_type: self.video_payload_type,
@@ -152,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn takes_payload_types_and_ssrcs_from_the_command_line() {
+    fn takes_the_stream_identities_and_rtcp_port_from_the_command_line() {
         // Arrange
         let args = Args::parse_from([
             "live-egress",
@@ -164,6 +168,7 @@ mod tests {
             "102",
             "--audio-ssrc",
             "4242",
+            "--rtcp-mux",
         ]);
 
         // Act
@@ -179,6 +184,7 @@ mod tests {
                 audio_ssrc: Some(4_242),
             }
         );
+        assert!(output.destination.rtcp_mux);
     }
 
     #[test]
