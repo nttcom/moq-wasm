@@ -1,11 +1,11 @@
+use crate::modules::moqt::version::OutgoingResponse;
 use std::sync::Arc;
 
 use crate::{
     modules::moqt::{
         control_plane::{
-            control_messages::{
-                control_message_type::ControlMessageType,
-                messages::{namespace_ok::NamespaceOk, publish_namespace::PublishNamespace},
+            control_messages::messages::{
+                namespace_ok::NamespaceOk, publish_namespace::PublishNamespace,
             },
             error_codes::{RequestErrorCode, RequestKind},
             handler::response_guard::ResponseGuard,
@@ -53,11 +53,8 @@ impl PublishNamespaceHandler {
             request_id: self.request_id,
         };
         self.session_context
-            .send_stream
-            .send(
-                ControlMessageType::PublishNamespaceOk,
-                publish_namespace_ok.encode(),
-            )
+            .control
+            .respond(OutgoingResponse::PublishNamespaceOk(publish_namespace_ok))
             .await
     }
 

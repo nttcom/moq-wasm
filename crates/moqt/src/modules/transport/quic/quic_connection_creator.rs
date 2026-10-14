@@ -13,9 +13,9 @@ use quinn::rustls::{
 };
 
 use crate::modules::transport::{
+    application_protocol::ApplicationProtocols,
     client_crypto::{
-        MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
-        quic_client_config,
+        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
@@ -33,6 +33,7 @@ impl QUICConnectionCreator {
         cert_path: &str,
         key_path: &str,
         keep_alive_sec: u64,
+        protocols: ApplicationProtocols,
     ) -> anyhow::Result<quinn::ServerConfig> {
         install_default_crypto_provider();
 
@@ -46,8 +47,7 @@ impl QUICConnectionCreator {
             .with_no_client_auth()
             .with_single_cert(cert, key)
             .context("failed to build the TLS server config")?;
-        let alpn = &[b"moq-00"];
-        server_crypto.alpn_protocols = alpn.iter().map(|&x| x.into()).collect();
+        server_crypto.alpn_protocols = protocols.quic_alpn_list();
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
@@ -61,9 +61,13 @@ impl QUICConnectionCreator {
         Ok(server_config)
     }
 
-    fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
+    fn create_client(
+        port_num: u16,
+        crypto: rustls::ClientConfig,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         let mut endpoint = client_endpoint(port_num)?;
-        endpoint.set_default_client_config(quic_client_config(crypto, MOQ_ALPN)?);
+        endpoint.set_default_client_config(quic_client_config(crypto, protocols.quic_alpn_list())?);
         tracing::debug!(local_addr = ?endpoint.local_addr()?, "QUIC client endpoint ready");
         Ok(QUICConnectionCreator { endpoint })
     }
@@ -71,12 +75,24 @@ impl QUICConnectionCreator {
 
 #[async_trait]
 impl TransportConnectionCreator for QUICConnectionCreator {
-    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?)
+    fn client(
+        port_num: u16,
+        verify_certificate: bool,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
     }
 
-    fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto_with_custom_cert(custom_cert_path)?)
+    fn client_with_custom_cert(
+        port_num: u16,
+        custom_cert_path: &str,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        Self::create_client(
+            port_num,
+            client_crypto_with_custom_cert(custom_cert_path)?,
+            protocols,
+        )
     }
 
     fn server(
@@ -84,8 +100,9 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         key_path: &str,
         port_num: u16,
         keep_alive_sec: u64,
+        protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        let server_config = Self::config_builder(cert_path, key_path, keep_alive_sec)?;
+        let server_config = Self::config_builder(cert_path, key_path, keep_alive_sec, protocols)?;
         let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port_num));
         let endpoint = quinn::Endpoint::server(server_config, address)?;
         tracing::info!("Server ready! for QUIC: {:?}", address);

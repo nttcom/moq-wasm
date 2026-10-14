@@ -2,6 +2,7 @@ use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedS
 use async_trait::async_trait;
 use bytes::BytesMut;
 
+use crate::modules::transport::application_protocol::NegotiatedProtocol;
 use crate::modules::transport::quic::quic_receive_stream::QUICReceiveStream;
 use crate::modules::transport::quic::quic_send_stream::QUICSendStream;
 use crate::modules::transport::transport_addresses::TransportAddresses;
@@ -17,6 +18,16 @@ impl QUICConnection {
     pub(crate) fn new(connection: quinn::Connection) -> Self {
         Self { connection }
     }
+}
+
+/// `None` before the handshake completes or without an ALPN.
+pub(crate) fn negotiated_alpn(connection: &quinn::Connection) -> Option<String> {
+    let data = connection
+        .handshake_data()?
+        .downcast::<quinn::crypto::rustls::HandshakeData>()
+        .ok()?;
+    data.protocol
+        .map(|alpn| String::from_utf8_lossy(&alpn).into_owned())
 }
 
 #[async_trait]
@@ -91,5 +102,11 @@ impl TransportConnection for QUICConnection {
 
     fn addresses(&self) -> TransportAddresses {
         (&self.connection).into()
+    }
+
+    fn negotiated_protocol(&self) -> NegotiatedProtocol {
+        NegotiatedProtocol::Quic {
+            alpn: negotiated_alpn(&self.connection).unwrap_or_default(),
+        }
     }
 }

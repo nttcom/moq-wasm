@@ -42,10 +42,12 @@ impl Demuxer {
         }
     }
 
-    /// Makes timestamps count from `origin` so several tracks share one
-    /// timeline. Call before the first `push`; later calls are ignored.
-    pub fn set_capture_origin(&mut self, origin: Timestamp) {
-        self.capture_origin.get_or_insert(origin);
+    /// Measures presentation time from `capture_origin` instead of the first
+    /// capture timestamp seen on this track, so the demuxers of the tracks of
+    /// one broadcast share one origin and their samples stay aligned.
+    pub fn with_capture_origin(mut self, capture_origin: Timestamp) -> Self {
+        self.capture_origin = Some(capture_origin);
+        self
     }
 
     pub fn push(&mut self, object: &LocObject) -> Result<Vec<MediaEvent>> {
@@ -123,7 +125,9 @@ mod tests {
     use crate::{
         h264::annexb::annexb_to_avcc,
         loc::object::{CAPTURE_TIMESTAMP_ID, LocExtension, VIDEO_CONFIG_ID},
-        test_support::{delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k},
+        test_support::{
+            delta_frame_annexb, fixture_record, keyframe_annexb, mono_48k, video_samples,
+        },
     };
 
     fn video_object(pts_micros: u64, payload: Bytes) -> LocObject {
@@ -131,6 +135,23 @@ mod tests {
             extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, pts_micros)],
             payload,
         }
+    }
+
+    #[test]
+    fn measures_presentation_time_from_a_shared_origin() {
+        // Arrange
+        let mut demuxer = Demuxer::video().with_capture_origin(Timestamp::from_micros(1_000_000));
+
+        // Act
+        let events = demuxer
+            .push(&video_object(1_500_000, keyframe_annexb()))
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            video_samples(&events)[0].pts,
+            Timestamp::from_micros(500_000)
+        );
     }
 
     #[test]
@@ -186,38 +207,6 @@ mod tests {
                 dts: Timestamp::from_millis(40)
             })]
         );
-    }
-
-    #[test]
-    fn a_shared_origin_keeps_the_gap_between_two_tracks() {
-        // Arrange: audio starts 30 ms after the video keyframe
-        let origin = Timestamp::from_micros(1_000_000);
-        let mut video = Demuxer::video();
-        let mut audio = Demuxer::audio(AudioConfig::Aac(mono_48k()));
-        video.set_capture_origin(origin);
-        audio.set_capture_origin(origin);
-        video.set_capture_origin(Timestamp::from_micros(7_000_000));
-
-        // Act
-        let video_events = video
-            .push(&video_object(1_000_000, keyframe_annexb()))
-            .unwrap();
-        let audio_events = audio
-            .push(&LocObject {
-                extensions: vec![LocExtension::varint(CAPTURE_TIMESTAMP_ID, 1_030_000)],
-                payload: Bytes::from_static(&[0xDE, 0xAD]),
-            })
-            .unwrap();
-
-        // Assert
-        let Some(MediaEvent::Video(video_sample)) = video_events.last() else {
-            panic!("expected a video sample");
-        };
-        let Some(MediaEvent::Audio(audio_sample)) = audio_events.last() else {
-            panic!("expected an audio sample");
-        };
-        assert_eq!(video_sample.pts, Timestamp::ZERO);
-        assert_eq!(audio_sample.pts, Timestamp::from_millis(30));
     }
 
     #[test]

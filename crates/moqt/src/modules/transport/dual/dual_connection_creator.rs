@@ -12,16 +12,19 @@ use quinn::rustls::{
 };
 
 use crate::modules::transport::{
+    application_protocol::ApplicationProtocols,
     client_crypto::{
-        MOQ_ALPN, client_crypto, client_crypto_with_custom_cert, client_endpoint,
-        quic_client_config,
+        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
     },
     connect_target::{ClientTransport, ConnectTarget},
     crypto_provider::install_default_crypto_provider,
-    quic::quic_connection::QUICConnection,
+    quic::quic_connection::{QUICConnection, negotiated_alpn},
     server_transport_config::server_transport_config,
     transport_connection_creator::TransportConnectionCreator,
-    webtransport::wt_connection::WtConnection,
+    webtransport::{
+        wt_connection::WtConnection,
+        wt_connection_creator::{accept_session, connect_session},
+    },
 };
 
 enum DualEndpoint {
@@ -37,14 +40,19 @@ struct DualClient {
 
 pub struct DualProtocolCreator {
     endpoint: DualEndpoint,
+    protocols: ApplicationProtocols,
 }
 
 impl DualProtocolCreator {
-    fn create_client(port_num: u16, crypto: rustls::ClientConfig) -> anyhow::Result<Self> {
+    fn create_client(
+        port_num: u16,
+        crypto: rustls::ClientConfig,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         let endpoint = client_endpoint(port_num)?;
-        let quic_config = quic_client_config(crypto.clone(), MOQ_ALPN)?;
+        let quic_config = quic_client_config(crypto.clone(), protocols.quic_alpn_list())?;
         let web_transport_config =
-            quic_client_config(crypto, web_transport_quinn::ALPN.as_bytes())?;
+            quic_client_config(crypto, vec![web_transport_quinn::ALPN.as_bytes().to_vec()])?;
         tracing::debug!(local_addr = ?endpoint.local_addr()?, "Dual Protocol client endpoint ready");
         Ok(DualProtocolCreator {
             endpoint: DualEndpoint::Client(Box::new(DualClient {
@@ -52,18 +60,31 @@ impl DualProtocolCreator {
                 quic_config,
                 web_transport_config,
             })),
+            protocols,
         })
     }
 }
 
 #[async_trait]
 impl TransportConnectionCreator for DualProtocolCreator {
-    fn client(port_num: u16, verify_certificate: bool) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?)
+    fn client(
+        port_num: u16,
+        verify_certificate: bool,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
     }
 
-    fn client_with_custom_cert(port_num: u16, custom_cert_path: &str) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto_with_custom_cert(custom_cert_path)?)
+    fn client_with_custom_cert(
+        port_num: u16,
+        custom_cert_path: &str,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        Self::create_client(
+            port_num,
+            client_crypto_with_custom_cert(custom_cert_path)?,
+            protocols,
+        )
     }
 
     fn server(
@@ -71,6 +92,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
         key_path: &str,
         port_num: u16,
         keep_alive_sec: u64,
+        protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
         install_default_crypto_provider();
 
@@ -89,11 +111,10 @@ impl TransportConnectionCreator for DualProtocolCreator {
             .with_single_cert(cert, key)
             .context("failed to build the TLS server config")?;
 
-        // ALPN を2つ登録（WebTransport + QUIC）
-        server_crypto.alpn_protocols = vec![
-            web_transport_quinn::ALPN.as_bytes().to_vec(), // h3
-            b"moq-00".to_vec(),
-        ];
+        server_crypto.alpn_protocols = [web_transport_quinn::ALPN.as_bytes().to_vec()]
+            .into_iter()
+            .chain(protocols.quic_alpn_list())
+            .collect();
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
@@ -108,6 +129,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
         Ok(DualProtocolCreator {
             endpoint: DualEndpoint::Server(endpoint),
+            protocols,
         })
     }
 
@@ -132,8 +154,7 @@ impl TransportConnectionCreator for DualProtocolCreator {
                 let connection = target
                     .connect_quic(&client.endpoint, client.web_transport_config.clone())
                     .await?;
-                let session =
-                    web_transport_quinn::Session::connect(connection, target.url.clone()).await?;
+                let session = connect_session(connection, target, self.protocols).await?;
                 Ok(Box::new(WtConnection::new(session)))
             }
         }
@@ -153,23 +174,17 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
         let connection = incoming.await?;
 
-        // ALPN で分岐
-        let alpn = connection
-            .handshake_data()
-            .and_then(|data| data.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
-            .and_then(|data| data.protocol)
+        let alpn = negotiated_alpn(&connection)
             .ok_or_else(|| anyhow::anyhow!("No ALPN protocol negotiated"))?;
 
-        if alpn.as_slice() == web_transport_quinn::ALPN.as_bytes() {
-            // WebTransport: H3 ハンドシェイクを行いセッションを確立する
+        if alpn == web_transport_quinn::ALPN {
             let request = web_transport_quinn::Request::accept(connection).await?;
-            let session = request.ok().await?;
+            let session = accept_session(request, self.protocols).await?;
             Ok(Box::new(WtConnection::new(session)))
-        } else if alpn.as_slice() == b"moq-00" {
-            // Raw QUIC
+        } else if self.protocols.quic_alpns.contains(&alpn.as_str()) {
             Ok(Box::new(QUICConnection::new(connection)))
         } else {
-            anyhow::bail!("Unsupported ALPN: {:?}", String::from_utf8_lossy(&alpn))
+            anyhow::bail!("Unsupported ALPN: {alpn:?}")
         }
     }
 
@@ -192,7 +207,129 @@ impl TransportConnectionCreator for DualProtocolCreator {
 
 #[cfg(test)]
 mod tests {
-    use crate::modules::test_support::{connect_sessions, dual_client, spawn_dual_server};
+    use super::DualProtocolCreator;
+    use crate::modules::{
+        test_support::{
+            HANDSHAKE_TIMEOUT, connect_sessions, dual_client, self_signed_server_config,
+            spawn_dual_server,
+        },
+        transport::{
+            application_protocol::{ApplicationProtocols, NegotiatedProtocol},
+            connect_target::ConnectTarget,
+            transport_connection::BoxedConnection,
+            transport_connection_creator::TransportConnectionCreator,
+        },
+    };
+
+    /// Returns the (client, server) connections.
+    async fn connect_transports(
+        name: &str,
+        scheme: &str,
+        path: &str,
+        server: ApplicationProtocols,
+        client: ApplicationProtocols,
+    ) -> (BoxedConnection, BoxedConnection) {
+        let config = self_signed_server_config(name);
+        let mut server = DualProtocolCreator::server(
+            &config.cert_path,
+            &config.key_path,
+            0,
+            config.keep_alive_interval_sec,
+            server,
+        )
+        .unwrap();
+        let url = format!(
+            "{scheme}://127.0.0.1:{}{path}",
+            server.local_port().unwrap()
+        );
+        let client = DualProtocolCreator::client(0, false, client).unwrap();
+        let target = ConnectTarget::parse(&url).unwrap();
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            let (client, server) = tokio::join!(
+                client.create_new_transport(&target),
+                server.accept_new_transport()
+            );
+            (client.unwrap(), server.unwrap())
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn raw_quic_connections_report_the_alpn_they_negotiated() {
+        // Act
+        let (client, server) = connect_transports(
+            "dual-alpn",
+            "moqt",
+            "",
+            ApplicationProtocols {
+                quic_alpns: &["moqt-b", "moqt-a"],
+                web_transport: &[],
+            },
+            ApplicationProtocols {
+                quic_alpns: &["moqt-a"],
+                web_transport: &[],
+            },
+        )
+        .await;
+
+        // Assert
+        let expected = NegotiatedProtocol::Quic {
+            alpn: "moqt-a".to_string(),
+        };
+        assert_eq!(client.negotiated_protocol(), expected);
+        assert_eq!(server.negotiated_protocol(), expected);
+    }
+
+    #[tokio::test]
+    async fn web_transport_sessions_carry_the_subprotocol_the_server_prefers() {
+        // Act
+        let (client, server) = connect_transports(
+            "dual-wt-protocol",
+            "https",
+            "/moq",
+            ApplicationProtocols {
+                quic_alpns: &[],
+                web_transport: &["moqt-b", "moqt-a"],
+            },
+            ApplicationProtocols {
+                quic_alpns: &[],
+                web_transport: &["moqt-a", "moqt-b"],
+            },
+        )
+        .await;
+
+        // Assert
+        let expected = NegotiatedProtocol::WebTransport {
+            protocol: Some("moqt-b".to_string()),
+        };
+        assert_eq!(client.negotiated_protocol(), expected);
+        assert_eq!(server.negotiated_protocol(), expected);
+    }
+
+    #[tokio::test]
+    async fn web_transport_sessions_without_a_shared_subprotocol_carry_none() {
+        // Act
+        let (client, server) = connect_transports(
+            "dual-wt-no-protocol",
+            "https",
+            "/moq",
+            ApplicationProtocols {
+                quic_alpns: &[],
+                web_transport: &["moqt-a"],
+            },
+            ApplicationProtocols {
+                quic_alpns: &[],
+                web_transport: &["moqt-b"],
+            },
+        )
+        .await;
+
+        // Assert
+        let expected = NegotiatedProtocol::WebTransport { protocol: None };
+        assert_eq!(client.negotiated_protocol(), expected);
+        assert_eq!(server.negotiated_protocol(), expected);
+    }
 
     #[tokio::test]
     async fn dual_client_connects_over_raw_quic_with_moqt_scheme() {

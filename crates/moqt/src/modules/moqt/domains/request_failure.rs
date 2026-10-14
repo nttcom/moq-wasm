@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::modules::{
-    moqt::control_plane::error_codes::{RequestErrorCode, RequestKind},
+    moqt::control_plane::error_codes::RequestErrorCode,
     transport::transport_send_stream::TransportSendError,
 };
 
@@ -23,14 +23,4 @@ pub enum RequestFailure {
     Send(#[from] TransportSendError),
     #[error("protocol violation: {0}")]
     ProtocolViolation(&'static str),
-}
-
-impl RequestFailure {
-    pub(crate) fn rejected(kind: RequestKind, request_id: u64, code: u64, reason: String) -> Self {
-        Self::Rejected {
-            request_id,
-            code: RequestErrorCode::from_wire(code, kind),
-            reason,
-        }
-    }
 }

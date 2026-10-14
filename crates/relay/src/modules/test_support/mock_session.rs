@@ -52,6 +52,7 @@ pub(crate) struct RecordedControlMessages {
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     closes: Arc<Mutex<Vec<(TerminationErrorCode, String)>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
+    publish_namespace_dones: Arc<Mutex<Vec<String>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
     publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
 }
@@ -67,6 +68,10 @@ impl RecordedControlMessages {
 
     pub(crate) fn publish_namespaces(&self) -> Vec<String> {
         self.publish_namespaces.lock().unwrap().clone()
+    }
+
+    pub(crate) fn publish_namespace_dones(&self) -> Vec<String> {
+        self.publish_namespace_dones.lock().unwrap().clone()
     }
 
     pub(crate) fn publishes(&self) -> Vec<SentPublish> {
@@ -322,8 +327,13 @@ impl Publisher for MockUpstreamPublisher {
         Ok(Box::pin(std::future::pending()))
     }
 
-    async fn send_publish_namespace_done(&self, _namespace: String) -> anyhow::Result<()> {
-        unimplemented!("not used by MockUpstreamSession tests")
+    async fn send_publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
+        self.recorded
+            .publish_namespace_dones
+            .lock()
+            .unwrap()
+            .push(namespace);
+        Ok(())
     }
 
     async fn send_publish(

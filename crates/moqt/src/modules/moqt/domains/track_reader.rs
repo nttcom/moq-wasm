@@ -143,7 +143,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
-        object::{ExtensionHeaders, MalformedTrackError},
+        object::MalformedTrackError,
         wire::{SubgroupId, SubgroupObject},
     };
 
@@ -234,12 +234,10 @@ mod tests {
         let track = published_track("reader-first-id").await;
         let factory = track.client.publisher().create_stream(&track.published);
         let mut subgroup = open_subgroup(&factory, 2, SubgroupId::FirstObjectIdDelta).await;
-        let field = subgroup.create_object_field(
-            7,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_payload(Bytes::from_static(b"o7")),
-        );
-        subgroup.send(field).await.unwrap();
+        subgroup
+            .send_raw(7, SubgroupObject::new_payload(Bytes::from_static(b"o7")))
+            .await
+            .unwrap();
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
@@ -266,12 +264,13 @@ mod tests {
         let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
 
         // Act
-        let end_of_group = group_0.create_object_field(
-            0,
-            ExtensionHeaders::default(),
-            SubgroupObject::new_status(crate::object::ObjectStatus::EndOfGroup as u64),
-        );
-        group_0.send(end_of_group).await.unwrap();
+        group_0
+            .send_raw(
+                0,
+                SubgroupObject::new_status(crate::object::ObjectStatus::EndOfGroup as u64),
+            )
+            .await
+            .unwrap();
         group_0.close().await.unwrap();
         let objects = collect_objects(&mut reader, 1).await;
         let nothing_more = tokio::time::timeout(NO_OBJECT_TIMEOUT, reader.next_object()).await;

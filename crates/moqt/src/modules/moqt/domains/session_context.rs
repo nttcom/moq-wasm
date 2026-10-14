@@ -6,90 +6,32 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 
 use crate::{
-    RequestFailure, SessionEvent,
-    modules::{
-        executor,
-        moqt::{
-            control_plane::{
-                constants::TerminationErrorCode,
-                control_messages::{
-                    control_message_type::ControlMessageType,
-                    messages::{
-                        publish_namespace_done::PublishNamespaceDone, unsubscribe::Unsubscribe,
-                        unsubscribe_namespace::UnsubscribeNamespace,
-                    },
-                },
-                enums::{RequestId, ResponseMessage},
-            },
-            data_plane::stream::{
-                bi_stream_sender::BiStreamSender, fetch_data_receiver::FetchDataReceiver,
-            },
-            runtime::dispatch::incoming_object::IncomingObject,
-        },
-        transport::transport_send_stream::TransportSendError,
+    SessionEvent,
+    modules::moqt::{
+        control_plane::{constants::TerminationErrorCode, enums::RequestId},
+        data_plane::stream::fetch_data_receiver::FetchDataReceiver,
+        runtime::dispatch::incoming_object::IncomingObject,
+        version::ControlChannel,
     },
 };
-
-const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// How to withdraw a request whose success response arrives after the caller
-/// stopped waiting (timeout or cancellation). Late error responses never need
-/// a withdrawal and are always discarded.
-#[derive(Debug)]
-pub(crate) enum LateResponseAction {
-    /// Discard the late response without a withdrawal message.
-    ///
-    /// FIXME: PUBLISH and FETCH should withdraw with PUBLISH_DONE /
-    /// FETCH_CANCEL, but decoding those messages is still `todo!()`, so
-    /// sending them would crash a peer running this crate.
-    Discard,
-    /// A late SUBSCRIBE_OK established a subscription nobody consumes.
-    Unsubscribe,
-    /// A late SUBSCRIBE_NAMESPACE_OK registered an unwanted namespace interest.
-    UnsubscribeNamespace { namespace: Vec<String> },
-    /// A late PUBLISH_NAMESPACE_OK accepted an announcement we gave up on.
-    PublishNamespaceDone { namespace: Vec<String> },
-}
-
-/// A request awaiting its response on this session. Kept in
-/// `inflight_requests` until the response arrives, even after the caller
-/// stops waiting, so a late response is answered with a withdrawal instead
-/// of being mistaken for an unknown Request ID (which must close the
-/// session, §9.1).
-pub(crate) enum InflightRequest {
-    Waiting {
-        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
-        on_late_response: LateResponseAction,
-    },
-    Abandoned(LateResponseAction),
-}
-
-#[derive(Default)]
-pub(crate) struct InflightRequests {
-    requests: HashMap<RequestId, InflightRequest>,
-    control_stream_closed: bool,
-}
 
 const MAX_PENDING_OBJECTS_PER_TRACK_ALIAS: usize = 256;
 
 pub(crate) struct SessionContext {
     pub(crate) transport_connection: BoxedConnection,
-    pub(crate) send_stream: BiStreamSender,
-    request_id: AtomicU64,
+    pub(crate) control: ControlChannel,
     track_alias: AtomicU64,
     pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    inflight_requests: std::sync::Mutex<InflightRequests>,
     pub(crate) receiver_map:
         tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<IncomingObject>>>,
     object_sinks: tokio::sync::Mutex<HashMap<u64, ObjectSink>>,
     pub(crate) fetch_notification_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
+        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<FetchDataReceiver>>>,
     pub(crate) fetch_receiver_map:
-        tokio::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
+        std::sync::Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedReceiver<FetchDataReceiver>>>,
 }
 
 enum ObjectSink {
@@ -122,26 +64,24 @@ pub(crate) enum IncomingObjectNotification {
     Discarded,
 }
 
-/// Holds the `inflight_requests` registration for an in-flight request. On
-/// drop, a still-waiting entry is downgraded to `Abandoned` (not removed):
-/// the caller gave up, but a late response must still find the entry so it
-/// triggers the registered action instead of a session close.
-#[must_use = "dropping this abandons the request in inflight_requests; bind it for the lifetime of the request"]
-pub(crate) struct RegisteredSender {
+#[must_use = "dropping this removes the pending fetch; bind it for the lifetime of the request"]
+pub(crate) struct PendingFetch {
     session: Arc<SessionContext>,
     request_id: RequestId,
+    kept: bool,
 }
 
-impl Drop for RegisteredSender {
+impl PendingFetch {
+    /// FETCH_OK arrived: the channel stays for `accept_fetch_receiver`.
+    pub(crate) fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for PendingFetch {
     fn drop(&mut self) {
-        if let Ok(mut inflight) = self.session.inflight_requests.lock()
-            && let Some(entry) = inflight.requests.get_mut(&self.request_id)
-            && let InflightRequest::Waiting {
-                on_late_response, ..
-            } = entry
-        {
-            let action = std::mem::replace(on_late_response, LateResponseAction::Discard);
-            *entry = InflightRequest::Abandoned(action);
+        if !self.kept {
+            self.session.remove_pending_fetch(self.request_id);
         }
     }
 }
@@ -149,78 +89,23 @@ impl Drop for RegisteredSender {
 impl SessionContext {
     pub(crate) fn new(
         transport_connection: BoxedConnection,
-        send_stream: BiStreamSender,
-        request_id: AtomicU64,
+        control: ControlChannel,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> Self {
         Self {
             transport_connection,
-            send_stream,
-            request_id,
+            control,
             track_alias: AtomicU64::new(0),
             event_sender,
-            inflight_requests: std::sync::Mutex::new(InflightRequests::default()),
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             object_sinks: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_notification_map: tokio::sync::Mutex::new(HashMap::new()),
-            fetch_receiver_map: tokio::sync::Mutex::new(HashMap::new()),
+            fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
+            fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
         }
-    }
-
-    pub(crate) fn get_request_id(&self) -> u64 {
-        self.request_id.fetch_add(2, Ordering::SeqCst)
     }
 
     pub(crate) fn get_track_alias(&self) -> u64 {
         self.track_alias.fetch_add(1, Ordering::SeqCst)
-    }
-
-    /// Inserts the sender into `inflight_requests` and returns a
-    /// `RegisteredSender` that marks the request abandoned on drop.
-    /// `on_late_response` is the withdrawal to send if a success response
-    /// arrives after abandonment. Once the control stream is closed no
-    /// response can arrive, so the sender is dropped and the wait fails at
-    /// once.
-    pub(crate) fn register_response_sender(
-        self: &Arc<Self>,
-        request_id: RequestId,
-        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
-        on_late_response: LateResponseAction,
-    ) -> RegisteredSender {
-        let mut inflight = self
-            .inflight_requests
-            .lock()
-            .expect("inflight_requests poisoned");
-        if !inflight.control_stream_closed {
-            inflight.requests.insert(
-                request_id,
-                InflightRequest::Waiting {
-                    sender,
-                    on_late_response,
-                },
-            );
-        }
-        RegisteredSender {
-            session: self.clone(),
-            request_id,
-        }
-    }
-
-    pub(crate) fn take_inflight_request(&self, request_id: RequestId) -> Option<InflightRequest> {
-        self.inflight_requests
-            .lock()
-            .expect("inflight_requests poisoned")
-            .requests
-            .remove(&request_id)
-    }
-
-    pub(crate) fn fail_inflight_requests(&self) {
-        let mut inflight = self
-            .inflight_requests
-            .lock()
-            .expect("inflight_requests poisoned");
-        inflight.control_stream_closed = true;
-        inflight.requests.clear();
     }
 
     pub(crate) async fn notify_incoming_object(
@@ -318,140 +203,41 @@ impl SessionContext {
         self.receiver_map.lock().await.remove(&track_alias);
     }
 
-    /// Awaits a response to a control message with a bounded timeout (§12.2).
-    ///
-    /// A timeout fails only this request instead of closing the session:
-    /// requests are request-scoped, and a shared (inter-relay) session must
-    /// survive one slow request. §12.2's resource-exhaustion concern is met
-    /// by the caller dropping its pending request state on the error path;
-    /// the `inflight_requests` entry stays behind as `Abandoned` so a late
-    /// response is withdrawn instead of closing the session.
-    pub(crate) async fn await_response(
-        &self,
-        receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
-    ) -> Result<ResponseMessage, RequestFailure> {
-        match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, receiver).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(RequestFailure::SessionClosed),
-            Err(_) => Err(RequestFailure::Timeout),
+    /// Call before sending the FETCH: its data stream can arrive before FETCH_OK.
+    pub(crate) fn register_pending_fetch(self: &Arc<Self>, request_id: RequestId) -> PendingFetch {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<FetchDataReceiver>();
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .insert(request_id, sender);
+        self.fetch_receiver_map
+            .lock()
+            .expect("fetch_receiver_map poisoned")
+            .insert(request_id, receiver);
+        PendingFetch {
+            session: self.clone(),
+            request_id,
+            kept: false,
         }
     }
 
-    /// Handles a response that arrived after the caller abandoned the request.
-    /// A success response means the peer holds state (subscription, namespace
-    /// interest, ...) nobody on this side will consume, so send the matching
-    /// withdrawal. A success response whose type does not match the request
-    /// is a protocol violation and closes the session; error responses are
-    /// simply discarded.
-    pub(crate) async fn handle_late_response(
-        &self,
-        request_id: RequestId,
-        action: LateResponseAction,
-        response: ResponseMessage,
-    ) {
-        let send_result = match &response {
-            ResponseMessage::SubscribeOk(subscribe_ok) => match &action {
-                LateResponseAction::Unsubscribe => {
-                    tracing::warn!(
-                        request_id,
-                        "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
-                    );
-                    self.cancel_unclaimed_track_alias(subscribe_ok.track_alias)
-                        .await;
-                    self.send_stream
-                        .send(
-                            ControlMessageType::UnSubscribe,
-                            Unsubscribe { request_id }.encode(),
-                        )
-                        .await
-                }
-                _ => self.close_on_mismatched_late_response(request_id, &response),
-            },
-            ResponseMessage::SubscribeNameSpaceOk(_) => match &action {
-                LateResponseAction::UnsubscribeNamespace { namespace } => {
-                    tracing::warn!(
-                        request_id,
-                        "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
-                    );
-                    self.send_stream
-                        .send(
-                            ControlMessageType::UnSubscribeNamespace,
-                            UnsubscribeNamespace::new(namespace.clone()).encode(),
-                        )
-                        .await
-                }
-                _ => self.close_on_mismatched_late_response(request_id, &response),
-            },
-            ResponseMessage::PublishNamespaceOk(_) => match &action {
-                LateResponseAction::PublishNamespaceDone { namespace } => {
-                    tracing::warn!(
-                        request_id,
-                        "PUBLISH_NAMESPACE_OK arrived after the request was abandoned; sending PUBLISH_NAMESPACE_DONE"
-                    );
-                    self.send_stream
-                        .send(
-                            ControlMessageType::PublishNamespaceDone,
-                            PublishNamespaceDone::new(namespace.clone()).encode(),
-                        )
-                        .await
-                }
-                _ => self.close_on_mismatched_late_response(request_id, &response),
-            },
-            // Late error responses, and late FETCH_OK / PUBLISH_OK /
-            // TRACK_STATUS_OK for requests registered with `Discard`. A
-            // success response of those kinds for a request of another kind is
-            // not detected here: `Discard` does not record which request kind
-            // it was registered for.
-            _ => Self::discard_late_response(request_id, &response),
-        };
-        if let Err(error) = send_result {
-            tracing::warn!(
-                request_id,
-                %error,
-                "failed to withdraw an abandoned request"
-            );
-        }
-    }
-
-    /// Nothing to withdraw (late error, or a `Discard` action): log and drop
-    /// the response.
-    fn discard_late_response(
-        request_id: RequestId,
-        response: &ResponseMessage,
-    ) -> Result<(), TransportSendError> {
-        tracing::warn!(
-            request_id,
-            ?response,
-            "discarding response that arrived after the request was abandoned"
-        );
-        Ok(())
-    }
-
-    /// A success response whose type does not correspond to the request it
-    /// answers means the peer's request-id bookkeeping cannot be trusted, so
-    /// close the session instead of guessing a withdrawal.
-    fn close_on_mismatched_late_response(
-        &self,
-        request_id: RequestId,
-        response: &ResponseMessage,
-    ) -> Result<(), TransportSendError> {
-        tracing::error!(
-            request_id,
-            ?response,
-            "Protocol violation: response type does not match the request; closing session"
-        );
-        self.close_with_error(
-            TerminationErrorCode::ProtocolViolation,
-            "response type does not match the request",
-        );
-        Ok(())
+    pub(crate) fn remove_pending_fetch(&self, request_id: RequestId) {
+        self.fetch_notification_map
+            .lock()
+            .expect("fetch_notification_map poisoned")
+            .remove(&request_id);
+        self.fetch_receiver_map
+            .lock()
+            .expect("fetch_receiver_map poisoned")
+            .remove(&request_id);
     }
 
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
         if let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation()) {
             tracing::error!(?error, "failed to send protocol violation event");
         }
-        self.transport_connection.close(code as u32, reason);
+        self.transport_connection
+            .close(self.control.version().termination_code(code), reason);
     }
 }
 
@@ -472,43 +258,18 @@ impl Drop for SessionContext {
 mod tests {
     use std::collections::HashSet;
 
-    use tokio::sync::mpsc::error::TryRecvError;
-
-    use super::{IncomingObjectNotification, LateResponseAction};
-    use crate::{
-        modules::{
-            moqt::{
-                control_plane::{
-                    control_messages::messages::{
-                        parameters::content_exists::ContentExists, subscribe_ok::SubscribeOk,
-                    },
-                    enums::ResponseMessage,
-                },
-                runtime::dispatch::incoming_object::IncomingObject,
-            },
-            test_support::{
-                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
-                subscription,
-            },
+    use super::IncomingObjectNotification;
+    use crate::modules::{
+        moqt::runtime::dispatch::incoming_object::IncomingObject,
+        test_support::{
+            datagram_object, notify_datagram, register_and_take_data_receiver,
+            spawn_connected_dual_sessions, subscription,
         },
-        object::GroupOrder,
     };
 
     const REQUEST_ID: u64 = 1;
     const OTHER_REQUEST_ID: u64 = 3;
     const TRACK_ALIAS: u64 = 5;
-
-    fn late_subscribe_ok() -> ResponseMessage {
-        ResponseMessage::SubscribeOk(SubscribeOk {
-            request_id: REQUEST_ID,
-            track_alias: TRACK_ALIAS,
-            expires: 0,
-            group_order: GroupOrder::Ascending,
-            content_exists: ContentExists::False,
-            delivery_timeout: None,
-            max_duration: None,
-        })
-    }
 
     #[tokio::test]
     async fn concurrent_callers_get_distinct_request_ids() {
@@ -522,7 +283,7 @@ mod tests {
                 .map(|_| {
                     scope.spawn(|| {
                         (0..1_000)
-                            .map(|_| context.get_request_id())
+                            .map(|_| context.control.next_request_id())
                             .collect::<Vec<_>>()
                     })
                 })
@@ -551,7 +312,7 @@ mod tests {
         // Assert
         let received = receiver.try_recv();
         assert!(
-            matches!(&received, Ok(IncomingObject::Datagram(object)) if object.track_alias == TRACK_ALIAS),
+            matches!(&received, Ok(IncomingObject::Datagram(object)) if *object == datagram_object()),
             "{received:?}"
         );
     }
@@ -598,65 +359,6 @@ mod tests {
 
         // Assert
         assert!(receiver.recv().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn late_subscribe_ok_drops_the_objects_buffered_for_its_track_alias() {
-        // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-late-subscribe-ok").await;
-        let context = server.subscriber().session;
-        notify_datagram(&context, TRACK_ALIAS).await;
-
-        // Act
-        context
-            .handle_late_response(
-                REQUEST_ID,
-                LateResponseAction::Unsubscribe,
-                late_subscribe_ok(),
-            )
-            .await;
-        let notification = notify_datagram(&context, TRACK_ALIAS).await;
-
-        // Assert
-        assert!(
-            matches!(notification, IncomingObjectNotification::Discarded),
-            "{notification:?}"
-        );
-        let mut receiver =
-            register_and_take_data_receiver(&context, OTHER_REQUEST_ID, TRACK_ALIAS).await;
-        let received = receiver.try_recv();
-        assert!(
-            matches!(&received, Err(TryRecvError::Empty)),
-            "{received:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn late_subscribe_ok_keeps_the_receiver_of_another_subscription() {
-        // Arrange
-        let (_client, server) =
-            spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
-        let context = server.subscriber().session;
-        context
-            .register_data_receiver(OTHER_REQUEST_ID, TRACK_ALIAS)
-            .await
-            .unwrap();
-
-        // Act
-        context
-            .handle_late_response(
-                REQUEST_ID,
-                LateResponseAction::Unsubscribe,
-                late_subscribe_ok(),
-            )
-            .await;
-        let notification = notify_datagram(&context, TRACK_ALIAS).await;
-
-        // Assert
-        assert!(
-            matches!(notification, IncomingObjectNotification::Notified),
-            "{notification:?}"
-        );
     }
 
     #[tokio::test]

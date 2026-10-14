@@ -20,6 +20,7 @@ namespace.rs, object.rs, server.rs (public re-exports)
 modules/moqt/domains      ← public API objects (Endpoint, Session, Publisher, …)
 modules/moqt/runtime      ← background tasks + incoming-object dispatch
 modules/moqt/control_plane← control messages, handlers, session events
+modules/moqt/version      ← per-draft adapter: control channel, SETUP, control receive loop
 modules/moqt/data_plane   ← object formats, stream/datagram send/receive, codecs
 modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL markers
         │
@@ -79,9 +80,9 @@ Four zero-sized markers implement it; the first three are native-only:
 
 | Marker | Implementation | Notes |
 | --- | --- | --- |
-| `QUIC` | quinn, ALPN `moq-00` | raw QUIC; used for inter-relay links and native clients |
+| `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and `moq-00` (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
+| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
@@ -103,6 +104,69 @@ Client-side helpers shared by the three creators:
   custom CA file), the `quinn::ClientConfig` per ALPN, and the client
   `quinn::Endpoint`.
 
+The creators do not know MoQT versions. Each takes an
+`ApplicationProtocols` (`application_protocol.rs`): the ALPNs a raw QUIC
+connection offers or accepts, and the WebTransport subprotocols a client
+lists in WT-Available-Protocols. A WebTransport server answers with the first
+of its own subprotocols the client also offered (WT-Protocol), or with none.
+Every connection reports what its handshake settled on through
+`TransportConnection::negotiated_protocol()`.
+`BROWSER` sets `WebTransportOptions.protocols` and reads `WebTransport.protocol`
+through `js_sys::Reflect`, since web-sys exposes neither; a browser without
+subprotocol support reports none.
+
+## Version adapter (`modules/moqt/version`)
+
+Everything above the adapter states what to send and receive; the adapter
+decides how a draft carries it. Only draft-14 is implemented: the adapter
+exists ahead of draft-18 support, as a deliberate exception to the
+coding-style rule that an abstraction waits for its second concrete use.
+
+- `Version` names the draft a session speaks.
+- `ControlChannel` is an enum with one variant per draft, matched in place
+  instead of a trait object: the set of drafts is closed, the match is
+  checked for exhaustiveness when a draft is added, and async methods need no
+  object safety or `Send` bounds that wasm32 cannot meet. It offers
+  `next_request_id`, `send_request(OutgoingRequest) -> PendingResponse`,
+  `respond(OutgoingResponse)` and `notify(Notification)`. The draft-14
+  control message structs serve as the shared model; `draft14::ControlChannel`
+  encodes them.
+- `ControlReceiver` spawns the loop that turns the peer's control messages
+  into `SessionEvent`s and responses; `connect` / `accept` /
+  `ServerHandshake` run the draft's SETUP exchange.
+- `draft14` carries everything on one bidirectional control stream: request
+  ids from 0 (client) or 1 (server) in steps of two, `inflight_requests`
+  pairing responses by request id, a `LateResponseAction` per request
+  (how a late success is withdrawn), the 10 s response timeout,
+  `ControlMessageReceiveTask` and the CLIENT_SETUP / SERVER_SETUP exchange
+  (`draft14::setup`). The withdrawals:
+  - SUBSCRIBE / SUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE → UNSUBSCRIBE /
+    UNSUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE_DONE.
+  - PUBLISH → PUBLISH_DONE (INTERNAL_ERROR, Stream Count 0: no stream opens
+    before PUBLISH_OK).
+  - FETCH → FETCH_CANCEL.
+  - TRACK_STATUS → nothing; it creates no state.
+- The data plane goes through the same seam. `SubgroupEncoder` and
+  `Version::encode_datagram` / `encode_fetch_header` / `encode_fetch_object`
+  lay out outgoing `Object`s. `Version::accept_uni_stream` reads the header
+  that tells a subgroup stream from a FETCH response and returns an
+  `IncomingStream`, `SubgroupReader` / `FetchReader` turn the rest of the
+  stream into `Object`s, and `Version::decode_datagram` decodes a datagram.
+  `draft14::objects` holds the draft-14 side (Object ID Deltas, Subgroup ID
+  forms, status codes) on top of the wire structs in `data_plane/object` and
+  the decoders in `data_plane/codec`.
+- `version::APPLICATION_PROTOCOLS` lists the ALPN and WebTransport subprotocol
+  of every supported draft; `Endpoint` hands it to its creator.
+  `version::connect` / `accept` pick the `Version` from the connection's
+  `negotiated_protocol()` before running that draft's SETUP exchange: ALPN
+  `moq-00` (draft-14 §3.1.2) and a WebTransport session without a subprotocol
+  (draft-14 defines none, §3.1.1) are draft-14; anything else fails the
+  session.
+- Error codes cross the seam as the typed enums of `error_codes.rs` and
+  `constants.rs`. `draft14::error_codes` holds their draft-14 values: `draft14`
+  uses them to encode and decode messages, and `Version::termination_code` /
+  `data_stream_reset_code` return them for transport closes and stream resets.
+
 ## Session establishment (`modules/moqt/domains`)
 
 Client flow: `Endpoint` → `Connecting` (a boxed `Future`) → `Session`.
@@ -111,20 +175,20 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 - `Endpoint::create_client(&ClientConfig)` / `create_server(&ServerConfig)`
   build a `SessionCreator` around the transport's `ConnectionCreator`.
 - `connect(url)` returns `Connecting`, whose future performs the transport
-  handshake, opens the bidirectional control stream, and runs the whole SETUP
-  exchange in `SessionContextFactory` (sends CLIENT_SETUP, awaits SERVER_SETUP,
-  version `0xff00000e` = draft-14). `ClientConfig.authorization_token`, when
+  handshake and runs the SETUP exchange through `version::connect` (draft-14
+  opens the bidirectional control stream, sends CLIENT_SETUP and awaits
+  SERVER_SETUP, version `0xff00000e`). `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
   `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session` is
   created.
 - `accept()` returns `Accepting`, whose future performs the transport
-  handshake, accepts the control stream, and stops after CLIENT_SETUP is
-  received (`SessionContextFactory::receive_client_setup`). It resolves to a
+  handshake and `version::accept`, which for draft-14 accepts the control
+  stream and stops after CLIENT_SETUP is received. It resolves to a
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:
-  - `Handshake::accept()` sends SERVER_SETUP
-    (`SessionContextFactory::send_server_setup`) and creates the `Session`.
+  - `Handshake::accept()` answers the setup (SERVER_SETUP for draft-14) and
+    creates the `Session`.
   - `Handshake::reject(code, reason)` closes the transport with the given
     termination code without sending SERVER_SETUP.
 
@@ -134,9 +198,9 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 
 | Task | Role |
 | --- | --- |
-| `ControlMessageReceiveTask` | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
-| `UniStreamReceiveTask` | accepts incoming unidirectional streams; the first frame must be a subgroup header (→ `SubscriptionNotifier`) or fetch header (→ `FetchNotifier`). |
-| `DatagramReceiveTask` | receives datagrams, decodes `ObjectDatagram`, dispatches via `SubscriptionNotifier`. |
+| control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below). Holds only a `Weak<SessionContext>` so it cannot keep the session alive. |
+| `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. |
+| `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. |
 
 `Session::publisher()` / `subscriber()` return lightweight `Publisher` /
@@ -232,21 +296,18 @@ through the raw stream senders.
 
 One struct owns all cross-task state:
 
-- `request_id: AtomicU64` — starts at 1, incremented by 2 per request.
+- `control: ControlChannel` — the version adapter above; for draft-14 it
+  holds the request id counter and `inflight_requests`.
 - `track_alias: AtomicU64` — per-session track alias allocation, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`.
-- `inflight_requests` — request/response correlation by request id.
-  Registration returns a `RegisteredSender` drop-guard that marks the entry
-  abandoned on drop, so a late response is withdrawn instead of closing the
-  session. When the control stream closes, every entry is failed and later
-  registrations fail at once: no response can arrive, so a caller never waits
-  out the response timeout for a gone peer.
 - `object_sinks: HashMap<track_alias, ObjectSink>` — see buffering invariant
   below.
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
   for FETCH data streams. A FETCH is answered on a single stream (draft-14
   §9.16.3), so `FetchNotifier` removes the sender when that stream arrives;
-  the receiver keeps it until `accept_fetch_receiver`.
+  the receiver keeps it until `accept_fetch_receiver`. Registration returns
+  a `PendingFetch` drop-guard that removes both entries unless FETCH_OK
+  arrived.
 
 ## Control plane (`modules/moqt/control_plane`)
 
@@ -264,7 +325,8 @@ One struct owns all cross-task state:
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14
   §13.1.1).
-- `error_codes.rs` — typed codes the public API uses instead of integers:
+- `error_codes.rs` — typed codes the public API uses instead of integers. They
+  carry no values; the version adapter maps them (`draft14::error_codes`):
   - `RequestErrorCode` (handler `error()`, `RequestFailure::Rejected`) is one
     semantic enum; draft-14 numbers codes per `*_ERROR` message, so the wire
     value is looked up per `RequestKind`.
@@ -274,18 +336,25 @@ One struct owns all cross-task state:
   - A code the message does not define is sent as INTERNAL_ERROR; an unknown
     received value (request error or PUBLISH_DONE status) reads as
     INTERNAL_ERROR.
-  - Integers remain only in the `moqt::wire` structs; `RequestKind` is
-    exported there for bindings that convert numbers themselves.
+  - Integers remain only in the `moqt::wire` structs. `moqt::wire` also
+    exports `RequestKind` and the draft-14 conversions
+    (`request_error_code_to_wire` / `request_error_code_from_wire`,
+    `publish_done_code_from_wire`) for the wasm bindings, whose JavaScript
+    API carries draft-14 numbers.
   - `ResponseGuard` is the one place that encodes and sends a `*_ERROR`, for
     both the handlers' `error()` and the drop-time NOT_SUPPORTED reply.
 
-`ControlMessageReceiveTask` splits every decoded message into one of three
-paths:
+The draft-14 `ControlMessageReceiveTask` splits every decoded message into
+one of three paths:
 
 1. **Requests** (SUBSCRIBE, PUBLISH, FETCH, namespace messages, …) become
    `SessionEvent` variants delivered to `Session::receive_event()`.
 2. **Responses** (`*_OK` / `*_ERROR`) are matched against `inflight_requests` by
-   request id and complete the pending `oneshot`.
+   request id and complete the pending `oneshot`. The waiting side holds a
+   `PendingResponse` whose drop marks the entry abandoned, so a late response
+   runs its `LateResponseAction` instead of closing the session. When the
+   control stream closes, every entry is failed and later registrations fail
+   at once.
 3. **Protocol violations** (a malformed payload, a SETUP after the handshake,
    a response to a request kind this crate never sends) close the session and
    stop the task.
@@ -331,14 +400,15 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `tokio_reader`.
 - `stream/*` — send/receive wrappers:
   - `StreamDataSenderFactory::next()` opens one uni stream per subgroup and
-    returns a `StreamDataSender`.
+    returns a `StreamDataSender` for the session's `Version`.
   - `StreamDataSender` uses a **typestate** (`Uninitialized` → `start()`
     → `HeaderSent`) so "header before objects" is enforced at compile time.
-    `start(SubgroupStart)` always declares extensions present and encodes the
-    subgroup id explicitly; `send_object(&Object)` computes the Object ID
-    Delta from the previous object and rejects ids that do not increase. The
-    raw `send_header` / `send` stay crate-private for `TrackWriter`, which
-    picks its header type itself.
+    For draft-14, `start(SubgroupStart)` always declares extensions present
+    and omits the Subgroup ID field for subgroup 0; `send_object(&Object)`
+    computes the Object ID Delta from the previous object and rejects ids that
+    do not increase. `TrackWriter` sends through the same two calls. Raw
+    header and object-field sends exist only in tests of how a receiver
+    resolves each header type and delta.
   - `StreamDataReceiver::receive()` returns `Subgroup::Header(SubgroupStart)`
     and then `Subgroup::Object(Object)` with absolute ids: header types
     without a Subgroup ID field mean subgroup 0, and the "first object id"
@@ -379,8 +449,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `SessionContext::object_sinks`.
 - `FetchNotifier` routes FETCH streams by request id as a
   `FetchDataReceiver`.
-- `IncomingObject` is the per-track-alias envelope (`StreamHeader` /
-  `Datagram`); FETCH streams never enter the per-track channel.
+- `IncomingObject` is the per-track-alias envelope (`Subgroup` holding a
+  `StreamDataReceiver` / `Datagram` holding an `Object`); FETCH streams never
+  enter the per-track channel.
 
 ## Key invariants
 
@@ -406,7 +477,7 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Unknown response request id**: a response that matches no `inflight_requests`
   entry is a protocol violation; the session is closed with
   `ProtocolViolation`.
-- **Control response timeout**: `SessionContext::await_response` bounds every
+- **Control response timeout**: `PendingResponse::response` bounds every
   request/response wait to 10 s; a timeout fails only that request with
   `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
   Every request that waits for a response returns `RequestFailure`, so

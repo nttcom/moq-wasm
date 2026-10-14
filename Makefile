@@ -6,6 +6,7 @@ MOQT_URL ?= https://127.0.0.1:4433
 RESOLVED_MOQT_URL = $(shell node scripts/resolve-local-relay-url.mjs "$(MOQT_URL)")
 LOCAL_MOQT_URL ?= $(RESOLVED_MOQT_URL)
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
+LIVE_EGRESS_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
 GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 # Only a local relay serves the self-signed development certificate; any other relay is verified.
@@ -13,13 +14,22 @@ GST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 LOOPBACK_RELAY_URLS := $(foreach scheme,https moqt,$(scheme)://127.0.0.1:% $(scheme)://localhost:% $(scheme)://[::1]:%)
 LOCAL_RELAY_URLS = $(LOOPBACK_RELAY_URLS) $(if $(filter $(LOOPBACK_RELAY_URLS),$(MOQT_URL)),$(RESOLVED_MOQT_URL))
 LIVE_INGEST_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_INGEST_MOQT_URL)),--insecure-skip-tls-verify)
+LIVE_EGRESS_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(LIVE_EGRESS_MOQT_URL)),--insecure-skip-tls-verify)
 ONVIF_TLS_FLAGS = $(if $(filter $(LOCAL_RELAY_URLS),$(ONVIF_MOQT_URL)),--insecure-skip-tls-verify)
 GST_TLS_PROPERTIES = $(if $(filter $(LOCAL_RELAY_URLS),$(GST_MOQT_URL)),insecure-skip-tls-verify=true)
 GST_SRT_ADDR ?= 0.0.0.0:9000
+LIVE_INGEST_RTP_SDP ?= assets/rtp.sdp
+LIVE_INGEST_RTP_NAMESPACE ?= anon/live/test
+LIVE_EGRESS_NAMESPACE ?= anon/live/test
+LIVE_EGRESS_DESTINATION ?= 127.0.0.1
+# Not 5004/5006: live-ingest-rtp listens there, and sending to it would loop the output back in.
+LIVE_EGRESS_VIDEO_PORT ?= 5014
+LIVE_EGRESS_AUDIO_PORT ?= 5016
+LIVE_EGRESS_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats gst-plugin gst-srt-publish onvif ffmpeg-rtmp ffmpeg-srt ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
 
 # Applications
 VTS_APPS_FILE ?= crates/vts/apps.example.json
@@ -44,19 +54,33 @@ chrome:
 chrome\:linux:
 	./scripts/chrome_linux.sh
 
-# RTMP/SRT Bridges
+# RTMP/SRT/RTP Bridges
 live-ingest:
 	@echo "Using MoQT relay URL: $(LIVE_INGEST_MOQT_URL)"
 	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
-		--moqt-url $(LIVE_INGEST_MOQT_URL) $(LIVE_INGEST_TLS_FLAGS) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,)
+		--moqt-url $(LIVE_INGEST_MOQT_URL) $(LIVE_INGEST_TLS_FLAGS) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,) $(LIVE_INGEST_RTP_FLAGS)
 
 live-ingest-transcode: LIVE_INGEST_TRANSCODE := 1
 live-ingest-transcode: live-ingest
 
 live-ingest-stats: LIVE_INGEST_STATS := 1
 live-ingest-stats: live-ingest
+
+# Reads the SDP that `make ffmpeg-rtp` writes, so start the sender first.
+live-ingest-rtp: LIVE_INGEST_RTP_FLAGS := --rtp-sdp $(LIVE_INGEST_RTP_SDP) --rtp-namespace $(LIVE_INGEST_RTP_NAMESPACE)
+live-ingest-rtp: live-ingest
+
+# MoQT to RTP: play the result with `ffplay -protocol_whitelist file,udp,rtp $(LIVE_EGRESS_SDP)`.
+live-egress:
+	mkdir -p $(dir $(LIVE_EGRESS_SDP))
+	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p live-egress -- \
+		--moqt-url $(LIVE_EGRESS_MOQT_URL) $(LIVE_EGRESS_TLS_FLAGS) \
+		--namespace $(LIVE_EGRESS_NAMESPACE) \
+		--destination $(LIVE_EGRESS_DESTINATION) \
+		--video-port $(LIVE_EGRESS_VIDEO_PORT) --audio-port $(LIVE_EGRESS_AUDIO_PORT) \
+		--sdp-out $(LIVE_EGRESS_SDP)
 
 # GStreamer plugin (crates/gst-plugin-moqt): `moqtsink` publishes H.264/AAC into MoQT.
 gst-plugin:
@@ -92,6 +116,19 @@ ffmpeg-srt:
 		-g 60 -sc_threshold 0 \
 		-c:a aac -ar 48000 -ac 2 \
 		-f mpegts "srt://localhost:9000?mode=caller&streamid=anon/live/test"
+
+# One RTP stream per output. The SDP FFmpeg writes names the ports, payload types and the AAC config, so the receiver needs it.
+ffmpeg-rtp:
+	mkdir -p $(dir $(LIVE_INGEST_RTP_SDP))
+	ffmpeg -re \
+		-f lavfi -i "testsrc=size=1920x1080:rate=30" \
+		-f lavfi -i "sine=frequency=1000:sample_rate=48000" \
+		-sdp_file $(LIVE_INGEST_RTP_SDP) \
+		-map 0:v -c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p \
+		-g 60 -sc_threshold 0 \
+		-f rtp rtp://127.0.0.1:5004 \
+		-map 1:a -c:a aac -ar 48000 -ac 2 \
+		-f rtp rtp://127.0.0.1:5006
 
 # Big Buck Bunny (c) 2008 Blender Foundation | www.bigbuckbunny.org, CC BY 3.0.
 BBB_URL := https://download.blender.org/demo/movies/BBB/bbb_sunflower_1080p_30fps_normal.mp4.zip

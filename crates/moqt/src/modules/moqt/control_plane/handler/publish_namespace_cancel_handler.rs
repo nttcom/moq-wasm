@@ -1,7 +1,4 @@
-use crate::modules::moqt::control_plane::{
-    control_messages::messages::publish_namespace_cancel::PublishNamespaceCancel,
-    error_codes::{RequestErrorCode, RequestKind},
-};
+use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 
 #[derive(Clone, Debug)]
 pub struct PublishNamespaceCancelHandler {
@@ -11,14 +8,15 @@ pub struct PublishNamespaceCancelHandler {
 }
 
 impl PublishNamespaceCancelHandler {
-    pub(crate) fn new(publish_namespace_cancel: PublishNamespaceCancel) -> Self {
+    pub(crate) fn new(
+        track_namespace: String,
+        error_code: RequestErrorCode,
+        error_reason: String,
+    ) -> Self {
         Self {
-            track_namespace: publish_namespace_cancel.track_namespace.join("/"),
-            error_code: RequestErrorCode::from_wire(
-                publish_namespace_cancel.error_code,
-                RequestKind::PublishNamespace,
-            ),
-            error_reason: publish_namespace_cancel.error_reason,
+            track_namespace,
+            error_code,
+            error_reason,
         }
     }
 
