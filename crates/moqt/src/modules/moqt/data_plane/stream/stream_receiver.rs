@@ -12,7 +12,7 @@ pub(crate) type UniStreamReceiver = StreamReceiver<{ 64 * 1024 }, UniStreamDecod
 
 #[derive(Debug)]
 pub enum StreamReceiveError {
-    Closed(String),
+    Closed(ReadError),
     Decode(String),
     /// The stream decoded but violates the protocol, e.g. an unknown Object
     /// Status (draft-14 §10.2.1.1). The caller should close the session.
@@ -47,10 +47,10 @@ impl<const U: usize, D: Decoder<Error = std::io::Error>> StreamReceiver<U, D> {
         let item = self.framed_read.next().await;
         match item {
             Some(Ok(item)) => Ok(Some(item)),
-            Some(Err(error)) if is_transport_error(&error) => {
-                Err(StreamReceiveError::Closed(error.to_string()))
-            }
-            Some(Err(error)) => Err(StreamReceiveError::Decode(error.to_string())),
+            Some(Err(error)) => match transport_error(&error) {
+                Some(read_error) => Err(StreamReceiveError::Closed(read_error.clone())),
+                None => Err(StreamReceiveError::Decode(error.to_string())),
+            },
             // The stream has ended.
             None => {
                 tracing::debug!("Stream has ended");
@@ -60,8 +60,8 @@ impl<const U: usize, D: Decoder<Error = std::io::Error>> StreamReceiver<U, D> {
     }
 }
 
-fn is_transport_error(error: &std::io::Error) -> bool {
-    error.get_ref().is_some_and(|inner| inner.is::<ReadError>())
+fn transport_error(error: &std::io::Error) -> Option<&ReadError> {
+    error.get_ref()?.downcast_ref()
 }
 
 #[cfg(test)]
@@ -91,7 +91,10 @@ mod tests {
         let result = receiver.receive().await;
 
         // Assert
-        assert!(matches!(result, Err(StreamReceiveError::Closed(_))));
+        assert!(matches!(
+            result,
+            Err(StreamReceiveError::Closed(ReadError::ConnectionLost))
+        ));
     }
 
     #[tokio::test]
@@ -103,7 +106,10 @@ mod tests {
         let result = receiver.receive().await;
 
         // Assert
-        assert!(matches!(result, Err(StreamReceiveError::Closed(_))));
+        assert!(matches!(
+            result,
+            Err(StreamReceiveError::Closed(ReadError::Reset))
+        ));
     }
 
     #[tokio::test]
