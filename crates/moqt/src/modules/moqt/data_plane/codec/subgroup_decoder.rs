@@ -3,7 +3,7 @@ use tokio_util::codec::Decoder;
 
 use crate::{
     modules::moqt::data_plane::object::decode_error::DecodeError,
-    object::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
+    wire::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
 };
 
 /// One frame of a subgroup stream as draft-14 encodes it.

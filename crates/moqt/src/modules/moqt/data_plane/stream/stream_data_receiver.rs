@@ -143,8 +143,9 @@ mod tests {
         },
         object::{
             ExtensionHeaders, ForwardingPreference, Location, ObjectStatus, StreamReceiveError,
-            SubgroupId, SubgroupObject, SubgroupObjectSender, SubgroupStart,
+            SubgroupObjectSender, SubgroupStart,
         },
+        wire::{SubgroupId, SubgroupObject},
     };
 
     async fn send_raw(sender: &mut SubgroupObjectSender, delta: u64, object: SubgroupObject) {
