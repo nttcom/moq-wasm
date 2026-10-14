@@ -13,6 +13,7 @@ pub(crate) enum EventKind {
     FromSession(MoqtSessionEvent),
     MalformedTrackDetected(TrackKey),
     ProtocolViolationDetected { reason: String },
+    GoAwaySent,
 }
 
 impl SessionEvent {
@@ -27,6 +28,13 @@ impl SessionEvent {
         Self {
             session_id,
             kind: EventKind::MalformedTrackDetected(track_key),
+        }
+    }
+
+    pub(crate) fn go_away_sent(session_id: SessionId) -> Self {
+        Self {
+            session_id,
+            kind: EventKind::GoAwaySent,
         }
     }
 

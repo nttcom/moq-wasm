@@ -2,7 +2,10 @@ pub(crate) mod entry;
 
 use std::{
     collections::{BTreeSet, HashSet},
-    sync::{Arc, PoisonError, RwLock},
+    sync::{
+        Arc, PoisonError, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use dashmap::{DashMap, DashSet, Entry};
@@ -108,6 +111,7 @@ pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) upstream_tracks: DashMap<TrackKey, UpstreamTrack>,
     pub(crate) downstream_subscriptions:
         DashMap<(SessionId, u64), RegisteredDownstreamSubscription>,
+    draining: AtomicBool,
 }
 
 impl InMemoryLocalPubSubDirectory {
@@ -118,7 +122,72 @@ impl InMemoryLocalPubSubDirectory {
             published_handlers: RwLock::new(Vec::new()),
             upstream_tracks: DashMap::new(),
             downstream_subscriptions: DashMap::new(),
+            draining: AtomicBool::new(false),
         }
+    }
+
+    /// draft-22 §6.6.1: a draining relay unsubscribes from its publishers once
+    /// the downstream subscribers it sent GOAWAY to have left, which tells a
+    /// publisher publishing on both relays that it can stop on this one
+    /// (draft-22 §7.6.1).
+    pub(crate) fn begin_draining(&self) {
+        self.draining.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn release_unwatched_published_subscriptions(
+        &self,
+        publisher_session_id: SessionId,
+    ) -> Vec<(TrackKey, ReleasedUpstreamSubscription)> {
+        let unwatched: Vec<TrackKey> = self
+            .upstream_tracks
+            .iter()
+            .filter(|track| {
+                track.downstream_subscriber_count == 0
+                    && track
+                        .subscriptions
+                        .get(&publisher_session_id)
+                        .is_some_and(|active| active.origin == UpstreamSubscriptionOrigin::Publish)
+            })
+            .map(|track| track.key().clone())
+            .collect();
+        let mut released = Vec::new();
+        for track_key in unwatched {
+            let Entry::Occupied(mut entry) = self.upstream_tracks.entry(track_key.clone()) else {
+                continue;
+            };
+            let track = entry.get_mut();
+            if track.downstream_subscriber_count > 0 {
+                continue;
+            }
+            let Some(active) = track.subscriptions.remove(&publisher_session_id) else {
+                continue;
+            };
+            if track.subscriptions.is_empty() {
+                entry.remove();
+            } else {
+                drop(entry);
+            }
+            self.forget_published_handler(publisher_session_id, &track_key);
+            released.push((
+                track_key,
+                ReleasedUpstreamSubscription {
+                    publisher_session_id,
+                    subscription: active.subscription,
+                },
+            ));
+        }
+        released
+    }
+
+    fn forget_published_handler(&self, publisher_session_id: SessionId, track_key: &TrackKey) {
+        self.published_handlers
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|published| {
+                published.publisher_session_id != publisher_session_id
+                    || published.handler.track_namespace() != track_key.track_namespace
+                    || published.handler.track_name() != track_key.track_name
+            });
     }
 
     #[tracing::instrument(
@@ -607,14 +676,7 @@ impl InMemoryLocalPubSubDirectory {
         let (ended_subscription, _) =
             self.end_publisher_subscription(&track_key, publisher_session_id, end)?;
         if ended_subscription.origin == UpstreamSubscriptionOrigin::Publish {
-            self.published_handlers
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)
-                .retain(|published| {
-                    published.publisher_session_id != publisher_session_id
-                        || published.handler.track_namespace() != track_key.track_namespace
-                        || published.handler.track_name() != track_key.track_name
-                });
+            self.forget_published_handler(publisher_session_id, &track_key);
         }
         Some(track_key)
     }
@@ -711,9 +773,10 @@ impl InMemoryLocalPubSubDirectory {
     /// subscriber leaving releases those from relays: a relay's upstream
     /// subscription only serves this relay's clients, so two relays feeding
     /// each other never keep a track alive between them. PUBLISH-initiated
-    /// subscriptions stay until their publisher ends them. Relay subscribers
-    /// left on a track whose every upstream subscription was released end
-    /// with TRACK_ENDED.
+    /// subscriptions stay until their publisher ends them, except while the
+    /// relay drains, when the last downstream subscriber releases them too.
+    /// Relay subscribers left on a track whose every upstream subscription
+    /// was released end with TRACK_ENDED.
     pub(crate) fn remove_downstream_subscription(
         &self,
         downstream_session_id: SessionId,
@@ -734,14 +797,22 @@ impl InMemoryLocalPubSubDirectory {
         }
         let downstream_remains = track.downstream_subscriber_count > 0;
         let client_remains = track.client_downstream_subscriber_count > 0;
+        let draining = self.draining.load(Ordering::SeqCst);
         let mut released_upstream_subscriptions = Vec::new();
+        let mut released_published = Vec::new();
         if !client_remains {
             track
                 .subscriptions
                 .retain(|publisher_session_id, subscription| {
-                    let released = subscription.origin == UpstreamSubscriptionOrigin::Subscribe
-                        && (!downstream_remains
-                            || subscription.publisher_peer == SessionPeer::Relay);
+                    let released = match subscription.origin {
+                        UpstreamSubscriptionOrigin::Subscribe => {
+                            !downstream_remains || subscription.publisher_peer == SessionPeer::Relay
+                        }
+                        UpstreamSubscriptionOrigin::Publish => draining && !downstream_remains,
+                    };
+                    if released && subscription.origin == UpstreamSubscriptionOrigin::Publish {
+                        released_published.push(*publisher_session_id);
+                    }
                     if released {
                         released_upstream_subscriptions.push(ReleasedUpstreamSubscription {
                             publisher_session_id: *publisher_session_id,
@@ -757,6 +828,11 @@ impl InMemoryLocalPubSubDirectory {
                 PublishDoneReason::publisher_session_closed(),
             );
             entry.remove();
+        } else {
+            drop(entry);
+        }
+        for publisher_session_id in released_published {
+            self.forget_published_handler(publisher_session_id, &track_key);
         }
         Some(RemovedDownstreamSubscription {
             track_key,

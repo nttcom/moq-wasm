@@ -1,21 +1,26 @@
 use std::{sync::Arc, time::Duration};
 
 use moqt::TerminationErrorCode;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::modules::{
-    cascading::route_registry::RelayRouteRegistry, domain::session_peer::SessionPeer,
-    session::session_repository::SessionRepository,
+    cascading::route_registry::RelayRouteRegistry,
+    domain::session_peer::SessionPeer,
+    session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
 /// Session migration, draft-14 §3.5: the relay leaves the route registry's
 /// active set, tells every client session where to reconnect with GOAWAY and
-/// waits for the clients to close. Clients still connected after `timeout`
-/// are closed with GOAWAY_TIMEOUT. Relay-peer sessions receive a GOAWAY with
+/// waits for the clients to close. Each client session's worker is told the
+/// GOAWAY was sent, so the tracks it publishes and nobody watches are
+/// unsubscribed. Clients still connected after `timeout` are closed with
+/// GOAWAY_TIMEOUT. Relay-peer sessions receive a GOAWAY with
 /// no URI, which makes the other relay subscribe the remaining publishers of
 /// the tracks this relay feeds it; nothing waits for them.
 pub(crate) async fn drain_client_sessions(
     repo: &Arc<tokio::sync::Mutex<SessionRepository>>,
     route_registry: &dyn RelayRouteRegistry,
+    relay_event_sender: &UnboundedSender<SessionEvent>,
     timeout: Duration,
 ) {
     if let Err(error) = route_registry.mark_draining().await {
@@ -44,7 +49,7 @@ pub(crate) async fn drain_client_sessions(
         timeout_secs = timeout.as_secs(),
         "sending GOAWAY to every session"
     );
-    for session in &sessions {
+    for (session_id, session) in &sessions {
         let new_session_uri = target
             .as_deref()
             .map(|host| format!("{}://{host}", session.url_scheme()))
@@ -52,8 +57,9 @@ pub(crate) async fn drain_client_sessions(
         if let Err(error) = session.go_away(new_session_uri).await {
             tracing::warn!(%error, "failed to send GOAWAY");
         }
+        let _ = relay_event_sender.send(SessionEvent::go_away_sent(*session_id));
     }
-    for session in &relay_sessions {
+    for (_, session) in &relay_sessions {
         if let Err(error) = session.go_away(String::new()).await {
             tracing::warn!(%error, "failed to send GOAWAY to a relay peer");
         }
@@ -78,7 +84,7 @@ pub(crate) async fn drain_client_sessions(
         remaining = remaining.len(),
         "drain timed out; closing the remaining client sessions with GOAWAY_TIMEOUT"
     );
-    for session in remaining {
+    for (_, session) in remaining {
         session.close(
             TerminationErrorCode::GoawayTimeout,
             "the relay is shutting down",
@@ -96,6 +102,7 @@ mod tests {
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         domain::session_peer::SessionPeer,
+        session::session_event::EventKind,
         session::session_repository::SessionRepository,
         test_support::{
             mock_session::{RecordedControlMessages, mock_new_session},
@@ -128,7 +135,15 @@ mod tests {
         let drain = {
             let (repository, registry) = (repository.clone(), registry.clone());
             tokio::spawn(async move {
-                drain_client_sessions(&repository, registry.as_ref(), DRAIN_TIMEOUT).await
+                let (relay_event_sender, _relay_event_receiver) =
+                    tokio::sync::mpsc::unbounded_channel();
+                drain_client_sessions(
+                    &repository,
+                    registry.as_ref(),
+                    &relay_event_sender,
+                    DRAIN_TIMEOUT,
+                )
+                .await
             })
         };
         while recorded.go_aways().is_empty() {
@@ -155,7 +170,14 @@ mod tests {
         let registry = StubRouteRegistry::with_migration_target(None);
 
         // Act
-        drain_client_sessions(&repository, &registry, Duration::from_millis(50)).await;
+        let (relay_event_sender, _relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+        drain_client_sessions(
+            &repository,
+            &registry,
+            &relay_event_sender,
+            Duration::from_millis(50),
+        )
+        .await;
 
         // Assert: no migration target, so the GOAWAY names no URI
         assert_eq!(recorded.go_aways(), vec![""]);
@@ -178,10 +200,12 @@ mod tests {
         repository.lock().await.add(new_session, sender).await;
         let registry = StubRouteRegistry::with_migration_target(Some("relay-b.example:4433"));
 
+        let (relay_event_sender, _relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+
         // Act
         let drained = tokio::time::timeout(
             Duration::from_secs(1),
-            drain_client_sessions(&repository, &registry, DRAIN_TIMEOUT),
+            drain_client_sessions(&repository, &registry, &relay_event_sender, DRAIN_TIMEOUT),
         )
         .await;
 
@@ -197,14 +221,40 @@ mod tests {
         let repository = Arc::new(tokio::sync::Mutex::new(SessionRepository::new()));
         let registry = StubRouteRegistry::with_migration_target(None);
 
+        let (relay_event_sender, _relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+
         // Act
         let drained = tokio::time::timeout(
             Duration::from_secs(1),
-            drain_client_sessions(&repository, &registry, DRAIN_TIMEOUT),
+            drain_client_sessions(&repository, &registry, &relay_event_sender, DRAIN_TIMEOUT),
         )
         .await;
 
         // Assert
         assert!(drained.is_ok());
+    }
+
+    #[tokio::test]
+    async fn each_client_session_hears_that_its_go_away_was_sent() {
+        // Arrange
+        let (repository, _recorded) = repository_with_client_session(7).await;
+        let registry = StubRouteRegistry::with_migration_target(None);
+        let (relay_event_sender, mut relay_event_receiver) = tokio::sync::mpsc::unbounded_channel();
+
+        // Act
+        drain_client_sessions(
+            &repository,
+            &registry,
+            &relay_event_sender,
+            Duration::from_millis(10),
+        )
+        .await;
+
+        // Assert
+        let event = relay_event_receiver
+            .try_recv()
+            .expect("the drain must report the GOAWAY it sent");
+        assert_eq!(event.session_id, 7);
+        assert!(matches!(event.kind, EventKind::GoAwaySent));
     }
 }

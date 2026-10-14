@@ -14,8 +14,9 @@ use crate::modules::{
         verified_token::VerifiedToken,
     },
     control_plane::sequences::{
-        CascadingRelayContext, downstream_publish::DownstreamPublish, fetch::Fetch,
-        go_away::GoAway, malformed_track::MalformedTrackCleanup, publish::Publish,
+        CascadingRelayContext, downstream_publish::DownstreamPublish,
+        drain_release::ReleaseUnwatchedPublishes, fetch::Fetch, go_away::GoAway,
+        malformed_track::MalformedTrackCleanup, publish::Publish,
         publish_namespace::PublishNamespace, publish_namespace_done::PublishNamespaceDone,
         subscribe::Subscribe, subscribe_namespace::SubscribeNameSpace,
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
@@ -124,6 +125,17 @@ impl SessionWorker {
                         &self.deps.ingress_sender,
                     )
                     .instrument(event_span)
+                    .await;
+            }
+            EventKind::GoAwaySent => {
+                ReleaseUnwatchedPublishes
+                    .handle(
+                        session_id,
+                        self.deps.local_pub_sub_directory.as_ref(),
+                        &self.deps.control_message_forwarder,
+                        &self.deps.ingress_sender,
+                    )
+                    .instrument(self.session_span.clone())
                     .await;
             }
             EventKind::ProtocolViolationDetected { reason } => {
