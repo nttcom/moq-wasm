@@ -2,7 +2,6 @@ use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     data_plane::ingress::ingress_coordinator::IngressCommand,
     domain::{pub_sub_directory::InMemoryLocalPubSubDirectory, session_id::SessionId},
-    session::handler::unsubscribe::UnsubscribeHandler,
 };
 use tracing::Span;
 
@@ -23,9 +22,8 @@ impl Unsubscribe {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         ingress_sender: &tokio::sync::mpsc::Sender<IngressCommand>,
-        handler: Box<dyn UnsubscribeHandler>,
+        subscribe_id: u64,
     ) {
-        let subscribe_id = handler.subscribe_id();
         tracing::info!(
             session_id = %session_id,
             subscribe_id = %subscribe_id,
@@ -84,16 +82,6 @@ mod tests {
         },
     };
 
-    struct MockUnsubscribeHandler {
-        subscribe_id: u64,
-    }
-
-    impl UnsubscribeHandler for MockUnsubscribeHandler {
-        fn subscribe_id(&self) -> u64 {
-            self.subscribe_id
-        }
-    }
-
     struct TestContext {
         upstream: UpstreamReleaseContext,
         runner_stop_receivers: Vec<oneshot::Receiver<PublishDoneReason>>,
@@ -135,7 +123,7 @@ mod tests {
                 &ctx.upstream.table,
                 &ctx.upstream.forwarder,
                 &ctx.upstream.ingress_sender,
-                Box::new(MockUnsubscribeHandler { subscribe_id }),
+                subscribe_id,
             )
             .await;
     }

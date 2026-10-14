@@ -280,7 +280,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
-                        handler,
+                        handler.subscribe_id(),
                     )
                     .instrument(event_span)
                     .await;
