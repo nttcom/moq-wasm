@@ -44,4 +44,7 @@ export const DEFAULT_AUDIO_STREAM_UPDATE_SETTINGS: AudioStreamUpdateSettings = {
   intervalSeconds: 1
 }
 
-export const DEFAULT_VIDEO_KEYFRAME_INTERVAL = 300
+/// In frames: 2 s at 30 fps. A viewer joining a rendition that the relay already
+/// receives starts at its next keyframe, since the relay does not pass that
+/// SUBSCRIBE on to the publisher.
+export const DEFAULT_VIDEO_KEYFRAME_INTERVAL = 60
