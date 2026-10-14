@@ -126,9 +126,15 @@ coding-style rule that an abstraction waits for its second concrete use.
 - `draft14` carries everything on one bidirectional control stream: request
   ids from 0 (client) or 1 (server) in steps of two, `inflight_requests`
   pairing responses by request id, a `LateResponseAction` per request
-  (withdraw or discard a late response), the 10 s response timeout,
+  (how a late success is withdrawn), the 10 s response timeout,
   `ControlMessageReceiveTask` and the CLIENT_SETUP / SERVER_SETUP exchange
-  (`draft14::setup`).
+  (`draft14::setup`). The withdrawals:
+  - SUBSCRIBE / SUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE → UNSUBSCRIBE /
+    UNSUBSCRIBE_NAMESPACE / PUBLISH_NAMESPACE_DONE.
+  - PUBLISH → PUBLISH_DONE (INTERNAL_ERROR, Stream Count 0: no stream opens
+    before PUBLISH_OK).
+  - FETCH → FETCH_CANCEL.
+  - TRACK_STATUS → nothing; it creates no state.
 - The data plane goes through the same seam. `SubgroupEncoder` and
   `Version::encode_datagram` / `encode_fetch_header` / `encode_fetch_object`
   lay out outgoing `Object`s. `Version::accept_uni_stream` reads the header
@@ -279,7 +285,9 @@ One struct owns all cross-task state:
 - `fetch_notification_map` / `fetch_receiver_map` — keyed by request id, used
   for FETCH data streams. A FETCH is answered on a single stream (draft-14
   §9.16.3), so `FetchNotifier` removes the sender when that stream arrives;
-  the receiver keeps it until `accept_fetch_receiver`.
+  the receiver keeps it until `accept_fetch_receiver`. Registration returns
+  a `PendingFetch` drop-guard that removes both entries unless FETCH_OK
+  arrived.
 
 ## Control plane (`modules/moqt/control_plane`)
 
@@ -320,9 +328,9 @@ one of three paths:
 2. **Responses** (`*_OK` / `*_ERROR`) are matched against `inflight_requests` by
    request id and complete the pending `oneshot`. The waiting side holds a
    `PendingResponse` whose drop marks the entry abandoned, so a late response
-   runs its `LateResponseAction` (UNSUBSCRIBE, UNSUBSCRIBE_NAMESPACE,
-   PUBLISH_NAMESPACE_DONE, or discard) instead of closing the session. When the control stream
-   closes, every entry is failed and later registrations fail at once.
+   runs its `LateResponseAction` instead of closing the session. When the
+   control stream closes, every entry is failed and later registrations fail
+   at once.
 3. **Protocol violations** (a malformed payload, a SETUP after the handshake,
    a response to a request kind this crate never sends) close the session and
    stop the task.
