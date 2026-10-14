@@ -2,6 +2,7 @@
 //! stream and pairs a response with its request by Request ID (§9.1).
 
 pub(crate) mod control_message_receive_task;
+pub(crate) mod error_codes;
 pub(crate) mod objects;
 pub(crate) mod setup;
 
@@ -25,8 +26,9 @@ use crate::{
                     control_message_type::ControlMessageType,
                     messages::{
                         fetch_cancel::FetchCancel, publish_done::PublishDone,
-                        publish_namespace_done::PublishNamespaceDone, unsubscribe::Unsubscribe,
-                        unsubscribe_namespace::UnsubscribeNamespace,
+                        publish_namespace_cancel::PublishNamespaceCancel,
+                        publish_namespace_done::PublishNamespaceDone, request_error::RequestError,
+                        unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                     },
                 },
                 enums::{RequestId, ResponseMessage},
@@ -176,7 +178,19 @@ impl ControlChannel {
             OutgoingResponse::SubscribeNamespaceOk(ok) => {
                 (ControlMessageType::SubscribeNamespaceOk, ok.encode())
             }
-            OutgoingResponse::Error(kind, error) => (error_message_type(kind), error.encode()),
+            OutgoingResponse::Error {
+                kind,
+                request_id,
+                code,
+                reason_phrase,
+            } => {
+                let error = RequestError {
+                    request_id,
+                    error_code: error_codes::request_error_code_to_wire(code, kind),
+                    reason_phrase,
+                };
+                (error_message_type(kind), error.encode())
+            }
         };
         self.send_stream.send(message_type, payload).await
     }
@@ -188,13 +202,36 @@ impl ControlChannel {
         let (message_type, payload) = match notification {
             Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, m.encode()),
             Notification::SubscribeUpdate(m) => (ControlMessageType::SubscribeUpdate, m.encode()),
-            Notification::PublishDone(m) => (ControlMessageType::PublishDone, m.encode()),
+            Notification::PublishDone {
+                request_id,
+                code,
+                stream_count,
+                reason,
+            } => {
+                let publish_done = PublishDone::new(
+                    request_id,
+                    error_codes::publish_done_code_to_wire(code),
+                    stream_count,
+                    reason,
+                );
+                (ControlMessageType::PublishDone, publish_done.encode())
+            }
             Notification::FetchCancel(m) => (ControlMessageType::FetchCancel, m.encode()),
             Notification::PublishNamespaceDone(m) => {
                 (ControlMessageType::PublishNamespaceDone, m.encode())
             }
-            Notification::PublishNamespaceCancel(m) => {
-                (ControlMessageType::PublishNamespaceCancel, m.encode())
+            Notification::PublishNamespaceCancel {
+                namespace,
+                code,
+                reason,
+            } => {
+                // §9.27: PUBLISH_NAMESPACE_CANCEL uses the PUBLISH_NAMESPACE_ERROR codes.
+                let cancel = PublishNamespaceCancel::new(
+                    namespace,
+                    error_codes::request_error_code_to_wire(code, RequestKind::PublishNamespace),
+                    reason,
+                );
+                (ControlMessageType::PublishNamespaceCancel, cancel.encode())
             }
             Notification::UnsubscribeNamespace(m) => {
                 (ControlMessageType::UnSubscribeNamespace, m.encode())
@@ -370,12 +407,12 @@ async fn handle_late_response(
                 // Stream Count 0 (§9.12): `publish()` returns no
                 // Subscription before PUBLISH_OK, so no stream was opened.
                 channel
-                    .notify(Notification::PublishDone(PublishDone::new(
+                    .notify(Notification::PublishDone {
                         request_id,
-                        PublishDoneCode::InternalError.into(),
-                        0,
-                        "publish request abandoned".to_string(),
-                    )))
+                        code: PublishDoneCode::InternalError,
+                        stream_count: 0,
+                        reason: "publish request abandoned".to_string(),
+                    })
                     .await
             }
             _ => close_on_mismatched_late_response(session, request_id, &response),

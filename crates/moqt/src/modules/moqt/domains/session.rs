@@ -266,8 +266,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Assert
-        assert_eq!(close.code, Some(TerminationErrorCode::GoawayTimeout as u32));
+        // Assert: draft-14 numbers GOAWAY_TIMEOUT 0x10
+        assert_eq!(close.code, Some(0x10));
         assert_eq!(close.reason, "bye");
         receive_disconnected(&client).await.unwrap();
     }

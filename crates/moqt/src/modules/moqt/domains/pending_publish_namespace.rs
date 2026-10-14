@@ -1,5 +1,3 @@
-use crate::modules::moqt::control_plane::error_codes::RequestKind;
-
 use crate::{
     RequestFailure,
     modules::moqt::{
@@ -21,12 +19,11 @@ impl PendingPublishNamespace {
                 Ok(())
             }
             ResponseMessage::PublishNamespaceError(request_id, error_code, reason_phrase) => {
-                Err(RequestFailure::rejected(
-                    RequestKind::PublishNamespace,
+                Err(RequestFailure::Rejected {
                     request_id,
-                    error_code,
-                    reason_phrase,
-                ))
+                    code: error_code,
+                    reason: reason_phrase,
+                })
             }
             _ => Err(RequestFailure::ProtocolViolation(
                 "response type does not match the request",

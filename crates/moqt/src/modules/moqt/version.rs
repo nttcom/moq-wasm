@@ -22,21 +22,22 @@ use crate::{
         executor::JoinHandle,
         moqt::{
             control_plane::{
+                constants::TerminationErrorCode,
                 control_messages::messages::{
                     fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk, go_away::GoAway,
                     max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
                     parameters::authorization_token::AuthorizationToken, publish::Publish,
-                    publish_done::PublishDone, publish_namespace::PublishNamespace,
-                    publish_namespace_cancel::PublishNamespaceCancel,
+                    publish_namespace::PublishNamespace,
                     publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
-                    request_error::RequestError, requests_blocked::RequestsBlocked,
-                    server_setup::ServerSetup, subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
-                    subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
-                    unsubscribe_namespace::UnsubscribeNamespace,
+                    requests_blocked::RequestsBlocked, server_setup::ServerSetup,
+                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
+                    subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate,
+                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                 },
                 enums::{RequestId, ResponseMessage},
-                error_codes::RequestKind,
+                error_codes::{
+                    DataStreamResetCode, PublishDoneCode, RequestErrorCode, RequestKind,
+                },
             },
             data_plane::{
                 object::canonical_object::{Object, SubgroupStart},
@@ -75,6 +76,18 @@ pub(crate) enum Version {
 }
 
 impl Version {
+    pub(crate) fn termination_code(self, code: TerminationErrorCode) -> u32 {
+        match self {
+            Self::Draft14 => draft14::error_codes::termination_code_to_wire(code),
+        }
+    }
+
+    pub(crate) fn data_stream_reset_code(self, code: DataStreamResetCode) -> u64 {
+        match self {
+            Self::Draft14 => draft14::error_codes::data_stream_reset_code_to_wire(code),
+        }
+    }
+
     fn negotiated(protocol: &NegotiatedProtocol) -> anyhow::Result<Self> {
         match protocol {
             NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
@@ -177,6 +190,12 @@ impl SubgroupEncoder {
         }
     }
 
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+        }
+    }
+
     pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
         match self {
             Self::Draft14(encoder) => encoder.header(start),
@@ -207,17 +226,31 @@ pub(crate) enum OutgoingResponse {
     FetchOk(FetchOk),
     PublishNamespaceOk(NamespaceOk),
     SubscribeNamespaceOk(NamespaceOk),
-    Error(RequestKind, RequestError),
+    Error {
+        kind: RequestKind,
+        request_id: RequestId,
+        code: RequestErrorCode,
+        reason_phrase: String,
+    },
 }
 
 /// A control message that neither waits on nor answers a request.
 pub(crate) enum Notification {
     Unsubscribe(Unsubscribe),
     SubscribeUpdate(SubscribeUpdate),
-    PublishDone(PublishDone),
+    PublishDone {
+        request_id: RequestId,
+        code: PublishDoneCode,
+        stream_count: u64,
+        reason: String,
+    },
     FetchCancel(FetchCancel),
     PublishNamespaceDone(PublishNamespaceDone),
-    PublishNamespaceCancel(PublishNamespaceCancel),
+    PublishNamespaceCancel {
+        namespace: Vec<String>,
+        code: RequestErrorCode,
+        reason: String,
+    },
     UnsubscribeNamespace(UnsubscribeNamespace),
     GoAway(GoAway),
     MaxRequestId(MaxRequestId),
@@ -333,6 +366,12 @@ pub(crate) enum ServerHandshake {
 }
 
 impl ServerHandshake {
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Draft14(_) => Version::Draft14,
+        }
+    }
+
     pub(crate) fn authorization_tokens(&self) -> &[AuthorizationToken] {
         match self {
             Self::Draft14(handshake) => {

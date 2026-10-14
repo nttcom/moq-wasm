@@ -40,6 +40,8 @@ impl FetchDataSender {
     }
 
     pub async fn reset(&self, code: DataStreamResetCode) -> anyhow::Result<()> {
-        self.stream_sender.reset(code.into()).await
+        self.stream_sender
+            .reset(self.version.data_stream_reset_code(code))
+            .await
     }
 }
