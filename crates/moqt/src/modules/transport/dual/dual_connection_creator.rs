@@ -15,6 +15,7 @@ use quinn::rustls::{
 };
 
 use crate::modules::transport::{
+    accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     client_crypto::{
         client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
@@ -33,6 +34,15 @@ use crate::modules::transport::{
 enum DualEndpoint {
     Server(quinn::Endpoint),
     Client(Box<DualClient>),
+}
+
+impl DualEndpoint {
+    fn quinn_endpoint(&self) -> &quinn::Endpoint {
+        match self {
+            Self::Server(endpoint) => endpoint,
+            Self::Client(client) => &client.endpoint,
+        }
+    }
 }
 
 struct DualClient {
@@ -166,36 +176,38 @@ impl TransportConnectionCreator for DualProtocolCreator {
         }
     }
 
-    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
+    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
         let endpoint = match &self.endpoint {
             DualEndpoint::Server(endpoint) => endpoint,
-            DualEndpoint::Client(_) => {
-                anyhow::bail!("Cannot accept_new_transport on a client endpoint")
-            }
+            DualEndpoint::Client(_) => Err(anyhow::anyhow!(
+                "Cannot accept_new_transport on a client endpoint"
+            ))?,
         };
         let connection = loop {
             let incoming = endpoint
                 .accept()
                 .await
-                .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
+                .ok_or(AcceptError::EndpointClosing)?;
             if self.refusing.load(Ordering::SeqCst) {
                 incoming.refuse();
                 continue;
             }
-            break incoming.await?;
+            break incoming.await.map_err(anyhow::Error::from)?;
         };
 
         let alpn = negotiated_alpn(&connection)
             .ok_or_else(|| anyhow::anyhow!("No ALPN protocol negotiated"))?;
 
         if alpn == web_transport_quinn::ALPN {
-            let request = web_transport_quinn::Request::accept(connection).await?;
+            let request = web_transport_quinn::Request::accept(connection)
+                .await
+                .map_err(anyhow::Error::from)?;
             let session = accept_session(request, self.protocols).await?;
             Ok(Box::new(WtConnection::new(session)))
         } else if self.protocols.quic_alpns.contains(&alpn.as_str()) {
             Ok(Box::new(QUICConnection::new(connection)))
         } else {
-            anyhow::bail!("Unsupported ALPN: {alpn:?}")
+            Err(anyhow::anyhow!("Unsupported ALPN: {alpn:?}"))?
         }
     }
 
@@ -204,19 +216,11 @@ impl TransportConnectionCreator for DualProtocolCreator {
     }
 
     async fn wait_idle(&self) {
-        let endpoint = match &self.endpoint {
-            DualEndpoint::Server(endpoint) => endpoint,
-            DualEndpoint::Client(client) => &client.endpoint,
-        };
-        endpoint.wait_idle().await;
+        self.endpoint.quinn_endpoint().wait_idle().await;
     }
 
     fn local_port(&self) -> anyhow::Result<u16> {
-        let endpoint = match &self.endpoint {
-            DualEndpoint::Server(endpoint) => endpoint,
-            DualEndpoint::Client(client) => &client.endpoint,
-        };
-        Ok(endpoint.local_addr()?.port())
+        Ok(self.endpoint.quinn_endpoint().local_addr()?.port())
     }
 }
 
@@ -226,9 +230,10 @@ mod tests {
     use crate::modules::{
         test_support::{
             HANDSHAKE_TIMEOUT, connect_sessions, dual_client, self_signed_server_config,
-            spawn_dual_server,
+            server_transport_creator, spawn_dual_server,
         },
         transport::{
+            accept_error::AcceptError,
             application_protocol::{ApplicationProtocols, NegotiatedProtocol},
             connect_target::ConnectTarget,
             transport_connection::BoxedConnection,
@@ -389,5 +394,18 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn accept_on_a_closed_endpoint_reports_endpoint_closing() {
+        // Arrange
+        let server: DualProtocolCreator = server_transport_creator("dual-closed");
+        server.endpoint.quinn_endpoint().close(0u32.into(), b"");
+
+        // Act
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.accept_new_transport()).await;
+
+        // Assert
+        assert!(matches!(result, Ok(Err(AcceptError::EndpointClosing))));
     }
 }

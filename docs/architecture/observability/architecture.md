@@ -75,7 +75,7 @@ neither is reported.
 {
   "relay_id": "relay-a",
   "timestamp_ms": 1791262800000,
-  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890 },
+  "process": { "rss_bytes": 123456789, "cache_tracks": 12, "cache_objects": 3456, "cache_payload_bytes": 98765432, "disk_cache_bytes": 1234567890, "client_sessions": 3, "draining_since_ms": null },
   "sessions": [
     {
       "session_id": 7, "peer": "client", "app_id": "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e",
@@ -135,6 +135,10 @@ neither is reported.
   `#[serde(default)]` because stored `snapshots.payload` rows from before the
   field are decoded again for `?at=`. The relay and mesh views chart it as
   `disk_cache_mb`.
+- `client_sessions` is the count a drain waits for: client sessions only, no
+  relay peer and no stats session. `draining_since_ms` is when the relay began
+  draining (sent GOAWAY) and `null` while it serves; a relay older than these
+  fields reads as 0 and `null`.
 
 ## Relay side (`crates/relay`, `modules/observability/`)
 
@@ -274,7 +278,10 @@ stack's API on port 8095; anywhere else, the deployed
 
 ### Topology
 - One circle for the hosting environment (e.g. GCP) holding the relays,
-  drawn as server icons with RSS and cache size. Every client — publisher or
+  drawn as server icons with RSS and cache size. A draining relay has a
+  dashed amber frame and an amber LED, under a `DRAINING <s>s · <n> clients`
+  label giving the time since the drain began and the client sessions still
+  connected, as of the snapshot shown. Every client — publisher or
   viewer — is a card outside the circle on a ring, at the angle of its relay,
   since clients reach the relays from the Internet. A card shows the client,
   the Track Namespace it publishes (or, for a pure subscriber, the one it
@@ -296,8 +303,9 @@ stack's API on port 8095; anywhere else, the deployed
 
 ### Selection
 - Clicking the "Relays" label of the environment selects the whole mesh:
-  nothing is dimmed, and the drawer shows each relay's clients, ingress,
-  egress and RSS with charts of egress, ingress, loss, sessions, RSS, cache
+  nothing is dimmed, and the drawer shows each relay's clients, state
+  (serving, or draining with the time and the clients left), ingress, egress
+  and RSS with charts of egress, ingress, loss, sessions, RSS, cache
   and congestion per relay plus an all-relays total line.
 - Clicking a client highlights the hops of its subscriptions; clicking a
   relay, those through the relay; clicking a link draws it thick and
@@ -321,7 +329,8 @@ the viewport by default, resizable by dragging its top edge) and holds:
 - a details column with what charts cannot show: identity (`app_id`, relay,
   path MTU), published tracks and subscriber count, received namespaces with
   their delivery lag, routes and their namespaces for a link, tracks carried
-  by an inter-relay link, and for a relay its ingress / egress split into
+  by an inter-relay link, and for a relay its state (serving, or draining
+  with the time and the clients left), its ingress / egress split into
   clients and each peer relay plus the attached clients. Section headings
   name their link in the selection blue (`carol → relay-b`). A relay's
   sections say ingress / egress rather than uplink / downlink, which are
@@ -330,8 +339,9 @@ the viewport by default, resizable by dragging its top edge) and holds:
   axes, gridlines and one line per series (uplink and downlink bitrate in
   one card, delivery lag per subscription in another), fed by
   `GET /series`. Every metric of the direction table above appears; a
-  relay's charts are its process figures and its ingress / egress totals
-  (bitrate-weighted egress loss, summed counts). The charts cover the header's
+  relay's charts are its process figures (including the client sessions a
+  drain waits for) and its ingress / egress totals (bitrate-weighted egress
+  loss, summed counts). The charts cover the header's
   range up to now and mark the selected past time with a vertical line;
   hovering any card moves a shared crosshair that shows every card's value
   at that instant, and clicking a card moves the whole page to that time. The grid keeps its scrollbar gutter, so resizing the drawer never

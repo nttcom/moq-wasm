@@ -194,7 +194,7 @@ mod tests {
     async fn publish_origin_is_released_by_its_last_subscriber_on_a_draining_relay() {
         // Arrange
         let mut ctx = setup(UpstreamSubscriptionOrigin::Publish, &[(100, 10)]).await;
-        ctx.upstream.table.begin_draining();
+        ctx.upstream.table.begin_draining(1);
 
         // Act
         run_unsubscribe(&ctx, 100, 10).await;

@@ -1,10 +1,5 @@
 use moqt::RequestErrorCode;
-use std::{
-    net::UdpSocket,
-    path::Path,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use moqt::{ClientConfig, Endpoint, QUIC, RequestFailure, Session};
@@ -20,15 +15,12 @@ use crate::{
         },
         cascading::route_registry::NoopRelayRouteRegistry,
         session::session_repository::SessionRepository,
+        test_support::relay_harness::fixtures::disk_cache::TempDir,
     },
     relay_server::{server::RelayServerDeps, session_handler::SessionHandler},
 };
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-
-// Picking a free port and binding it are two steps; tests spawning relays in
-// parallel must not interleave them or two relays race for the same port.
-static PORT_BIND_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) fn app_token(publish: Option<&str>, subscribe: Option<&str>) -> VerifiedToken {
     VerifiedToken {
@@ -82,18 +74,13 @@ pub(crate) struct RunningRelay {
     pub(crate) port: u16,
     pub(crate) server: RelayServer,
     pub(crate) handler: SessionHandler,
-}
-
-fn free_udp_port() -> u16 {
-    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-    socket.local_addr().unwrap().port()
+    _cert_dir: TempDir,
 }
 
 fn write_self_signed_cert(dir: &Path) -> (String, String) {
     let CertifiedKey { cert, signing_key } =
         generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
             .unwrap();
-    std::fs::create_dir_all(dir).unwrap();
     let cert_path = dir.join("cert.pem");
     let key_path = dir.join("key.pem");
     std::fs::write(&cert_path, cert.pem()).unwrap();
@@ -105,10 +92,8 @@ fn write_self_signed_cert(dir: &Path) -> (String, String) {
 }
 
 pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRelay {
-    let _bind_guard = PORT_BIND_LOCK.lock().unwrap();
-    let port = free_udp_port();
-    let cert_dir = std::env::temp_dir().join(format!("relay-auth-test-{port}"));
-    let (key_path, cert_path) = write_self_signed_cert(&cert_dir);
+    let cert_dir = TempDir::new("auth-test");
+    let (key_path, cert_path) = write_self_signed_cert(cert_dir.path());
     let server = RelayServer::new_with_deps(
         &key_path,
         &cert_path,
@@ -122,11 +107,12 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
             disk_cache: None,
         },
     );
-    let handler = server.spawn_client_transport::<QUIC>(port);
+    let handler = server.spawn_client_transport::<QUIC>(0);
     RunningRelay {
-        port,
+        port: handler.local_port,
         server,
         handler,
+        _cert_dir: cert_dir,
     }
 }
 

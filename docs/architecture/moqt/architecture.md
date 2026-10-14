@@ -186,9 +186,11 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   while `accept()` keeps being polled; established sessions are unaffected.
   A closing server uses it so that clients learn at once instead of waiting
   for their handshake to time out.
-- `accept()` returns `Accepting`, whose future performs the transport
-  handshake and `version::accept`, which for draft-14 accepts the control
-  stream and stops after CLIENT_SETUP is received. It resolves to a
+- `accept()` returns `Accepting`, or `AcceptError::EndpointClosing` once the
+  endpoint is closed, which every transport reports the same way. The future
+  of `Accepting` performs the transport handshake and `version::accept`,
+  which for draft-14 accepts the control stream and stops after CLIENT_SETUP
+  is received. It resolves to a
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:

@@ -1,10 +1,10 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { type Series, fetchSeries } from './api'
+import { type RelaySnapshot, type Series, fetchSeries } from './api'
 import { type ChartSpec, chartSpecs } from './charts'
 import { type ChartLine, LineChart, formatValue } from './LineChart'
 import { type Selection, type Visibility, routesOf } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
-import { type Link, type Topology, isStatsSession, linkMbps, relativeNamespace } from './topology'
+import { type Link, type Topology, drainingSeconds, isStatsSession, linkMbps, relativeNamespace } from './topology'
 
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
@@ -68,6 +68,10 @@ function Rows({ rows }: { rows: [ReactNode, ReactNode?][] }) {
 }
 
 const mbps = (value: number) => `${formatValue(value)} Mbps`
+const relayState = (snapshot: RelaySnapshot) => {
+  const draining = drainingSeconds(snapshot)
+  return draining === null ? 'serving' : `draining ${draining}s, ${snapshot.process.client_sessions} clients left`
+}
 const lagText = (us: number) => `lag ${Math.round(us / 1000)} ms`
 
 function ScopeNote({ visible, namespacePrefix }: { visible: Visibility; namespacePrefix: string }) {
@@ -118,6 +122,7 @@ function Details({
                     (client) => client.relayId === relay.id && visible.clients.has(client.key)
                   ).length
                 ],
+                ['State', relayState(relay.snapshot)],
                 ['Ingress', mbps(throughput(relay.id, 'to'))],
                 ['Egress', mbps(throughput(relay.id, 'from'))],
                 [
@@ -147,7 +152,8 @@ function Details({
     return (
       <>
         <div className="sub">
-          {relay.snapshot.sessions.filter((session) => !isStatsSession(session)).length} sessions
+          {relay.snapshot.sessions.filter((session) => !isStatsSession(session)).length} sessions ·{' '}
+          {relayState(relay.snapshot)}
         </div>
         <ScopeNote visible={visible} namespacePrefix={namespacePrefix} />
         <Section title="Ingress" direction={`received by ${relay.id}`}>

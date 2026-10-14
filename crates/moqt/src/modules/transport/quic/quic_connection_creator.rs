@@ -1,6 +1,5 @@
 use crate::modules::transport::transport_connection::BoxedConnection;
 use anyhow::Context;
-use anyhow::Ok;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -14,6 +13,7 @@ use quinn::rustls::{
 };
 
 use crate::modules::transport::{
+    accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     client_crypto::{
         client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
@@ -133,18 +133,18 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         Ok(Box::new(QUICConnection::new(connection)))
     }
 
-    async fn accept_new_transport(&self) -> anyhow::Result<BoxedConnection> {
+    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
         loop {
             let incoming = self
                 .endpoint
                 .accept()
                 .await
-                .ok_or_else(|| anyhow::anyhow!("Endpoint is closing"))?;
+                .ok_or(AcceptError::EndpointClosing)?;
             if self.refusing.load(Ordering::SeqCst) {
                 incoming.refuse();
                 continue;
             }
-            let connection = incoming.await?;
+            let connection = incoming.await.map_err(anyhow::Error::from)?;
             return Ok(Box::new(QUICConnection::new(connection)));
         }
     }
@@ -159,5 +159,29 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 
     fn local_port(&self) -> anyhow::Result<u16> {
         Ok(self.endpoint.local_addr()?.port())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QUICConnectionCreator;
+    use crate::modules::{
+        test_support::{HANDSHAKE_TIMEOUT, server_transport_creator},
+        transport::{
+            accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
+        },
+    };
+
+    #[tokio::test]
+    async fn accept_on_a_closed_endpoint_reports_endpoint_closing() {
+        // Arrange
+        let server: QUICConnectionCreator = server_transport_creator("quic-closed");
+        server.endpoint.close(0u32.into(), b"");
+
+        // Act
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.accept_new_transport()).await;
+
+        // Assert
+        assert!(matches!(result, Ok(Err(AcceptError::EndpointClosing))));
     }
 }

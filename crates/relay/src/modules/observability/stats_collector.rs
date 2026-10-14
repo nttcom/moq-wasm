@@ -47,7 +47,13 @@ impl StatsCollector {
     }
 
     pub(crate) async fn collect(&self, timestamp_ms: u64, rss_bytes: Option<u64>) -> RelaySnapshot {
-        let sessions = self.sources.repo.lock().await.session_states();
+        let (sessions, client_sessions) = {
+            let repo = self.sources.repo.lock().await;
+            (
+                repo.session_states(),
+                *repo.client_session_count().borrow() as u64,
+            )
+        };
         let dialed_relay_ids = self
             .sources
             .inter_relay_connection_manager
@@ -84,6 +90,8 @@ impl StatsCollector {
                 cache_objects: occupancy.objects,
                 cache_payload_bytes: occupancy.payload_bytes,
                 disk_cache_bytes: occupancy.disk_payload_bytes,
+                client_sessions,
+                draining_since_ms: self.sources.directory.draining_since_ms(),
             },
             sessions: sessions
                 .into_iter()
@@ -335,6 +343,29 @@ mod tests {
             );
             track_key
         }
+    }
+
+    #[tokio::test]
+    async fn the_process_stats_count_the_client_sessions_and_report_the_drain() {
+        // Arrange
+        let fixture = Fixture::new();
+        for (session_id, peer) in [
+            (1, SessionPeer::Client),
+            (2, SessionPeer::Client),
+            (3, SessionPeer::Relay),
+        ] {
+            fixture
+                .add_session(session_id, peer, moqt::TransportStats::default())
+                .await;
+        }
+        fixture.directory.begin_draining(1_000);
+
+        // Act
+        let snapshot = fixture.collector().collect(2_000, None).await;
+
+        // Assert
+        assert_eq!(snapshot.process.client_sessions, 2);
+        assert_eq!(snapshot.process.draining_since_ms, Some(1_000));
     }
 
     #[tokio::test]

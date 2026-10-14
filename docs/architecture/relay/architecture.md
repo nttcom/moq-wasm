@@ -864,8 +864,10 @@ so cache, fan-out, FETCH and authorization need no separate path.
   addresses, see `docs/architecture/observability/architecture.md`),
   `InMemoryLocalPubSubDirectory::active_upstream_tracks` and
   `downstream_subscription_states`, each track cache's `IngressStats`, and
-  `TrackCacheStore::occupancy`. RSS comes from `/proc/self/status` and is
-  absent elsewhere. `active_upstream_tracks` lists every publisher feeding a
+  `TrackCacheStore::occupancy`, plus `SessionRepository::client_session_count`
+  (the count a drain waits for) and the drain's start time, which
+  `InMemoryLocalPubSubDirectory::begin_draining` records. RSS comes from
+  `/proc/self/status` and is absent elsewhere. `active_upstream_tracks` lists every publisher feeding a
   track, so a track with several publishers appears once per publisher, each
   entry carrying the track cache's counters, and a subscription reports the
   track's newest publisher.

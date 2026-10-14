@@ -28,6 +28,12 @@ pub struct ProcessStats {
     /// Defaulted so snapshots stored before the field existed still decode.
     #[serde(default)]
     pub disk_cache_bytes: u64,
+    /// Sessions a drain waits for; excludes relay peers and the stats sessions.
+    #[serde(default)]
+    pub client_sessions: u64,
+    /// Unix milliseconds when the relay sent GOAWAY; `None` while it serves.
+    #[serde(default)]
+    pub draining_since_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +114,8 @@ mod tests {
                 cache_objects: 2,
                 cache_payload_bytes: 3,
                 disk_cache_bytes: 4,
+                client_sessions: 5,
+                draining_since_ms: Some(1_791_262_799_000),
             },
             sessions: vec![SessionStats {
                 session_id: 7,
@@ -174,6 +182,22 @@ mod tests {
 
         // Assert
         assert_eq!(process.disk_cache_bytes, 0);
+    }
+
+    #[test]
+    fn a_snapshot_from_a_relay_without_the_drain_fields_reads_as_serving() {
+        // Arrange
+        let mut json: serde_json::Value = serde_json::from_slice(&snapshot().to_json()).unwrap();
+        let process = json["process"].as_object_mut().unwrap();
+        process.remove("client_sessions");
+        process.remove("draining_since_ms");
+
+        // Act
+        let decoded = RelaySnapshot::from_json(&serde_json::to_vec(&json).unwrap()).unwrap();
+
+        // Assert
+        assert_eq!(decoded.process.client_sessions, 0);
+        assert_eq!(decoded.process.draining_since_ms, None);
     }
 
     #[test]
