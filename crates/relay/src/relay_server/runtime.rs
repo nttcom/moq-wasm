@@ -74,7 +74,7 @@ impl RelayRuntime {
             local_pub_sub_directory.clone(),
         );
         let ingress = IngressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
-        let egress = EgressCoordinator::new(repo.clone(), cache_store.clone());
+        let egress = EgressCoordinator::new(repo.clone(), cache_store.clone(), sender.clone());
         let manager = EventHandler::run(
             receiver,
             WorkerDeps {

@@ -74,3 +74,23 @@ test('the written catalog puts initDataList after tracks and leaves an empty one
   expect(Object.keys(JSON.parse(withInitData))).toEqual(['version', 'generatedAt', 'tracks', 'initDataList'])
   expect(Object.keys(JSON.parse(withoutInitData))).toEqual(['version', 'generatedAt', 'tracks'])
 })
+
+test('a video track keeps its alternate group and bitrate', () => {
+  // Arrange
+  const catalog = {
+    version: 1,
+    tracks: [
+      { name: 'video', packaging: 'loc', role: 'video', isLive: true, altGroup: 1 },
+      { name: 'video_480p', packaging: 'loc', role: 'video', isLive: true, altGroup: 1, bitrate: 1_200_000 }
+    ]
+  }
+
+  // Act
+  const [source, rendition] = extractCatalogVideoTracks(catalog)
+
+  // Assert
+  expect(source.altGroup).toBe(1)
+  expect(source.bitrate).toBeUndefined()
+  expect(rendition.altGroup).toBe(1)
+  expect(rendition.bitrate).toBe(1_200_000)
+})

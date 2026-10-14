@@ -18,7 +18,8 @@ on it produces the tracks below, so one player,
 | `timeline` | MSF media timeline | `[presentation time, [group, object], encode wallclock]` per keyframe |
 
 `video_720p` / `video_480p` / `video_360p` appear when the publisher transcodes
-(`crates/transcode`); each is one `altGroup` entry with `width` / `height`.
+(`crates/transcode`); each is one `altGroup` entry with `width` / `height` and
+its encoder target as `bitrate`.
 A publisher can name its tracks otherwise (`SourceTracks`): `onvif-ingest`
 publishes `video/profile_N` and `audio/profile_N` per camera profile, without
 `timeline`.

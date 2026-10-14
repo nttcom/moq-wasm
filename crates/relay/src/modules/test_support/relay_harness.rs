@@ -22,6 +22,7 @@ use crate::modules::{
         },
     },
     domain::{
+        delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
         pub_sub_directory::{DownstreamRunnerSignals, entry::PublishDoneReason},
         session_id::SessionId,
@@ -62,7 +63,7 @@ pub(crate) struct EgressRunnerHandle {
     sent: mpsc::UnboundedReceiver<Sent>,
     priorities: mpsc::UnboundedReceiver<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
-    forward_sender: watch::Sender<bool>,
+    delivery_control_sender: watch::Sender<DeliveryControl>,
     stop_sender: Option<oneshot::Sender<PublishDoneReason>>,
     delivery_stats: Arc<DeliveryStats>,
     join_handle: tokio::task::JoinHandle<()>,
@@ -78,8 +79,16 @@ impl EgressRunnerHandle {
         let _ = stop_sender.send(end);
     }
 
+    /// Applies a SUBSCRIBE_UPDATE the way the directory registration does.
+    pub(crate) fn apply_subscribe_update(&self, update: DeliveryControl) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(update);
+        });
+    }
+
     pub(crate) fn set_forward(&self, forward: bool) {
-        self.forward_sender.send_replace(forward);
+        self.delivery_control_sender
+            .send_modify(|control| control.forward = forward);
     }
 
     pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {
@@ -97,6 +106,12 @@ impl EgressRunnerHandle {
         );
     }
 
+    /// Call after PUBLISH_DONE; the runner sends it only once its streams are done.
+    pub(crate) fn assert_nothing_more_sent(&mut self) {
+        let sent = self.sent.try_recv();
+        assert!(sent.is_err(), "nothing may follow PUBLISH_DONE: {sent:?}");
+    }
+
     pub(crate) async fn expect_stream_priority(&mut self) -> moqt::object::StreamPriority {
         tokio::time::timeout(RECV_TIMEOUT, self.priorities.recv())
             .await
@@ -109,6 +124,14 @@ impl EgressRunnerHandle {
             Ok(Some(Sent::Object(object))) => object,
             other => panic!("egress should send an object downstream, got {other:?}"),
         }
+    }
+
+    pub(crate) async fn assert_no_publish_done_within(&mut self, window: Duration) {
+        let publish_done = tokio::time::timeout(window, self.publish_done.recv()).await;
+        assert!(
+            publish_done.is_err(),
+            "no PUBLISH_DONE should be sent: {publish_done:?}"
+        );
     }
 
     pub(crate) fn assert_no_publish_done(&mut self) {
@@ -323,7 +346,8 @@ impl RelayHarness {
     ) -> EgressRunnerHandle {
         let (publisher, observers) = MockPublisher::channel();
         let (ready_sender, ready_receiver) = oneshot::channel();
-        let (forward_sender, forward_receiver) = watch::channel(true);
+        let (delivery_control_sender, delivery_control_receiver) =
+            watch::channel(DeliveryControl::new(true, &filter_type, largest_location));
         let (stop_sender, stop_receiver) = oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
         let delivery_stats = Arc::new(DeliveryStats::default());
@@ -336,12 +360,12 @@ impl RelayHarness {
             largest_location,
             DownstreamRunnerSignals {
                 stop_receiver,
-                forward_receiver,
+                delivery_control_receiver,
                 delivery_stats: delivery_stats.clone(),
             },
         );
         let join_handle = tokio::spawn(async move {
-            let _ = runner.run(subscribe_ok_receiver).await;
+            runner.run(subscribe_ok_receiver).await;
         });
         tokio::time::timeout(RECV_TIMEOUT, ready_receiver)
             .await
@@ -353,7 +377,7 @@ impl RelayHarness {
             sent: observers.sent,
             priorities: observers.priorities,
             publish_done: observers.publish_done,
-            forward_sender,
+            delivery_control_sender,
             stop_sender: Some(stop_sender),
             delivery_stats,
             join_handle,

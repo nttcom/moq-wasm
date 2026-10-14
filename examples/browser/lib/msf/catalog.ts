@@ -11,6 +11,7 @@ export type MsfTrack = {
   codec?: string
   mimeType?: string
   depends?: string[]
+  altGroup?: number
   bitrate?: number
   width?: number
   height?: number
@@ -43,6 +44,7 @@ export type MediaCatalogTrack = {
   packaging?: string
   role?: string
   codec?: string
+  altGroup?: number
   bitrate?: number
   samplerate?: number
   channelConfig?: string
@@ -107,6 +109,7 @@ function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaC
       packaging: asString(track.packaging),
       role: trackRole,
       codec: asString(track.codec),
+      altGroup: asNumber(track.altGroup),
       bitrate: asNumber(track.bitrate),
       samplerate: asNumber(track.samplerate),
       channelConfig: asString(track.channelConfig),

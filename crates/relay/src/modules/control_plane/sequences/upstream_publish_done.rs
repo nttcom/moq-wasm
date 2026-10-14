@@ -48,6 +48,7 @@ impl UpstreamPublishDone {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         domain::{
             pub_sub_directory::entry::UpstreamSubscriptionOrigin, session_peer::SessionPeer,
@@ -88,7 +89,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap()
             .stop_receiver;

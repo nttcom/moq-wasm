@@ -98,8 +98,9 @@ impl RenditionPublisher {
         match output.event {
             MediaEvent::VideoConfig(config) => {
                 self.cmaf[index] = Some(Fmp4TrackMuxer::video(config.clone()));
-                let info =
+                let mut info =
                     VideoTrackInfo::from_record(&config, format!("Video {}", rendition.name))?;
+                info.bitrate = Some(u64::from(rendition.bitrate_kbps) * 1000);
                 self.broadcast.update_video_catalog(&track, info).await
             }
             MediaEvent::Video(sample) => {

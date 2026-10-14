@@ -22,7 +22,10 @@ use crate::modules::{
         subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{pub_sub_directory::entry::PublishDoneReason, session_id::SessionId},
+    domain::{
+        delivery_control::DeliveryControl, pub_sub_directory::entry::PublishDoneReason,
+        session_id::SessionId,
+    },
     session::{
         handler::track_status::TrackStatusHandler,
         moqt_session_event::MoqtSessionEvent,
@@ -136,6 +139,26 @@ impl SessionWorker {
                         &self.deps.ingress_sender,
                     )
                     .instrument(self.session_span.clone())
+                    .await;
+            }
+            EventKind::DownstreamSubscriptionEnded { request_id } => {
+                let event_span = tracing::info_span!(
+                    parent: &self.session_span,
+                    "relay.session.event",
+                    session_id = %session_id,
+                    event = "DownstreamSubscriptionEnded",
+                    request_id,
+                );
+                Unsubscribe {}
+                    .handle(
+                        session_id,
+                        &self.session_span,
+                        self.deps.local_pub_sub_directory.as_ref(),
+                        &self.deps.control_message_forwarder,
+                        &self.deps.ingress_sender,
+                        request_id,
+                    )
+                    .instrument(event_span)
                     .await;
             }
             EventKind::ProtocolViolationDetected { reason } => {
@@ -277,7 +300,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &deps.ingress_sender,
-                        handler,
+                        handler.subscribe_id(),
                     )
                     .instrument(event_span)
                     .await;
@@ -322,7 +345,11 @@ impl SessionWorker {
                         &session_span,
                         deps.local_pub_sub_directory.as_ref(),
                         handler.subscription_request_id(),
-                        handler.forward(),
+                        DeliveryControl::from_subscribe_update(
+                            handler.forward(),
+                            handler.start_location(),
+                            handler.end_group(),
+                        ),
                     )
                 });
             }

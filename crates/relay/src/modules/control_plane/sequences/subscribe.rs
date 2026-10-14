@@ -13,6 +13,7 @@ use crate::modules::{
         ingress::ingress_coordinator::{IngressCommand, IngressStartRequest},
     },
     domain::{
+        delivery_control::DeliveryControl,
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamTrack},
         session_id::SessionId,
         session_peer::SessionPeer,
@@ -458,13 +459,18 @@ impl Subscribe {
             None => upstream_track.content_exists(),
         };
 
+        let downstream_subscription = handler.to_downstream_subscription(subscriber_track_alias);
         let Some(runner_signals) = table.register_downstream_subscription(
             session_id,
             handler.subscribe_id(),
             subscriber_peer,
             track_key.clone(),
             largest_location,
-            INITIAL_FORWARD,
+            DeliveryControl::new(
+                INITIAL_FORWARD,
+                &downstream_subscription.filter_type(),
+                largest_location,
+            ),
         ) else {
             tracing::debug!(
                 subscribe_id = handler.subscribe_id(),
@@ -482,7 +488,7 @@ impl Subscribe {
                 subscriber_session_id: session_id,
                 downstream_subscribe_id: handler.subscribe_id(),
                 track_key: track_key.clone(),
-                downstream_subscription: handler.to_downstream_subscription(subscriber_track_alias),
+                downstream_subscription,
                 parent_span: Span::current(),
                 ready_sender,
                 runner_signals,
@@ -593,6 +599,7 @@ mod tests {
         pub_sub_directory::{InMemoryLocalPubSubDirectory, entry::UpstreamSubscriptionOrigin},
         session_peer::SessionPeer,
     };
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, active_upstream, local_publisher_resolver, track_key, upstream_track,
     };
@@ -744,7 +751,7 @@ mod tests {
                     SessionPeer::Client,
                     access.track_key.clone(),
                     None,
-                    true,
+                    delivery_control(true),
                 )
                 .unwrap();
             if let Some(late_publishers) = access.late_publishers.take() {

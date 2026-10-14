@@ -1,24 +1,33 @@
 use std::{collections::HashMap, sync::Arc};
 
-use moqt::{object::GroupOrder, subscribe::FilterType};
+use moqt::object::GroupOrder;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use crate::modules::data_plane::{
-    cache::subgroup_key::SubgroupKey,
-    cache::track_cache::{SubgroupRun, TrackCache},
+use crate::modules::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::track_cache::{SubgroupRun, TrackCache},
+    },
+    domain::delivery_control::DeliveryControl,
 };
 
 /// Subscriptions only deliver objects newer than the subscribe-time Largest
 /// Object (§9.7), so an absolute start at or below it is raised past it.
 fn resolve_start_location(
-    filter_type: &FilterType,
+    start: moqt::object::Location,
     largest: &Option<moqt::object::Location>,
 ) -> moqt::object::Location {
-    let start = filter_type.start_location(*largest);
     match largest {
         Some(largest) if start <= *largest => largest.next(),
         _ => start,
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchedulerExit {
+    /// Every group of the subscription's range has been scheduled.
+    EndGroupReached,
+    OpenEventsClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,17 +38,33 @@ pub(crate) struct GroupSendTask {
 }
 
 struct StartLocationProgress {
-    start_group_id: u64,
-    start_object_id: Option<u64>,
+    start: moqt::object::Location,
+    start_group_seen: bool,
 }
 
 impl StartLocationProgress {
+    fn new(start: moqt::object::Location) -> Self {
+        Self {
+            start,
+            start_group_seen: false,
+        }
+    }
+
+    /// Moves the start to a later Start Location from a SUBSCRIBE_UPDATE;
+    /// an earlier one leaves it unchanged.
+    fn raise(&mut self, start: moqt::object::Location) {
+        if start > self.start {
+            *self = Self::new(start);
+        }
+    }
+
     fn accept(&mut self, group_id: u64) -> Option<u64> {
-        if group_id < self.start_group_id {
+        if group_id < self.start.group_id {
             return None;
         }
-        if group_id == self.start_group_id {
-            Some(self.start_object_id.take().unwrap_or(0))
+        if group_id == self.start.group_id && !self.start_group_seen {
+            self.start_group_seen = true;
+            Some(self.start.object_id)
         } else {
             Some(0)
         }
@@ -48,68 +73,105 @@ impl StartLocationProgress {
 
 pub(crate) struct EgressScheduler {
     cache: Arc<TrackCache>,
-    filter_type: FilterType,
     group_order: GroupOrder,
     sender: mpsc::Sender<GroupSendTask>,
     /// Largest Object at SUBSCRIBE processing time; `None` when no content
     /// has been delivered yet.
     largest_location: Option<moqt::object::Location>,
-    forward_receiver: watch::Receiver<bool>,
+    delivery_control_receiver: watch::Receiver<DeliveryControl>,
 }
 
 impl EgressScheduler {
     pub(crate) fn new(
         cache: Arc<TrackCache>,
-        filter_type: FilterType,
         group_order: GroupOrder,
         sender: mpsc::Sender<GroupSendTask>,
         largest_location: Option<moqt::object::Location>,
-        forward_receiver: watch::Receiver<bool>,
+        delivery_control_receiver: watch::Receiver<DeliveryControl>,
     ) -> Self {
         Self {
             cache,
-            filter_type,
             group_order,
             sender,
             largest_location,
-            forward_receiver,
+            delivery_control_receiver,
         }
     }
 
-    pub(crate) async fn run(self, ready_sender: oneshot::Sender<anyhow::Result<()>>) {
+    pub(crate) async fn run(
+        self,
+        ready_sender: oneshot::Sender<anyhow::Result<()>>,
+    ) -> SchedulerExit {
         let mut receiver = self.cache.subscribe_subgroup_opened();
+        let mut delivery_control_receiver = self.delivery_control_receiver.clone();
         let mut scheduled = HashMap::<SubgroupKey, GroupSendTask>::new();
 
-        let start = resolve_start_location(&self.filter_type, &self.largest_location);
-        if *self.forward_receiver.borrow() {
-            self.schedule_cached_objects(&start, &mut scheduled).await;
+        let control = *delivery_control_receiver.borrow_and_update();
+        let start = resolve_start_location(control.start, &self.largest_location);
+        if control.forward {
+            self.schedule_cached_objects(&start, &control, &mut scheduled)
+                .await;
         }
-        let mut progress = StartLocationProgress {
-            start_group_id: start.group_id,
-            start_object_id: Some(start.object_id),
-        };
+        let mut progress = StartLocationProgress::new(start);
         let _ = ready_sender.send(Ok(()));
+        if self.range_ended(&progress, &control) {
+            return SchedulerExit::EndGroupReached;
+        }
 
+        let mut delivery_control_open = true;
         loop {
-            match receiver.recv().await {
-                Ok(_) if !*self.forward_receiver.borrow() => {}
-                Ok(run) => {
-                    let group_id = run.key.group_id();
-                    if let Some(object_id) = progress.accept(group_id)
-                        && self
-                            .schedule(run, object_id, &mut scheduled)
-                            .await
-                            .is_some()
-                    {
-                        self.recover_lagged_groups(group_id, &mut scheduled).await;
+            tokio::select! {
+                event = receiver.recv() => match event {
+                    Ok(run) => {
+                        let control = *delivery_control_receiver.borrow();
+                        let group_id = run.key.group_id();
+                        if control.is_past_end(group_id) {
+                            return SchedulerExit::EndGroupReached;
+                        }
+                        if !control.forward {
+                            continue;
+                        }
+                        progress.raise(control.start);
+                        if let Some(object_id) = progress.accept(group_id)
+                            && self
+                                .schedule(run, object_id, &mut scheduled)
+                                .await
+                                .is_some()
+                        {
+                            self.recover_lagged_groups(group_id, &control, &mut scheduled)
+                                .await;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(n, "egress scheduler receiver lagged");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return SchedulerExit::OpenEventsClosed;
+                    }
+                },
+                changed = delivery_control_receiver.changed(), if delivery_control_open => {
+                    if changed.is_err() {
+                        delivery_control_open = false;
+                        continue;
+                    }
+                    let control = *delivery_control_receiver.borrow_and_update();
+                    progress.raise(control.start);
+                    if self.range_ended(&progress, &control) {
+                        return SchedulerExit::EndGroupReached;
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(n, "egress scheduler receiver lagged");
-                }
-                Err(broadcast::error::RecvError::Closed) => break,
             }
         }
+    }
+
+    /// Live groups arrive in ascending order, so once the cache has opened a
+    /// group at or past the End Group no further group can enter the range;
+    /// a start at or past the End Group leaves nothing to deliver at all.
+    fn range_ended(&self, progress: &StartLocationProgress, control: &DeliveryControl) -> bool {
+        let Some(end_group) = control.end_group else {
+            return false;
+        };
+        progress.start.group_id >= end_group || !self.cache.groups_at_or_after(end_group).is_empty()
     }
 
     /// Re-schedules cached groups after `group_id`, recovering groups whose
@@ -118,6 +180,7 @@ impl EgressScheduler {
     async fn recover_lagged_groups(
         &self,
         group_id: u64,
+        control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
         if matches!(self.group_order, GroupOrder::Descending) {
@@ -128,12 +191,14 @@ impl EgressScheduler {
                 group_id: group_id + 1,
                 object_id: 0,
             },
+            control,
             scheduled,
         )
         .await;
     }
 
-    /// Schedules every cached group at or after the filter Start Location.
+    /// Schedules every cached group at or after the filter Start Location and
+    /// before the End Group of `control`.
     ///
     /// The Start Location is a lower bound (§9.7), not a group that has to
     /// exist: group ids may start anywhere and skip values (§2.3.1), so the
@@ -147,9 +212,13 @@ impl EgressScheduler {
     async fn schedule_cached_objects(
         &self,
         start: &moqt::object::Location,
+        control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
         for group_id in self.cache.groups_at_or_after(start.group_id) {
+            if control.is_past_end(group_id) {
+                return;
+            }
             let object_id = if group_id == start.group_id {
                 start.object_id
             } else {
@@ -190,15 +259,29 @@ impl EgressScheduler {
 
 #[cfg(test)]
 mod tests {
+    use moqt::subscribe::FilterType;
+
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::{
         cached_object::{insert_aborted_group, insert_closed_group, stream_key},
         location,
     };
 
+    const EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
     struct RunningScheduler {
         task_receiver: mpsc::Receiver<GroupSendTask>,
-        handle: tokio::task::JoinHandle<()>,
+        delivery_control_sender: watch::Sender<DeliveryControl>,
+        handle: tokio::task::JoinHandle<SchedulerExit>,
+    }
+
+    impl RunningScheduler {
+        async fn exit(&mut self) -> SchedulerExit {
+            tokio::time::timeout(EXIT_TIMEOUT, &mut self.handle)
+                .await
+                .expect("scheduler should exit")
+                .expect("scheduler should not panic")
+        }
     }
 
     impl Drop for RunningScheduler {
@@ -223,13 +306,15 @@ mod tests {
     ) -> RunningScheduler {
         let (task_sender, task_receiver) = mpsc::channel(16);
         let (ready_sender, ready_receiver) = oneshot::channel();
+        let (delivery_control_sender, delivery_control_receiver) = watch::channel(
+            DeliveryControl::new(forward, &filter_type, largest_location),
+        );
         let scheduler = EgressScheduler::new(
             cache,
-            filter_type,
             GroupOrder::Ascending,
             task_sender,
             largest_location,
-            watch::channel(forward).1,
+            delivery_control_receiver,
         );
         let handle = tokio::spawn(scheduler.run(ready_sender));
         ready_receiver
@@ -238,6 +323,7 @@ mod tests {
             .expect("scheduler should start");
         RunningScheduler {
             task_receiver,
+            delivery_control_sender,
             handle,
         }
     }
@@ -370,6 +456,108 @@ mod tests {
                 object_id: 0
             }
         );
+    }
+
+    #[tokio::test]
+    async fn absolute_range_schedules_no_cached_group_past_its_end_group() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        for group_id in 1..4 {
+            insert_closed_group(&cache, group_id, &[0]);
+        }
+        let filter_type = FilterType::AbsoluteRange {
+            location: location(1, 0),
+            end_group: 2,
+        };
+
+        // Act
+        let mut scheduler = start_scheduler(cache, filter_type, None).await;
+
+        // Assert
+        let mut scheduled_groups = Vec::new();
+        while let Ok(task) = scheduler.task_receiver.try_recv() {
+            scheduled_groups.push(task.key.group_id());
+        }
+        assert_eq!(scheduled_groups, vec![1, 2]);
+    }
+
+    #[tokio::test]
+    async fn opening_a_group_past_the_end_group_ends_the_schedule() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let filter_type = FilterType::AbsoluteRange {
+            location: location(0, 0),
+            end_group: 1,
+        };
+        let mut scheduler = start_scheduler(cache.clone(), filter_type, None).await;
+
+        // Act
+        let _open = cache.open_subgroup(stream_key(2));
+
+        // Assert
+        assert_eq!(scheduler.exit().await, SchedulerExit::EndGroupReached);
+        assert!(scheduler.task_receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn start_past_the_end_group_ends_the_schedule_at_once() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let filter_type = FilterType::AbsoluteRange {
+            location: location(0, 0),
+            end_group: 1,
+        };
+
+        // Act: the subscribe-time Largest Object raises the start to {3, 1}
+        let mut scheduler = start_scheduler(cache, filter_type, Some(location(3, 0))).await;
+
+        // Assert
+        assert_eq!(scheduler.exit().await, SchedulerExit::EndGroupReached);
+    }
+
+    #[tokio::test]
+    async fn update_moving_end_group_to_an_opened_group_ends_the_schedule() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let mut scheduler = start_scheduler(cache.clone(), FilterType::LargestObject, None).await;
+        let _open = cache.open_subgroup(stream_key(3));
+        let _ = scheduler.task_receiver.recv().await;
+
+        // Act
+        scheduler.delivery_control_sender.send_modify(|control| {
+            control.apply_update(DeliveryControl::from_subscribe_update(
+                true,
+                location(0, 0),
+                3,
+            ));
+        });
+
+        // Assert
+        assert_eq!(scheduler.exit().await, SchedulerExit::EndGroupReached);
+    }
+
+    #[tokio::test]
+    async fn update_moving_end_group_past_the_open_groups_keeps_scheduling() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let mut scheduler = start_scheduler(cache.clone(), FilterType::LargestObject, None).await;
+        let _open = cache.open_subgroup(stream_key(3));
+        let _ = scheduler.task_receiver.recv().await;
+        scheduler.delivery_control_sender.send_modify(|control| {
+            control.apply_update(DeliveryControl::from_subscribe_update(
+                true,
+                location(0, 0),
+                5,
+            ));
+        });
+
+        // Act
+        let _next = cache.open_subgroup(stream_key(4));
+
+        // Assert
+        let task = scheduler.task_receiver.recv().await;
+        assert_eq!(task.map(|task| task.key), Some(stream_key(4)));
+        assert!(!scheduler.handle.is_finished());
     }
 
     #[tokio::test]

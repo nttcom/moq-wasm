@@ -392,13 +392,38 @@ impl Subscriber {
         subscription: &Subscription,
         forward: bool,
     ) -> anyhow::Result<()> {
-        let largest = match subscription.content_exists() {
-            ContentExists::True { location } => Some(location),
-            ContentExists::False => None,
-        };
         let end_group = match subscription.filter_type() {
             FilterType::AbsoluteRange { end_group, .. } => end_group + 1,
             _ => 0,
+        };
+        self.narrow(subscription, end_group, forward).await
+    }
+
+    /// Ends the subscription before `group_id`: groups below it are still
+    /// delivered and the publisher answers with PUBLISH_DONE once it has sent
+    /// them (draft-14 §9.10, §9.12). The Start Location and priority of the
+    /// SUBSCRIBE are repeated, so `forward` has to be the current Forward
+    /// State.
+    pub async fn end_before_group(
+        &self,
+        subscription: &Subscription,
+        group_id: u64,
+        forward: bool,
+    ) -> anyhow::Result<()> {
+        self.narrow(subscription, group_id, forward).await
+    }
+
+    /// `end_group` is the SUBSCRIBE_UPDATE field: the end group plus one, or 0
+    /// for an open-ended subscription.
+    async fn narrow(
+        &self,
+        subscription: &Subscription,
+        end_group: u64,
+        forward: bool,
+    ) -> anyhow::Result<()> {
+        let largest = match subscription.content_exists() {
+            ContentExists::True { location } => Some(location),
+            ContentExists::False => None,
         };
         self.subscribe_update(
             subscription,
@@ -740,6 +765,56 @@ mod tests {
         );
         assert_eq!(update.end_group(), 0);
         assert_eq!(update.subscriber_priority(), 128);
+    }
+
+    #[tokio::test]
+    async fn end_before_group_sends_the_group_as_end_group_plus_one() {
+        // Arrange
+        let (client, server) = spawn_connected_dual_sessions("subscriber-end-before-group").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        let largest = Location {
+            group_id: 3,
+            object_id: 1,
+        };
+        handler
+            .ok(0, ContentExists::True { location: largest })
+            .await
+            .unwrap();
+        let subscription = request.await.unwrap().unwrap();
+
+        // Act
+        client
+            .subscriber()
+            .end_before_group(&subscription, 7, true)
+            .await
+            .unwrap();
+
+        // Assert: groups up to 6 stay in the range, which the field encodes as 6 + 1
+        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE_UPDATE from the client");
+        };
+        assert_eq!(update.subscription_request_id(), handler.request_id());
+        assert_eq!(update.end_group(), 7);
+        assert!(update.forward());
+        assert_eq!(
+            update.start_location(),
+            Location {
+                group_id: 3,
+                object_id: 2
+            }
+        );
     }
 
     #[tokio::test]

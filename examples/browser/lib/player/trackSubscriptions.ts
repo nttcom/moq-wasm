@@ -15,6 +15,7 @@ export type TrackSubscription = {
 /// for its duration and deliver again, from the next group, on the way back.
 export class TrackSubscriptions {
   private readonly subscriptions = new Map<MediaKind, TrackSubscription>()
+  private readonly retiring = new Map<bigint, TrackSubscription>()
   private forwardPaused = false
   private forwardUpdate = Promise.resolve()
 
@@ -41,12 +42,24 @@ export class TrackSubscriptions {
     track: MediaCatalogTrack,
     handler: SubgroupObjectHandler
   ): Promise<void> {
+    this.subscriptions.set(kind, await this.open(kind, wireName, track, handler))
+  }
+
+  /// Subscribes without making the subscription the one of its kind, so a
+  /// rendition switch can receive the next rendition while the current one
+  /// still plays; `handOver` gives it the kind.
+  async open(
+    kind: MediaKind,
+    wireName: string,
+    track: MediaCatalogTrack,
+    handler: SubgroupObjectHandler
+  ): Promise<TrackSubscription> {
     const { client, namespace, authInfo } = this.context
     const { requestId, subscribeOk } = await client.subscribe(namespace, wireName, authInfo, {
       forward: true,
       onPublishDone: (message) => this.end(kind, message)
     })
-    this.subscriptions.set(kind, { requestId, trackAlias: subscribeOk.trackAlias, name: wireName, track })
+    const subscription = { requestId, trackAlias: subscribeOk.trackAlias, name: wireName, track }
     if (this.forwardPaused) {
       await client.setSubscriptionForward(requestId, false)
     }
@@ -55,6 +68,30 @@ export class TrackSubscriptions {
       observedObjectHandler(this.context, subscribeOk.trackAlias, wireName, handler)
     )
     this.context.log('info', `subscribed ${namespace.join('/')}/${wireName}`)
+    return subscription
+  }
+
+  /// Makes `next` the subscription of its kind. The one it replaces keeps
+  /// delivering until `retire` unsubscribes it or its publisher ends it.
+  handOver(kind: MediaKind, next: TrackSubscription): TrackSubscription | undefined {
+    const previous = this.subscriptions.get(kind)
+    this.subscriptions.set(kind, next)
+    if (previous) {
+      this.retiring.set(previous.requestId, previous)
+    }
+    return previous
+  }
+
+  async retire(subscription: TrackSubscription): Promise<void> {
+    if (this.retiring.delete(subscription.requestId)) {
+      await this.close(subscription)
+    }
+  }
+
+  async retireAll(): Promise<void> {
+    for (const subscription of [...this.retiring.values()]) {
+      await this.retire(subscription)
+    }
   }
 
   async unsubscribe(kind: MediaKind): Promise<void> {
@@ -62,18 +99,36 @@ export class TrackSubscriptions {
     if (!subscription) {
       return
     }
-
-    const { client, observer } = this.context
     this.subscriptions.delete(kind)
-    client.clearSubgroupObjectHandler(subscription.trackAlias)
-    observer.forget(subscription.trackAlias)
+    await this.close(subscription)
+  }
+
+  async close(subscription: TrackSubscription): Promise<void> {
+    const { client } = this.context
+    this.forget(subscription)
     if (client.getConnectionStatus()) {
       await client.unsubscribe(subscription.requestId)
     }
     this.context.log('info', `unsubscribed ${subscription.name}`)
   }
 
+  /// Delivers the groups before `groupId` and lets the publisher end the
+  /// subscription with PUBLISH_DONE once they are sent.
+  async endBeforeGroup(subscription: TrackSubscription, groupId: bigint): Promise<void> {
+    const { client } = this.context
+    if (client.getConnectionStatus()) {
+      await client.endSubscriptionBeforeGroup(subscription.requestId, groupId, !this.forwardPaused)
+    }
+  }
+
   private end(kind: MediaKind, message: PublishDoneMessage): void {
+    const retired = this.retiring.get(message.requestId)
+    if (retired) {
+      this.retiring.delete(message.requestId)
+      this.forget(retired)
+      this.context.log('info', `${retired.name} ended by the publisher (status ${message.statusCode})`)
+      return
+    }
     const subscription = this.subscriptions.get(kind)
     if (subscription?.requestId !== message.requestId) {
       return
@@ -82,6 +137,11 @@ export class TrackSubscriptions {
     this.context.observer.forget(subscription.trackAlias)
     this.context.log('info', `${subscription.name} ended by the publisher (status ${message.statusCode})`)
     this.onPublishDone(kind, message)
+  }
+
+  private forget(subscription: TrackSubscription): void {
+    this.context.client.clearSubgroupObjectHandler(subscription.trackAlias)
+    this.context.observer.forget(subscription.trackAlias)
   }
 
   pauseForward(): void {

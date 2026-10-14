@@ -226,6 +226,7 @@ async fn join_track(
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use std::time::Duration;
 
     use super::*;
@@ -330,7 +331,14 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(UpstreamSubscriptionOrigin::Subscribe);
         table
-            .register_downstream_subscription(2, 100, SessionPeer::Client, track_key, None, true)
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                track_key,
+                None,
+                delivery_control(true),
+            )
             .unwrap();
         let table = Arc::new(table);
 
@@ -385,7 +393,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap();
         let table = Arc::new(table);

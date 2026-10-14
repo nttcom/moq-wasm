@@ -34,7 +34,10 @@ export class PlayerControls {
 
   render(): void {
     const state = this.player.state
-    fillSelect(this.part('video-track'), state.videoTracks, state.selectedVideoTrack, describeVideoTrack)
+    fillSelect(this.part('video-track'), state.videoTracks, state.selectedVideoTrack, describeVideoTrack, {
+      selected: state.adaptiveVideo,
+      label: `Auto${describeAutoTrack(state)}`
+    })
     fillSelect(this.part('audio-track'), state.audioTracks, state.selectedAudioTrack, (track) => track.label)
     this.renderPackaging(state)
     this.renderPlayPause(state.paused)
@@ -64,7 +67,9 @@ export class PlayerControls {
 
   private bind(): void {
     const { player, seekbar } = this
-    this.onValue('video-track', 'change', (value) => void player.selectVideoTrack(value))
+    this.onValue('video-track', 'change', (value) =>
+      value === AUTO_VIDEO_TRACK ? player.setAdaptiveVideo(true) : void player.selectVideoTrack(value)
+    )
     this.onValue('audio-track', 'change', (value) => void player.selectAudioTrack(value))
     this.onValue('packaging', 'change', (value) => void player.setPackaging(value as Packaging))
     this.onValue('speed', 'change', (value) => player.setPlaybackRate(Number(value)))
@@ -295,27 +300,44 @@ export class PlayerControls {
   }
 }
 
+/// The option value of the automatic choice; track names never start with `@`
+/// in the publishers this player follows.
+const AUTO_VIDEO_TRACK = '@auto'
+
+/// `auto` adds a leading option for the automatic choice, shown selected while
+/// it is on.
 function fillSelect(
   select: HTMLSelectElement,
   tracks: MediaCatalogTrack[],
   selected: string,
-  describe: (track: MediaCatalogTrack) => string
+  describe: (track: MediaCatalogTrack) => string,
+  auto?: { selected: boolean; label: string }
 ): void {
-  const names = tracks.map((track) => track.name)
+  const names = [...(auto ? [AUTO_VIDEO_TRACK] : []), ...tracks.map((track) => track.name)]
   const current = Array.from(select.options).map((option) => option.value)
   if (names.length !== current.length || names.some((name, index) => name !== current[index])) {
     select.replaceChildren(
-      ...tracks.map((track) => {
+      ...names.map((name, index) => {
         const option = document.createElement('option')
-        option.value = track.name
-        option.textContent = describe(track)
+        option.value = name
+        const track = tracks[auto ? index - 1 : index]
+        option.textContent = track ? describe(track) : ''
         return option
       })
     )
   }
-  if (select.value !== selected) {
-    select.value = selected
+  if (auto) {
+    select.options[0].textContent = auto.label
   }
+  const value = auto?.selected ? AUTO_VIDEO_TRACK : selected
+  if (select.value !== value) {
+    select.value = value
+  }
+}
+
+function describeAutoTrack(state: LivePlayerState): string {
+  const track = state.videoTracks.find((candidate) => candidate.name === state.selectedVideoTrack)
+  return state.adaptiveVideo && track ? ` (${track.label})` : ''
 }
 
 function describeVideoTrack(track: MediaCatalogTrack): string {

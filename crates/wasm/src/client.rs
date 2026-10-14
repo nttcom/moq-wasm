@@ -684,6 +684,30 @@ impl MOQTClient {
             .map_err(anyhow_error)
     }
 
+    #[wasm_bindgen(js_name = sendSubscribeEndBeforeGroup)]
+    pub async fn send_subscribe_end_before_group(
+        &self,
+        subscription_request_id: u64,
+        group_id: u64,
+        forward: bool,
+    ) -> Result<(), JsValue> {
+        let session = self.session()?;
+        let subscription = self
+            .shared
+            .subscriptions
+            .borrow()
+            .get(&subscription_request_id)
+            .cloned()
+            .ok_or_else(|| {
+                js_error(format!("no active subscription: {subscription_request_id}"))
+            })?;
+        session
+            .subscriber()
+            .end_before_group(&subscription, group_id, forward)
+            .await
+            .map_err(anyhow_error)
+    }
+
     #[wasm_bindgen(js_name = sendFetch)]
     #[allow(clippy::too_many_arguments)]
     pub async fn send_fetch(

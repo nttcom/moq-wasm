@@ -136,6 +136,7 @@ class LivePlayer {
   start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
+  setAdaptiveVideo(enabled: boolean): void
   selectAudioTrack(name: string): Promise<void>
   setPackaging(packaging: Packaging): Promise<void>
   seek(captureMicros: number): void
@@ -189,7 +190,8 @@ One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
 
 `LivePlayerState` carries what the controls and the diagnostics render: the
-catalog tracks and the selection, whether CMAF is available, the packaging,
+catalog tracks and the selection, whether the video rendition is chosen
+automatically, whether CMAF is available, the packaging,
 `mode: 'live' | 'review'`, paused, stalled, the playback rate and whether it
 is adjustable,
 the catalog / playback / rewind status, the seek range (broadcast start,
@@ -207,7 +209,9 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `trackContext` | The client, namespace, auth info, observer and log every request needs |
 | `deliveryObserver` | What the player reports of every object, FETCH and playhead |
 | `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
-| `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order |
+| `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order, the hand-over of a kind to another subscription and the retiring one it replaces |
+| `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
+| `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
@@ -367,6 +371,53 @@ review but receives nothing while the live subscriptions do not forward, so
 after `LIVE` the fragments of the next group land in a buffered range of their
 own and playback jumps there once it holds a second of video. The live audio
 still buffered when a review starts is silenced and heard again on `LIVE`.
+
+### Rendition switch
+
+A live LOC video change to another track of the same `altGroup` does not
+interrupt the picture. The incoming rendition is subscribed (Next Group Start)
+while the outgoing one keeps playing, and `RenditionSplice` decides at the
+first group start it delivers where it takes over. Renditions of one switching
+set number their groups by media time (draft-ietf-moq-msf-01 §4.2), so that
+start is the group after the newest one the outgoing rendition has begun: the
+decoder worker receives the groups before it from the outgoing rendition and
+the rest from the incoming one, one continuous track, and the seek timeline is
+kept. At the hand-over the player sends the outgoing subscription a
+SUBSCRIBE_UPDATE ending it before the start group, so the publisher sends the
+rest of the current group and ends it with PUBLISH_DONE; the outgoing
+subscription is unsubscribed instead once it delivers an object at or past the
+start group, or once the incoming one has moved past it.
+
+An incoming first group more than one group away from the outgoing one means
+the ids are not aligned; the incoming rendition then starts at once and the
+timeline starts over, as for any other change. A track outside the switching
+set, a change in CMAF mode and a change during a review resubscribe as before:
+unsubscribe, clear the timeline, subscribe. A seek, `stop`, a packaging change
+or another track change settles a switch in progress: one that has handed over
+keeps the new rendition, one that has not keeps the outgoing rendition.
+
+### Automatic quality
+
+The player chooses the live LOC video rendition itself until a track is picked
+by hand; `setAdaptiveVideo(true)` (the quality menu's `Auto`) gives the choice
+back. The choice runs only over a ladder: the tracks of the playing track's
+`altGroup` with a catalog `bitrate`, the source track estimated from its pixel
+count and the largest rendition with a known bitrate. A publisher without
+renditions or without any bitrate, such as the ONVIF bridge, has no ladder and
+plays what is selected.
+
+Objects are pushed at the rate the rendition is encoded at, so the throughput a
+viewer measures while the path keeps up is the rendition's own bitrate and says
+nothing about the headroom. `AdaptiveBitrate` therefore steps down on what
+shows a rendition does not fit: the least capture-to-arrival lag of the last
+second standing more than 400 ms above the least lag since the rendition
+started, or a stall. It then picks the highest rendition at or below 80 % of the
+throughput of the last 2 s, which while the path is the bottleneck is what the
+path carries. A step up is a trial of the next rendition after a calm spell of
+10 s; a trial that has to step down within 20 s doubles the spell, up to 120 s.
+The first 3 s after a switch are left out, since the lag of the two renditions
+differs by the transcoding delay. Every change goes through the rendition
+switch above, so a step costs no picture gap; CMAF mode and review do not adapt.
 
 ### Review audio
 
@@ -575,7 +626,7 @@ by capture timestamps it never catches up on its own, and when it reaches the
 newest closed group it waits for the publisher to close another one.
 
 The slider is disabled until a closed group is available. Stop and video quality
-changes clear the timeline and cancel pending review playback. The observed
+changes that resubscribe (see *Rendition switch*) clear the timeline and cancel pending review playback. The observed
 range is not a guarantee of relay cache retention: an evicted group can no longer
 be replayed. A FETCH that fails with INTERNAL_ERROR, TIMEOUT, INVALID_RANGE,
 NO_OBJECTS or UNKNOWN_STATUS_IN_RANGE, whose stream is reset with INTERNAL_ERROR,

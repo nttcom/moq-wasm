@@ -305,6 +305,7 @@ impl PublishNamespace {
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::delivery_control;
     use std::time::Duration;
 
     use super::*;
@@ -370,7 +371,7 @@ mod tests {
                 SessionPeer::Client,
                 track_key.clone(),
                 None,
-                true,
+                delivery_control(true),
             )
             .unwrap();
 

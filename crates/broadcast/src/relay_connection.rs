@@ -924,6 +924,7 @@ mod tests {
             width: 640,
             height: 360,
             init_segment: String::new(),
+            bitrate: None,
         }
     }
 

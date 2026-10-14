@@ -80,6 +80,13 @@ impl PublishDoneReason {
         }
     }
 
+    pub(crate) fn subscription_ended() -> Self {
+        Self {
+            status_code: PublishDoneCode::SubscriptionEnded,
+            error_reason: "end of subscription range reached".to_string(),
+        }
+    }
+
     pub(crate) fn malformed_track() -> Self {
         Self {
             status_code: PublishDoneCode::MalformedTrack,

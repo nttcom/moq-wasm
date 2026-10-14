@@ -129,6 +129,9 @@ pub struct VideoTrackInfo {
     pub width: u32,
     pub height: u32,
     pub init_segment: String,
+    /// Target bitrate in bits per second, known when the publisher encodes
+    /// the track itself.
+    pub bitrate: Option<u64>,
 }
 
 impl VideoTrackInfo {
@@ -141,6 +144,7 @@ impl VideoTrackInfo {
             width: sps.width,
             height: sps.height,
             init_segment: general_purpose::STANDARD.encode(init_segment),
+            bitrate: None,
         })
     }
 }
@@ -191,6 +195,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         loc.framerate = Some(30.0);
         loc.width = Some(info.width);
         loc.height = Some(info.height);
+        loc.bitrate = info.bitrate;
         let mut cmaf = cmaf_sibling(&loc, "video/mp4", cmaf_alt_group);
         init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
         tracks.push(loc);
@@ -425,6 +430,28 @@ mod tests {
             init_data_of(&catalog, audio_cmaf),
             Some(audio_init_segment.as_str())
         );
+    }
+
+    #[test]
+    fn rendition_bitrate_reaches_both_of_its_catalog_tracks() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        let mut rendition = metadata.video_tracks[VIDEO_TRACK_NAME].clone();
+        rendition.bitrate = Some(1_200_000);
+        metadata
+            .video_tracks
+            .insert("video_480p".to_string(), rendition);
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert: the source track has no known bitrate
+        assert_eq!(track_named(&catalog, "video_480p").bitrate, Some(1_200_000));
+        assert_eq!(
+            track_named(&catalog, "video_480p_cmaf").bitrate,
+            Some(1_200_000)
+        );
+        assert_eq!(track_named(&catalog, "video").bitrate, None);
     }
 
     #[test]
