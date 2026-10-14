@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { MOQTClient, SubgroupObjectMessage } from '../../pkg/moqt'
-import { MoqtClientWrapper } from './moqtClient'
+import { GroupOrder, MoqtClientWrapper } from './moqtClient'
 
 type Callback = (...args: any[]) => unknown
 
@@ -361,6 +361,35 @@ test('a joining FETCH that delivered nothing yet is repeated against the re-issu
 
   // Assert
   expect(clients[1].sent).toContain(`JOINING_FETCH ${requestId} ${subscribeId} 0`)
+})
+
+test('a descending FETCH resumes on the new relay without repeating the objects already delivered', async () => {
+  // Arrange: groups 5 down to 1 requested, relay A delivered 4:0, 4:1 and 3:0
+  const { clients, wrapper } = fakeRelays()
+  await wrapper.connect('https://relay-a.example:4433')
+  const delivered: string[] = []
+  const { requestId } = await wrapper.fetch(['room', 'them'], 'video', 1n, 0n, 5n, 0n, {
+    groupOrder: GroupOrder.Descending,
+    onObject: (message) => delivered.push(`${message.groupId}:${message.objectId}`)
+  })
+  const [relayA] = clients
+  relayA.receiveFetchObject(requestId, 4n, 0n)
+  relayA.receiveFetchObject(requestId, 4n, 1n)
+  relayA.receiveFetchObject(requestId, 3n, 0n)
+  await settled()
+
+  // Act
+  relayA.receiveGoAway('https://relay-b.example:4433')
+  await settled()
+  const relayB = clients[1]
+  relayB.receiveFetchObject(requestId, 3n, 0n)
+  relayB.receiveFetchObject(requestId, 3n, 1n)
+  relayB.receiveFetchObject(requestId, 2n, 0n)
+  await settled()
+
+  // Assert: the range was cut after group 3 and group 3's repeated object was dropped
+  expect(relayB.sent).toContain(`FETCH ${requestId} room/them/video 1:0-4:0`)
+  expect(delivered).toEqual(['4:0', '4:1', '3:0', '3:1', '2:0'])
 })
 
 test('a PUBLISH_DONE from the relay that sent GOAWAY does not end the subscription carried over', async () => {
