@@ -1,8 +1,8 @@
-use std::time::Duration;
+use std::{pin::Pin, time::Duration};
 
 use anyhow::{Context, Result};
 use moqt::{SessionEvent, TrackReader};
-use tokio::{io::AsyncWriteExt, task::JoinHandle};
+use tokio::{io::AsyncWriteExt, task::JoinHandle, time::Sleep};
 use tracing::info;
 
 use crate::catalog;
@@ -15,23 +15,72 @@ use crate::transport::{
 
 const MOVE_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 
+/// How long the previous relay session stays open after a move for groups it
+/// started and has not finished.
+const PREVIOUS_SESSION_GRACE: Duration = Duration::from_secs(5);
+
 pub async fn run(args: SubscribeArgs) -> Result<()> {
     let mut relay = args.relay.clone();
     let mut watching = watch(&relay, &args.track).await?;
     // The move runs beside the current session, which keeps delivering
     // until the new relay has accepted the subscriptions (draft-14 §8.3.1).
     let mut pending_move: Option<JoinHandle<Result<Watching>>> = None;
+    // After a move the previous session finishes the groups before the
+    // cutover (the first group the new session delivers, or the one after
+    // the newest group written), and the new session supplies the rest.
+    let mut previous: Option<Watching> = None;
+    let mut cutover: Option<u64> = None;
+    let mut grace: Option<Pin<Box<Sleep>>> = None;
+    let mut newest_written: Option<u64> = None;
     let mut out = tokio::io::stdout();
     loop {
         let session = watching.connection.session.clone();
         tokio::select! {
             object = watching.media_reader.next_object() => match object {
                 Ok(Some(object)) => {
+                    if previous.is_some() {
+                        let first = *cutover.get_or_insert(match newest_written {
+                            Some(newest) if object.group_id <= newest => newest + 1,
+                            _ => object.group_id,
+                        });
+                        if object.group_id < first {
+                            continue;
+                        }
+                    }
+                    newest_written = newest_written.max(Some(object.group_id));
                     out.write_all(&object.payload).await?;
                     out.flush().await?;
                 }
                 Ok(None) => break,
                 Err(error) => tracing::warn!(%error, "group read error, advancing to next group"),
+            },
+            object = async { previous.as_mut().expect("polled only while the previous session is open").media_reader.next_object().await },
+                if previous.is_some() =>
+            {
+                match object {
+                    Ok(Some(object)) if cutover.is_none_or(|first| object.group_id < first) => {
+                        newest_written = newest_written.max(Some(object.group_id));
+                        out.write_all(&object.payload).await?;
+                        out.flush().await?;
+                    }
+                    // Reached the cutover, or the previous relay ended the track.
+                    _ => {
+                        grace = None;
+                        if let Some(previous) = previous.take() {
+                            previous.close().await;
+                            info!("closed the previous relay session");
+                        }
+                    }
+                }
+            },
+            () = async { grace.as_mut().expect("polled only while the grace runs").await },
+                if grace.is_some() =>
+            {
+                grace = None;
+                if let Some(previous) = previous.take() {
+                    previous.close().await;
+                    info!("closed the previous relay session after the grace period");
+                }
             },
             event = session.receive_event() => {
                 if let SessionEvent::GoAway(go_away) = event?
@@ -53,9 +102,12 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
                 pending_move = None;
                 match moved? {
                     Ok(next) => {
-                        let previous = std::mem::replace(&mut watching, next);
-                        drop(session);
-                        previous.close().await;
+                        if let Some(older) = previous.take() {
+                            older.close().await;
+                        }
+                        previous = Some(std::mem::replace(&mut watching, next));
+                        cutover = None;
+                        grace = Some(Box::pin(tokio::time::sleep(PREVIOUS_SESSION_GRACE)));
                         info!(relay = %relay.url, "moved to the relay named by GOAWAY");
                     }
                     Err(error) => {
@@ -68,6 +120,9 @@ pub async fn run(args: SubscribeArgs) -> Result<()> {
     }
     if let Some(pending_move) = pending_move {
         pending_move.abort();
+    }
+    if let Some(previous) = previous {
+        previous.close().await;
     }
     watching.close().await;
     Ok(())
