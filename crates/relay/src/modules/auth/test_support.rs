@@ -79,8 +79,8 @@ impl TokenVerifier for StubVerifier {
 
 pub(crate) struct RunningRelay {
     pub(crate) port: u16,
-    _server: RelayServer,
-    _handler: SessionHandler,
+    pub(crate) server: RelayServer,
+    pub(crate) handler: SessionHandler,
 }
 
 fn free_udp_port() -> u16 {
@@ -122,8 +122,8 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
     let handler = server.spawn_client_transport::<QUIC>(port);
     RunningRelay {
         port,
-        _server: server,
-        _handler: handler,
+        server,
+        handler,
     }
 }
 

@@ -21,8 +21,11 @@ pub(crate) trait Session: 'static + Send + Sync {
     fn as_subscriber(&self) -> Box<dyn Subscriber>;
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent>;
     fn close(&self, code: moqt::TerminationErrorCode, reason: &str);
+    /// draft-14 §9.4; an empty URI tells the peer to reuse the current one.
+    async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()>;
     fn transport_stats(&self) -> moqt::TransportStats;
     fn transport_addresses(&self) -> moqt::server::TransportAddresses;
+    fn url_scheme(&self) -> &'static str;
 }
 
 #[async_trait]
@@ -39,12 +42,20 @@ impl Session for moqt::Session {
         self.close_with_error(code, reason);
     }
 
+    async fn go_away(&self, new_session_uri: String) -> anyhow::Result<()> {
+        moqt::Session::go_away(self, new_session_uri).await
+    }
+
     fn transport_stats(&self) -> moqt::TransportStats {
         moqt::Session::transport_stats(self)
     }
 
     fn transport_addresses(&self) -> moqt::server::TransportAddresses {
         moqt::Session::transport_addresses(self)
+    }
+
+    fn url_scheme(&self) -> &'static str {
+        moqt::Session::url_scheme(self)
     }
 
     async fn receive_moqt_session_event(&self) -> anyhow::Result<MoqtSessionEvent> {

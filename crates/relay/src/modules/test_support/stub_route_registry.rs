@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use async_trait::async_trait;
 
@@ -15,6 +18,8 @@ pub(crate) enum PublisherLookup {
 pub(crate) struct StubRouteRegistry {
     publisher_lookup: PublisherLookup,
     watched_namespace_calls: Mutex<Vec<String>>,
+    migration_target: Option<String>,
+    draining: AtomicBool,
 }
 
 impl StubRouteRegistry {
@@ -22,11 +27,24 @@ impl StubRouteRegistry {
         Self {
             publisher_lookup,
             watched_namespace_calls: Mutex::new(Vec::new()),
+            migration_target: None,
+            draining: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn with_migration_target(migration_target: Option<&str>) -> Self {
+        Self {
+            migration_target: migration_target.map(str::to_string),
+            ..Self::new(PublisherLookup::MustNotBeCalled)
         }
     }
 
     pub(crate) fn watched_namespace_calls(&self) -> Vec<String> {
         self.watched_namespace_calls.lock().unwrap().clone()
+    }
+
+    pub(crate) fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
     }
 }
 
@@ -59,6 +77,15 @@ impl RelayRouteRegistry for StubRouteRegistry {
             .unwrap()
             .push(format!("unregister {track_namespace}"));
         Ok(())
+    }
+
+    async fn mark_draining(&self) -> anyhow::Result<()> {
+        self.draining.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn find_migration_target(&self) -> anyhow::Result<Option<String>> {
+        Ok(self.migration_target.clone())
     }
 
     async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {

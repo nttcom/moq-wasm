@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use moqt::{Endpoint, TransportProtocol, server::Accepting};
+use tokio::sync::oneshot;
 use tracing::{Instrument, Span};
 
 use crate::{
@@ -87,6 +88,7 @@ impl SessionIntake {
 
 pub struct SessionHandler {
     join_handle: tokio::task::JoinHandle<()>,
+    stop_sender: Option<oneshot::Sender<()>>,
 }
 
 impl SessionHandler {
@@ -97,6 +99,7 @@ impl SessionHandler {
         let mut endpoint = Endpoint::<T>::create_server(&config)
             .inspect_err(|e| tracing::error!("failed to create server: {}", e))
             .unwrap();
+        let (stop_sender, mut stop_receiver) = oneshot::channel();
         let join_handle = tokio::task::Builder::new()
             .spawn(async move {
                 let relay_hostname = relay_hostname();
@@ -110,7 +113,7 @@ impl SessionHandler {
                         session_peer = session_peer,
                         relay_hostname = %relay_hostname,
                     );
-                    let connecting = async {
+                    let accept = async {
                         endpoint.accept().await.inspect_err(|error| {
                             if Self::is_endpoint_closing(error) {
                                 tracing::info!(%error, "transport endpoint closed");
@@ -119,8 +122,15 @@ impl SessionHandler {
                             }
                         })
                     }
-                    .instrument(session_span.clone())
-                    .await;
+                    .instrument(session_span.clone());
+                    let connecting = tokio::select! {
+                        biased;
+                        _ = &mut stop_receiver => {
+                            tracing::info!(peer = session_peer, "stopped accepting sessions");
+                            break;
+                        }
+                        connecting = accept => connecting,
+                    };
                     let connecting = match connecting {
                         Ok(connecting) => connecting,
                         Err(error) => {
@@ -139,9 +149,28 @@ impl SessionHandler {
                             .await;
                     });
                 }
+                endpoint.wait_idle().await;
             })
             .unwrap();
-        Self { join_handle }
+        Self {
+            join_handle,
+            stop_sender: Some(stop_sender),
+        }
+    }
+
+    /// Ends the accept loop; the sessions already accepted keep running.
+    pub fn stop_accepting(&mut self) {
+        if let Some(stop_sender) = self.stop_sender.take() {
+            let _ = stop_sender.send(());
+        }
+    }
+
+    /// Resolves once the accept loop has stopped and every transport
+    /// connection of the endpoint has finished closing, so the process can
+    /// exit without losing the CONNECTION_CLOSE of a session closed last.
+    /// Call `stop_accepting` first; otherwise this never resolves.
+    pub async fn wait_idle(&mut self) {
+        let _ = (&mut self.join_handle).await;
     }
 
     fn is_endpoint_closing(error: &anyhow::Error) -> bool {
