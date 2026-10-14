@@ -11,7 +11,7 @@ interface ChatSidebarProps {
 
 export function ChatSidebar({ messages, chatMessage, onMessageChange, onSend, onToggle }: ChatSidebarProps) {
   return (
-    <aside className="w-full overflow-y-auto border-t border-white/10 bg-gray-900/80 px-4 py-6 backdrop-blur lg:h-screen lg:w-[28rem] lg:border-l lg:border-t-0 lg:px-6 lg:py-8">
+    <aside className="h-full w-80 shrink-0 overflow-y-auto border-l border-white/10 bg-slate-900 px-4 py-4">
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center justify-end">
           <button

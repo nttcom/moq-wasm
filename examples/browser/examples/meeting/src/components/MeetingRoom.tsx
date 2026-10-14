@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { LocalSession } from '../session/localSession'
 import { Room } from '../types/room'
 import { ChatMessage } from '../types/chat'
@@ -23,6 +23,7 @@ import { checkCodecSupport } from '../utils/codecSupport'
 import type { RemotePlaybackStats, VideoAdaptation } from '../media/mediaSubscriber'
 import type { SidebarStatsSample, VideoSendTiming } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
+import { type StageView, arrangeStage } from '../utils/stageLayout'
 
 interface MeetingRoomProps {
   session: LocalSession
@@ -46,7 +47,9 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const userName = session.localMember.name
   const [chatMessage, setChatMessage] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [stageView, setStageView] = useState<StageView>('gallery')
+  const [filmstripOpen, setFilmstripOpen] = useState(true)
   const [statsHistory, setStatsHistory] = useState<Map<string, SidebarStatsSample[]>>(new Map())
   const [remoteStats, setRemoteStats] = useState<Map<string, RemotePlaybackStats>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
@@ -63,6 +66,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const { backoff: catalogSubscribeBackoff, retryTick: catalogSubscribeRetryTick } =
     useRetryBackoff('catalog-auto-subscribe')
   const {
+    activeSpeakerId,
+    speakingMemberIds,
     cameraEnabled,
     screenShareEnabled,
     microphoneEnabled,
@@ -158,7 +163,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setCatalogLoadingMemberIds(new Set())
     setCatalogSubscribedMemberIds(new Set())
     setCatalogUnsubscribingTrackKeys(new Set())
-    setIsSidebarOpen(true)
+    setIsSidebarOpen(false)
     setStatsHistory(new Map())
     setRemoteStats(new Map())
   }, [session])
@@ -581,6 +586,25 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     }
   }
 
+  const remoteMemberIds = useMemo(() => Array.from(room.remoteMembers.keys()), [room.remoteMembers])
+  const remoteSharingIds = useMemo(
+    () =>
+      new Set(
+        remoteMemberIds.filter(
+          (memberId) => catalogTracksForRole(remoteCatalogTracks.get(memberId) ?? [], 'screenshare').length > 0
+        )
+      ),
+    [remoteCatalogTracks, remoteMemberIds]
+  )
+  const stage = arrangeStage({
+    view: stageView,
+    filmstripOpen,
+    remoteMemberIds,
+    remoteSharingIds,
+    localSharing: screenShareEnabled,
+    activeSpeakerId
+  })
+
   useEffect(() => {
     chatSubscribeBackoff.retain(room.remoteMembers)
     for (const member of room.remoteMembers.values()) {
@@ -604,10 +628,10 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   ])
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 text-white">
-      <div className="flex min-h-screen flex-col lg:flex-row">
-        <main className="flex-1 px-6 py-10 lg:px-10 lg:py-12">
-          <RoomHeader roomName={roomName} onLeave={onLeave} />
+    <div className="flex h-screen flex-col bg-slate-950 text-white">
+      <RoomHeader roomName={roomName} participantCount={room.remoteMembers.size + 1} />
+      <div className="flex min-h-0 flex-1">
+        <main className="min-w-0 flex-1">
           <MemberGrid
             localMember={room.localMember}
             remoteMembers={Array.from(room.remoteMembers.values())}
@@ -664,10 +688,17 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onSubscribeTrack={handleSubscribeCatalogTrack}
             onUnsubscribeTrack={handleUnsubscribeCatalogTrack}
             statsHistory={statsHistory}
+            stage={stage}
+            speakingMemberIds={speakingMemberIds}
+            filmstripOpen={filmstripOpen}
+            onToggleView={() => setStageView(stage.view === 'gallery' ? 'speaker' : 'gallery')}
+            onToggleFilmstrip={() => setFilmstripOpen((open) => !open)}
+            chatOpen={isSidebarOpen}
+            onToggleChat={() => setIsSidebarOpen((open) => !open)}
+            onLeave={onLeave}
           />
         </main>
-
-        {isSidebarOpen ? (
+        {isSidebarOpen && (
           <ChatSidebar
             messages={chatMessages}
             chatMessage={chatMessage}
@@ -675,17 +706,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onSend={handleSendChatMessage}
             onToggle={() => setIsSidebarOpen(false)}
           />
-        ) : (
-          <aside className="w-full border-t border-white/10 bg-gray-900/80 px-4 py-4 backdrop-blur lg:w-20 lg:border-l lg:border-t-0 lg:px-2 lg:py-6">
-            <button
-              type="button"
-              onClick={() => setIsSidebarOpen(true)}
-              className="mb-2 w-full rounded-lg bg-blue-600 px-2 py-2 text-xs font-semibold text-white transition hover:bg-blue-700"
-              title="Open chat"
-            >
-              Chat
-            </button>
-          </aside>
         )}
       </div>
     </div>

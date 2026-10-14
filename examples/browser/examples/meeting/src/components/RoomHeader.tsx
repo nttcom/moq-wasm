@@ -1,24 +1,15 @@
 interface RoomHeaderProps {
   roomName: string
-  onLeave: () => void
+  participantCount: number
 }
 
-export function RoomHeader({ roomName, onLeave }: RoomHeaderProps) {
+export function RoomHeader({ roomName, participantCount }: RoomHeaderProps) {
   return (
-    <header className="flex flex-col gap-4 border-b border-white/10 pb-8 md:flex-row md:items-center md:justify-between">
-      <div>
-        <p className="text-sm uppercase tracking-wide text-blue-300">Current Room</p>
-        <h1 className="text-4xl font-bold" data-testid="room-name">
-          {roomName}
-        </h1>
-      </div>
-      <button
-        onClick={onLeave}
-        data-testid="room-leave-button"
-        className="px-6 py-3 rounded-lg bg-red-500 hover:bg-red-600 transition shadow-lg self-start md:self-auto"
-      >
-        Leave Room
-      </button>
+    <header className="flex items-center gap-3 px-4 py-2 text-sm">
+      <h1 className="font-semibold" data-testid="room-name">
+        {roomName}
+      </h1>
+      <span className="text-slate-400">{participantCount} participants</span>
     </header>
   )
 }

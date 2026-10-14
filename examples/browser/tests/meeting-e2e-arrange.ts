@@ -124,9 +124,24 @@ export function getMemberCard(page: Page, memberName: string): Locator {
   return page.getByTestId(`member-card-${memberName}`)
 }
 
-// Locate the catalog status span inside a member card.
-export function getCatalogStatus(page: Page, memberName: string): Locator {
-  return page.getByTestId(`catalog-status-${memberName}`)
+// Wait until a remote member's tile reports its catalog state (e.g. 'Subscribed').
+export async function expectCatalogStatus(page: Page, memberName: string, status: string, timeout = 15_000) {
+  await expect(getMemberCard(page, memberName)).toHaveAttribute('data-catalog-status', status, { timeout })
+}
+
+// Open the details of a remote member, where its tracks are selected and subscribed.
+export async function openMemberDetails(page: Page, memberName: string): Promise<void> {
+  await page.getByTestId(`member-menu-${memberName}`).click()
+}
+
+export async function closeModal(page: Page): Promise<void> {
+  await page.getByTestId('modal-close-button').click()
+}
+
+export async function openChat(model: MeetingClientPageModel): Promise<void> {
+  if (!(await model.chatInput.isVisible())) {
+    await model.page.getByTestId('chat-toggle-button').click()
+  }
 }
 
 // Locate the video element inside a remote member card.
@@ -154,17 +169,20 @@ export function getTrackSelect(page: Page, role: 'video' | 'screenshare', member
   return page.getByTestId(`track-select-${role}-${memberName}`)
 }
 
-// Locate a remote member's per-role subscription status (e.g. 'Subscribed').
-export function getTrackStatus(
+// Wait until a remote member's tile reports a per-role subscription state (e.g. 'Subscribed').
+export async function expectTrackStatus(
   page: Page,
   role: 'video' | 'audio' | 'chat' | 'screenshare',
-  memberName: string
-): Locator {
-  return page.getByTestId(`track-status-${role}-${memberName}`)
+  memberName: string,
+  status: string,
+  timeout = 15_000
+): Promise<void> {
+  await expect(getMemberCard(page, memberName)).toHaveAttribute(`data-${role}-status`, status, { timeout })
 }
 
 // Send a chat message from this client.
 export async function sendChatMessage(model: MeetingClientPageModel, text: string): Promise<void> {
+  await openChat(model)
   await model.chatInput.fill(text)
   await model.chatSendButton.click()
 }
