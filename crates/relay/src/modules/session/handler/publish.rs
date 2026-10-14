@@ -88,6 +88,7 @@ impl PublishHandler for moqt::publish::PublishHandler {
             forward: self.forward,
             filter_type,
             delivery_timeout: self.delivery_timeout,
+            max_cache_duration: self.max_cache_duration,
         })
     }
 

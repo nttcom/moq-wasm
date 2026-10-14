@@ -472,6 +472,7 @@ impl MOQTClient {
                 largest_object_id,
             ),
             forward,
+            max_cache_duration: None,
         };
         let result = session
             .publisher()

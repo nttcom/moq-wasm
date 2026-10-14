@@ -15,6 +15,7 @@ fn subscriber_initiated(
         content_exists: moqt::object::ContentExists::False,
         filter_type,
         delivery_timeout: None,
+        max_cache_duration: None,
     })
 }
 

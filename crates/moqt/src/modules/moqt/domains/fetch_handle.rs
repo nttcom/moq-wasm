@@ -9,6 +9,9 @@ pub struct FetchHandle {
     pub group_order: GroupOrder,
     pub end_of_track: bool,
     pub end_location: Location,
+    /// MAX_CACHE_DURATION in milliseconds (draft-14 §9.2.1.3) the FETCH_OK
+    /// carried.
+    pub max_cache_duration: Option<u64>,
 }
 
 impl FetchHandle {
@@ -18,6 +21,7 @@ impl FetchHandle {
             group_order: fetch_ok.group_order,
             end_of_track: fetch_ok.end_of_track,
             end_location: fetch_ok.end_location,
+            max_cache_duration: fetch_ok.max_cache_duration,
         }
     }
 }

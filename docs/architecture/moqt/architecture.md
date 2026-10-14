@@ -322,6 +322,14 @@ One struct owns all cross-task state:
   tuple (`track_namespace_tuple`) and as the `/`-joined string
   (`track_namespace`); the tuple is authoritative because a tuple element may
   itself contain `/`.
+- MAX_CACHE_DURATION (draft-14 §9.2.1.3, milliseconds) is read from received
+  messages and set on outgoing ones, but never enforced here; caching
+  endpoints such as the relay apply it.
+  Received values are on `Subscription::max_cache_duration()` (from
+  SUBSCRIBE_OK or PUBLISH), `PublishHandler.max_cache_duration` and
+  `FetchHandle.max_cache_duration`; values to send go in
+  `SubscribeHandler.max_cache_duration`, `FetchHandler.max_cache_duration` and
+  `PublishOption.max_cache_duration`.
 - `enums.rs` — `SessionEvent` (inbound requests + `Disconnected` /
   `ProtocolViolation`) and the crate-private `ResponseMessage`.
 - `constants.rs` — protocol version and `TerminationErrorCode` (draft-14

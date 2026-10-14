@@ -30,6 +30,8 @@ pub struct SubscribeHandler {
     pub group_order: GroupOrder,
     pub forward: bool,
     pub filter_type: FilterType,
+    /// Sent as MAX_CACHE_DURATION (milliseconds, draft-14 §9.2.1.3) in the
+    /// SUBSCRIBE_OK.
     pub max_cache_duration: Option<u64>,
     pub delivery_timeout: Option<u64>,
     guard: ResponseGuard,
@@ -157,6 +159,36 @@ mod tests {
         // Assert
         let subscription = request.await.unwrap().unwrap();
         assert_eq!(subscription.group_order(), GroupOrder::Ascending);
+    }
+
+    #[tokio::test]
+    async fn subscribe_ok_hands_its_max_cache_duration_to_the_subscriber() {
+        // Arrange
+        let (port, accept) = spawn_dual_server("subscribe-handler-max-cache-duration");
+        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
+            .await
+            .unwrap();
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        handler.max_cache_duration = Some(2_000);
+
+        // Act
+        handler.ok(0, ContentExists::False).await.unwrap();
+
+        // Assert
+        let subscription = request.await.unwrap().unwrap();
+        assert_eq!(subscription.max_cache_duration(), Some(2_000));
     }
 
     #[tokio::test]

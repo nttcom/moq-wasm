@@ -131,7 +131,7 @@ impl Publisher {
             forward: option.forward,
             authorization_tokens: vec![],
             delivery_timeout: None,
-            max_duration: None,
+            max_duration: option.max_cache_duration,
         };
         // A late PUBLISH_OK is discarded: the peer keeps subscription state
         // but receives no objects.
@@ -156,6 +156,7 @@ impl Publisher {
                             track_name,
                             track_alias,
                             message,
+                            option.max_cache_duration,
                         )
                         .with_content_exists(content_exists),
                     ))
